@@ -138,10 +138,11 @@ static uint64_t memory_run_single(void *arg) {
 typedef struct {
     pthread_t thread;
     int cpu;
-    const uint64_t *data;
+    uint64_t *data;
     size_t start;
     size_t end;
     bool simd;
+    pthread_barrier_t *done_allocating_barrier;
     pthread_barrier_t *start_barrier;
     pthread_barrier_t *end_barrier;
     volatile bool *stop;
@@ -151,6 +152,7 @@ typedef struct {
 typedef struct {
     worker_t *workers;
     int nthreads;
+    pthread_barrier_t done_allocating_barrier;
     pthread_barrier_t start_barrier;
     pthread_barrier_t end_barrier;
     volatile bool stop;
@@ -168,15 +170,23 @@ static void pin_to_cpu(int cpu) {
 static void *worker_main(void *arg) {
     worker_t *w = (worker_t *)arg;
     pin_to_cpu(w->cpu);
+
+    size_t len = w->end - w->start;
+    w->data = (uint64_t *)xalloc(64, len * sizeof(uint64_t));
+    for (size_t i = 0; i < len; i++) {
+        w->data[i] = (uint64_t)(w->start + i);
+    }
+    pthread_barrier_wait(w->done_allocating_barrier);
+
     for (;;) {
         pthread_barrier_wait(w->start_barrier);
         if (*w->stop) break;
-        const uint64_t *slice = w->data + w->start;
-        size_t len = w->end - w->start;
-        w->checksum = w->simd ? memory_read_simd(slice, len) : memory_read_scalar(slice, len);
+        w->checksum = w->simd ? memory_read_simd(w->data, len) : memory_read_scalar(w->data, len);
         pthread_barrier_wait(w->end_barrier);
     }
     pthread_barrier_wait(w->end_barrier);
+    free(w->data);
+    w->data = NULL;
     return NULL;
 }
 
@@ -199,26 +209,28 @@ static int allowed_cpus(int *cpus, int max_cpus) {
     return n;
 }
 
-static void threaded_init(threaded_ctx_t *ctx, const uint64_t *data, size_t len, bool simd, const int *cpus, int nthreads) {
+static void threaded_init(threaded_ctx_t *ctx, size_t len, bool simd, const int *cpus, int nthreads) {
     ctx->workers = calloc((size_t)nthreads, sizeof(worker_t));
     if (!ctx->workers) die("calloc workers");
     ctx->nthreads = nthreads;
     ctx->stop = false;
+    if (pthread_barrier_init(&ctx->done_allocating_barrier, NULL, (unsigned)nthreads + 1) != 0) die("pthread_barrier_init");
     if (pthread_barrier_init(&ctx->start_barrier, NULL, (unsigned)nthreads + 1) != 0) die("pthread_barrier_init");
     if (pthread_barrier_init(&ctx->end_barrier, NULL, (unsigned)nthreads + 1) != 0) die("pthread_barrier_init");
     size_t slice = len / (size_t)nthreads;
     for (int i = 0; i < nthreads; i++) {
         worker_t *w = &ctx->workers[i];
         w->cpu = cpus[i];
-        w->data = data;
         w->start = (size_t)i * slice;
         w->end = (i + 1 == nthreads) ? len : w->start + slice;
         w->simd = simd;
+        w->done_allocating_barrier = &ctx->done_allocating_barrier;
         w->start_barrier = &ctx->start_barrier;
         w->end_barrier = &ctx->end_barrier;
         w->stop = &ctx->stop;
         if (pthread_create(&w->thread, NULL, worker_main, w) != 0) die("pthread_create");
     }
+    pthread_barrier_wait(&ctx->done_allocating_barrier);
 }
 
 static void threaded_destroy(threaded_ctx_t *ctx) {
@@ -226,6 +238,7 @@ static void threaded_destroy(threaded_ctx_t *ctx) {
     pthread_barrier_wait(&ctx->start_barrier);
     pthread_barrier_wait(&ctx->end_barrier);
     for (int i = 0; i < ctx->nthreads; i++) pthread_join(ctx->workers[i].thread, NULL);
+    pthread_barrier_destroy(&ctx->done_allocating_barrier);
     pthread_barrier_destroy(&ctx->start_barrier);
     pthread_barrier_destroy(&ctx->end_barrier);
     free(ctx->workers);
@@ -386,8 +399,8 @@ int main(int argc, char **argv) {
 
     threaded_ctx_t threaded_scalar;
     threaded_ctx_t threaded_simd;
-    threaded_init(&threaded_scalar, data, memory_len, false, cpus, ncpus);
-    threaded_init(&threaded_simd, data, memory_len, true, cpus, ncpus);
+    threaded_init(&threaded_scalar, memory_len, false, cpus, ncpus);
+    threaded_init(&threaded_simd, memory_len, true, cpus, ncpus);
     if (threaded_run(&threaded_scalar) != expected || threaded_run(&threaded_simd) != expected) {
         fprintf(stderr, "error: threaded memory_read checksum validation failed\n");
         return 1;
