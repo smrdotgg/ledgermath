@@ -1,2 +1,27 @@
+# LedgerMath
+
+LedgerMath is a server benchmarking tool.
+
+It will initially only run on AWS.
+
+It will run daily.
+
+The benchmarking will need to be as precise as possible, so we will be using a low level language for that. (Whatever language we pick will likely use assemble for the hot path between when the "main event" runs - ensuring we get peak performance and minimal noise during that period.)
+I have no strong opinion on what low level language we decide to use. C seems like a fine option, but at the end of the day I don't really care.
+One thing I do care about is ensuring that we set up the benchmark in such a way that its not locked down to one language. This project will likely be open source. We want to allow people to write new benchmarks for new scenerios or new platforms or whatever, using whatever low-level language they want. We don't necessarily need the benchmark as a whole to be super-duper fast. We just need to make sure that the measured-path is absolutely as fast as possible with no noise leaking into it. Hope that makes sense.
 
 
+This will then make its way to a database.
+
+
+We will then have a website that displays all the numbers.
+
+We will also set up a skill that allows agents to query the website for particular numbers and make estimates. For example, how much money will it cost to distribute a new update of Fortnite to 30 million players? We would probably multiple some bandwidth numbers, some storage numbers, etc and come up with a rough guestimate. This process will be documented in a skill in the future.
+
+
+
+This project is heavily inspired by "NapkinMath"
+
+note: the "NapkinMath" repo is available in "local/". It may seem invisible because it is part of `.gitignore`.
+
+be sure to read "local/AGENTS.md" to get context that will not make it to GitHub.
