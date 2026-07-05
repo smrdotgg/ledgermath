@@ -202,4 +202,7 @@ A migrated benchmark is done only when **all** of these hold:
   Verified `make -C benchmarks/c`, `./benchmarks/c/build/memory_read_random --quick`,
   and `python3 -m json.tool`; quick run emitted 112.542 ms/pass over 512 MiB
   (~13.4 ns/element, 4.77 GB/s).
+- **2026-07-05** — Added `bench_syscall.c` with `syscall` variants for `getpid`,
+  `gettimeofday`, `getrusage`, and `stat`; `getpid` uses `syscall(SYS_getpid)` to
+  force the real kernel crossing while `gettimeofday` captures the expected vDSO path.
 - _(agents: append your entry here, one per merged benchmark)_
