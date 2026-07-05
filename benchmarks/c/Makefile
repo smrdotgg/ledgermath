@@ -1,23 +1,30 @@
-CC      ?= gcc
+CC      ?= cc
 CFLAGS  ?= -O3 -march=native -std=c11 -Wall -Wextra -D_GNU_SOURCE
 LDFLAGS ?= -pthread
 
-TARGET := build/ledgermath-bench
-SRC    := ledgermath_bench.c
+BUILD   := build
+HARNESS := harness.c
+HARNESS_HDR := harness.h
 
-all: $(TARGET)
+# Every bench_<name>.c compiles+links into build/<name>. Adding a benchmark is a
+# single new file — no edits to this Makefile or any shared source.
+BENCH_SRCS := $(wildcard bench_*.c)
+TARGETS    := $(patsubst bench_%.c,$(BUILD)/%,$(BENCH_SRCS))
 
-$(TARGET): $(SRC)
-	mkdir -p build
-	$(CC) $(CFLAGS) -o $@ $< $(LDFLAGS)
+all: $(TARGETS)
 
-run: $(TARGET)
-	./$(TARGET)
+$(BUILD)/%: bench_%.c $(HARNESS) $(HARNESS_HDR)
+	mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -o $@ $< $(HARNESS) $(LDFLAGS)
 
-quick: $(TARGET)
-	./$(TARGET) --quick
+# Run every benchmark and merge their JSON arrays into one array on stdout.
+run: all
+	./run-all.sh
+
+quick: all
+	./run-all.sh --quick
 
 clean:
-	rm -rf build
+	rm -rf $(BUILD)
 
 .PHONY: all run quick clean
