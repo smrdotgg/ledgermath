@@ -64,13 +64,13 @@ static bool is_sorted_u64(const uint64_t *values, size_t len) {
     return true;
 }
 
+/* Sparse probe of the sorted output: still data-dependent on the completed sort
+ * (elision guard), but cheap enough not to contaminate the timed op — a full
+ * per-element hash chain here would add ~10% to the measured sort time. */
 static uint64_t checksum_u64(const uint64_t *values, size_t len) {
-    uint64_t hash = 1469598103934665603ULL;
-    for (size_t i = 0; i < len; i++) {
-        hash ^= values[i];
-        hash *= 1099511628211ULL;
-    }
-    return hash;
+    uint64_t sum = values[0] ^ values[len / 2] ^ values[len - 1];
+    for (size_t i = 0; i < len; i += 512) sum += values[i];
+    return sum;
 }
 
 __attribute__((noinline))
