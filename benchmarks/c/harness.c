@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/statfs.h>
 #include <time.h>
 
 void die(const char *msg) {
@@ -78,6 +79,33 @@ void pin_to_cpu(int cpu) {
     if (sched_setaffinity(0, sizeof(set), &set) != 0) {
         fprintf(stderr, "warning: sched_setaffinity(cpu=%d) failed: %s\n", cpu, strerror(errno));
     }
+}
+
+#define TMPFS_MAGIC_ 0x01021994
+#define RAMFS_MAGIC_ 0x858458f6
+
+char *bench_file_path(const char *benchmark_name) {
+    const char *dir = getenv("LEDGERMATH_BENCH_DIR");
+    if (dir == NULL || dir[0] == '\0') dir = "/var/tmp";
+
+    struct statfs fs;
+    if (statfs(dir, &fs) != 0) {
+        fprintf(stderr, "statfs(%s) failed: %s\n", dir, strerror(errno));
+        exit(1);
+    }
+    if (fs.f_type == TMPFS_MAGIC_ || fs.f_type == RAMFS_MAGIC_) {
+        fprintf(stderr,
+                "error: %s is tmpfs/ramfs — a disk benchmark there would measure RAM.\n"
+                "Set LEDGERMATH_BENCH_DIR to a disk-backed directory.\n",
+                dir);
+        exit(1);
+    }
+
+    size_t len = strlen(dir) + strlen(benchmark_name) + sizeof("/ledgermath-.bench");
+    char *path = (char *)malloc(len);
+    if (path == NULL) die("malloc bench_file_path");
+    snprintf(path, len, "%s/ledgermath-%s.bench", dir, benchmark_name);
+    return path;
 }
 
 result_t measure(const char *benchmark, const char *variant, int threads,

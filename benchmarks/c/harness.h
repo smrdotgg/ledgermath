@@ -51,6 +51,13 @@ bench_opts_t parse_opts(int argc, char **argv);
 int allowed_cpus(int *cpus, int max_cpus);
 void pin_to_cpu(int cpu);
 
+/* Heap-allocated scratch-file path for a disk benchmark:
+ * $LEDGERMATH_BENCH_DIR/ledgermath-<benchmark_name>.bench, default dir /var/tmp
+ * (FHS-guaranteed disk-backed; /tmp is tmpfs on some distros). Dies if the target
+ * directory is on tmpfs/ramfs — a disk benchmark there would silently measure RAM.
+ * Caller frees. */
+char *bench_file_path(const char *benchmark_name);
+
 /* Warmup -> calibrate iteration count to target_calibration_ns -> sample_count timed
  * samples. fn's return value is recorded as the checksum; benchmarks MUST derive it
  * from the computed data so -O3 cannot elide the work. */
