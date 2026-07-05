@@ -130,26 +130,11 @@ type RunOpts = { timeoutMs?: number; inherit?: boolean; allowFail?: boolean };
 
 /** Run a command synchronously. Returns {code, stdout, stderr}. Throws on failure unless allowFail. */
 function run(cmd: string, args: string[], opts: RunOpts = {}) {
-  let r;
-  if (opts.inherit) {
-    // Stream to the terminal live AND append to the log file, so long-running children
-    // (opencode above all) are captured for later debugging. We wrap in bash so `tee`
-    // does the mirroring; the command + args are passed as argv (after a `_` placeholder
-    // for $0) so nothing needs shell-escaping. pipefail makes the child's exit code win
-    // over tee's.
-    r = spawnSync(
-      "bash",
-      ["-c", 'set -o pipefail; "$@" 2>&1 | tee -a "$RALPH_LOG"', "_", cmd, ...args],
-      {
-        stdio: "inherit",
-        encoding: "utf8",
-        timeout: opts.timeoutMs,
-        env: { ...process.env, RALPH_LOG: LOG_FILE },
-      },
-    );
-  } else {
-    r = spawnSync(cmd, args, { stdio: "pipe", encoding: "utf8", timeout: opts.timeoutMs });
-  }
+  const r = spawnSync(cmd, args, {
+    stdio: opts.inherit ? "inherit" : "pipe",
+    encoding: "utf8",
+    timeout: opts.timeoutMs,
+  });
   const code = r.status ?? (r.signal ? 1 : 0);
   const stdout = r.stdout ?? "";
   const stderr = r.stderr ?? "";
