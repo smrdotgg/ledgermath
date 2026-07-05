@@ -208,4 +208,7 @@ A migrated benchmark is done only when **all** of these hold:
 - **2026-07-05** — Added `hash` benchmark (`crc32`, `siphash`, `sha256`) as
   `bench_hash.c`: hardware CRC32C, SipHash-1-3, SHA-256 with SHA-NI selected on this
   host. Verified `make -C benchmarks/c` and `build/hash --quick` JSON output.
+- **2026-07-05** — Added `sort` (`u64`) as a standalone C benchmark using a fixed-seed
+  1 MiB unsorted input, per-op copy into scratch, LSD radix sort (no `qsort`), startup
+  sortedness validation, and a sparse checksum over the sorted output.
 - _(agents: append your entry here, one per merged benchmark)_
