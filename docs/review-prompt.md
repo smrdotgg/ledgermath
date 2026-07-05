@@ -1,162 +1,146 @@
-# Review & merge the Tier 1 benchmark PRs
+# Review & merge the Tier 2 disk benchmark PRs
 
-You are reviewing a set of open PRs on `smrdotgg/ledgermath` (this repo). They were
-written autonomously by another AI agent (GPT-5.5 via OpenCode, driven by `ralph.ts`).
-Your job: **review every open `bench/*` PR, fix small problems yourself, flag big ones,
-and merge everything that passes.** You have full authority to push to PR branches and
-merge to `main`. The human (smr) will only get involved for PRs you flag as
-fundamentally broken.
+You are reviewing open PRs on `smrdotgg/ledgermath` (this repo). They were written
+autonomously by another AI agent (GPT-5.5 via OpenCode, driven by `ralph.ts`) and cover
+the **Tier 2 disk benchmarks**: `disk_write`, `disk_read_sequential`, `disk_read_random`,
+`disk_read_io_uring` (PRDs 08–11). Your job: **review every open `bench/*` PR, fix small
+problems yourself, flag big ones, and merge everything that passes.** You have full
+authority to push to PR branches and merge to `main`. The human (smr) only gets involved
+for PRs you flag as fundamentally broken.
 
 ## Context — read these first
 
-1. `docs/dev-log.md` — the project's north star, the JSON output contract, the decisions
-   log, and the definition of done. This is the ground truth for what "correct" means.
-2. `docs/prds/` — one PRD per PR. Each PR must implement its PRD **exactly**: same
-   `benchmark`/`variant` strings, same file added, same ballpark numbers.
-3. `benchmarks/c/harness.{h,c}` and the two pre-existing benchmarks
-   (`bench_memory_read.c`, `bench_compressed_memory_read.c`) — the house style and the
-   quality bar. They were human-reviewed and verified; treat them as reference
-   implementations.
+1. `docs/dev-log.md` — north star, the JSON output contract, decisions log (READ THE
+   TIER 2 DECISIONS: O_DIRECT-for-reads, `bench_file_path()`, LDLIBS), definition of done.
+2. `docs/prds/08…11-*.md` — one PRD per PR. Each PR must implement its PRD **exactly**:
+   same `benchmark`/`variant` strings, same single file added, same ballparks.
+3. The merged Tier 1 benchmarks in `benchmarks/c/` — human-verified reference
+   implementations for house style (fixed-seed shuffles, checksum guards, cleanup).
 
-The one-sentence mission: **LedgerMath's numbers must reflect the limits of the
-hardware, never the quality of the benchmark code.** A benchmark that builds, runs, and
-prints valid JSON but measures the wrong thing is worse than no benchmark — it poisons a
-public dataset people will use for capacity planning. The automated gate already
-guaranteed "builds + runs + valid JSON," so your review adds the part machines couldn't:
+The mission: **LedgerMath's numbers must reflect the limits of the hardware, never the
+quality of the benchmark code.** Disk benchmarks are the easiest place to get a number
+that is plausible, stable, reproducible — and wrong, because the page cache, the
+filesystem, and virtualized storage all love to answer instead of the device. The
+automated gate proved "builds + runs + valid JSON"; your review adds what machines can't:
 **is the measurement methodologically sound?**
 
 ## Your powers and limits
 
 - `gh` CLI is authenticated; `git` has push access. Use them freely.
-- You can verify builds/behavior on linux/amd64 via Docker:
-  `docker run --rm --platform linux/amd64 -v "$PWD/benchmarks/c":/src -w /src gcc:14 sh -c 'make clean && make && ./run-all.sh --quick'`
-  (start Docker Desktop with `open -a Docker` if the daemon isn't up). **Timing numbers
-  under emulation are meaningless** — use Docker only to confirm: clean compile under
-  `-Wall -Wextra`, no crashes/hangs, valid JSON, checksums/validation pass. Judge the
-  *numbers* by reading the code and comparing the PR's pasted `--quick` output (from the
-  real x86 VPS) against the PRD's ballpark.
+- Verify builds/behavior on linux/amd64 via Docker (install liburing first):
+  `docker run --rm --platform linux/amd64 -v "$PWD/benchmarks/c":/src -w /src gcc:14 sh -c 'apt-get update -qq && apt-get install -y -qq liburing-dev && make clean && make && ./run-all.sh --quick'`
+  (start Docker Desktop with `open -a Docker` if needed). **Timing under emulation is
+  meaningless** — Docker is for: clean compile under `-Wall -Wextra`, no crashes/hangs,
+  valid JSON, startup validations passing, scratch files actually deleted afterwards.
+  Note: O_DIRECT usually works on Docker's overlayfs/ext4, but if a bench dies with
+  "O_DIRECT unsupported" under Docker, that alone is not a PR defect — verify the failure
+  is the *loud* kind (clear error, non-zero exit), never a silent buffered fallback.
+- Judge the *numbers* from the `--quick` JSON embedded in each PR body (captured on the
+  real VPS by ralph). Remember the dev-log rule: VPS disk numbers are smoke tests —
+  virtualized storage is noisy — so judge *shape* (relative gaps, plausibility bounds),
+  not absolute closeness to the PRD ballparks.
 - Do not weaken the harness, the schema, or the PRD requirements to make a PR pass.
 
 ## Workflow
 
 Process PRs one at a time, in PR-number order:
 
-1. `gh pr list --state open` — enumerate. For each PR: read the PRD it implements, then
-   `gh pr diff <n>` / check out the branch and read the full new file.
+1. `gh pr list --state open` — enumerate. For each: read its PRD, then `gh pr diff <n>` /
+   check out the branch and read the full new file.
 2. Review against the checklist below. Decide: **pass / small problems / big problems**.
-3. **Small problems** (you are confident in the fix, it doesn't change the measurement
-   methodology): fix them yourself on the PR branch — commit with a clear message
-   explaining what you changed and why, push, re-verify the build in Docker.
+3. **Small problems** (confident fix, doesn't change the measurement methodology): fix on
+   the PR branch — commit with a clear message, push, re-verify the build in Docker.
    Examples: missing include, a warning, wrong `variant` string, missing dev-log entry,
-   merge conflicts, an unjoined thread at exit, `bytes_per_op` off by a factor.
-4. **Big problems** (the measurement itself is wrong, the approach needs redesign, or a
-   scope violation you can't untangle): do NOT merge. Leave a PR comment via
-   `gh pr comment <n>` that states the problem precisely and what a correct
-   implementation looks like — it will be handed verbatim to the authoring agent for
-   rework. Move on to the next PR.
-5. **Merge passing PRs**: `gh pr merge <n> --squash --delete-branch`. Merge them
-   **sequentially as you go** — after each merge, the next PR will likely conflict on
-   `docs/dev-log.md` (every PR appends a Running Log entry at the same place; this is
-   expected, not a mistake). Resolve by keeping **both** entries in chronological order:
-   update the branch (merge `main` into it or rebase), fix the conflict, push, then merge.
-6. When all PRs are handled, post nothing anywhere — just report back in your final
-   message: a table of PR → verdict → action taken (merged / fixed-then-merged /
-   commented-and-left-open, with one line on why).
+   merge conflicts, missed `unlink` of the scratch file, unchecked syscall return.
+4. **Big problems** (the measurement is wrong or the approach needs redesign): do NOT
+   merge. `gh pr comment <n>` with a precise statement of the problem and what correct
+   looks like — the comment goes verbatim to the authoring agent for rework. Move on.
+5. **Merge passing PRs**: `gh pr merge <n> --squash --delete-branch`, sequentially. After
+   each merge the next PR will likely conflict on `docs/dev-log.md` (every PR appends a
+   Running Log entry — expected, not a mistake). Resolve by keeping **all** entries in
+   chronological order, push, then merge.
+6. Report back in your final message: a table of PR → verdict → action taken.
 
-## Review checklist — the mistakes to actively hunt for
+## Review checklist — the disk-specific failure modes to hunt
 
-These are the specific failure modes AI-written benchmarks tend to have. The gate could
-not catch any of them; you can.
+### 1. The page cache answered, not the disk (the #1 trap)
 
-### 1. The work isn't really happening (elision / dead code)
+- **Reads must be `O_DIRECT`** (PRDs 09/10/11). Verify the flag is on the fd that is
+  actually read in the timed op — not just present somewhere in the file. Verify there is
+  **no silent fallback to buffered** if `open(O_DIRECT)` fails; the required behavior is a
+  loud error and non-zero exit.
+- Red flags in the PR's real-VPS JSON: sequential read at RAM-like throughput (10+ GiB/s);
+  random read under ~10 µs/op; random ≈ sequential. Any of those means the cache or a
+  too-small/too-clever access pattern answered.
+- `disk_write` is the inverse: it must be **buffered** (no O_DIRECT) — the no-fsync
+  variant *is* a page-cache measurement by design. Check the label honesty instead: the
+  fsync variant must call `fdatasync` after **every** write inside the timed op.
+- **fsync gap check**: `fsync` variant should be dramatically slower than `No fsync`
+  (typically 10–1000×). If they're within ~2×, durability isn't reaching the device —
+  either a bug (fdatasync outside the op, wrong fd, `fsync` on a different file) or lying
+  virtualized storage; a bug must be fixed, storage weirdness must be noted in the
+  dev-log entry.
 
-- The hot function must return a checksum **derived from the data it processed**, and
-  `measure()` records it. Verify the dependency is real: if the checksum could be
-  computed without doing the work (e.g. summing an index variable instead of loaded
-  data, or hashing the same cached result), `-O3` may delete the loop.
-- Cross-check with physics: **compare the PR's pasted `--quick` numbers against the
-  PRD's ballpark.** Sequential RAM writes at 500 GiB/s, a "random" read at 1 ns, a sort
-  at 50 GiB/s — those aren't fast code, they're deleted code (or cache hits, see #3).
-  A number wildly *better* than the ballpark is a stronger red flag than one that's worse.
+### 2. O_DIRECT correctness (it fails ugly, not loud)
 
-### 2. Measuring the wrong thing (timed-region contamination)
+- Alignment: buffers from `xalloc(4096, ...)`, offsets and lengths multiples of the
+  block size (8192 at 8192-aligned offsets is fine). Misalignment → `EINVAL` at runtime;
+  make sure errors from `pread`/CQEs are actually checked, not ignored.
+- Short reads must be looped, and every syscall/CQE result checked. An unchecked
+  `pread` returning -1 forever produces a very fast, very fake benchmark.
 
-- Setup (allocation, filling buffers, building/shuffling index arrays, generating random
-  data) must happen **once, outside the measured op** — in `main` before `measure()`, or
-  in the context struct. If `fn(ctx)` re-shuffles or re-generates data per call, the
-  benchmark measures the PRNG, not the hardware.
-- Special case, PRD 05 (sort): each op legitimately needs a fresh unsorted copy, so a
-  `memcpy` inside the op is correct there (the PRD says so). But the *random generation*
-  must still be setup-only. And verify iteration 2+ actually sorts unsorted data — if
-  the op sorts in place without re-copying, every iteration after the first sorts an
-  already-sorted array and the number is fiction.
-- No `printf`/logging inside the timed op. No syscalls in ops that aren't syscall
-  benchmarks.
+### 3. io_uring completion discipline (PRD 11)
 
-### 3. Cache instead of RAM (working-set too small)
+- Every op must **submit 64 SQEs and reap all 64 CQEs before returning** — submitting
+  without waiting measures queueing, not I/O. Look for `io_uring_wait_cqe`/peek loops
+  that see all 64, with each CQE's `res` checked against 32768 and `cqe_seen` called.
+- Checksum must be computed from buffers **after** their completion is reaped.
+- The 64 buffers must be distinct allocations (or distinct regions); a single shared
+  buffer with 64 in-flight reads is a data race and measures nothing meaningful.
+- Throughput plausibility: QD64 should beat PRD 09's QD1 on real hardware. Wildly above
+  device plausibility → completions not awaited.
 
-- Memory benchmarks need working sets far beyond LLC: the PRDs specify 1 GiB
-  (512 MiB `--quick`). If an agent shrank the buffer "for speed," random access becomes
-  an L2/L3 benchmark and the number is ~10× too good.
-- For `memory_read_random`: verify the access order is genuinely a shuffled permutation
-  of *all* elements (fixed-seed PRNG shuffle of an index array), not `rand()` per
-  iteration (contaminates, see #2) and not a small cycling window (cache-resident).
+### 4. Scratch-file discipline
 
-### 4. Known single-benchmark traps (each PRD warns about its own — verify the PR obeyed)
+- File paths must come from `bench_file_path(...)` — never hardcoded (`/tmp/...` is an
+  automatic fail: tmpfs risk is the whole reason the helper exists).
+- File created at the PRD's size (`--quick`: 256 MiB), `fdatasync`ed after creation,
+  **deleted on every exit path** (including validation failure). Run the binary in Docker
+  and check nothing is left in `/var/tmp` afterwards.
+- Content must be the verifiable offset-derived pattern the PRD requires, with a startup
+  validation read that exits non-zero on mismatch.
 
-- **sort**: must NOT use `qsort` (function-pointer comparison overhead ≈ 2–3× slow).
-  Inlined-comparison sort (radix/pdq-style) required. Startup sortedness validation
-  required.
-- **hash**: CRC32 must be the SSE4.2 hardware intrinsic (`_mm_crc32_u64`) — a table CRC
-  is ~10× slow. SipHash must actually mix all 64 input bytes with a real key schedule
-  (check against the SipHash reference if unsure). SHA-256 must runtime-dispatch SHA-NI
-  vs scalar fallback via `__builtin_cpu_supports("sha")`; stderr should say which path
-  ran. No new link flags (OpenSSL forbidden — that would need a Makefile edit).
-- **syscall**: `getpid` must use `syscall(SYS_getpid)` — glibc caches `getpid()` and a
-  ~2 ns result means it measured the cache. `gettimeofday` being only a few ns is
-  CORRECT (vDSO, no trap) — don't let a "fix" force it into a real syscall.
-- **mutex**: contention must be real — a contender thread pinned to a *different* CPU,
-  hammering the same `pthread_mutex_t`, running for the whole measurement. Single-digit
-  ns per lock/unlock means the contender wasn't actually running. Process must exit
-  cleanly (contender stopped/joined) — a hang would have shown up as the gate's 5-min
-  timeout, but check the join logic anyway.
-- **tcp_echo**: reads and writes must loop until all 32 KiB is transferred — a single
-  `read()` returning 8 KiB early, unlooped, silently measures a quarter round-trip.
-  `TCP_NODELAY` on both ends. Ephemeral port via `getsockname` (no hardcoded port).
-  Sub-microsecond "round-trips" mean the echo isn't happening.
-- **memory_write**: the write loop must not be optimizable into `memset` of a constant
-  (values should depend on `i` or similar), and the checksum must read back written data.
+### 5. Timed-region contamination (same as ever, disk flavor)
 
-### 5. Contract and scope violations
+- File creation, pattern filling, shuffle building, `fdatasync`-after-creation — all
+  setup, all outside the timed op. If the op re-opens the file, re-seeds, or re-shuffles,
+  it's measuring syscalls and PRNGs, not the device.
+- `disk_read_random`'s access order: a fixed-seed Fisher–Yates full permutation of all
+  block offsets (house pattern from `bench_memory_read_random.c`), not `rand()` per op,
+  not a small cycling window.
+- No `printf`/logging inside timed ops.
 
-- **Schema**: exactly the fields in dev-log §2 — no renames, no extras, no drops. The
-  `benchmark`/`variant` strings must match the PRD tables **character for character**
-  (the future database keys on them). `threads` and `bytes_per_op` must be truthful —
-  throughput is derived from `bytes_per_op`, so an off-by-2× there is an off-by-2×
-  headline number.
-- **Scope**: each PR may add exactly one `bench_<name>.c` and append one dev-log entry.
-  Any edit to `harness.*`, `Makefile`, `run-all.sh`, another benchmark, or the PRDs is a
-  violation — revert it if trivial, flag the PR if load-bearing (e.g. it "needed" a
-  harness change to work).
-- Threading discipline: anything multi-threaded must follow the NUMA first-touch pattern
-  from `bench_memory_read.c` (per-worker allocation after pinning).
+### 6. Contract and scope
 
-### 6. C correctness that moves numbers
-
-- Warnings under `-Wall -Wextra` (build in Docker to check — the gate tolerated
-  warnings, your review shouldn't).
-- UB that optimizers exploit: signed overflow in index math, strict-aliasing casts,
-  uninitialized reads. UB can make a loop faster *and wrong*.
-- Fixed-seed PRNG (reproducibility across daily runs), not `time(NULL)` seeding.
-- `--quick` sizing actually implemented (not ignored), matching the house pattern.
+- Schema: exactly the dev-log §2 fields; `benchmark`/`variant` strings must match the
+  PRD tables **character for character**; `bytes_per_op` truthful (8192 for 08–10;
+  2097152 for PRD 11 — one op is the whole 64×32 KiB batch) since throughput derives
+  from it.
+- Scope: exactly one new `bench_<name>.c` + one dev-log Running Log entry per PR. Any
+  edit to `harness.*`, `Makefile`, `run-all.sh`, other benchmarks, or PRDs is a
+  violation — the Makefile already handles `-luring`; a PR that touched it anyway needs
+  that hunk reverted or flagged.
+- Warnings under `-Wall -Wextra` are your problem to catch (the gate tolerates them).
+  Fixed seeds, `--quick` sizing honored, every syscall checked.
 
 ## Judgment calls
 
-- Assume the code is guilty until the numbers make physical sense: for each PR, write
-  down (in your head) what the hardware limit should be, then check the pasted output
-  against it. That single habit catches most of the list above.
-- Prefer fixing over flagging when the fix is mechanical and you can re-verify the build.
-  Prefer flagging over fixing when the *methodology* is wrong — a rewritten benchmark
-  should go back through the authoring loop, not be smuggled in via review.
-- If a PR is missing its pasted `--quick` output (so you can't sanity-check real-hardware
-  numbers), that alone is not a big problem — note it in your report and judge from code.
+- For each PR, first write down what the *shape* of a correct result looks like (fsync ≫
+  no-fsync; random ≫ sequential per-op latency; QD64 ≫ QD1 throughput), then check the
+  embedded JSON against that shape. Shape violations are methodology bugs until proven
+  to be VPS storage weirdness.
+- Prefer fixing over flagging for mechanical issues; prefer flagging over fixing when the
+  measurement itself is wrong — a rewritten benchmark should go back through the
+  authoring loop, not be smuggled in via review.
+- If a PR body is missing its embedded `--quick` JSON (ralph normally adds it), judge
+  from code and say so in your report.

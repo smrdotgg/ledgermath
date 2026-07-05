@@ -97,6 +97,21 @@ checks against `expected_sum_range`). A benchmark with no elision guard is not d
   merge time. Do not consolidate benchmarks into a shared `main()`.
 - **Keep `samples_ns` raw**: the north star is histograms, not averages. We store the raw
   per-sample timings now so percentiles are computable later without re-running anything.
+- **Tier 2 disk reads use `O_DIRECT`, not buffered+drop-cache** (2026-07-05): napkin's
+  original visited each page once and dropped the page cache between runs — a pattern our
+  repeat-the-op harness can't express. Buffered reads would be served from the page cache
+  from the second pass onward, silently turning disk benchmarks into RAM benchmarks.
+  `O_DIRECT` bypasses the cache so every read hits the device regardless of repetition.
+  Cost: alignment rules (4096-aligned buffers/offsets/lengths — use `xalloc(4096, ...)`)
+  and a documented deviation from napkin's method. Writes stay buffered (±`fdatasync`) —
+  the cache-vs-durable gap is the measurement there.
+- **Disk scratch files go through `bench_file_path()`** (2026-07-05): default `/var/tmp`
+  (FHS-guaranteed disk-backed), overridable via `LEDGERMATH_BENCH_DIR`, and it refuses
+  tmpfs/ramfs outright — `/tmp` is RAM-backed on some distros and a disk benchmark there
+  would measure memory. Never hardcode a path.
+- **Per-benchmark link libraries via Makefile target-specific variables** (2026-07-05):
+  e.g. `$(BUILD)/disk_read_io_uring: LDLIBS += -luring`. Adding one is a harness-owner
+  change, not something a benchmark PR does — the no-shared-edits rule stands.
 
 ---
 
@@ -106,10 +121,14 @@ checks against `expected_sum_range`). A benchmark with no elision guard is not d
 
 - `harness.h` / `harness.c` — everything shared. Do not duplicate this logic into a
   benchmark file; include the header and call into it.
-- `bench_memory_read.c` — the 4 `memory_read` variants (1/all threads × scalar/SIMD).
-- `bench_compressed_memory_read.c` — the `bitpacker` integer-unpack benchmark.
+- One `bench_<name>.c` per benchmark group. Landed so far (Tier 1 complete):
+  `memory_read`, `compressed_memory_read`, `memory_write`, `memory_read_random`,
+  `syscall`, `hash`, `sort`, `mutex`, `tcp_echo`. Treat these as reference
+  implementations — especially `bench_memory_read.c` (threading/NUMA) and
+  `bench_memory_read_random.c` (fixed-seed shuffle pattern).
 - `Makefile` — wildcard rule: every `bench_*.c` → `build/<name>`, linked against the
-  harness. `make`, `make quick`, `make run`, `make clean`.
+  harness. `make`, `make quick`, `make run`, `make clean`. Per-benchmark extra libs via
+  target-specific `LDLIBS` (io_uring links `-luring`; needs `liburing-dev` installed).
 - `run-all.sh` — runs every built binary and merges their JSON arrays into one array on
   stdout (via python3). Forwards args, so `./run-all.sh --quick` works.
 
@@ -125,6 +144,9 @@ checks against `expected_sum_range`). A benchmark with no elision guard is not d
 - `print_json(results, n)` — the stdout contract. Use it; don't hand-roll JSON.
 - Helpers: `xalloc` (aligned alloc-or-die), `now_ns` (`CLOCK_MONOTONIC_RAW`), `die`,
   `expected_sum_range`, `allowed_cpus`, `pin_to_cpu`.
+- `bench_file_path(name)` — scratch-file path for disk benchmarks:
+  `$LEDGERMATH_BENCH_DIR/ledgermath-<name>.bench`, default dir `/var/tmp`, dies on
+  tmpfs/ramfs. Disk benchmarks must use this — never a hardcoded path.
 
 ### Notable correctness detail: NUMA first-touch
 
@@ -168,9 +190,12 @@ A migrated benchmark is done only when **all** of these hold:
 
 - **No database, pipeline, deployment, or website work.** That's owned by the project
   lead. This repo stops at "binary prints JSON."
-- **No Tier 2–4 benchmarks yet**: disk (needs local NVMe + page-cache eviction), Redis /
-  MySQL (need running services), blob storage / S3 (needs buckets + credentials). Only
-  Tier 1 (pure CPU / memory / OS, no external infra) is in play right now.
+- **No Tier 3–4 benchmarks yet**: Redis / MySQL (need running services), blob storage /
+  S3 (needs buckets + credentials). Tier 1 (CPU / memory / OS) is complete; Tier 2 (disk:
+  PRDs 08–11) is in play now.
+- **Dev-box disk numbers are smoke tests, not data.** Virtualized VPS storage is noisy
+  and unrepresentative; real disk numbers come later from dedicated EC2 hardware with
+  local NVMe. Don't tune a benchmark to make VPS numbers look like the ballpark.
 - **Don't trust the napkin-math README's benchmark list.** It references Criterion groups
   (`hash`, `syscall`, `sort`, `blob_storage`, …) that **do not exist** in the local
   checkout — only `memory_read` and `compressed_memory_read` are actually there. Port
@@ -218,4 +243,9 @@ A migrated benchmark is done only when **all** of these hold:
   binary. The server binds `127.0.0.1:0` on a helper thread, the client measures full
   32 KiB write/read round-trips with TCP_NODELAY and socket timeouts, and the checksum is
   derived from echoed bytes.
+- **2026-07-05** — Tier 2 (disk) prep: added `bench_file_path()` harness helper
+  (`/var/tmp` default, `LEDGERMATH_BENCH_DIR` override, tmpfs guard), Makefile
+  target-specific `LDLIBS` (`-luring` for `disk_read_io_uring`), PRDs 08–11, and the
+  O_DIRECT-for-reads decision. Verified on linux/amd64 (gcc:14): all 9 existing binaries
+  build clean with the new Makefile; tmpfs guard refuses `/dev/shm`.
 - _(agents: append your entry here, one per merged benchmark)_

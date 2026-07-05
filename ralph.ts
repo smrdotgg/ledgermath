@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /**
- * ralph.ts — autonomous Tier 1 benchmark migration loop.
+ * ralph.ts — autonomous benchmark migration loop (current wave: Tier 2, disk).
  *
  * For each PRD in docs/prds/, in order:
  *   1. Skip if its branch/PR already exists (idempotent — safe to re-run).
@@ -15,7 +15,8 @@
  *   bun ralph.ts            # do the work
  *   bun ralph.ts --dry-run  # print planned iterations + skips, invoke nothing
  *
- * Requires: git, gh (authenticated), opencode, make, cc (with AVX2), python3.
+ * Requires: git, gh (authenticated), opencode, make, cc (with AVX2), python3,
+ * and for Tier 2's io_uring benchmark: liburing-dev.
  */
 
 import { spawnSync } from "node:child_process";
@@ -35,7 +36,9 @@ interface Prd {
 }
 
 // Order matches docs/prds/README.md. Add a row here when a new PRD is written.
+// Completed tiers stay in the list — skip-detection ignores them and they document history.
 const PRDS: Prd[] = [
+  // Tier 1 — CPU / memory / OS (all merged)
   { file: "01-memory-write.md",       branch: "bench/memory-write",       binary: "memory_write",       title: "bench: add memory_write (sequential + random)" },
   { file: "02-memory-read-random.md", branch: "bench/memory-read-random", binary: "memory_read_random", title: "bench: add memory_read_random" },
   { file: "03-syscall.md",            branch: "bench/syscall",            binary: "syscall",            title: "bench: add syscall (getpid, gettimeofday, getrusage, stat)" },
@@ -43,6 +46,11 @@ const PRDS: Prd[] = [
   { file: "05-sort.md",               branch: "bench/sort",               binary: "sort",               title: "bench: add sort (u64)" },
   { file: "06-mutex.md",              branch: "bench/mutex",              binary: "mutex",              title: "bench: add mutex (contended)" },
   { file: "07-tcp-echo.md",           branch: "bench/tcp-echo",           binary: "tcp_echo",           title: "bench: add tcp_echo (32 KiB loopback)" },
+  // Tier 2 — disk
+  { file: "08-disk-write.md",           branch: "bench/disk-write",           binary: "disk_write",           title: "bench: add disk_write (8 KiB, ±fsync)" },
+  { file: "09-disk-read-sequential.md", branch: "bench/disk-read-sequential", binary: "disk_read_sequential", title: "bench: add disk_read_sequential (8 KiB, O_DIRECT)" },
+  { file: "10-disk-read-random.md",     branch: "bench/disk-read-random",     binary: "disk_read_random",     title: "bench: add disk_read_random (8 KiB, O_DIRECT)" },
+  { file: "11-disk-read-io-uring.md",   branch: "bench/disk-read-io-uring",   binary: "disk_read_io_uring",   title: "bench: add disk_read_io_uring (32 KiB × 64)" },
 ];
 
 const MODEL = "openai/gpt-5.5";
@@ -200,14 +208,15 @@ function runOpencode(prompt: string, continueSession: boolean) {
 
 /**
  * Gate: build clean, run the new binary --quick, parse its stdout as JSON, and confirm
- * commits exist vs origin/main. Returns null on pass, or an error string on failure.
+ * commits exist vs origin/main. Returns {err: null, quickJson} on pass; {err} on failure.
+ * quickJson is embedded in the PR body so reviewers get real-hardware numbers.
  */
-function gate(prd: Prd): string | null {
+function gate(prd: Prd): { err: string | null; quickJson: string } {
   log(`${C.cyan}▶ gate${C.reset} — checking commits → build → run → JSON`);
 
   // 1. Commits must exist relative to base.
   const ahead = capture("git", ["rev-list", "--count", `${REMOTE}/${BASE}..HEAD`]);
-  if (ahead === "0" || ahead === "") return "no commits were made on the branch";
+  if (ahead === "0" || ahead === "") return { err: "no commits were made on the branch", quickJson: "" };
   log(`  ${C.green}·${C.reset} ${ahead} commit(s) on ${prd.branch}`);
 
   // 2. Build the whole C suite; must succeed (warnings are allowed to pass the gate but
@@ -216,15 +225,16 @@ function gate(prd: Prd): string | null {
   run("make", ["-C", "benchmarks/c", "clean"], { allowFail: true });
   log(`  ${C.dim}· building benchmarks/c …${C.reset}`);
   const make = run("make", ["-C", "benchmarks/c"], { allowFail: true });
-  if (make.code !== 0) return `build failed:\n${make.stdout}\n${make.stderr}`;
+  if (make.code !== 0) return { err: `build failed:\n${make.stdout}\n${make.stderr}`, quickJson: "" };
   const warnings = (make.stderr.match(/warning:/g) ?? []).length;
   log(`  ${C.green}·${C.reset} build ok${warnings ? ` ${C.yellow}(${warnings} warning(s) — reviewer should check)${C.reset}` : ""}`);
 
-  // 3. The PRD's binary must exist and run --quick.
+  // 3. The PRD's binary must exist and run --quick. Disk benchmarks with fsync are slow
+  //    even at --quick sizing, hence the generous timeout.
   const binPath = `benchmarks/c/build/${prd.binary}`;
   log(`  ${C.dim}· running ${prd.binary} --quick …${C.reset}`);
-  const runBin = run(binPath, ["--quick"], { allowFail: true, timeoutMs: 5 * 60 * 1000 });
-  if (runBin.code !== 0) return `${binPath} --quick exited ${runBin.code}:\n${runBin.stderr}`;
+  const runBin = run(binPath, ["--quick"], { allowFail: true, timeoutMs: 10 * 60 * 1000 });
+  if (runBin.code !== 0) return { err: `${binPath} --quick exited ${runBin.code}:\n${runBin.stderr}`, quickJson: "" };
 
   // 4. stdout must be valid JSON (the contract).
   const parse = spawnSync("python3", ["-c", "import sys,json;print(len(json.load(sys.stdin)))"], {
@@ -232,19 +242,24 @@ function gate(prd: Prd): string | null {
     encoding: "utf8",
   });
   if ((parse.status ?? 1) !== 0) {
-    return `${binPath} --quick stdout is not valid JSON:\n${runBin.stdout.slice(0, 2000)}`;
+    return { err: `${binPath} --quick stdout is not valid JSON:\n${runBin.stdout.slice(0, 2000)}`, quickJson: "" };
   }
   log(`  ${C.green}·${C.reset} valid JSON, ${parse.stdout.trim()} record(s)`);
-  return null;
+  return { err: null, quickJson: runBin.stdout.trim() };
 }
 
-function openPr(prd: Prd) {
+function openPr(prd: Prd, quickJson: string) {
   log(`${C.blue}▶ pushing${C.reset} ${prd.branch} and opening PR …`);
   run("git", ["push", "-u", REMOTE, prd.branch], { inherit: true });
+  // Embed the gate's real-hardware --quick output so reviewers can sanity-check the
+  // numbers against the PRD ballparks without re-running anything.
+  const quickBlock = quickJson
+    ? `\n\n<details><summary>--quick output from the gate run (this machine)</summary>\n\n\`\`\`json\n${quickJson.slice(0, 12000)}\n\`\`\`\n</details>`
+    : "";
   const body =
-    `Implements \`docs/prds/${prd.file}\` as part of the Tier 1 napkin-math migration ` +
+    `Implements \`docs/prds/${prd.file}\` as part of the napkin-math migration ` +
     `(see docs/dev-log.md).\n\nAutomated gate passed: builds clean, \`${prd.binary} --quick\` ` +
-    `runs and emits valid JSON.\n\n🤖 Generated by ralph.ts (openai/gpt-5.5, ${VARIANT}).`;
+    `runs and emits valid JSON.${quickBlock}\n\n🤖 Generated by ralph.ts (openai/gpt-5.5, ${VARIANT}).`;
   const pr = run(
     "gh",
     ["pr", "create", "--base", BASE, "--head", prd.branch, "--title", prd.title, "--body", body],
@@ -268,13 +283,19 @@ function preflight() {
   run("git", ["fetch", REMOTE], { allowFail: false });
   const auth = run("gh", ["auth", "status"], { allowFail: true });
   if (auth.code !== 0) throw new Error("gh is not authenticated; run `gh auth login`");
+  // Tier 2: the io_uring benchmark links liburing. Warn (don't fail) if it's missing —
+  // only that one PRD's gate would fail; the rest proceed normally.
+  const liburing = spawnSync("sh", ["-c", "echo '#include <liburing.h>' | cc -E -xc - >/dev/null 2>&1"]);
+  if ((liburing.status ?? 1) !== 0) {
+    warn("liburing headers not found — PRD 11 (disk_read_io_uring) will fail its gate. Fix: sudo apt-get install liburing-dev");
+  }
   ok("preflight passed");
 }
 
 async function main() {
   // Session separator in the log file so repeated runs are easy to tell apart.
   toFile(`\n\n========== ralph session ${new Date().toISOString()}${DRY_RUN ? " (dry-run)" : ""} ==========`);
-  banner(DRY_RUN ? "ralph — DRY RUN" : "ralph — Tier 1 benchmark migration", C.blue);
+  banner(DRY_RUN ? "ralph — DRY RUN" : "ralph — benchmark migration", C.blue);
   log(`logging to ${C.bold}${LOG_FILE}${C.reset}`);
   log(`model=${C.bold}${MODEL}${C.reset} variant=${C.bold}${VARIANT}${C.reset} base=${BASE} PRDs=${PRDS.length} agent-timeout=${fmtDur(AGENT_TIMEOUT_MS)}`);
   if (DRY_RUN) log(`${C.yellow}dry run: no branches, agents, or PRs will be created${C.reset}`);
@@ -306,17 +327,17 @@ async function main() {
     run("git", ["checkout", "-B", prd.branch, `${REMOTE}/${BASE}`], { inherit: true });
 
     runOpencode(promptFor(prd), false);
-    let err = gate(prd);
-    if (err) {
-      warn(`gate failed on first attempt — retrying once. Reason:\n${err}`);
-      runOpencode(promptFor(prd, err), true);
-      err = gate(prd);
+    let g = gate(prd);
+    if (g.err) {
+      warn(`gate failed on first attempt — retrying once. Reason:\n${g.err}`);
+      runOpencode(promptFor(prd, g.err), true);
+      g = gate(prd);
     }
 
-    if (err) {
-      fail(`${tag} FAILED after retry (${fmtDur(Date.now() - t0)}) — branch left local, no PR. Reason:\n${err}`);
+    if (g.err) {
+      fail(`${tag} FAILED after retry (${fmtDur(Date.now() - t0)}) — branch left local, no PR. Reason:\n${g.err}`);
       summary.failed.push(prd.branch);
-    } else if (openPr(prd)) {
+    } else if (openPr(prd, g.quickJson)) {
       ok(`${tag} complete in ${fmtDur(Date.now() - t0)}`);
       summary.opened.push(prd.branch);
     } else {
