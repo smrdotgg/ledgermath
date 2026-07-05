@@ -248,4 +248,10 @@ A migrated benchmark is done only when **all** of these hold:
   target-specific `LDLIBS` (`-luring` for `disk_read_io_uring`), PRDs 08–11, and the
   O_DIRECT-for-reads decision. Verified on linux/amd64 (gcc:14): all 9 existing binaries
   build clean with the new Makefile; tmpfs guard refuses `/dev/shm`.
+- **2026-07-05** — Added `disk_read_sequential` (`8 KiB`) as an O_DIRECT C benchmark:
+  setup creates a 256 MiB quick / 1 GiB full deterministic scratch file via
+  `bench_file_path()`, validates block 0, reads 8 KiB at sequential offsets with wraparound,
+  and removes the scratch file on exit. Verified `make -C benchmarks/c` and
+  `build/disk_read_sequential --quick` through `python3 -m json.tool`; quick run emitted
+  ~100 us/op (~82 MB/s) on this virtualized disk.
 - _(agents: append your entry here, one per merged benchmark)_
