@@ -248,4 +248,9 @@ A migrated benchmark is done only when **all** of these hold:
   target-specific `LDLIBS` (`-luring` for `disk_read_io_uring`), PRDs 08–11, and the
   O_DIRECT-for-reads decision. Verified on linux/amd64 (gcc:14): all 9 existing binaries
   build clean with the new Makefile; tmpfs guard refuses `/dev/shm`.
+- **2026-07-05** — Added `disk_read_io_uring` (`32 KiB × 64 in flight`) as a standalone C
+  benchmark using `O_DIRECT`, liburing queue depth 64, 64 separate aligned buffers, and an
+  offset-derived scratch-file pattern validated before measurement. Verified
+  `make -C benchmarks/c`, `build/disk_read_io_uring --quick`, and `python3 -m json.tool`;
+  quick run emitted 1.303 ms per 2 MiB batch (~1.61 GB/s) on this dev box.
 - _(agents: append your entry here, one per merged benchmark)_
