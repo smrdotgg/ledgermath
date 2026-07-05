@@ -193,6 +193,18 @@ A migrated benchmark is done only when **all** of these hold:
   one binary per benchmark (`bench_memory_read.c`, `bench_compressed_memory_read.c`),
   wildcard Makefile, `run-all.sh` JSON merger. Behavior-preserving; verified on
   linux/amd64 (gcc:14). This is the base all Tier 1 migration branches fork from.
+- **2026-07-05** — Added standalone `memory_write` C benchmark (`1 thread, Sequential` +
+  `1 thread, Random`) with 64-byte elements, setup-time shuffled random order, read-back
+  checksum validation, and `--quick` sizing.
+- **2026-07-05** — Added `memory_read_random` (`1 thread`) as a single C binary:
+  fixed-seed shuffled random reads over 64-byte elements (512 MiB quick / 1 GiB full),
+  `MADV_RANDOM` data and `MADV_SEQUENTIAL` index hints, plus checksum validation.
+  Verified `make -C benchmarks/c`, `./benchmarks/c/build/memory_read_random --quick`,
+  and `python3 -m json.tool`; quick run emitted 112.542 ms/pass over 512 MiB
+  (~13.4 ns/element, 4.77 GB/s).
+- **2026-07-05** — Added `bench_syscall.c` with `syscall` variants for `getpid`,
+  `gettimeofday`, `getrusage`, and `stat`; `getpid` uses `syscall(SYS_getpid)` to
+  force the real kernel crossing while `gettimeofday` captures the expected vDSO path.
 - **2026-07-05** — Added `hash` benchmark (`crc32`, `siphash`, `sha256`) as
   `bench_hash.c`: hardware CRC32C, SipHash-1-3, SHA-256 with SHA-NI selected on this
   host. Verified `make -C benchmarks/c` and `build/hash --quick` JSON output.
