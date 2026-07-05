@@ -268,4 +268,10 @@ A migrated benchmark is done only when **all** of these hold:
   on this dev VPS — expected storage weirdness, not a methodology bug: with O_DIRECT QD1
   there is no readahead, and the virtualized disk's per-request latency dominates both
   access patterns. Real NVMe numbers from dedicated hardware should show the gap.
+- **2026-07-05** — Added `disk_read_io_uring` (`32 KiB × 64 in flight`) as a standalone C
+  benchmark using `O_DIRECT`, liburing queue depth 64, 64 separate aligned buffers, and an
+  offset-derived scratch-file pattern validated before measurement. Verified
+  `make -C benchmarks/c`, `build/disk_read_io_uring --quick`, and `python3 -m json.tool`;
+  quick run emitted 1.303 ms per 2 MiB batch (~1.61 GB/s) on this dev box — ~20× PRD 09's
+  QD1 sequential throughput on the same VPS.
 - _(agents: append your entry here, one per merged benchmark)_
