@@ -248,9 +248,30 @@ A migrated benchmark is done only when **all** of these hold:
   target-specific `LDLIBS` (`-luring` for `disk_read_io_uring`), PRDs 08–11, and the
   O_DIRECT-for-reads decision. Verified on linux/amd64 (gcc:14): all 9 existing binaries
   build clean with the new Makefile; tmpfs guard refuses `/dev/shm`.
+- **2026-07-05** — Added `disk_write` (`8 KiB, No fsync` + `8 KiB, fsync`) as a standalone
+  C benchmark using `bench_file_path("disk_write")`, fixed-size wraparound writes, startup
+  read-back validation, and cleanup on exit. Verified `make -C benchmarks/c` and
+  `build/disk_write --quick` JSON; dev VPS smoke-test means were ~2.8 µs without fsync
+  and ~174 µs with `fdatasync`.
+- **2026-07-05** — Added `disk_read_sequential` (`8 KiB`) as an O_DIRECT C benchmark:
+  setup creates a 256 MiB quick / 1 GiB full deterministic scratch file via
+  `bench_file_path()`, validates block 0, reads 8 KiB at sequential offsets with wraparound,
+  and removes the scratch file on exit. Verified `make -C benchmarks/c` and
+  `build/disk_read_sequential --quick` through `python3 -m json.tool`; quick run emitted
+  ~100 us/op (~82 MB/s) on this virtualized disk.
+- **2026-07-05** — Added `disk_read_random` (`8 KiB`) as `bench_disk_read_random.c`:
+  creates a 256 MiB quick / 4 GiB full scratch file via `bench_file_path()`, fills 8 KiB
+  blocks with an offset-derived pattern, reads via `O_DIRECT` in fixed-seed shuffled
+  full-block order, validates block 0, and accumulates first-u64 checksums. Verified
+  `make -C benchmarks/c`, `build/disk_read_random --quick`, and `python3 -m json.tool`;
+  quick run emitted 98.799 us/op (~82.9 MB/s). Note: random ≈ sequential (~100 µs both)
+  on this dev VPS — expected storage weirdness, not a methodology bug: with O_DIRECT QD1
+  there is no readahead, and the virtualized disk's per-request latency dominates both
+  access patterns. Real NVMe numbers from dedicated hardware should show the gap.
 - **2026-07-05** — Added `disk_read_io_uring` (`32 KiB × 64 in flight`) as a standalone C
   benchmark using `O_DIRECT`, liburing queue depth 64, 64 separate aligned buffers, and an
   offset-derived scratch-file pattern validated before measurement. Verified
   `make -C benchmarks/c`, `build/disk_read_io_uring --quick`, and `python3 -m json.tool`;
-  quick run emitted 1.303 ms per 2 MiB batch (~1.61 GB/s) on this dev box.
+  quick run emitted 1.303 ms per 2 MiB batch (~1.61 GB/s) on this dev box — ~20× PRD 09's
+  QD1 sequential throughput on the same VPS.
 - _(agents: append your entry here, one per merged benchmark)_
