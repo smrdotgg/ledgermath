@@ -259,4 +259,13 @@ A migrated benchmark is done only when **all** of these hold:
   and removes the scratch file on exit. Verified `make -C benchmarks/c` and
   `build/disk_read_sequential --quick` through `python3 -m json.tool`; quick run emitted
   ~100 us/op (~82 MB/s) on this virtualized disk.
+- **2026-07-05** — Added `disk_read_random` (`8 KiB`) as `bench_disk_read_random.c`:
+  creates a 256 MiB quick / 4 GiB full scratch file via `bench_file_path()`, fills 8 KiB
+  blocks with an offset-derived pattern, reads via `O_DIRECT` in fixed-seed shuffled
+  full-block order, validates block 0, and accumulates first-u64 checksums. Verified
+  `make -C benchmarks/c`, `build/disk_read_random --quick`, and `python3 -m json.tool`;
+  quick run emitted 98.799 us/op (~82.9 MB/s). Note: random ≈ sequential (~100 µs both)
+  on this dev VPS — expected storage weirdness, not a methodology bug: with O_DIRECT QD1
+  there is no readahead, and the virtualized disk's per-request latency dominates both
+  access patterns. Real NVMe numbers from dedicated hardware should show the gap.
 - _(agents: append your entry here, one per merged benchmark)_
