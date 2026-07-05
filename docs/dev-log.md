@@ -214,4 +214,8 @@ A migrated benchmark is done only when **all** of these hold:
 - **2026-07-05** — Added `mutex` contended pthread benchmark (`bench_mutex.c`): measured
   thread and contender pinned to separate allowed CPUs, shared counter checksum guard,
   clean contender join. Verified `make -C benchmarks/c` and `build/mutex --quick` JSON.
+- **2026-07-05** — Added `tcp_echo` (`32 KiB`) loopback TCP benchmark as its own C
+  binary. The server binds `127.0.0.1:0` on a helper thread, the client measures full
+  32 KiB write/read round-trips with TCP_NODELAY and socket timeouts, and the checksum is
+  derived from echoed bytes.
 - _(agents: append your entry here, one per merged benchmark)_
