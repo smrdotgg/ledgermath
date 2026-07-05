@@ -211,4 +211,7 @@ A migrated benchmark is done only when **all** of these hold:
 - **2026-07-05** — Added `sort` (`u64`) as a standalone C benchmark using a fixed-seed
   1 MiB unsorted input, per-op copy into scratch, LSD radix sort (no `qsort`), startup
   sortedness validation, and a sparse checksum over the sorted output.
+- **2026-07-05** — Added `mutex` contended pthread benchmark (`bench_mutex.c`): measured
+  thread and contender pinned to separate allowed CPUs, shared counter checksum guard,
+  clean contender join. Verified `make -C benchmarks/c` and `build/mutex --quick` JSON.
 - _(agents: append your entry here, one per merged benchmark)_
