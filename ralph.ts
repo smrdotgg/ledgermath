@@ -184,7 +184,7 @@ function promptFor(prd: Prd, errorContext?: string): string {
 
 /** Invoke headless OpenCode. `continueSession` resumes the prior session for a retry. */
 function runOpencode(prompt: string, continueSession: boolean) {
-  const args = ["run", "--model", MODEL, "--variant", VARIANT, "--auto"];
+  const args = ["run", "--model", MODEL, "--variant", VARIANT, "--dangerously-skip-permissions"];
   if (continueSession) args.push("--continue");
   args.push(prompt);
   const kind = continueSession ? "retry (--continue)" : "fresh session";
