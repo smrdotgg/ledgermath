@@ -193,4 +193,7 @@ A migrated benchmark is done only when **all** of these hold:
   one binary per benchmark (`bench_memory_read.c`, `bench_compressed_memory_read.c`),
   wildcard Makefile, `run-all.sh` JSON merger. Behavior-preserving; verified on
   linux/amd64 (gcc:14). This is the base all Tier 1 migration branches fork from.
+- **2026-07-05** — Added `bench_syscall.c` with `syscall` variants for `getpid`,
+  `gettimeofday`, `getrusage`, and `stat`; `getpid` uses `syscall(SYS_getpid)` to
+  force the real kernel crossing while `gettimeofday` captures the expected vDSO path.
 - _(agents: append your entry here, one per merged benchmark)_
