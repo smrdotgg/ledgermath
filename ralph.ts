@@ -19,6 +19,9 @@
  */
 
 import { spawnSync } from "node:child_process";
+import { appendFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 
 interface Prd {
   /** PRD filename in docs/prds/ */
@@ -63,6 +66,31 @@ const C = {
 
 const START = Date.now();
 
+// Persistent log file — everything printed to the terminal is also appended here (with
+// color codes stripped) so you can `cat ~/ralph-logs.txt` (or paste it) after the fact.
+// Override the path with RALPH_LOG_FILE if you want it elsewhere.
+const LOG_FILE = process.env.RALPH_LOG_FILE || join(homedir(), "ralph-logs.txt");
+
+const ANSI = /\x1b\[[0-9;]*m/g;
+function stripAnsi(s: string): string {
+  return s.replace(ANSI, "");
+}
+
+/** Append a plain-text line to the log file. Never throws (logging must not crash the run). */
+function toFile(line: string) {
+  try {
+    appendFileSync(LOG_FILE, stripAnsi(line) + "\n");
+  } catch {
+    /* if the log file can't be written, keep going — terminal output still works */
+  }
+}
+
+/** Print to the terminal (with color) and mirror to the log file (plain). */
+function emit(line: string) {
+  console.log(line);
+  toFile(line);
+}
+
 /** Wall-clock HH:MM:SS for the current line. */
 function ts(): string {
   const d = new Date();
@@ -85,13 +113,13 @@ function sinceStart(): string {
 }
 
 function log(msg: string) {
-  console.log(`${C.gray}${ts()} ${C.dim}${sinceStart()}${C.reset} ${C.bold}[ralph]${C.reset} ${msg}`);
+  emit(`${C.gray}${ts()} ${C.dim}${sinceStart()}${C.reset} ${C.bold}[ralph]${C.reset} ${msg}`);
 }
 
 /** A loud section divider so iterations are easy to find when scrolling back. */
 function banner(msg: string, color: string = C.cyan) {
   const line = "─".repeat(Math.max(4, 72 - msg.length));
-  console.log(`\n${color}${C.bold}══ ${msg} ${line}${C.reset}`);
+  emit(`\n${color}${C.bold}══ ${msg} ${line}${C.reset}`);
 }
 
 function ok(msg: string) { log(`${C.green}✓${C.reset} ${msg}`); }
@@ -102,11 +130,26 @@ type RunOpts = { timeoutMs?: number; inherit?: boolean; allowFail?: boolean };
 
 /** Run a command synchronously. Returns {code, stdout, stderr}. Throws on failure unless allowFail. */
 function run(cmd: string, args: string[], opts: RunOpts = {}) {
-  const r = spawnSync(cmd, args, {
-    stdio: opts.inherit ? "inherit" : "pipe",
-    encoding: "utf8",
-    timeout: opts.timeoutMs,
-  });
+  let r;
+  if (opts.inherit) {
+    // Stream to the terminal live AND append to the log file, so long-running children
+    // (opencode above all) are captured for later debugging. We wrap in bash so `tee`
+    // does the mirroring; the command + args are passed as argv (after a `_` placeholder
+    // for $0) so nothing needs shell-escaping. pipefail makes the child's exit code win
+    // over tee's.
+    r = spawnSync(
+      "bash",
+      ["-c", 'set -o pipefail; "$@" 2>&1 | tee -a "$RALPH_LOG"', "_", cmd, ...args],
+      {
+        stdio: "inherit",
+        encoding: "utf8",
+        timeout: opts.timeoutMs,
+        env: { ...process.env, RALPH_LOG: LOG_FILE },
+      },
+    );
+  } else {
+    r = spawnSync(cmd, args, { stdio: "pipe", encoding: "utf8", timeout: opts.timeoutMs });
+  }
   const code = r.status ?? (r.signal ? 1 : 0);
   const stdout = r.stdout ?? "";
   const stderr = r.stderr ?? "";
@@ -244,7 +287,10 @@ function preflight() {
 }
 
 async function main() {
+  // Session separator in the log file so repeated runs are easy to tell apart.
+  toFile(`\n\n========== ralph session ${new Date().toISOString()}${DRY_RUN ? " (dry-run)" : ""} ==========`);
   banner(DRY_RUN ? "ralph — DRY RUN" : "ralph — Tier 1 benchmark migration", C.blue);
+  log(`logging to ${C.bold}${LOG_FILE}${C.reset}`);
   log(`model=${C.bold}${MODEL}${C.reset} variant=${C.bold}${VARIANT}${C.reset} base=${BASE} PRDs=${PRDS.length} agent-timeout=${fmtDur(AGENT_TIMEOUT_MS)}`);
   if (DRY_RUN) log(`${C.yellow}dry run: no branches, agents, or PRs will be created${C.reset}`);
   preflight();
@@ -304,6 +350,8 @@ async function main() {
 }
 
 main().catch((e) => {
-  console.error(`\n[ralph] fatal: ${e instanceof Error ? e.message : e}`);
+  const msg = `\n[ralph] fatal: ${e instanceof Error ? e.message : e}`;
+  console.error(msg);
+  toFile(msg);
   process.exit(1);
 });
