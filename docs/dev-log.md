@@ -193,4 +193,8 @@ A migrated benchmark is done only when **all** of these hold:
   one binary per benchmark (`bench_memory_read.c`, `bench_compressed_memory_read.c`),
   wildcard Makefile, `run-all.sh` JSON merger. Behavior-preserving; verified on
   linux/amd64 (gcc:14). This is the base all Tier 1 migration branches fork from.
+- **2026-07-05** — Added `tcp_echo` (`32 KiB`) loopback TCP benchmark as its own C
+  binary. The server binds `127.0.0.1:0` on a helper thread, the client measures full
+  32 KiB write/read round-trips with TCP_NODELAY and socket timeouts, and the checksum is
+  derived from echoed bytes.
 - _(agents: append your entry here, one per merged benchmark)_
