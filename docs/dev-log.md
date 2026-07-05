@@ -205,4 +205,7 @@ A migrated benchmark is done only when **all** of these hold:
 - **2026-07-05** — Added `bench_syscall.c` with `syscall` variants for `getpid`,
   `gettimeofday`, `getrusage`, and `stat`; `getpid` uses `syscall(SYS_getpid)` to
   force the real kernel crossing while `gettimeofday` captures the expected vDSO path.
+- **2026-07-05** — Added `hash` benchmark (`crc32`, `siphash`, `sha256`) as
+  `bench_hash.c`: hardware CRC32C, SipHash-1-3, SHA-256 with SHA-NI selected on this
+  host. Verified `make -C benchmarks/c` and `build/hash --quick` JSON output.
 - _(agents: append your entry here, one per merged benchmark)_
