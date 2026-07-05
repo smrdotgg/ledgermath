@@ -50,6 +50,54 @@ const REMOTE = "origin";
 
 const DRY_RUN = process.argv.includes("--dry-run");
 
+// ── logging ──────────────────────────────────────────────────────────────────
+// Everything is timestamped and elapsed-stamped so that when you SSH in and attach
+// to the tmux session mid-run, you can immediately tell what's happening and for how
+// long — "agent working for 3m" reads very differently from "agent working for 47m".
+
+const C = {
+  reset: "\x1b[0m", bold: "\x1b[1m", dim: "\x1b[2m",
+  red: "\x1b[31m", green: "\x1b[32m", yellow: "\x1b[33m",
+  blue: "\x1b[34m", cyan: "\x1b[36m", gray: "\x1b[90m",
+};
+
+const START = Date.now();
+
+/** Wall-clock HH:MM:SS for the current line. */
+function ts(): string {
+  const d = new Date();
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+
+/** Human duration: 4s, 3m12s, 1h04m. */
+function fmtDur(ms: number): string {
+  const s = Math.round(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m${String(s % 60).padStart(2, "0")}s`;
+  return `${Math.floor(m / 60)}h${String(m % 60).padStart(2, "0")}m`;
+}
+
+/** Total elapsed since ralph started, e.g. "+3m12s". */
+function sinceStart(): string {
+  return `+${fmtDur(Date.now() - START)}`;
+}
+
+function log(msg: string) {
+  console.log(`${C.gray}${ts()} ${C.dim}${sinceStart()}${C.reset} ${C.bold}[ralph]${C.reset} ${msg}`);
+}
+
+/** A loud section divider so iterations are easy to find when scrolling back. */
+function banner(msg: string, color: string = C.cyan) {
+  const line = "─".repeat(Math.max(4, 72 - msg.length));
+  console.log(`\n${color}${C.bold}══ ${msg} ${line}${C.reset}`);
+}
+
+function ok(msg: string) { log(`${C.green}✓${C.reset} ${msg}`); }
+function warn(msg: string) { log(`${C.yellow}⚠${C.reset} ${msg}`); }
+function fail(msg: string) { log(`${C.red}✗${C.reset} ${msg}`); }
+
 type RunOpts = { timeoutMs?: number; inherit?: boolean; allowFail?: boolean };
 
 /** Run a command synchronously. Returns {code, stdout, stderr}. Throws on failure unless allowFail. */
@@ -72,10 +120,6 @@ function run(cmd: string, args: string[], opts: RunOpts = {}) {
 /** Capture stdout of a command, trimmed. */
 function capture(cmd: string, args: string[]): string {
   return run(cmd, args, { allowFail: true }).stdout.trim();
-}
-
-function log(msg: string) {
-  console.log(`\n\x1b[1m[ralph]\x1b[0m ${msg}`);
 }
 
 function remoteBranchExists(branch: string): boolean {
@@ -115,9 +159,15 @@ function runOpencode(prompt: string, continueSession: boolean) {
   const args = ["run", "--model", MODEL, "--variant", VARIANT, "--auto"];
   if (continueSession) args.push("--continue");
   args.push(prompt);
-  log(`opencode ${args.slice(0, continueSession ? 6 : 5).join(" ")} "<prompt>"`);
-  // Inherit stdio so the agent's progress is visible in the ralph run log.
-  run("opencode", args, { timeoutMs: AGENT_TIMEOUT_MS, inherit: true, allowFail: true });
+  const kind = continueSession ? "retry (--continue)" : "fresh session";
+  log(`${C.blue}▶ agent starting${C.reset} — ${MODEL} ${VARIANT}, ${kind}, timeout ${fmtDur(AGENT_TIMEOUT_MS)}`);
+  log(`${C.dim}(opencode output streams below until the agent finishes)${C.reset}`);
+  const t0 = Date.now();
+  // Inherit stdio so the agent's live progress is visible in the tmux session.
+  const r = run("opencode", args, { timeoutMs: AGENT_TIMEOUT_MS, inherit: true, allowFail: true });
+  const elapsed = fmtDur(Date.now() - t0);
+  if (r.code === 0) ok(`agent finished in ${elapsed}`);
+  else warn(`agent exited ${r.code} after ${elapsed} (gate will decide pass/fail)`);
 }
 
 /**
@@ -125,35 +175,43 @@ function runOpencode(prompt: string, continueSession: boolean) {
  * commits exist vs origin/main. Returns null on pass, or an error string on failure.
  */
 function gate(prd: Prd): string | null {
+  log(`${C.cyan}▶ gate${C.reset} — checking commits → build → run → JSON`);
+
   // 1. Commits must exist relative to base.
   const ahead = capture("git", ["rev-list", "--count", `${REMOTE}/${BASE}..HEAD`]);
   if (ahead === "0" || ahead === "") return "no commits were made on the branch";
+  log(`  ${C.green}·${C.reset} ${ahead} commit(s) on ${prd.branch}`);
 
   // 2. Build the whole C suite; must succeed (warnings are allowed to pass the gate but
   //    the PRD's definition-of-done requires warning-clean; -Werror is intentionally not
   //    forced here so a stray warning doesn't discard otherwise-good work — reviewer catches it).
-  const build = run("make", ["-C", "benchmarks/c", "clean"], { allowFail: true });
-  if (build.code !== 0) { /* clean failing is fine if build dir absent */ }
+  run("make", ["-C", "benchmarks/c", "clean"], { allowFail: true });
+  log(`  ${C.dim}· building benchmarks/c …${C.reset}`);
   const make = run("make", ["-C", "benchmarks/c"], { allowFail: true });
   if (make.code !== 0) return `build failed:\n${make.stdout}\n${make.stderr}`;
+  const warnings = (make.stderr.match(/warning:/g) ?? []).length;
+  log(`  ${C.green}·${C.reset} build ok${warnings ? ` ${C.yellow}(${warnings} warning(s) — reviewer should check)${C.reset}` : ""}`);
 
   // 3. The PRD's binary must exist and run --quick.
   const binPath = `benchmarks/c/build/${prd.binary}`;
+  log(`  ${C.dim}· running ${prd.binary} --quick …${C.reset}`);
   const runBin = run(binPath, ["--quick"], { allowFail: true, timeoutMs: 5 * 60 * 1000 });
   if (runBin.code !== 0) return `${binPath} --quick exited ${runBin.code}:\n${runBin.stderr}`;
 
   // 4. stdout must be valid JSON (the contract).
-  const parse = spawnSync("python3", ["-c", "import sys,json;json.load(sys.stdin)"], {
+  const parse = spawnSync("python3", ["-c", "import sys,json;print(len(json.load(sys.stdin)))"], {
     input: runBin.stdout,
     encoding: "utf8",
   });
   if ((parse.status ?? 1) !== 0) {
     return `${binPath} --quick stdout is not valid JSON:\n${runBin.stdout.slice(0, 2000)}`;
   }
+  log(`  ${C.green}·${C.reset} valid JSON, ${parse.stdout.trim()} record(s)`);
   return null;
 }
 
 function openPr(prd: Prd) {
+  log(`${C.blue}▶ pushing${C.reset} ${prd.branch} and opening PR …`);
   run("git", ["push", "-u", REMOTE, prd.branch], { inherit: true });
   const body =
     `Implements \`docs/prds/${prd.file}\` as part of the Tier 1 napkin-math migration ` +
@@ -165,59 +223,70 @@ function openPr(prd: Prd) {
     { allowFail: true },
   );
   if (pr.code !== 0) {
-    log(`gh pr create failed:\n${pr.stdout}\n${pr.stderr}`);
+    fail(`gh pr create failed:\n${pr.stdout}\n${pr.stderr}`);
     return false;
   }
-  console.log(pr.stdout.trim());
+  ok(`PR opened: ${C.cyan}${pr.stdout.trim()}${C.reset}`);
   return true;
 }
 
 function preflight() {
+  log("preflight: checking clean tree, fetching, verifying gh auth …");
   // Clean worktree required — we switch branches and inspect diffs.
   const dirty = capture("git", ["status", "--porcelain"]);
   if (dirty.length > 0) {
     throw new Error("working tree is not clean; commit or stash first:\n" + dirty);
   }
-  run("git", ["fetch", REMOTE], { inherit: true });
+  run("git", ["fetch", REMOTE], { allowFail: false });
   const auth = run("gh", ["auth", "status"], { allowFail: true });
   if (auth.code !== 0) throw new Error("gh is not authenticated; run `gh auth login`");
+  ok("preflight passed");
 }
 
 async function main() {
-  log(DRY_RUN ? "DRY RUN — no branches, agents, or PRs will be created" : "starting migration loop");
+  banner(DRY_RUN ? "ralph — DRY RUN" : "ralph — Tier 1 benchmark migration", C.blue);
+  log(`model=${C.bold}${MODEL}${C.reset} variant=${C.bold}${VARIANT}${C.reset} base=${BASE} PRDs=${PRDS.length} agent-timeout=${fmtDur(AGENT_TIMEOUT_MS)}`);
+  if (DRY_RUN) log(`${C.yellow}dry run: no branches, agents, or PRs will be created${C.reset}`);
   preflight();
 
   const summary = { opened: [] as string[], skipped: [] as string[], failed: [] as string[] };
 
-  for (const prd of PRDS) {
+  for (let i = 0; i < PRDS.length; i++) {
+    const prd = PRDS[i]!;
+    const tag = `[${i + 1}/${PRDS.length}] ${prd.branch}`;
+    const t0 = Date.now();
+
     const { done, reason } = isDone(prd);
     if (done) {
-      log(`SKIP ${prd.branch} — ${reason}`);
+      banner(`${tag} — SKIP`, C.gray);
+      log(`${C.gray}already done: ${reason}${C.reset}`);
       summary.skipped.push(prd.branch);
       continue;
     }
 
     if (DRY_RUN) {
-      log(`WOULD RUN ${prd.file} → branch ${prd.branch} → PR "${prd.title}"`);
+      banner(`${tag} — WOULD RUN`, C.yellow);
+      log(`${prd.file} → branch ${prd.branch} → PR "${prd.title}"`);
       summary.opened.push(prd.branch + " (dry-run)");
       continue;
     }
 
-    log(`=== ${prd.file} → ${prd.branch} ===`);
+    banner(`${tag} — ${prd.file}`, C.cyan);
     run("git", ["checkout", "-B", prd.branch, `${REMOTE}/${BASE}`], { inherit: true });
 
     runOpencode(promptFor(prd), false);
     let err = gate(prd);
     if (err) {
-      log(`gate failed, retrying once:\n${err}`);
+      warn(`gate failed on first attempt — retrying once. Reason:\n${err}`);
       runOpencode(promptFor(prd, err), true);
       err = gate(prd);
     }
 
     if (err) {
-      log(`FAILED ${prd.branch} after retry — leaving branch local, not opening PR:\n${err}`);
+      fail(`${tag} FAILED after retry (${fmtDur(Date.now() - t0)}) — branch left local, no PR. Reason:\n${err}`);
       summary.failed.push(prd.branch);
     } else if (openPr(prd)) {
+      ok(`${tag} complete in ${fmtDur(Date.now() - t0)}`);
       summary.opened.push(prd.branch);
     } else {
       summary.failed.push(prd.branch + " (PR create failed)");
@@ -227,10 +296,11 @@ async function main() {
     run("git", ["checkout", BASE], { inherit: true, allowFail: true });
   }
 
-  log("done.");
-  console.log(`  opened:  ${summary.opened.join(", ") || "(none)"}`);
-  console.log(`  skipped: ${summary.skipped.join(", ") || "(none)"}`);
-  console.log(`  failed:  ${summary.failed.join(", ") || "(none)"}`);
+  banner(`done in ${fmtDur(Date.now() - START)}`, C.green);
+  log(`${C.green}opened  (${summary.opened.length}):${C.reset} ${summary.opened.join(", ") || "(none)"}`);
+  log(`${C.gray}skipped (${summary.skipped.length}):${C.reset} ${summary.skipped.join(", ") || "(none)"}`);
+  log(`${summary.failed.length ? C.red : C.dim}failed  (${summary.failed.length}):${C.reset} ${summary.failed.join(", ") || "(none)"}`);
+  if (summary.failed.length) log(`${C.yellow}re-run \`bun ralph.ts\` to retry failed PRDs (completed ones are skipped automatically)${C.reset}`);
 }
 
 main().catch((e) => {
