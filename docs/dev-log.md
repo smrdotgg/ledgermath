@@ -248,6 +248,11 @@ A migrated benchmark is done only when **all** of these hold:
   target-specific `LDLIBS` (`-luring` for `disk_read_io_uring`), PRDs 08–11, and the
   O_DIRECT-for-reads decision. Verified on linux/amd64 (gcc:14): all 9 existing binaries
   build clean with the new Makefile; tmpfs guard refuses `/dev/shm`.
+- **2026-07-05** — Added `disk_write` (`8 KiB, No fsync` + `8 KiB, fsync`) as a standalone
+  C benchmark using `bench_file_path("disk_write")`, fixed-size wraparound writes, startup
+  read-back validation, and cleanup on exit. Verified `make -C benchmarks/c` and
+  `build/disk_write --quick` JSON; dev VPS smoke-test means were ~2.8 µs without fsync
+  and ~174 µs with `fdatasync`.
 - **2026-07-05** — Added `disk_read_sequential` (`8 KiB`) as an O_DIRECT C benchmark:
   setup creates a 256 MiB quick / 1 GiB full deterministic scratch file via
   `bench_file_path()`, validates block 0, reads 8 KiB at sequential offsets with wraparound,
