@@ -193,4 +193,7 @@ A migrated benchmark is done only when **all** of these hold:
   one binary per benchmark (`bench_memory_read.c`, `bench_compressed_memory_read.c`),
   wildcard Makefile, `run-all.sh` JSON merger. Behavior-preserving; verified on
   linux/amd64 (gcc:14). This is the base all Tier 1 migration branches fork from.
+- **2026-07-05** — Added `hash` benchmark (`crc32`, `siphash`, `sha256`) as
+  `bench_hash.c`: hardware CRC32C, SipHash-1-3, SHA-256 with SHA-NI selected on this
+  host. Verified `make -C benchmarks/c` and `build/hash --quick` JSON output.
 - _(agents: append your entry here, one per merged benchmark)_
