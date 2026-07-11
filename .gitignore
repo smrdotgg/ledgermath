@@ -43,3 +43,5 @@ tmp/
 
 # benchmark build artifacts
 benchmarks/c/build/
+
+.claude
