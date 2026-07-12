@@ -15,6 +15,7 @@
 	"peerDependencies": {},
 	"dependencies": {
 		"@aws-sdk/client-ec2": "^3.848.0",
-		"sst": "4.17.0"
+		"sst": "4.17.0",
+		"zod": "^4.4.3"
 	}
 }

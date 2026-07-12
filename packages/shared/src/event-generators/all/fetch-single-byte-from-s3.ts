@@ -1,30 +1,28 @@
-import { DataType, type EventGenerator, EventGeneratorCode } from "../types";
+import { EventGeneratorCodes, type EventGenerator } from "../types";
+import { z } from "zod";
 
-const fetchSingleByteFromS3: EventGenerator = {
-	code: EventGeneratorCode.FetchSingleByteFromS3,
-	requiredParameters: [
-		{
-			key: "getUrl",
-			description:
+export const fetchSingleByteFromS3 = {
+	code: EventGeneratorCodes.fetch_file_from_s3,
+	description: "Fetch file from s3",
+	inputShape: z.object({
+		getUrl: z
+			.string()
+			.describe(
 				"The URL of a file in an S3 bucket that is exactly one byte big.",
-			type: DataType.String,
-		},
-	],
-	outputs: [
-		{
-			key: "TTFB",
-			description:
+			),
+	}),
+	outputShape: z.object({
+		ttfb: z
+			.number()
+			.describe(
 				"The time until the first response is received, measured in nanoseconds.",
-			type: DataType.Number,
-		},
-		{
-			key: "TTLB",
-			description:
+			),
+		ttlb: z
+			.number()
+			.describe(
 				"The time until the last response is received, measured in nanoseconds.",
-			type: DataType.Number,
-		},
-	],
-	description: "Fetches a single byte from an S3-compatible bucket.",
+			),
+	}),
 	explanation:
-		"An HTTP GET request is sent to the getUrl. The response is saved in memory, and is not written to disk.",
+		"An HTTP GET request is sent to the file. The response is saved to memory.",
 };

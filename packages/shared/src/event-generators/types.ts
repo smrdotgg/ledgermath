@@ -1,11 +1,14 @@
+import type { ZodObject } from "zod";
+
 export enum DataType {
 	String = "string",
 	Number = "number",
 }
 
-export enum EventGeneratorCode {
-	FetchSingleByteFromS3 = "fetch_single_byte_from_s3",
-}
+export const EventGeneratorCodes = {
+	fetch_file_from_s3: "fetch_file_from_s3",
+} as const;
+export type EventGeneratorCode = keyof typeof EventGeneratorCodes;
 
 export interface Parameter {
 	key: string;
@@ -15,8 +18,8 @@ export interface Parameter {
 
 export interface EventGenerator {
 	code: EventGeneratorCode;
-	requiredParameters: Parameter[];
-	outputs: Parameter[];
+	inputShape: ZodObject;
+	outputShape: ZodObject;
 	description: string;
 	explanation: string;
 }
