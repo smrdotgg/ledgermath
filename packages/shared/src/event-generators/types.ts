@@ -6,7 +6,7 @@ export enum DataType {
 }
 
 export const EventGeneratorCodes = {
-	fetch_file_from_s3: "fetch_file_from_s3",
+	fetch_tool: "fetch_tool",
 } as const;
 export type EventGeneratorCode = keyof typeof EventGeneratorCodes;
 

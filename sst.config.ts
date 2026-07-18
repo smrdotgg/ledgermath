@@ -27,8 +27,7 @@ export default $config({
 		// Account vCPU quota is 32 for standard On-Demand (L-1216C47A).
 		// c6i.metal needs 128 — use 8xlarge until the quota is raised.
 		// Override: LEDGERMATH_INSTANCE_TYPE=c6i.metal sst deploy
-		const instanceType =
-			process.env.LEDGERMATH_INSTANCE_TYPE ?? "c6i.8xlarge";
+		const instanceType = process.env.LEDGERMATH_INSTANCE_TYPE ?? "c6i.8xlarge";
 		const sourceKey = "source/benchmarks-c.zip";
 
 		const results = new sst.aws.Bucket("Results");

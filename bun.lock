@@ -12,7 +12,7 @@
       "devDependencies": {
         "@types/aws-lambda": "8.10.162",
         "@types/bun": "latest",
-        "typescript": "^7",
+        "typescript": "^7.0.2",
       },
     },
     "packages/shared": {
