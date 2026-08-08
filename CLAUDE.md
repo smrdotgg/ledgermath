@@ -25,3 +25,17 @@ This project is heavily inspired by "NapkinMath"
 note: the "NapkinMath" repo is available in "local/". It may seem invisible because it is part of `.gitignore`.
 
 be sure to read "local/AGENTS.md" to get context that will not make it to GitHub.
+
+## Agent skills
+
+### Issue tracker
+
+Issues live as GitHub issues on `smrdotgg/ledgermath`, managed via the `gh` CLI. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Default five canonical roles (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`). See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context — `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.
