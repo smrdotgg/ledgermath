@@ -112,6 +112,13 @@ checks against `expected_sum_range`). A benchmark with no elision guard is not d
 - **Per-benchmark link libraries via Makefile target-specific variables** (2026-07-05):
   e.g. `$(BUILD)/disk_read_io_uring: LDLIBS += -luring`. Adding one is a harness-owner
   change, not something a benchmark PR does — the no-shared-edits rule stands.
+- **Monorepo: this repo becomes the whole platform** (2026-08-08): the Ledger, Methods /
+  Derivations, and the open data interface will be built here, superseding the §1 note
+  that downstream is "not built here". Vocabulary is pinned in `CONTEXT.md`; the plan is
+  the wayfinder map (issue #12). Targets widen from machines-only to **Machines and
+  Services** — the "EC2 only" rule is now scoped as "Machine benchmarks require owned
+  machines", not "only machines get benchmarked". The §2 output contract stays the
+  runner-side foundation.
 
 ---
 
