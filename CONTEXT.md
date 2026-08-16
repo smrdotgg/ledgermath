@@ -7,11 +7,18 @@ Continuous napkin math: an open, permanent ledger of raw performance observation
 ### Data model
 
 **Observation**:
-An immutable, timestamped record that a specific Artifact ran against a specific Target and what was measured raw. Never edited, never deleted.
+An immutable, timestamped record of what one Variant measured raw when a specific Artifact ran against a specific Target. Never edited, never deleted.
 _Avoid_: fact, result, data point, measurement (as a noun for the record)
 
+**Run**:
+One execution of an Artifact against a Target. Every execution produces exactly one Run record — success or failure — holding its outcome; a failed Run has no Observations.
+_Avoid_: job, invocation
+
+**Annotation**:
+An append-only Ledger record declaring that the Series in its scope stop being comparable at a stated boundary, and why. May supersede or cancel an earlier Annotation; never edited, never deleted.
+
 **Ledger**:
-The append-only, permanent, open store of all Observations.
+The append-only, permanent, open store of all Observations, Runs, and Annotations.
 _Avoid_: database, warehouse, data lake
 
 **Method**:
@@ -25,7 +32,7 @@ _Avoid_: inference, estimate, insight
 ### Measurement
 
 **Target**:
-The thing a benchmark measures: a Machine or a Service, identified durably (type, region, zone).
+The thing a benchmark measures: a Machine or a Service, identified durably by a provider-specific structured identity (for an AWS EC2 Machine: instance type, region, availability zone, operating system), rendered canonically as a slug.
 _Avoid_: platform, environment
 
 **Machine**:
@@ -35,11 +42,14 @@ A Target we own and control root-to-metal for the duration of a run (e.g. an EC2
 A managed Target we cannot control internally (e.g. S3, Lambda), measured from the outside.
 
 **Artifact**:
-The exact benchmark code and build recipe that produced an Observation, preserved forever so the Observation is auditable.
-_Avoid_: binary, script
+The exact binary that ran, identified forever by its content hash, together with the build record(s) — source commit, containerized build environment, build parameters — that reproduce it. Two builds that yield byte-identical binaries are builds of the same Artifact.
+_Avoid_: script
 
 **Benchmark**:
 A program measuring one class of operation (e.g. `memory_read`); emits result records per Variant.
 
 **Variant**:
 One specific configuration of a Benchmark (e.g. "1 thread, SIMD"). Unique within its Benchmark.
+
+**Series**:
+The time-ordered history of Observations for one Variant on one Target — one chart line. What regression alarms watch and Annotations apply to.
