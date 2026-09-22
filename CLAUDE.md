@@ -39,3 +39,7 @@ Default five canonical roles (`needs-triage`, `needs-info`, `ready-for-agent`, `
 ### Domain docs
 
 Single-context — `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.
+
+## Current work
+
+Before touching `CONTEXT.md`, the wayfinder tickets, or `docs/spec/`: read `docs/handoff-2026-09-22.md` (amending ticket #13, September 2026).
