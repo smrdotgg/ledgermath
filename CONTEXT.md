@@ -11,14 +11,18 @@ One execution of one Artifact for one Station, recorded whether it succeeded or 
 _Avoid_: observation, result, data point, job, invocation
 
 **Series**:
-The time-ordered Runs with status ok for one Station. One chart line; what Annotations segment and alarms watch.
+The time-ordered Runs of one Station that count: completed, with a latest Verdict of ok. One chart line; what Annotations segment and alarms watch.
 
 **Annotation**:
 An append-only Ledger record, anchored at an Artifact hash or a timestamp and scoped to a set of Series, saying why those Series stop being comparable there. Superseded or cancelled, never edited or deleted.
 _Avoid_: note, comment, version bump
 
+**Verdict**:
+Ingest's judgement that a Run's declared values matched their observed counterparts, made by a versioned Method and recorded with its version. Superseded by a later Verdict when the Method changes, never edited.
+_Avoid_: status (for the judgement), validation result
+
 **Ledger**:
-The append-only, permanent, open store of all Runs and Annotations.
+The append-only, permanent, open store of all Runs, Annotations, Verdicts, and Build records.
 _Avoid_: database, warehouse, data lake
 
 **Method**:
@@ -32,7 +36,7 @@ _Avoid_: inference, estimate, insight, observation
 ### Measurement
 
 **Benchmark**:
-A program: one source directory declaring its parameters and roles, one PRD, built to one Artifact per architecture. An ownership unit, not a category.
+A program: one source directory declaring its parameters and roles, one PRD, built to one Artifact per CPU profile. An ownership unit, not a category.
 _Avoid_: suite, test, category
 
 **Variant**:
@@ -84,16 +88,42 @@ _Avoid_: bootstrap, setup script, Visitor
 The typed file in git that declares every Target, Benchmark, Variant, and Station.
 _Avoid_: config, registry (for the manifest)
 
+### Build and Archive
+
+**CPU profile**:
+What a Machine's processor is, for building: one Capture plus the line each compiler resolved `native` to on that Machine, identified by the hash over both. Bound by one Target, never shared, never edited.
+_Avoid_: architecture, arch, target triple
+
+**Capture**:
+Everything a Machine's processor and kernel report about the CPU, dumped raw and unmasked by the runner on every Run and when a CPU profile is made. Identified by the hash of its bytes.
+_Avoid_: cpuinfo, fingerprint, hardware id
+
+**Build record**:
+The record of one build: the source commit, the builder image digest, and the CPU profile it was built for. Several may attach to one Artifact.
+_Avoid_: provenance (as a noun for the record), build metadata
+
+**Archive**:
+The content-addressed, public, permanent store of the bytes behind every hash a Run cites: Artifacts, provisioner and runner bundles, builder images, and Captures. Indexed by the Ledger.
+_Avoid_: artifact store, blob store, bucket (for the store)
+
+**Checkpoint**:
+The signed statement published with every append to the Archive's index, naming the index commit, its tree hash, the entry count, and the time. What mirrors and verifiers pin, and what a Run cites for its Artifact's publication.
+_Avoid_: snapshot, tag
+
+**Withdrawn**:
+The state of an Archive entry whose bytes have been removed from public copies by a reviewed index commit recording the reason and the date. The hash and the Build records stay, and Runs that cite it remain valid.
+_Avoid_: deleted, yanked, removed
+
 ### Comparability
 
 **Setup hash**:
-The hash of everything about a Station other than its Artifact that could move its numbers: its Variant, its bound Targets, the Provisioners involved, and the on-box runner. The second boundary signal beside the Artifact hash.
+The hash of everything about a Station other than its Artifact that could move its numbers: its Variant, its bound Targets with their CPU profiles, the Provisioners involved, and the on-box runner. The second boundary signal beside the Artifact hash.
 
 **Boundary**:
 A point on a Series where the Artifact hash or the setup hash differs between consecutive Runs. Splits the Series by default.
 
 **Transition run**:
-Old and new alternated on one Machine within one hour, per Station, reporting whether the numbers moved. The controlled experiment that resolves a boundary.
+Old and new alternated on one Machine within one hour, per Station, reporting whether the numbers moved. The controlled experiment that resolves a boundary. Its result is keyed by the pair of hashes and the Station, so an unrelated merge never forces a re-run.
 
 **Boundary state**:
 Verified unchanged, declared changed, changed but unexplained, or unverified.
