@@ -48,21 +48,29 @@ A named slot a Benchmark declares for a Target it involves. Exactly one role run
 _Avoid_: vantage (as a Target field)
 
 **Target**:
-A Machine or Service that a Station binds to one of its Benchmark's roles, identified by a provider-specific structured identity rendered to a slug. For a one-role Benchmark, the thing measured.
-_Avoid_: platform, environment, host
+An offering of one Kind that the provider names at a place, such as an instance type in a zone or a storage class in a Region, which a Station binds to one of its Benchmark's roles. Identified by a structured identity in the provider's own words, rendered once to a slug; exists whether or not we have created anything. For a one-role Benchmark, the thing measured.
+_Avoid_: platform, environment, host, resource
 
 **Machine**:
-A Target we control root-to-metal for the duration of a Run. The machine type is the measurement.
+A Target that boots our image and runs our binary as root for the duration of a Run. The machine type is the measurement; bare metal or guest is a fact of the type.
 
 **Service**:
 A managed Target we cannot see inside, measured from the outside.
+
+**Kind**:
+The provider product a Target belongs to, such as EC2 or S3, named `<provider>.<product>`. Each Kind has one Provisioner, one identity schema, one registry, and one environment schema, and is either a Machine kind or a Service kind. The same role as `kind` in a Kubernetes manifest.
+_Avoid_: type, class, product (for this); kind (for Machine or Service)
+
+**Target Instance**:
+A resource a Provisioner creates from a Target for a Station or a Visit: an EC2 instance, a bucket, a function. Configured by the Station's requirements, it holds the Station's Fixtures and is named in the Run by the provider's own identifiers.
+_Avoid_: instance (bare), resource, deployment
 
 **Station**:
 A Variant with each of its Benchmark's roles bound to a Target. The identity of a Series and the unit the schedule is written in. Exists before it has data; retired by date, never deleted.
 _Avoid_: job, deployment, config
 
 **Visit**:
-One launch of the Machine bound to the role that runs the binary, during which every Station due there gets one Run.
+One boot of the Machine Target Instance bound to the role that runs the binary, launched fresh or rebooted if kept and preceded by any launch attempts it took, during which every Station due there gets one Run.
 _Avoid_: session, batch
 
 **Artifact**:
@@ -81,7 +89,7 @@ The content a measured interval reads or writes, created by a Provisioner for a 
 _Avoid_: test data, asset, payload (for the fixture)
 
 **Provisioner**:
-Code, one per Target kind, that declares which state and fixture keys it can realize and how each is observed back, and that creates fixtures and establishes state before a Run.
+Code, one per Kind, that declares which state and fixture keys it can realize and how each is observed back, and that creates Target Instances and Fixtures and establishes state before a Run.
 _Avoid_: bootstrap, setup script, Visitor
 
 **Manifest**:
