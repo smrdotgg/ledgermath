@@ -84,6 +84,10 @@ _Avoid_: log line, metric, measured region
 **Observed counterpart**:
 The fact recorded at Run time that proves a declared value held. Every declared value has one; a value with none cannot be declared.
 
+**As-booted value**:
+The value a state key has on a fresh box of a Target before the Provisioner writes anything, captured in the Capture, or pinned in the Provisioner bundle for a key the box cannot see. What a Variant silent on that key declares.
+_Avoid_: default, baseline
+
 **Fixture**:
 The content a measured interval reads or writes, created by a Provisioner for a Station and pinned by recipe and checksum.
 _Avoid_: test data, asset, payload (for the fixture)
@@ -99,12 +103,12 @@ _Avoid_: config, registry (for the manifest)
 ### Build and Archive
 
 **CPU profile**:
-What a Machine's processor is, for building: one Capture plus the line each compiler resolved `native` to on that Machine, identified by the hash over both. Bound by one Target, never shared, never edited.
+What a Machine's processor is, for building: the processor section of one Capture plus the line each compiler resolved `native` to on that Machine, identified by the hash over both. Bound by one Target, never shared, never edited.
 _Avoid_: architecture, arch, target triple
 
 **Capture**:
-Everything a Machine's processor and kernel report about the CPU, dumped raw and unmasked by the runner on every Run and when a CPU profile is made. Identified by the hash of its bytes.
-_Avoid_: cpuinfo, fingerprint, hardware id
+Everything a Machine's box and its provider's API report about it, dumped raw and unmasked by the runner on every Run and when a CPU profile is made: a processor section (what the processor and kernel report about the CPU), the kernel's view of memory, NUMA layout, devices, and controls, and the instance type's catalog record. Identified by the hash of its bytes; frozen per Target as booted.
+_Avoid_: cpuinfo, fingerprint, hardware id, inventory, facts dump
 
 **Build record**:
 The record of one build: the source commit, the builder image digest, and the CPU profile it was built for. Several may attach to one Artifact.
