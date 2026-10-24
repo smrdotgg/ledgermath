@@ -6,6 +6,13 @@ task, **read this whole file first**, then read the specific PRD you were assign
 
 ---
 
+> **Note (2026-10-24).** Sections 3 to 7 describe the July 2026 proof of concept in
+> `benchmarks/c/`, `infra/`, and `sst.config.ts`. The resolution of Provider abstraction
+> and declarative run spec (#22) deletes that code rather than migrating it, so those
+> sections stay for history only. Section 2 is current.
+
+---
+
 ## 1. North star
 
 LedgerMath is "continuous napkin math." The inspiration is Simon Eskildsen's
@@ -35,43 +42,78 @@ numbers.** Everything above is context for *why*, not scope for *what*.
 
 ## 2. The contract (read this twice)
 
-**A benchmark is a native binary that prints a JSON array of result records to stdout.
-All diagnostics — calibration notes, warnings, errors — go to stderr.**
+**A benchmark is a static native binary that prints a stream of events to stdout, one
+JSON object per line. All diagnostics go to stderr.** It receives its parameters and the
+Provisioner's outputs as environment variables, and it prints nothing it was told, only
+what it observed.
 
-That's the entire interface. It is what makes the project language-agnostic: a future Go
-or Rust or Zig benchmark is a first-class citizen the moment it prints the same JSON
-shape. Nothing downstream parses source code, links a library, or knows what language a
-benchmark was written in. It reads stdout.
+Decided in Provider abstraction and declarative run spec (#22) on 2026-10-24, replacing
+the JSON array of result records the proof of concept printed. ADR-0022 records why. The
+contract is language-agnostic on purpose: a Go or Rust benchmark is a first-class citizen
+the moment it reads the same variables and prints the same lines. The exact shape a
+non-C author reads is the JSON Schema export at `benchmarks/<name>/events.schema.json`.
 
-### Result record schema
+### What the binary receives
 
-Every object in the array has exactly these fields:
+Exactly these environment variables and nothing else:
 
-| Field | Type | Meaning |
-|-------|------|---------|
-| `benchmark` | string | The benchmark group, e.g. `"memory_read"`. Groups related variants. |
-| `variant` | string | The specific configuration, e.g. `"1 thread, SIMD"`. Unique within a benchmark. |
-| `unit` | string | Unit of the latency fields. Currently always `"ns/op"`. |
-| `mean_ns` | number | Mean time for one operation, nanoseconds. The raw truth. |
-| `median_ns` | number | Median of the samples, nanoseconds. More robust to noise. |
-| `throughput_bytes_per_second` | number | Derived: `bytes_per_op / (mean_ns / 1e9)`. `0` when an op has no meaningful byte count (e.g. a syscall). |
-| `bytes_per_op` | integer | Bytes processed per operation. `0` for latency-only benchmarks. |
-| `threads` | integer | Hardware threads the variant used. `1` for single-threaded. |
-| `checksum` | integer | A value derived from the actual computed data, used to prove the work happened (see below). Not a measurement — never charted. |
-| `samples_ns` | array of number | The individual per-sample timings behind `mean`/`median`. Seed for future P50/P99 histograms — never drop these. |
+- `LM_PARAM_<KEY>` for every parameter of the Variant, key upper-cased. Values are plain
+  strings: integers in decimal, booleans as `true` or `false`, strings verbatim.
+- `LM_<ROLE>_<OUTPUT>` for every output of every role's Provisioner, such as
+  `LM_BOX_DISK_DEVICE=/dev/nvme1n1`, `LM_BOX_FILE_PATH=/mnt/lm/fixture`, or
+  `LM_SERVICE_URL_REGIONAL=https://…`.
+- `LM_SAMPLES`, the number of counted samples to take, a Benchmark constant (default 10).
 
-An agent must not invent, rename, or drop fields. If a new benchmark genuinely needs a
-new field, that is a schema change — raise it in the PR description, don't do it silently.
+A `memory_read` Run of the Variant "1 thread, AVX2, 4 GiB" sees
+`LM_PARAM_SIZE_BYTES=4294967296`, `LM_PARAM_THREADS=1`, `LM_PARAM_PATH=avx2`, and
+`LM_SAMPLES=10`. The `--quick` flag remains a developer convenience for small buffers and
+few samples; its output never enters the Ledger.
 
-### Why `checksum` exists (the compiler-elision trap)
+### What the binary prints
+
+Newline-delimited JSON, UTF-8, one complete object per line, no blank lines, nothing else
+on stdout. Every object has `event` and `t`, where `t` is whole nanoseconds from
+`CLOCK_MONOTONIC_RAW`. Six events are universal and the harness emits them:
+
+| Event | Fields besides `t` | Meaning |
+|-------|--------------------|---------|
+| `started` | `schema` (`ledgermath.events/1`), `wall_utc`, `clock`, `clock_read_ns` | Always first. `clock_read_ns` is the measured cost of one clock read on this box, so every interval carries an error bound. |
+| `observed` | `values` | The observed counterparts of the declared parameters, as the Benchmark's `benchmark.ts` names them: bytes actually copied per repetition, threads actually joined, the code path actually dispatched. Never a value read back from the environment. |
+| `sample_started` | `sample`, `warmup`, `repetitions` | Opens one sample. Warmup samples are emitted and tagged, never dropped. |
+| `sample_ended` | `sample` | Closes it. The sample's time is the difference of the two `t` values; dividing by `repetitions` is a Method's job, not the binary's. |
+| `verified` | `checksum` | The elision guard, as a hex string (`0x` and sixteen lowercase digits). |
+| `finished` | | Always last. Its absence is evidence of a crash. |
+
+A Benchmark with phases of its own, such as `http_get` with `connected` and `first_byte`,
+declares those event names and fields in its `benchmark.ts` and emits them in the same
+stream. They may not reuse the six universal names.
+
+No clock is read inside a measured interval: two reads per sample, at its edges. The
+harness makes intervals long by putting many repetitions between the two edges, and
+calibrates the repetition count so one sample lasts about a second.
+
+### What is gone, and why
+
+- `benchmark` and `variant`: declared values. The controller that launched the binary
+  knows which Station it is running.
+- `mean_ns`, `median_ns`, `throughput_bytes_per_second`, and the per-sample average:
+  derivable. Methods compute them from the sample timestamps and repetition counts.
+- `unit`: implied by the contract.
+- `bytes_per_op` and `threads`: declared values. Their observed counterparts are whatever
+  the Benchmark declares under `observed`.
+
+Exit code 0 means the binary completed. Any other exit, or a missing `finished`, is a Run
+recorded with a failure status and whatever events reached the pipe before the end.
+
+### Why `verified` exists (the compiler-elision trap)
 
 We compile with `-O3`. If a benchmark's result is never observed, the optimizer will
 delete the entire measured loop and you'll report physically impossible numbers (e.g.
 memory bandwidth faster than the bus). Every benchmark's hot function must return a value
 **derived from the data it processed** (a sum, a hash accumulator, an XOR of outputs),
-which `measure()` records as `checksum`. Where a correct answer is knowable ahead of time,
-validate it at startup and exit non-zero on mismatch (see `bench_memory_read.c`, which
-checks against `expected_sum_range`). A benchmark with no elision guard is not done.
+which the harness emits as `verified`. Where a correct answer is knowable ahead of time,
+validate it at startup and exit non-zero on mismatch. A benchmark with no elision guard
+is not done.
 
 ---
 

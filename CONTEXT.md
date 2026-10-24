@@ -97,7 +97,7 @@ Code, one per Kind, that declares which state and fixture keys it can realize an
 _Avoid_: bootstrap, setup script, Visitor
 
 **Manifest**:
-The typed file in git that declares every Target, Benchmark, Variant, and Station.
+The typed TypeScript files in git, one per Benchmark, one per Variant with its Stations, and one per Target, that together declare every Target, Benchmark, Variant, and Station.
 _Avoid_: config, registry (for the manifest)
 
 ### Build and Archive
