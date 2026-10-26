@@ -89,7 +89,7 @@ The value a state key has on a fresh box of a Target before the Provisioner writ
 _Avoid_: default, baseline
 
 **Fixture**:
-The content a measured interval reads or writes, created by a Provisioner for a Station and pinned by recipe and checksum.
+The content a measured interval reads, created by a Provisioner for a Station and pinned by recipe and checksum. What a binary writes during a Run goes to an area of its own and is never a Fixture.
 _Avoid_: test data, asset, payload (for the fixture)
 
 **Provisioner**:

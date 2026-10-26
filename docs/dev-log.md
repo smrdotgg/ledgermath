@@ -78,7 +78,7 @@ on stdout. Every object has `event` and `t`, where `t` is whole nanoseconds from
 | Event | Fields besides `t` | Meaning |
 |-------|--------------------|---------|
 | `started` | `schema` (`ledgermath.events/1`), `wall_utc`, `clock`, `clock_read_ns` | Always first. `clock_read_ns` is the measured cost of one clock read on this box, so every interval carries an error bound. |
-| `observed` | `values` | The observed counterparts of the declared parameters, as the Benchmark's `benchmark.ts` names them: bytes actually copied per repetition, threads actually joined, the code path actually dispatched. Never a value read back from the environment. |
+| `observed` | `values` | The observed counterparts of the declared parameters, as the Benchmark's `benchmark.ts` names them: bytes actually copied per repetition, threads actually joined, the code path actually dispatched. Never a value read back from the environment. May be emitted more than once, anywhere between `started` and `finished`, each key exactly once; a Service Benchmark emits what it learned from responses after its last sample. |
 | `sample_started` | `sample`, `warmup`, `repetitions` | Opens one sample. Warmup samples are emitted and tagged, never dropped. |
 | `sample_ended` | `sample` | Closes it. The sample's time is the difference of the two `t` values; dividing by `repetitions` is a Method's job, not the binary's. |
 | `verified` | `checksum` | The elision guard, as a hex string (`0x` and sixteen lowercase digits). |
@@ -86,7 +86,14 @@ on stdout. Every object has `event` and `t`, where `t` is whole nanoseconds from
 
 A Benchmark with phases of its own, such as `http_get` with `connected` and `first_byte`,
 declares those event names and fields in its `benchmark.ts` and emits them in the same
-stream. They may not reuse the six universal names.
+stream, anywhere between `started` and `finished`. They may not reuse the six universal
+names.
+
+A Benchmark that talks to a Service speaks HTTP over TLS itself: no provider SDK on the
+measured path, no automatic retry, and any signing finished before a request's first
+timestamp. Every connection and every response, errors included, is an event in the HTTP
+event vocabulary the harness exports. Decided in Service benchmark trustworthiness (#19);
+ADRs 0026 to 0028 record it.
 
 No clock is read inside a measured interval: two reads per sample, at its edges. The
 harness makes intervals long by putting many repetitions between the two edges, and
