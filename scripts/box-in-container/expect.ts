@@ -42,6 +42,9 @@ const runs = filesUnder("runs", ".json").map((path) => readJson<RunRecord>(path)
 const boots = filesUnder("boots", ".json").map((path) => readJson<BootSummary>(path));
 const logs = filesUnder("logs", ".log");
 const log = logs[0] ? readFileSync(logs[0], "utf8") : "";
+const putsPath = join(out, "calls", "puts.log");
+const puts = existsSync(putsPath) ? readFileSync(putsPath, "utf8").trim().split("\n") : [];
+const blobPuts = puts.filter((key) => key.startsWith("blobs/"));
 const powerPath = join(out, "calls", "power.log");
 const power = existsSync(powerPath) ? readFileSync(powerPath, "utf8").trim().split("\n") : [];
 const schedule = readJson<{ benchmarks: Array<{ builds: string[]; params: unknown[] }> }>(join(ROOT, "schedule.json"));
@@ -113,9 +116,19 @@ switch (scenario) {
 	case "blobs-flaky": {
 		expect(status === 0, `exit status ${status}, expected 0`);
 		expect(log.includes("attempt 1 of 3 failed"), "the log does not show the failed first attempt");
+		expect(new Set(blobPuts).size === blobPuts.length, "the retry uploaded again blobs the first attempt had put in");
 		everyRunChecksOut();
 		expect(runs.length === planned, `${runs.length} Runs, expected ${planned}`);
 		expect(boots.length === 1, `${boots.length} boot summaries, expected 1`);
+		break;
+	}
+	case "blobs-present": {
+		expect(status === 0, `exit status ${status}, expected 0`);
+		everyRunChecksOut();
+		expect(runs.length === planned, `${runs.length} Runs, expected ${planned}`);
+		const seeded = readFileSync(join(out, "seeded"), "utf8").trim().split("\n");
+		for (const key of seeded) expect(!puts.includes(key), `${key} was in the bucket already and was uploaded again`);
+		expect(blobPuts.length > 0, "no blob was uploaded at all");
 		break;
 	}
 	default:

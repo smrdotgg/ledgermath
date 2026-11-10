@@ -20,8 +20,10 @@
 #                timeout(1)
 #   blobs-rejected  the bucket refuses every blob: no Run and no boot summary is
 #                published, the log is, and the boot fails
-#   blobs-flaky  the first upload of blobs/ fails halfway: the retry completes it
-#                and every Run checks out
+#   blobs-flaky  the first upload of blobs/ fails halfway: the retry uploads only
+#                the rest, and every Run checks out
+#   blobs-present  the bucket already holds a blob the boot makes, from an earlier
+#                boot: it is not uploaded again, and every Run checks out
 #
 # What this shows: box.sh, run.py, the Makefiles and cpuid.c work on the image's
 # own packages (Python 3.9, gcc 11, glibc-static), with the user-data the launch
@@ -57,7 +59,7 @@ fi
 
 ENVIRONMENT=()
 case "$SCENARIO" in
-  ok | terminated | shutdown) ;;
+  ok | terminated | shutdown | blobs-present) ;;
   budget) ENVIRONMENT+=(-e LEDGERMATH_RUN_SECONDS=120) ;;
   blobs-rejected) ENVIRONMENT+=(-e FAKE_S3_REJECT=blobs/) ;;
   blobs-flaky) ENVIRONMENT+=(-e FAKE_S3_FAIL_ONCE=blobs/) ;;
@@ -88,6 +90,15 @@ OUT="$(cd "$OUT" && pwd)"
 # Mounted from OUT, so the box's dump (findmnt) shows no path of this checkout.
 cp "$HERE/aws" "$HERE/power" "$OUT/stubs/"
 git archive --format=tar.gz -o "$OUT/s3/$BUCKET/$KEY" "$COMMIT"
+if [ "$SCENARIO" = blobs-present ]; then
+  # The source archive is a blob of every Run; put it there as an earlier boot
+  # would have, older than the box's copy will be.
+  hex="$(sha256sum "$OUT/s3/$BUCKET/$KEY" | cut -d' ' -f1)"
+  mkdir -p "$OUT/s3/$BUCKET/blobs/sha256"
+  cp "$OUT/s3/$BUCKET/$KEY" "$OUT/s3/$BUCKET/blobs/sha256/$hex"
+  touch -d 2026-01-01 "$OUT/s3/$BUCKET/blobs/sha256/$hex"
+  echo "blobs/sha256/$hex" >"$OUT/seeded"
+fi
 git show "$COMMIT:runner/box.sh" >"$OUT/box.sh"
 bun scripts/box-in-container/user-data.ts "$OUT/box.sh" "$BUCKET" "$STAGE" "$KEY" "$COMMIT" "$REGION" >"$OUT/user-data"
 chmod +x "$OUT/user-data"

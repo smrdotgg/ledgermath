@@ -71,12 +71,21 @@ retry() {
 }
 
 put_part() {
-  aws s3 cp --recursive --only-show-errors --exclude '*.tmp' "$OUT/$1" "s3://$LEDGERMATH_BUCKET/$1"
+  if [ "$1" = blobs ]; then
+    # A blob's key is the hash of its bytes, so a blob the bucket already holds
+    # under the same key and size is this blob: --size-only skips it, and the
+    # versioned bucket keeps no second copy. sync lists blobs/ to find out, and
+    # exits 0 only when every blob was uploaded or found there.
+    aws s3 sync --size-only --only-show-errors --exclude '*.tmp' "$OUT/blobs/" "s3://$LEDGERMATH_BUCKET/blobs/"
+  else
+    aws s3 cp --recursive --only-show-errors --exclude '*.tmp' "$OUT/$1/" "s3://$LEDGERMATH_BUCKET/$1/"
+  fi
 }
 
 # A Run, and a boot summary, names blobs. run.py writes every blob before the
-# Run that names it, so once all of blobs/ is in the bucket, every hash in
-# runs/ and boots/ resolves there. Until then neither is published.
+# Run that names it, so once every blob of blobs/ is in the bucket, uploaded
+# now or found there, every hash in runs/ and boots/ resolves. Until then
+# neither is published.
 upload_results() {
   if [ -z "${LEDGERMATH_BUCKET:-}" ] || ! command -v aws >/dev/null 2>&1; then
     UPLOAD_FAILED="everything (no bucket or no aws CLI)"

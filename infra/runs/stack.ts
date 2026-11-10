@@ -108,7 +108,8 @@ export function runsStack() {
 		ingress: [],
 	});
 
-	// The box reads its source and writes its prefixes, nothing else.
+	// The box reads its source, lists blobs/ (so it uploads only the blobs the
+	// bucket does not hold yet), and writes its prefixes, nothing else.
 	const boxRole = new aws.iam.Role("BoxRole", {
 		assumeRolePolicy: aws.iam.assumeRolePolicyForPrincipal({ Service: "ec2.amazonaws.com" }),
 	});
@@ -118,6 +119,12 @@ export function runsStack() {
 			Version: "2012-10-17",
 			Statement: [
 				{ Effect: "Allow", Action: ["s3:GetObject"], Resource: [$interpolate`${bucket.arn}/${archive.key}`] },
+				{
+					Effect: "Allow",
+					Action: ["s3:ListBucket"],
+					Resource: [bucket.arn],
+					Condition: { StringLike: { "s3:prefix": ["blobs/", "blobs/*"] } },
+				},
 				{
 					Effect: "Allow",
 					Action: ["s3:PutObject"],
