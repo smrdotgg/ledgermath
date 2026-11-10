@@ -132,21 +132,24 @@ trace of that sample in the stream; its exit status and stderr are the evidence.
   the Benchmark declares under `observed`.
 
 Exit code 0 means the binary completed. Any other exit, a signal, or a missing `finished`
-is still a Run: its `exit` holds the code, or the signal and `timeout_seconds` when the
-runner killed it (`schedule.json` sets the limit, 600 seconds for `memory_read`), and its
-`events` are whatever reached the pipe. Nothing in the Run judges it.
+is still a Run: its `exit` holds the code or the signal, with `timeout_seconds` when the
+runner's timeout killed it (`schedule.json` sets the limit, 600 seconds for
+`memory_read`), and only then: a binary that ended by itself an instant before keeps its
+own exit alone. Its `events` are whatever reached the pipe. Nothing in the Run judges
+it.
 `tests/samples/failures/` holds two such Runs.
 
-When the runner is told to stop (SIGTERM, SIGINT or SIGHUP) while it is launching or
-running a binary, it kills the binary and still writes that execution's Run. Its `exit`
-then also holds `runner_signal`, the signal the runner received, beside the code or signal
-the binary actually ended with, and its after-dump is taken as usual. The runner starts
-nothing more, and the boot summary records `stopped_by` and lists every execution that
-never started under `not_run`; those have no Run. The box sends this TERM itself 35
-minutes after it started, so the 45-minute shutdown is only a backstop.
-`tests/samples/interrupted/` holds such a boot. What is not covered: a SIGKILL of the
-runner, or the box losing power, loses the execution in flight, and the boot summary is
-not written.
+When the runner is told to stop (SIGTERM, SIGINT or SIGHUP), it kills the binary it is
+running and still writes that execution's Run, after-dump included. If the signal arrived
+before the runner collected the binary's exit, the Run's `exit` also holds
+`runner_signal`, beside the code or signal the binary actually ended with; a signal that
+arrives after that is not written into the Run. Either way the runner starts nothing more,
+and the boot summary records `stopped_by` and lists every execution that never started
+under `not_run`; those have no Run. The box sends this TERM itself 35 minutes after it
+started, so the 45-minute shutdown is only a backstop. `tests/samples/interrupted/` holds
+such a boot. Not covered: a SIGKILL of the runner (three minutes after that TERM, or the
+kernel's OOM killer) or the box losing power loses the execution in flight, and possibly
+the boot summary. The README says what reaches the bucket, and what may not.
 
 ### Why `verified` exists (the compiler-elision trap)
 
@@ -371,9 +374,10 @@ A migrated benchmark is done only when **all** of these hold:
   it. `runner/run.py` writes one Run per execution with the environment dumped around
   it, and on SIGTERM still records the execution in flight; `runner/box.sh` is the box's
   user-data (45-minute shutdown timer, image packages, source archive, a 35-minute budget
-  for `run.py`, upload of Runs only after all their blobs, shutdown). The `-runs` SST stage
-  (`infra/runs/`) pins `ami-03499a87bbb39a09a`, versions its bucket, and launches a
-  `c6i.8xlarge` in `us-east-2c` at 22:10 UTC, never retried, one box per scheduled slot.
+  for `run.py`, upload of only the blobs the bucket lacks and of Runs only after all their
+  blobs, shutdown). The `-runs` SST stage (`infra/runs/`) pins `ami-03499a87bbb39a09a`,
+  versions its bucket, and launches a `c6i.8xlarge` in `us-east-2c` at 22:10 UTC, never
+  retried, one box per scheduled slot, and not at all when more than ten minutes late.
   `scripts/box-in-container/run.sh` boots `box.sh` in `amazonlinux:2023.12.20260710.0`,
   the image's release (Python 3.9.25, gcc 11.5.0, glibc-static 2.34): the whole
   schedule ran, eight Runs, every hash resolving, and so did its failure scenarios

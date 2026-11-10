@@ -24,7 +24,7 @@ until step 4 of the plan replaces it.
 | `scripts/check-runs.ts` | Checks a directory laid out like the bucket: schemas, every hash, events against stdout, runner manifests |
 | `scripts/box-in-container/` | Boots `runner/box.sh` in Amazon Linux 2023 with S3 and shutdown stubbed, in several scenarios |
 | `infra/runs/` | The `-runs` SST stage: stack, launch Lambda, reaper, user-data |
-| `tests/` | `bun test`: the schemas against sample Runs, the Run checker, and the launch and reap logic |
+| `tests/` | `bun test`: the schemas against sample Runs, the Run checker, the runner's timeout and stop races, and the launch and reap logic |
 
 ## A benchmark, locally
 
@@ -64,7 +64,8 @@ Each scenario boots the box and checks what it should have left
 (`scripts/box-in-container/expect.ts`): `ok` (the whole schedule, about five minutes),
 `terminated` (run.py told to stop mid-execution), `shutdown` (every process told to stop,
 as a shutdown does), `budget` (the time budget runs out), `blobs-rejected` (the bucket
-refuses every blob) and `blobs-flaky` (the first upload of blobs drops halfway). The
+refuses every blob), `blobs-flaky` (the first upload of blobs drops halfway) and
+`blobs-present` (the bucket already holds a blob the boot makes). The
 Runs describe this machine, seen from a container.
 
 ## The daily box: a `-runs` stage
@@ -74,9 +75,12 @@ deploys July's stack, below, unchanged.
 
 Once a day at **22:10 UTC**, an hour before July's run, a Lambda launches one
 `c6i.8xlarge` from `ami-03499a87bbb39a09a` (Amazon Linux 2023.12.20260710.0, the image
-July has used since 2026-07-18) in `us-east-2c`. The Lambda is never retried, and a
-scheduled launch's EC2 client token comes from the stage and the scheduled time, so one
-slot can start at most one box. Its user-data is `runner/box.sh`, which:
+July has used since 2026-07-18) in `us-east-2c`. The Lambda is never retried, Lambda
+drops the invocation if it waited in Lambda's queue for more than a minute, and the
+handler refuses a scheduled launch more than ten minutes after its scheduled time, so a
+late box cannot overlap July's. A scheduled launch's EC2 client token comes from the
+stage and the scheduled time, so one slot can start at most one box. Its user-data is
+`runner/box.sh`, which:
 
 1. sets a shutdown timer that ends the box 45 minutes after it started, whatever happens;
 2. installs `gcc`, `make`, `glibc-static`, `tar`, `gzip` and `util-linux` from the image's
@@ -86,14 +90,14 @@ slot can start at most one box. Its user-data is `runner/box.sh`, which:
 4. builds `runner/cpuid.c` and runs `runner/run.py` until 35 minutes after the box
    started. `run.py` builds every benchmark in `schedule.json` both static and dynamic and
    writes one Run per execution. At 35 minutes it is sent TERM: it kills the binary it is
-   running, still writes that execution's Run (`exit.runner_signal`), starts nothing more,
-   and writes the boot summary, which lists what was not run. Three minutes later it is
-   killed outright if it has not exited;
-5. uploads blobs, then Runs and the boot summary, then its log, and shuts down, which
-   terminates the instance.
+   running, still writes that execution's Run, starts nothing more, writes the boot
+   summary, which lists what was not run, and exits. If it has not exited three minutes
+   later, it is killed outright;
+5. uploads the blobs the bucket does not hold yet, then the Runs and the boot summary, then
+   its log, and shuts down, which terminates the instance.
 
-The stage's bucket is versioned, so no object is ever lost to a second write, and ends
-up holding:
+The stage's bucket is versioned, so a second write to a key keeps the first. It ends up
+holding:
 
 ```
 runs/<yyyy>/<mm>/<dd>/<id>.json      one Run (schemas/run.schema.json)
@@ -108,20 +112,47 @@ minutes. It touches nothing else; July's reaper cannot touch these boxes either.
 
 ### What a boot guarantees, and what it does not
 
-- Every execution that started has a Run, whatever the binary did: exited, crashed, was
-  killed by the runner's timeout, or was killed because the runner was told to stop by
-  SIGTERM, SIGINT or SIGHUP (the 35-minute budget, or a shutdown). An execution that never
-  started has no Run; the boot summary lists it under `not_run`.
-- A Run or boot summary is uploaded only after all of `blobs/` is in the bucket, so every
-  hash in an uploaded Run resolves. Each upload is tried three times. If the blobs still
-  fail, no Run and no boot summary is uploaded; the log is, and says so.
-- Any upload failure, a failed build, or a stopped schedule makes the boot exit non-zero
-  and its log say why.
-- Not guaranteed: if `run.py` is killed outright (SIGKILL: the three-minute limit after
-  TERM, or the kernel's OOM killer) or the box loses power or fails, the execution in
-  flight has no Run and the boot summary is not written. Everything is uploaded at the end
-  of the boot, so a box that dies before then, or whose bucket is unreachable, leaves no
-  Run at all, and possibly no log.
+What `run.py` writes on the box:
+
+- One Run for every execution it started, whether the binary exited, crashed, or was killed
+  by the runner's timeout. `exit.timeout_seconds` is there only when the runner's own kill
+  ended the binary.
+- When `run.py` is sent SIGTERM, SIGINT or SIGHUP, the execution in flight still gets its
+  Run: the runner kills the binary and takes the after-dump as usual.
+  `exit.runner_signal` records the signal if it arrived before the runner collected the
+  binary's exit; a signal that arrives later stops the boot but is not written into that
+  Run. Either way `run.py` starts nothing more and writes the boot summary, with
+  `stopped_by`, and every execution it did not start listed under `not_run`.
+
+What reaches the bucket:
+
+- A Run or boot summary is uploaded only once every file of `blobs/` has been uploaded, or
+  found in the bucket under the same key at the same size. A blob's key is the hash of its
+  bytes, and a blob found there is not read back. `run.py` writes every blob before the
+  Run that names it, so every hash in an uploaded Run names a blob in the bucket;
+  `scripts/check-runs.ts` checks that afterwards.
+- Each upload is tried three times. If the blobs still fail, no Run and no boot summary is
+  uploaded. If the Runs fail partway, some Runs may be in the bucket without the boot
+  summary. The log goes last, also tried three times.
+- A failed upload, a failed build or a stopped schedule makes `box.sh` exit non-zero. Its
+  log says why, if the log reached the bucket; the instance's console output shows it
+  while the instance exists.
+
+Not guaranteed:
+
+- If `run.py` is killed outright (SIGKILL: three minutes after the budget's TERM, or the
+  kernel's OOM killer), or the box loses power, fails, or is terminated by the reaper, the
+  execution in flight has no Run, and the boot summary may be missing.
+- Nothing leaves the box until the end of the boot. A box that dies before then, or cannot
+  reach the bucket, leaves no Run, and possibly not even its log.
+- If the 45-minute shutdown ends a boot instead of the 35-minute budget, the upload goes on
+  only as long as systemd waits for it.
+- A Run is written only if its after-dump and blob writes succeed. If they fail, a full disk
+  for example, `run.py` stops with an error, which the boot summary records as `error` if
+  that write succeeds.
+- There is no boot at all when the launch is refused (late, or a duplicate of its slot),
+  waits in Lambda's queue for more than a minute, or fails. The launch function's log says
+  which.
 
 ### Deploy
 
