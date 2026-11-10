@@ -6,10 +6,11 @@ task, **read this whole file first**, then read the specific PRD you were assign
 
 ---
 
-> **Note (2026-10-24).** Sections 3 to 7 describe the July 2026 proof of concept in
-> `benchmarks/c/`, `infra/`, and `sst.config.ts`. The resolution of Provider abstraction
-> and declarative run spec (#22) deletes that code rather than migrating it, so those
-> sections stay for history only. Section 2 is current.
+> **Note (2026-11-10).** Sections 3 to 7 describe the July 2026 proof of concept in
+> `benchmarks/c/`, `infra/lambda/`, `infra/ec2/` and the stage `smr` of `sst.config.ts`.
+> It keeps running beside the new runner until step 4 of the build plan (#36), which
+> reverses the decision of Provider abstraction and declarative run spec (#22) to delete
+> it. Section 2 is current: `memory_read` and the step-2 runner implement it.
 
 ---
 
@@ -50,8 +51,22 @@ what it observed.
 Decided in Provider abstraction and declarative run spec (#22) on 2026-10-24, replacing
 the JSON array of result records the proof of concept printed. ADR-0022 records why. The
 contract is language-agnostic on purpose: a Go or Rust benchmark is a first-class citizen
-the moment it reads the same variables and prints the same lines. The exact shape a
-non-C author reads is the JSON Schema export at `benchmarks/<name>/events.schema.json`.
+the moment it reads the same variables and prints the same lines. The exact shape of each
+line is `schemas/events.schema.json`; `scripts/check-events.py` checks what a schema
+cannot, the order of the stream.
+
+### Where it lives
+
+| Path | What it is |
+|------|------------|
+| `benchmarks/harness/c/` | The C harness (`lm.h`, `lm.c`), which prints the stream. A benchmark in another language prints the same lines without it. |
+| `benchmarks/<name>/` | One benchmark: its source, and a `Makefile` offering `make BUILD=static` or `BUILD=dynamic` (one file at `build/<build>/<name>`), `make -s compiler` and `make -s resolved`. Only `memory_read` is on the stream so far; the other twelve are July's, in `benchmarks/c/`. |
+| `schemas/events.schema.json` | One line of the stream. |
+| `scripts/check-events.py` | The order of a stream: `./build/static/memory_read --quick \| python3 scripts/check-events.py --quick`. Needs only Python 3. |
+| `schedule.json` | What a box runs: benchmarks, builds, samples, timeout, parameter sets. Not part of the runner. |
+| `runner/` | The box side. `box.sh` is the user-data; `run.py` builds, launches each binary, dumps the environment around it and writes one Run per execution; `cpuid.c` is the raw cpuid dump. |
+| `schemas/run.schema.json` | The Run, which holds the stream as `events`. |
+| `scripts/check-runs.ts` | Checks Runs laid out as in the bucket: schemas, file names, every hash, events against stdout, stream order, and each runner manifest against the source archive when that is present. |
 
 ### What the binary receives
 
@@ -61,8 +76,13 @@ Exactly these environment variables and nothing else:
   strings: integers in decimal, booleans as `true` or `false`, strings verbatim.
 - `LM_<ROLE>_<OUTPUT>` for every output of every role's Provisioner, such as
   `LM_BOX_DISK_DEVICE=/dev/nvme1n1`, `LM_BOX_FILE_PATH=/mnt/lm/fixture`, or
-  `LM_SERVICE_URL_REGIONAL=https://…`.
+  `LM_SERVICE_URL_REGIONAL=https://…`. None exist yet: there is no Provisioner in step 2,
+  and `memory_read` needs none.
 - `LM_SAMPLES`, the number of counted samples to take, a Benchmark constant (default 10).
+
+`runner/run.py` gives the binary exactly these variables and no others (no `PATH`, no
+`HOME`), an empty working directory, stdin from `/dev/null` and files for stdout and
+stderr, and launches it as an ordinary process with nothing wrapped around it.
 
 A `memory_read` Run of the Variant "1 thread, AVX2, 4 GiB" sees
 `LM_PARAM_SIZE_BYTES=4294967296`, `LM_PARAM_THREADS=1`, `LM_PARAM_PATH=avx2`, and
@@ -77,15 +97,15 @@ on stdout. Every object has `event` and `t`, where `t` is whole nanoseconds from
 
 | Event | Fields besides `t` | Meaning |
 |-------|--------------------|---------|
-| `started` | `schema` (`ledgermath.events/1`), `wall_utc`, `clock`, `clock_read_ns` | Always first. `clock_read_ns` is the measured cost of one clock read on this box, so every interval carries an error bound. |
-| `observed` | `values` | The observed counterparts of the declared parameters, as the Benchmark's `benchmark.ts` names them: bytes actually copied per repetition, threads actually joined, the code path actually dispatched. Never a value read back from the environment. May be emitted more than once, anywhere between `started` and `finished`, each key exactly once; a Service Benchmark emits what it learned from responses after its last sample. |
+| `started` | `schema` (`ledgermath.events/1`), `wall_utc`, `clock`, `clock_read_ns`, `quick` | Always first. `clock_read_ns` is the measured cost of one clock read on this box, so every interval carries an error bound. `quick` is `true` under `--quick`, whose stream is never recorded; the schema lets it be absent, and the C harness always prints it. |
+| `observed` | `values` | The observed counterparts of the declared parameters, as the benchmark documents them (`memory_read`: `bytes_per_repetition`, `threads_used`, `path_taken`): bytes actually copied per repetition, threads actually joined, the code path actually dispatched. Never a value read back from the environment. May be emitted more than once, anywhere between `started` and `finished`, each key exactly once; a Service Benchmark emits what it learned from responses after its last sample. |
 | `sample_started` | `sample`, `warmup`, `repetitions` | Opens one sample. Warmup samples are emitted and tagged, never dropped. |
 | `sample_ended` | `sample` | Closes it. The sample's time is the difference of the two `t` values; dividing by `repetitions` is a Method's job, not the binary's. |
 | `verified` | `checksum` | The elision guard, as a hex string (`0x` and sixteen lowercase digits). |
 | `finished` | | Always last. Its absence is evidence of a crash. |
 
 A Benchmark with phases of its own, such as `http_get` with `connected` and `first_byte`,
-declares those event names and fields in its `benchmark.ts` and emits them in the same
+documents those event names and fields beside its source and emits them in the same
 stream, anywhere between `started` and `finished`. They may not reuse the six universal
 names.
 
@@ -97,7 +117,9 @@ ADRs 0026 to 0028 record it.
 
 No clock is read inside a measured interval: two reads per sample, at its edges. The
 harness makes intervals long by putting many repetitions between the two edges, and
-calibrates the repetition count so one sample lasts about a second.
+calibrates the repetition count so one sample lasts about a second. Both of a sample's
+events are written after the sample ends, so a binary that dies mid-sample leaves no
+trace of that sample in the stream; its exit status and stderr are the evidence.
 
 ### What is gone, and why
 
@@ -109,8 +131,22 @@ calibrates the repetition count so one sample lasts about a second.
 - `bytes_per_op` and `threads`: declared values. Their observed counterparts are whatever
   the Benchmark declares under `observed`.
 
-Exit code 0 means the binary completed. Any other exit, or a missing `finished`, is a Run
-recorded with a failure status and whatever events reached the pipe before the end.
+Exit code 0 means the binary completed. Any other exit, a signal, or a missing `finished`
+is still a Run: its `exit` holds the code, or the signal and `timeout_seconds` when the
+runner killed it (`schedule.json` sets the limit, 600 seconds for `memory_read`), and its
+`events` are whatever reached the pipe. Nothing in the Run judges it.
+`tests/samples/failures/` holds two such Runs.
+
+When the runner is told to stop (SIGTERM, SIGINT or SIGHUP) while it is launching or
+running a binary, it kills the binary and still writes that execution's Run. Its `exit`
+then also holds `runner_signal`, the signal the runner received, beside the code or signal
+the binary actually ended with, and its after-dump is taken as usual. The runner starts
+nothing more, and the boot summary records `stopped_by` and lists every execution that
+never started under `not_run`; those have no Run. The box sends this TERM itself 35
+minutes after it started, so the 45-minute shutdown is only a backstop.
+`tests/samples/interrupted/` holds such a boot. What is not covered: a SIGKILL of the
+runner, or the box losing power, loses the execution in flight, and the boot summary is
+not written.
 
 ### Why `verified` exists (the compiler-elision trap)
 
@@ -330,4 +366,18 @@ A migrated benchmark is done only when **all** of these hold:
   `make -C benchmarks/c`, `build/disk_read_io_uring --quick`, and `python3 -m json.tool`;
   quick run emitted 1.303 ms per 2 MiB batch (~1.61 GB/s) on this dev box — ~20× PRD 09's
   QD1 sequential throughput on the same VPS.
+- **2026-11-10** — Step 2 of the build plan (#36, brief #37), not yet deployed. The C
+  harness `benchmarks/harness/c/` prints the event stream and `memory_read` moved to
+  it. `runner/run.py` writes one Run per execution with the environment dumped around
+  it, and on SIGTERM still records the execution in flight; `runner/box.sh` is the box's
+  user-data (45-minute shutdown timer, image packages, source archive, a 35-minute budget
+  for `run.py`, upload of Runs only after all their blobs, shutdown). The `-runs` SST stage
+  (`infra/runs/`) pins `ami-03499a87bbb39a09a`, versions its bucket, and launches a
+  `c6i.8xlarge` in `us-east-2c` at 22:10 UTC, never retried, one box per scheduled slot.
+  `scripts/box-in-container/run.sh` boots `box.sh` in `amazonlinux:2023.12.20260710.0`,
+  the image's release (Python 3.9.25, gcc 11.5.0, glibc-static 2.34): the whole
+  schedule ran, eight Runs, every hash resolving, and so did its failure scenarios
+  (stopped mid-execution, budget run out, blobs refused or dropped). Sample Runs and the
+  schema test are in `tests/`; `.github/workflows/check.yml` runs the `FROM scratch` check
+  and the tests.
 - _(agents: append your entry here, one per merged benchmark)_
