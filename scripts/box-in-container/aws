@@ -8,6 +8,12 @@ the rest, so a box.sh that reads or writes elsewhere fails here too:
 
     read   source/<anything>
     write  runs/, blobs/, boots/, logs/
+
+Two variables make it fail on purpose:
+
+    FAKE_S3_REJECT=<prefix>     refuse every write under the prefix
+    FAKE_S3_FAIL_ONCE=<prefix>  fail the first command that writes under the
+                                prefix, halfway through its files
 """
 
 import fnmatch
@@ -18,6 +24,9 @@ import sys
 ROOT = "/fake-s3"
 READ = ("source/",)
 WRITE = ("runs/", "blobs/", "boots/", "logs/")
+REJECT = os.environ.get("FAKE_S3_REJECT", "")
+FAIL_ONCE = os.environ.get("FAKE_S3_FAIL_ONCE", "")
+FAILED_ONCE = "/fake-calls/failed-once"
 
 
 def fail(message):
@@ -35,6 +44,8 @@ def split(url):
 def put(path, bucket, key):
     if not key.startswith(WRITE):
         fail("AccessDenied: PutObject on %s is outside %s" % (key, ", ".join(WRITE)))
+    if REJECT and key.startswith(REJECT):
+        fail("AccessDenied (FAKE_S3_REJECT): PutObject on " + key)
     target = os.path.join(ROOT, bucket, key)
     os.makedirs(os.path.dirname(target), exist_ok=True)
     shutil.copyfile(path, target)
@@ -79,12 +90,19 @@ def main(args):
         if not recursive:
             put(source, bucket, key)
             return
-        for parent, _, files in os.walk(source):
-            for name in files:
+        files = []
+        for parent, _, names in os.walk(source):
+            for name in names:
                 relative = os.path.relpath(os.path.join(parent, name), source)
-                if any(fnmatch.fnmatch(relative, pattern) for pattern in excludes):
-                    continue
-                put(os.path.join(parent, name), bucket, key.rstrip("/") + "/" + relative)
+                if not any(fnmatch.fnmatch(relative, pattern) for pattern in excludes):
+                    files.append(relative)
+        prefix = key.rstrip("/") + "/"
+        fail_halfway = FAIL_ONCE and prefix.startswith(FAIL_ONCE) and not os.path.exists(FAILED_ONCE)
+        for number, relative in enumerate(sorted(files)):
+            if fail_halfway and number == len(files) // 2:
+                open(FAILED_ONCE, "w").close()
+                fail("InternalError (FAKE_S3_FAIL_ONCE): the connection dropped after %d of %d files" % (number, len(files)))
+            put(os.path.join(source, relative), bucket, prefix + relative)
     else:
         fail("neither side is s3://")
 

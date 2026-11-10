@@ -18,6 +18,10 @@
 #                does: the same
 #   budget       a 120-second budget runs out mid-schedule: the same, by way of
 #                timeout(1)
+#   blobs-rejected  the bucket refuses every blob: no Run and no boot summary is
+#                published, the log is, and the boot fails
+#   blobs-flaky  the first upload of blobs/ fails halfway: the retry completes it
+#                and every Run checks out
 #
 # What this shows: box.sh, run.py, the Makefiles and cpuid.c work on the image's
 # own packages (Python 3.9, gcc 11, glibc-static), with the user-data the launch
@@ -55,6 +59,8 @@ ENVIRONMENT=()
 case "$SCENARIO" in
   ok | terminated | shutdown) ;;
   budget) ENVIRONMENT+=(-e LEDGERMATH_RUN_SECONDS=120) ;;
+  blobs-rejected) ENVIRONMENT+=(-e FAKE_S3_REJECT=blobs/) ;;
+  blobs-flaky) ENVIRONMENT+=(-e FAKE_S3_FAIL_ONCE=blobs/) ;;
   *) echo "unknown scenario $SCENARIO" >&2; exit 2 ;;
 esac
 

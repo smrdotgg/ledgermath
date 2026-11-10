@@ -55,25 +55,61 @@ DAY="$(date -u +%Y/%m/%d)"
 
 say() { echo "ledgermath-box: $*"; }
 
-upload() {
+# What failed to upload; empty while everything has.
+UPLOAD_FAILED=""
+
+# Three tries, 10 and 20 seconds apart. The aws CLI already retries each
+# request; this covers a whole command failing.
+retry() {
+  local attempt
+  for attempt in 1 2 3; do
+    "$@" && return 0
+    say "attempt $attempt of 3 failed: $*"
+    if [ "$attempt" -lt 3 ]; then sleep $((attempt * 10)); fi
+  done
+  return 1
+}
+
+put_part() {
+  aws s3 cp --recursive --only-show-errors --exclude '*.tmp' "$OUT/$1" "s3://$LEDGERMATH_BUCKET/$1"
+}
+
+# A Run, and a boot summary, names blobs. run.py writes every blob before the
+# Run that names it, so once all of blobs/ is in the bucket, every hash in
+# runs/ and boots/ resolves there. Until then neither is published.
+upload_results() {
   if [ -z "${LEDGERMATH_BUCKET:-}" ] || ! command -v aws >/dev/null 2>&1; then
-    say "cannot upload: no bucket or no aws CLI"
+    UPLOAD_FAILED="everything (no bucket or no aws CLI)"
     return
   fi
-  local bucket="s3://$LEDGERMATH_BUCKET"
-  # Blobs first, so nothing in the bucket cites a blob that is not there yet.
+  if [ -d "$OUT/blobs" ]; then
+    say "uploading blobs/"
+    if ! retry put_part blobs; then
+      UPLOAD_FAILED="blobs/"
+      say "UPLOAD FAILED: blobs/. No Run and no boot summary is published: they would name blobs the bucket may not hold."
+      return
+    fi
+  fi
   local part
-  for part in blobs runs boots; do
+  for part in runs boots; do
     if [ -d "$OUT/$part" ]; then
       say "uploading $part/"
-      aws s3 cp --recursive --only-show-errors --exclude '*.tmp' "$OUT/$part" "$bucket/$part" \
-        || say "UPLOAD FAILED: $part/"
+      if ! retry put_part "$part"; then
+        UPLOAD_FAILED="$part/"
+        say "UPLOAD FAILED: $part/"
+        return
+      fi
     fi
   done
-  say "uploading this log to $bucket/logs/$DAY/$BOOT.log"
+}
+
+upload_log() {
+  if [ -z "${LEDGERMATH_BUCKET:-}" ] || ! command -v aws >/dev/null 2>&1; then
+    return 1
+  fi
+  say "uploading this log to s3://$LEDGERMATH_BUCKET/logs/$DAY/$BOOT.log"
   sleep 1 # let tee write what came before
-  aws s3 cp --only-show-errors --content-type text/plain "$LOG" "$bucket/logs/$DAY/$BOOT.log" \
-    || say "UPLOAD FAILED: the log"
+  retry aws s3 cp --only-show-errors --content-type text/plain "$LOG" "s3://$LEDGERMATH_BUCKET/logs/$DAY/$BOOT.log"
 }
 
 on_exit() {
@@ -81,8 +117,17 @@ on_exit() {
   trap - EXIT
   trap '' TERM INT # nothing cuts the upload short
   set +e
+  say "the boot's work ended with status $code"
+  upload_results
+  if [ -n "$UPLOAD_FAILED" ]; then
+    say "BOOT FAILED: the upload of $UPLOAD_FAILED failed"
+    [ "$code" -ne 0 ] || code=1
+  fi
   say "exiting with status $code"
-  upload
+  if ! upload_log; then
+    say "UPLOAD FAILED: the log"
+    [ "$code" -ne 0 ] || code=1
+  fi
   say "shutting down"
   sync
   shutdown -h now || poweroff || true

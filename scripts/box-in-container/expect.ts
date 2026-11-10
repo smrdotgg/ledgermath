@@ -102,6 +102,22 @@ switch (scenario) {
 		}
 		break;
 	}
+	case "blobs-rejected": {
+		expect(status !== 0, "exit status 0, expected a failure");
+		expect(runs.length === 0, `${runs.length} Runs were published although their blobs were refused`);
+		expect(boots.length === 0, `${boots.length} boot summaries were published although their blobs were refused`);
+		expect(log.includes("UPLOAD FAILED: blobs/"), "the log does not say the blobs failed to upload");
+		expect(log.includes("attempt 3 of 3 failed"), "the log does not show three attempts");
+		break;
+	}
+	case "blobs-flaky": {
+		expect(status === 0, `exit status ${status}, expected 0`);
+		expect(log.includes("attempt 1 of 3 failed"), "the log does not show the failed first attempt");
+		everyRunChecksOut();
+		expect(runs.length === planned, `${runs.length} Runs, expected ${planned}`);
+		expect(boots.length === 1, `${boots.length} boot summaries, expected 1`);
+		break;
+	}
 	default:
 		problems.push(`unknown scenario ${scenario}`);
 }
