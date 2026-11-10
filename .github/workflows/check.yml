@@ -1,0 +1,56 @@
+# Checks the build and the record, off the box. No measured Run goes through
+# Docker: the scratch container only shows that the binary runs alone.
+name: check
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  scratch:
+    name: memory_read runs alone in a FROM scratch container
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build memory_read static and dynamic
+        run: |
+          make -C benchmarks/memory_read BUILD=static
+          make -C benchmarks/memory_read BUILD=dynamic
+          file benchmarks/memory_read/build/*/memory_read
+
+      - name: The static build runs as the only file in a scratch container, and its stream is valid
+        run: |
+          docker build -q -t lm-memory-read-static -f - benchmarks/memory_read/build/static <<'EOF'
+          FROM scratch
+          COPY memory_read /bench
+          ENTRYPOINT ["/bench"]
+          EOF
+          docker run --rm lm-memory-read-static --quick > stream.ndjson
+          python3 scripts/check-events.py --quick stream.ndjson
+
+      - name: The same container refuses the dynamic build, so the check has teeth
+        run: |
+          docker build -q -t lm-memory-read-dynamic -f - benchmarks/memory_read/build/dynamic <<'EOF'
+          FROM scratch
+          COPY memory_read /bench
+          ENTRYPOINT ["/bench"]
+          EOF
+          if docker run --rm lm-memory-read-dynamic --quick; then
+            echo "the dynamic build ran without its shared libraries"
+            exit 1
+          fi
+
+  test:
+    name: bun test
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+      - run: bun install --frozen-lockfile
+      - run: bun test

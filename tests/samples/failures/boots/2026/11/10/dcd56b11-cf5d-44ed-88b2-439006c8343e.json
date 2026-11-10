@@ -1,0 +1,49 @@
+{
+  "schema": "ledgermath.boot/1",
+  "boot": "dcd56b11-cf5d-44ed-88b2-439006c8343e",
+  "provider": {
+    "name": "aws",
+    "instance_type": "m6id.xlarge",
+    "region": "us-east-2",
+    "availability_zone": "us-east-2a",
+    "availability_zone_id": "use2-az1",
+    "image_id": "ami-0123456789abcdef0",
+    "instance_id": "i-0123456789abcdef0"
+  },
+  "source_commit": "fc12694d29e9d251dd26a781077369448c5d89c7",
+  "source": "sha256:47e2fbfd596df3359e093ba5ee3fff2b3fd6304b028b3468c8391b81a0626e5c",
+  "runner": "sha256:a9a18272499d5f25543a50de4261b64a357df6a76dd9a2677042a8979bcc8464",
+  "started_at": "2026-11-10T22:52:01.973320722Z",
+  "runs": [
+    {
+      "id": "01a1c7a9-47f0-7e5e-acaa-7df1872ac6c1",
+      "benchmark": "memory_read",
+      "build": "static",
+      "params": {
+        "size_bytes": 1073741824,
+        "threads": 1,
+        "path": "scalar"
+      },
+      "exit": {
+        "signal": 9,
+        "timeout_seconds": 1
+      }
+    },
+    {
+      "id": "01a1c7a9-4e16-76e2-9439-73b434157666",
+      "benchmark": "memory_read",
+      "build": "static",
+      "params": {
+        "size_bytes": 1073741824,
+        "threads": 1,
+        "path": "sse"
+      },
+      "exit": {
+        "code": 2
+      }
+    }
+  ],
+  "build_failures": [],
+  "not_run": [],
+  "ended_at": "2026-11-10T22:52:04.083761030Z"
+}

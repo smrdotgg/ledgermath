@@ -43,5 +43,8 @@ tmp/
 
 # benchmark build artifacts
 benchmarks/c/build/
+benchmarks/*/build/
+runner/build/
+__pycache__/
 
 .claude

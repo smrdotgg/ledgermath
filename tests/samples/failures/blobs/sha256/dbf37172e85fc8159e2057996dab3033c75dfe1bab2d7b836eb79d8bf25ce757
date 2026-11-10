@@ -1,0 +1,16 @@
+{
+  "schema": "ledgermath.dump/1",
+  "taken_at": "2026-11-10T22:52:03.488758744Z",
+  "sections": {
+    "cpuid": "sha256:15961457a830441b1fb77fea4341262497ad5679b146efbfe70e6259e7ac1d40",
+    "cpuinfo": "sha256:60cb0f82f5126d2e2b0b0717c775af9bb485b5e7ddcd8f14b514c7c578bc5faf",
+    "lscpu": "sha256:aa763e3f902bbde59b74cd26856cf1d9f7f951990989c0108f5274b1a2ba6550",
+    "sys_cpu": "sha256:4fc9c1461575db852913b5f68aa7c117ccd5787c6defdc773d9fd9a7cc5f99fa",
+    "kernel": "sha256:308e3326540a2d3eda167ab8fee8ad1005bf279e619b9b763eff5dcef3db4902",
+    "memory": "sha256:9611b91b7a4074c279ce7c84da651eda4123518e5e60358496144ed39d44a777",
+    "devices": "sha256:4e166bef9b8a7fc966598a872275500de92ef33c25cd614ea79d305a6a710ea4",
+    "process": "sha256:a3bc926a55d87c6504c23a1336e807ea602b3a4fce3015b63d0648cb868b02e2",
+    "packages": "sha256:49919a08c2ceb10060cbd4f426a21c868567fc0df176e5e110a8ea137ce420ed",
+    "provider": "sha256:d154fad966a788e378ec0d53a760235205384c85d6e5f7f8c5690c51cef2d1ff"
+  }
+}

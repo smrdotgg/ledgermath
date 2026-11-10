@@ -1,0 +1,108 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:ledgermath:events:1",
+  "title": "Event",
+  "description": "One line of a benchmark's stdout. A benchmark prints a stream of these, one JSON object per line, and nothing else on stdout. The six universal events below have exactly the fields listed. A benchmark may also emit events of its own, under any other name, with any fields beside `event` and `t`. The order of the stream is checked by scripts/check-events.py. The contract in prose is docs/dev-log.md section 2.",
+  "type": "object",
+  "required": ["event", "t"],
+  "properties": {
+    "event": { "type": "string", "minLength": 1 },
+    "t": {
+      "description": "Whole nanoseconds on the clock that `started` names.",
+      "type": "integer",
+      "minimum": 0
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "event": { "const": "started" } } },
+      "then": {
+        "description": "Always first.",
+        "required": ["schema", "wall_utc", "clock", "clock_read_ns"],
+        "properties": {
+          "event": true,
+          "t": true,
+          "schema": { "const": "ledgermath.events/1" },
+          "wall_utc": {
+            "description": "The wall clock read straight after `t`, to the nanosecond.",
+            "type": "string",
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{9}Z$"
+          },
+          "clock": { "description": "The clock every `t` is read from.", "type": "string", "minLength": 1 },
+          "clock_read_ns": {
+            "description": "The median cost of one clock read, measured at startup.",
+            "type": "number",
+            "minimum": 0
+          },
+          "quick": {
+            "description": "True for a developer's --quick stream, which is never recorded.",
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "if": { "properties": { "event": { "const": "observed" } } },
+      "then": {
+        "description": "What the program observed about its own work. May appear more than once; each key appears once across all of them.",
+        "required": ["values"],
+        "properties": {
+          "event": true,
+          "t": true,
+          "values": { "type": "object" }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "if": { "properties": { "event": { "const": "sample_started" } } },
+      "then": {
+        "description": "The start edge of one sample. Samples are numbered from 0 and never overlap.",
+        "required": ["sample", "warmup", "repetitions"],
+        "properties": {
+          "event": true,
+          "t": true,
+          "sample": { "type": "integer", "minimum": 0 },
+          "warmup": { "type": "boolean" },
+          "repetitions": { "type": "integer", "minimum": 1 }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "if": { "properties": { "event": { "const": "sample_ended" } } },
+      "then": {
+        "description": "The end edge of the sample with the same number.",
+        "required": ["sample"],
+        "properties": {
+          "event": true,
+          "t": true,
+          "sample": { "type": "integer", "minimum": 0 }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "if": { "properties": { "event": { "const": "verified" } } },
+      "then": {
+        "description": "A value derived from the data the measured work processed.",
+        "required": ["checksum"],
+        "properties": {
+          "event": true,
+          "t": true,
+          "checksum": { "type": "string", "pattern": "^0x[0-9a-f]{16}$" }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "if": { "properties": { "event": { "const": "finished" } } },
+      "then": {
+        "description": "Always last. Its absence is evidence of a crash.",
+        "properties": { "event": true, "t": true },
+        "additionalProperties": false
+      }
+    }
+  ]
+}

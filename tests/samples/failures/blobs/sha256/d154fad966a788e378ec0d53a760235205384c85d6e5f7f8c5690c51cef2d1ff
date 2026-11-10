@@ -1,0 +1,10 @@
+{
+ "http://169.254.169.254/latest/dynamic/instance-identity/document": "{\n  \"accountId\" : \"123456789012\",\n  \"architecture\" : \"x86_64\",\n  \"availabilityZone\" : \"us-east-2a\",\n  \"billingProducts\" : null,\n  \"devpayProductCodes\" : null,\n  \"marketplaceProductCodes\" : null,\n  \"imageId\" : \"ami-0123456789abcdef0\",\n  \"instanceId\" : \"i-0123456789abcdef0\",\n  \"instanceType\" : \"m6id.xlarge\",\n  \"kernelId\" : null,\n  \"pendingTime\" : \"2026-01-01T00:00:00Z\",\n  \"privateIp\" : \"192.0.2.10\",\n  \"ramdiskId\" : null,\n  \"region\" : \"us-east-2\",\n  \"version\" : \"2017-09-30\"\n}",
+ "http://169.254.169.254/latest/meta-data/ami-id": "ami-0123456789abcdef0",
+ "http://169.254.169.254/latest/meta-data/instance-id": "i-0123456789abcdef0",
+ "http://169.254.169.254/latest/meta-data/instance-life-cycle": "on-demand",
+ "http://169.254.169.254/latest/meta-data/instance-type": "m6id.xlarge",
+ "http://169.254.169.254/latest/meta-data/placement/availability-zone": "us-east-2a",
+ "http://169.254.169.254/latest/meta-data/placement/availability-zone-id": "use2-az1",
+ "http://169.254.169.254/latest/meta-data/placement/region": "us-east-2"
+}

@@ -1,6 +1,6 @@
 {
 	"$schema": "https://json.schemastore.org/package.json",
-	"name": "ledgermath/shared",
+	"name": "@ledgermath/shared",
 	"module": "index.ts",
 	"type": "module",
 	"private": true,

@@ -1,0 +1,16 @@
+{
+  "benchmarks": [
+    {
+      "name": "memory_read",
+      "builds": ["static", "dynamic"],
+      "samples": 10,
+      "timeout_seconds": 600,
+      "params": [
+        { "size_bytes": 1073741824, "threads": 1, "path": "scalar" },
+        { "size_bytes": 1073741824, "threads": 1, "path": "avx2" },
+        { "size_bytes": 1073741824, "threads": "all", "path": "scalar" },
+        { "size_bytes": 1073741824, "threads": "all", "path": "avx2" }
+      ]
+    }
+  ]
+}

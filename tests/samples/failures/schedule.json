@@ -1,0 +1,18 @@
+{
+  "benchmarks": [
+    {
+      "name": "memory_read",
+      "builds": ["static"],
+      "samples": 10,
+      "timeout_seconds": 1,
+      "params": [{ "size_bytes": 1073741824, "threads": 1, "path": "scalar" }]
+    },
+    {
+      "name": "memory_read",
+      "builds": ["static"],
+      "samples": 10,
+      "timeout_seconds": 600,
+      "params": [{ "size_bytes": 1073741824, "threads": 1, "path": "sse" }]
+    }
+  ]
+}

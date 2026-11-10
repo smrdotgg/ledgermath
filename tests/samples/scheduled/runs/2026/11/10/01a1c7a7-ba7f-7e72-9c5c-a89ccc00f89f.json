@@ -1,0 +1,275 @@
+{
+  "schema": "ledgermath.run/1",
+  "id": "01a1c7a7-ba7f-7e72-9c5c-a89ccc00f89f",
+  "boot": "dcd56b11-cf5d-44ed-88b2-439006c8343e",
+  "started_at": "2026-11-10T22:50:20.671082506Z",
+  "ended_at": "2026-11-10T22:50:36.265338240Z",
+  "benchmark": "memory_read",
+  "params": {
+    "size_bytes": 1073741824,
+    "threads": "all",
+    "path": "avx2"
+  },
+  "samples": 10,
+  "source_commit": "fc12694d29e9d251dd26a781077369448c5d89c7",
+  "source": "sha256:47e2fbfd596df3359e093ba5ee3fff2b3fd6304b028b3468c8391b81a0626e5c",
+  "binary": {
+    "blob": "sha256:184aff50cde3c2f6fda3dea2790357c276be4ff1949f4f0cb36f2583c0f5e5b5",
+    "build": "dynamic",
+    "compiler": "cc (GCC) 11.5.0 20240719 (Red Hat 11.5.0-5)",
+    "command": "mkdir -p build/dynamic\ncc -O3 -march=native -std=c11 -Wall -Wextra -D_GNU_SOURCE  -I../harness/c -o build/dynamic/memory_read memory_read.c ../harness/c/lm.c -pthread",
+    "resolved_flags": "sha256:5bca088f7256d311399c93b9f569b2340b770548beea3797ec4754adbcd12785"
+  },
+  "provider": {
+    "name": "aws",
+    "instance_type": "m6id.xlarge",
+    "region": "us-east-2",
+    "availability_zone": "us-east-2a",
+    "availability_zone_id": "use2-az1",
+    "image_id": "ami-0123456789abcdef0",
+    "instance_id": "i-0123456789abcdef0"
+  },
+  "environment": {
+    "before": "sha256:7a587647233cbf41d3d5174f717903a6004169d0c08541a7014c004679f15530",
+    "after": "sha256:db739c7fc82b832a84e59f70bccdc8088969679fd8924a6215f35f7545d7c3bc"
+  },
+  "runner": "sha256:a9a18272499d5f25543a50de4261b64a357df6a76dd9a2677042a8979bcc8464",
+  "exit": {
+    "code": 0
+  },
+  "events": [
+    {
+      "event": "started",
+      "t": 280345501683416,
+      "schema": "ledgermath.events/1",
+      "wall_utc": "2026-11-10T22:50:20.692718291Z",
+      "clock": "CLOCK_MONOTONIC_RAW",
+      "clock_read_ns": 20.215,
+      "quick": false
+    },
+    {
+      "event": "observed",
+      "t": 280345682421659,
+      "values": {
+        "bytes_per_repetition": 1073741824,
+        "threads_used": 4,
+        "path_taken": "avx2"
+      }
+    },
+    {
+      "event": "sample_started",
+      "t": 280345682442321,
+      "sample": 0,
+      "warmup": true,
+      "repetitions": 1
+    },
+    {
+      "event": "sample_ended",
+      "t": 280345723310406,
+      "sample": 0
+    },
+    {
+      "event": "sample_started",
+      "t": 280345723339117,
+      "sample": 1,
+      "warmup": true,
+      "repetitions": 1
+    },
+    {
+      "event": "sample_ended",
+      "t": 280345763447711,
+      "sample": 1
+    },
+    {
+      "event": "sample_started",
+      "t": 280345763474521,
+      "sample": 2,
+      "warmup": true,
+      "repetitions": 2
+    },
+    {
+      "event": "sample_ended",
+      "t": 280345844427284,
+      "sample": 2
+    },
+    {
+      "event": "sample_started",
+      "t": 280345844452417,
+      "sample": 3,
+      "warmup": true,
+      "repetitions": 4
+    },
+    {
+      "event": "sample_ended",
+      "t": 280346003945615,
+      "sample": 3
+    },
+    {
+      "event": "sample_started",
+      "t": 280346003969321,
+      "sample": 4,
+      "warmup": true,
+      "repetitions": 8
+    },
+    {
+      "event": "sample_ended",
+      "t": 280346321227283,
+      "sample": 4
+    },
+    {
+      "event": "sample_started",
+      "t": 280346321250902,
+      "sample": 5,
+      "warmup": true,
+      "repetitions": 16
+    },
+    {
+      "event": "sample_ended",
+      "t": 280346959261399,
+      "sample": 5
+    },
+    {
+      "event": "sample_started",
+      "t": 280346959402306,
+      "sample": 6,
+      "warmup": true,
+      "repetitions": 32
+    },
+    {
+      "event": "sample_ended",
+      "t": 280348232233789,
+      "sample": 6
+    },
+    {
+      "event": "sample_started",
+      "t": 280348232295333,
+      "sample": 7,
+      "warmup": false,
+      "repetitions": 32
+    },
+    {
+      "event": "sample_ended",
+      "t": 280349512563418,
+      "sample": 7
+    },
+    {
+      "event": "sample_started",
+      "t": 280349512592304,
+      "sample": 8,
+      "warmup": false,
+      "repetitions": 32
+    },
+    {
+      "event": "sample_ended",
+      "t": 280350786283328,
+      "sample": 8
+    },
+    {
+      "event": "sample_started",
+      "t": 280350786309250,
+      "sample": 9,
+      "warmup": false,
+      "repetitions": 32
+    },
+    {
+      "event": "sample_ended",
+      "t": 280352062969526,
+      "sample": 9
+    },
+    {
+      "event": "sample_started",
+      "t": 280352063022024,
+      "sample": 10,
+      "warmup": false,
+      "repetitions": 32
+    },
+    {
+      "event": "sample_ended",
+      "t": 280353347161132,
+      "sample": 10
+    },
+    {
+      "event": "sample_started",
+      "t": 280353347188754,
+      "sample": 11,
+      "warmup": false,
+      "repetitions": 32
+    },
+    {
+      "event": "sample_ended",
+      "t": 280354619890103,
+      "sample": 11
+    },
+    {
+      "event": "sample_started",
+      "t": 280354619918350,
+      "sample": 12,
+      "warmup": false,
+      "repetitions": 32
+    },
+    {
+      "event": "sample_ended",
+      "t": 280355899280664,
+      "sample": 12
+    },
+    {
+      "event": "sample_started",
+      "t": 280355899306175,
+      "sample": 13,
+      "warmup": false,
+      "repetitions": 32
+    },
+    {
+      "event": "sample_ended",
+      "t": 280357169064386,
+      "sample": 13
+    },
+    {
+      "event": "sample_started",
+      "t": 280357169106554,
+      "sample": 14,
+      "warmup": false,
+      "repetitions": 32
+    },
+    {
+      "event": "sample_ended",
+      "t": 280358447855257,
+      "sample": 14
+    },
+    {
+      "event": "sample_started",
+      "t": 280358447882300,
+      "sample": 15,
+      "warmup": false,
+      "repetitions": 32
+    },
+    {
+      "event": "sample_ended",
+      "t": 280359728641242,
+      "sample": 15
+    },
+    {
+      "event": "sample_started",
+      "t": 280359728668982,
+      "sample": 16,
+      "warmup": false,
+      "repetitions": 32
+    },
+    {
+      "event": "sample_ended",
+      "t": 280361000714985,
+      "sample": 16
+    },
+    {
+      "event": "verified",
+      "t": 280361000739746,
+      "checksum": "0x001ffffffc000000"
+    },
+    {
+      "event": "finished",
+      "t": 280361074325059
+    }
+  ],
+  "stdout": "sha256:2f5b6a0039cd21c0f19f96480f562017438de1e1e770e08058a24097b3e5e892",
+  "stderr": "sha256:ae51514129a535270b7734994b96703cf873cdd3f4aef6a6119871882baea640"
+}

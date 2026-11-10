@@ -1,0 +1,135 @@
+#!/usr/bin/python3 -I
+"""A stand-in for the aws CLI inside scripts/box-in-container/run.sh.
+
+It understands only the `aws s3 cp` and `aws s3 sync` calls runner/box.sh
+makes, and keeps the bucket as a directory: s3://<bucket>/<key> is
+/fake-s3/<bucket>/<key>. It allows what the box's instance role allows
+(infra/runs/stack.ts) and refuses the rest, so a box.sh that reads, lists or
+writes elsewhere fails here too:
+
+    read   source/<anything>
+    list   blobs/
+    write  runs/, blobs/, boots/, logs/
+
+`sync` uploads a file the bucket lacks, or holds at another size; without
+--size-only, also one whose local copy is newer, as the real CLI does. Every
+object written is appended to /fake-calls/puts.log.
+
+Two variables make it fail on purpose:
+
+    FAKE_S3_REJECT=<prefix>     refuse every write under the prefix
+    FAKE_S3_FAIL_ONCE=<prefix>  fail the first command that writes under the
+                                prefix, halfway through its files
+"""
+
+import fnmatch
+import os
+import shutil
+import sys
+
+ROOT = "/fake-s3"
+READ = ("source/",)
+WRITE = ("runs/", "blobs/", "boots/", "logs/")
+LIST = ("blobs/",)
+PUTS = "/fake-calls/puts.log"
+REJECT = os.environ.get("FAKE_S3_REJECT", "")
+FAIL_ONCE = os.environ.get("FAKE_S3_FAIL_ONCE", "")
+FAILED_ONCE = "/fake-calls/failed-once"
+
+
+def fail(message):
+    print("aws (stub): " + message, file=sys.stderr)
+    sys.exit(1)
+
+
+def split(url):
+    bucket, _, key = url[len("s3://"):].partition("/")
+    if not bucket or not key:
+        fail("not an s3://bucket/key URL: " + url)
+    return bucket, key
+
+
+def put(path, bucket, key):
+    if not key.startswith(WRITE):
+        fail("AccessDenied: PutObject on %s is outside %s" % (key, ", ".join(WRITE)))
+    if REJECT and key.startswith(REJECT):
+        fail("AccessDenied (FAKE_S3_REJECT): PutObject on " + key)
+    target = os.path.join(ROOT, bucket, key)
+    os.makedirs(os.path.dirname(target), exist_ok=True)
+    shutil.copyfile(path, target)
+    with open(PUTS, "a") as handle:
+        handle.write(key + "\n")
+
+
+def needs_upload(local, remote, size_only):
+    if not os.path.exists(remote) or os.path.getsize(local) != os.path.getsize(remote):
+        return True
+    return not size_only and os.path.getmtime(local) > os.path.getmtime(remote)
+
+
+def main(args):
+    if args[:2] not in (["s3", "cp"], ["s3", "sync"]):
+        fail("only `aws s3 cp` and `aws s3 sync` are stubbed, got: aws " + " ".join(args))
+    syncing = args[1] == "sync"
+    size_only = False
+    recursive = syncing
+    excludes = []
+    positional = []
+    rest = iter(args[2:])
+    for arg in rest:
+        if arg == "--recursive":
+            recursive = True
+        elif arg == "--only-show-errors":
+            pass
+        elif arg == "--size-only" and syncing:
+            size_only = True
+        elif arg == "--exclude":
+            excludes.append(next(rest))
+        elif arg == "--content-type":
+            next(rest)
+        elif arg.startswith("--"):
+            fail("unstubbed option " + arg)
+        else:
+            positional.append(arg)
+    if len(positional) != 2:
+        fail("expected a source and a destination, got %r" % positional)
+    source, destination = positional
+
+    if source.startswith("s3://"):
+        if recursive:
+            fail("recursive download is not stubbed")
+        bucket, key = split(source)
+        if not key.startswith(READ):
+            fail("AccessDenied: GetObject on %s is outside %s" % (key, ", ".join(READ)))
+        path = os.path.join(ROOT, bucket, key)
+        if not os.path.isfile(path):
+            fail("NoSuchKey: " + source)
+        shutil.copyfile(path, destination)
+    elif destination.startswith("s3://"):
+        bucket, key = split(destination)
+        if not recursive:
+            put(source, bucket, key)
+            return
+        files = []
+        for parent, _, names in os.walk(source):
+            for name in names:
+                relative = os.path.relpath(os.path.join(parent, name), source)
+                if not any(fnmatch.fnmatch(relative, pattern) for pattern in excludes):
+                    files.append(relative)
+        prefix = key.rstrip("/") + "/"
+        if syncing:
+            if not prefix.startswith(LIST):
+                fail("AccessDenied: ListBucket on %s is outside %s" % (prefix, ", ".join(LIST)))
+            files = [relative for relative in files if needs_upload(os.path.join(source, relative),
+                                                                    os.path.join(ROOT, bucket, prefix + relative), size_only)]
+        fail_halfway = FAIL_ONCE and prefix.startswith(FAIL_ONCE) and not os.path.exists(FAILED_ONCE)
+        for number, relative in enumerate(sorted(files)):
+            if fail_halfway and number == len(files) // 2:
+                open(FAILED_ONCE, "w").close()
+                fail("InternalError (FAKE_S3_FAIL_ONCE): the connection dropped after %d of %d files" % (number, len(files)))
+            put(os.path.join(source, relative), bucket, prefix + relative)
+    else:
+        fail("neither side is s3://")
+
+
+main(sys.argv[1:])

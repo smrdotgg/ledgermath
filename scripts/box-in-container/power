@@ -1,0 +1,4 @@
+#!/bin/sh
+# Stands in for shutdown and poweroff inside scripts/box-in-container/run.sh:
+# records the call instead of ending anything.
+echo "$(basename "$0") $*" >> /fake-calls/power.log

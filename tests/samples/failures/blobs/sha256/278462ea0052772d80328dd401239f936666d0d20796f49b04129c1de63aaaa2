@@ -1,0 +1,8 @@
+{"event":"started","t":280447250112449,"schema":"ledgermath.events/1","wall_utc":"2026-11-10T22:52:02.439273187Z","clock":"CLOCK_MONOTONIC_RAW","clock_read_ns":20.286,"quick":false}
+{"event":"observed","t":280447748118849,"values":{"bytes_per_repetition":1073741824,"threads_used":1,"path_taken":"scalar"}}
+{"event":"sample_started","t":280447748140749,"sample":0,"warmup":true,"repetitions":1}
+{"event":"sample_ended","t":280447858550343,"sample":0}
+{"event":"sample_started","t":280447858576856,"sample":1,"warmup":true,"repetitions":1}
+{"event":"sample_ended","t":280447968416582,"sample":1}
+{"event":"sample_started","t":280447968440053,"sample":2,"warmup":true,"repetitions":2}
+{"event":"sample_ended","t":280448188093254,"sample":2}
