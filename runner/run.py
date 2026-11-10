@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """Runs the schedule on this box and writes one Run for every execution.
 
+The schedule is schedule.json at the root of the source tree. It is not part of
+the runner: a Run carries its own parameters, so editing the schedule changes
+no recorded fact of any Run it does not touch.
+
 For each benchmark in the schedule it builds every named build, then runs each
 parameter set under each build. Around every execution it dumps the box's
 environment, and it records what happened without judging it: a crash, a
@@ -456,7 +460,7 @@ def main():
     parser = argparse.ArgumentParser(description="Run the schedule on this box and write one Run per execution.")
     parser.add_argument("--root", required=True, help="the source tree (holds benchmarks/ and runner/)")
     parser.add_argument("--out", required=True, help="where runs/, blobs/ and boots/ are written")
-    parser.add_argument("--schedule", help="defaults to runner/schedule.json under --root")
+    parser.add_argument("--schedule", help="defaults to schedule.json under --root")
     parser.add_argument("--source-commit", required=True, help="the git commit the source tree was archived from")
     parser.add_argument("--source-archive", required=True, help="the archive the source tree was unpacked from")
     parser.add_argument("--cpuid", help="the built runner/cpuid.c; without it the dump has no cpuid section")
@@ -465,7 +469,7 @@ def main():
 
     root = os.path.abspath(args.root)
     out = os.path.abspath(args.out)
-    with open(args.schedule or os.path.join(root, "runner", "schedule.json"), encoding="utf-8") as handle:
+    with open(args.schedule or os.path.join(root, "schedule.json"), encoding="utf-8") as handle:
         schedule = json.load(handle)
 
     blobs = Blobs(out)
