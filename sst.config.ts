@@ -7,9 +7,21 @@
  *       → user-data builds + runs benchmarks/c/run-all.sh → S3 → terminate
  *
  * Override instance type: LEDGERMATH_INSTANCE_TYPE=c6i.metal sst deploy
+ *
+ * A stage whose name ends in -runs is instead the step-2 runner, which writes
+ * Runs: infra/runs/stack.ts. Every other stage is the stack below, unchanged.
  */
 export default $config({
 	app(input) {
+		if (input?.stage?.endsWith("-runs")) {
+			return {
+				name: "ledgermath",
+				// Its bucket holds Runs, which are kept forever: `sst remove` keeps it.
+				removal: "retain",
+				home: "aws",
+				providers: { aws: { profile: "tabot-dev", region: "us-east-2" } },
+			};
+		}
 		return {
 			name: "ledgermath",
 			removal: input?.stage === "production" ? "retain" : "remove",
@@ -24,6 +36,11 @@ export default $config({
 		};
 	},
 	async run() {
+		if ($app.stage.endsWith("-runs")) {
+			const { runsStack } = await import("./infra/runs/stack");
+			return runsStack();
+		}
+
 		// Account vCPU quota is 32 for standard On-Demand (L-1216C47A).
 		// c6i.metal needs 128 — use 8xlarge until the quota is raised.
 		// Override: LEDGERMATH_INSTANCE_TYPE=c6i.metal sst deploy
