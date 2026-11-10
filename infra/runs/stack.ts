@@ -83,7 +83,9 @@ function sourceArchive(): SourceArchive {
 export function runsStack() {
 	const archive = sourceArchive();
 
-	const bucket = new sst.aws.Bucket("RunsBucket");
+	// Runs are added and never edited: versioning keeps every earlier object
+	// even if a key is written twice.
+	const bucket = new sst.aws.Bucket("RunsBucket", { versioning: true });
 	const source = new aws.s3.BucketObjectv2("Source", {
 		bucket: bucket.name,
 		key: archive.key,
