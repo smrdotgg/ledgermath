@@ -13,11 +13,43 @@ import { createHash } from "node:crypto";
 export const SCHEDULED_EVENT = { scheduledTime: "<aws.scheduler.scheduled-time>" };
 
 const SCHEDULED_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/;
+
+/**
+ * A scheduled launch this late is not started. Lambda can hold an asynchronous
+ * event for a while after throttling or an error of its own, and a box started
+ * long after 22:10 could still hold 32 vCPUs when July's pipeline launches at
+ * 23:10, which the account's 64-vCPU quota cannot fit.
+ */
+export const LATEST_START_MS = 10 * 60 * 1000;
 const INSTANCE_TYPE = /^[a-z][a-z0-9-]*\.[a-z0-9]+$/;
 
 function field(event: unknown, name: string): unknown {
 	if (typeof event !== "object" || event === null) return undefined;
 	return (event as Record<string, unknown>)[name];
+}
+
+/** The payload's scheduled time; undefined for a launch by hand. */
+function scheduledTimeOf(event: unknown): string | undefined {
+	const scheduledTime = field(event, "scheduledTime");
+	if (scheduledTime === undefined) return undefined;
+	if (typeof scheduledTime !== "string" || !SCHEDULED_TIME.test(scheduledTime)) {
+		throw new Error(
+			`scheduledTime must be a time such as 2026-11-12T22:10:00Z, got ${JSON.stringify(scheduledTime)}`,
+		);
+	}
+	return scheduledTime;
+}
+
+/**
+ * Why a scheduled launch is too late to start at `now`, or undefined when it is
+ * not. A launch by hand is never too late.
+ */
+export function lateness(event: unknown, now: Date): string | undefined {
+	const scheduledTime = scheduledTimeOf(event);
+	if (scheduledTime === undefined) return undefined;
+	const late = now.getTime() - Date.parse(scheduledTime);
+	if (late <= LATEST_START_MS) return undefined;
+	return `scheduled for ${scheduledTime} and invoked at ${now.toISOString()}, ${Math.round(late / 1000)} s late; a scheduled launch more than ${LATEST_START_MS / 60_000} minutes late is not started`;
 }
 
 /**
@@ -27,13 +59,8 @@ function field(event: unknown, name: string): unknown {
  * then this is undefined and the SDK makes a fresh token.
  */
 export function clientToken(stage: string, event: unknown): string | undefined {
-	const scheduledTime = field(event, "scheduledTime");
+	const scheduledTime = scheduledTimeOf(event);
 	if (scheduledTime === undefined) return undefined;
-	if (typeof scheduledTime !== "string" || !SCHEDULED_TIME.test(scheduledTime)) {
-		throw new Error(
-			`scheduledTime must be a time such as 2026-11-12T22:10:00Z, got ${JSON.stringify(scheduledTime)}`,
-		);
-	}
 	// 64 hex characters, EC2's limit for a client token.
 	return createHash("sha256").update(`ledgermath-box ${stage} ${scheduledTime}`).digest("hex");
 }

@@ -131,9 +131,12 @@ export function runsStack() {
 	// A retried launch could start a second box, or a late one that overlaps
 	// July's 23:10 launch. Scheduler's own delivery retries are SST's default
 	// of 0; `function.retries: 0` makes the Lambda event-invoke config that
-	// stops Lambda retrying an asynchronous invocation, twice by default. The
-	// payload carries the scheduled time, from which the launch's client token
-	// comes, so one slot can only ever start one box.
+	// stops Lambda retrying an asynchronous invocation, twice by default, and
+	// its transform sets the oldest event Lambda will still run to a minute,
+	// the least it allows (six hours by default). The payload carries the
+	// scheduled time: the launch's client token comes from it, so one slot can
+	// only ever start one box, and the handler refuses a launch more than ten
+	// minutes after it.
 	const launch = new sst.aws.CronV2("BoxLaunch", {
 		schedule: LAUNCH_SCHEDULE,
 		timezone: "UTC",
@@ -143,6 +146,7 @@ export function runsStack() {
 			handler: "infra/runs/launch-box.handler",
 			timeout: "60 seconds",
 			retries: 0,
+			transform: { eventInvokeConfig: { maximumEventAgeInSeconds: 60 } },
 			copyFiles: [{ from: "runner/box.sh", to: "box.sh" }],
 			environment: {
 				LEDGERMATH_STAGE: $app.stage,

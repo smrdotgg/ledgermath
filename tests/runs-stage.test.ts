@@ -4,8 +4,8 @@ import { join } from "node:path";
 
 import type { Instance, Tag } from "@aws-sdk/client-ec2";
 
-import { boxTags } from "../infra/runs/launch-box";
-import { chooseInstanceType, clientToken, SCHEDULED_EVENT } from "../infra/runs/launch-event";
+import { boxTags, launch } from "../infra/runs/launch-box";
+import { chooseInstanceType, clientToken, LATEST_START_MS, lateness, SCHEDULED_EVENT } from "../infra/runs/launch-event";
 import { MAX_AGE_MS, staleBoxes } from "../infra/runs/reap-boxes";
 import { BOX_MARKER, buildUserData, USER_DATA_LIMIT_BYTES } from "../infra/runs/user-data";
 
@@ -67,11 +67,41 @@ describe("the launch", () => {
 	});
 });
 
-describe("the launch's client token", () => {
-	/** The schedule's payload as EventBridge Scheduler delivers it at `time`. */
-	const delivered = (time: string): unknown =>
-		JSON.parse(JSON.stringify(SCHEDULED_EVENT).replace("<aws.scheduler.scheduled-time>", time));
+/** The schedule's payload as EventBridge Scheduler delivers it at `time`. */
+const delivered = (time: string): unknown =>
+	JSON.parse(JSON.stringify(SCHEDULED_EVENT).replace("<aws.scheduler.scheduled-time>", time));
 
+describe("a late scheduled launch", () => {
+	const slot = delivered("2026-11-12T22:10:00Z");
+	const at = (time: string): Date => new Date(time);
+
+	test("is started up to ten minutes after its scheduled time", () => {
+		expect(LATEST_START_MS).toBe(10 * 60 * 1000);
+		expect(lateness(slot, at("2026-11-12T22:10:00Z"))).toBeUndefined();
+		expect(lateness(slot, at("2026-11-12T22:20:00Z"))).toBeUndefined();
+		expect(lateness(slot, at("2026-11-12T22:09:00Z"))).toBeUndefined(); // a clock a little behind
+	});
+
+	test("is refused after that, saying why", () => {
+		expect(lateness(slot, at("2026-11-12T22:20:01Z"))).toContain("601 s late");
+		expect(lateness(slot, at("2026-11-12T23:00:00Z"))).toContain("2026-11-12T22:10:00Z");
+	});
+
+	test("never applies to a launch by hand", () => {
+		expect(lateness({}, at("2030-01-01T00:00:00Z"))).toBeUndefined();
+		expect(lateness({ instanceType: "c6i.large" }, at("2030-01-01T00:00:00Z"))).toBeUndefined();
+	});
+
+	test("is refused by the handler without launching, and without throwing", async () => {
+		// Nothing of the launch's configuration is set here, and no AWS call can
+		// succeed: the refusal has to come before either is needed.
+		const outcome = await launch(slot, at("2026-11-12T23:00:00Z"));
+		expect(outcome.launched).toBe(false);
+		expect(outcome.launched === false && outcome.reason).toContain("3000 s late");
+	});
+});
+
+describe("the launch's client token", () => {
 	test("is the same for every invocation of one scheduled slot, so EC2 starts one box", () => {
 		const first = clientToken("smr-runs", delivered("2026-11-12T22:10:00Z"));
 		const again = clientToken("smr-runs", delivered("2026-11-12T22:10:00Z"));

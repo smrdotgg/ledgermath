@@ -3,7 +3,7 @@ import { EC2Client, RunInstancesCommand, type _InstanceType, type Tag } from "@a
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { chooseInstanceType, clientToken } from "./launch-event";
+import { chooseInstanceType, clientToken, lateness } from "./launch-event";
 import { buildUserData } from "./user-data";
 
 /**
@@ -13,16 +13,24 @@ import { buildUserData } from "./user-data";
  * type, such as {"instanceType": "c6i.large"}; its Runs are real Runs of that
  * type. The schedule's payload carries the scheduled time, from which the
  * launch's client token comes (infra/runs/launch-event.ts). The function is
- * never retried (retries: 0 in infra/runs/stack.ts).
+ * never retried, Lambda drops an asynchronous event older than a minute
+ * (infra/runs/stack.ts), and a scheduled launch more than ten minutes late is
+ * refused here, so a late box never overlaps July's.
  */
 
 export interface LaunchResult {
+	launched: true;
 	instanceId: string;
 	instanceType: string;
 	imageId: string;
 	sourceCommit: string;
 	stage: string;
 	clientToken: string | null;
+}
+
+export interface RefusedLaunch {
+	launched: false;
+	reason: string;
 }
 
 /**
@@ -47,7 +55,18 @@ function required(name: string): string {
 
 const ec2 = new EC2Client({});
 
-export async function handler(event: unknown): Promise<LaunchResult> {
+export async function handler(event: unknown): Promise<LaunchResult | RefusedLaunch> {
+	return launch(event, new Date());
+}
+
+/** The launch, with the time it runs at given, so a test can say when that is. */
+export async function launch(event: unknown, now: Date): Promise<LaunchResult | RefusedLaunch> {
+	const late = lateness(event, now);
+	if (late !== undefined) {
+		console.log(JSON.stringify({ message: "refused a late scheduled launch", reason: late }));
+		return { launched: false, reason: late };
+	}
+
 	const stage = required("LEDGERMATH_STAGE");
 	const imageId = required("LEDGERMATH_IMAGE_ID");
 	const sourceCommit = required("LEDGERMATH_SOURCE_COMMIT");
@@ -95,6 +114,7 @@ export async function handler(event: unknown): Promise<LaunchResult> {
 	const instanceId = result.Instances?.[0]?.InstanceId;
 	if (!instanceId) throw new Error("RunInstances returned no instance id");
 	const launched: LaunchResult = {
+		launched: true,
 		instanceId,
 		instanceType,
 		imageId,
