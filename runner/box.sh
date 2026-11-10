@@ -5,11 +5,16 @@
 #   set a 45-minute shutdown timer, whatever happens after
 #   install the compiler, the static C library and the dump's tools
 #   fetch and unpack the source archive, a `git archive` of one commit
-#   build the cpuid tool, then let runner/run.py build, run and record
+#   build the cpuid tool, then let runner/run.py build, run and record, until
+#   35 minutes after the box started
 #   upload blobs/, runs/, boots/ and this script's log to the stage's bucket
 #   shut down, which terminates the instance
 #
-# A failure anywhere still uploads what exists, and the log, and shuts down.
+# At 35 minutes run.py is sent TERM: it kills the binary it is running, records
+# that execution and the boot summary, and exits; 3 minutes later it is killed
+# outright. Recording and uploading so happen in ordinary time, well before the
+# 45-minute shutdown, which stays as the backstop. A failure anywhere still
+# uploads what can be uploaded, and the log, and shuts down.
 #
 # The launch Lambda (infra/runs/launch-box.ts) puts these above this script:
 #
@@ -21,9 +26,13 @@
 #
 # then the marker line below, then this file without its first line. The box
 # checks that what it is running is runner/box.sh from that commit.
+#
+# LEDGERMATH_RUN_SECONDS, the budget in seconds from the box's start, is 2100
+# unless set. The launch never sets it; scripts/box-in-container/run.sh does.
 set -euo pipefail
 
 # First, before anything can fail: end the box in 45 minutes.
+BOX_STARTED="$(date +%s)"
 if shutdown -h +45 "ledgermath: the box's 45-minute limit" 2>/dev/null; then
   TIMER="shutdown -h +45"
 else
@@ -126,8 +135,29 @@ fi
 
 cc -O2 -o "$WORK/cpuid" "$SRC/runner/cpuid.c"
 
-say "running the schedule at $COMMIT"
-python3 "$SRC/runner/run.py" --root "$SRC" --out "$OUT" --source-commit "$COMMIT" \
-  --source-archive "$ARCHIVE" --cpuid "$WORK/cpuid"
-say "done"
+BUDGET=$((BOX_STARTED + ${LEDGERMATH_RUN_SECONDS:-2100} - $(date +%s)))
+if [ "$BUDGET" -lt 10 ]; then
+  say "only ${BUDGET}s of the time budget is left; not starting the schedule"
+  exit 1
+fi
+say "running the schedule at $COMMIT, for at most ${BUDGET}s"
+# --foreground: the TERM goes to run.py alone, which stops the binary itself
+# and records it. The exit status is 124 when the budget ran out, whether
+# run.py then exited or was killed; its boot summary tells the two apart.
+RUN_STATUS=0
+timeout --foreground --signal=TERM --kill-after=180 "$BUDGET" \
+  python3 "$SRC/runner/run.py" --root "$SRC" --out "$OUT" --source-commit "$COMMIT" \
+  --source-archive "$ARCHIVE" --cpuid "$WORK/cpuid" || RUN_STATUS=$?
+case "$RUN_STATUS" in
+  0) say "done" ;;
+  124)
+    if compgen -G "$OUT/boots/*/*/*/*.json" >/dev/null; then
+      say "the time budget ran out; run.py recorded the execution in flight and the boot summary"
+    else
+      say "the time budget ran out and run.py did not stop within 180s; it was killed, so the execution in flight has no Run"
+    fi
+    ;;
+  *) say "run.py exited with status $RUN_STATUS" ;;
+esac
+exit "$RUN_STATUS"
 # The EXIT trap uploads and shuts down.

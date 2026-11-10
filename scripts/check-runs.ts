@@ -44,7 +44,7 @@ export interface RunRecord {
 	started_at: string;
 	samples: number;
 	environment: { before: string; after: string };
-	exit: { code: number } | { signal: number; timeout_seconds?: number };
+	exit: { code: number; runner_signal?: number } | { signal: number; timeout_seconds?: number; runner_signal?: number };
 	events: RunEvent[];
 	events_error?: { line: number; message: string };
 	stdout: string;

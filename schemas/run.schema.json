@@ -74,13 +74,16 @@
       "$ref": "#/$defs/hash"
     },
     "exit": {
-      "description": "How the process ended: its exit code, or the signal that killed it. `timeout_seconds` is present when the runner killed it for running that long.",
+      "description": "How the process ended: its exit code, or the signal that killed it. `timeout_seconds` is present when the runner killed it for running that long. `runner_signal` is present when the runner was told to stop while it was launching or running the binary: see $defs/runner_signal.",
       "oneOf": [
         {
           "type": "object",
           "additionalProperties": false,
           "required": ["code"],
-          "properties": { "code": { "type": "integer", "minimum": 0 } }
+          "properties": {
+            "code": { "type": "integer", "minimum": 0 },
+            "runner_signal": { "$ref": "#/$defs/runner_signal" }
+          }
         },
         {
           "type": "object",
@@ -88,7 +91,8 @@
           "required": ["signal"],
           "properties": {
             "signal": { "type": "integer", "minimum": 1 },
-            "timeout_seconds": { "type": "integer", "minimum": 1 }
+            "timeout_seconds": { "type": "integer", "minimum": 1 },
+            "runner_signal": { "$ref": "#/$defs/runner_signal" }
           }
         }
       ]
@@ -119,6 +123,11 @@
     "stderr": { "description": "The binary's stderr, verbatim.", "$ref": "#/$defs/hash" }
   },
   "$defs": {
+    "runner_signal": {
+      "description": "The signal that told the runner to stop (15 SIGTERM, 2 SIGINT, 1 SIGHUP), received while it was launching or running the binary. The runner then killed the binary if it had not ended, and started no further execution. `code` or `signal` beside it is still how the binary actually ended.",
+      "type": "integer",
+      "minimum": 1
+    },
     "hash": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
     "time": {
       "description": "UTC, to the nanosecond.",

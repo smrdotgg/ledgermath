@@ -16,6 +16,11 @@ Everything is written under --out, ready to be copied to the bucket as it is:
     blobs/sha256/<hash>                every blob a Run cites, named by its hash
     boots/<yyyy>/<mm>/<dd>/<boot>.json what this boot did
 
+Told to stop by SIGTERM, SIGINT or SIGHUP, it kills the binary it is running,
+still writes that execution's Run (with `exit.runner_signal`), starts nothing
+more, writes the boot summary listing what was not run, and exits non-zero. A
+SIGKILL, or the box losing power, loses the execution in flight.
+
 Runs on the box's own Python (3.9 on Amazon Linux 2023) with no packages.
 """
 
@@ -369,6 +374,23 @@ def build(root, name, build_name, blobs):
     }
 
 
+# ---- being told to stop ----
+
+class Stop:
+    """The first stop signal received, and the binary running at the time."""
+
+    signal = None
+    child = None
+
+
+def on_stop(signum, _frame):
+    if Stop.signal is None:
+        Stop.signal = signum
+        log("told to stop by %s" % signal.Signals(signum).name)
+    if Stop.child is not None:
+        Stop.child.kill()
+
+
 # ---- one execution ----
 
 def param_text(value):
@@ -383,7 +405,8 @@ def execute(binary, arguments, environment, timeout_seconds):
 
     The child gets exactly `environment`, an empty working directory, and files
     for stdout and stderr. This process then blocks in waitpid; the timeout is a
-    kernel alarm, not a polling loop.
+    kernel alarm, not a polling loop. A stop signal kills the child too, and the
+    exit record says which signal it was.
     """
     scratch = tempfile.mkdtemp(prefix="ledgermath-")
     workdir = os.path.join(scratch, "cwd")
@@ -396,6 +419,9 @@ def execute(binary, arguments, environment, timeout_seconds):
         started = time.time_ns()
         child = subprocess.Popen([binary] + arguments, env=environment, cwd=workdir,
                                  stdin=subprocess.DEVNULL, stdout=out, stderr=err, close_fds=True)
+        Stop.child = child
+        if Stop.signal is not None:  # told to stop while it was being launched
+            child.kill()
 
         def on_alarm(_signal, _frame):
             timed_out.append(True)
@@ -408,6 +434,7 @@ def execute(binary, arguments, environment, timeout_seconds):
         finally:
             signal.alarm(0)
             signal.signal(signal.SIGALRM, previous)
+            Stop.child = None
         ended = time.time_ns()
 
     with open(stdout_path, "rb") as handle:
@@ -421,6 +448,8 @@ def execute(binary, arguments, environment, timeout_seconds):
     exit_record = {"code": status} if status >= 0 else {"signal": -status}
     if timed_out:
         exit_record["timeout_seconds"] = timeout_seconds
+    if Stop.signal is not None:
+        exit_record["runner_signal"] = Stop.signal
     return started, ended, exit_record, stdout, stderr
 
 
@@ -472,6 +501,9 @@ def main():
     with open(args.schedule or os.path.join(root, "schedule.json"), encoding="utf-8") as handle:
         schedule = json.load(handle)
 
+    for stop_signal in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(stop_signal, on_stop)
+
     blobs = Blobs(out)
     imds = Imds()
     provider = provider_fields(imds)
@@ -493,83 +525,111 @@ def main():
         "started_at": rfc3339(boot_started),
         "runs": [],
         "build_failures": [],
+        "not_run": [],
     }
     day = datetime.datetime.fromtimestamp(boot_started // 10 ** 9, datetime.timezone.utc)
 
-    for benchmark in schedule["benchmarks"]:
-        name = benchmark["name"]
-        built = []
-        for build_name in benchmark["builds"]:
-            try:
-                built.append(build(root, name, build_name, blobs))
-                log("built %s %s %s" % (name, build_name, built[-1]["record"]["blob"]))
-            except BuildFailed as error:
-                log("BUILD FAILED: %s" % error)
-                summary["build_failures"].append({"benchmark": name, "build": build_name, "message": str(error)})
+    def not_run(name, build_name, params):
+        summary["not_run"].append({"benchmark": name, "build": build_name, "params": params})
 
-        for index, params in enumerate(benchmark["params"]):
-            # Builds take turns going first, by parameter set and by day, so
-            # neither build always runs on the warmer or the cooler box.
-            order = built if (index + day.toordinal()) % 2 == 0 else list(reversed(built))
-            for one in order:
-                environment = {"LM_PARAM_" + key.upper(): param_text(value) for key, value in params.items()}
-                environment["LM_SAMPLES"] = str(benchmark["samples"])
-
-                before = take_dump(blobs, cpuid_tool, imds)
-                try:
-                    started, ended, exit_record, stdout, stderr = execute(
-                        one["path"], ["--quick"] if args.quick else [], environment, benchmark["timeout_seconds"])
-                except OSError as error:
-                    log("COULD NOT START %s %s: %s" % (name, one["record"]["build"], error))
-                    summary["build_failures"].append(
-                        {"benchmark": name, "build": one["record"]["build"], "message": "could not start: %s" % error})
+    try:
+        for benchmark in schedule["benchmarks"]:
+            name = benchmark["name"]
+            built = []
+            unbuilt = []  # told to stop before these were built
+            for build_name in benchmark["builds"]:
+                if Stop.signal is not None:
+                    unbuilt.append(build_name)
                     continue
-                after = take_dump(blobs, cpuid_tool, imds)
+                try:
+                    built.append(build(root, name, build_name, blobs))
+                    log("built %s %s %s" % (name, build_name, built[-1]["record"]["blob"]))
+                except BuildFailed as error:
+                    log("BUILD FAILED: %s" % error)
+                    summary["build_failures"].append({"benchmark": name, "build": build_name, "message": str(error)})
 
-                events, events_error = parse_events(stdout)
-                run = {
-                    "schema": RUN_SCHEMA,
-                    "id": uuid7(started // 10 ** 6),
-                    "boot": boot,
-                    "started_at": rfc3339(started),
-                    "ended_at": rfc3339(ended),
-                    "benchmark": name,
-                    "params": params,
-                    "samples": benchmark["samples"],
-                    "source_commit": args.source_commit,
-                    "source": source,
-                    "binary": one["record"],
-                    "provider": provider,
-                    "environment": {"before": before, "after": after},
-                    "runner": runner,
-                    "exit": exit_record,
-                    "events": events,
-                    "stdout": blobs.put(stdout),
-                    "stderr": blobs.put(stderr),
-                }
-                if events_error is not None:
-                    run["events_error"] = events_error
+            for index, params in enumerate(benchmark["params"]):
+                for build_name in unbuilt:
+                    not_run(name, build_name, params)
+                # Builds take turns going first, by parameter set and by day, so
+                # neither build always runs on the warmer or the cooler box.
+                order = built if (index + day.toordinal()) % 2 == 0 else list(reversed(built))
+                for one in order:
+                    build_name = one["record"]["build"]
+                    if Stop.signal is not None:
+                        not_run(name, build_name, params)
+                        continue
+                    environment = {"LM_PARAM_" + key.upper(): param_text(value) for key, value in params.items()}
+                    environment["LM_SAMPLES"] = str(benchmark["samples"])
 
-                moment = datetime.datetime.fromtimestamp(started // 10 ** 9, datetime.timezone.utc)
-                path = os.path.join(out, "runs", moment.strftime("%Y/%m/%d"), run["id"] + ".json")
-                write_atomically(path, as_json(run))
-                summary["runs"].append({
-                    "id": run["id"],
-                    "benchmark": name,
-                    "build": one["record"]["build"],
-                    "params": params,
-                    "exit": exit_record,
-                })
-                log("run %s %s %s %s exit=%s events=%d seconds=%.1f"
-                    % (run["id"], name, one["record"]["build"], json.dumps(params), json.dumps(exit_record),
-                       len(events), (ended - started) / 1e9))
+                    before = take_dump(blobs, cpuid_tool, imds)
+                    if Stop.signal is not None:
+                        not_run(name, build_name, params)
+                        continue
+                    try:
+                        started, ended, exit_record, stdout, stderr = execute(
+                            one["path"], ["--quick"] if args.quick else [], environment, benchmark["timeout_seconds"])
+                    except OSError as error:
+                        log("COULD NOT START %s %s: %s" % (name, build_name, error))
+                        summary["build_failures"].append(
+                            {"benchmark": name, "build": build_name, "message": "could not start: %s" % error})
+                        continue
+                    after = take_dump(blobs, cpuid_tool, imds)
 
-    summary["ended_at"] = rfc3339(time.time_ns())
-    boot_path = os.path.join(out, "boots", day.strftime("%Y/%m/%d"), (boot or "unknown") + ".json")
-    write_atomically(boot_path, as_json(summary))
-    log("wrote %d runs; %d failures" % (len(summary["runs"]), len(summary["build_failures"])))
+                    events, events_error = parse_events(stdout)
+                    run = {
+                        "schema": RUN_SCHEMA,
+                        "id": uuid7(started // 10 ** 6),
+                        "boot": boot,
+                        "started_at": rfc3339(started),
+                        "ended_at": rfc3339(ended),
+                        "benchmark": name,
+                        "params": params,
+                        "samples": benchmark["samples"],
+                        "source_commit": args.source_commit,
+                        "source": source,
+                        "binary": one["record"],
+                        "provider": provider,
+                        "environment": {"before": before, "after": after},
+                        "runner": runner,
+                        "exit": exit_record,
+                        "events": events,
+                        "stdout": blobs.put(stdout),
+                        "stderr": blobs.put(stderr),
+                    }
+                    if events_error is not None:
+                        run["events_error"] = events_error
+
+                    moment = datetime.datetime.fromtimestamp(started // 10 ** 9, datetime.timezone.utc)
+                    path = os.path.join(out, "runs", moment.strftime("%Y/%m/%d"), run["id"] + ".json")
+                    write_atomically(path, as_json(run))
+                    summary["runs"].append({
+                        "id": run["id"],
+                        "benchmark": name,
+                        "build": build_name,
+                        "params": params,
+                        "exit": exit_record,
+                    })
+                    log("run %s %s %s %s exit=%s events=%d seconds=%.1f"
+                        % (run["id"], name, build_name, json.dumps(params), json.dumps(exit_record),
+                           len(events), (ended - started) / 1e9))
+    except BaseException as error:
+        summary["error"] = repr(error)
+        raise
+    finally:
+        # Written however the loop ended, so a boot that was told to stop, or
+        # that failed, still says what it ran and what it did not.
+        if Stop.signal is not None:
+            summary["stopped_by"] = Stop.signal
+        summary["ended_at"] = rfc3339(time.time_ns())
+        boot_path = os.path.join(out, "boots", day.strftime("%Y/%m/%d"), (boot or "unknown") + ".json")
+        write_atomically(boot_path, as_json(summary))
+        log("wrote %d runs; %d failures; %d not run" % (
+            len(summary["runs"]), len(summary["build_failures"]), len(summary["not_run"])))
+
+    if Stop.signal is not None:
+        return 128 + Stop.signal
     return 1 if summary["build_failures"] else 0
-
 
 if __name__ == "__main__":
     sys.exit(main())
