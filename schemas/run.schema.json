@@ -74,7 +74,7 @@
       "$ref": "#/$defs/hash"
     },
     "exit": {
-      "description": "How the process ended: its exit code, or the signal that killed it. `timeout_seconds` is present when the runner killed it for running that long. `runner_signal` is present when the runner was told to stop while it was launching or running the binary: see $defs/runner_signal.",
+      "description": "How the process ended: its exit code, or the signal that killed it. `timeout_seconds` is present when the runner killed it for running that long. `runner_signal` is present when the runner was told to stop before it collected the binary's exit: see $defs/runner_signal.",
       "oneOf": [
         {
           "type": "object",
@@ -124,7 +124,7 @@
   },
   "$defs": {
     "runner_signal": {
-      "description": "The signal that told the runner to stop (15 SIGTERM, 2 SIGINT, 1 SIGHUP), received while it was launching or running the binary. The runner then killed the binary if it had not ended, and started no further execution. `code` or `signal` beside it is still how the binary actually ended.",
+      "description": "The signal that told the runner to stop (15 SIGTERM, 2 SIGINT, 1 SIGHUP), received after the runner launched the binary and before it collected the binary's exit. The runner then killed the binary if it had not ended, and started no further execution. `code` or `signal` beside it is still how the binary actually ended. A stop signal that arrives after the exit was collected stops the boot but is not recorded here.",
       "type": "integer",
       "minimum": 1
     },

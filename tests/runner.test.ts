@@ -76,3 +76,36 @@ describe("the runner's timeout", () => {
 		SLOW,
 	);
 });
+
+describe("a stop signal", () => {
+	test(
+		"while the binary runs kills it; its Run says why, and nothing more starts",
+		() => {
+			const { status, runs, boot } = race("stop-while-running");
+			expectValid(runs);
+			expect(runs.map((run) => run.exit)).toEqual([{ signal: 9, runner_signal: 15 }]);
+			expect(boot.stopped_by).toBe(15);
+			expect(boot.not_run.length).toBe(1);
+			expect(status).toBe(143);
+		},
+		SLOW,
+	);
+
+	for (const [name, when] of [
+		["stop-after-exit", "just after the binary was reaped"],
+		["stop-in-after-dump", "during the dump after the binary ended"],
+	]) {
+		test(
+			`${when} leaves that Run complete, without runner_signal, and still stops the boot`,
+			() => {
+				const { status, runs, boot } = race(name ?? "");
+				expectValid(runs);
+				expect(runs.map((run) => run.exit)).toEqual([{ code: 0 }]);
+				expect(boot.stopped_by).toBe(15);
+				expect(boot.not_run.length).toBe(1);
+				expect(status).toBe(143);
+			},
+			SLOW,
+		);
+	}
+});

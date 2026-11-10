@@ -376,11 +376,15 @@ def build(root, name, build_name, blobs):
 
 # ---- being told to stop ----
 
+STOP_SIGNALS = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)
+
+
 class Stop:
     """The first stop signal received, and the binary running at the time."""
 
     signal = None
     child = None
+    logged = False
 
 
 def still_running(child):
@@ -393,11 +397,21 @@ def still_running(child):
 
 
 def on_stop(signum, _frame):
+    # Nothing is printed here: writing to stdout while the main code is in the
+    # middle of a write raises "reentrant call". stopping() logs it instead.
     if Stop.signal is None:
         Stop.signal = signum
-        log("told to stop by %s" % signal.Signals(signum).name)
-    if Stop.child is not None:
-        Stop.child.kill()
+    child = Stop.child
+    if child is not None and still_running(child):
+        os.kill(child.pid, signal.SIGKILL)
+
+
+def stopping():
+    """True once a stop signal has arrived; logs it the first time it is seen."""
+    if Stop.signal is not None and not Stop.logged:
+        Stop.logged = True
+        log("told to stop by %s" % signal.Signals(Stop.signal).name)
+    return Stop.signal is not None
 
 
 # ---- one execution ----
@@ -429,8 +443,8 @@ def execute(binary, arguments, environment, timeout_seconds):
         child = subprocess.Popen([binary] + arguments, env=environment, cwd=workdir,
                                  stdin=subprocess.DEVNULL, stdout=out, stderr=err, close_fds=True)
         Stop.child = child
-        if Stop.signal is not None:  # told to stop while it was being launched
-            child.kill()
+        if Stop.signal is not None and still_running(child):  # told to stop while it was being launched
+            os.kill(child.pid, signal.SIGKILL)
 
         def on_alarm(_signal, _frame):
             # An alarm that comes after the binary ended by itself kills nothing
@@ -442,7 +456,19 @@ def execute(binary, arguments, environment, timeout_seconds):
         previous = signal.signal(signal.SIGALRM, on_alarm)
         signal.alarm(timeout_seconds)
         try:
-            status = child.wait()
+            # Wait until the binary has ended, without reaping it.
+            os.waitid(os.P_PID, child.pid, os.WEXITED | os.WNOWAIT)
+            # Whether the runner had been told to stop is read at the moment
+            # the binary is reaped, with the stop signals held (run.py has one
+            # thread), so a signal that comes later stops the boot but is not
+            # written into this execution's exit.
+            signal.pthread_sigmask(signal.SIG_BLOCK, STOP_SIGNALS)
+            try:
+                stop_signal = Stop.signal
+                status = child.wait()
+                Stop.child = None
+            finally:
+                signal.pthread_sigmask(signal.SIG_UNBLOCK, STOP_SIGNALS)
         finally:
             signal.alarm(0)
             signal.signal(signal.SIGALRM, previous)
@@ -462,8 +488,8 @@ def execute(binary, arguments, environment, timeout_seconds):
     # ended by itself an instant before the kill keeps its own exit alone.
     if timed_out and status == -signal.SIGKILL:
         exit_record["timeout_seconds"] = timeout_seconds
-    if Stop.signal is not None:
-        exit_record["runner_signal"] = Stop.signal
+    if stop_signal is not None:
+        exit_record["runner_signal"] = stop_signal
     return started, ended, exit_record, stdout, stderr
 
 
@@ -552,7 +578,7 @@ def main():
             built = []
             unbuilt = []  # told to stop before these were built
             for build_name in benchmark["builds"]:
-                if Stop.signal is not None:
+                if stopping():
                     unbuilt.append(build_name)
                     continue
                 try:
@@ -570,14 +596,14 @@ def main():
                 order = built if (index + day.toordinal()) % 2 == 0 else list(reversed(built))
                 for one in order:
                     build_name = one["record"]["build"]
-                    if Stop.signal is not None:
+                    if stopping():
                         not_run(name, build_name, params)
                         continue
                     environment = {"LM_PARAM_" + key.upper(): param_text(value) for key, value in params.items()}
                     environment["LM_SAMPLES"] = str(benchmark["samples"])
 
                     before = take_dump(blobs, cpuid_tool, imds)
-                    if Stop.signal is not None:
+                    if stopping():
                         not_run(name, build_name, params)
                         continue
                     try:
@@ -633,7 +659,7 @@ def main():
     finally:
         # Written however the loop ended, so a boot that was told to stop, or
         # that failed, still says what it ran and what it did not.
-        if Stop.signal is not None:
+        if stopping():
             summary["stopped_by"] = Stop.signal
         summary["ended_at"] = rfc3339(time.time_ns())
         boot_path = os.path.join(out, "boots", day.strftime("%Y/%m/%d"), (boot or "unknown") + ".json")
