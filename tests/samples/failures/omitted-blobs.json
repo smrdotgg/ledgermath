@@ -1,0 +1,12 @@
+[
+  {
+    "blob": "sha256:47e2fbfd596df3359e093ba5ee3fff2b3fd6304b028b3468c8391b81a0626e5c",
+    "bytes": 173098,
+    "what": "the source archive (git archive of source_commit)"
+  },
+  {
+    "blob": "sha256:a3674893a396548874757acdd23df1028ce8789a4a82e35e41b209205b88f5f2",
+    "bytes": 1178032,
+    "what": "the static benchmark binary"
+  }
+]

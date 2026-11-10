@@ -1,0 +1,263 @@
+{
+  "schema": "ledgermath.run/1",
+  "id": "01a1c7a6-59ce-745c-a266-d09d811edf60",
+  "boot": "dcd56b11-cf5d-44ed-88b2-439006c8343e",
+  "started_at": "2026-11-10T22:48:50.382563342Z",
+  "ended_at": "2026-11-10T22:49:12.004026242Z",
+  "benchmark": "memory_read",
+  "params": {
+    "size_bytes": 1073741824,
+    "threads": 1,
+    "path": "scalar"
+  },
+  "samples": 10,
+  "source_commit": "fc12694d29e9d251dd26a781077369448c5d89c7",
+  "source": "sha256:47e2fbfd596df3359e093ba5ee3fff2b3fd6304b028b3468c8391b81a0626e5c",
+  "binary": {
+    "blob": "sha256:184aff50cde3c2f6fda3dea2790357c276be4ff1949f4f0cb36f2583c0f5e5b5",
+    "build": "dynamic",
+    "compiler": "cc (GCC) 11.5.0 20240719 (Red Hat 11.5.0-5)",
+    "command": "mkdir -p build/dynamic\ncc -O3 -march=native -std=c11 -Wall -Wextra -D_GNU_SOURCE  -I../harness/c -o build/dynamic/memory_read memory_read.c ../harness/c/lm.c -pthread",
+    "resolved_flags": "sha256:5bca088f7256d311399c93b9f569b2340b770548beea3797ec4754adbcd12785"
+  },
+  "provider": {
+    "name": "aws",
+    "instance_type": "m6id.xlarge",
+    "region": "us-east-2",
+    "availability_zone": "us-east-2a",
+    "availability_zone_id": "use2-az1",
+    "image_id": "ami-0123456789abcdef0",
+    "instance_id": "i-0123456789abcdef0"
+  },
+  "environment": {
+    "before": "sha256:bfeb93754cef53481b69fb857da5ced858de8a6d8b1ed67fc3b244e927e111e1",
+    "after": "sha256:c3358bec56acea6e851bc58a219e0fd6a4f85a13698acfd33ab9cfcde13ea5ac"
+  },
+  "runner": "sha256:a9a18272499d5f25543a50de4261b64a357df6a76dd9a2677042a8979bcc8464",
+  "exit": {
+    "code": 0
+  },
+  "events": [
+    {
+      "event": "started",
+      "t": 280255215082282,
+      "schema": "ledgermath.events/1",
+      "wall_utc": "2026-11-10T22:48:50.407778345Z",
+      "clock": "CLOCK_MONOTONIC_RAW",
+      "clock_read_ns": 21.732,
+      "quick": false
+    },
+    {
+      "event": "observed",
+      "t": 280255792500089,
+      "values": {
+        "bytes_per_repetition": 1073741824,
+        "threads_used": 1,
+        "path_taken": "scalar"
+      }
+    },
+    {
+      "event": "sample_started",
+      "t": 280255792527743,
+      "sample": 0,
+      "warmup": true,
+      "repetitions": 1
+    },
+    {
+      "event": "sample_ended",
+      "t": 280255908640371,
+      "sample": 0
+    },
+    {
+      "event": "sample_started",
+      "t": 280255908664245,
+      "sample": 1,
+      "warmup": true,
+      "repetitions": 1
+    },
+    {
+      "event": "sample_ended",
+      "t": 280256020604963,
+      "sample": 1
+    },
+    {
+      "event": "sample_started",
+      "t": 280256020622849,
+      "sample": 2,
+      "warmup": true,
+      "repetitions": 2
+    },
+    {
+      "event": "sample_ended",
+      "t": 280256243900483,
+      "sample": 2
+    },
+    {
+      "event": "sample_started",
+      "t": 280256243925229,
+      "sample": 3,
+      "warmup": true,
+      "repetitions": 4
+    },
+    {
+      "event": "sample_ended",
+      "t": 280256674947378,
+      "sample": 3
+    },
+    {
+      "event": "sample_started",
+      "t": 280256674972075,
+      "sample": 4,
+      "warmup": true,
+      "repetitions": 8
+    },
+    {
+      "event": "sample_ended",
+      "t": 280257553254444,
+      "sample": 4
+    },
+    {
+      "event": "sample_started",
+      "t": 280257553280777,
+      "sample": 5,
+      "warmup": true,
+      "repetitions": 16
+    },
+    {
+      "event": "sample_ended",
+      "t": 280259286128854,
+      "sample": 5
+    },
+    {
+      "event": "sample_started",
+      "t": 280259286182369,
+      "sample": 6,
+      "warmup": false,
+      "repetitions": 16
+    },
+    {
+      "event": "sample_ended",
+      "t": 280261021847720,
+      "sample": 6
+    },
+    {
+      "event": "sample_started",
+      "t": 280261021873490,
+      "sample": 7,
+      "warmup": false,
+      "repetitions": 16
+    },
+    {
+      "event": "sample_ended",
+      "t": 280262771963242,
+      "sample": 7
+    },
+    {
+      "event": "sample_started",
+      "t": 280262771990662,
+      "sample": 8,
+      "warmup": false,
+      "repetitions": 16
+    },
+    {
+      "event": "sample_ended",
+      "t": 280264505909560,
+      "sample": 8
+    },
+    {
+      "event": "sample_started",
+      "t": 280264505933741,
+      "sample": 9,
+      "warmup": false,
+      "repetitions": 16
+    },
+    {
+      "event": "sample_ended",
+      "t": 280266242626980,
+      "sample": 9
+    },
+    {
+      "event": "sample_started",
+      "t": 280266242652832,
+      "sample": 10,
+      "warmup": false,
+      "repetitions": 16
+    },
+    {
+      "event": "sample_ended",
+      "t": 280267983837307,
+      "sample": 10
+    },
+    {
+      "event": "sample_started",
+      "t": 280267983863437,
+      "sample": 11,
+      "warmup": false,
+      "repetitions": 16
+    },
+    {
+      "event": "sample_ended",
+      "t": 280269733295418,
+      "sample": 11
+    },
+    {
+      "event": "sample_started",
+      "t": 280269733322950,
+      "sample": 12,
+      "warmup": false,
+      "repetitions": 16
+    },
+    {
+      "event": "sample_ended",
+      "t": 280271511840667,
+      "sample": 12
+    },
+    {
+      "event": "sample_started",
+      "t": 280271511868250,
+      "sample": 13,
+      "warmup": false,
+      "repetitions": 16
+    },
+    {
+      "event": "sample_ended",
+      "t": 280273249747774,
+      "sample": 13
+    },
+    {
+      "event": "sample_started",
+      "t": 280273249772241,
+      "sample": 14,
+      "warmup": false,
+      "repetitions": 16
+    },
+    {
+      "event": "sample_ended",
+      "t": 280274986947064,
+      "sample": 14
+    },
+    {
+      "event": "sample_started",
+      "t": 280274986973953,
+      "sample": 15,
+      "warmup": false,
+      "repetitions": 16
+    },
+    {
+      "event": "sample_ended",
+      "t": 280276731276841,
+      "sample": 15
+    },
+    {
+      "event": "verified",
+      "t": 280276731305537,
+      "checksum": "0x001ffffffc000000"
+    },
+    {
+      "event": "finished",
+      "t": 280276811455733
+    }
+  ],
+  "stdout": "sha256:71b9bf6fe8b1d8637145030ec89a3e5b39ac37b7f86f5f849cc730fc8da1158a",
+  "stderr": "sha256:77deb4ce166512452b80375839eb97e3eb4346694cd60f710731fcbc5a8916ec"
+}
