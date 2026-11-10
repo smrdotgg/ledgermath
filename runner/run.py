@@ -383,6 +383,15 @@ class Stop:
     child = None
 
 
+def still_running(child):
+    """True until the child has ended. It never reaps the child, so while this
+    is true the child's pid is still its own and safe to signal."""
+    try:
+        return os.waitid(os.P_PID, child.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT) is None
+    except ChildProcessError:  # already reaped
+        return False
+
+
 def on_stop(signum, _frame):
     if Stop.signal is None:
         Stop.signal = signum
@@ -424,8 +433,11 @@ def execute(binary, arguments, environment, timeout_seconds):
             child.kill()
 
         def on_alarm(_signal, _frame):
-            timed_out.append(True)
-            child.kill()
+            # An alarm that comes after the binary ended by itself kills nothing
+            # and records nothing.
+            if still_running(child):
+                timed_out.append(True)
+                os.kill(child.pid, signal.SIGKILL)
 
         previous = signal.signal(signal.SIGALRM, on_alarm)
         signal.alarm(timeout_seconds)
@@ -446,7 +458,9 @@ def execute(binary, arguments, environment, timeout_seconds):
     for leftover in os.listdir(workdir):
         log("warning: the binary left %s in its working directory" % leftover)
     exit_record = {"code": status} if status >= 0 else {"signal": -status}
-    if timed_out:
+    # Only when the runner's own SIGKILL is how the binary ended: a binary that
+    # ended by itself an instant before the kill keeps its own exit alone.
+    if timed_out and status == -signal.SIGKILL:
         exit_record["timeout_seconds"] = timeout_seconds
     if Stop.signal is not None:
         exit_record["runner_signal"] = Stop.signal
