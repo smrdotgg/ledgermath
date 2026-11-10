@@ -3,6 +3,7 @@ import { EC2Client, RunInstancesCommand, type _InstanceType, type Tag } from "@a
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { chooseInstanceType, clientToken } from "./launch-event";
 import { buildUserData } from "./user-data";
 
 /**
@@ -10,7 +11,9 @@ import { buildUserData } from "./user-data";
  * by hand. Its configuration is the function's environment, set in
  * infra/runs/stack.ts. For a smoke test the payload may name another instance
  * type, such as {"instanceType": "c6i.large"}; its Runs are real Runs of that
- * type.
+ * type. The schedule's payload carries the scheduled time, from which the
+ * launch's client token comes (infra/runs/launch-event.ts). The function is
+ * never retried (retries: 0 in infra/runs/stack.ts).
  */
 
 export interface LaunchResult {
@@ -19,19 +22,7 @@ export interface LaunchResult {
 	imageId: string;
 	sourceCommit: string;
 	stage: string;
-}
-
-const INSTANCE_TYPE = /^[a-z][a-z0-9-]*\.[a-z0-9]+$/;
-
-/** The instance type the payload asks for, or the configured one. */
-export function chooseInstanceType(event: unknown, configured: string): string {
-	if (typeof event !== "object" || event === null) return configured;
-	const requested = (event as { instanceType?: unknown }).instanceType;
-	if (requested === undefined) return configured;
-	if (typeof requested !== "string" || !INSTANCE_TYPE.test(requested)) {
-		throw new Error(`instanceType must be an EC2 instance type such as "c6i.large", got ${JSON.stringify(requested)}`);
-	}
-	return requested;
+	clientToken: string | null;
 }
 
 /**
@@ -61,6 +52,7 @@ export async function handler(event: unknown): Promise<LaunchResult> {
 	const imageId = required("LEDGERMATH_IMAGE_ID");
 	const sourceCommit = required("LEDGERMATH_SOURCE_COMMIT");
 	const instanceType = chooseInstanceType(event, required("LEDGERMATH_INSTANCE_TYPE"));
+	const token = clientToken(stage, event);
 
 	// Copied into the bundle from runner/box.sh (copyFiles in infra/runs/stack.ts).
 	const userData = buildUserData(readFileSync(join(process.cwd(), "box.sh"), "utf8"), {
@@ -79,6 +71,7 @@ export async function handler(event: unknown): Promise<LaunchResult> {
 			InstanceType: instanceType as _InstanceType,
 			MinCount: 1,
 			MaxCount: 1,
+			ClientToken: token,
 			IamInstanceProfile: { Name: required("LEDGERMATH_INSTANCE_PROFILE") },
 			// A public address reaches the package repository and S3 without a NAT gateway.
 			NetworkInterfaces: [
@@ -101,7 +94,14 @@ export async function handler(event: unknown): Promise<LaunchResult> {
 
 	const instanceId = result.Instances?.[0]?.InstanceId;
 	if (!instanceId) throw new Error("RunInstances returned no instance id");
-	const launched: LaunchResult = { instanceId, instanceType, imageId, sourceCommit, stage };
+	const launched: LaunchResult = {
+		instanceId,
+		instanceType,
+		imageId,
+		sourceCommit,
+		stage,
+		clientToken: token ?? null,
+	};
 	console.log(JSON.stringify({ message: "launched a ledgermath box", ...launched }));
 	return launched;
 }

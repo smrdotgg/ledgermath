@@ -22,6 +22,8 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 
+import { SCHEDULED_EVENT } from "./launch-event";
+
 /**
  * Amazon Linux 2023 2023.12.20260710.0, kernel 6.1: the image July's pipeline
  * has booted since 2026-07-18. The image, and with it the kernel and the
@@ -124,13 +126,21 @@ export function runsStack() {
 	});
 	const boxProfile = new aws.iam.InstanceProfile("BoxProfile", { role: boxRole.name });
 
+	// A retried launch could start a second box, or a late one that overlaps
+	// July's 23:10 launch. Scheduler's own delivery retries are SST's default
+	// of 0; `function.retries: 0` makes the Lambda event-invoke config that
+	// stops Lambda retrying an asynchronous invocation, twice by default. The
+	// payload carries the scheduled time, from which the launch's client token
+	// comes, so one slot can only ever start one box.
 	const launch = new sst.aws.CronV2("BoxLaunch", {
 		schedule: LAUNCH_SCHEDULE,
 		timezone: "UTC",
-		retries: 0, // a retried launch could start a second box
+		retries: 0,
+		event: SCHEDULED_EVENT,
 		function: {
 			handler: "infra/runs/launch-box.handler",
 			timeout: "60 seconds",
+			retries: 0,
 			copyFiles: [{ from: "runner/box.sh", to: "box.sh" }],
 			environment: {
 				LEDGERMATH_STAGE: $app.stage,

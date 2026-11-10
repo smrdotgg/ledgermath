@@ -4,7 +4,8 @@ import { join } from "node:path";
 
 import type { Instance, Tag } from "@aws-sdk/client-ec2";
 
-import { boxTags, chooseInstanceType } from "../infra/runs/launch-box";
+import { boxTags } from "../infra/runs/launch-box";
+import { chooseInstanceType, clientToken, SCHEDULED_EVENT } from "../infra/runs/launch-event";
 import { MAX_AGE_MS, staleBoxes } from "../infra/runs/reap-boxes";
 import { BOX_MARKER, buildUserData, USER_DATA_LIMIT_BYTES } from "../infra/runs/user-data";
 
@@ -63,6 +64,40 @@ describe("the launch", () => {
 	test("refuses an instance type that is not one", () => {
 		expect(() => chooseInstanceType({ instanceType: 5 }, "c6i.8xlarge")).toThrow();
 		expect(() => chooseInstanceType({ instanceType: "c6i.large --dry-run" }, "c6i.8xlarge")).toThrow();
+	});
+});
+
+describe("the launch's client token", () => {
+	/** The schedule's payload as EventBridge Scheduler delivers it at `time`. */
+	const delivered = (time: string): unknown =>
+		JSON.parse(JSON.stringify(SCHEDULED_EVENT).replace("<aws.scheduler.scheduled-time>", time));
+
+	test("is the same for every invocation of one scheduled slot, so EC2 starts one box", () => {
+		const first = clientToken("smr-runs", delivered("2026-11-12T22:10:00Z"));
+		const again = clientToken("smr-runs", delivered("2026-11-12T22:10:00Z"));
+		expect(first).toBeDefined();
+		expect(again).toBe(first);
+		expect(first?.length).toBeLessThanOrEqual(64); // EC2's limit
+	});
+
+	test("differs from day to day and from stage to stage", () => {
+		const tokens = new Set([
+			clientToken("smr-runs", delivered("2026-11-12T22:10:00Z")),
+			clientToken("smr-runs", delivered("2026-11-13T22:10:00Z")),
+			clientToken("dev-runs", delivered("2026-11-12T22:10:00Z")),
+		]);
+		expect(tokens.size).toBe(3);
+	});
+
+	test("is left to the SDK, fresh each time, for a launch by hand", () => {
+		expect(clientToken("smr-runs", {})).toBeUndefined();
+		expect(clientToken("smr-runs", { instanceType: "c6i.large" })).toBeUndefined();
+		expect(clientToken("smr-runs", undefined)).toBeUndefined();
+	});
+
+	test("refuses a payload whose placeholder was not replaced, rather than reuse one token every day", () => {
+		expect(() => clientToken("smr-runs", SCHEDULED_EVENT)).toThrow();
+		expect(() => clientToken("smr-runs", { scheduledTime: "yesterday" })).toThrow();
 	});
 });
 
