@@ -3,6 +3,7 @@ import { EC2Client, RunInstancesCommand, type _InstanceType, type Tag } from "@a
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { fixturesEndpoint } from "./fixtures";
 import { clientToken, lateness, requestedInstanceType, unscheduledType } from "./launch-event";
 import { buildUserData } from "./user-data";
 
@@ -82,12 +83,19 @@ export async function launch(event: unknown, now: Date): Promise<LaunchResult | 
 	const token = clientToken(stage, event);
 
 	// Copied into the bundle from runner/box.sh (copyFiles in infra/runs/stack.ts).
+	// The fixtures bucket is in this function's region: the stage made both.
+	const region = required("AWS_REGION");
 	const userData = buildUserData(readFileSync(join(process.cwd(), "box.sh"), "utf8"), {
 		bucket: required("LEDGERMATH_BUCKET"),
 		stage,
 		sourceKey: required("LEDGERMATH_SOURCE_KEY"),
 		sourceCommit,
-		region: required("AWS_REGION"),
+		region,
+		fixtures: {
+			endpoint: fixturesEndpoint(required("LEDGERMATH_FIXTURES_BUCKET"), region),
+			region,
+			role: required("LEDGERMATH_FIXTURES_ROLE"),
+		},
 	});
 
 	const tags = boxTags(stage, sourceCommit);

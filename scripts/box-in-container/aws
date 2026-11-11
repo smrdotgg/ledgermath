@@ -11,7 +11,7 @@ writes elsewhere fails here too:
     list   blobs/
     write  runs/, blobs/, boots/, logs/
 
-and the four read-only EC2 calls runner/provision.py and runner/run.py make,
+and the six read-only EC2 calls runner/provision.py and runner/run.py make,
 which the role allows and nothing else of EC2:
 
     describe-instance-types   the catalog record AWS gave for the type, saved
@@ -22,6 +22,10 @@ which the role allows and nothing else of EC2:
     describe-volume-status    instance asked about, and its status, with the
     describe-instances        documentation's example ids; the instance's own
                               record, as small
+    describe-route-tables     as the stage's default VPC answered on
+    describe-vpc-endpoints    2026-11-11: no table associated with the subnet,
+                              the VPC's main table routing 0.0.0.0/0 to an
+                              internet gateway, and no endpoint; example ids
 
 An answer saved as /fake-ec2/<action>.json is given instead, whatever was
 asked: a boot on a real instance without credentials replays what the API
@@ -86,7 +90,7 @@ def needs_upload(local, remote, size_only):
     return not size_only and os.path.getmtime(local) > os.path.getmtime(remote)
 
 
-EC2_ACTIONS = ("describe-instance-types", "describe-volumes", "describe-volume-status", "describe-instances")
+EC2_ACTIONS = ("describe-instance-types", "describe-volumes", "describe-volume-status", "describe-instances", "describe-route-tables", "describe-vpc-endpoints")
 ACCOUNT = "123456789012"  # the documentation's example account
 VOLUME = "vol-0123456789abcdef0"
 
@@ -128,6 +132,21 @@ def ec2(args):
             "AvailabilityZone": "us-east-2c", "AvailabilityZoneId": "use2-az3", "CreateTime": "2026-11-11T00:00:00+00:00",
             "Encrypted": False, "Size": 8, "SnapshotId": "snap-0123456789abcdef0", "State": "in-use", "VolumeId": VOLUME,
             "Iops": 3000, "VolumeType": "gp3", "MultiAttachEnabled": False, "Throughput": 125, "OwnerId": ACCOUNT}]}
+    elif action == "describe-route-tables":
+        filters = options["--filters"]
+        if any(f.startswith("Name=association.subnet-id,") for f in filters):
+            answer = {"RouteTables": []}
+        else:
+            vpc = next(f.split("Values=", 1)[1] for f in filters if f.startswith("Name=vpc-id,"))
+            answer = {"RouteTables": [{
+                "Associations": [{"Main": True, "RouteTableAssociationId": "rtbassoc-0123456789abcdef0", "RouteTableId": "rtb-0123456789abcdef0",
+                                  "AssociationState": {"State": "associated"}}],
+                "PropagatingVgws": [], "RouteTableId": "rtb-0123456789abcdef0",
+                "Routes": [{"DestinationCidrBlock": "172.31.0.0/16", "GatewayId": "local", "Origin": "CreateRouteTable", "State": "active"},
+                           {"DestinationCidrBlock": "0.0.0.0/0", "GatewayId": "igw-0123456789abcdef0", "Origin": "CreateRoute", "State": "active"}],
+                "Tags": [], "VpcId": vpc, "OwnerId": ACCOUNT}]}
+    elif action == "describe-vpc-endpoints":
+        answer = {"VpcEndpoints": []}
     elif action == "describe-volume-status":
         answer = {"VolumeStatuses": [{
             "Actions": [], "AvailabilityZone": "us-east-2c", "AvailabilityZoneId": "use2-az3", "Events": [], "VolumeId": volume,

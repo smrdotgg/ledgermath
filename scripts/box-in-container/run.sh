@@ -72,6 +72,11 @@ BUCKET=ledgermath-container-test
 STAGE=container
 REGION=us-east-2
 HOSTNAME_EXAMPLE=ip-192-0-2-10 # a documentation address, not this machine's
+# The s3_fixtures Service as a stage would give it; the http-get scenarios
+# point the endpoint at the stand-in instead. The role is the documentation's
+# example account's.
+FIXTURES_ENDPOINT=https://ledgermath-container-test-fixtures.s3.us-east-2.amazonaws.com
+FIXTURES_ROLE=arn:aws:iam::123456789012:role/ledgermath-container-test-fixtures
 
 worktree=false
 SCENARIO=ok
@@ -150,7 +155,8 @@ if [ "$SCENARIO" = blobs-present ]; then
 fi
 git show "$COMMIT:runner/box.sh" >"$OUT/box.sh"
 git show "$COMMIT:schedule.json" >"$OUT/schedule.json" # what the box runs, for expect.ts
-bun scripts/box-in-container/user-data.ts "$OUT/box.sh" "$BUCKET" "$STAGE" "$KEY" "$COMMIT" "$REGION" >"$OUT/user-data"
+bun scripts/box-in-container/user-data.ts "$OUT/box.sh" "$BUCKET" "$STAGE" "$KEY" "$COMMIT" "$REGION" \
+  "$FIXTURES_ENDPOINT" "$REGION" "$FIXTURES_ROLE" >"$OUT/user-data"
 chmod +x "$OUT/user-data"
 
 NAME="ledgermath-box-test-$$"

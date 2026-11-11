@@ -19,6 +19,15 @@ export interface BoxVariables {
 	sourceKey: string;
 	sourceCommit: string;
 	region: string;
+	/** The s3_fixtures Service, as runner/run.py gives it to a benchmark (infra/runs/fixtures.ts). */
+	fixtures: {
+		/** LM_SERVICE_ENDPOINT: https://<fixtures bucket>.s3.<region>.amazonaws.com on a box. */
+		endpoint: string;
+		/** LM_SERVICE_REGION. */
+		region: string;
+		/** The role run.py assumes for the keys. */
+		role: string;
+	};
 }
 
 /** Characters that need no quoting in a shell word. */
@@ -40,6 +49,9 @@ export function buildUserData(boxScript: string, variables: BoxVariables): strin
 		["LEDGERMATH_SOURCE_KEY", variables.sourceKey],
 		["LEDGERMATH_SOURCE_COMMIT", variables.sourceCommit],
 		["AWS_DEFAULT_REGION", variables.region],
+		["LEDGERMATH_FIXTURES_ENDPOINT", variables.fixtures.endpoint],
+		["LEDGERMATH_FIXTURES_REGION", variables.fixtures.region],
+		["LEDGERMATH_FIXTURES_ROLE", variables.fixtures.role],
 	];
 	for (const [name, value] of assignments) {
 		if (!SHELL_SAFE.test(value)) {

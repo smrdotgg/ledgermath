@@ -18,6 +18,13 @@
  *     logs/<yyyy>/<mm>/<dd>/<boot>.log     the box's log
  *     source/<commit>.tar.gz               git archive of the deployed commit
  *
+ * The deploy also puts blobs there itself: AWS-LC's source archive, which the
+ * box fetches to build http_get (infra/runs/tls-archive.ts), and the bytes of
+ * each Fixture of the s3_fixtures Service, which S3 copies into a private
+ * fixtures bucket of its own (infra/runs/fixtures.ts). A box may assume a
+ * role that reads those objects and nothing else; runner/run.py does, once
+ * per boot, and gives the keys to http_get alone.
+ *
  * A second Lambda terminates any box of this stage that outlives its own
  * 45-minute timer.
  *
@@ -31,8 +38,10 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 
 import { boxPolicy } from "./box-role";
+import { fixturesReaderPolicy, fixturesReaderTrustPolicy, writeFixtureFiles } from "./fixtures";
 import { GITHUB_OIDC_AUDIENCE, GITHUB_OIDC_URL, readPolicy, trustPolicy } from "./github-role";
 import { LAUNCH_SCHEDULES, TARGETS, ZONE } from "./placement";
+import { tlsArchive } from "./tls-archive";
 
 /**
  * Amazon Linux 2023 2023.12.20260710.0, kernel 6.1: the image July's pipeline
@@ -83,6 +92,9 @@ function sourceArchive(): SourceArchive {
 
 export function runsStack() {
 	const archive = sourceArchive();
+	// Checked before anything is made: a missing or wrong copy stops the deploy
+	// here, saying how to fetch it.
+	const tls = tlsArchive($cli.paths.root);
 
 	// Runs are added and never edited: versioning keeps every earlier object
 	// even if a key is written twice.
@@ -93,6 +105,38 @@ export function runsStack() {
 		source: $asset(archive.path),
 		contentType: "application/gzip",
 	});
+	// AWS-LC's source archive, a blob like any other, named by its hash.
+	new aws.s3.BucketObjectv2("TlsArchive", {
+		bucket: bucket.name,
+		key: tls.key,
+		source: $asset(tls.path),
+		contentType: "application/gzip",
+	});
+
+	// The s3_fixtures Service (infra/runs/fixtures.ts). Its bucket holds the
+	// Fixtures and nothing else: never versioned, private, SSE-S3 by default,
+	// no CORS, no lifecycle, no logging. Each Fixture's bytes are a blob in the
+	// Runs bucket; S3 copies the blob into the fixtures bucket with a SHA-256
+	// checksum over the whole object, as one part.
+	const fixturesBucket = new sst.aws.Bucket("FixturesBucket", { cors: false });
+	const fixtureFiles = writeFixtureFiles(join($cli.paths.root, ".sst", "ledgermath-fixtures"));
+	for (const fixture of fixtureFiles) {
+		const blob = new aws.s3.BucketObjectv2(`FixtureBlob${fixture.bytes}`, {
+			bucket: bucket.name,
+			key: fixture.blobKey,
+			source: $asset(fixture.path),
+			contentType: "application/octet-stream",
+		});
+		new aws.s3.ObjectCopy(`Fixture${fixture.bytes}`, {
+			bucket: fixturesBucket.name,
+			key: fixture.key,
+			source: $interpolate`${bucket.name}/${blob.key}`,
+			checksumAlgorithm: "SHA256",
+			storageClass: "STANDARD",
+			serverSideEncryption: "AES256",
+			metadataDirective: "COPY",
+		});
+	}
 
 	const vpc = aws.ec2.getVpcOutput({ default: true });
 	const subnet = aws.ec2.getSubnetOutput({
@@ -109,16 +153,31 @@ export function runsStack() {
 		ingress: [],
 	});
 
-	// The box reads its source, lists blobs/ (so it uploads only the blobs the
-	// bucket does not hold yet), writes its prefixes, and reads what EC2 says
-	// about its instance type, volumes and instance; nothing else
+	// The box reads its source and AWS-LC's archive, lists blobs/ (so it
+	// uploads only the blobs the bucket does not hold yet), writes its
+	// prefixes, reads what EC2 says about its instance type, volumes, instance
+	// and path to S3, and assumes the fixtures reader role; nothing else
 	// (infra/runs/box-role.ts).
 	const boxRole = new aws.iam.Role("BoxRole", {
 		assumeRolePolicy: aws.iam.assumeRolePolicyForPrincipal({ Service: "ec2.amazonaws.com" }),
 	});
+	// Only the box's role may assume it, and it may only read the Fixtures. A
+	// session from a role a box already holds is role chaining, so it lasts at
+	// most an hour.
+	const fixturesRole = new aws.iam.Role("FixturesReaderRole", {
+		description: "Assumed by the LedgerMath box's role for http_get: s3:GetObject on the Fixture objects, nothing else",
+		assumeRolePolicy: boxRole.arn.apply((arn) => JSON.stringify(fixturesReaderTrustPolicy(arn))),
+		maxSessionDuration: 3600,
+	});
+	new aws.iam.RolePolicy("FixturesReaderPolicy", {
+		role: fixturesRole.id,
+		policy: fixturesBucket.arn.apply((arn) => JSON.stringify(fixturesReaderPolicy(arn))),
+	});
 	new aws.iam.RolePolicy("BoxPolicy", {
 		role: boxRole.id,
-		policy: bucket.arn.apply((arn) => JSON.stringify(boxPolicy(arn, archive.key))),
+		policy: $resolve({ arn: bucket.arn, fixturesRoleArn: fixturesRole.arn }).apply(({ arn, fixturesRoleArn }) =>
+			JSON.stringify(boxPolicy(arn, archive.key, { tlsArchiveKey: tls.key, fixturesRoleArn })),
+		),
 	});
 	const boxProfile = new aws.iam.InstanceProfile("BoxProfile", { role: boxRole.name });
 
@@ -152,6 +211,8 @@ export function runsStack() {
 			LEDGERMATH_SUBNET_ID: subnet.id,
 			LEDGERMATH_SECURITY_GROUP_ID: securityGroup.id,
 			LEDGERMATH_INSTANCE_PROFILE: boxProfile.name,
+			LEDGERMATH_FIXTURES_BUCKET: fixturesBucket.name,
+			LEDGERMATH_FIXTURES_ROLE: fixturesRole.arn,
 		},
 		permissions: [
 			{ actions: ["ec2:RunInstances"], resources: ["*"] },
@@ -241,5 +302,8 @@ export function runsStack() {
 		subnet: subnet.id,
 		sourceCommit: archive.commit,
 		sourceKey: source.key,
+		tlsArchiveKey: tls.key,
+		fixturesBucket: fixturesBucket.name,
+		fixturesRole: fixturesRole.arn,
 	};
 }
