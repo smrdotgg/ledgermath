@@ -99,10 +99,11 @@ Emitted once, before measuring, after one checked repetition.
 | `protected_lines` | Protected lines found equal to the counter after it |
 
 ```json
-{"event":"observed","t":301634827797081,"values":{"threads_used":2,"cpus":"0,1","core_ids":"0,1","package_ids":"0,0","lock_type":"PTHREAD_MUTEX_NORMAL","libc":"2.39","critical_sections_per_repetition":10000,"protected_lines":1}}
+{"event":"observed","t":302910207268930,"values":{"threads_used":2,"cpus":"0,2","core_ids":"0,0","package_ids":"0,0","lock_type":"PTHREAD_MUTEX_NORMAL","libc":"2.34","critical_sections_per_repetition":10000,"protected_lines":1}}
 ```
 
-(Built on the development machine's Ubuntu, hence glibc 2.39.)
+(The siblings set, in the Amazon Linux 2023 container on the development machine, whose
+CPUs 0 and 2 are the two hardware threads of core 0.)
 
 `cpus` with `core_ids` and `package_ids` are the observed counterparts of `threads` and
 `placement`: distinct cores show distinct core ids, siblings one. The Run's dump holds the

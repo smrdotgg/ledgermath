@@ -59,11 +59,11 @@ cannot, the order of the stream.
 
 | Path | What it is |
 |------|------------|
-| `benchmarks/harness/c/` | The C harness (`lm.h`, `lm.c`), which prints the stream. A benchmark in another language prints the same lines without it. |
-| `benchmarks/<name>/` | One benchmark: its source, a `README.md` (what it measures, its parameters, its observed values, its elision guard, and every difference from July's version), and a `Makefile` offering `make BUILD=static` or `BUILD=dynamic` (one file at `build/<build>/<name>`), `make -s compiler` and `make -s resolved`. Eight are on the stream: `memory_read`, `compressed_memory_read`, `memory_read_random`, `memory_write`, `syscall`, `hash`, `sort` and `tcp_echo`. The other five, `mutex` and the four disk benchmarks, are still only July's, in `benchmarks/c/`. |
+| `benchmarks/harness/c/` | The C harness (`lm.h`, `lm.c`), which prints the stream, and `lm_event.h` and `lm_event.c`, which emit a benchmark's own events and further `observed` events (`lm.c` stays as it is, so `memory_read`'s binary keeps its bytes). A benchmark in another language prints the same lines without them. |
+| `benchmarks/<name>/` | One benchmark: its source, a `README.md` (what it measures, its parameters, its observed values, its elision guard, and every difference from July's version), and a `Makefile` offering `make BUILD=static` or `BUILD=dynamic` (one file at `build/<build>/<name>`), `make -s compiler` and `make -s resolved`. Nine are on the stream: `memory_read`, `compressed_memory_read`, `memory_read_random`, `memory_write`, `syscall`, `hash`, `sort`, `tcp_echo` and `mutex`. The other four, the disk benchmarks, are still only July's, in `benchmarks/c/`. |
 | `schemas/events.schema.json` | One line of the stream. |
 | `scripts/check-events.py` | The order of a stream: `./build/static/memory_read --quick \| python3 scripts/check-events.py --quick`. Needs only Python 3. |
-| `scripts/check-scratch.py` | Runs every static build of `schedule.json` as the only file in a `FROM scratch` container, once per parameter set, and checks each stream. Needs Docker. |
+| `scripts/check-scratch.py` | Runs every static build of `schedule.json` as the only file in a `FROM scratch` container, once per parameter set, and checks each stream. A set asking for CPUs this machine's topology cannot provide (`mutex`'s `distinct_cores` or `smt_siblings`) is reported as skipped, with the reason, and must exit 2. Needs Docker. |
 | `schedule.json` | What a box runs: benchmarks, builds, samples, timeout, parameter sets. Not part of the runner. |
 | `runner/` | The box side. `box.sh` is the user-data; `run.py` builds, launches each binary, dumps the environment around it and writes one Run per execution; `cpuid.c` is the raw cpuid dump. |
 | `schemas/run.schema.json` | The Run, which holds the stream as `events`. |
@@ -82,6 +82,7 @@ The benchmarks on the stream, each with one parameter set per execution. The val
 | `hash` | `algorithm` `crc32`, `siphash` or `sha256`, `size_bytes` 64 | `bytes_per_repetition`, `algorithm_run`, `path_taken` | `crc32`, `siphash`, `sha256` |
 | `sort` | `size_bytes` 1 MiB | `bytes_per_repetition` | `u64` |
 | `tcp_echo` | `size_bytes` 32 KiB | `bytes_per_repetition` | `32 KiB` |
+| `mutex` | `threads` `1` with `placement` `one_cpu`, or `2` with `distinct_cores` or `smt_siblings`; `critical_section_lines` `1`, or `8` with `distinct_cores`; `lock` `pthread_mutex_default` | `threads_used`, `cpus`, `core_ids`, `package_ids`, `lock_type`, `libc`, `critical_sections_per_repetition`, `protected_lines`; its own events `cpu_pair` and `mutex_threads` | none: July's `contended` Series ends, and this is a new measurement |
 
 ### What the binary receives
 
@@ -451,4 +452,46 @@ A migrated benchmark is done only when **all** of these hold:
   Pulumi alias to its old parent makes the standalone `BoxLaunchHandler` the same
   resource, so it is updated in place and keeps its name and its log group. None of
   this was checked with `sst diff`.
+- **2026-11-11** — Step 4 of the build plan (#36, brief #42), `mutex`, not yet deployed.
+  `benchmarks/mutex/` is the design of section 1.4 of the brief's study, as the decisions
+  on it settled: one repetition is exactly 10,000 critical sections done by whichever
+  threads win the lock, timed per critical section across all threads; the main thread
+  is thread 0 and works too, releasing the others through a generation word they spin on
+  with `pause`, never a barrier; the binary pins its threads from sysfs topology
+  (`one_cpu`, `distinct_cores`, `smt_siblings`) and exits 2 after `started`, saying why,
+  when the CPUs it may run on cannot provide the placement. Its own events are
+  `cpu_pair` (the cache line round trip between the pinned CPUs, before measuring) and
+  `mutex_threads` (each thread's work, acquisitions, context switches and CPU time, after
+  measuring); they pass the events schema, `check-events.py` and the Method's stream
+  check. They are emitted by a new harness file, `lm_event.h` and `lm_event.c`, which
+  also gives a further `observed`, for the disk benchmarks next. One departure from the
+  study: its guard (the counter equals 10,000 × every repetition, and every protected
+  line equals the counter) cannot see a race with one protected line, because the counter
+  is also the loop's stopping condition and still ends at its target; so the guard also
+  checks that the threads' own counts of critical sections add up to the counter. With
+  the lock skipped in one thread, or the other lines written outside it, the binary
+  exits 1. `schedule.json` has the study's three entries, with `instance_types`.
+  `check-scratch.py` now builds each benchmark once, decides from this machine's topology
+  which `mutex` sets it can place, reports the rest as skipped with the reason (each must
+  still exit 2) and fails a benchmark none of whose sets ran; under `taskset -c 1`,
+  `1,3` and `0,1` it skipped exactly the sets those CPUs cannot provide. `lm.c` and `lm.h`
+  are unchanged: built in the Amazon Linux 2023 container, `memory_read` still hashes to
+  `a3674893…`, and the seven ported binaries hash as at `e112646`, `compressed_memory_read`
+  included, whose README and comments now give its pool's size (244 MiB) instead of
+  saying it exceeds every cache. All eight container scenarios pass: `ok` ran 22
+  executions in 399 s of `run.py` (435 s for the boot; `mutex`'s one-thread set took
+  19 s) and left out the three two-thread sets, because this machine is not a target;
+  `instance-types` ran `mutex`'s one-thread and siblings sets from one build. The timings
+  on this shared machine (4 vCPUs, 2 cores, with other work holding the load at 3 to 7)
+  are not data. Of 15 executions of each set (three rounds of five, through `run.py`'s
+  own `execute`), only the two or three per set in which every thread held at least 95%
+  of its CPU (from `mutex_threads`) measured the lock: 4.5 ns a critical section for one
+  thread, 71 and 83 ns on distinct cores, 113 to 207 ns with eight lines, and 68.6 to
+  69.7 ns on siblings, within 0.2 to 3.5% from sample to sample, with a cache line round
+  trip of 104 to 108 ns between the cores and 47 to 49 ns between the siblings; that is
+  the range the study measured (5.9, 92, 128 and 75 ns). In the others the threads held
+  40 to 80% of their CPUs, with thousands of involuntary switches, and the values were
+  two to four times those. What only boxes can settle is item 15 of the study: about 20
+  boots per type, the one-thread spread on a stock box, and whether the two-thread value
+  follows `cpu_pair`.
 - _(agents: append your entry here, one per merged benchmark)_

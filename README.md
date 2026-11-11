@@ -16,8 +16,8 @@ until step 4 of the plan replaces it.
 
 | Path | What it is |
 |------|------------|
-| `benchmarks/harness/c/` | The C harness that prints the event stream |
-| `benchmarks/<name>/` | One benchmark on the stream: its source, a `README.md` (what it measures, its parameters and observed values, how it differs from July's), and a `Makefile` (`make BUILD=static`, `BUILD=dynamic`, `make -s compiler`, `make -s resolved`). Eight so far: `memory_read`, `compressed_memory_read`, `memory_read_random`, `memory_write`, `syscall`, `hash`, `sort`, `tcp_echo` |
+| `benchmarks/harness/c/` | The C harness that prints the event stream (`lm.h`, `lm.c`), and `lm_event.h` and `lm_event.c`, which emit a benchmark's own events and further `observed` events |
+| `benchmarks/<name>/` | One benchmark on the stream: its source, a `README.md` (what it measures, its parameters and observed values, how it differs from July's), and a `Makefile` (`make BUILD=static`, `BUILD=dynamic`, `make -s compiler`, `make -s resolved`). Nine so far: `memory_read`, `compressed_memory_read`, `memory_read_random`, `memory_write`, `syscall`, `hash`, `sort`, `tcp_echo`, `mutex` |
 | `schedule.json` | The targets (instance types, their zone, the times of day each boots) and what a box runs: benchmarks, builds, samples, timeout, parameter sets, and the instance types an entry is for. Checked by `infra/runs/schedule.ts` |
 | `runner/` | The box side: `box.sh` (user-data), `run.py` (builds, runs, dumps, writes Runs), `cpuid.c` |
 | `schemas/` | `run.schema.json` (the Run) and `events.schema.json` (one line of the stream) |
@@ -59,7 +59,10 @@ python3 scripts/check-scratch.py    # needs Docker
 `.github/workflows/check.yml` runs the tests, then `scripts/check-scratch.py`: it builds
 every benchmark that `schedule.json` builds static, and runs each binary as the only file
 in a `FROM scratch` container, once per parameter set with `--quick`, checking every
-stream. It then shows that the same container refuses `memory_read`'s dynamic build. No
+stream. A parameter set that asks for CPUs this machine does not have, such as `mutex` on
+two distinct cores on a machine with one, is reported as skipped with the reason, decided
+from the machine's topology; it is still run once, and must exit 2. Every other set must
+pass. It then shows that the same container refuses `memory_read`'s dynamic build. No
 measured Run goes through Docker.
 
 To boot the box script the way a box does, in `amazonlinux:2023.12.20260710.0` (the
@@ -72,16 +75,18 @@ scripts/box-in-container/run.sh --scenario terminated /tmp/box-test     # see be
 ```
 
 Each scenario boots the box and checks what it should have left
-(`scripts/box-in-container/expect.ts`): `ok` (the whole schedule, about seven minutes),
+(`scripts/box-in-container/expect.ts`): `ok` (the whole schedule for this machine's type
+as IMDS gives it, about seven and a half minutes; this machine is not a target, so the
+entries naming instance types, `mutex`'s two-thread sets, are left out),
 `terminated` (run.py told to stop mid-execution), `shutdown` (every process told to stop,
 as a shutdown does), `budget` (the time budget runs out), `blobs-rejected` (the bucket
 refuses every blob), `blobs-flaky` (the first upload of blobs drops halfway),
 `blobs-present` (the bucket already holds a blob the boot makes) and `instance-types`
 (a fake IMDS says the box is an `m5.large`, and the box boots
 `scripts/box-in-container/instance-types.json` as its schedule: the entries for other
-types are left out and listed in the boot summary, about a minute). The Runs describe
-this machine, seen from a container; in `instance-types` their provider fields are the
-fake IMDS's.
+types are left out and listed in the boot summary, and `mutex`'s one-thread and siblings
+sets run from one build, about two minutes). The Runs describe this machine, seen from a
+container; in `instance-types` their provider fields are the fake IMDS's.
 
 ## The daily box: a `-runs` stage
 
@@ -152,11 +157,15 @@ parameter sets on different types:
 
 ```json
 { "name": "mutex", "builds": ["static"], "samples": 10, "timeout_seconds": 180,
-  "params": [{ "threads": 1, "placement": "one_cpu" }] },
+  "params": [{ "threads": 1, "placement": "one_cpu", "critical_section_lines": 1, "lock": "pthread_mutex_default" }] },
 { "name": "mutex", "builds": ["static"], "samples": 10, "timeout_seconds": 180,
-  "instance_types": ["c6i.8xlarge", "c8i.2xlarge"],
-  "params": [{ "threads": 2, "placement": "distinct_cores" }] }
+  "instance_types": ["m5.large", "c6i.8xlarge", "c8i.2xlarge", "i4i.2xlarge"],
+  "params": [{ "threads": 2, "placement": "smt_siblings", "critical_section_lines": 1, "lock": "pthread_mutex_default" }] }
 ```
+
+(`schedule.json` does this for `mutex`: `c8a.2xlarge` has one hardware thread per core,
+so it runs no siblings set, and `m5.large` has one core, so it runs no distinct-cores
+set.)
 
 Then `bun test`, commit, and deploy: the stage's schedules change only with a deploy, and
 a deploy stops if `schedule.json` fails its check (`infra/runs/schedule.ts`). The check
