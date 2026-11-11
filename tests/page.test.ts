@@ -120,6 +120,18 @@ describe("the page", () => {
 		checkNoExternalReference(html, file);
 	});
 
+	test("says which differences were left out of the split, and lists what is left out", async () => {
+		const made = new HandMade();
+		made.run({ startedAt: "2026-11-10T23:37:00Z", boot: "first", tscKhz: 2_899_996, bogomips: "5799.99" });
+		made.run({ startedAt: "2026-11-11T00:24:00Z", boot: "second", tscKhz: 2_899_978, bogomips: "5799.95" });
+		const file = derive(made.files, await gather(made.files, made.fetch));
+		const html = renderPage(file, { runUrlBase: BASE });
+		expect(html).toContain("cpuid (only in what is left out of the split: $ cpuid)");
+		expect(html).toContain("devices (not split on: /sys/class/nvme/nvme0/serial)");
+		expect(html).toContain("<h3>Left out of the split</h3>");
+		expect(html).toContain("the lines of hypervisor leaf 0x40000010, one per CPU");
+	});
+
 	test("refuses Derivations of a Method it does not know", async () => {
 		const file = await samplesDerived();
 		const other = { ...file, method: { name: "series", version: 2 } } as unknown as DerivationsFile;

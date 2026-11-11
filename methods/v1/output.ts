@@ -6,7 +6,7 @@
  */
 
 import type { ParamValue } from "../run";
-import type { Facts, SplitFact } from "./facts";
+import type { Facts, LeftOut, SplitFact } from "./facts";
 import type { SampleTime } from "./numbers";
 
 export interface MethodName {
@@ -67,6 +67,13 @@ export interface Group {
 	percentiles: Percentiles;
 }
 
+/**
+ * What a changed section did to the split: "splits" when its split fact
+ * differs, "left out" when it is split on but differs only in what LEFT_OUT
+ * lists, "not split on" when no split fact is read from it.
+ */
+export type SectionEffect = "splits" | "left out" | "not split on";
+
 /** What differed between two consecutive Runs of a Series. */
 export interface Differed {
 	from: string;
@@ -76,6 +83,7 @@ export interface Differed {
 	/** Sections of the before-dump whose hashes differ, split on or not. */
 	sections: Array<{
 		section: string;
+		effect: SectionEffect;
 		/** The section's top-level keys whose values differ; null when not read, or present on one side only. */
 		keys: string[] | null;
 	}>;
@@ -138,6 +146,8 @@ export interface DerivationsFile {
 	/** How each number is made, in words, for the page. */
 	definitions: Record<string, string>;
 	split_on: readonly SplitFact[];
+	/** What is left out of a section before it is compared for the split, and why. */
+	left_out: readonly LeftOut[];
 	not_split_on: readonly SplitFact[];
 	/** Run files read. */
 	runs_read: number;

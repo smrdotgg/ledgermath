@@ -28,6 +28,14 @@ export interface HandMadeRun {
 	processor?: string;
 	/** Picks the kernel version in the kernel section. */
 	kernel?: string;
+	/** The TSC frequency in kHz in cpuid's hypervisor leaf 0x40000010, as calibrated at boot. */
+	tscKhz?: number;
+	/** lscpu's BogoMIPS field, as calibrated at boot. */
+	bogomips?: string;
+	/** Another cpuid line, as a processor with other features or microcode would print. */
+	cpuidLine?: string;
+	/** lscpu's Flags field. */
+	lscpuFlags?: string;
 	/** Picks the binary's bytes. */
 	binary?: string;
 	/** Each counted sample's sample_ended.t minus sample_started.t. */
@@ -69,11 +77,41 @@ export class HandMade {
 		return this.put(`${JSON.stringify(value, null, 1)}\n`);
 	}
 
-	private dump(moment: "before" | "after", o: Required<Pick<HandMadeRun, "processor" | "kernel">> & { boot: string; startedAt: string; n: number }): string {
+	private dump(
+		moment: "before" | "after",
+		o: Required<Pick<HandMadeRun, "processor" | "kernel" | "tscKhz" | "bogomips" | "cpuidLine" | "lscpuFlags">> & { boot: string; startedAt: string; n: number },
+	): string {
+		// Shaped like runner/cpuid.c's output and lscpu -J's, for four CPUs.
+		const hex = (value: number): string => `0x${value.toString(16).padStart(8, "0")}`;
+		const cpuid = [0, 1, 2, 3]
+			.map((cpu) =>
+				[
+					`CPU ${cpu}:`,
+					"   0x00000000 0x00: eax=0x0000001b ebx=0x756e6547 ecx=0x6c65746e edx=0x49656e69",
+					`   0x00000001 0x00: eax=0x000606a6 ebx=${hex(0x800 + (cpu << 24))} ecx=0xfffa3203 edx=0x1f8bfbff`,
+					`   0x80000002 0x00: brand=${o.processor}`,
+					...(o.cpuidLine === "" ? [] : [`   ${o.cpuidLine}`]),
+					`   0x40000000 0x00: eax=0x40000010 ebx=0x4b4d564b ecx=0x564b4d56 edx=0x0000004d`,
+					`   0x40000010 0x00: eax=${hex(o.tscKhz)} ebx=0x000f4240 ecx=0x00000000 edx=0x00000000`,
+				].join("\n"),
+			)
+			.join("\n");
+		const lscpu = JSON.stringify(
+			{
+				lscpu: [
+					{ field: "Architecture:", data: "x86_64" },
+					{ field: "Model name:", data: o.processor },
+					{ field: "BogoMIPS:", data: o.bogomips },
+					{ field: "Flags:", data: o.lscpuFlags },
+				],
+			},
+			null,
+			3,
+		);
 		const sections = {
-			cpuid: this.section({ "$ cpuid": { exit: 0, stderr: "", stdout: `CPU 0:\n   ${o.processor}\n` } }),
+			cpuid: this.section({ "$ cpuid": { exit: 0, stderr: "", stdout: `${cpuid}\n` } }),
 			cpuinfo: this.section({ "/proc/cpuinfo": `model name: ${o.processor}\ncpu MHz: ${2900 + o.n}.${moment === "before" ? 1 : 2}\n` }),
-			lscpu: this.section({ "$ lscpu -J": { exit: 0, stderr: "", stdout: `{"model": "${o.processor}"}` } }),
+			lscpu: this.section({ "$ lscpu -J": { exit: 0, stderr: "", stdout: `${lscpu}\n` } }),
 			sys_cpu: this.section({ "/sys/devices/system/cpu/online": "0-31\n", "/sys/devices/system/cpu/cpu0/microcode/version": `${o.processor}-ucode\n` }),
 			kernel: this.section({
 				"$ uname -a": { exit: 0, stderr: "", stdout: `Linux ip-host-${o.boot} ${o.kernel} x86_64 GNU/Linux\n` },
@@ -100,6 +138,12 @@ export class HandMade {
 		const bytes = options.bytesPerRepetition === undefined ? 1073741824 : options.bytesPerRepetition;
 		const processor = options.processor ?? "Intel(R) Xeon(R) Platinum 8375C";
 		const kernel = options.kernel ?? "6.1.176-221.360.amzn2023.x86_64";
+		const calibrated = {
+			tscKhz: options.tscKhz ?? 2_899_996,
+			bogomips: options.bogomips ?? "5799.99",
+			cpuidLine: options.cpuidLine ?? "",
+			lscpuFlags: options.lscpuFlags ?? "fpu vme de pse tsc avx2 avx512f",
+		};
 
 		const events: RunEvent[] = [];
 		let t = 1_000_000;
@@ -150,8 +194,8 @@ export class HandMade {
 				instance_id: `i-${boot}`,
 			},
 			environment: {
-				before: this.dump("before", { processor, kernel, boot, startedAt, n }),
-				after: this.dump("after", { processor, kernel, boot, startedAt, n }),
+				before: this.dump("before", { processor, kernel, ...calibrated, boot, startedAt, n }),
+				after: this.dump("after", { processor, kernel, ...calibrated, boot, startedAt, n }),
 			},
 			runner: this.put("a runner manifest"),
 			exit: options.exit ?? { code: 0 },

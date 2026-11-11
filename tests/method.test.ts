@@ -5,6 +5,7 @@ import { join } from "node:path";
 
 import type { Run, RunFile } from "../methods/run";
 import { derive, gather, groupLetter, serialize } from "../methods/v1";
+import { LEFT_OUT, withoutLeftOut } from "../methods/v1/facts";
 import { median, percentile } from "../methods/v1/numbers";
 import type { DerivationsFile, SeriesDerivation } from "../methods/v1/output";
 import { blobsFromDirectories } from "../scripts/lib/blobs";
@@ -179,6 +180,56 @@ describe("Method version 1 on hand-made Runs", () => {
 		expect(series.differed[0]?.facts).toEqual([]);
 		expect(series.differed[1]?.facts).toEqual(["kernel"]);
 		expect(series.differed[1]?.sections.find((s) => s.section === "kernel")?.keys).toEqual(["$ uname -a", "/proc/version"]);
+	});
+
+	test("two boots that differ only in what is measured at boot make one group, and what differed says so", async () => {
+		// Shaped like the two c6i.8xlarge boots of 2026-11-10 and 2026-11-11: the TSC frequency in cpuid's
+		// leaf 0x40000010, lscpu's BogoMIPS and the host name differ, and nothing else that is split on.
+		const made = new HandMade();
+		made.run({ startedAt: "2026-11-10T23:37:00Z", boot: "first", tscKhz: 2_899_996, bogomips: "5799.99" });
+		made.run({ startedAt: "2026-11-11T00:24:00Z", boot: "second", tscKhz: 2_899_978, bogomips: "5799.95" });
+		const series = onlySeries(await deriveHandMade(made));
+		expect(series.points.map((point) => point.group)).toEqual(["A", "A"]);
+		expect(series.percentiles.time_per_repetition_ns?.count).toBe(2);
+		const [pair] = series.differed;
+		expect(pair?.facts).toEqual([]);
+		expect(Object.fromEntries((pair?.sections ?? []).map((s) => [s.section, s.effect]))).toEqual({
+			cpuid: "left out",
+			cpuinfo: "not split on",
+			devices: "not split on",
+			kernel: "left out",
+			lscpu: "left out",
+			memory: "not split on",
+			provider: "not split on",
+		});
+	});
+
+	test("any other difference in cpuid or lscpu still splits, anticipated or not", async () => {
+		const made = new HandMade();
+		made.run({ startedAt: "2026-11-10T23:37:00Z", boot: "first" });
+		made.run({ startedAt: "2026-11-11T00:24:00Z", boot: "second", tscKhz: 2_899_978, cpuidLine: "0x00000007 0x00: eax=0x00000000 ebx=0xf1bf07ab" });
+		made.run({ startedAt: "2026-11-12T00:24:00Z", boot: "third", bogomips: "5799.95", lscpuFlags: "fpu vme de pse tsc avx2" });
+		made.run({ startedAt: "2026-11-13T00:24:00Z", boot: "fourth", tscKhz: 2_900_011 });
+		const series = onlySeries(await deriveHandMade(made));
+		expect(series.points.map((point) => point.group)).toEqual(["A", "B", "C", "A"]);
+		expect(series.differed[0]?.facts).toEqual(["cpuid"]);
+		expect(series.differed[0]?.sections.find((s) => s.section === "cpuid")?.effect).toBe("splits");
+		expect(series.differed[1]?.facts).toEqual(["cpuid", "lscpu"]);
+		expect(series.differed[1]?.sections.find((s) => s.section === "lscpu")?.effect).toBe("splits");
+		expect(series.differed[2]?.facts).toEqual(["lscpu"]);
+	});
+
+	test("what is left out, and nothing more", () => {
+		const cpuid = { "$ cpuid": { exit: 0, stderr: "", stdout: "CPU 0:\n   0x40000010 0x00: eax=0x002c401c\n   0x40000011 0x00: eax=0x1\n" } };
+		expect(withoutLeftOut("cpuid", cpuid)).toEqual({ "$ cpuid": { exit: 0, stderr: "", stdout: "CPU 0:\n   0x40000011 0x00: eax=0x1\n" } });
+		const lscpu = { "$ lscpu -J": { exit: 0, stderr: "", stdout: '{"lscpu": [{"field": "BogoMIPS:", "data": "5799.99"}, {"field": "Model:", "data": "106", "children": [{"field": "BogoMIPS:", "data": "1"}]}]}' } };
+		expect(withoutLeftOut("lscpu", lscpu)["$ lscpu -J"]).toMatchObject({ stdout: '{"lscpu":[{"children":[],"data":"106","field":"Model:"}]}' });
+		const notJson = { "$ lscpu -J": { exit: 1, stderr: "no", stdout: "BogoMIPS: 5799.99" } };
+		expect(withoutLeftOut("lscpu", notJson)).toEqual(notJson);
+		expect(withoutLeftOut("kernel", { "$ uname -a": "host", "/proc/version": "6.1" })).toEqual({ "/proc/version": "6.1" });
+		const other = { a: 1 };
+		expect(withoutLeftOut("sys_cpu", other)).toBe(other);
+		expect(LEFT_OUT.map((entry) => entry.section)).toEqual(["cpuid", "lscpu", "kernel"]);
 	});
 
 	test("a failed Run is shown, in its group, and in no percentile", async () => {

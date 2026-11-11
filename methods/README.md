@@ -49,24 +49,44 @@ never touches a stored Run; only the Run record is forever.
 ### What version 1 splits on, and why
 
 The binary, the runner, the sample count, the image (`provider.image_id`), and these
-sections of the before-dump: `cpuid`, `lscpu`, `sys_cpu`, `kernel` (without its
-`$ uname -a` entry), `process` and `packages`. Never `source_commit` or `source`.
+sections of the before-dump: `cpuid`, `lscpu`, `sys_cpu`, `kernel`, `process` and
+`packages`, each compared whole apart from the short list of per-boot values below.
+Never `source_commit` or `source`. Any other difference in those sections splits,
+whether anyone foresaw it or not.
 
-The sections were chosen from the Runs. In every boot available (the real `c6i.8xlarge`
-boot of 2026-11-10, eight Runs, and the three sample boots in `tests/samples`), eight
-sections held the same hash before and after every Run and across all Runs of the boot:
-`cpuid`, `lscpu`, `sys_cpu`, `kernel`, `devices`, `process`, `packages`, `provider`.
-`cpuinfo` (each CPU's current MHz) and `memory` (meminfo, loadavg, uptime) changed on
-every read, before against after in every Run. Of the steady eight, three name the box
-itself, and would split every boot from every other:
+The sections were chosen from the Runs. Within every boot available (the real
+`c6i.8xlarge` boots of 2026-11-10 23:36 UTC and 2026-11-11 00:23 UTC, eight Runs each,
+and the three sample boots in `tests/samples`), eight sections held the same hash before
+and after every Run and across all Runs of the boot: `cpuid`, `lscpu`, `sys_cpu`,
+`kernel`, `devices`, `process`, `packages`, `provider`. `cpuinfo` (each CPU's current MHz)
+and `memory` (meminfo, loadavg, uptime) changed on every read, before against after in
+every Run. Of the steady eight, two name the box itself, and would split every boot from
+every other, so they are not split on:
 
 - `provider`: the instance ID, private address and launch time. Its instance type and
   zone ID make the Series, and its image is split on.
 - `devices`: the root volume's serial, new on every launch.
-- `kernel`: the host name in `uname -a`. Everything else in it is the image's (kernel
-  version, command line, sysctls, transparent hugepages, clocksource, NUMA layout), so
-  version 1 splits on the section without that one entry.
 
-So `provider` and `devices` are not split on. They, `cpuinfo` and `memory` are still in
-"what differed", and the page counts how often each section changed. Only one real boot
-exists so far, so steadiness across boots is unproven: the next boots show it.
+### What is left out of a section before it is compared
+
+Between the two real boots, `sys_cpu`, `process`, `packages`, the binaries, the runner
+and the image were identical. Three sections differed, each only in a value assigned or
+measured anew at every boot. Version 1 leaves out exactly these (`LEFT_OUT` in
+`v1/facts.ts`), and nothing else:
+
+| Section | Left out | Why, with what the Runs show |
+|---------|----------|------------------------------|
+| `cpuid` | Every line of hypervisor leaf `0x40000010` (one per CPU) | Its `eax` is the TSC frequency in kHz, as calibrated for the boot: `0x002c401c` = 2,899,996 on the first boot, `0x002c400a` = 2,899,978 on the second. Those 32 lines were the only difference among the 2,240 lines of each dump. |
+| `lscpu` | The `BogoMIPS` field | The kernel's delay-loop calibration at boot, from the same TSC frequency: `5799.99` and `5799.95`. It was the only difference. |
+| `kernel` | The `$ uname -a` entry | It holds the host name, which comes from the private address and is new on every launch. The kernel version, command line, sysctls, transparent hugepages, clocksource and NUMA layout in the rest of the section were identical. |
+
+The fact read from one of these sections is `canonical-json-sha256:<hex>`: the sha256 of
+what remains, as JSON with keys sorted and no whitespace; `lscpu`'s output is parsed and
+re-written that way too, without any entry whose field is `BogoMIPS:` (if it does not
+parse as JSON, it is compared as it is). With these left out, each of the eight real
+Series is one group of two Runs; without them, every boot was a group of its own.
+
+"What differed" still lists every section whose raw hash changed, and marks each change:
+it splits, it lies only in what is left out, or the section is not split on. If a value
+on this list turns out to matter, or another per-boot value turns up, that is a new
+version, never an edit to this one.

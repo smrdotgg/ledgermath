@@ -13,7 +13,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { parseArgs } from "node:util";
 
-import type { DerivationsFile, Group, Point, SeriesDerivation, Stat } from "../methods/v1/output";
+import type { DerivationsFile, Group, Point, SectionEffect, SeriesDerivation, Stat } from "../methods/v1/output";
 import {
 	bytesPerSecondUnit,
 	type ChartMedian,
@@ -187,6 +187,13 @@ function failedList(derivation: SeriesDerivation, options: PageOptions): string 
 	return `<h3>Failed Runs (${failed.length})</h3><ul class="failed">${items.join("")}</ul>`;
 }
 
+/** How a changed section is marked in "what differed". */
+const EFFECT: Record<SectionEffect, string> = {
+	splits: "splits",
+	"left out": "only in what is left out of the split",
+	"not split on": "not split on",
+};
+
 function differedList(derivation: SeriesDerivation): string {
 	const pairs = derivation.differed;
 	if (pairs.length === 0) return "<h3>What differed</h3><p>One Run: nothing to compare yet.</p>";
@@ -195,7 +202,10 @@ function differedList(derivation: SeriesDerivation): string {
 	const sections = new Map<string, number>();
 	for (const pair of pairs) {
 		for (const fact of pair.facts) facts.set(fact, (facts.get(fact) ?? 0) + 1);
-		for (const { section } of pair.sections) sections.set(section, (sections.get(section) ?? 0) + 1);
+		for (const { section, effect } of pair.sections) {
+			const label = `${section} (${EFFECT[effect]})`;
+			sections.set(label, (sections.get(label) ?? 0) + 1);
+		}
 	}
 	const counts = (map: Map<string, number>): string =>
 		map.size === 0
@@ -207,9 +217,11 @@ function differedList(derivation: SeriesDerivation): string {
 	const items = pairs.map((pair) => {
 		const parts: string[] = [];
 		if (pair.facts.length) parts.push(`split facts: <b>${pair.facts.map(esc).join(", ")}</b>`);
-		const named = pair.sections.map(({ section, keys }) =>
-			keys === null || keys.length === 0 ? esc(section) : `${esc(section)} (${keys.map(esc).join(", ")})`,
-		);
+		const named = pair.sections.map(({ section, keys, effect }) => {
+			const changed = keys === null || keys.length === 0 ? "" : `: ${keys.map(esc).join(", ")}`;
+			const name = effect === "splits" ? `<b>${esc(section)}</b>` : esc(section);
+			return `${name} (${EFFECT[effect]}${changed})`;
+		});
 		parts.push(`sections: ${named.length ? named.join("; ") : "none"}`);
 		const from = startedAt.get(pair.from) ?? "";
 		const to = startedAt.get(pair.to) ?? "";
@@ -334,7 +346,11 @@ export function renderPage(file: DerivationsFile, options: PageOptions): string 
 		`<p class="meta">Derived by <b>Method ${esc(file.method.name)}, version ${file.method.version}</b>, from ${file.runs_read} Run file${file.runs_read === 1 ? "" : "s"}: ${counted} counted, ${runs.length - counted} failed, ${file.unreadable.length} that do not validate. Newest Run started ${newest === null ? "never" : esc(time(Date.parse(newest)))}. Every point, and every time below, links to its Run file.</p>`,
 		`<nav><h2>${file.derivations.length} Series</h2><ol>${toc.join("")}</ol></nav>`,
 		`<details><summary>How the numbers are made (Method ${esc(file.method.name)} v${file.method.version})</summary><dl>${definitions}</dl>`,
-		`<h3>Split on</h3><ul>${facts(file.split_on)}</ul><h3>Not split on</h3><ul>${facts(file.not_split_on)}</ul>`,
+		`<h3>Split on</h3><ul>${facts(file.split_on)}</ul>`,
+		`<h3>Left out of the split</h3><ul>${file.left_out
+			.map(({ section, what, why }) => `<li><b>${esc(section)}</b>: ${esc(what)}: ${esc(why)}.</li>`)
+			.join("")}</ul>`,
+		`<h3>Not split on</h3><ul>${facts(file.not_split_on)}</ul>`,
 		`<h3>How often each dump section changed, over every Run</h3>${evidenceTable(file)}</details>`,
 		unreadable,
 		...file.derivations.map((derivation) => seriesSection(derivation, file, options)),

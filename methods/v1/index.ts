@@ -38,6 +38,7 @@ import {
 	type BlobMap,
 	changedKeys,
 	type Facts,
+	LEFT_OUT,
 	NOT_SPLIT_ON,
 	outcome,
 	SPLIT_FACTS,
@@ -54,6 +55,7 @@ import type {
 	Differed,
 	Group,
 	MethodName,
+	SectionEffect,
 	Percentiles,
 	Point,
 	SectionCounts,
@@ -86,10 +88,13 @@ export const DEFINITIONS: Record<string, string> = {
 		"the Run asked for. Any other Run is failed: shown, with the reasons, and in no percentile.",
 	groups:
 		"Within a Series, the Runs whose split facts are all equal make one group. Groups are lettered in the order " +
-		"each first appears, and may interleave in time.",
+		"each first appears, and may interleave in time. A dump section is compared whole, apart from the per-boot " +
+		"values listed as left out; a fact read from such a section is canonical-json-sha256:<hex>, the sha256 of " +
+		"what remains as JSON with keys sorted and no whitespace (lscpu's output is re-written that way too).",
 	differed:
 		"For each pair of consecutive Runs in a Series, every split fact and every dump section of the before-dump " +
-		"whose value changed, split on or not, with the top-level keys that changed for the sections that are read.",
+		"whose hash changed, split on or not, with the top-level keys that changed for the sections that are read. " +
+		"Each changed section is marked: it splits, its change lies only in what is left out, or it is not split on.",
 };
 
 interface ReadRun {
@@ -269,7 +274,12 @@ function differed(from: Analysed, to: Analysed, blobs: BlobMap): Differed {
 	const names = [...new Set([...Object.keys(from.before), ...Object.keys(to.before)])].sort(compareText);
 	const sections = names
 		.filter((name) => from.before[name] !== to.before[name])
-		.map((name) => ({ section: name, keys: changedKeys(name, from.before[name], to.before[name], blobs) }));
+		.map((name) => {
+			const fact = SECTION_FACT.get(name);
+			const effect: SectionEffect =
+				fact === undefined ? "not split on" : from.facts[fact] !== to.facts[fact] ? "splits" : "left out";
+			return { section: name, effect, keys: changedKeys(name, from.before[name], to.before[name], blobs) };
+		});
 	return { from: from.run.id, to: to.run.id, facts, sections };
 }
 
@@ -403,6 +413,7 @@ export function derive(files: readonly RunFile[], blobs: BlobMap): DerivationsFi
 		method: METHOD,
 		definitions: DEFINITIONS,
 		split_on: SPLIT_FACTS,
+		left_out: LEFT_OUT,
 		not_split_on: NOT_SPLIT_ON,
 		runs_read: files.length,
 		unreadable,

@@ -61,23 +61,18 @@ export interface SplitFact {
  *
  * Dump sections were chosen from the Runs: a section is split on when its
  * hash was the same before and after every Run, and across all Runs of a
- * boot, and it holds nothing that names the box itself.
+ * boot, and it holds nothing that names the box itself. A section is compared
+ * whole, apart from what LEFT_OUT lists.
  */
 export const SPLIT_FACTS: readonly SplitFact[] = [
 	{ fact: "binary", what: "binary.blob: the bytes that ran" },
 	{ fact: "runner", what: "runner: the manifest of runner/ that launched the binary" },
 	{ fact: "samples", what: "samples: LM_SAMPLES" },
 	{ fact: "image", what: "provider.image_id" },
-	{ fact: "cpuid", what: "dump section cpuid: the raw cpuid leaves of every CPU", section: "cpuid" },
-	{ fact: "lscpu", what: "dump section lscpu", section: "lscpu" },
+	{ fact: "cpuid", what: "dump section cpuid: the raw cpuid leaves of every CPU, without what is left out", section: "cpuid" },
+	{ fact: "lscpu", what: "dump section lscpu, without what is left out", section: "lscpu" },
 	{ fact: "sys_cpu", what: "dump section sys_cpu: topology, caches, vulnerabilities, microcode, cpufreq, cpuidle", section: "sys_cpu" },
-	{
-		fact: "kernel",
-		what:
-			`dump section kernel without its "${KERNEL_HOST_KEY}" entry, which holds the host name: ` +
-			"canonical-json-sha256 is the sha256 of that object as JSON with keys sorted and no whitespace",
-		section: "kernel",
-	},
+	{ fact: "kernel", what: "dump section kernel, without what is left out", section: "kernel" },
 	{ fact: "process", what: "dump section process: limits, cgroup, allowed CPUs", section: "process" },
 	{ fact: "packages", what: "dump section packages: every installed package and version", section: "packages" },
 ];
@@ -96,6 +91,41 @@ export const NOT_SPLIT_ON: readonly SplitFact[] = [
 	},
 ];
 
+/** A value left out of a section before it is compared for the split. */
+export interface LeftOut {
+	section: string;
+	what: string;
+	why: string;
+}
+
+/**
+ * Everything version 1 leaves out of a section before comparing it for the
+ * split, and nothing else: each is a value measured or assigned anew at every
+ * boot, so it would split every boot from every other. Any other difference,
+ * anticipated or not, still splits. "What differed" still reports the raw
+ * sections, and marks a difference that lies only in what is left out.
+ */
+export const LEFT_OUT: readonly LeftOut[] = [
+	{
+		section: "cpuid",
+		what: "the lines of hypervisor leaf 0x40000010, one per CPU",
+		why:
+			"its eax is the TSC frequency in kHz as calibrated for the boot: 2,899,996 (0x002c401c) on the c6i.8xlarge " +
+			"boot of 2026-11-10 23:36 UTC, 2,899,978 (0x002c400a) on the one of 2026-11-11 00:23 UTC; the other 2,208 " +
+			"lines of the two dumps are identical",
+	},
+	{
+		section: "lscpu",
+		what: "the BogoMIPS field",
+		why: "the kernel's delay-loop calibration at boot, from the same TSC frequency: 5799.99 and 5799.95 on those two boots",
+	},
+	{
+		section: "kernel",
+		what: `the "${KERNEL_HOST_KEY}" entry`,
+		why: "it holds the host name, which comes from the private address and is new on every launch",
+	},
+];
+
 export type Facts = Record<string, string | number | null>;
 
 /** The bytes of the blobs this Method reads, by hash. */
@@ -109,16 +139,75 @@ function sectionJson(hash: string, blobs: BlobMap): Record<string, unknown> {
 	return value as Record<string, unknown>;
 }
 
-/** The kernel section's fact: its contents without the host name, hashed. */
-export function kernelFact(hash: string, blobs: BlobMap): string {
-	const { [KERNEL_HOST_KEY]: _host, ...rest } = sectionJson(hash, blobs);
-	return `canonical-json-sha256:${createHash("sha256").update(canonicalJson(rest)).digest("hex")}`;
+const CPUID_CALIBRATION_LINE = /^\s*0x40000010 0x[0-9a-f]+:/;
+const isObject = (value: unknown): value is Record<string, unknown> =>
+	typeof value === "object" && value !== null && !Array.isArray(value);
+
+/** lscpu -J output without any entry whose field is "BogoMIPS:", at any depth. */
+function withoutBogomips(value: unknown): unknown {
+	if (Array.isArray(value)) {
+		return value
+			.filter((item) => !(isObject(item) && typeof item.field === "string" && item.field.replace(/:$/, "").trim() === "BogoMIPS"))
+			.map(withoutBogomips);
+	}
+	if (isObject(value)) return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, withoutBogomips(item)]));
+	return value;
+}
+
+/** Applies f to the stdout of every command result in a section. */
+function mapStdout(section: Record<string, unknown>, f: (stdout: string) => string): Record<string, unknown> {
+	return Object.fromEntries(
+		Object.entries(section).map(([key, value]) =>
+			isObject(value) && typeof value.stdout === "string" ? [key, { ...value, stdout: f(value.stdout) }] : [key, value],
+		),
+	);
+}
+
+/** A section's contents without what LEFT_OUT lists for it. */
+export function withoutLeftOut(name: string, section: Record<string, unknown>): Record<string, unknown> {
+	if (name === "kernel") {
+		const { [KERNEL_HOST_KEY]: _host, ...rest } = section;
+		return rest;
+	}
+	if (name === "cpuid") {
+		return mapStdout(section, (stdout) =>
+			stdout
+				.split("\n")
+				.filter((line) => !CPUID_CALIBRATION_LINE.test(line))
+				.join("\n"),
+		);
+	}
+	if (name === "lscpu") {
+		return mapStdout(section, (stdout) => {
+			try {
+				return canonicalJson(withoutBogomips(JSON.parse(stdout)));
+			} catch {
+				return stdout; // not JSON: compared whole
+			}
+		});
+	}
+	return section;
+}
+
+const LEFT_OUT_SECTIONS: ReadonlySet<string> = new Set(LEFT_OUT.map(({ section }) => section));
+
+/**
+ * A section's split fact: its hash, or for a section LEFT_OUT names,
+ * canonical-json-sha256:<hex>, the sha256 of what remains as JSON with keys
+ * sorted and no whitespace.
+ */
+export function sectionFact(name: string, hash: string, blobs: BlobMap): string {
+	if (!LEFT_OUT_SECTIONS.has(name)) return hash;
+	const remaining = withoutLeftOut(name, sectionJson(hash, blobs));
+	return `canonical-json-sha256:${createHash("sha256").update(canonicalJson(remaining)).digest("hex")}`;
 }
 
 /** The split facts of one Run, given the sections of its before-dump. */
 export function splitFacts(run: Run, before: Record<string, string>, blobs: BlobMap): Facts {
-	const section = (name: string): string | null => before[name] ?? null;
-	const kernel = section("kernel");
+	const section = (name: string): string | null => {
+		const hash = before[name];
+		return hash === undefined ? null : sectionFact(name, hash, blobs);
+	};
 	return {
 		binary: run.binary.blob,
 		runner: run.runner,
@@ -127,7 +216,7 @@ export function splitFacts(run: Run, before: Record<string, string>, blobs: Blob
 		cpuid: section("cpuid"),
 		lscpu: section("lscpu"),
 		sys_cpu: section("sys_cpu"),
-		kernel: kernel === null ? null : kernelFact(kernel, blobs),
+		kernel: section("kernel"),
 		process: section("process"),
 		packages: section("packages"),
 	};
