@@ -50,10 +50,13 @@
 # namespace the box's joins, so the Runs' provider fields are its words while
 # the dumps are still this machine's.
 #
-# The disks: the container is not privileged and has no device node of this
-# machine's disks, so provision.py, which sees this machine's NVMe controllers
-# in /sys, can format nothing; it refuses (the scenarios check that it did not
-# prepare anything). The root volume's directory, /var/tmp/ledgermath/disk, is
+# The disks: provision.py sees this machine's NVMe controllers in /sys, and so
+# this machine's own instance-store disk. It must never format it, and it
+# cannot: the container runs without CAP_MKNOD, so provision.py cannot make the
+# device node it works through and refuses at once (and Docker's device cgroup
+# would refuse to open the device, blkid would find its file system, and
+# mkfs.xfs, never forced, would refuse it). The scenarios check that it
+# prepared nothing and ran neither mkfs.xfs nor mount. The root volume's directory, /var/tmp/ledgermath/disk, is
 # a tmpfs of the container's own: the disk Runs read and write memory there,
 # and say so (their device_found is false). The schedule's root volume
 # Fixture (1 GiB) and the scratch file of disk_write (up to 1 GiB) do not fit
@@ -174,6 +177,7 @@ fi
 echo "booting $COMMIT in $IMAGE, scenario $SCENARIO"
 docker run -d --name "$NAME" "${NETWORK[@]}" "${ENVIRONMENT[@]}" \
   --security-opt seccomp=unconfined \
+  --cap-drop MKNOD \
   --tmpfs /var/tmp/ledgermath/disk:rw,size=2560m \
   -v "$OUT/s3:/fake-s3" \
   -v "$OUT/calls:/fake-calls" \

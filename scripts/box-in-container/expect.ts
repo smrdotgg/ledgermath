@@ -142,9 +142,11 @@ function mutexRunsSayWhereTheyRan(): void {
 }
 
 // Every disk Run says which disk it measured, and its dump proves it
-// (scripts/check-disk-runs.ts); here the disk directory is a tmpfs.
+// (scripts/check-disk-runs.ts). Here the root volume's disk directory is a
+// tmpfs of the container's own, so its Runs find no block device: accepted
+// here, and only here (acceptNoDevice); everything else is checked as on a box.
 function diskRunsTieToTheirDumps(): void {
-	const { problems: diskProblems } = checkDiskRuns(bucket);
+	const { problems: diskProblems } = checkDiskRuns(bucket, { acceptNoDevice: true });
 	for (const problem of diskProblems) problems.push(`check-disk-runs: ${problem}`);
 	expect(runs.some((run) => String(run.benchmark).startsWith("disk_")), "no disk Run, though the schedule names disk benchmarks");
 }
@@ -163,10 +165,16 @@ function provisionPreparedNothing(): void {
 	const text = Object.values(section)[0];
 	expect(typeof text === "string", "the provision section holds no record");
 	if (typeof text !== "string") return;
-	const record = JSON.parse(text) as { decisions: Array<{ what: string; action: string }>; steps: Array<{ command: string[] }>; fixtures: Array<{ disk: string; made: boolean }> };
+	const record = JSON.parse(text) as {
+		state?: string;
+		decisions: Array<{ what: string; action: string }>;
+		steps: Array<{ command: string[] }>;
+		fixtures: Array<{ disk: string; made: boolean }>;
+	};
 	const store = record.decisions.find((decision) => decision.what === "instance_store");
 	expect(store !== undefined && store.action !== "prepare", `provision.py's instance-store decision is ${JSON.stringify(store)}, expected none or refuse`);
 	expect(!record.steps.some((step) => step.command[0] === "mkfs.xfs" || step.command[0] === "mount"), "provision.py ran mkfs.xfs or mount in the container");
+	expect(record.state === "done" || record.state === "failed", `the provision record's state is ${String(record.state)}, expected done, or failed for the refusal`);
 	expect(record.fixtures.some((fixture) => fixture.disk === "root_volume" && fixture.made), "the root volume's Fixture was not made");
 }
 
