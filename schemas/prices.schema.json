@@ -1,0 +1,165 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:ledgermath:prices:1",
+  "title": "Price file",
+  "description": "A day's copy of what AWS publicly charges for what LedgerMath measures, stored at prices/<yyyy>/<mm>/<dd>/aws.json in the Runs repository, under the UTC date it was fetched. Added once, never edited. It holds the records the named rule set selected from AWS's Price List offer files, verbatim: each product and each set of On-Demand terms is AWS's own object, parsed and written back with nothing changed but the whitespace between tokens. Each source names the versioned URL its bytes came from, their size and SHA-256, so anyone can download the whole file and cut it again. A price is cited as this file's path, the SKU and the rate code. The root and LedgerMath's own objects are closed; AWS's objects are open, because they are AWS's words.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "provider", "fetched_at", "measured", "rules", "sources"],
+  "properties": {
+    "schema": { "const": "ledgermath.prices/1" },
+    "provider": { "description": "Whose price lists these are.", "const": "aws" },
+    "fetched_at": {
+      "description": "When the fetch started, UTC, to the millisecond. Its date names the file.",
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$"
+    },
+    "measured": {
+      "description": "What is measured, as schedule.json said when the file was cut: the inputs the rules were given besides the offer files.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["region", "instance_types"],
+      "properties": {
+        "region": { "description": "The Region of the schedule's zone.", "type": "string", "pattern": "^[a-z]{2}-[a-z]+-[0-9]$" },
+        "instance_types": {
+          "description": "The schedule's instance types, sorted.",
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^[a-z][a-z0-9-]*\\.[a-z0-9]+$" }
+        }
+      }
+    },
+    "rules": {
+      "description": "The rule set the records were selected with (scripts/lib/price-rules.ts). A record a rule of this version does not select is not in the file, whatever AWS charges for it.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version"],
+      "properties": {
+        "name": { "const": "ledgermath.aws-price-rules" },
+        "version": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "sources": {
+      "description": "One per offer file the rules read.",
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/source" }
+    }
+  },
+  "$defs": {
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["offer_code", "url", "version", "publication_date", "bytes", "sha256", "header", "selections", "products", "terms"],
+      "properties": {
+        "offer_code": { "description": "AWS's offer code, such as AmazonEC2.", "type": "string", "pattern": "^[A-Za-z0-9]+$" },
+        "url": {
+          "description": "The versioned URL the bytes were downloaded from; never a current URL.",
+          "type": "string",
+          "pattern": "^https://pricing\\.us-east-1\\.amazonaws\\.com/offers/v1\\.0/aws/[A-Za-z0-9]+/[0-9]{14}/[a-z0-9-]+/index\\.json$"
+        },
+        "version": { "description": "The offer file's own version.", "type": "string", "pattern": "^[0-9]{14}$" },
+        "publication_date": { "description": "The offer file's own publicationDate.", "type": "string", "minLength": 1 },
+        "bytes": { "description": "The size of the file downloaded.", "type": "integer", "minimum": 1 },
+        "sha256": { "description": "The SHA-256 of the file downloaded.", "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+        "header": {
+          "description": "Every top-level member of the offer file other than products and terms, verbatim.",
+          "type": "object",
+          "required": ["formatVersion", "offerCode", "version", "publicationDate"],
+          "properties": {
+            "formatVersion": { "type": "string" },
+            "disclaimer": { "type": "string" },
+            "offerCode": { "type": "string" },
+            "version": { "type": "string" },
+            "publicationDate": { "type": "string" }
+          }
+        },
+        "selections": {
+          "description": "Each rule of the rule set that reads this offer, what it selects, and the SKUs it selected, in the offer file's order.",
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["rule", "selects", "skus"],
+            "properties": {
+              "rule": { "type": "string", "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$" },
+              "selects": { "type": "string", "minLength": 1 },
+              "skus": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "minLength": 1 } }
+            }
+          }
+        },
+        "products": {
+          "description": "The selected products, verbatim, each under the SKU the offer file files it under.",
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": { "$ref": "#/$defs/product" }
+        },
+        "terms": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["OnDemand"],
+          "properties": {
+            "OnDemand": {
+              "description": "Each selected product's On-Demand terms, verbatim: terms.OnDemand.<sku> of the offer file, a map from <sku>.<offerTermCode> to a term.",
+              "type": "object",
+              "minProperties": 1,
+              "additionalProperties": {
+                "type": "object",
+                "minProperties": 1,
+                "additionalProperties": { "$ref": "#/$defs/term" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "product": {
+      "description": "AWS's product object.",
+      "type": "object",
+      "required": ["sku", "attributes"],
+      "properties": {
+        "sku": { "type": "string", "minLength": 1 },
+        "productFamily": { "type": "string" },
+        "attributes": { "type": "object", "additionalProperties": { "type": "string" } }
+      }
+    },
+    "term": {
+      "description": "AWS's term object.",
+      "type": "object",
+      "required": ["offerTermCode", "sku", "effectiveDate", "priceDimensions"],
+      "properties": {
+        "offerTermCode": { "type": "string", "minLength": 1 },
+        "sku": { "type": "string", "minLength": 1 },
+        "effectiveDate": { "type": "string" },
+        "priceDimensions": {
+          "description": "A map from rate code, <sku>.<offerTermCode>.<code>, to a price dimension.",
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": { "$ref": "#/$defs/priceDimension" }
+        },
+        "termAttributes": { "type": "object" }
+      }
+    },
+    "priceDimension": {
+      "description": "AWS's price dimension: a rate, the unit it is per, and the range of usage it applies to.",
+      "type": "object",
+      "required": ["rateCode", "unit", "pricePerUnit"],
+      "properties": {
+        "rateCode": { "type": "string", "minLength": 1 },
+        "description": { "type": "string" },
+        "beginRange": { "type": "string" },
+        "endRange": { "type": "string" },
+        "unit": { "type": "string" },
+        "pricePerUnit": {
+          "description": "The price per unit, by currency, as AWS writes the number.",
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": { "type": "string", "pattern": "^[0-9]+(\\.[0-9]+)?$" }
+        },
+        "appliesTo": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  }
+}
