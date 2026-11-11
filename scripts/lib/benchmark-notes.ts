@@ -39,14 +39,14 @@ const INSTANCE_STORE = "the instance's own NVMe disk (instance store), on i4i.2x
 export const BENCHMARK_NOTES: Readonly<Record<string, BenchmarkNote>> = {
 	memory_read: {
 		measures:
-			"How fast a buffer of 64-bit words is read front to back and summed: on one unpinned thread (threads 1) or one pinned thread per allowed CPU (threads all), with an x86 scalar loop (path scalar) or AVX2 (path avx2). Memory read bandwidth.",
+			"How fast a buffer of 64-bit words is read front to back and summed: on one unpinned thread (threads 1) or one pinned thread per allowed CPU (threads all), with an x86 scalar loop (path scalar) or AVX2 (path avx2). Whether the buffer comes from memory or cache depends on size_bytes and the machine's caches, which the Run's dump records.",
 		repetition: "reads size_bytes once; with threads all, each thread reads its own slice of it",
 		bytes: "bytes read",
 		source: "benchmarks/memory_read/memory_read.c",
 	},
 	compressed_memory_read: {
 		measures:
-			"How fast one core unpacks integers stored at 8 bits each into 32-bit integers, from a pool large enough to come from memory rather than cache: the decode step of a compressed column.",
+			"How fast one core unpacks integers stored at 8 bits each into 32-bit integers, the decode step of a compressed column, cycling through a pool of blocks meant to come from memory rather than cache. Whether the pool exceeds the cache depends on the machine (some have an L3 of hundreds of MiB); the Run's dump records the cache sizes.",
 		repetition: "unpacks one block: 256 bytes in, 256 32-bit integers (1024 bytes) out",
 		bytes: "bytes written out (unpacked), not bytes read: 1024 out for 256 in",
 		source: "benchmarks/compressed_memory_read/README.md",
@@ -55,19 +55,19 @@ export const BENCHMARK_NOTES: Readonly<Record<string, BenchmarkNote>> = {
 		measures:
 			"How fast one core reads a large buffer in random order: the first 8 bytes of every 64-byte element, in a shuffled order, with many cache misses in flight. The throughput of random reads, not the latency of one.",
 		repetition: "reads every 64-byte element of size_bytes once: size_bytes / 64 reads",
-		bytes: "bytes of the buffer covered (size_bytes per repetition), not bytes loaded by the core",
+		bytes: "bytes of the elements read from: 64 per read, the cache line each read brings in, of which the core uses 8",
 		source: "benchmarks/memory_read_random/README.md",
 	},
 	memory_write: {
 		measures:
-			"How fast one core writes a large buffer, front to back (order sequential) or in random order (order random), one 64-byte element at a time with AVX2 stores.",
+			"How fast one core writes a large buffer, front to back (order sequential) or in random order (order random), one 64-byte element at a time: two 32-byte AVX2 stores, then a read of its last word.",
 		repetition: "writes every 64-byte element of size_bytes once",
 		bytes: "bytes written",
 		source: "benchmarks/memory_write/README.md",
 	},
 	syscall: {
 		measures:
-			"The cost of one call into the kernel (call getpid, getrusage, stat), beside one the C library answers without entering it (call gettimeofday, through the vDSO).",
+			"The cost of one call into the kernel (call getpid, getrusage, stat; stat's cost depends on the file system that answers it, which the Run observes), beside call gettimeofday, which the vDSO normally answers without entering the kernel. Whether it did is not observed: the clock source in the Run's dump decides it.",
 		repetition: "makes one call",
 		source: "benchmarks/syscall/README.md",
 	},
@@ -105,12 +105,12 @@ export const BENCHMARK_NOTES: Readonly<Record<string, BenchmarkNote>> = {
 				match: { threads: 1, idle_threads: 0 },
 				note: "the same in a process that has only ever had one thread, where glibc skips the atomic instructions",
 			},
-			{ match: { placement: "distinct_cores", critical_section_lines: 1 }, note: "lock handoff between two physical cores" },
+			{ match: { placement: "distinct_cores", critical_section_lines: 1 }, note: "lock handoff throughput between two physical cores" },
 			{
 				match: { placement: "distinct_cores", critical_section_lines: 8 },
-				note: "lock handoff between two physical cores with eight protected cache lines moving with the lock",
+				note: "lock handoff throughput between two physical cores with eight protected cache lines moving with the lock, which includes glibc's futex sleep and wake-up",
 			},
-			{ match: { placement: "smt_siblings" }, note: "lock handoff between the two hardware threads of one core" },
+			{ match: { placement: "smt_siblings" }, note: "lock handoff throughput between the two hardware threads of one core" },
 		],
 		source: "benchmarks/mutex/README.md",
 	},
@@ -126,7 +126,7 @@ export const BENCHMARK_NOTES: Readonly<Record<string, BenchmarkNote>> = {
 	},
 	disk_read_io_uring: {
 		measures:
-			"How many reads a disk completes with 64 kept submitted (O_DIRECT through io_uring): on EC2 the provider's throughput or IOPS limit for the disk.",
+			"How many reads a disk completes with 64 kept submitted (O_DIRECT through io_uring). On EC2 the counted samples sit on the provider's throughput or IOPS limit for the disk, not the device's own; the device's counters in the Run say which limit bound.",
 		repetition: "one completed read: time per repetition is the time per completion",
 		bytes: "bytes read",
 		variants: [
@@ -139,7 +139,7 @@ export const BENCHMARK_NOTES: Readonly<Record<string, BenchmarkNote>> = {
 	},
 	disk_read_sequential: {
 		measures:
-			"Reading a file front to back from a cold page cache, the way a program does: buffered 8 KiB preads, with the kernel's stock readahead.",
+			"Reading a file front to back the way a program does: buffered 8 KiB preads with the kernel's stock readahead, each sample's region dropped from the page cache first. It is a cold read when the eviction worked, which the Run records as each sample's resident pages.",
 		repetition: "one 8 KiB pread",
 		bytes: "bytes read",
 		variants: [
@@ -150,7 +150,7 @@ export const BENCHMARK_NOTES: Readonly<Record<string, BenchmarkNote>> = {
 	},
 	disk_write: {
 		measures:
-			"What a buffered 8 KiB pwrite costs, followed by fdatasync (sync fdatasync: until the device has the data) or by nothing (sync none: until the page cache has it).",
+			"What a buffered 8 KiB pwrite costs, followed by fdatasync (sync fdatasync: until the device has the data) or by nothing (sync none: until the page cache has it). fdatasync's cost depends on the disk's write cache, which the Run records (every disk seen so far is write through).",
 		repetition: "one write, with its fdatasync when sync is fdatasync",
 		bytes: "bytes written",
 		variants: [
