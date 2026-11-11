@@ -92,6 +92,12 @@ describe("series", () => {
 		const memory = listSeries(data, ["memory_read"]);
 		expect(memory.series.map((s) => s.instance_type)).toEqual(["c6i.8xlarge", "m5.large"]);
 		expect(listSeries(data, ["memory", "m5.large"]).series.map((s) => s.id)).toEqual([fixture.m5.series.id]);
+		// A word naming a field is matched against fields only: memory_read's description mentions avx2, syscall's params do not.
+		expect(listSeries(data, ["avx2"]).series.map((s) => s.benchmark)).toEqual(["memory_read", "memory_read"]);
+		// Any other word, against the descriptions too, with their caveats.
+		const network = listSeries(data, ["network"]);
+		expect(network.series.map((s) => s.benchmark)).toEqual(["tcp_echo"]);
+		expect(seriesListText(data, network)).toContain("Loopback: no network is involved.");
 		const text = seriesListText(data, memory);
 		expect(text).toContain("[lm:benchmark/memory_read]");
 		expect(text).toContain(`${fixture.m5.series.id}  m5.large  use2-az3  path=avx2 size_bytes=1073741824 threads=all  build static  5 counted of 5 Runs`);

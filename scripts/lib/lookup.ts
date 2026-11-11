@@ -153,19 +153,24 @@ function summary(series: SeriesDerivation): SeriesSummary {
 	};
 }
 
+/** What names a Series: its id, benchmark, params, build, instance type and zone ID. */
+function fieldText(s: SeriesSummary): string {
+	return [s.id, s.benchmark, paramsText(s.params), `build=${s.build}`, s.build, s.instance_type ?? "", s.availability_zone_id ?? ""].join(" ");
+}
+
+/** Its fields, and the words describing what it measures. */
 function searchText(s: SeriesSummary): string {
-	return [
-		s.id,
-		s.benchmark,
-		paramsText(s.params),
-		`build=${s.build}`,
-		s.build,
-		s.instance_type ?? "",
-		s.availability_zone_id ?? "",
-		s.measures ?? "",
-		...s.variant,
-		s.caveat ?? "",
-	].join(" ");
+	return [fieldText(s), s.measures ?? "", ...s.variant, s.caveat ?? ""].join(" ");
+}
+
+/**
+ * The Series matching every word. A word that names a field of some Series
+ * ("avx2", "static", "threads=1", "m5.large") is matched against fields only;
+ * any other word ("network", "latency") against the description too.
+ */
+function matchingSeries(all: SeriesSummary[], words: string[]): SeriesSummary[] {
+	const tests = words.map((word) => (all.some((s) => wordMatches(word, fieldText(s))) ? (s: SeriesSummary) => wordMatches(word, fieldText(s)) : (s: SeriesSummary) => wordMatches(word, searchText(s))));
+	return all.filter((s) => tests.every((matches) => matches(s)));
 }
 
 function numberStats(id: string, name: NumberName, stat: Stat | null, group?: string): NumberStats | null {
@@ -226,7 +231,7 @@ function seriesNotHeld(data: LedgerData, words: string[], all: SeriesSummary[]):
 	const types = countBy(all.map((s) => s.instance_type ?? "(no instance type)"));
 	const priced = new Set(data.prices?.file.measured.instance_types ?? []);
 	for (const word of words) {
-		const matching = all.filter((s) => wordMatches(word, searchText(s)));
+		const matching = matchingSeries(all, [word]);
 		if (matching.length > 0) {
 			lines.push(`"${word}" alone matches ${matching.length} Series (${[...countBy(matching.map((s) => `${s.benchmark} on ${s.instance_type}`)).keys()].join(", ")}).`);
 			continue;
@@ -243,7 +248,7 @@ function seriesNotHeld(data: LedgerData, words: string[], all: SeriesSummary[]):
 
 export function listSeries(data: LedgerData, words: string[]): SeriesList {
 	const all = sortedSummaries(data);
-	const series = all.filter((s) => words.every((word) => wordMatches(word, searchText(s))));
+	const series = matchingSeries(all, words);
 	return { words, series, not_held: series.length === 0 ? seriesNotHeld(data, words, all) : null };
 }
 
