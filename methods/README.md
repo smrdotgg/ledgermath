@@ -48,7 +48,8 @@ never touches a stored Run; only the Run record is forever.
   schema, and every order rule of `scripts/check-events.py` (`v1/stream.ts` is a port of it,
   and `tests/stream.test.ts` checks the two agree), with the Run's own `samples` as the
   count of counted samples to expect. The events are read from each Run's stdout blob,
-  which `gather` fetches with its dumps (`readStream`, `methods/run.ts`), for every Run:
+  which `gather` fetches with its dumps (`readStream`, `methods/run.ts`), reduces to what
+  the Derivations need (`summarizeStream`, `v1/facts.ts`) and lets go, for every Run:
   those written before the runner stopped copying them into the record count as they did
   when version 1 read them there, byte for byte (`tests/samples/older-shape-derivations.json`).
 - **Failed Runs**: shown, with the reasons, in their group, in no percentile.

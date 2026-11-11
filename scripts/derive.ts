@@ -50,8 +50,8 @@ async function main(): Promise<void> {
 	}
 
 	const files = readRunFiles(values.runs);
-	const blobs = await gather(files, firstOf(sources));
-	const derivations = derive(files, blobs);
+	const gathered = await gather(files, firstOf(sources));
+	const derivations = derive(files, gathered);
 	mkdirSync(dirname(values.out), { recursive: true });
 	writeFileSync(values.out, serialize(derivations));
 
@@ -59,7 +59,7 @@ async function main(): Promise<void> {
 	console.log(
 		`method ${derivations.method.name} v${derivations.method.version}: ${files.length} Run files, ` +
 			`${derivations.derivations.length} Series, ${counted} counted Runs, ${files.length - derivations.unreadable.length - counted} failed, ` +
-			`${derivations.unreadable.length} unreadable; ${blobs.size} blobs read -> ${values.out}`,
+			`${derivations.unreadable.length} unreadable; ${gathered.blobs.size + gathered.streams.size} blobs read -> ${values.out}`,
 	);
 }
 

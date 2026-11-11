@@ -29,6 +29,26 @@ const repr = (value: unknown): string => (value === undefined ? "None" : JSON.st
 
 /** Every way the stream breaks the contract's order, with line numbers; empty when it holds. */
 export function streamProblems(lines: readonly unknown[], expectSamples: number | null, expectQuick = false): string[] {
+	const { problems, counted } = streamCheck(lines, expectQuick);
+	return [...problems, ...countProblem(counted, expectSamples)];
+}
+
+/**
+ * The one problem that needs to know how many counted samples were asked for:
+ * none when the stream had no event to count (streamCheck's `counted` null).
+ */
+export function countProblem(counted: number | null, expectSamples: number | null): string[] {
+	return expectSamples !== null && counted !== null && counted !== expectSamples
+		? [`expected ${expectSamples} counted samples, found ${counted}`]
+		: [];
+}
+
+/**
+ * streamProblems without the comparison with the number of counted samples
+ * asked for, and the number found (null when there was no event to count),
+ * so a stream can be judged once and its count compared later.
+ */
+export function streamCheck(lines: readonly unknown[], expectQuick = false): { problems: string[]; counted: number | null } {
 	const problems: string[] = [];
 	const bad = (number: number, message: string): void => {
 		problems.push(`line ${number}: ${message}`);
@@ -42,7 +62,7 @@ export function streamProblems(lines: readonly unknown[], expectSamples: number 
 		if (!isInt(event.t) || event.t < 0) return bad(number, '"t" must be a whole number of nanoseconds');
 		events.push([number, event as Record<string, unknown> & { event: string; t: number }]);
 	});
-	if (events.length === 0) return [...problems, "no events"];
+	if (events.length === 0) return { problems: [...problems, "no events"], counted: null };
 
 	const [firstNumber, first] = events[0] as (typeof events)[number];
 	if (first.event !== "started") bad(firstNumber, `the first event must be "started", got "${first.event}"`);
@@ -114,8 +134,5 @@ export function streamProblems(lines: readonly unknown[], expectSamples: number 
 	if (openSample !== null) problems.push(`sample ${repr(openSample[0])} never ended`);
 	if (seen.get("verified") === 0) problems.push('no "verified" event');
 	if (counted === 0) problems.push("no counted sample (warmup false)");
-	if (expectSamples !== null && counted !== expectSamples) {
-		problems.push(`expected ${expectSamples} counted samples, found ${counted}`);
-	}
-	return problems;
+	return { problems, counted };
 }

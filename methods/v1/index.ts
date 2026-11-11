@@ -1,8 +1,8 @@
 /**
  * Method version 1: Runs in, Derivations out.
  *
- *     const blobs = await gather(files, fetchBlob);   // the only I/O: blobs by hash
- *     const derivations = derive(files, blobs);       // pure
+ *     const gathered = await gather(files, fetchBlob);   // the only I/O: blobs by hash
+ *     const derivations = derive(files, gathered);       // pure
  *     writeFileSync(out, serialize(derivations));
  *
  * Series: the Runs that share a benchmark, params, build, instance type and
@@ -17,6 +17,11 @@
  *
  * Same Run files and blobs in, same bytes out: everything is sorted in byte
  * order and nothing reads a clock or the machine it runs on.
+ *
+ * Memory: gather() keeps the dump blobs, which are small and mostly shared,
+ * but no stdout. Each Run's stdout is read as it arrives, reduced to what the
+ * Derivations need of it (summarizeStream, facts.ts), and let go, so nothing
+ * proportional to the total size of the streams stays in memory.
  *
  * Once Derivations of this version are published, a change to what it
  * outputs is version 2, in methods/v2/, beside this one.
@@ -43,13 +48,15 @@ import {
 	NOT_SPLIT_ON,
 	outcome,
 	SPLIT_FACTS,
+	type StreamSummary,
 	seriesId,
 	seriesKey,
 	seriesKeyText,
 	splitFacts,
+	summarizeStream,
 	UNREAD_SECTIONS,
 } from "./facts";
-import { median, observedBytesPerRepetition, percentile } from "./numbers";
+import { median, percentile } from "./numbers";
 import type {
 	CitedRun,
 	DerivationsFile,
@@ -123,36 +130,49 @@ export function readRuns(files: readonly RunFile[]): { runs: ReadRun[]; unreadab
 	return { runs, unreadable };
 }
 
+/** What derive() reads: the dump blobs by hash, and each stdout blob's summary by its hash. */
+export interface Gathered {
+	blobs: BlobMap;
+	streams: ReadonlyMap<string, StreamSummary>;
+}
+
 /**
- * Fetches every blob version 1 reads: each Run's stdout (its events) and its
- * before and after dump indexes, and the sections of each before-dump except
- * UNREAD_SECTIONS. Throws if a Run names a blob that cannot be fetched.
+ * Fetches every blob version 1 reads: each Run's before and after dump
+ * indexes and the sections of each before-dump except UNREAD_SECTIONS, which
+ * it keeps, and each Run's stdout (its events), which it reads, summarises
+ * and lets go: at most `concurrency` streams are in memory at once. Throws if
+ * a Run names a blob that cannot be fetched.
  */
-export async function gather(files: readonly RunFile[], fetchBlob: FetchBlob, concurrency = 16): Promise<Map<string, Uint8Array>> {
+export async function gather(files: readonly RunFile[], fetchBlob: FetchBlob, concurrency = 16): Promise<Gathered> {
 	const { runs } = readRuns(files);
 	const blobs = new Map<string, Uint8Array>();
-	const fetchAll = async (hashes: Iterable<string>): Promise<void> => {
-		const wanted = [...new Set(hashes)].filter((hash) => !blobs.has(hash)).sort(compareText);
+	const streams = new Map<string, StreamSummary>();
+	const fetchAll = async (hashes: Iterable<string>, keep: (hash: string, bytes: Uint8Array) => void, held: ReadonlyMap<string, unknown>): Promise<void> => {
+		const wanted = [...new Set(hashes)].filter((hash) => !held.has(hash)).sort(compareText);
 		let next = 0;
 		const worker = async (): Promise<void> => {
 			while (next < wanted.length) {
 				const hash = wanted[next++] as string;
 				const bytes = await fetchBlob(hash);
 				if (bytes === null) throw new Error(`blob ${hash} cannot be fetched`);
-				blobs.set(hash, bytes);
+				keep(hash, bytes);
 			}
 		};
 		await Promise.all(Array.from({ length: Math.min(concurrency, wanted.length) }, worker));
 	};
+	const keepBlob = (hash: string, bytes: Uint8Array): void => {
+		blobs.set(hash, bytes);
+	};
 
-	await fetchAll(runs.flatMap(({ run }) => [run.stdout, run.environment.before, run.environment.after]));
+	await fetchAll(runs.flatMap(({ run }) => [run.environment.before, run.environment.after]), keepBlob, blobs);
 	const sections: string[] = [];
 	for (const { run } of runs) {
 		const index = parseDumpIndex(run.environment.before, blobs.get(run.environment.before) as Uint8Array);
 		for (const [name, hash] of Object.entries(index.sections)) if (!UNREAD_SECTIONS.has(name)) sections.push(hash);
 	}
-	await fetchAll(sections);
-	return blobs;
+	await fetchAll(sections, keepBlob, blobs);
+	await fetchAll(runs.map(({ run }) => run.stdout), (hash, bytes) => streams.set(hash, summarizeStream(readStream(bytes))), streams);
+	return { blobs, streams };
 }
 
 function dumpSections(hash: string, blobs: BlobMap): Record<string, string> {
@@ -172,17 +192,16 @@ interface Analysed {
 	point: (group: string) => Point;
 }
 
-function analyse({ file, run }: ReadRun, blobs: BlobMap): Analysed {
+function analyse({ file, run }: ReadRun, { blobs, streams }: Gathered): Analysed {
 	const before = dumpSections(run.environment.before, blobs);
 	const after = dumpSections(run.environment.after, blobs);
 	const facts = splitFacts(run, before, blobs);
-	const stdout = blobs.get(run.stdout);
-	if (stdout === undefined) throw new Error(`stdout ${run.stdout} of run ${run.id} was not fetched`);
-	const stream = readStream(stdout);
+	const stream = streams.get(run.stdout);
+	if (stream === undefined) throw new Error(`stdout ${run.stdout} of run ${run.id} was not gathered`);
 	const { failures, samples } = outcome(run, stream);
 	const counted = failures.length === 0;
 	const time = counted ? median(samples.map((sample) => sample.ns_per_repetition)) : null;
-	const bytes = counted ? observedBytesPerRepetition(stream.events) : null;
+	const bytes = counted ? stream.bytesPerRepetition : null;
 	return {
 		file,
 		run,
@@ -398,13 +417,14 @@ function seriesOrder(a: SeriesDerivation, b: SeriesDerivation): number {
 }
 
 /**
- * The Derivations of version 1 for these Run files, reading only the blobs
- * given (as gather() fetches them). Pure: the same files and blobs give the
- * same result, whatever order the files come in.
+ * The Derivations of version 1 for these Run files, reading only what
+ * gather() gathered for them. Pure: the same files and blobs give the same
+ * result, whatever order the files come in.
  */
-export function derive(files: readonly RunFile[], blobs: BlobMap): DerivationsFile {
+export function derive(files: readonly RunFile[], gathered: Gathered): DerivationsFile {
+	const { blobs } = gathered;
 	const { runs, unreadable } = readRuns(files);
-	const analysed = runs.map((read) => analyse(read, blobs));
+	const analysed = runs.map((read) => analyse(read, gathered));
 	const bySeries = new Map<string, Analysed[]>();
 	for (const one of analysed) {
 		const list = bySeries.get(one.keyText) ?? [];

@@ -172,6 +172,32 @@ describe("Method version 1 reads every Run's events from its stdout blob", () =>
 		expect(asked.has(run.environment.before) && asked.has(run.environment.after)).toBe(true);
 	});
 
+	test("and keeps no stdout in memory: each is read, summarised and let go, a few at a time", async () => {
+		const made = new HandMade();
+		const runs = Array.from({ length: 12 }, (_, i) => made.run({ startedAt: `2026-11-11T22:${String(10 + i).padStart(2, "0")}:00Z` }));
+		const stdouts = new Set(runs.map((run) => run.stdout));
+		let inFlight = 0;
+		let most = 0;
+		const gathered = await gather(
+			made.files,
+			async (hash) => {
+				if (!stdouts.has(hash)) return made.fetch(hash);
+				most = Math.max(most, ++inFlight);
+				// Let the other workers run before this fetch completes, as a slow fetch would.
+				for (let turn = 0; turn < 20; turn++) await Promise.resolve();
+				inFlight--;
+				return made.fetch(hash);
+			},
+			3,
+		);
+		for (const hash of stdouts) {
+			expect(gathered.blobs.has(hash)).toBe(false);
+			expect(gathered.streams.get(hash)?.problems).toEqual([]);
+		}
+		expect(most).toBe(3);
+		expect(derive(made.files, gathered).derivations[0]?.points.every((point) => point.counted)).toBe(true);
+	});
+
 	test("and fails a Run whose stdout holds a line that is not JSON, saying which, in words that do not depend on the machine", async () => {
 		const made = new HandMade();
 		const stdout = '{"event":"started","t":1,"schema":"ledgermath.events/1","wall_utc":"2026-11-11T22:15:00.000000000Z","clock":"CLOCK_MONOTONIC_RAW","clock_read_ns":20}\nnot json\n';

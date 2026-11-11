@@ -6,8 +6,8 @@
 import { createHash } from "node:crypto";
 
 import { canonicalJson, type ParamValue, type Run, type RunExit, type Stream, schemaValidators } from "../run";
-import { countedSamples, type SampleTime } from "./numbers";
-import { streamProblems } from "./stream";
+import { countedSamples, observedBytesPerRepetition, type SampleTime } from "./numbers";
+import { countProblem, streamCheck } from "./stream";
 
 /** The Runs that share these make one Series. */
 export interface SeriesKey {
@@ -296,24 +296,60 @@ export interface Outcome {
  * A stop signal the runner received (exit.runner_signal) does not by itself
  * keep a Run out: beside exit code 0 it means the binary had already finished.
  *
- * The events are the Run's stdout, read by readStream (methods/run.ts), for
- * every Run: a Run written before the runner stopped copying them into the
- * record counts as it did when they were read from there.
+ * The events are the Run's stdout, read by readStream (methods/run.ts) and
+ * summarised once by summarizeStream, for every Run: a Run written before the
+ * runner stopped copying them into the record counts as it did when they were
+ * read from there.
  */
-export function outcome(run: Run, stream: Stream): Outcome {
+export function outcome(run: Run, stream: StreamSummary): Outcome {
 	const failures: string[] = [];
 	const exit = describeExit(run.exit);
 	if (exit !== null) failures.push(exit);
 	if (run.exit.runner_signal !== undefined && exit !== null) {
 		failures.push(`the runner was told to stop by signal ${run.exit.runner_signal}`);
 	}
+	failures.push(...stream.problems, ...countProblem(stream.counted, run.samples));
+	if (failures.length > 0) return { failures, samples: [] };
+	if (stream.samples instanceof Error) throw stream.samples;
+	return { failures, samples: stream.samples };
+}
+
+/**
+ * What version 1 needs of a Run's stream, and nothing proportional to the
+ * stream's size: the problems the stream has of itself, in outcome()'s order
+ * (where parsing stopped, each event that breaks the events schema, each
+ * break of the order rules but the count, which needs the Run's `samples`),
+ * the number of counted samples, those samples' times when the stream has no
+ * problem of its own, and the bytes per repetition it observed. gather()
+ * makes one per stdout blob as it reads it, and lets the blob go.
+ */
+export interface StreamSummary {
+	problems: string[];
+	/** Null when the stream had no event to count. */
+	counted: number | null;
+	/** The counted samples; the error countedSamples threw, if it did (a stream with problems is never asked). */
+	samples: SampleTime[] | Error;
+	bytesPerRepetition: number | null;
+}
+
+export function summarizeStream(stream: Stream): StreamSummary {
+	const problems: string[] = [];
 	if (stream.error !== null) {
-		failures.push(`stdout line ${stream.error.line} is not an event: ${stream.error.message}`);
+		problems.push(`stdout line ${stream.error.line} is not an event: ${stream.error.message}`);
 	}
 	const validate = schemaValidators().event;
 	stream.events.forEach((event, index) => {
-		if (!validate(event)) failures.push(`event ${index + 1} does not match schemas/events.schema.json`);
+		if (!validate(event)) problems.push(`event ${index + 1} does not match schemas/events.schema.json`);
 	});
-	failures.push(...streamProblems(stream.events, run.samples));
-	return { failures, samples: failures.length === 0 ? countedSamples(stream.events) : [] };
+	const check = streamCheck(stream.events);
+	problems.push(...check.problems);
+	let samples: SampleTime[] | Error = [];
+	if (problems.length === 0) {
+		try {
+			samples = countedSamples(stream.events);
+		} catch (error) {
+			samples = error as Error;
+		}
+	}
+	return { problems, counted: check.counted, samples, bytesPerRepetition: observedBytesPerRepetition(stream.events) };
 }
