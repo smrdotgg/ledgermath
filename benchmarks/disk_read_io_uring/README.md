@@ -1,10 +1,17 @@
 # disk_read_io_uring
 
-How many reads a disk completes when the queue never empties: `O_DIRECT` reads through
-`io_uring`, 64 kept in flight, from the Fixture the box made at boot. A sample's time over
-its repetitions is the time per completion, which gives IOPS and bytes per second. On EC2
+How many reads a disk completes when the binary keeps 64 of them submitted: `O_DIRECT`
+reads through `io_uring`, from the Fixture the box made at boot. A sample's time over its
+repetitions is the time per completion, which gives IOPS and bytes per second. On EC2
 both disks hold their provider's limits, so the counted samples sit on them; the device's
 own counters say which limit bound.
+
+"Submitted" is what the binary controls and all it sees: a read it has submitted and not
+yet reaped. How many of those the device holds at a given instant it does not see. A
+completed read waiting to be reaped still counts as submitted, so the device may hold
+fewer than 64, and a probe found moments with 64 completions waiting and none in the
+device. `device_counters` gives the device's own count of requests in flight, at the two
+edges of the measuring only (`in_flight_before`, `in_flight_after`).
 
 The design is section 2 of the step-4 brief's study (#42) and the decisions on it.
 
@@ -35,7 +42,7 @@ LM_PARAM_DIR=/mnt/local/ledgermath-scratch/disk LM_PARAM_ACCESS=random LM_PARAM_
 | `LM_PARAM_DIR` | `/var/tmp/ledgermath/disk`, `/mnt/lm/instance-store` | The directory holding the Fixture |
 | `LM_PARAM_ACCESS` | `sequential`, `random` | `sequential`: consecutive requests from the start of the span, wrapping at its end. `random`: the requests of a seeded permutation of the span's blocks (`disk_read_random`'s seed), each at most once until it is used up |
 | `LM_PARAM_REQUEST_BYTES` | `32768` with `sequential`, `4096` with `random` | Bytes per read; a multiple of 512, at most 16 MiB |
-| `LM_PARAM_QUEUE_DEPTH` | `64` | Reads kept in flight; 1 to 4096 |
+| `LM_PARAM_QUEUE_DEPTH` | `64` | Reads the binary keeps submitted and not yet reaped; 1 to 4096 |
 | `LM_PARAM_SPAN_BYTES` | 1 GiB, 32 GiB | Bytes of the Fixture the reads cover; at least `queue_depth` requests |
 
 `--quick` uses `/var/tmp/ledgermath/disk`, `sequential`, 32 KiB and 64 when the variables
@@ -52,10 +59,11 @@ process's own.
 Before measuring, `queue_depth` reads are submitted. One repetition takes one completion
 (waiting in `io_uring_enter` only when none has arrived), checks that it read the whole
 request, adds the block's first word to a running sum, and prepares a read in its place,
-which the next `io_uring_enter` submits. So the queue holds `queue_depth` or
-`queue_depth - 1` reads across every sample and every sample edge, unlike July's batches,
-which drained to zero at the end of each. After measuring, every read still in flight is
-reaped. One thread is enough: at 200,000 IOPS on the `i4i.2xlarge` the process used 29% of
+which the next `io_uring_enter` submits. So the binary has `queue_depth` reads submitted,
+or `queue_depth - 1` between reaping one and submitting its replacement, across every
+sample and every sample edge, unlike July's batches, whose submissions drained to zero at
+the end of each. That is the count of reads submitted and not reaped, not of reads in the
+device (see above). After measuring, every read still submitted is reaped. One thread is enough: at 200,000 IOPS on the `i4i.2xlarge` the process used 29% of
 a CPU (0.8 s in user space and 8.4 s in the kernel over 31 s), and the device's own counter
 showed its IOPS limit binding.
 
@@ -63,16 +71,17 @@ showed its IOPS limit binding.
 
 Everything `disk_read_random`'s README lists under "Observed" about the file and its
 device, and: `access` (as carried out), `request_bytes`, `queue_depth` (reads submitted
-before measuring and kept in flight), `span_bytes` and `span_blocks`, `bytes_per_repetition`
+before measuring and kept submitted), `span_bytes` and `span_blocks`, `bytes_per_repetition`
 (`request_bytes`), `ring_sq_entries` and `ring_cq_entries` (the ring the kernel made), and
 `ring_features` (`io_uring_params.features`, in hexadecimal).
 
 ## Events of its own
 
-**`device_counters`**, as in `disk_read_random`, over `lm_measure`: from the queue full of
-reads submitted before the first sample to the queue full after the last, so the reads it
-counts can differ from the repetitions by up to `queue_depth`. On the instance store's
-random set: 6,291,475 device reads of 4 KiB for 6,291,456 completions measured.
+**`device_counters`**, as in `disk_read_random`, over all of `lm_measure`: its warmup
+samples, the gaps between samples, and any other I/O on the device at the time. It starts
+with `queue_depth` reads already submitted and ends with as many still submitted, so the
+reads it counts can differ from the repetitions by up to `queue_depth`. On the instance
+store's random set: 6,291,475 device reads of 4 KiB for 6,291,456 completions measured.
 
 **`work`**: `submitted` and `completed` (all of them, the fill and the drain included),
 `submitted_before_measuring`, `completed_during_measuring`, `in_flight_after_measuring`,
@@ -110,10 +119,10 @@ such as Docker's default) exits 2, saying so.
 
 July's is `benchmarks/c/bench_disk_read_io_uring.c`, variant `32 KiB × 64 in flight`.
 
-- **A queue that stays full.** July's repetition submitted 64 reads of 32 KiB and waited
-  for all 64, so the queue drained to zero 64 times per 2 MiB; its 125.07 MiB/s every day
-  was the root gp3 volume's limit. Now the queue never empties and the time is per
-  completion.
+- **Reads kept submitted.** July's repetition submitted 64 reads of 32 KiB and waited for
+  all 64, so its submissions drained to zero 64 times per 2 MiB; its 125.07 MiB/s every
+  day was the root gp3 volume's limit. Now the binary keeps 64 submitted (63 for an
+  instant after each reap) and the time is per completion.
 - **Both disks, named,** and a random 4 KiB set beside the sequential 32 KiB one.
 - **Raw system calls** instead of liburing, which has no static library on the image.
 - **The Fixture is the box's**, checked here; July's binary wrote a 1 GiB scratch file

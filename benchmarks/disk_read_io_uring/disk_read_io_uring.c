@@ -9,14 +9,17 @@
  *                           wrapping at its end; random: the requests of a seeded
  *                           permutation of the span's blocks
  *   LM_PARAM_REQUEST_BYTES  bytes per read; a multiple of 512
- *   LM_PARAM_QUEUE_DEPTH    reads kept in flight; 1 to 4096
+ *   LM_PARAM_QUEUE_DEPTH    reads kept submitted and not yet reaped; 1 to 4096
  *   LM_PARAM_SPAN_BYTES     bytes of the Fixture the reads cover, from its start
  *
  * Before measuring, queue_depth reads are submitted. One repetition reaps one
  * completion, checks that it read the whole request, and submits one read in
- * its place, so the queue holds queue_depth or queue_depth - 1 reads across
- * every sample and every sample edge. A sample's time over its repetitions is
- * the time per completion, which gives IOPS and bytes per second.
+ * its place, so the binary has queue_depth reads submitted, or queue_depth - 1
+ * between a reap and the next submission, across every sample and every
+ * sample edge. How many of them the device holds at a given instant it does
+ * not see: a completion waiting to be reaped is still counted as submitted.
+ * A sample's time over its repetitions is the time per completion, which
+ * gives IOPS and bytes per second.
  *
  * The ring is made with raw io_uring system calls: Amazon Linux 2023's
  * liburing-devel (2.6) has no static library, and a benchmark is one static

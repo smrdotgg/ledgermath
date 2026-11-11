@@ -27,10 +27,12 @@
  *     lm_disk_stat_read(&d, &after);
  *     lm_disk_counters_emit(&d, &before, &after, "lm_measure", span);
  *
- * `device_counters` is the change in /sys/block/<disk>/stat over the
- * interval it names: the proof that the device, not the page cache, served
- * the reads (read sectors x 512 against repetitions x request bytes), and of
- * how many writes and flushes a durable write cost.
+ * `device_counters` is the change in /sys/block/<disk>/stat over the call
+ * it names, warmup samples, the gaps between samples and any other I/O on
+ * the device in that time included. Read sectors x 512 at least repetitions
+ * x request bytes shows that the device, not the page cache, served the
+ * reads; writes and flushes per repetition are upper bounds of what a write
+ * cost, since the counts cannot tell this binary's requests from others'.
  *
  * Everything here runs outside measured intervals.
  */

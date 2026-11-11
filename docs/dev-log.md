@@ -66,7 +66,7 @@ cannot, the order of the stream.
 | `scripts/check-scratch.py` | Runs every static build of `schedule.json` as the only file in a `FROM scratch` container, once per parameter set, and checks each stream. A set asking for CPUs this machine's topology cannot provide (`mutex`'s `distinct_cores` or `smt_siblings`), or for `io_uring` a kernel refuses (`kernel.io_uring_disabled`), is reported as skipped, with the reason, only when the binary refuses it in its own words: exit 2, `started` alone on stdout, and its refusal line for that set on stderr; anything else fails (`tests/check-scratch.test.ts`). The disk sets get a 64 MiB Fixture made by `runner/fixture.c`, mounted at their `dir`. Needs Docker. |
 | `schedule.json` | What a box runs: benchmarks, builds, samples, timeout, parameter sets. Not part of the runner. |
 | `runner/` | The box side. `box.sh` is the user-data; `provision.py` prepares the disks at boot (the instance's own NVMe disk, where there is one, and the Fixtures, which `fixture.c` writes) and records all it did; `run.py` builds, launches each binary, dumps the environment around it and writes one Run per execution; `cpuid.c` is the raw cpuid dump. |
-| `scripts/check-disk-runs.ts` | Checks that every disk Run says which disk it measured and that its dump proves it: the device's model and serial in `/sys`, its counters between the dumps', the device's own `nvme amzn stats`, the EBS volume in the EC2 API, the instance-store disk in the provision record. |
+| `scripts/check-disk-runs.ts` | Checks that every disk Run found the disk its parameters declare (the checker, never the binary, knows what `instance_store` and `root_volume` mean) and that its evidence adds up and its dump bears it out: `file_device` is lsblk's number for the device, the device's model and serial in `/sys`, `device_counters`' change equal to its after minus its before and lying between the dumps', the device's own `nvme amzn stats`, the EBS volume in the EC2 API, the instance-store device number in the provision record. Every number it compares must be present and finite. |
 | `schemas/run.schema.json` | The Run, which holds the stream as `events`. |
 | `scripts/check-runs.ts` | Checks Runs laid out as in the bucket: schemas, file names, every hash, events against stdout, stream order, and each runner manifest against the source archive when that is present. |
 
@@ -167,7 +167,10 @@ before the runner collected the binary's exit, the Run's `exit` also holds
 arrives after that is not written into the Run. Either way the runner starts nothing more,
 and the boot summary records `stopped_by` and lists every execution that never started
 under `not_run`; those have no Run. The box sends this TERM itself 35 minutes after it
-started, so the 45-minute shutdown is only a backstop. `tests/samples/interrupted/` holds
+started, so the 45-minute shutdown is only a backstop. The budget can run out: the disk
+sets run last, and on an `i4i.2xlarge` their timeouts alone add up to 33 minutes (18 on
+the other types), with provisioning allowed up to 15 minutes before them, so a
+misbehaving disk ends the boot this way, with what exists uploaded. `tests/samples/interrupted/` holds
 such a boot. Not covered: a SIGKILL of the runner (three minutes after that TERM, or the
 kernel's OOM killer) or the box losing power loses the execution in flight, and possibly
 the boot summary. The README says what reaches the bucket, and what may not.
@@ -602,4 +605,42 @@ A migrated benchmark is done only when **all** of these hold:
   8 left out, 574 s while the machine's load was 10 to 15). `tests/fixture.test.ts`
   failed once under that load: its `beforeAll` builds `disk_read_random` within bun's
   default five seconds; alone, with a longer timeout, it passes.
+- **2026-11-11** — Step 4 of the build plan (#36, brief #42), the disk build, after an
+  independent verifier's review, not yet deployed. Five findings fixed. (1) `disk_write`
+  opened its scratch file by name with `O_CREAT | O_TRUNC`, following links: as root on
+  the box, a link at that name let it overwrite any file. It now creates it with
+  `openat(dir, name, O_CREAT | O_EXCL | O_NOFOLLOW)`, refuses a name that exists in any
+  form and touches nothing, preallocates through the same descriptor, and removes the
+  file at the end only if the name is still that file. (2) Provisioning checked
+  `/dev/<name>` and then formatted that pathname again: a node replaced in between was
+  formatted. It now works only through a device node of its own, made with `mknod` for
+  the disk's `major:minor` under `/run/ledgermath`; immediately before `mkfs.xfs` it
+  checks again that the number names the same disk (by `/sys/dev/block`), the node is
+  that number, there is no partition, holder or mount, `blkid -p` exits 2 and prints
+  nothing (exit 2 alone also means it could not open the device), and it can read the
+  first MiB; after `mount -t xfs` the mounted file system's number, by `stat` and by
+  mountinfo, must be the one checked, or it is unmounted (lazily if need be). (3) The
+  record was written only at the end, SIGTERM lost it, and a timeout left children
+  running. Now the record is replaced whole as provisioning starts and as each step
+  starts and ends; every command runs in a process group of its own, killed whole (TERM,
+  KILL after five seconds) when it times out or provisioning is stopped, and whatever a
+  step leaves behind is killed and recorded; provisioning stops itself at 840 seconds and
+  on SIGTERM, recording why. `box.sh` runs it with `--supervise-seconds 900`: a
+  supervisor runs it in a session of its own, kills that session when it ends, records
+  any unfinished step from its output files, and undoes what a killed provisioning left
+  half done. (4) A failed mount left `/mnt/lm/instance-store` as a directory on the root
+  volume, where `disk_write`'s instance-store set ran and measured EBS. The mount point is
+  now made just before `mount` and removed on any failure, one found at boot is removed
+  or moved aside, and the root volume's directory exists only when its Fixture was made;
+  `check-disk-runs.ts` also compares the disk found with the disk declared. (5) The
+  checker accepted evidence that did not add up: a `file_device` lsblk contradicts, a
+  `change` that is not `after` minus `before`, empty counters, NVMe JSON without
+  counters (comparisons with `NaN` passed). Each is now a problem, and every number it
+  compares must be present and finite. The READMEs now say what `device_counters`
+  covers (the whole measuring call and any other I/O on the device) and proves, that
+  `disk_read_io_uring` keeps 64 reads submitted (not 64 in the device, which it cannot
+  see), and the budget's worst case. The container test drops `CAP_MKNOD`, so
+  provisioning there cannot make a node for this machine's own instance-store disk, and
+  accepts its tmpfs disk Runs explicitly. The tightened checker passes all 17 disk Runs of
+  the two real boots. Only `disk_write`'s binary changed.
 - _(agents: append your entry here, one per merged benchmark)_

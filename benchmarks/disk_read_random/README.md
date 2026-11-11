@@ -87,13 +87,24 @@ Both come after `verified` and pass `schemas/events.schema.json` and
 `scripts/check-events.py`.
 
 **`device_counters`**, the same in all four disk benchmarks: the change in
-`/sys/block/<disk>/stat` over the interval it names (`lm_measure`, warmup samples
-included), both reads raw, the partition's too when the file is on one, and the span's
-resident pages afterwards. It is the proof that the device, not the page cache, served the
-reads: `read_sectors` × 512 against the repetitions of every sample times
-`request_bytes`. The `O_DIRECT` flag alone does not prove it. Field names follow the
-kernel's `Documentation/block/stat.rst`; `in_flight` is a level, so it is given before and
-after instead of as a change.
+`/sys/block/<disk>/stat` over the call it names (`lm_measure`, or `lm_measure_fixed`),
+both reads raw, the partition's too when the file is on one, and the span's resident
+pages afterwards. Field names follow the kernel's `Documentation/block/stat.rst`;
+`in_flight` is a level, so it is given before and after instead of as a change.
+
+What it covers: the whole measuring call, its warmup samples and the gaps between samples
+(where the harness writes its events) included, and every request to that device in that
+time, whoever made it: the file system's own metadata, journald, anything else running.
+It cannot attribute a request to this binary.
+
+What it proves: that the device served at least as many bytes as the measured work asked
+for. If `read_sectors` × 512 is at least the repetitions of every sample times
+`request_bytes`, the page cache did not serve those reads, which the `O_DIRECT` flag alone
+does not show. It does not prove that every one of the device's requests was the
+benchmark's: the counts are upper bounds for the benchmark's own I/O. The `nvme amzn
+stats` histograms in the dump cover more still: from the dump before the Run to the dump
+after it, the whole process (in `disk_write`, preparing its scratch file too) and
+anything else on the device.
 
 ```json
 {"event":"device_counters","t":1182574280616,"interval":"lm_measure","device_found":true,"disk_device":"nvme1n1","stat":"/sys/class/block/nvme1n1/stat","change":{"reads":196608,"read_merges":0,"read_sectors":3145728,"read_ticks_ms":23206,"writes":1,"write_merges":0,"write_sectors":2,"write_ticks_ms":0,"io_ticks_ms":22760,"time_in_queue_ms":23205,"discards":0,"discard_merges":0,"discard_sectors":0,"discard_ticks_ms":0,"flushes":0,"flush_ticks_ms":0},"in_flight_before":0,"in_flight_after":0,"before":[8062132,48,163625541,3109953,939971,9,146193322,234549,0,229930,3355791,1748,0,7324218748,11288,0,0],"after":[8258740,48,166771269,3133159,939972,9,146193324,234549,0,252690,3378996,1748,0,7324218748,11288,0,0],"file_resident_pages":0}
@@ -119,8 +130,16 @@ Fixture, not zeros, another block or stale data.
 `scripts/check-disk-runs.ts` does all of this for every disk Run in a directory laid out
 like the bucket.
 
+- The disk found is the disk declared. The binary never reads `disk`; the checker knows
+  what each name means: `instance_store` must find an `Amazon EC2 NVMe Instance Storage`
+  device mounted at exactly its `dir`, `root_volume` an `Amazon Elastic Block Store` device
+  holding the root file system. A Run that found no block device measured no disk.
+- `file_device` is the number `lsblk` gives `block_device` (its `MAJ:MIN` column), in the
+  dumps before and after.
 - `disk_controller`, `disk_model` and `disk_serial` are `/sys/class/nvme/<controller>/` in
   the `devices` section, and the disk's row of its `lsblk`.
+- `device_counters` adds up: its counters have the stat file's length and are whole
+  numbers, and its `change` is exactly its `after` minus its `before`.
 - `device_counters.before` and `.after` lie between `/sys/block/<disk>/stat` in the
   `block_stat` sections of the dumps before and after the Run.
 - `nvme amzn stats` of `/dev/<disk>` (the `nvme_stats` sections) gives the device's own
@@ -128,8 +147,9 @@ like the bucket.
   the time spent over the volume's or the instance's limits.
 - An EBS serial `vol0abc…` is the volume `vol-0abc…` in `ec2_volumes`, which gives its type,
   size, IOPS and throughput; an instance-store disk is the one the `provision` section's
-  record prepared (`mkfs.xfs` and `mount` of that device), and `ec2_instance_type` lists
-  the instance's storage.
+  record prepared, by its device number and serial, and mounted where the Run found it,
+  and `ec2_instance_type` lists the instance's storage.
+- Every number compared must be present and finite; one that is not fails the check.
 
 ## What will stay unstable, and what to read with care
 

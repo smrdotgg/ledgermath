@@ -63,10 +63,13 @@ device (`o_direct` is false here), and: `request_bytes`, `bytes_per_sample` and
 
 ## Events of its own
 
-**`device_counters`**, as in `disk_read_random`, over all the samples. Read sectors × 512
-is the proof that every byte came from the device: 1.0005 times the bytes asked on the
-root volume, 1.0001 on the instance store (readahead reads a little past each region's
-end). Read sectors over reads is the size of what readahead asked the device for.
+**`device_counters`**, as in `disk_read_random`, over all of `lm_measure_fixed`: the
+warmup samples, the steps between samples that make each region cold, and any other I/O
+on the device at the time. Read sectors × 512 at least the bytes the samples read shows
+the device, not the page cache, served them: 1.0005 times the bytes asked on the root
+volume, 1.0001 on the instance store (readahead reads a little past each region's end,
+and other I/O adds a little). Read sectors over reads is the mean size of the device's
+read requests in that time, nearly all of them readahead's.
 
 **`work`**: `reads`, `bytes_read`, and `samples`, one entry per sample: its `offset`,
 `posix_fadvise`'s result (`fadvise_result`, 0 for success) and `resident_pages_before`,

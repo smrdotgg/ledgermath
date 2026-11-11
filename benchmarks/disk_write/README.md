@@ -41,12 +41,21 @@ available memory: about 750 MiB on an `m5.large`), so the flusher leaves it alon
 
 ## The scratch file, and one repetition
 
-The scratch file is `ledgermath-disk_write.scratch` in `dir`. Before measuring, it is
-written in full with `O_DIRECT` in 1 MiB writes, then `fdatasync`ed, so every block is
+The scratch file is `ledgermath-disk_write.scratch` in `dir`. The binary runs as root on
+the box, so it creates that name exclusively and never through a symbolic link
+(`openat(dir, name, O_CREAT | O_EXCL | O_NOFOLLOW)`): if the name exists in any form, a
+file, a directory, a symbolic link (dangling or not), a leftover of an earlier Run, the
+binary exits 1, saying so, and touches nothing. A missing `dir` exits 1 too.
+
+Before measuring, the file is written in full with `O_DIRECT` in 1 MiB writes through the
+same descriptor (never by opening the name again), then `fdatasync`ed, so every block is
 allocated and written on the device and none is in the page cache; `FIEMAP` must then find
 no unwritten or unallocated extent and no hole, or the binary exits 1. The measured writes
 overwrite those blocks, so XFS allocates nothing and converts no extent while measuring.
-The file is deleted at the end, and on any exit through `exit()`. It is never a Fixture.
+At the end, and on any exit through `exit()`, the file is deleted, but only if its name is
+still the file the binary created (the same device and inode); otherwise it is left and
+the binary says so. It is never a Fixture. A Run killed outright (a timeout's `SIGKILL`)
+leaves the file, and the next Run in that directory then refuses to start.
 
 One repetition writes the 8 KiB buffer at the next offset with `pwrite` through the page
 cache, then calls `fdatasync` in the `fdatasync` sets. The buffer holds the Fixture
@@ -62,10 +71,13 @@ device, here the scratch file (`o_direct` is false: the measured writes are buff
 
 ## Events of its own
 
-**`device_counters`**, as in `disk_read_random`, over `lm_measure`. Writes and flushes per
-repetition are what a durable write cost the device: on both disks exactly one write and
-no flush, because both report `write_cache` "write through", so `fdatasync` sends no flush
-command. With no sync, the root volume saw 60 writes while measuring, for 12.6 million
+**`device_counters`**, as in `disk_read_random`, over all of `lm_measure`: its warmup
+samples, the gaps between samples, and every other request to the device in that time.
+So writes and flushes per repetition are upper bounds of what a durable write cost the
+device; on both disks they came to exactly one write and no flush, because both report
+`write_cache` "write through", so `fdatasync` sends no flush command. The `nvme amzn
+stats` histograms in the dump, taken before and after the whole process, also hold the
+preparation's 1 GiB of writes. With no sync, the root volume saw 60 writes while measuring, for 12.6 million
 `pwrite`s (5 per million, which the box's own background writes could account for); the
 1,088 writes of that Run's whole life were mostly the scratch file's preallocation.
 
@@ -100,8 +112,10 @@ July's is `benchmarks/c/bench_disk_write.c`, variants `8 KiB, No fsync` and `8 K
   write latency; here it is 913.5 µs on the same kind of volume.
 - **One set per execution,** with both disks named, where July ran its two variants in one
   process on one file.
-- **The scratch file is preallocated by writing it with `O_DIRECT`** and checked with
-  `FIEMAP`; July wrote zeros through the page cache and synced.
+- **The scratch file is created exclusively, never through a symbolic link,** where July's
+  opened its name with `O_TRUNC`, following links; it is preallocated by writing it with
+  `O_DIRECT` and checked with `FIEMAP`, where July wrote zeros through the page cache and
+  synced.
 - **The guard** reads back the last write and sums distinct tags; July's sum was of the
   same first word and the offset.
 - **New:** `observed` with the device, `device_counters`, `work`, and the parameters.

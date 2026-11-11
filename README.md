@@ -23,7 +23,7 @@ until step 4 of the plan replaces it.
 | `schemas/` | `run.schema.json` (the Run) and `events.schema.json` (one line of the stream) |
 | `scripts/check-events.py` | Checks a stream's order; needs only Python 3 |
 | `scripts/check-runs.ts` | Checks a directory laid out like the bucket: schemas, every hash, events against stdout, runner manifests |
-| `scripts/check-disk-runs.ts` | Checks that every disk Run in such a directory says which disk it measured, and that its dump proves it |
+| `scripts/check-disk-runs.ts` | Checks that every disk Run in such a directory found the disk it declares, that its evidence adds up, and that its dump bears it out |
 | `scripts/check-targets.ts` | Checks `schedule.json`'s targets' `vcpus`, their zone offerings and `vcpu_quota.limit` against AWS, read-only; needs AWS access, so not part of `bun test` |
 | `scripts/box-in-container/` | Boots `runner/box.sh` in Amazon Linux 2023 with S3 and shutdown stubbed, in several scenarios |
 | `infra/runs/` | The `-runs` SST stage: stack, launch Lambda, reaper, user-data, the schedule's check (`schedule.ts`), the targets and their launch schedules (`placement.ts`), the workflow's AWS role |
@@ -148,7 +148,15 @@ scheduled time, so one slot of one target can start at most one box. Its user-da
    Run per execution. At 35 minutes it is sent TERM: it kills the binary it is running, still
    writes that execution's Run, starts nothing more, writes the boot summary, which lists
    what was not run, and exits. If it has not exited three minutes later, it is killed
-   outright;
+   outright.
+
+   The budget is not always enough. The disk benchmarks run last, and each disk set may
+   run until its timeout of 180 seconds: on an `i4i.2xlarge` the eleven disk sets'
+   timeouts alone add up to 33 minutes (the six root-volume sets on the other types, 18
+   minutes), and provisioning, before `run.py`, may use up to 15 of the same 35 minutes.
+   So if a disk misbehaves and its sets run to their timeouts, the budget ends the boot:
+   the execution in flight still gets its Run, the rest are listed under `not_run`, and
+   what exists is uploaded. On the real boxes the whole boot took 13 and 10.5 minutes;
 6. uploads the blobs the bucket does not hold yet, then the Runs and the boot summary, then
    its log, and shuts down, which terminates the instance.
 
@@ -176,22 +184,57 @@ The box's role reads its source, lists `blobs/`, writes `runs/`, `blobs/`, `boot
 The four disk benchmarks each name the disk a parameter set means, `"disk":
 "root_volume"` or `"instance_store"`, which makes the Series, and the directory the
 binary works in, `"dir"`. The binary never reads `disk`; it reports the file and device it
-found (`observed`) and the change in the device's counters while it measured
-(`device_counters`). On a `-runs` box, before `run.py`, `runner/provision.py`:
+found (`observed`) and the change in the device's counters over its measuring
+(`device_counters`). That change covers the whole measuring call, warmup samples and the
+gaps between samples included, and every request to the device in that time, whoever
+made it. So it shows that the device, not the page cache, served at least the bytes the
+measured reads asked for, and it gives upper bounds of the writes and flushes a durable
+write cost; it cannot tell the benchmark's requests from anyone else's. The `nvme amzn
+stats` histograms in the dump, taken before and after each Run, cover the whole process
+(a `disk_write` preparing its scratch file included) and everything else on the device.
+
+On a `-runs` box, before `run.py`, `runner/provision.py`:
 
 - finds the instance's own NVMe disk by its model, `Amazon EC2 NVMe Instance Storage`,
-  never by number, and prepares it only when it is the one disk the catalog
-  (`describe-instance-types`) lists and is empty: no partition, no holder, not mounted,
-  its device node right, and nothing `blkid -p` can find. It records the disk first
-  (`lsblk`, `blkid`, `nvme id-ctrl`, `nvme id-ns`, `nvme amzn stats`), then makes a
-  default XFS file system (`mkfs.xfs`, never forced) and mounts it at
-  `/mnt/lm/instance-store`. Anything else is refused and recorded. Of the targets only
-  `i4i.2xlarge` has such a disk (one of 1,875 GB); the other types have no such step;
+  never by its kernel name, and prepares it only when it is the one disk the catalog
+  (`describe-instance-types`) lists and is empty: no partition, no holder, not mounted.
+  From then on the disk is its device number: provisioning makes a block device node of
+  its own for that `major:minor` (`mknod`, under `/run/ledgermath`, which only root can
+  write), so the node it works through can never come to mean another device, and nothing
+  runs on a `/dev` name. It records the disk (`lsblk`, `blkid`, `nvme id-ctrl`, `nvme
+  id-ns`, `nvme amzn stats`), then, immediately before formatting, checks everything again:
+  the number still names the same disk (name, model, serial, size, by
+  `/sys/dev/block/<major:minor>`), the node is still that number, no partition, holder or
+  mount, `blkid -p` exits 2 and prints nothing (it also exits 2 when it cannot open the
+  device), and provisioning can read the first MiB. Then a default XFS file system
+  (`mkfs.xfs`, never forced), the mount point made, `mount -t xfs` at
+  `/mnt/lm/instance-store`, and the mounted file system's device number, by `stat` and by
+  `/proc/self/mountinfo`, must be the number checked. If the mount fails or the number
+  differs, the file system is unmounted and the mount point removed, so an instance-store
+  set finds no directory and fails, saying why, instead of running on the root volume.
+  Anything else is refused and recorded. Of the targets only `i4i.2xlarge` has such a disk
+  (one of 1,875 GB); the other types have no such step;
 - makes the Fixtures with `runner/fixture.c` (`O_DIRECT` writes of 1 MiB, then
   `fdatasync`): 32 GiB on the instance store, and 1 GiB under `/var/tmp/ledgermath/disk` on
-  the root volume on every type;
+  the root volume on every type. A Fixture not made whole is removed, and the root
+  volume's directory exists only when its Fixture was made;
 - writes every command, exit code, output and timing to
   `/var/tmp/ledgermath/provision.json`, which every dump holds as the section `provision`.
+  The record is rewritten whole (written beside it, then renamed) as provisioning starts,
+  as each step starts and as it ends, so it always says what every step that started did,
+  the one in progress included.
+
+Every command it runs is in a process group of its own. A step that runs past its time,
+or is told to stop, has its whole group sent TERM, then KILL five seconds later; anything
+a step leaves running after it exits is killed too, and the record says so. Provisioning
+stops itself at 840 seconds, and on SIGTERM, SIGINT or SIGHUP: it records what stopped it
+and the output captured so far, undoes what is half done, and exits. `box.sh` runs it with
+`--supervise-seconds 900`, its outer limit: the work runs as a child in a session of its
+own, is sent TERM at 900 seconds and KILL 30 seconds later, and then every process left in
+that session is killed, any step whose end was not recorded is recorded from its output
+files, and what a killed provisioning left half done (a mount it did not verify, a partial
+Fixture, a root-volume directory without one) is undone. So nothing of provisioning is
+running when the schedule starts, and the record is complete however provisioning ended.
 
 On a real `i4i.2xlarge` this took 43 seconds: `mkfs.xfs` 6 s (it discards the whole disk
 first), the 32 GiB Fixture 30 s, the root volume's 7 s. The root volume is the image's
@@ -210,11 +253,16 @@ fails is recorded with what it printed. `ec2_volumes` and `ec2_instance` name th
 as the IMDS identity document in `provider` already does.
 
 `bun scripts/check-disk-runs.ts DIR` checks, for every disk Run in a directory laid out
-like the bucket, that the device it names is in its dump (model and serial in `/sys` and
-`lsblk`), that its counters lie between the dump's, that the device itself counted the
-reads and writes (`nvme amzn stats`), that an EBS serial `vol…` is a volume the EC2 API
-lists, with its type, size and limits, and that an instance-store disk is the one the
-provision record formatted and mounted.
+like the bucket, that the disk it found is the disk it declares (`instance_store`: an
+`Amazon EC2 NVMe Instance Storage` device mounted at exactly its `dir`; `root_volume`: an
+`Amazon Elastic Block Store` device holding the root file system; the binary never reads
+`disk`, the checker holds what each name means), that the device it names is in its dump
+(model and serial in `/sys` and `lsblk`, and `file_device` is lsblk's number for it), that
+its counters add up (`change` is `after` minus `before`) and lie between the dump's, that
+the device itself counted the reads and writes (`nvme amzn stats`), that an EBS serial
+`vol…` is a volume the EC2 API lists, with its type, size and limits, and that an
+instance-store disk is the one the provision record readied, by device number. Every
+number it compares must be present and finite.
 
 ### Targets, boot times, and which types an entry runs on
 
