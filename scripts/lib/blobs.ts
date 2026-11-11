@@ -38,8 +38,13 @@ export function blobsFromDirectories(directories: readonly string[]): FetchBlob 
 	};
 }
 
-/** Fetches blobs/sha256/<hex> from the bucket, keeping each in cache/sha256/<hex> once checked. */
-export function blobsFromBucket(bucket: Bucket, cache: string | null): FetchBlob {
+/**
+ * Fetches blobs/sha256/<hex> from the bucket, looking in cache/sha256/<hex>
+ * first, and keeping each fetched blob there once checked, unless `keep` is
+ * false (for stdout blobs, of which a Method keeps a reduced record instead).
+ */
+export function blobsFromBucket(bucket: Bucket, cache: string | null, options: { keep?: boolean } = {}): FetchBlob {
+	const keep = options.keep ?? true;
 	const local = cache === null ? null : blobsFromDirectories([cache]);
 	return async (hash) => {
 		const cached = local === null ? null : await local(hash);
@@ -48,7 +53,7 @@ export function blobsFromBucket(bucket: Bucket, cache: string | null): FetchBlob
 		const bytes = await bucket.get(key);
 		if (bytes === null) return null;
 		checked(hash, bytes, `${bucket.name}/${key}`);
-		if (cache !== null) {
+		if (cache !== null && keep) {
 			const directory = join(cache, "sha256");
 			mkdirSync(directory, { recursive: true });
 			const path = join(directory, hexOf(hash));
