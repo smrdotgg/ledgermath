@@ -1,6 +1,7 @@
-import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { afterAll, describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, relative } from "node:path";
 
 import { TARGETS } from "../infra/runs/placement";
 import { parseSchedule, type Schedule, type Target } from "../infra/runs/schedule";
@@ -10,9 +11,11 @@ import {
 	describeSeries,
 	GitHubIssues,
 	type IssueTracker,
+	newestPriceFile,
 	type OpenAlarm,
 	runAlarm,
 	STATE_MARKER,
+	stalePrices,
 	staleSeries,
 	stateOf,
 	watchedSeries,
@@ -351,6 +354,121 @@ describe("a watched Series that has never had a Run", () => {
 		expect(opened).toMatchObject({ action: "opened", issue: 1 });
 		expect(opened.stale.map(describeSeries)).toEqual(["syscall · call=getpid · static · c6i.8xlarge · us-east-2c"]);
 		expect(tracker.issues[0]?.body).toContain("`syscall · call=getpid · static · c6i.8xlarge · us-east-2c`: no Run at all");
+	});
+});
+
+describe("the price files", () => {
+	const scratch = mkdtempSync(join(tmpdir(), "lm-alarm-prices-"));
+	afterAll(() => rmSync(scratch, { recursive: true, force: true }));
+	const priceFile = (repository: string, path: string, content: string): void => {
+		mkdirSync(join(repository, path, ".."), { recursive: true });
+		writeFileSync(join(repository, path), content);
+	};
+
+	test("the newest is the one fetched last; a file not named like a price file, or without a fetch time, is passed over", () => {
+		const repository = join(scratch, "repository");
+		expect(newestPriceFile(repository)).toBeNull();
+		priceFile(repository, "prices/2026/11/10/aws.json", JSON.stringify({ fetched_at: "2026-11-10T03:17:00.000Z" }));
+		priceFile(repository, "prices/2026/11/11/aws.json", JSON.stringify({ fetched_at: "2026-11-11T15:17:00.000Z" }));
+		priceFile(repository, "prices/2026/11/12/aws.json", "not JSON");
+		priceFile(repository, "prices/2026/11/13/aws.json", JSON.stringify({ fetched_at: "yesterday" }));
+		priceFile(repository, "prices/2026/11/14/gcp.json", JSON.stringify({ fetched_at: "2026-11-14T03:17:00.000Z" }));
+		const expected = { path: "prices/2026/11/11/aws.json", fetchedAt: "2026-11-11T15:17:00.000Z" };
+		expect(newestPriceFile(repository)).toEqual(expected);
+		expect(newestPriceFile(relative(process.cwd(), repository))).toEqual(expected);
+		expect(newestPriceFile(`${repository}/`)).toEqual(expected);
+	});
+
+	test("are stale once the newest was fetched more than 48 hours ago, or, with none at all, once the workflow has existed that long", () => {
+		const newest = { path: "prices/2026/11/11/aws.json", fetchedAt: "2026-11-11T03:17:00.000Z" };
+		const fetched = Date.parse(newest.fetchedAt);
+		expect(stalePrices(newest, new Date(fetched + 48 * HOUR), null)).toBeNull();
+		expect(stalePrices(newest, new Date(fetched + 48 * HOUR + 1000), null)).toEqual({ newest, since: null });
+		// However long ago the workflow was added, a recent file is what counts.
+		expect(stalePrices(newest, new Date(fetched + HOUR), new Date("2026-01-01T00:00:00Z"))).toBeNull();
+		const since = new Date("2026-11-12T10:00:00Z");
+		expect(stalePrices(null, new Date(since.getTime() + 48 * HOUR), since)).toBeNull();
+		expect(stalePrices(null, new Date(since.getTime() + 48 * HOUR + 1000), since)).toEqual({ newest: null, since: since.toISOString() });
+		// Not known to exist: no file is not stale.
+		expect(stalePrices(null, new Date("2030-01-01T00:00:00Z"), null)).toBeNull();
+	});
+
+	const made = new HandMade();
+	for (const day of ["2026-11-12", "2026-11-13", "2026-11-14", "2026-11-15", "2026-11-16"]) oneBoot(made, `${day}T22:10:00Z`);
+	const at = (iso: string): Date => new Date(iso);
+	const file = (day: string) => ({ path: `prices/${day.replaceAll("-", "/")}/aws.json`, fetchedAt: `${day}T03:17:42.123Z` });
+
+	test("alone stale, open the issue, saying the Series are fine; silent while nothing changes; said once when a new file arrives", async () => {
+		const tracker = new FakeIssues();
+		const pass = (now: string, newestPrices: ReturnType<typeof file> | null) =>
+			runAlarm({ schedule: SCHEDULE, runs: made.files, now: at(now), scheduleChangedAt: SETTLED, copyFailed: false, tracker, newestPrices, pricesSince: at("2026-11-01T00:00:00Z") });
+		expect(await pass("2026-11-15T03:17:00Z", file("2026-11-13"))).toMatchObject({ action: "none", prices: null });
+		const opened = await pass("2026-11-15T23:00:00Z", file("2026-11-13"));
+		expect(opened).toMatchObject({ action: "opened", issue: 1, stale: [], prices: { newest: file("2026-11-13") } });
+		const body = tracker.issues[0]?.body ?? "";
+		expect(body).toContain("every watched Series has had a Run in the last 48 hours.");
+		expect(body).toContain(
+			"**No new price file for more than 48 hours.** The newest, [prices/2026/11/13/aws.json](https://github.com/smrdotgg/ledgermath-runs/blob/main/prices/2026/11/13/aws.json), was fetched at 2026-11-13T03:17:42.123Z, 67.7 hours ago.",
+		);
+		expect(stateOf(body)).toEqual({ stale: [], copy_failed: false, stale_prices: "prices/2026/11/13/aws.json" });
+		expect(await pass("2026-11-16T05:00:00Z", file("2026-11-13"))).toMatchObject({ action: "unchanged" });
+		const recovered = await pass("2026-11-16T23:00:00Z", file("2026-11-16"));
+		expect(recovered).toMatchObject({ action: "commented", prices: null });
+		expect(tracker.issues[0]?.comments[0]).toContain("every watched Series has had a Run in the last 48 hours again, and the newest price file is no more than 48 hours old.");
+		expect(tracker.issues[0]?.comments[0]).not.toContain("No new price file");
+		expect(stateOf(tracker.issues[0]?.comments[0] ?? "")).toEqual({ stale: [], copy_failed: false });
+		expect(await pass("2026-11-17T05:00:00Z", file("2026-11-16"))).toMatchObject({ action: "unchanged" });
+		expect(tracker.issues.length).toBe(1);
+	});
+
+	test("stale beside stale Series, say both in one post, and a change in either is one comment", async () => {
+		const tracker = new FakeIssues();
+		const runs = new HandMade();
+		oneBoot(runs, "2026-11-12T22:10:00Z");
+		const pass = (now: string, newestPrices: ReturnType<typeof file>) =>
+			runAlarm({ schedule: SCHEDULE, runs: runs.files, now: at(now), scheduleChangedAt: SETTLED, copyFailed: false, tracker, newestPrices, pricesSince: null });
+		const opened = await pass("2026-11-15T12:00:00Z", file("2026-11-12"));
+		expect(opened).toMatchObject({ action: "opened" });
+		expect(opened.stale.length).toBe(8);
+		expect(tracker.issues[0]?.body).toContain("8 watched Series have had no Run for more than 48 hours");
+		expect(tracker.issues[0]?.body).toContain("No new price file for more than 48 hours");
+		// Prices again, the Series still stale.
+		expect(await pass("2026-11-15T18:00:00Z", file("2026-11-15"))).toMatchObject({ action: "commented", prices: null });
+		expect(tracker.issues[0]?.comments[0]).toContain("8 watched Series have had no Run");
+		expect(tracker.issues[0]?.comments[0]).toContain("The newest price file is no more than 48 hours old again.");
+		expect(tracker.issues[0]?.comments[0]).not.toContain("No new price file");
+		expect(await pass("2026-11-16T00:00:00Z", file("2026-11-15"))).toMatchObject({ action: "unchanged" });
+	});
+
+	test("with none at all, stay quiet until 48 hours after the prices workflow first existed, then say so", async () => {
+		const tracker = new FakeIssues();
+		const since = at("2026-11-14T09:00:00Z");
+		const pass = (now: string) =>
+			runAlarm({ schedule: SCHEDULE, runs: made.files, now: at(now), scheduleChangedAt: SETTLED, copyFailed: false, tracker, newestPrices: null, pricesSince: since });
+		expect(await pass("2026-11-16T09:00:00Z")).toMatchObject({ action: "none" });
+		const opened = await pass("2026-11-16T09:00:01Z");
+		expect(opened).toMatchObject({ action: "opened", prices: { newest: null, since: since.toISOString() } });
+		expect(tracker.issues[0]?.body).toContain(
+			"**No price file.** The Runs repository holds no price file at all, and the prices workflow has existed since 2026-11-14T09:00:00.000Z, more than 48 hours.",
+		);
+		expect(stateOf(tracker.issues[0]?.body ?? "")?.stale_prices).toBe("none");
+		// Without knowing when the workflow first existed, no price file is not reported.
+		const quiet = new FakeIssues();
+		expect(
+			await runAlarm({ schedule: SCHEDULE, runs: made.files, now: at("2026-11-16T12:00:00Z"), scheduleChangedAt: SETTLED, copyFailed: false, tracker: quiet }),
+		).toMatchObject({ action: "none", prices: null });
+	});
+
+	test("an open issue whose last post is from before prices were watched gets no comment while the price files are fresh", async () => {
+		const tracker = new FakeIssues();
+		const runs = new HandMade();
+		oneBoot(runs, "2026-11-12T22:10:00Z");
+		const now = at("2026-11-15T12:00:00Z");
+		const stale = staleSeries(watchedSeries(SCHEDULE), runs.files, now, SETTLED);
+		const before = `${ALARM_MARKER}\nan older post\n${STATE_MARKER}${JSON.stringify({ stale: stale.map(describeSeries).sort(), copy_failed: false })} -->`;
+		tracker.issues.push({ number: 1, title: "Stale Series: no Run for 48 hours", body: before, open: true, comments: [] });
+		const outcome = await runAlarm({ schedule: SCHEDULE, runs: runs.files, now, scheduleChangedAt: SETTLED, copyFailed: false, tracker, newestPrices: file("2026-11-15"), pricesSince: null });
+		expect(outcome).toMatchObject({ action: "unchanged", issue: 1 });
 	});
 });
 

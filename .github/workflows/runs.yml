@@ -2,7 +2,8 @@
 # from the -runs stage's bucket into smrdotgg/ledgermath-runs and pushes them,
 # derives every Series with Method version 1, builds the page, keeps the page
 # and the Derivations as an artifact, and opens (or comments on) one issue when
-# a watched Series has had no Run for 48 hours.
+# a watched Series has had no Run for 48 hours, or the newest price file
+# (prices.yml) is more than 48 hours old.
 #
 # It needs, in this repository's settings (README, "The Runs repository, the
 # Method and the page"):
@@ -109,12 +110,17 @@ jobs:
       # never had a Run counts only once schedule.json has been unchanged for
       # 48 hours: the alarm is told when main last changed it, the commit time
       # of the last commit on main's first-parent line that touched it (a
-      # merge commit, not the branch commit it brought in).
-      - name: Check for watched Series with no Run for 48 hours
+      # merge commit, not the branch commit it brought in). It also reports a
+      # newest price file more than 48 hours old; with no price file at all,
+      # only once the prices workflow has existed for 48 hours: it is told when
+      # that was, the commit time of the first commit on main's first-parent
+      # line that touched .github/workflows/prices.yml.
+      - name: Check for watched Series with no Run, and price files, for 48 hours
         if: ${{ !cancelled() && steps.runs-repository.outcome == 'success' }}
         env:
           GITHUB_TOKEN: ${{ github.token }}
           COPY: ${{ steps.copy.outcome == 'success' && steps.push.outcome == 'success' && 'succeeded' || 'failed' }}
         run: |
           changed="$(git log -1 --first-parent --format=%cI -- schedule.json)"
-          bun scripts/alarm.ts --runs ledgermath-runs --copy "$COPY" --schedule-changed-at "$changed"
+          prices_since="$(git log --first-parent --reverse --format=%cI -- .github/workflows/prices.yml | sed -n 1p)"
+          bun scripts/alarm.ts --runs ledgermath-runs --copy "$COPY" --schedule-changed-at "$changed" --prices-since "$prices_since"

@@ -89,6 +89,13 @@ describe("the runs workflow", () => {
 		expect(alarm?.run).toContain('changed="$(git log -1 --first-parent --format=%cI -- schedule.json)"');
 		expect(alarm?.run).toContain('--schedule-changed-at "$changed"');
 	});
+
+	test("tells the alarm when the prices workflow first existed on main, from the whole history", () => {
+		const alarm = steps.find((step) => step.run?.includes("scripts/alarm.ts"));
+		expect(alarm?.run).toContain('prices_since="$(git log --first-parent --reverse --format=%cI -- .github/workflows/prices.yml | sed -n 1p)"');
+		expect(alarm?.run).toContain('--prices-since "$prices_since"');
+		expect(existsSync(join(ROOT, ".github", "workflows", "prices.yml"))).toBe(true);
+	});
 });
 
 describe("the prices workflow", () => {
