@@ -110,6 +110,36 @@ function everyOtherExecutionLeftOut(): void {
 	);
 }
 
+// Every mutex Run that exited 0 says where its threads ran: one CPU each, on
+// distinct cores or on one core as its placement asks; one cpu_pair event per
+// thread after the first; and every thread in mutex_threads.
+function mutexRunsSayWhereTheyRan(): void {
+	for (const run of runs) {
+		if (run.benchmark !== "mutex" || !("code" in run.exit) || run.exit.code !== 0) continue;
+		const params = run.params as { threads: number; placement: string };
+		const label = `mutex run ${run.id} ${JSON.stringify(params)}`;
+		const observed: Record<string, unknown> = Object.assign(
+			{},
+			...run.events.filter((event) => event.event === "observed").map((event) => event.values as Record<string, unknown>),
+		);
+		const cpus = String(observed.cpus).split(",");
+		const packages = String(observed.package_ids).split(",");
+		const cores = String(observed.core_ids)
+			.split(",")
+			.map((core, index) => `${packages[index]}/${core}`);
+		expect(
+			observed.threads_used === params.threads && new Set(cpus).size === params.threads && cores.length === params.threads,
+			`${label}: observed ${JSON.stringify(observed)}`,
+		);
+		if (params.placement === "distinct_cores") expect(new Set(cores).size === params.threads, `${label}: its threads share a core (${cores})`);
+		if (params.placement === "smt_siblings") expect(new Set(cores).size === 1, `${label}: its threads are on more than one core (${cores})`);
+		const pairs = run.events.filter((event) => event.event === "cpu_pair").length;
+		expect(pairs === params.threads - 1, `${label}: ${pairs} cpu_pair events, expected ${params.threads - 1}`);
+		const threads = run.events.find((event) => event.event === "mutex_threads")?.threads;
+		expect(Array.isArray(threads) && threads.length === params.threads, `${label}: mutex_threads does not list its ${params.threads} threads`);
+	}
+}
+
 const interrupted = runs.filter((run) => run.exit.runner_signal !== undefined);
 
 switch (scenario) {
@@ -118,6 +148,7 @@ switch (scenario) {
 		everyRunChecksOut();
 		everyExecutionRanOnceAndExitedZero();
 		everyOtherExecutionLeftOut();
+		mutexRunsSayWhereTheyRan();
 		expect(runs.length === planned, `${runs.length} Runs, expected ${planned}`);
 		expect(boots.length === 1, `${boots.length} boot summaries, expected 1`);
 		expect(boot?.stopped_by === undefined && boot?.not_run.length === 0, "the boot summary says it was stopped");
@@ -195,6 +226,11 @@ switch (scenario) {
 		everyRunChecksOut();
 		everyExecutionRanOnceAndExitedZero();
 		everyOtherExecutionLeftOut();
+		mutexRunsSayWhereTheyRan();
+		expect(
+			runs.some((run) => run.benchmark === "mutex" && (run.params as { threads?: unknown }).threads === 2),
+			"no two-thread mutex Run, which the scenario's schedule names for an m5.large",
+		);
 		expect(runs.length === planned && planned > 0, `${runs.length} Runs, expected ${planned}`);
 		expect(others.length > 0, "the schedule leaves nothing out on this type, so the scenario shows nothing");
 		expect(boot?.not_run.length === 0 && boot?.build_failures.length === 0, "the boot summary lists executions not run or builds that failed");

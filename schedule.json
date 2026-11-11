@@ -87,6 +87,36 @@
       "params": [
         { "size_bytes": 32768 }
       ]
+    },
+    {
+      "name": "mutex",
+      "builds": ["static"],
+      "samples": 10,
+      "timeout_seconds": 180,
+      "params": [
+        { "threads": 1, "placement": "one_cpu", "critical_section_lines": 1, "lock": "pthread_mutex_default" }
+      ]
+    },
+    {
+      "name": "mutex",
+      "builds": ["static"],
+      "samples": 10,
+      "timeout_seconds": 180,
+      "instance_types": ["c6i.8xlarge", "c8i.2xlarge", "c8a.2xlarge", "i4i.2xlarge"],
+      "params": [
+        { "threads": 2, "placement": "distinct_cores", "critical_section_lines": 1, "lock": "pthread_mutex_default" },
+        { "threads": 2, "placement": "distinct_cores", "critical_section_lines": 8, "lock": "pthread_mutex_default" }
+      ]
+    },
+    {
+      "name": "mutex",
+      "builds": ["static"],
+      "samples": 10,
+      "timeout_seconds": 180,
+      "instance_types": ["m5.large", "c6i.8xlarge", "c8i.2xlarge", "i4i.2xlarge"],
+      "params": [
+        { "threads": 2, "placement": "smt_siblings", "critical_section_lines": 1, "lock": "pthread_mutex_default" }
+      ]
     }
   ]
 }

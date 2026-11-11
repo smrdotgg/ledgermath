@@ -10,9 +10,12 @@
 #   OUT          a directory that does not exist yet
 #
 # Scenarios:
-#   ok           the whole schedule runs: one Run of every benchmark, build and
-#                parameter set, each exiting 0, and every Run checks out (about
-#                seven minutes)
+#   ok           the whole schedule runs for this machine's type, as IMDS gives
+#                it: one Run of every benchmark, build and parameter set of every
+#                entry for it, each exiting 0, every other entry's executions
+#                listed under left_out, and every Run checks out (about eight
+#                minutes; this machine is not a target, so the entries that name
+#                instance types, such as mutex's two-thread sets, are left out)
 #   terminated   run.py is sent TERM while a binary runs, as the time budget does:
 #                that execution still has a Run, the boot summary lists what was
 #                not run, and the boot fails
@@ -28,9 +31,10 @@
 #                boot: it is not uploaded again, and every Run checks out
 #   instance-types  the box boots scripts/box-in-container/instance-types.json as
 #                its schedule.json, and a fake IMDS says it is an m5.large: the
-#                entries for every type and for m5.large run, the others are
-#                listed under left_out in the boot summary, and a benchmark two
-#                entries name is built once (about two minutes)
+#                entries for every type and for m5.large run (among them mutex's
+#                one-thread and siblings sets, which this machine can provide),
+#                the others are listed under left_out in the boot summary, and a
+#                benchmark two entries name is built once (about two minutes)
 #
 # What this shows: box.sh, run.py, the Makefiles and cpuid.c work on the image's
 # own packages (Python 3.9, gcc 11, glibc-static), with the user-data the launch
