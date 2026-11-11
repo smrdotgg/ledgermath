@@ -5,8 +5,8 @@ binary that prints a stream of events to stdout, one JSON object per line, and
 diagnostics to stderr. A box on EC2 builds it, runs it as an ordinary process, dumps
 its own environment around every execution, and writes one Run per execution: a
 self-describing record kept forever. The plan is GitHub issue #36; step 2, one Run end
-to end, is #37; step 3, the first Method and a page, is #39. `docs/dev-log.md` section 2
-is the event contract.
+to end, is #37; step 3, the first Method and a page, is #39; step 6, prices, is #45.
+`docs/dev-log.md` section 2 is the event contract.
 
 Two pipelines live here side by side. The new one, described first, writes Runs.
 July's proof of concept (`benchmarks/c/`, its own JSON format) keeps running unchanged
@@ -20,7 +20,7 @@ until step 4 of the plan replaces it.
 | `benchmarks/<name>/` | One benchmark on the stream: its source, a `README.md` (what it measures, its parameters and observed values, how it differs from July's), and a `Makefile` (`make BUILD=static`, `BUILD=dynamic`, `make -s compiler`, `make -s resolved`). All thirteen: `memory_read`, `compressed_memory_read`, `memory_read_random`, `memory_write`, `syscall`, `hash`, `sort`, `tcp_echo`, `mutex`, `disk_read_random`, `disk_read_io_uring`, `disk_read_sequential`, `disk_write` |
 | `schedule.json` | The targets (instance types, their zone, the times of day each boots) and what a box runs: benchmarks, builds, samples, timeout, parameter sets, and the instance types an entry is for. Checked by `infra/runs/schedule.ts` |
 | `runner/` | The box side: `box.sh` (user-data), `provision.py` (prepares the disks at boot and records it), `fixture.c` (writes a disk Fixture), `run.py` (builds, runs, dumps, writes Runs), `cpuid.c` |
-| `schemas/` | `run.schema.json` (the Run) and `events.schema.json` (one line of the stream) |
+| `schemas/` | `run.schema.json` (the Run), `events.schema.json` (one line of the stream) and `prices.schema.json` (a price file) |
 | `scripts/check-events.py` | Checks a stream's order; needs only Python 3 |
 | `scripts/check-runs.ts` | Checks a directory laid out like the bucket: schemas, every hash, events against stdout, runner manifests |
 | `scripts/check-disk-runs.ts` | Checks that every disk Run in such a directory found the disk it declares, that its evidence adds up, and that its dump bears it out |
@@ -30,9 +30,13 @@ until step 4 of the plan replaces it.
 | `methods/` | Methods, versioned: `v1/` turns Runs into Derivations (`methods/README.md`) |
 | `scripts/copy-runs.ts` | The copy job: the bucket's Run files and boot summaries into the Runs repository |
 | `scripts/derive.ts`, `scripts/build-page.ts` | Run a Method over the Runs; turn its Derivations into the page |
-| `scripts/alarm.ts` | Opens, or comments on, one issue when a watched Series has had no Run for 48 hours |
+| `scripts/alarm.ts` | Opens, or comments on, one issue when a watched Series has had no Run for 48 hours, or the newest price file is more than 48 hours old |
 | `.github/workflows/runs.yml` | All four on a schedule: copy, push, derive, page, alarm |
-| `tests/` | `bun test`: the schemas against sample Runs, the Run checker, the schedule's check, the runner's timeout and stop races and its instance-type filtering, the dump's sections, the disk provisioning's decisions, the disk Fixture and the binaries' checks of it, the launch schedules, launch and reap logic, the box's and the workflow's roles, the Method, the copy job, the page, the alarm and the workflow |
+| `scripts/fetch-prices.ts`, `scripts/check-prices.ts` | Make the day's price file from AWS's public price lists; check a price file by downloading its sources again and cutting them again |
+| `scripts/lib/price-rules.ts` | The selection rules, versioned: which of AWS's price records a price file keeps |
+| `scripts/lib/offer-file.ts`, `scripts/lib/prices.ts`, `scripts/lib/price-file-check.ts` | Reading AWS's offer files without holding them in memory; the cut, the download and the price file; whether a price file holds together |
+| `.github/workflows/prices.yml` | The price fetch, twice a day, adding at most one file a day to the Runs repository |
+| `tests/` | `bun test`: the schemas against sample Runs, the Run checker, the schedule's check, the runner's timeout and stop races and its instance-type filtering, the dump's sections, the disk provisioning's decisions, the disk Fixture and the binaries' checks of it, the launch schedules, launch and reap logic, the box's and the workflow's roles, the Method, the copy job, the page, the alarm and the workflows, and the price fetch, cut, schema and recompute check on excerpts of AWS's files (`tests/samples/prices/`) |
 
 ## A benchmark, locally
 
@@ -473,9 +477,11 @@ bun scripts/derive.ts --runs /tmp/ledgermath-runs --bucket "$BUCKET" --cache /tm
 bun scripts/build-page.ts /tmp/page/derivations.json /tmp/page/index.html
 
 # The alarm, posting nothing; --now sets the clock, --copy says whether the copy job worked,
-# --schedule-changed-at says when main last changed schedule.json.
+# --schedule-changed-at says when main last changed schedule.json, --prices-since when the
+# prices workflow first existed on main.
 bun scripts/alarm.ts --runs /tmp/ledgermath-runs --copy succeeded --dry-run --now 2026-11-13T00:00:00Z \
-  --schedule-changed-at "$(git log -1 --first-parent --format=%cI origin/main -- schedule.json)"
+  --schedule-changed-at "$(git log -1 --first-parent --format=%cI origin/main -- schedule.json)" \
+  --prices-since "$(git log --first-parent --reverse --format=%cI origin/main -- .github/workflows/prices.yml | sed -n 1p)"
 ```
 
 Without AWS, the samples are a directory of Runs with their blobs:
@@ -547,6 +553,159 @@ a pass, the Runs repository may be behind the bucket, and anything it writes say
 the top, before the list. When every watched Series has a Run again it says so once on the
 open issue, so a later incident is not mistaken for the old one. Closing the issue lets
 the next incident open a new one.
+
+The same issue says when the newest price file in the Runs repository (below, "Prices")
+was fetched more than 48 hours ago, by its `fetched_at`. With no price file at all, it
+says nothing until the prices workflow has existed for more than 48 hours, the same idea
+as for a Series that has never had a Run: the workflow passes
+`--prices-since "$(git log --first-parent --reverse --format=%cI -- .github/workflows/prices.yml | sed -n 1p)"`,
+the commit time of the first commit on main's first-parent line that touched the
+workflow, the merge that brought it. Without `--prices-since`, or with it empty, no price
+file is not reported. Whether the price files are stale is part of the state each post
+carries, so it too is written only when it changes; when they are fresh again while
+Series are still stale, the next post says so.
+
+## Prices
+
+Step 6 (#45). Every day LedgerMath keeps a copy of what AWS publicly charges for what it
+measures, so a price can be cited the way a Run can: a file that never changes, at a fixed
+address, holding AWS's own words. One file a day, `prices/<yyyy>/<mm>/<dd>/aws.json` (the
+UTC date of the fetch) in the Runs repository beside the Runs, added once and never
+edited, even on a day when nothing changed, so "the price on a given day" is one lookup
+and a missing day shows.
+
+### Where the prices come from
+
+AWS's Price List bulk files, which need no account. `scripts/fetch-prices.ts` starts at
+the offer index, `https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/index.json`,
+follows each offer's `currentRegionIndexUrl` to its region index, and takes the
+Region's `currentVersionUrl`, the versioned URL of the offer file for that Region. The
+three offers, on 2026-11-11:
+
+| Offer | What it holds for us | Versioned file for `us-east-2` | Size |
+|-------|----------------------|---------------------------------|------|
+| `AmazonEC2` | Instance types, and EBS volumes | `…/offers/v1.0/aws/AmazonEC2/20261110173852/us-east-2/index.json` | 442 MB (108,279 products) |
+| `AmazonS3` | S3 storage and requests | `…/offers/v1.0/aws/AmazonS3/20261109154310/us-east-2/index.json` | 0.5 MB |
+| `AWSDataTransfer` | Data out of the Region, to the internet among others | `…/offers/v1.0/aws/AWSDataTransfer/20261110232936/us-east-2/index.json` | 1.5 MB |
+
+How AWS versions them: a file's `version` is its `publicationDate` written as 14
+digits, and the versioned URL holds it. `…/<offer>/current/<region>/index.json` serves
+the newest version's bytes and moves; a price file records and cites only the versioned
+URL. The EC2 offer is published several times a week. The version index,
+`…/<offer>/index.json`, lists one version per period it was in effect (about a month),
+not every publication; but every version tried was still at its versioned URL, listed or
+not, among them unlisted EC2 versions of 2019-11-21, 2020-08-06 and 2026-10-12. AWS does
+not promise that, so the price file also holds the size and SHA-256 of what it read.
+
+### What a price file holds
+
+The schema is `schemas/prices.schema.json` (`ledgermath.prices/1`). Besides `schema`,
+`provider` (`aws`) and `fetched_at` (when the fetch started, to the millisecond):
+
+- `measured`: what `schedule.json` said is measured when the file was cut, its instance
+  types (sorted) and the Region of its zone. A new instance type in the schedule brings
+  its price with it the next day.
+- `rules`: the rule set the records were selected with, by name and version
+  (`scripts/lib/price-rules.ts`).
+- `sources`, one per offer file: the versioned `url`, the file's own `version` and
+  `publication_date`, its size in `bytes` and its `sha256`, its `header` (every top-level
+  member other than `products` and `terms`, verbatim, AWS's disclaimer included), the
+  `selections` (each rule, what it selects in words, and the SKUs it selected), and the
+  selected `products` and their `terms.OnDemand`, keyed as AWS keys them.
+
+The records are verbatim: each product and each SKU's On-Demand terms is AWS's own
+object, parsed and written back with nothing changed but the whitespace between tokens.
+The cut proves this record by record (written back, a record must equal the file's text
+with its whitespace removed, so no key moved, no number lost its digits and no escape
+changed) and stops if it does not hold. Reserved terms are not kept.
+
+Rule set 1 selects, in the Region:
+
+| Rule | Offer | What it selects | Exactly |
+|------|-------|-----------------|---------|
+| `ec2-instance-on-demand-linux` | `AmazonEC2` | Each scheduled instance type as a box of the stage runs: Linux, shared tenancy, no pre-installed software, no licence, no capacity reservation | one per type |
+| `ebs-gp3-storage` | `AmazonEC2` | gp3 storage, per GB-month | one |
+| `ebs-gp3-iops` | `AmazonEC2` | gp3 IOPS bought beyond the volume's included 3,000 | one |
+| `ebs-gp3-throughput` | `AmazonEC2` | gp3 throughput bought beyond the included 125 MiB/s | one |
+| `s3-standard-storage` | `AmazonS3` | S3 Standard storage, in its three tiers | one |
+| `s3-standard-requests` | `AmazonS3` | S3 Standard requests: Tier1 (PUT, COPY, POST, LIST) and Tier2 (GET and all others) | one of each |
+| `data-transfer-out-to-internet` | `AWSDataTransfer` | Data out of the Region to the internet, in its four tiers | one |
+| `data-transfer-out-to-internet-global-free-tier` | `AWSDataTransfer` | The 100 GB a month, across Regions, that the first tier is "beyond" | one |
+
+Each rule's exact conditions are in the file (`selects`) and in the code. A record a rule
+of the named version does not select is not in the file, whatever AWS charges for it.
+A rule that selects nothing, or more than it may, stops the fetch before it writes
+anything: a silently empty or wrong price file is the failure guarded against, and a
+stopped fetch shows up in the alarm two days later at the latest. A rule set is never
+edited once a stored file names it: a change is a new version beside the old one in
+`RULE_SETS`, so every stored file can still be cut again.
+
+One quirk, kept as AWS wrote it: the gp3 throughput record's `unit` is `GiBps-mo` at
+`40.96` USD while its `description` says `$0.04 per provisioned MiBps-month`
+(40.96 / 1024 = 0.04).
+
+### Citing a price
+
+A price is cited as the file, the SKU and the rate code:
+
+```
+prices/2026/11/11/aws.json, SKU 8D49XP354UEYTHGM, rate code 8D49XP354UEYTHGM.JRTCKXETXF.6YS6EN2CT7
+```
+
+The rate code is `<sku>.<offerTermCode>.<code>`, and the file files every term under
+`<sku>.<offerTermCode>` and every price dimension under its rate code (the fetch checks
+both), so the citation finds exactly one price dimension, with its unit, its range and
+AWS's description:
+
+```bash
+jq --arg sku 8D49XP354UEYTHGM --arg rate 8D49XP354UEYTHGM.JRTCKXETXF.6YS6EN2CT7 \
+  '.sources[] | select(.products[$sku]) | {product: .products[$sku], price: [.terms.OnDemand[$sku][].priceDimensions[$rate]] | map(select(.))[0]}' \
+  prices/2026/11/11/aws.json
+```
+
+### Locally
+
+No AWS access is needed. Fetch into a clone of the Runs repository that pushes nowhere,
+then check the file it made:
+
+```bash
+git clone git@github.com:smrdotgg/ledgermath-runs.git /tmp/ledgermath-runs
+git -C /tmp/ledgermath-runs remote set-url --push origin no-push
+
+# Downloads about 445 MB under --work, cuts, adds prices/<today>/aws.json, removes the
+# downloads (--keep-sources keeps them, as <offer code>.json). Run again the same day,
+# it says the file exists and does nothing.
+bun scripts/fetch-prices.ts --work /tmp/prices-work /tmp/ledgermath-runs
+
+# The recompute check: downloads each source again at its versioned URL, checks its size
+# and SHA-256, cuts it again with the rule set, measured inputs and fetch time the file
+# records, and requires the result to be the file, byte for byte. --sources DIR reads
+# <offer code>.json from DIR instead of downloading (still hashed and checked).
+bun scripts/check-prices.ts --work /tmp/prices-work /tmp/ledgermath-runs/prices/2026/11/11/aws.json
+```
+
+Each source's hash can also be checked by hand:
+`curl -sS "$(jq -r '.sources[0].url' FILE)" | sha256sum`.
+
+On this machine (us-east-2, near AWS's CDN) the whole fetch took 12 s and at most 96 MB of
+memory: 5 s to download the EC2 file, 6 s to cut. The check took 11 s and 125 MB.
+
+### The workflow
+
+`.github/workflows/prices.yml` runs at 03:17 and 15:17 UTC and by hand. The second
+run is a second chance on a day GitHub drops or delays the first; when the first worked,
+it adds nothing. It checks out this repository and the Runs repository (with the same
+deploy key as `runs.yml`), runs the fetch with its downloads under the runner's temporary
+directory, and commits and pushes the new file as `github-actions[bot]`, refusing to
+commit anything but new files. It shares `runs.yml`'s concurrency group, `runs`, so the
+two never run at once and neither's push is refused because the other pushed after its
+checkout. Its times are hours from `runs.yml`'s, because GitHub keeps at most one run of
+a group waiting: a third run queued while one runs and one waits cancels the waiting one.
+
+It needs only the secret `RUNS_REPO_DEPLOY_KEY`, which `runs.yml` already uses (above): a
+deploy key of `smrdotgg/ledgermath-runs` with write access. No AWS credentials and no
+variables. GitHub runs scheduled workflows from the default branch only, so it starts
+once it is on `main`.
 
 ## July's pipeline (`benchmarks/c/`, stage `smr`)
 
