@@ -198,8 +198,8 @@ export function failures(run: Run, record: RequestsRecord): string[] {
 	if (run.exit.runner_signal !== undefined && exit !== null) reasons.push(`the runner was told to stop by signal ${run.exit.runner_signal}`);
 	reasons.push(...record.problems);
 	if (record.problems.length === 0 && !record.holds_requests) reasons.push("its stream holds no request (no response_ended or request_failed carrying request)");
-	const short = countProblem(record.counted, run.samples);
-	if (short.length > 0) reasons.push(`${short[0]}: the Run was cut short`);
+	const count = countProblem(record.counted, run.samples);
+	if (count.length > 0) reasons.push(record.counted !== null && record.counted < run.samples ? `${count[0]}: the Run was cut short` : (count[0] as string));
 	if ("code" in run.exit && run.exit.code === 0 && record.failed > 0) {
 		reasons.push(`exit code 0, which says every request succeeded, but ${record.failed} counted request${record.failed === 1 ? "" : "s"} failed`);
 	}

@@ -119,8 +119,8 @@ const text = (value: unknown): string | null => (typeof value === "string" && va
  *
  * - it failed when it holds a request_failed (phase and error from it), or
  *   its response's status (response_headers.status) is not 2xx; a request
- *   one of whose lines was withheld (line_withheld) is counted apart, as a
- *   failure of the record, and in no time;
+ *   one of whose lines was withheld (line_withheld, but for a certificate's)
+ *   is counted apart, as a failure of the record, and in no time;
  * - it succeeded when its status is 2xx and its body matched the Fixture and
  *   S3's checksum (response_ended.fixture and .s3_checksum "match"). Its events
  *   must then be, in order, name_resolved, connection_opened,
@@ -167,7 +167,8 @@ export function readRequests(events: readonly RunEvent[]): ReadRequests {
 	const close = (start: RunEvent, inside: RunEvent[], end: RunEvent): void => {
 		const sample = start.sample as number;
 		const warmup = start.warmup === true;
-		const sequence = inside.filter((event) => !ASIDE.has(event.event));
+		// A withheld line stands for the event it replaced: a certificate's is aside like the certificate.
+		const sequence = inside.filter((event) => !ASIDE.has(event.event) && !(event.event === "line_withheld" && ASIDE.has(String(event.withheld_event))));
 		const keep = (outcome: Failure | null): void => {
 			if (outcome === null) return;
 			if (warmup) result.warmupFailure ??= outcome;

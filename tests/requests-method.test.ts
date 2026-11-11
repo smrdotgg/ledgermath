@@ -115,6 +115,20 @@ describe("one request's phases, from the event timestamps", () => {
 		expect(readRequests(late).problems).toEqual(["sample 1: sample_ended is not at response_ended's t"]);
 	});
 
+	test("a request one of whose lines was withheld is counted apart, in no time; a withheld certificate line changes nothing", () => {
+		const good = events(requestStream({ connection: "new", requests: [{}, {}] }));
+		const replace = (name: string, sample: number) =>
+			good.map((event) => (event.event === name && (name === "certificate" || event.request === sample) ? { event: "line_withheld", t: event.t, withheld_event: name, withheld_bytes: 900 } : event));
+		const headers = readRequests(replace("response_headers", 2));
+		expect(headers.problems).toEqual([]);
+		expect(headers.succeeded.length).toBe(1);
+		expect(headers.failed).toEqual([{ phase: "record", kind: "line_withheld_response_headers" }]);
+		const certificate = readRequests(replace("certificate", 0));
+		expect(certificate.problems).toEqual([]);
+		expect(certificate.failed).toEqual([]);
+		expect(certificate.succeeded.length).toBe(2);
+	});
+
 	test("the address block is the /16 of an IPv4 address; anything else is kept whole", () => {
 		expect(addressBlock("52.219.176.66")).toBe("52.219.0.0/16");
 		expect(addressBlock("2600:1f16::1")).toBe("2600:1f16::1");
@@ -292,8 +306,10 @@ describe("Method requests v1 over Runs", () => {
 		requestRun(made, { startedAt: "2026-11-13T21:35:00Z", exit: { code: 0 }, stream: { connection: "new", requests: [...rampRequests(19), { fail: { phase: "body", error: "eof" } }] } });
 		requestRun(made, { startedAt: "2026-11-14T21:35:00Z", exit: { code: 1 }, stream: { connection: "new", requests: [...rampRequests(19), { mismatch: true }] } });
 		requestRun(made, { startedAt: "2026-11-15T21:35:00Z", stream: { connection: "new", requests: rampRequests(20) } });
+		requestRun(made, { startedAt: "2026-11-16T21:35:00Z", samples: 19, stream: { connection: "new", requests: rampRequests(20) } });
 		const s = only(await derived(made));
-		const [short, killed, lying, mismatched, good] = s.points;
+		const [short, killed, lying, mismatched, good, extra] = s.points;
+		expect(extra?.failure).toBe("expected 19 counted samples, found 20");
 		expect(short?.counted).toBe(false);
 		expect(short?.failure).toBe("expected 20 counted samples, found 12: the Run was cut short");
 		expect(killed?.counted).toBe(false);
