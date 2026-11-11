@@ -10,14 +10,33 @@ time per critical section across all threads: a Method's division, not the binar
 
 The study of July's data and the design is section 1 of the step-4 brief's study (#42).
 
-| Parameter set (`threads`, `placement`, `critical_section_lines`) | What it measures | Scheduled on |
+| Parameter set (`threads`, `placement`, `critical_section_lines`, `idle_threads`) | What it measures | Scheduled on |
 |---|---|---|
-| `1`, `one_cpu`, `1` | The cost of one lock and unlock that nobody contends | every target |
-| `2`, `distinct_cores`, `1` | Lock handoff throughput when the lock and the counter move between two physical cores | `c6i.8xlarge`, `c8i.2xlarge`, `c8a.2xlarge`, `i4i.2xlarge` |
-| `2`, `distinct_cores`, `8` | The same with eight protected cache lines moving with the lock, which includes glibc's futex sleep and wake-up | the same four |
-| `2`, `smt_siblings`, `1` | Lock handoff between the two hardware threads of one core, which share its L1 and L2 | `m5.large`, `c6i.8xlarge`, `c8i.2xlarge`, `i4i.2xlarge` |
+| `1`, `one_cpu`, `1`, `1` | The cost of one lock and unlock that nobody contends, in a program that has more than one thread. **Usually the number wanted**, and what napkin-math's "mutex lock/unlock" means | every target |
+| `1`, `one_cpu`, `1`, `0` | The same in a process that has only ever had one thread, where glibc skips the atomic instructions | every target |
+| `2`, `distinct_cores`, `1`, `0` | Lock handoff throughput when the lock and the counter move between two physical cores | `c6i.8xlarge`, `c8i.2xlarge`, `c8a.2xlarge`, `i4i.2xlarge` |
+| `2`, `distinct_cores`, `8`, `0` | The same with eight protected cache lines moving with the lock, which includes glibc's futex sleep and wake-up | the same four |
+| `2`, `smt_siblings`, `1`, `0` | Lock handoff between the two hardware threads of one core, which share its L1 and L2 | `m5.large`, `c6i.8xlarge`, `c8i.2xlarge`, `i4i.2xlarge` |
 
-All four use `lock` `pthread_mutex_default`. `m5.large` has one core with two
+### The two one-thread sets
+
+glibc (2.34 and later) locks and unlocks a default mutex with plain stores while the
+process has only ever had one thread: it checks a per-thread word that the first
+`pthread_create` sets, and only after that uses `lock cmpxchg` to lock and `xchg` to
+unlock. So with one working thread and nothing else, the number is true only of a program
+that never started a thread. `idle_threads` 1 adds one thread, before measuring, that
+blocks for the life of the process with every signal blocked (in `pause()`): it never
+runs, never spins and never touches the lock, but the process is multi-threaded, so the
+working thread takes the atomic path, as it would in any program that uses threads at
+all. That is the uncontended lock a reader usually means. `idle_threads` 0 is the
+single-threaded special case, kept beside it so the difference is measured, not assumed.
+
+On the development machine, the Amazon Linux build's glibc 2.34 took the plain path for
+every one of the first 100,000 locks and unlocks of the benchmark's mutex with
+`idle_threads` 0, and the atomic path for every one with `idle_threads` 1 (counted with
+breakpoints on the four instructions; see the step-4 log entry in `docs/dev-log.md`).
+
+All five use `lock` `pthread_mutex_default`. `m5.large` has one core with two
 hardware threads, so it runs no distinct-cores set; `c8a.2xlarge` has one hardware thread
 per core, so it runs no siblings set. The schedule keeps them off with `instance_types`;
 the binary would exit 2 there.
@@ -41,9 +60,10 @@ under load, they took 15 to 47 seconds each.
 | `LM_PARAM_PLACEMENT` | `one_cpu`, `distinct_cores`, `smt_siblings` | Where the binary pins them; see below. `one_cpu` takes 1 thread, `smt_siblings` 2 or more |
 | `LM_PARAM_CRITICAL_SECTION_LINES` | `1`, `8` | 64-byte cache lines each critical section increments, the counter's included; 1 to 64 |
 | `LM_PARAM_LOCK` | `pthread_mutex_default` | `pthread_mutex_default`, a mutex made from a default attribute (glibc's `PTHREAD_MUTEX_NORMAL`, which never spins), or `pthread_mutex_adaptive` (`PTHREAD_MUTEX_ADAPTIVE_NP`, which spins briefly before sleeping; not scheduled: the study measured it no better) |
+| `LM_PARAM_IDLE_THREADS` | `0`, `1` | `1` starts one more thread, after thread 0 is pinned and before any other thread or the first critical section, that blocks for the life of the process and never touches the lock; the binary waits, up to five seconds, until the kernel shows it sleeping. Not pinned. `0` starts none |
 
-`--quick` uses 1 thread, `one_cpu`, 1 line and `pthread_mutex_default` when the
-variables are unset.
+`--quick` uses 1 thread, `one_cpu`, 1 line, `pthread_mutex_default` and 0 idle threads
+when the variables are unset.
 
 ### Placement
 
@@ -85,7 +105,8 @@ pairs), and the protected lines follow, 64 bytes apart, the first holding the co
 
 ## Observed
 
-Emitted once, before measuring, after one checked repetition.
+In two `observed` events. The first is emitted after one checked repetition, before
+`cpu_pair`:
 
 | Key | What it is |
 |---|---|
@@ -105,9 +126,22 @@ Emitted once, before measuring, after one checked repetition.
 (The siblings set, in the Amazon Linux 2023 container on the development machine, whose
 CPUs 0 and 2 are the two hardware threads of core 0.)
 
+The second is emitted just before measuring, after `cpu_pair`:
+
+| Key | What it is |
+|---|---|
+| `libc_single_threaded` | glibc's `__libc_single_threaded` (`<sys/single_threaded.h>`), read at that moment: `true` while the process has only ever had one thread. The lock's own test is of a per-thread word the same `pthread_create` sets |
+| `process_threads` | The `Threads:` line of `/proc/self/status` at that moment: the working threads plus any idle one |
+| `idle_threads_sleeping` | Idle threads whose state in `/proc/self/task/<tid>/stat` is `S` (sleeping) at that moment: 0 or 1 |
+
+```json
+{"event":"observed","t":…,"values":{"libc_single_threaded":false,"process_threads":2,"idle_threads_sleeping":1}}
+```
+
 `cpus` with `core_ids` and `package_ids` are the observed counterparts of `threads` and
-`placement`: distinct cores show distinct core ids, siblings one. The Run's dump holds the
-whole topology.
+`placement`: distinct cores show distinct core ids, siblings one. `process_threads`,
+`idle_threads_sleeping` and `libc_single_threaded` are those of `idle_threads`. The Run's
+dump holds the whole topology.
 
 ## Events of its own
 
@@ -172,9 +206,9 @@ lock skipped in one thread, the binary exits 1 at the first of them that sees th
 
 ## What will stay unstable
 
-- **1 thread:** a busy hardware sibling of its CPU slows it, up to 2.5× in the study. On
-  a box running nothing else the sibling should be idle, so it should be about as steady
-  as `syscall / getpid`; that is not yet shown on a box.
+- **1 thread, either set:** a busy hardware sibling of its CPU slows it, up to 2.5× in the
+  study. On a box running nothing else the sibling should be idle, so both should be about
+  as steady as `syscall / getpid`; that is not yet shown on a box.
 - **Distinct cores:** a distribution across boots, from where the two cores sit on the
   host (mesh or CCX distance), on top of about 5% from run to run. `cpu_pair` is recorded
   to explain it.
@@ -198,8 +232,9 @@ is a different measurement, not a port.
 - **July had one shape, two threads on the first two allowed CPUs,** whatever cores those
   were. Here the placement is a parameter the binary carries out from the topology, and
   the Run says which CPUs and cores it used.
-- **New:** the uncontended set, the siblings set, the eight-line set, the events
-  `cpu_pair` and `mutex_threads`, and the guard's count of lost increments. July's guard
+- **New:** the two uncontended sets (single-threaded and multi-threaded), the siblings
+  set, the eight-line set, the events `cpu_pair` and `mutex_threads`, and the guard's count
+  of lost increments. July's guard
   was the shared counter alone.
 - **What is common to every port:** the output is the event stream
   (`docs/dev-log.md` section 2), the binary is linked statically, and the harness takes

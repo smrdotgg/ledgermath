@@ -6,6 +6,9 @@
  *   LM_PARAM_PLACEMENT               where they run: one_cpu, distinct_cores or smt_siblings
  *   LM_PARAM_CRITICAL_SECTION_LINES  64-byte lines each critical section increments, 1 to 64
  *   LM_PARAM_LOCK                    pthread_mutex_default or pthread_mutex_adaptive
+ *   LM_PARAM_IDLE_THREADS            0, or 1: one more thread that blocks for the life of the
+ *                                    process and never touches the lock, so the process is
+ *                                    multi-threaded even with one working thread
  *
  * One repetition is exactly K = 10,000 critical sections, done by whichever
  * threads win the lock: every thread loops lock, then stop if the counter has
@@ -24,6 +27,12 @@
  *   libc                               gnu_get_libc_version()
  *   critical_sections_per_repetition   critical sections the threads counted in one repetition
  *   protected_lines                    lines found equal to the counter after it
+ *
+ * Observed (just before measuring, in a second observed event):
+ *   libc_single_threaded               glibc's __libc_single_threaded: while it is true,
+ *                                      glibc's mutex locks and unlocks with plain stores
+ *   process_threads                    the Threads: line of /proc/self/status
+ *   idle_threads_sleeping              idle threads the kernel shows sleeping (state S)
  *
  * Events of its own:
  *   cpu_pair       before measuring, with two or more threads: the round trip of a
@@ -48,12 +57,18 @@
 #include <inttypes.h>
 #include <pthread.h>
 #include <sched.h>
+#include <signal.h>
 #include <stdarg.h>
 #include <stdatomic.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <sys/resource.h>
+#include <sys/single_threaded.h>
+#include <sys/syscall.h>
+#include <unistd.h>
 
 #define K 10000ULL             /* critical sections per repetition */
 #define MAX_LINES 64
@@ -289,6 +304,72 @@ static void *worker_main(void *arg) {
     }
 }
 
+/* ---- the idle thread ---- */
+
+/* Its kernel thread id, written once it is about to block. */
+static _Atomic pid_t g_idle_tid;
+
+/* Blocks for the life of the process with every signal blocked, so pause()
+ * never returns: it does no work, never spins, never touches the lock. Its
+ * existence alone makes the process multi-threaded, so glibc's mutex takes
+ * its atomic path for the working threads. */
+static void *idle_main(void *arg) {
+    (void)arg;
+    sigset_t all;
+    sigfillset(&all);
+    pthread_sigmask(SIG_BLOCK, &all, NULL);
+    atomic_store(&g_idle_tid, (pid_t)syscall(SYS_gettid));
+    for (;;) pause();
+    return NULL;
+}
+
+/* The state letter of one of this process's threads in /proc, or 0 if it cannot be read. */
+static char thread_state(pid_t tid) {
+    char path[64];
+    char text[512];
+    snprintf(path, sizeof(path), "/proc/self/task/%d/stat", (int)tid);
+    FILE *f = fopen(path, "r");
+    if (f == NULL) return 0;
+    size_t n = fread(text, 1, sizeof(text) - 1, f);
+    fclose(f);
+    text[n] = '\0';
+    const char *close_paren = strrchr(text, ')'); /* the name may hold spaces and parentheses */
+    return close_paren != NULL && close_paren[1] == ' ' ? close_paren[2] : 0;
+}
+
+/* Starts the idle thread and waits, up to five seconds, until the kernel shows it sleeping. */
+static void start_idle_thread(void) {
+    pthread_t thread;
+    int rc = pthread_create(&thread, NULL, idle_main, NULL);
+    if (rc != 0) lm_die("pthread_create (the idle thread): %s", strerror(rc));
+    uint64_t deadline = lm_now_ns() + 5000000000ULL;
+    for (;;) {
+        pid_t tid = atomic_load(&g_idle_tid);
+        if (tid != 0 && thread_state(tid) == 'S') return;
+        if (lm_now_ns() > deadline) lm_die("the idle thread did not block within five seconds");
+        struct timespec pause_for = { 0, 1000000 };
+        nanosleep(&pause_for, NULL);
+    }
+}
+
+/* The Threads: line of /proc/self/status. */
+static uint64_t process_threads(void) {
+    FILE *f = fopen("/proc/self/status", "r");
+    if (f == NULL) lm_die("cannot read /proc/self/status: %s", strerror(errno));
+    char line[256];
+    unsigned long long threads = 0;
+    bool found = false;
+    while (fgets(line, sizeof(line), f) != NULL) {
+        if (sscanf(line, "Threads: %llu", &threads) == 1) {
+            found = true;
+            break;
+        }
+    }
+    fclose(f);
+    if (!found) lm_die("/proc/self/status has no Threads: line");
+    return threads;
+}
+
 /* Every thread takes a snapshot of its counters and CPU time. */
 static void snapshot_all(ctx_t *c, int command) {
     snapshot(&c->threads[0], command);
@@ -479,12 +560,14 @@ int main(int argc, char **argv) {
     const char *placement = lm_param("placement", "one_cpu");
     uint64_t lines_param = lm_param_u64("critical_section_lines", "1");
     const char *lock = lm_param("lock", "pthread_mutex_default");
+    uint64_t idle_param = lm_param_u64("idle_threads", "0");
 
     if (threads_param < 1 || threads_param > MAX_THREADS) lm_usage("parameter threads must be 1 to %d, got %" PRIu64, MAX_THREADS, threads_param);
     if (lines_param < 1 || lines_param > MAX_LINES) lm_usage("parameter critical_section_lines must be 1 to %d, got %" PRIu64, MAX_LINES, lines_param);
     int nthreads = (int)threads_param;
     if (strcmp(placement, "one_cpu") == 0 && nthreads != 1) lm_usage("placement one_cpu takes threads 1, got %d", nthreads);
     if (strcmp(placement, "smt_siblings") == 0 && nthreads < 2) lm_usage("placement smt_siblings takes threads 2 or more, got %d", nthreads);
+    if (idle_param > 1) lm_usage("parameter idle_threads must be 0 or 1, got %" PRIu64, idle_param);
 
     pthread_mutexattr_t attr;
     if (pthread_mutexattr_init(&attr) != 0) lm_die("pthread_mutexattr_init");
@@ -520,6 +603,7 @@ int main(int argc, char **argv) {
         atomic_init(&c.threads[i].done, UINT64_MAX);
     }
     pin(&c.threads[0]);
+    if (idle_param == 1) start_idle_thread();
     for (int i = 1; i < nthreads; i++) {
         rc = pthread_create(&c.threads[i].thread, NULL, worker_main, &c.threads[i]);
         if (rc != 0) lm_die("pthread_create: %s", strerror(rc));
@@ -558,6 +642,15 @@ int main(int argc, char **argv) {
     uint64_t per_batch = lm_quick() ? 10000 : 100000;
     for (int i = 1; i < nthreads; i++) cpu_pair(&c, i, per_batch);
 
+    /* What was the case just before measuring. */
+    lm_event e;
+    lm_observed_begin(&e, lm_now_ns());
+    lm_event_bool(&e, "libc_single_threaded", __libc_single_threaded != 0);
+    lm_event_u64(&e, "process_threads", process_threads());
+    pid_t idle_tid = atomic_load(&g_idle_tid);
+    lm_event_u64(&e, "idle_threads_sleeping", idle_tid != 0 && thread_state(idle_tid) == 'S' ? 1 : 0);
+    lm_event_emit(&e);
+
     snapshot_all(&c, CMD_BEGIN);
     lm_measure(mutex_run, &c);
     snapshot_all(&c, CMD_END);
@@ -567,7 +660,6 @@ int main(int argc, char **argv) {
         if (rc != 0) lm_die("pthread_join: %s", strerror(rc));
     }
 
-    lm_event e;
     lm_event_begin(&e, "mutex_threads", lm_now_ns());
     lm_event_array(&e, "threads");
     for (int i = 0; i < nthreads; i++) {
