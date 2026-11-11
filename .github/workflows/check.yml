@@ -11,26 +11,18 @@ permissions:
 
 jobs:
   scratch:
-    name: memory_read runs alone in a FROM scratch container
+    name: every static build runs alone in a FROM scratch container
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Build memory_read static and dynamic
+      - name: Every static build in schedule.json runs as the only file in a scratch container, once per parameter set, and its stream is valid
+        run: python3 scripts/check-scratch.py
+
+      - name: Build memory_read dynamic
         run: |
-          make -C benchmarks/memory_read BUILD=static
           make -C benchmarks/memory_read BUILD=dynamic
           file benchmarks/memory_read/build/*/memory_read
-
-      - name: The static build runs as the only file in a scratch container, and its stream is valid
-        run: |
-          docker build -q -t lm-memory-read-static -f - benchmarks/memory_read/build/static <<'EOF'
-          FROM scratch
-          COPY memory_read /bench
-          ENTRYPOINT ["/bench"]
-          EOF
-          docker run --rm lm-memory-read-static --quick > stream.ndjson
-          python3 scripts/check-events.py --quick stream.ndjson
 
       - name: The same container refuses the dynamic build, so the check has teeth
         run: |
