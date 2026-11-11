@@ -9,9 +9,12 @@ out run.py's environment dump and instance metadata, runs a schedule of two
 executions through run.py's main(), and forces one case:
 
     timeout-kills       the binary sleeps; the runner's 1-second timeout kills it
-    alarm-after-exit    the binary ends at once, and the timeout's alarm fires
-                        after it was reaped, before the runner cancels it
-    stop-while-running  the runner is sent SIGTERM while the binary sleeps
+    alarm-after-exit    the binary ends at once, and the timeout's alarm (5 seconds,
+                        far longer than the binary needs to end) fires after it was
+                        reaped, before the runner cancels it: the reap waits until
+                        the alarm is certain to have fired
+    stop-while-running  the runner is sent SIGTERM once it has launched the binary,
+                        which sleeps
     stop-after-exit     the runner is sent SIGTERM just after it reaped the binary
     stop-in-after-dump  the runner is sent SIGTERM as the dump after the binary starts
 
@@ -35,6 +38,9 @@ import subprocess
 import sys
 import threading
 import time
+
+ALARM_SECONDS = 5   # alarm-after-exit's timeout: far longer than `sh -c "exit 0"` needs
+WAIT_SECONDS = 120  # the most any condition is waited for
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CASES = ("timeout-kills", "alarm-after-exit", "stop-while-running", "stop-after-exit", "stop-in-after-dump",
@@ -76,7 +82,7 @@ def main():
         "name": "fake",
         "builds": ["static"],
         "samples": 1,
-        "timeout_seconds": 1 if case in ("timeout-kills", "alarm-after-exit") else 60,
+        "timeout_seconds": {"timeout-kills": 1, "alarm-after-exit": ALARM_SECONDS}.get(case, 60),
         "params": [{"mode": "sleep" if sleeping else "quick", "n": n} for n in (1, 2)],
     }]}
     if case in ("instance-types", "no-instance-type"):
@@ -105,19 +111,27 @@ def main():
     # No EC2 API call from a test, whatever credentials this machine has.
     run.ec2_sections = lambda imds: {"ec2_instance": {"stub": "the EC2 API is stubbed in this test"}}
 
+    real_init = subprocess.Popen.__init__
     real_wait = subprocess.Popen.wait
     reaped = []
+
+    def init(self, *args, **kwargs):
+        self.launched_at = time.monotonic()  # the runner arms its alarm just after this
+        real_init(self, *args, **kwargs)
 
     def wait(self, timeout=None):
         status = real_wait(self, timeout)
         if str(self.args[0]).endswith("/fake") and not reaped:
             reaped.append(True)
             if case == "alarm-after-exit":
-                time.sleep(1.5)  # the 1-second alarm fires now, after the binary was reaped
+                # Reaped; now past the moment the alarm must fire, so it fires
+                # after the reap and before the runner cancels it.
+                time.sleep(max(0.0, self.launched_at + ALARM_SECONDS + 1.0 - time.monotonic()))
             if case == "stop-after-exit":
                 os.kill(os.getpid(), signal.SIGTERM)
         return status
 
+    subprocess.Popen.__init__ = init
     subprocess.Popen.wait = wait
 
     real_take_dump = run.take_dump
@@ -141,7 +155,16 @@ def main():
 
     run.make = make
     if case == "stop-while-running":
-        threading.Timer(2.0, os.kill, (os.getpid(), signal.SIGTERM)).start()
+        def stop_once_running():
+            # Once the runner has launched the binary, whatever the machine's speed.
+            end = time.monotonic() + WAIT_SECONDS
+            while time.monotonic() < end:
+                child = run.Stop.child
+                if child is not None and run.still_running(child):
+                    os.kill(os.getpid(), signal.SIGTERM)
+                    return
+                time.sleep(0.01)
+        threading.Thread(target=stop_once_running, daemon=True).start()
 
     sys.argv = ["run.py", "--root", root, "--out", out, "--schedule", os.path.join(out, "schedule.json"),
                 "--source-commit", "0" * 40, "--source-archive", archive]

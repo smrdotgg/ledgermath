@@ -45,7 +45,7 @@ function jsonUnder<T>(directory: string): T[] {
 
 function race(name: string): Outcome {
 	const out = join(scratch, name);
-	const done = spawnSync("python3", [HARNESS, name, out], { encoding: "utf8" });
+	const done = spawnSync("python3", [HARNESS, name, out], { encoding: "utf8", timeout: SLOW - 10_000 });
 	if (done.status !== 0) throw new Error(`runner-races.py ${name} failed:\n${done.stdout}${done.stderr}`);
 	const runs = jsonUnder<RunRecord>(join(out, "runs")).sort((a, b) => a.started_at.localeCompare(b.started_at));
 	const [boot] = jsonUnder<BootSummary>(join(out, "boots"));
@@ -65,7 +65,9 @@ function expectValid(runs: RunRecord[]): void {
 	}
 }
 
-const SLOW = 30_000;
+// Each test runs runner/run.py through a race; generous, so a loaded machine is
+// slow, never failed (tests/runner-races.py waits for conditions, not times).
+const SLOW = 180_000;
 
 describe("the runner's timeout", () => {
 	test(

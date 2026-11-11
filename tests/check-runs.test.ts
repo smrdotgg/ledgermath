@@ -7,6 +7,9 @@ import { join } from "node:path";
 
 import { checkBucketDirectory, readTarGz } from "../scripts/check-runs";
 
+/** Checking runs check-events.py once per Run, and git or tar runs as processes: seconds, more on a loaded machine. */
+const SUBPROCESS_TIMEOUT_MS = 60_000;
+
 const ROOT = join(import.meta.dir, "..");
 const scratch = mkdtempSync(join(tmpdir(), "check-runs-test-"));
 afterAll(() => rmSync(scratch, { recursive: true, force: true }));
@@ -25,7 +28,7 @@ describe("reading a source archive", () => {
 			const committed = execFileSync("git", ["show", `HEAD:${path}`], { cwd: ROOT });
 			expect(files.get(path)?.equals(committed)).toBe(true);
 		}
-	});
+	}, SUBPROCESS_TIMEOUT_MS);
 });
 
 /** A bucket directory holding one Run whose runner manifest is `manifest`. */
@@ -87,7 +90,7 @@ describe("the runner manifest", () => {
 		const result = checkBucketDirectory(directory, { blobs: true });
 		expect(result.problems).toEqual([]);
 		expect(result.manifests).toEqual({ checked: 1, unchecked: 0 });
-	});
+	}, SUBPROCESS_TIMEOUT_MS);
 
 	test("that names a wrong hash, or misses a file, is a problem", () => {
 		// Lists run.py with a hash that is not its own, and leaves box.sh out.
@@ -95,12 +98,12 @@ describe("the runner manifest", () => {
 		const problems = checkBucketDirectory(directory, { blobs: true }).problems.join("\n");
 		expect(problems).toContain("run.py: listed as");
 		expect(problems).toContain("does not list runner/box.sh");
-	});
+	}, SUBPROCESS_TIMEOUT_MS);
 
 	test("is counted as not checked when the source archive was left out", () => {
 		const { directory, sourceHash } = bucketWithOneRun("omitted", listing, false);
 		const result = checkBucketDirectory(directory, { blobs: true, omitted: new Set([sourceHash]) });
 		expect(result.problems).toEqual([]);
 		expect(result.manifests).toEqual({ checked: 0, unchecked: 1 });
-	});
+	}, SUBPROCESS_TIMEOUT_MS);
 });

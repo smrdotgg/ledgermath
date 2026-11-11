@@ -27,7 +27,7 @@ interface Results {
 
 const scratch = mkdtempSync(join(tmpdir(), "dump-sections-"));
 afterAll(() => rmSync(scratch, { recursive: true, force: true }));
-const done = spawnSync("python3", [join(import.meta.dir, "dump-sections.py"), scratch], { encoding: "utf8" });
+const done = spawnSync("python3", [join(import.meta.dir, "dump-sections.py"), scratch], { encoding: "utf8", timeout: 600_000 });
 if (done.status !== 0) throw new Error(`dump-sections.py failed:\n${done.stdout}${done.stderr}`);
 const results = JSON.parse(done.stdout) as Results;
 

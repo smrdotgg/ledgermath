@@ -42,6 +42,9 @@ function eventOf(run: RunRecord, name: string): RunEvent {
 	return structuredClone(event);
 }
 
+/** Checking a sample directory runs check-events.py once per Run, and reads every blob: seconds, more on a loaded machine. */
+const SAMPLE_TIMEOUT_MS = 120_000;
+
 describe("the sample Runs", () => {
 	for (const directory of SAMPLE_DIRECTORIES) {
 		test(`${directory}: every Run and event validates, and every hash resolves`, () => {
@@ -51,7 +54,7 @@ describe("the sample Runs", () => {
 			});
 			expect(result.problems).toEqual([]);
 			expect(result.runs).toBeGreaterThan(0);
-		});
+		}, SAMPLE_TIMEOUT_MS);
 	}
 
 	test("a scheduled boot left one Run per parameter set per build of memory_read, each exiting 0", () => {
@@ -97,7 +100,7 @@ describe("the sample Runs", () => {
 			]) {
 				expect(names).toContain(name);
 			}
-		});
+		}, SAMPLE_TIMEOUT_MS);
 	}
 });
 
