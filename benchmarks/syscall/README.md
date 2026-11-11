@@ -60,10 +60,13 @@ and `stat`.
   `gettimeofday` through the vDSO, but through a wrapper that loads the vDSO function's
   address and calls it, where a dynamic binary's `gettimeofday` resolves to the vDSO
   function itself. And `syscall()` is now called directly, where July's dynamic binary
-  called it through the PLT. On the development machine (Ice Lake, gcc 11.5), July's and
-  this binary run back to back gave `gettimeofday` 21.0 ns against July's 20.5 ns, and
-  `getpid` 106.3 ns against July's 108.4 ns (the fastest sample of several runs each).
-  `getrusage` and `stat` agreed within 0.2%.
+  called it through the PLT. On the development machine (an Ice Lake Xeon), July's and
+  this binary, both built by gcc 13.3 and run back to back on an otherwise idle machine,
+  gave `gettimeofday` 21.0 ns against July's 20.5 ns (+2.4%), and `getpid` 106.3 ns
+  against July's 108.4 ns (−1.9%), the fastest sample of several runs each; `getrusage`
+  and `stat` agreed within 0.2%. Built by gcc 11.5 and run in the Amazon Linux 2023
+  container while other work kept the processor's sibling threads busy, the wrapper
+  cost more: `gettimeofday` 30.5 ns against 27.8 ns (+10%), `getpid` within 1%.
 - **What is common to every port:** the output is the event stream
   (`docs/dev-log.md` section 2) instead of July's JSON record, whose `median_ns` is now
   the Method's median of each sample's time over its repetitions. The binary is linked
