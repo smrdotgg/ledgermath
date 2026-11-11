@@ -97,12 +97,16 @@ only with a deploy.
 ## Propose a Method version
 
 A Method turns Runs into Derivations; [`methods/README.md`](methods/README.md) describes
-version 1. Once a version's Derivations are published, it is never edited: a change to what
-it outputs is a new version in its own directory, `methods/v2/` beside `methods/v1/`, with
-its own `output.ts`, and `scripts/derive.ts`, the page (`scripts/build-page.ts`) and the
-lookup tool (`scripts/lib/ledger-data.ts`, which reads version 1 only) learn to choose it.
-A stored Run is never touched. The pull request says what the new version does differently
-and shows it on the Runs: what it splits or counts that the old one did not, and why.
+the two there are, `series` v1 (`methods/v1/`) and `requests` v1 (`methods/requests/v1/`).
+Once a version's Derivations are published, it is never edited: a change to what it outputs
+is a new version in its own directory (`methods/v2/` beside `methods/v1/` for `series`,
+`methods/requests/v2/` for `requests`), with its own `output.ts`, and `scripts/derive.ts`,
+the page (`scripts/build-page.ts`) and the lookup tool (`scripts/lib/ledger-data.ts`, which
+reads version 1 of each only) learn to choose it. A change to what a version keeps of a
+stream raises its record's revision (`series-v1-r1`, `requests-v1-r1`), so records kept by
+other code are not read. A stored Run is never touched. The pull request says what the new
+version does differently and shows it on the Runs: what it splits or counts that the old
+one did not, and why.
 
 Price rules follow the same rule: a change to what a price file keeps is a new rule set
 version beside the old one in [`scripts/lib/price-rules.ts`](scripts/lib/price-rules.ts),
