@@ -1,0 +1,31 @@
+# AWS-LC, the TLS library http_get links statically. Its source is not in git.
+#
+# This file pins it: the release, where its source archive comes from, the
+# SHA-256 of that archive, the directory the archive unpacks to, and how it is
+# built. It is in make syntax so a Makefile can include it; each line is
+# KEY := value, and nothing else is, so any other tool can read it with a
+# regular expression. benchmarks/harness/c/vendor/build-aws-lc.sh builds the
+# library from an archive given by path (AWS_LC_ARCHIVE), refusing one whose
+# hash differs. The box fetches the archive once and passes its path in.
+#
+# The archive is GitHub's for the tag: AWS-LC publishes no release assets.
+# Its licences are permissive (Apache-2.0 OR ISC for AWS-LC's own code; see
+# LICENSE in the archive).
+#
+# The CMake flags are upstream's Release build, static, without the Go and
+# Perl code generators (the archive carries their output) and without tests
+# or tools. ENABLE_CRYPTO_POLICIES is already off by default; it is pinned off
+# because, on, every SSL_CTX would be seeded from the box's crypto-policies
+# file (/etc/crypto-policies on Amazon Linux 2023), a file outside the binary.
+# The library keeps upstream's optimisation flags; no -march is given, so it
+# picks its assembly at run time from cpuid. build-aws-lc.sh adds one flag of
+# its own to C and C++, -ffile-prefix-map, so the source file names compiled
+# into the library do not depend on where it was unpacked.
+#
+# Changing any line here changes every http_get binary: an Artifact boundary.
+AWS_LC_VERSION := 5.14.0
+AWS_LC_URL := https://github.com/aws/aws-lc/archive/refs/tags/v5.14.0.tar.gz
+AWS_LC_SHA256 := 8895a9d2434e875e009e652a1015f9c2c275261634c7132253ca5aa60d266888
+AWS_LC_ARCHIVE_ROOT := aws-lc-5.14.0
+AWS_LC_CMAKE_FLAGS := -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DDISABLE_GO=ON -DDISABLE_PERL=ON -DBUILD_TESTING=OFF -DBUILD_TOOL=OFF -DENABLE_CRYPTO_POLICIES=OFF
+AWS_LC_TARGETS := crypto ssl
