@@ -7,6 +7,7 @@ import { parseSchedule, type Schedule, type Target } from "../infra/runs/schedul
 import {
 	ALARM_MARKER,
 	ALARM_TITLE,
+	describeSeries,
 	GitHubIssues,
 	type IssueTracker,
 	type OpenAlarm,
@@ -40,6 +41,8 @@ const SCHEDULE: Schedule = {
 	],
 };
 const HOUR = 3_600_000;
+/** When the schedule last changed, in the tests where that is long enough ago not to matter. */
+const SETTLED = new Date("2026-10-01T00:00:00Z");
 
 /** Issues in memory, as GitHub keeps them. */
 class FakeIssues implements IssueTracker {
@@ -114,7 +117,7 @@ describe("the watched Series", () => {
 	test("are all kept fresh by one boot of schedule.json on each target", () => {
 		const boots = new HandMade();
 		for (const target of REAL_SCHEDULE.targets) oneBoot(boots, "2026-11-12T22:10:00Z", REAL_SCHEDULE, target);
-		expect(staleSeries(watchedSeries(REAL_SCHEDULE), boots.files, new Date("2026-11-13T22:10:00Z"))).toEqual([]);
+		expect(staleSeries(watchedSeries(REAL_SCHEDULE), boots.files, new Date("2026-11-13T22:10:00Z"), SETTLED)).toEqual([]);
 	});
 });
 
@@ -146,9 +149,9 @@ describe("the watched Series across targets", () => {
 		oneBoot(made, "2026-11-12T22:10:00Z", schedule, C6I);
 		const now = new Date("2026-11-13T22:10:00Z");
 		// m5.large has not booted: both of its Series are stale, and the c6i.8xlarge-only one is not listed for it.
-		expect(staleSeries(watchedSeries(schedule), made.files, now).map(label)).toEqual(['syscall {"call":"getpid"} m5.large', 'mutex {"threads":1} m5.large']);
+		expect(staleSeries(watchedSeries(schedule), made.files, now, SETTLED).map(label)).toEqual(['syscall {"call":"getpid"} m5.large', 'mutex {"threads":1} m5.large']);
 		oneBoot(made, "2026-11-12T22:20:00Z", schedule, M5);
-		expect(staleSeries(watchedSeries(schedule), made.files, now)).toEqual([]);
+		expect(staleSeries(watchedSeries(schedule), made.files, now, SETTLED)).toEqual([]);
 	});
 });
 
@@ -160,7 +163,7 @@ describe("the alarm", () => {
 	// The newest Run's start: the last of the boot, seven minutes after its first.
 	const newestStart = Date.parse(newest) + 7 * 60_000;
 	const pass = (tracker: FakeIssues, at: number, copyFailed = false, runs = made.files) =>
-		runAlarm({ schedule: SCHEDULE, runs, now: new Date(at), copyFailed, tracker });
+		runAlarm({ schedule: SCHEDULE, runs, now: new Date(at), scheduleChangedAt: SETTLED, copyFailed, tracker });
 
 	test("with the clock 49 hours past the newest Run, opens one issue listing every stale Series", async () => {
 		const tracker = new FakeIssues();
@@ -274,7 +277,7 @@ describe("the alarm", () => {
 				{ name: "memory_read", builds: ["static"], samples: 10, timeout_seconds: 600, params: [{ size_bytes: 4096, threads: 1, path: "scalar" }] },
 			],
 		};
-		const stale = staleSeries(watchedSeries(schedule), partial.files, new Date("2026-11-13T12:00:00Z"));
+		const stale = staleSeries(watchedSeries(schedule), partial.files, new Date("2026-11-13T12:00:00Z"), SETTLED);
 		expect(stale.map((series) => [series.build, series.params.size_bytes, series.newest === null])).toEqual([
 			["dynamic", 1073741824, false],
 			["dynamic", 1073741824, false],
@@ -291,14 +294,60 @@ describe("the alarm", () => {
 		oneOff.run({ startedAt: "2026-11-01T10:00:00Z", instanceType: "c6i.large" });
 		oneOff.run({ startedAt: "2026-11-01T11:00:00Z", zone: "us-east-2a", zoneId: "use2-az1" });
 		const now = new Date("2026-11-13T22:10:00Z");
-		expect(staleSeries(watchedSeries(SCHEDULE), oneOff.files, now)).toEqual([]);
+		expect(staleSeries(watchedSeries(SCHEDULE), oneOff.files, now, SETTLED)).toEqual([]);
 
 		// And a Run elsewhere does not keep a watched Series fresh.
 		const elsewhere = new HandMade();
 		for (const params of SCHEDULE.benchmarks[0]?.params ?? []) {
 			for (const build of SCHEDULE.benchmarks[0]?.builds ?? []) elsewhere.run({ startedAt: "2026-11-13T20:00:00Z", params, build, instanceType: "c6i.large" });
 		}
-		expect(staleSeries(watchedSeries(SCHEDULE), elsewhere.files, now).length).toBe(8);
+		expect(staleSeries(watchedSeries(SCHEDULE), elsewhere.files, now, SETTLED).length).toBe(8);
+	});
+});
+
+describe("a watched Series that has never had a Run", () => {
+	// memory_read's eight Series ran on 2026-11-12; a new benchmark was added to
+	// the schedule at 2026-11-13T09:00Z and has not run yet.
+	const added: Schedule = {
+		...SCHEDULE,
+		benchmarks: [...SCHEDULE.benchmarks, { name: "syscall", builds: ["static"], samples: 10, timeout_seconds: 120, params: [{ call: "getpid" }] }],
+	};
+	const changedAt = new Date("2026-11-13T09:00:00Z");
+	const made = new HandMade();
+	oneBoot(made, "2026-11-12T22:10:00Z");
+	const neverRun = (now: string) =>
+		staleSeries(watchedSeries(added), made.files, new Date(now), changedAt).filter((series) => series.newest === null).map((series) => series.benchmark);
+
+	test("is not stale while the schedule has been unchanged for 48 hours or less", () => {
+		expect(neverRun("2026-11-13T09:00:00Z")).toEqual([]);
+		expect(neverRun("2026-11-14T22:00:00Z")).toEqual([]);
+		expect(neverRun("2026-11-15T09:00:00Z")).toEqual([]); // 48 hours to the minute
+	});
+
+	test("is stale once the schedule has been unchanged for more than 48 hours", () => {
+		expect(neverRun("2026-11-15T09:00:01Z")).toEqual(["syscall"]);
+		const stale = staleSeries(watchedSeries(added), made.files, new Date("2026-11-15T09:00:01Z"), changedAt);
+		expect(stale.find((series) => series.benchmark === "syscall")).toMatchObject({ params: { call: "getpid" }, newest: null });
+	});
+
+	test("does not delay a Series that has had a Run: its newest Run's age is all that counts, however recent the change", () => {
+		// The schedule changed an hour ago, and memory_read's Runs are 49 hours old.
+		const stale = staleSeries(watchedSeries(added), made.files, new Date("2026-11-15T00:00:00Z"), new Date("2026-11-14T23:00:00Z"));
+		expect(stale.map((series) => series.benchmark)).toEqual(Array(8).fill("memory_read"));
+	});
+
+	test("raises no alarm the moment it is merged, and one once its 48 hours are up", async () => {
+		const tracker = new FakeIssues();
+		const fresh = new HandMade();
+		oneBoot(fresh, "2026-11-13T22:10:00Z");
+		oneBoot(fresh, "2026-11-14T22:10:00Z");
+		oneBoot(fresh, "2026-11-15T22:10:00Z");
+		const pass = (now: string) => runAlarm({ schedule: added, runs: fresh.files, now: new Date(now), scheduleChangedAt: changedAt, copyFailed: false, tracker });
+		expect(await pass("2026-11-13T12:00:00Z")).toMatchObject({ action: "none", stale: [] });
+		const opened = await pass("2026-11-15T12:00:00Z");
+		expect(opened).toMatchObject({ action: "opened", issue: 1 });
+		expect(opened.stale.map(describeSeries)).toEqual(["syscall · call=getpid · static · c6i.8xlarge · us-east-2c"]);
+		expect(tracker.issues[0]?.body).toContain("`syscall · call=getpid · static · c6i.8xlarge · us-east-2c`: no Run at all");
 	});
 });
 

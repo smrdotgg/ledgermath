@@ -35,7 +35,11 @@ jobs:
     env:
       RUNS_BUCKET: ${{ vars.RUNS_BUCKET }}
     steps:
+      # The whole history, so the alarm can be told when schedule.json last
+      # changed.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
@@ -101,10 +105,16 @@ jobs:
 
       # Even when the copy, the Method or the page failed. When the copy or
       # its push failed, the Runs repository may be behind the bucket, and the
-      # alarm says so at the top of anything it writes.
+      # alarm says so at the top of anything it writes. A Series that has
+      # never had a Run counts only once schedule.json has been unchanged for
+      # 48 hours: the alarm is told when main last changed it, the commit time
+      # of the last commit on main's first-parent line that touched it (a
+      # merge commit, not the branch commit it brought in).
       - name: Check for watched Series with no Run for 48 hours
         if: ${{ !cancelled() && steps.runs-repository.outcome == 'success' }}
         env:
           GITHUB_TOKEN: ${{ github.token }}
           COPY: ${{ steps.copy.outcome == 'success' && steps.push.outcome == 'success' && 'succeeded' || 'failed' }}
-        run: bun scripts/alarm.ts --runs ledgermath-runs --copy "$COPY"
+        run: |
+          changed="$(git log -1 --first-parent --format=%cI -- schedule.json)"
+          bun scripts/alarm.ts --runs ledgermath-runs --copy "$COPY" --schedule-changed-at "$changed"

@@ -79,6 +79,15 @@ describe("the runs workflow", () => {
 		expect(alarm?.run).toContain('--copy "$COPY"');
 		expect(alarm?.env?.COPY).toBe("${{ steps.copy.outcome == 'success' && steps.push.outcome == 'success' && 'succeeded' || 'failed' }}");
 	});
+
+	test("tells the alarm when main last changed schedule.json, from the whole history", () => {
+		const checkout = steps[0];
+		expect(checkout?.uses?.startsWith("actions/checkout@")).toBe(true);
+		expect(checkout?.with?.["fetch-depth"]).toBe(0 as unknown as string);
+		const alarm = steps.find((step) => step.run?.includes("scripts/alarm.ts"));
+		expect(alarm?.run).toContain('changed="$(git log -1 --first-parent --format=%cI -- schedule.json)"');
+		expect(alarm?.run).toContain('--schedule-changed-at "$changed"');
+	});
 });
 
 describe("every action in the workflows", () => {
