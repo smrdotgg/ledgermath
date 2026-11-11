@@ -45,8 +45,20 @@ side by side, so those limits do not add up.
 Each tool writes the pids it and its children have to OUT/<case>/pids/. A pid
 is a survivor if it still names a process that is not a zombie WAIT_SECONDS
 after provision.py exited. Prints one JSON object, one entry per case.
+
+What the cases need of the machine: a reaper for orphans. A step's children
+that outlive it are orphans; killed, they are zombies until whoever adopted
+them reaps them, and provision.py waits (up to 10 seconds) for a killed step's
+processes to be gone, zombies included. On a box PID 1 is systemd, which reaps
+them at once. In a container whose PID 1 reaps nothing (bun test run as the
+container's command), they stay zombies, provision.py waits out its 10
+seconds, and in the two supervisor cases the supervisor's grace runs out first.
+So this harness is, for the processes it starts, what systemd is on a box:
+their child subreaper (prctl PR_SET_CHILD_SUBREAPER), reaping every orphan
+that comes to it, and never one of its own children, which subprocess waits for.
 """
 
+import ctypes
 import json
 import os
 import signal
@@ -89,6 +101,58 @@ OPTIONS = {
     "outer-limit-suspended": ["--supervise-seconds", "330", "--deadline-seconds", "300"],
     "outer-limit-killed": ["--supervise-seconds", "330", "--deadline-seconds", "300"],
 }
+
+
+class Reaper:
+    """This process as the subreaper of everything it starts (see the module's
+    docstring): orphans are reparented to it, and a thread reaps each one that
+    has exited. Its own children are left to subprocess, which waits for them:
+    Popen is wrapped so that a child is known before the thread can see it."""
+
+    PR_SET_CHILD_SUBREAPER = 36
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.children = {}  # pid -> the Popen that started it
+
+    def start(self):
+        libc = ctypes.CDLL(None, use_errno=True)
+        if libc.prctl(self.PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0) != 0:
+            raise OSError(ctypes.get_errno(), "prctl(PR_SET_CHILD_SUBREAPER)")
+        real_init = subprocess.Popen.__init__
+        reaper = self
+
+        def init(popen, *args, **kwargs):
+            with reaper.lock:
+                real_init(popen, *args, **kwargs)
+                reaper.children[popen.pid] = popen
+
+        subprocess.Popen.__init__ = init
+        threading.Thread(target=self.loop, daemon=True).start()
+
+    def loop(self):
+        me = os.getpid()
+        while True:
+            with self.lock:
+                for name in os.listdir("/proc"):
+                    if not name.isdigit():
+                        continue
+                    pid = int(name)
+                    own = self.children.get(pid)
+                    if own is not None and own.returncode is None:
+                        continue  # a child of ours: subprocess reaps it
+                    try:
+                        with open("/proc/%d/stat" % pid) as handle:
+                            text = handle.read()
+                    except OSError:
+                        continue
+                    fields = text[text.rindex(")") + 2:].split()
+                    if fields[0] == "Z" and int(fields[1]) == me:
+                        try:
+                            os.waitpid(pid, os.WNOHANG)
+                        except ChildProcessError:
+                            pass
+            time.sleep(0.05)
 
 
 def write(path, text, mode=0o644):
@@ -239,6 +303,7 @@ def run_case(base, name):
 
 
 def main():
+    Reaper().start()
     base = os.path.abspath(sys.argv[1])
     os.makedirs(base, exist_ok=True)
     names = [name for name in TOOLS if len(sys.argv) < 3 or name in sys.argv[2:]]
