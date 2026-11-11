@@ -697,8 +697,10 @@ bun scripts/check-prices.ts --work /tmp/prices-work /tmp/ledgermath-runs/prices/
 Each source's hash can also be checked by hand:
 `curl -sS "$(jq -r '.sources[0].url' FILE)" | sha256sum`.
 
-On this machine (us-east-2, near AWS's CDN) the whole fetch took 12 s and at most 96 MB of
-memory: 5 s to download the EC2 file, 6 s to cut. The check took 11 s and 125 MB.
+On this machine (us-east-2, near AWS's CDN) the whole fetch took 5 to 12 s and at most
+154 MB of memory: 1 to 5 s to download the EC2 file, 4 to 6 s to cut it. The check took
+5 to 11 s and at most 166 MB. Most of the memory is the keys the reader keeps to refuse
+a repeated SKU.
 
 ### The workflow
 
