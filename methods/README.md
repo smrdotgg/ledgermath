@@ -22,8 +22,9 @@ be recomputed and compared with `cmp`, whoever computes it, wherever.
 
 ## Versions
 
-Once Derivations of a version are published, a change to what it outputs is a new
-version, never an edit: version 2 goes in `v2/`, beside `v1/`, with its own
+Version 1 may still change until the data is first published; from then on a change
+is a new version. Once Derivations of a version are published, a change to what it
+outputs is a new version, never an edit: version 2 goes in `v2/`, beside `v1/`, with its own
 `output.ts`, and `scripts/derive.ts` and the page learn to choose it. Rewriting a Method
 never touches a stored Run; only the Run record is forever.
 
@@ -39,7 +40,9 @@ never touches a stored Run; only the Run record is forever.
   them.
 - **Groups**: the Runs whose split facts are all equal. They may interleave in time.
 - **What differed**: for each pair of consecutive Runs, every split fact and every
-  before-dump section whose value changed, split on or not.
+  before-dump section whose value changed, split on or not, with the top-level keys
+  that changed, except for the sections it does not read: `cpuinfo`, `memory`,
+  `block_stat` and `nvme_stats`, which change on every read and are never fetched.
 - **Which Runs count**: exit code 0, every stdout line an event matching the events
   schema, and every order rule of `scripts/check-events.py` (`v1/stream.ts` is a port of it,
   and `tests/stream.test.ts` checks the two agree), with the Run's own `samples` as the
@@ -66,6 +69,20 @@ every other, so they are not split on:
 - `provider`: the instance ID, private address and launch time. Its instance type and
   zone ID make the Series, and its image is split on.
 - `devices`: the root volume's serial, new on every launch.
+
+Sections added to the dump since then for the disk benchmarks are not split on either,
+and "what differed" lists each one that changed:
+
+- `block_stat` (every block device's I/O counters) and `nvme_stats` (every Amazon NVMe
+  disk's counters and latency histograms) change on every read, before against after,
+  like `cpuinfo` and `memory`, so their contents are not fetched.
+- `provision` (the box script's record of preparing its disks, with every command's start
+  and end times and the disks' serials), `ec2_volumes` (the volumes' IDs, creation times
+  and status) and `ec2_instance` (the instance's ID, addresses and launch time) are new on
+  every boot.
+- `ec2_instance_type`, the catalog record of the instance type, is taken once per boot:
+  the instance type already makes the Series, AWS may revise the record without the
+  machine changing, and a failed call records its error instead.
 
 ### What is left out of a section before it is compared
 

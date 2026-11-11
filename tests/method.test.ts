@@ -204,6 +204,39 @@ describe("Method version 1 on hand-made Runs", () => {
 		});
 	});
 
+	test("the disk benchmarks' dump sections are never split on, are listed under what differed, and those that change on every read are not fetched", async () => {
+		const made = new HandMade();
+		made.run({ startedAt: "2026-11-11T22:15:00Z", boot: "first", diskSections: {} });
+		made.run({ startedAt: "2026-11-11T22:16:00Z", boot: "first", diskSections: {} });
+		made.run({ startedAt: "2026-11-12T22:15:00Z", boot: "second", diskSections: {} });
+		made.run({ startedAt: "2026-11-13T22:15:00Z", boot: "third", diskSections: { catalog: "revision 2" } });
+		const asked = new Set<string>();
+		const file = derive(made.files, await gather(made.files, async (hash) => (asked.add(hash), made.fetch(hash))));
+		const series = onlySeries(file);
+		expect(series.points.map((point) => point.group)).toEqual(["A", "A", "A", "A"]);
+		const effects = (i: number) => Object.fromEntries((series.differed[i]?.sections ?? []).map((s) => [s.section, s.effect]));
+		const keys = (i: number, name: string) => series.differed[i]?.sections.find((s) => s.section === name)?.keys;
+		// Within a boot: what changes on every read, and nothing taken once per boot.
+		expect(effects(0)).toEqual({ block_stat: "not split on", cpuinfo: "not split on", memory: "not split on", nvme_stats: "not split on" });
+		expect(keys(0, "block_stat")).toBeNull();
+		expect(keys(0, "nvme_stats")).toBeNull();
+		// Between boots: also what names the boot's instance, volumes and disk preparation; the catalog only when AWS revised it.
+		expect(effects(1)).toMatchObject({ provision: "not split on", ec2_volumes: "not split on", ec2_instance: "not split on" });
+		expect(effects(1).ec2_instance_type).toBeUndefined();
+		expect(keys(1, "ec2_instance")).toEqual(["$ aws ec2 describe-instances --instance-ids i-x"]);
+		expect(effects(2)).toMatchObject({ ec2_instance_type: "not split on" });
+		expect(series.differed.flatMap((pair) => pair.facts)).toEqual([]);
+		// The sections that change on every read were never fetched; the others were.
+		const sectionHashes = (name: string) =>
+			made.files.map((f) => JSON.parse(new TextDecoder().decode(made.blobs.get((f.record as Run).environment.before))).sections[name] as string);
+		for (const name of ["block_stat", "nvme_stats", "cpuinfo", "memory"]) for (const hash of sectionHashes(name)) expect(asked.has(hash)).toBe(false);
+		for (const name of ["provision", "ec2_instance_type", "ec2_volumes", "ec2_instance"]) for (const hash of sectionHashes(name)) expect(asked.has(hash)).toBe(true);
+		// Each is in the file's list of what is not split on, with why.
+		const notSplit = file.not_split_on.map((entry) => entry.fact);
+		for (const name of ["block_stat", "nvme_stats", "provision", "ec2_instance_type", "ec2_volumes", "ec2_instance"]) expect(notSplit).toContain(name);
+		expect(file.split_on.map((entry) => entry.section).filter(Boolean)).toEqual(["cpuid", "lscpu", "sys_cpu", "kernel", "process", "packages"]);
+	});
+
 	test("any other difference in cpuid or lscpu still splits, anticipated or not", async () => {
 		const made = new HandMade();
 		made.run({ startedAt: "2026-11-10T23:37:00Z", boot: "first" });
