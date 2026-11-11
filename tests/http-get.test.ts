@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { type ChildProcess, spawn, spawnSync } from "node:child_process";
 import { createHash, createHmac } from "node:crypto";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -985,6 +985,31 @@ describe.skipIf(!AVAILABLE)("http_get against the stand-in", () => {
 		const head = of(r, "request_failed")[0]?.head_received as { base64: string };
 		expect(Buffer.from(head.base64, "base64").toString("latin1")).toContain("x-a: b\u0000c");
 		expect(r.stdout).not.toContain("\\u0000");
+	});
+
+	test("no core file, and no other process may read the binary's memory, from before the credentials are read", async () => {
+		const child = spawn(BINARY, [], { env: environment("stall", { samples: 1, timeoutMs: 20_000 }), stdio: ["ignore", "pipe", "pipe"] });
+		let stdout = "";
+		let stderr = "";
+		child.stderr?.on("data", (chunk: Buffer) => {
+			stderr += chunk.toString();
+		});
+		await new Promise<void>((resolve, reject) => {
+			child.stdout?.on("data", (chunk: Buffer) => {
+				stdout += chunk.toString();
+				if (stdout.includes("\n")) resolve();
+			});
+			child.on("exit", (code) => reject(new Error(`exited ${code} before its first line: ${stderr}`)));
+		});
+		const pid = child.pid as number;
+		const limits = readFileSync(`/proc/${pid}/limits`, "utf8");
+		expect(limits).toMatch(/^Max core file size\s+0\s+0\s+bytes\s*$/m);
+		// A process that is not dumpable has its /proc files owned by root.
+		expect(statSync(`/proc/${pid}/environ`).uid).toBe(0);
+		const exited = new Promise((resolve) => child.on("exit", resolve));
+		child.kill("SIGTERM");
+		await exited;
+		outputs.push({ label: "core stdout", text: stdout }, { label: "core stderr", text: stderr });
 	});
 
 	test("auth none sends no signing headers and reads no credentials", () => {

@@ -30,7 +30,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/prctl.h>
 #include <sys/random.h>
+#include <sys/resource.h>
 #include <sys/socket.h>
 #include <time.h>
 #include <unistd.h>
@@ -1113,7 +1115,16 @@ static void sleep_until(uint64_t target) {
     }
 }
 
+/* Before anything reads the credentials: no core file, and no other process
+ * of this user may read this one's memory (ptrace, /proc/<pid>/mem). */
+static void protect_memory(void) {
+    struct rlimit none = { 0, 0 };
+    if (setrlimit(RLIMIT_CORE, &none) != 0) lm_die("setrlimit(RLIMIT_CORE): %s", strerror(errno));
+    if (prctl(PR_SET_DUMPABLE, 0, 0, 0, 0) != 0) lm_die("prctl(PR_SET_DUMPABLE): %s", strerror(errno));
+}
+
 int main(int argc, char **argv) {
+    protect_memory();
     signal(SIGPIPE, SIG_IGN);
     lm_start(argc, argv);
     read_params();
