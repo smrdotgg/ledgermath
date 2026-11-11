@@ -10,8 +10,8 @@
  * asserts they agree, so the two cannot drift apart.
  *
  * It reads the Run's parsed events, which are the stream's lines 1 to n:
- * runner/run.py stops parsing at the first line that is not a JSON object and
- * records that line as events_error, which keeps a Run out by itself. What
+ * readStream (methods/run.ts) stops parsing the stdout blob at the first line
+ * that is not a JSON object and says which, which keeps a Run out by itself. What
  * this cannot see, and check-events.py can: whether stdout ended with a
  * newline, and a whole number written as 1.0 (JSON.parse reads it as 1).
  */

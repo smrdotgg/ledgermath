@@ -23,7 +23,7 @@ until step 4 of the plan replaces it.
 | `runner/` | The box side: `box.sh` (user-data), `provision.py` (prepares the disks at boot and records it), `fixture.c` (writes a disk Fixture), `aws-lc-archive.sh` (fetches and checks the TLS library's source for `http_get`'s build), `run.py` (builds, runs, dumps, gives a Service's inputs to the entries that name it, writes Runs), `cpuid.c` |
 | `schemas/` | `run.schema.json` (the Run), `events.schema.json` (one line of the stream) and `prices.schema.json` (a price file) |
 | `scripts/check-events.py` | Checks a stream's order; needs only Python 3 |
-| `scripts/check-runs.ts` | Checks a directory laid out like the bucket: schemas, every hash, events against stdout, runner manifests |
+| `scripts/check-runs.ts` | Checks a directory laid out like the bucket: schemas, every hash, every stream read from its stdout blob, runner manifests |
 | `scripts/check-disk-runs.ts` | Checks that every disk Run in such a directory found the disk it declares, that its evidence adds up, and that its dump bears it out |
 | `scripts/check-targets.ts` | Checks `schedule.json`'s targets' `vcpus`, their zone offerings and `vcpu_quota.limit` against AWS, read-only; needs AWS access, so not part of `bun test` |
 | `scripts/box-in-container/` | Boots `runner/box.sh` in Amazon Linux 2023 with S3 and shutdown stubbed, in several scenarios, `http_get` against a stand-in for S3 among them |
@@ -216,6 +216,17 @@ boots/<yyyy>/<mm>/<dd>/<boot>.json   what one boot ran, and what it did not
 logs/<yyyy>/<mm>/<dd>/<boot>.log     the box's log
 source/<commit>.tar.gz               the deployed source
 ```
+
+A Run's events are its stdout blob, for every Run. `run.py` copies none of them into the
+record and does not parse stdout: the Run names the blob and gives its size and number of
+lines (`stdout_bytes`, `stdout_lines`), so Run files stay at about 2 KB for the small
+benchmarks and 4 KB for `http_get`, whose streams are 130 to 620 KB. Runs written before
+this change also hold their events as `events` (and, had a line failed to parse,
+`events_error`); they are never edited, and they stay valid. Every reader reads the stdout
+blob, for every Run, through one function, `readStream` in `methods/run.ts`:
+`scripts/check-runs.ts` (which also checks that an older Run's `events` equal its blob),
+`scripts/check-disk-runs.ts`, the container checks, and Method version 1. The lookup tool
+and the page read Derivations, not events.
 
 A reaper runs every five minutes and terminates any box of the stage older than 50
 minutes. It touches nothing else; July's reaper cannot touch these boxes either.

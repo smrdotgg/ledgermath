@@ -803,22 +803,10 @@ def execute(binary, arguments, environment, timeout_seconds):
     return started, ended, exit_record, stdout, stderr
 
 
-def parse_events(stdout):
-    """Every stdout line, parsed, in order; stops at the first line that is not a JSON object."""
-    events = []
-    text = stdout.decode("utf-8", "replace")
-    lines = text.split("\n")
-    if lines and lines[-1] == "":
-        lines.pop()
-    for number, line in enumerate(lines, start=1):
-        try:
-            event = json.loads(line)
-        except ValueError as error:
-            return events, {"line": number, "message": "not JSON: %s" % error}
-        if not isinstance(event, dict):
-            return events, {"line": number, "message": "not a JSON object"}
-        events.append(event)
-    return events, None
+def stdout_lines(stdout):
+    """The number of lines in stdout, as a reader splits it: at newlines, a
+    last line without one counted too."""
+    return stdout.count(b"\n") + (1 if stdout and not stdout.endswith(b"\n") else 0)
 
 
 def put_tree(blobs, directory, skip=("build", "__pycache__")):
@@ -992,7 +980,6 @@ def main():
                         continue
                     after = take_dump(blobs, cpuid_tool, imds, once)
 
-                    events, events_error = parse_events(stdout)
                     run = {
                         "schema": RUN_SCHEMA,
                         "id": uuid7(started // 10 ** 6),
@@ -1013,12 +1000,13 @@ def main():
                         "environment": {"before": before, "after": after},
                         "runner": runner,
                         "exit": exit_record,
-                        "events": events,
+                        # The stdout blob is the Run's events, read by every
+                        # reader (methods/run.ts); its size and lines save a fetch.
                         "stdout": blobs.put(stdout),
+                        "stdout_bytes": len(stdout),
+                        "stdout_lines": stdout_lines(stdout),
                         "stderr": blobs.put(stderr),
                     })
-                    if events_error is not None:
-                        run["events_error"] = events_error
 
                     moment = datetime.datetime.fromtimestamp(started // 10 ** 9, datetime.timezone.utc)
                     path = os.path.join(out, "runs", moment.strftime("%Y/%m/%d"), run["id"] + ".json")
@@ -1030,9 +1018,9 @@ def main():
                         "params": params,
                         "exit": exit_record,
                     })
-                    log("run %s %s %s %s exit=%s events=%d seconds=%.1f"
+                    log("run %s %s %s %s exit=%s stdout_lines=%d seconds=%.1f"
                         % (run["id"], name, build_name, json.dumps(params), json.dumps(exit_record),
-                           len(events), (ended - started) / 1e9))
+                           run["stdout_lines"], (ended - started) / 1e9))
     except BaseException as error:
         summary["error"] = repr(error)
         raise

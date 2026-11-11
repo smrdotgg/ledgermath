@@ -150,7 +150,13 @@ function check(w: World, options = {}) {
 	const environment = { before: index(w.sections.before), after: index(w.sections.after) };
 	mkdirSync(join(dir, "runs", "2026", "11", "11"), { recursive: true });
 	for (const { run } of [w.store, w.root]) {
-		writeFileSync(join(dir, "runs", "2026", "11", "11", `${run.id as string}.json`), JSON.stringify({ ...run, environment }));
+		// The events go where a Run's events are: its stdout blob, one per line.
+		const { events, ...record } = run as Json & { events: Json[] };
+		const text = events.map((event) => `${JSON.stringify(event)}\n`).join("");
+		const hash = createHash("sha256").update(text).digest("hex");
+		writeFileSync(join(dir, "blobs", "sha256", hash), text);
+		const stdout = { stdout: `sha256:${hash}`, stdout_bytes: Buffer.byteLength(text), stdout_lines: events.length };
+		writeFileSync(join(dir, "runs", "2026", "11", "11", `${run.id as string}.json`), JSON.stringify({ ...record, environment, ...stdout }));
 	}
 	return checkDiskRuns(dir, options);
 }

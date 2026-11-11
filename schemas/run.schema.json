@@ -2,14 +2,24 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:ledgermath:run:1",
   "title": "Run",
-  "description": "One execution of one benchmark binary, written whether it succeeded or failed. A Run describes itself: it holds the parameters the binary was given, the provider's own words for where it ran, the bytes that ran, and the box's environment before and after. Nothing in it is a judgement. Every value of the form sha256:<hex> names a blob stored at blobs/sha256/<hex> whose bytes hash to it. The root is closed: a key not listed here makes a record invalid.",
+  "description": "One execution of one benchmark binary, written whether it succeeded or failed. A Run describes itself: it holds the parameters the binary was given, the provider's own words for where it ran, the bytes that ran, the box's environment before and after, and the binary's stdout, whose lines are its events. Nothing in it is a judgement. Every value of the form sha256:<hex> names a blob stored at blobs/sha256/<hex> whose bytes hash to it. The root is closed: a key not listed here makes a record invalid.",
   "type": "object",
   "additionalProperties": false,
   "required": [
     "schema", "id", "boot", "started_at", "ended_at", "benchmark", "params", "samples",
     "source_commit", "source", "binary", "provider", "environment", "runner", "exit",
-    "events", "stdout", "stderr"
+    "stdout", "stderr"
   ],
+  "dependentRequired": {
+    "stdout_bytes": ["stdout_lines"],
+    "stdout_lines": ["stdout_bytes"]
+  },
+  "dependentSchemas": {
+    "stdout_bytes": {
+      "description": "A Run written since stdout became the one source of its events copies none of them.",
+      "properties": { "events": false, "events_error": false }
+    }
+  },
   "properties": {
     "schema": { "const": "ledgermath.run/1" },
     "id": {
@@ -117,7 +127,7 @@
       ]
     },
     "events": {
-      "description": "Every line the binary printed to stdout, parsed, in order (schemas/events.schema.json). Parsing stops at the first line that is not a JSON object; `stdout` always holds the lines as printed.",
+      "description": "Carried only by Runs written before the runner stopped copying stdout into the Run (they have no `stdout_bytes`): every line the binary printed to stdout, parsed, in order, stopping at the first line that is not a JSON object. Later Runs do not carry it. For every Run the `stdout` blob is the source of its events (schemas/events.schema.json, one per line), and every reader reads them there; for a Run that carries `events`, they must equal the blob's lines.",
       "type": "array",
       "items": {
         "type": "object",
@@ -129,7 +139,7 @@
       }
     },
     "events_error": {
-      "description": "Present when a stdout line could not be parsed: the line's number and why.",
+      "description": "Carried, like `events`, only by Runs written before the runner stopped copying stdout into the Run, when a stdout line could not be parsed: the line's number and why. A reader of a later Run finds such a line when it parses the `stdout` blob.",
       "type": "object",
       "additionalProperties": false,
       "required": ["line", "message"],
@@ -138,7 +148,13 @@
         "message": { "type": "string" }
       }
     },
-    "stdout": { "description": "The binary's stdout, verbatim.", "$ref": "#/$defs/hash" },
+    "stdout": { "description": "The binary's stdout, verbatim: one event per line (schemas/events.schema.json). The source of the Run's events for every Run.", "$ref": "#/$defs/hash" },
+    "stdout_bytes": { "description": "The length of the stdout blob, in bytes. Written, with `stdout_lines`, by every Run since the runner stopped copying stdout into the Run; such a Run carries no `events`.", "type": "integer", "minimum": 0 },
+    "stdout_lines": {
+      "description": "The number of lines in the stdout blob: the pieces between newlines, a last line without one counted too. Written with `stdout_bytes`.",
+      "type": "integer",
+      "minimum": 0
+    },
     "stderr": { "description": "The binary's stderr, verbatim.", "$ref": "#/$defs/hash" }
   },
   "$defs": {

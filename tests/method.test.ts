@@ -37,12 +37,19 @@ function onlySeries(file: DerivationsFile): SeriesDerivation {
 	return file.derivations[0] as SeriesDerivation;
 }
 
-/** The time per repetition of a Run, worked out here from its events, apart from the Method's code. */
+/**
+ * The time per repetition of a Run, worked out here apart from the Method's
+ * code, from the events the sample Runs (written before the runner stopped
+ * copying stdout into the record) still carry: so it also shows that the
+ * Method's reading of the stdout blob gives what the record said.
+ */
 function byHand(run: Run): number {
 	const perRepetition: number[] = [];
-	for (const start of run.events) {
+	const events = run.events;
+	if (events === undefined) throw new Error(`run ${run.id} carries no events to work from`);
+	for (const start of events) {
 		if (start.event !== "sample_started" || start.warmup !== false) continue;
-		const end = run.events.find((event) => event.event === "sample_ended" && event.sample === start.sample);
+		const end = events.find((event) => event.event === "sample_ended" && event.sample === start.sample);
 		perRepetition.push(((end?.t as number) - start.t) / (start.repetitions as number));
 	}
 	perRepetition.sort((a, b) => a - b);

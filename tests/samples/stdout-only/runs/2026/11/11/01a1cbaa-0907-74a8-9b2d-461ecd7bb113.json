@@ -1,0 +1,54 @@
+{
+  "schema": "ledgermath.run/1",
+  "id": "01a1cbaa-0907-74a8-9b2d-461ecd7bb113",
+  "boot": "dcd56b11-cf5d-44ed-88b2-439006c8343e",
+  "started_at": "2026-11-11T17:31:20.711966474Z",
+  "ended_at": "2026-11-11T17:31:20.719045914Z",
+  "benchmark": "fake",
+  "params": {
+    "n": 3
+  },
+  "samples": 1,
+  "service": {
+    "name": "s3_fixtures",
+    "inputs": {
+      "endpoint": "https://ledgermath-test-fixtures.s3.us-east-2.amazonaws.com",
+      "region": "us-east-2"
+    },
+    "secret_inputs": [
+      "aws_access_key_id",
+      "aws_secret_access_key",
+      "aws_session_token"
+    ]
+  },
+  "source_commit": "0000000000000000000000000000000000000000",
+  "source": "sha256:c5bdaea6db6806243aba8cdca6622348fad92b85aed52d7be483d3ac565826de",
+  "binary": {
+    "blob": "sha256:5f6e309f63da4cbbb5bd148b84cdec387ffd22e8fcee12a1296595f51ee048d8",
+    "build": "static",
+    "compiler": "fake-cc 1.0",
+    "command": "mkdir -p build/static\ncp fake.sh build/static/fake\nchmod +x build/static/fake",
+    "resolved_flags": "sha256:19b9cab4e16a04ba95aaefd6bc607ab19ea626fd479403cc75b0b0ce570d8b96"
+  },
+  "provider": {
+    "name": "aws",
+    "instance_type": "m5.large",
+    "region": "us-east-2",
+    "availability_zone": "us-east-2c",
+    "availability_zone_id": "use2-az3",
+    "image_id": "ami-0123456789abcdef0",
+    "instance_id": "i-0123456789abcdef0"
+  },
+  "environment": {
+    "before": "sha256:55858c4954db1d379a1aca3bf32dee4cafd74194536b9dcc00072faaa2a664e4",
+    "after": "sha256:40635d547186fdaba186fcfbb26664d8271e8eea02e5bba75763585f8ab5ac16"
+  },
+  "runner": "sha256:addbab75b9320702b7e052be4943e07521e745ff5386522a7326f1bc4be712d1",
+  "exit": {
+    "code": 0
+  },
+  "stdout": "sha256:e157d58e56608daf7ba05271efe6bff5d153a6017dc9b6d3157b567375c45235",
+  "stdout_bytes": 543,
+  "stdout_lines": 6,
+  "stderr": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+}

@@ -64,6 +64,7 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { readStream } from "../methods/run";
 import type { RunEvent, RunRecord } from "./check-runs";
 
 type Section = Record<string, unknown>;
@@ -289,7 +290,13 @@ export function checkDiskRuns(dir: string, options: DiskCheckOptions = {}): Disk
 			lines.push({ id: run.id, benchmark: run.benchmark, params: run.params, summary: `exit ${JSON.stringify(run.exit)}: not checked` });
 			continue;
 		}
-		const events = run.events as RunEvent[];
+		// The Run's events are its stdout blob's lines, for every Run.
+		const stdoutPath = join(dir, "blobs", "sha256", run.stdout.replace(/^sha256:/, ""));
+		if (!existsSync(stdoutPath)) {
+			bad(`its stdout ${run.stdout}, which holds its events, is not in blobs/`);
+			continue;
+		}
+		const events: RunEvent[] = readStream(readFileSync(stdoutPath)).events;
 		const observed: Record<string, unknown> = Object.assign({}, ...events.filter((e) => e.event === "observed").map((e) => e.values as object));
 		const counters = events.filter((e) => e.event === "device_counters");
 		const verifiedAt = events.findIndex((e) => e.event === "verified");

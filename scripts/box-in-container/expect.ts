@@ -7,6 +7,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { appliesTo, type Schedule } from "../../infra/runs/schedule";
+import { readStream } from "../../methods/run";
 import { checkDiskRuns } from "../check-disk-runs";
 import { checkBucketDirectory, readTarGz, type RunRecord } from "../check-runs";
 import { filesUnder as everyFileUnder, findSecrets } from "../lib/secret-search";
@@ -50,6 +51,8 @@ const readJson = <T>(path: string): T => JSON.parse(readFileSync(path, "utf8")) 
 
 const status = Number(statusText);
 const runs = filesUnder("runs", ".json").map((path) => readJson<RunRecord>(path));
+/** A Run's events: its stdout blob's lines, as every reader reads them. */
+const eventsOf = (run: RunRecord) => readStream(readFileSync(join(bucket, "blobs", "sha256", run.stdout.replace("sha256:", "")))).events;
 const logs = filesUnder("logs", ".log");
 const log = logs[0] ? readFileSync(logs[0], "utf8") : "";
 const putsPath = join(out, "calls", "puts.log");
@@ -123,7 +126,7 @@ function mutexRunsSayWhereTheyRan(): void {
 		const label = `mutex run ${run.id} ${JSON.stringify(params)}`;
 		const observed: Record<string, unknown> = Object.assign(
 			{},
-			...run.events.filter((event) => event.event === "observed").map((event) => event.values as Record<string, unknown>),
+			...eventsOf(run).filter((event) => event.event === "observed").map((event) => event.values as Record<string, unknown>),
 		);
 		const cpus = String(observed.cpus).split(",");
 		const packages = String(observed.package_ids).split(",");
@@ -136,9 +139,9 @@ function mutexRunsSayWhereTheyRan(): void {
 		);
 		if (params.placement === "distinct_cores") expect(new Set(cores).size === params.threads, `${label}: its threads share a core (${cores})`);
 		if (params.placement === "smt_siblings") expect(new Set(cores).size === 1, `${label}: its threads are on more than one core (${cores})`);
-		const pairs = run.events.filter((event) => event.event === "cpu_pair").length;
+		const pairs = eventsOf(run).filter((event) => event.event === "cpu_pair").length;
 		expect(pairs === params.threads - 1, `${label}: ${pairs} cpu_pair events, expected ${params.threads - 1}`);
-		const threads = run.events.find((event) => event.event === "mutex_threads")?.threads;
+		const threads = eventsOf(run).find((event) => event.event === "mutex_threads")?.threads;
 		expect(Array.isArray(threads) && threads.length === params.threads, `${label}: mutex_threads does not list its ${params.threads} threads`);
 	}
 }
@@ -286,7 +289,7 @@ function printHttpGetSizes(): void {
 		const size = readFileSync(join(bucket, "runs", day, `${run.id}.json`)).length;
 		const stdout = readFileSync(join(bucket, "blobs", "sha256", run.stdout.replace("sha256:", ""))).length;
 		const params = run.params as { object_bytes: number; connection: string };
-		console.log(`size ${params.object_bytes} ${params.connection}: Run file ${size} B, stdout ${stdout} B, ${run.events.length} events`);
+		console.log(`size ${params.object_bytes} ${params.connection}: Run file ${size} B, stdout ${stdout} B, ${eventsOf(run).length} events`);
 	}
 }
 

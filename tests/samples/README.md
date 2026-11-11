@@ -96,6 +96,20 @@ copied here unchanged:
 It describes no machine. Re-record it with the same command and copy, when `runner/run.py`
 changes what such a Run holds.
 
+## `stdout-only/`: Runs as the runner writes them now
+
+The directories above hold Runs of the older shape: each carries its stream as `events`,
+copied from its stdout blob. They stay as they are and must keep validating. `stdout-only/`
+holds 3 Runs of the shape written since: no `events`, and `stdout_bytes` and
+`stdout_lines` beside `stdout`, the blob that is every Run's events. It was made, like
+`service/`, by `python3 tests/service-runs.py keys DIR` on 2026-11-11, `DIR/out` copied
+unchanged, with the same stand-ins.
+
+`older-shape-derivations.json` is Method version 1's output for the Runs of `scheduled/`,
+`interrupted/`, `failures/` and `service/` together, made by its code before the change,
+when it read `run.events`. `tests/stdout-events.test.ts` derives the same Runs, reading
+their stdout blobs, and requires the same bytes.
+
 ## Re-recording
 
 ```bash

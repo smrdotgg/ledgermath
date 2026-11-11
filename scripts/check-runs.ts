@@ -10,16 +10,21 @@
  * FILE is a JSON array of {"blob": "sha256:<hex>", ...}, as tests/samples has.
  *
  * For every Run file:
- *   - it validates against schemas/run.schema.json, and each of its events
- *     against schemas/events.schema.json;
+ *   - it validates against schemas/run.schema.json;
  *   - its name is its id, under the date it started;
  *   - every sha256:<hex> it holds, and every section a dump index names,
  *     resolves to blobs/sha256/<hex>, whose bytes hash to <hex>;
  *   - its `runner` manifest lists exactly the files under runner/ in its
  *     `source` archive, with their hashes, when that archive is in blobs/
  *     (the output says how many manifests could not be checked);
- *   - its stdout blob holds exactly its events, line for line;
+ *   - its stream, its stdout blob read as every reader reads it (readStream,
+ *     methods/run.ts), has each event matching schemas/events.schema.json;
+ *     the blob's size and lines are the Run's stdout_bytes and stdout_lines
+ *     when it has them; and a Run written before the runner stopped copying
+ *     stdout into the record holds exactly the blob's events, and its
+ *     events_error, if any, names the line where the blob stops parsing;
  *   - when the binary exited 0, its stream passes scripts/check-events.py.
+ * With --no-blobs no stream is checked: the stdout blob is where they are.
  * For every boot summary: every Run it lists is there.
  *
  * Interprets nothing about the numbers. Exit status 0 when all holds, 1 when not.
@@ -32,6 +37,8 @@ import { basename, dirname, join, relative, resolve } from "node:path";
 import { gunzipSync } from "node:zlib";
 
 import Ajv2020, { type ValidateFunction } from "ajv/dist/2020";
+
+import { readStream } from "../methods/run";
 
 const ROOT = resolve(import.meta.dir, "..");
 const HASH = /^sha256:([0-9a-f]{64})$/;
@@ -51,9 +58,12 @@ export interface RunRecord {
 	samples: number;
 	environment: { before: string; after: string };
 	exit: { code: number; runner_signal?: number } | { signal: number; timeout_seconds?: number; runner_signal?: number };
-	events: RunEvent[];
+	/** Only in Runs written before the runner stopped copying stdout into the record. */
+	events?: RunEvent[];
 	events_error?: { line: number; message: string };
 	stdout: string;
+	stdout_bytes?: number;
+	stdout_lines?: number;
 	[key: string]: unknown;
 }
 
@@ -109,6 +119,7 @@ function isDumpIndex(value: unknown): value is { schema: string; sections: Recor
 
 export interface CheckResult {
 	runs: number;
+	/** The events of every stream checked, read from the stdout blobs. */
 	events: number;
 	blobs: number;
 	/** Runs whose runner manifest was checked against their source archive, and Runs whose was not. */
@@ -236,13 +247,6 @@ export function checkBucketDirectory(directory: string, options: CheckOptions): 
 		const expected = join("runs", day, `${run.id}.json`);
 		if (where !== expected) problems.push(`${where}: should be at ${expected}`);
 
-		run.events.forEach((event, index) => {
-			if (!validators.event(event)) {
-				problems.push(`${where}: event ${index + 1}: ${describeErrors(validators.event)}`);
-			}
-		});
-		eventCount += run.events.length;
-
 		if (!options.blobs) continue;
 
 		for (const hash of hashesIn(run)) {
@@ -292,17 +296,25 @@ export function checkBucketDirectory(directory: string, options: CheckOptions): 
 
 		const stdout = blob(run.stdout);
 		if (stdout === null) continue;
-		const text = stdout.toString("utf8");
-		const lines = text.split("\n");
-		if (lines.at(-1) === "") lines.pop();
-		const parsed = lines.slice(0, run.events_error ? run.events_error.line - 1 : lines.length);
-		const matches =
-			parsed.length === run.events.length &&
-			parsed.every((line, index) => JSON.stringify(JSON.parse(line)) === JSON.stringify(run.events[index]));
-		if (!matches) problems.push(`${where}: its events are not its stdout, line for line`);
+		const stream = readStream(stdout);
+		stream.events.forEach((event, index) => {
+			if (!validators.event(event)) problems.push(`${where}: stdout line ${index + 1}: ${describeErrors(validators.event)}`);
+		});
+		eventCount += stream.events.length;
+		if (run.stdout_bytes !== undefined && (run.stdout_bytes !== stdout.length || run.stdout_lines !== stream.lines)) {
+			problems.push(`${where}: says its stdout is ${run.stdout_bytes} bytes and ${run.stdout_lines} lines; the blob is ${stdout.length} and ${stream.lines}`);
+		}
+		if (run.events !== undefined) {
+			const events = run.events;
+			const same = events.length === stream.events.length && events.every((event, index) => JSON.stringify(event) === JSON.stringify(stream.events[index]));
+			if (!same) problems.push(`${where}: its events are not its stdout's, line for line`);
+			if ((run.events_error?.line ?? null) !== (stream.error?.line ?? null)) {
+				problems.push(`${where}: its events_error names ${run.events_error ? `line ${run.events_error.line}` : "no line"}; its stdout stops parsing at ${stream.error ? `line ${stream.error.line}` : "no line"}`);
+			}
+		}
 
 		if ("code" in run.exit && run.exit.code === 0) {
-			const quick = run.events[0]?.quick === true;
+			const quick = stream.events[0]?.quick === true;
 			const args = [join(ROOT, "scripts", "check-events.py"), "--samples", String(run.samples)];
 			if (quick) args.push("--quick");
 			const checked = spawnSync("python3", args, { input: stdout, encoding: "utf8" });
@@ -355,7 +367,7 @@ if (import.meta.main) {
 	}
 	if (result.problems.length > 0) process.exit(1);
 	console.log(
-		`ok: ${result.runs} runs, ${result.events} events${blobs ? `, ${result.blobs} blobs resolved and hashed` : ""}`,
+		blobs ? `ok: ${result.runs} runs, ${result.events} events, ${result.blobs} blobs resolved and hashed` : `ok: ${result.runs} runs`,
 	);
 	if (blobs) {
 		const { checked, unchecked } = result.manifests;
@@ -364,6 +376,6 @@ if (import.meta.main) {
 			console.log(`runner manifests: ${unchecked} NOT checked: their source archive or manifest is not in blobs/`);
 		}
 	} else {
-		console.log("blobs, and with them the runner manifests, were not checked (--no-blobs)");
+		console.log("blobs, and with them the streams and the runner manifests, were not checked (--no-blobs)");
 	}
 }

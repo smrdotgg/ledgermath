@@ -6,6 +6,7 @@ import { join } from "node:path";
 
 import { SERVICES } from "../infra/runs/schedule";
 import { S3_FIXTURES } from "../infra/runs/fixtures";
+import { readStream } from "../methods/run";
 import { checkBucketDirectory, describeErrors, loadValidators, type RunRecord } from "../scripts/check-runs";
 import { findSecrets, secretForms } from "../scripts/lib/secret-search";
 
@@ -127,7 +128,8 @@ describe("an entry that measures a Service, when the keys are had", () => {
 					secret_inputs: ["aws_access_key_id", "aws_secret_access_key", "aws_session_token"],
 				});
 				// The binary's own account of what it got: the variables' names.
-				expect(run.events[1]?.values).toEqual({
+				const events = readStream(readFileSync(join(o.directory, "out", "blobs", "sha256", run.stdout.replace("sha256:", "")))).events;
+				expect(events[1]?.values).toEqual({
 					service_variables:
 						"LM_SERVICE_AWS_ACCESS_KEY_ID LM_SERVICE_AWS_SECRET_ACCESS_KEY LM_SERVICE_AWS_SESSION_TOKEN LM_SERVICE_ENDPOINT LM_SERVICE_REGION ",
 				});

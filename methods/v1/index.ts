@@ -31,6 +31,7 @@ import {
 	parseDumpIndex,
 	type Run,
 	type RunFile,
+	readStream,
 	schemaErrors,
 	schemaValidators,
 } from "../run";
@@ -123,9 +124,9 @@ export function readRuns(files: readonly RunFile[]): { runs: ReadRun[]; unreadab
 }
 
 /**
- * Fetches every blob version 1 reads: each Run's before and after dump
- * indexes, and the sections of each before-dump except UNREAD_SECTIONS.
- * Throws if a Run names a blob that cannot be fetched.
+ * Fetches every blob version 1 reads: each Run's stdout (its events) and its
+ * before and after dump indexes, and the sections of each before-dump except
+ * UNREAD_SECTIONS. Throws if a Run names a blob that cannot be fetched.
  */
 export async function gather(files: readonly RunFile[], fetchBlob: FetchBlob, concurrency = 16): Promise<Map<string, Uint8Array>> {
 	const { runs } = readRuns(files);
@@ -144,7 +145,7 @@ export async function gather(files: readonly RunFile[], fetchBlob: FetchBlob, co
 		await Promise.all(Array.from({ length: Math.min(concurrency, wanted.length) }, worker));
 	};
 
-	await fetchAll(runs.flatMap(({ run }) => [run.environment.before, run.environment.after]));
+	await fetchAll(runs.flatMap(({ run }) => [run.stdout, run.environment.before, run.environment.after]));
 	const sections: string[] = [];
 	for (const { run } of runs) {
 		const index = parseDumpIndex(run.environment.before, blobs.get(run.environment.before) as Uint8Array);
@@ -175,10 +176,13 @@ function analyse({ file, run }: ReadRun, blobs: BlobMap): Analysed {
 	const before = dumpSections(run.environment.before, blobs);
 	const after = dumpSections(run.environment.after, blobs);
 	const facts = splitFacts(run, before, blobs);
-	const { failures, samples } = outcome(run);
+	const stdout = blobs.get(run.stdout);
+	if (stdout === undefined) throw new Error(`stdout ${run.stdout} of run ${run.id} was not fetched`);
+	const stream = readStream(stdout);
+	const { failures, samples } = outcome(run, stream);
 	const counted = failures.length === 0;
 	const time = counted ? median(samples.map((sample) => sample.ns_per_repetition)) : null;
-	const bytes = counted ? observedBytesPerRepetition(run) : null;
+	const bytes = counted ? observedBytesPerRepetition(stream.events) : null;
 	return {
 		file,
 		run,

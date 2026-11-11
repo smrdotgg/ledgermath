@@ -67,8 +67,8 @@ cannot, the order of the stream.
 | `schedule.json` | What a box runs: benchmarks, builds, samples, timeout, parameter sets. Not part of the runner. |
 | `runner/` | The box side. `box.sh` is the user-data; `provision.py` prepares the disks at boot (the instance's own NVMe disk, where there is one, and the Fixtures, which `fixture.c` writes) and records all it did; `run.py` builds, launches each binary, dumps the environment around it and writes one Run per execution; `cpuid.c` is the raw cpuid dump. |
 | `scripts/check-disk-runs.ts` | Checks that every disk Run found the disk its parameters declare (the checker, never the binary, knows what `instance_store` and `root_volume` mean) and that its evidence adds up and its dump bears it out: `file_device` is lsblk's number for the device, the device's model and serial in `/sys`, `device_counters`' change equal to its after minus its before and lying between the dumps', the device's own `nvme amzn stats`, the EBS volume in the EC2 API, the instance-store device number in the provision record. Every number it compares must be present and finite. |
-| `schemas/run.schema.json` | The Run, which holds the stream as `events`. |
-| `scripts/check-runs.ts` | Checks Runs laid out as in the bucket: schemas, file names, every hash, events against stdout, stream order, and each runner manifest against the source archive when that is present. |
+| `schemas/run.schema.json` | The Run, which names its stdout blob, the stream, with the blob's size and lines. Runs written before the runner stopped copying stdout into the record also hold the stream as `events`; every reader reads the blob, for every Run (`readStream`, `methods/run.ts`). |
+| `scripts/check-runs.ts` | Checks Runs laid out as in the bucket: schemas, file names, every hash, each stream read from its stdout blob (every event against the events schema, an older Run's `events` against the blob, stream order), and each runner manifest against the source archive when that is present. |
 
 The benchmarks on the stream, each with one parameter set per execution. The values are
 `schedule.json`'s; each `README.md` says what every key means.
@@ -160,8 +160,9 @@ Exit code 0 means the binary completed. Any other exit, a signal, or a missing `
 is still a Run: its `exit` holds the code or the signal, with `timeout_seconds` when the
 runner's timeout killed it (`schedule.json` sets the limit, 600 seconds for
 `memory_read`), and only then: a binary that ended by itself an instant before keeps its
-own exit alone. Its `events` are whatever reached the pipe. Nothing in the Run judges
-it.
+own exit alone. Its stdout blob holds whatever reached the pipe, and is the Run's events:
+the runner copies none of it into the record and parses none of it. A reader that finds a
+line that is not an event finds it in the blob. Nothing in the Run judges it.
 `tests/samples/failures/` holds two such Runs.
 
 When the runner is told to stop (SIGTERM, SIGINT or SIGHUP), it kills the binary it is
@@ -806,4 +807,20 @@ A migrated benchmark is done only when **all** of these hold:
   16 MiB (200 and 40 requests). Read-only AWS showed the stage's default VPC as the study
   assumed: no table on the subnet, `0.0.0.0/0` to an internet gateway in the main table,
   no endpoint; and the image already has `ethtool`.
+- **2026-11-11** — Step 5: the stdout blob is every Run's events (brief #43, decision 4,
+  the maintainer's rule; the last commit on `http-get-box`, to drop if they change their
+  mind before the first S3 Run). `run.py` no longer copies stdout into the Run, nor parses
+  it: the Run names its stdout blob, as every Run did, and gives `stdout_bytes` and
+  `stdout_lines`. Every reader reads the blob, for every Run, through `readStream`
+  (`methods/run.ts`): `check-runs.ts` (each event against the schema, the two facts, and for
+  a Run written before, that its `events` equal the blob), `check-disk-runs.ts`, the
+  container checks, Method version 1. Runs written before keep their `events` and stay
+  valid: still `ledgermath.run/1`, `events` now optional, because nothing else changed and
+  a reader's rule is the same for both. Method version 1 gives the same bytes as before for
+  the 15 older sample Runs (`tests/samples/older-shape-derivations.json`, made by its code
+  before the change) and for the 245 real Runs in the bucket (162 Series, compared with
+  `cmp`); it now fetches one more blob per Run, the stdout (816 blobs instead of 571 for
+  those Runs, 4.5 KB each on average). Run files: 5.5 to 12.8 KB before for the small
+  benchmarks, 1.7 to 2.0 KB now; `http_get`'s, from 208 to 985 KB with events inside to
+  3.8 KB.
 - _(agents: append your entry here, one per merged benchmark)_

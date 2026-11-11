@@ -9,6 +9,7 @@ import {
 	type RunEvent,
 	type RunRecord,
 } from "../scripts/check-runs";
+import { readStream } from "../methods/run";
 import { findSecrets } from "../scripts/lib/secret-search";
 import { allFields, EXAMPLE, identifyingProblems, sectionFields, shapedValues } from "./samples/identifying";
 
@@ -37,8 +38,13 @@ function goodRun(): Record<string, unknown> {
 	return structuredClone(run) as Record<string, unknown>;
 }
 
+/** A sample Run's events: its stdout blob's lines, as every reader reads them. */
+function eventsOf(directory: string, run: RunRecord): RunEvent[] {
+	return readStream(readFileSync(join(SAMPLES, directory, "blobs", "sha256", run.stdout.replace("sha256:", "")))).events;
+}
+
 function eventOf(run: RunRecord, name: string): RunEvent {
-	const event = run.events.find((candidate) => candidate.event === name);
+	const event = eventsOf("scheduled", run).find((candidate) => candidate.event === name);
 	if (!event) throw new Error(`no ${name} event`);
 	return structuredClone(event);
 }
@@ -168,6 +174,47 @@ describe("the Run schema's service", () => {
 	});
 });
 
+describe("the two shapes of a Run", () => {
+	// Runs written before the runner stopped copying stdout into the record
+	// carry events; Runs written since carry stdout_bytes and stdout_lines, and
+	// no events. Both are ledgermath.run/1, and both are read from stdout.
+	const newer = (): Record<string, unknown> => structuredClone(samplesIn("stdout-only")[0]) as Record<string, unknown>;
+
+	test("both validate: every older sample Run, and the newer samples", () => {
+		for (const directory of [...SAMPLE_DIRECTORIES, "service"]) {
+			for (const run of samplesIn(directory)) {
+				expect(run.events).toBeDefined();
+				expect(validators.run(run)).toBe(true);
+			}
+		}
+		const runs = samplesIn("stdout-only");
+		expect(runs.length).toBe(3);
+		for (const run of runs) {
+			expect(run.events).toBeUndefined();
+			expect(typeof run.stdout_bytes).toBe("number");
+			expect(validators.run(run)).toBe(true);
+		}
+	});
+
+	test("the newer shape carries no events and no events_error", () => {
+		expect(validators.run({ ...newer(), events: [] })).toBe(false);
+		expect(validators.run({ ...newer(), events_error: { line: 1, message: "not JSON" } })).toBe(false);
+	});
+
+	test("stdout_bytes and stdout_lines come together", () => {
+		const { stdout_lines: _lines, ...withoutLines } = newer();
+		expect(validators.run(withoutLines)).toBe(false);
+		const { stdout_bytes: _bytes, ...withoutBytes } = newer();
+		expect(validators.run(withoutBytes)).toBe(false);
+		expect(validators.run({ ...newer(), stdout_lines: -1 })).toBe(false);
+	});
+
+	test("a Run of neither shape, without events and without the stdout facts, is still a Run: its stdout is its events", () => {
+		const { stdout_bytes: _bytes, stdout_lines: _lines, ...bare } = newer();
+		expect(validators.run(bare)).toBe(true);
+	});
+});
+
 describe("the Run schema rejects", () => {
 	test("a good Run, as a control, is accepted", () => {
 		expect(validators.run(goodRun())).toBe(true);
@@ -200,7 +247,7 @@ describe("the Run schema rejects", () => {
 	test("an event without its clock reading", () => {
 		const run = goodRun() as unknown as RunRecord;
 		const { t: _dropped, ...withoutT } = eventOf(run, "finished");
-		run.events = [...run.events.slice(0, -1), withoutT as RunEvent];
+		run.events = [...eventsOf("scheduled", run).slice(0, -1), withoutT as RunEvent];
 		expect(validators.run(run)).toBe(false);
 	});
 });
@@ -209,7 +256,7 @@ describe("the event schema rejects", () => {
 	const run = goodRun() as unknown as RunRecord;
 
 	test("good events, as a control, are accepted", () => {
-		for (const event of run.events) expect(validators.event(event)).toBe(true);
+		for (const event of eventsOf("scheduled", run)) expect(validators.event(event)).toBe(true);
 	});
 
 	test("a universal event with an extra field", () => {

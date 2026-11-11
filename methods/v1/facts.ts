@@ -5,7 +5,7 @@
 
 import { createHash } from "node:crypto";
 
-import { canonicalJson, type ParamValue, type Run, type RunExit, schemaValidators } from "../run";
+import { canonicalJson, type ParamValue, type Run, type RunExit, type Stream, schemaValidators } from "../run";
 import { countedSamples, type SampleTime } from "./numbers";
 import { streamProblems } from "./stream";
 
@@ -295,21 +295,25 @@ export interface Outcome {
  *
  * A stop signal the runner received (exit.runner_signal) does not by itself
  * keep a Run out: beside exit code 0 it means the binary had already finished.
+ *
+ * The events are the Run's stdout, read by readStream (methods/run.ts), for
+ * every Run: a Run written before the runner stopped copying them into the
+ * record counts as it did when they were read from there.
  */
-export function outcome(run: Run): Outcome {
+export function outcome(run: Run, stream: Stream): Outcome {
 	const failures: string[] = [];
 	const exit = describeExit(run.exit);
 	if (exit !== null) failures.push(exit);
 	if (run.exit.runner_signal !== undefined && exit !== null) {
 		failures.push(`the runner was told to stop by signal ${run.exit.runner_signal}`);
 	}
-	if (run.events_error !== undefined) {
-		failures.push(`stdout line ${run.events_error.line} is not an event: ${run.events_error.message}`);
+	if (stream.error !== null) {
+		failures.push(`stdout line ${stream.error.line} is not an event: ${stream.error.message}`);
 	}
 	const validate = schemaValidators().event;
-	run.events.forEach((event, index) => {
+	stream.events.forEach((event, index) => {
 		if (!validate(event)) failures.push(`event ${index + 1} does not match schemas/events.schema.json`);
 	});
-	failures.push(...streamProblems(run.events, run.samples));
-	return { failures, samples: failures.length === 0 ? countedSamples(run.events) : [] };
+	failures.push(...streamProblems(stream.events, run.samples));
+	return { failures, samples: failures.length === 0 ? countedSamples(stream.events) : [] };
 }

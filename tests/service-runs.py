@@ -29,6 +29,8 @@ s3_fixtures.
                   and what it printed is recorded nowhere
     unshaped      assume-role prints JSON whose AccessKeyId is not a key ID
     no-values     run.py is given no s3_fixtures values: not run, aws never called
+    text          no Service: plain (n=1), and n=6, whose binary prints a line that is
+                  not JSON before verified
 
 The keys are stand-ins, not credentials; each must still reach the measured
 executions' environment and nowhere else.
@@ -41,7 +43,7 @@ import sys
 import tarfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-CASES = ("keys", "refused", "garbled", "unshaped", "no-values")
+CASES = ("keys", "refused", "garbled", "unshaped", "no-values", "text")
 
 KEY_ID = "ASIAQSTANDINTESTKEY7"
 SECRET = "stand+in/Secret/Access/Key/0123456789abcdefghijk"
@@ -72,6 +74,7 @@ echo '{"event":"started","t":1,"schema":"ledgermath.events/1","wall_utc":"2026-1
 echo "{\"event\":\"observed\",\"t\":2,\"values\":{\"service_variables\":\"$names\"}}"
 echo '{"event":"sample_started","t":3,"sample":0,"warmup":false,"repetitions":1}'
 echo '{"event":"sample_ended","t":4,"sample":0}'
+[ "$LM_PARAM_N" = 6 ] && echo "a line that is not JSON"
 echo '{"event":"verified","t":5,"checksum":"0x0000000000000000"}'
 echo '{"event":"finished","t":6}'
 '''
@@ -123,6 +126,8 @@ def main():
 
     entry = {"name": "fake", "builds": ["static"], "samples": 1, "timeout_seconds": 60}
     schedule = {"benchmarks": [dict(entry, params=[{"n": 1}]), dict(entry, params=[{"n": 2}, {"n": 3}], service="s3_fixtures")]}
+    if case == "text":
+        schedule = {"benchmarks": [dict(entry, params=[{"n": 1}, {"n": 6}])]}
     write(os.path.join(directory, "schedule.json"), json.dumps(schedule))
     # The source archive, as git archive would make it: run.py hashes it, and
     # check-runs.ts reads runner/ from it to check the runner manifest.

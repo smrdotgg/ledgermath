@@ -55,10 +55,59 @@ export interface Run {
 	environment: { before: string; after: string };
 	runner: string;
 	exit: RunExit;
-	events: RunEvent[];
-	events_error?: { line: number; message: string };
+	/** Only in Runs written before the runner stopped copying stdout into the Run; read the stdout blob instead (readStream). */
+	events?: RunEvent[];
+	/** The same: only in those older Runs. */
+	events_error?: StreamError;
+	/** The binary's stdout, whose lines are the Run's events: the one source of them, for every Run. */
 	stdout: string;
+	/** The stdout blob's length and lines, in Runs written since. */
+	stdout_bytes?: number;
+	stdout_lines?: number;
 	stderr: string;
+}
+
+/** Where a stream stopped being events: the line's number and why. */
+export interface StreamError {
+	line: number;
+	message: string;
+}
+
+/** A binary's stdout, read as events. */
+export interface Stream {
+	/** Every line, parsed, in order, up to the first that is not a JSON object. */
+	events: RunEvent[];
+	/** That line, when there is one. */
+	error: StreamError | null;
+	/** How many lines stdout has: the pieces between newlines, a last line without one counted too. */
+	lines: number;
+}
+
+/**
+ * The events of a Run: its stdout blob's lines, as every reader reads them,
+ * for every Run, whatever else the record holds. The text (invalid UTF-8
+ * replaced, a byte-order mark kept) is split at newlines, without the empty
+ * piece after a final one; each line is parsed as JSON, up to the first line
+ * that does not parse or is not an object. The reason given for that line is
+ * this function's own words, the same on every machine.
+ */
+export function readStream(stdout: Uint8Array): Stream {
+	const lines = new TextDecoder("utf-8", { ignoreBOM: true }).decode(stdout).split("\n");
+	if (lines.at(-1) === "") lines.pop();
+	const events: RunEvent[] = [];
+	for (const [index, line] of lines.entries()) {
+		let value: unknown;
+		try {
+			value = JSON.parse(line);
+		} catch {
+			return { events, error: { line: index + 1, message: "not JSON" }, lines: lines.length };
+		}
+		if (typeof value !== "object" || value === null || Array.isArray(value)) {
+			return { events, error: { line: index + 1, message: "not a JSON object" }, lines: lines.length };
+		}
+		events.push(value as RunEvent);
+	}
+	return { events, error: null, lines: lines.length };
 }
 
 /** Fetches a blob by hash: its bytes, or null when there is no such blob. */

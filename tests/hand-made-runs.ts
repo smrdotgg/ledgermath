@@ -11,7 +11,7 @@ import { createHash } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
-import type { FetchBlob, ParamValue, Run, RunEvent, RunExit, RunFile } from "../methods/run";
+import { type FetchBlob, type ParamValue, readStream, type Run, type RunEvent, type RunExit, type RunFile } from "../methods/run";
 
 export interface HandMadeRun {
 	/** Such as 2026-11-12T22:15:00Z. */
@@ -55,6 +55,14 @@ export interface HandMadeRun {
 	 * catalog revision on every boot.
 	 */
 	diskSections?: { catalog?: string };
+	/**
+	 * Written as runners wrote Runs before stdout became the one source of
+	 * their events: the events copied into the record too, and no
+	 * stdout_bytes or stdout_lines.
+	 */
+	eventsInside?: boolean;
+	/** The stdout blob's text, instead of the stream made from the options above. */
+	stdout?: string;
 	/**
 	 * Adds the sections the dump gained for the Service benchmarks, shaped like
 	 * runner/run.py's: net_counters differs on every dump; network, and the EC2
@@ -215,7 +223,8 @@ export class HandMade {
 		const hex = ms.toString(16).padStart(12, "0");
 		const tail = sha256(`hand-made ${n}`);
 		const id = `${hex.slice(0, 8)}-${hex.slice(8, 12)}-7${tail.slice(0, 3)}-8${tail.slice(3, 6)}-${tail.slice(6, 18)}`;
-		const stdout = `${events.map((event) => JSON.stringify(event)).join("\n")}\n`;
+		const stdout = options.stdout ?? `${events.map((event) => JSON.stringify(event)).join("\n")}\n`;
+		const stdoutBytes = new TextEncoder().encode(stdout);
 		const run: Run = {
 			schema: "ledgermath.run/1",
 			id,
@@ -249,8 +258,9 @@ export class HandMade {
 			},
 			runner: this.put("a runner manifest"),
 			exit: options.exit ?? { code: 0 },
-			events,
+			...(options.eventsInside ? { events } : {}),
 			stdout: this.put(stdout),
+			...(options.eventsInside ? {} : { stdout_bytes: stdoutBytes.length, stdout_lines: readStream(stdoutBytes).lines }),
 			stderr: this.put(""),
 		};
 		const bytesOfFile = new TextEncoder().encode(`${JSON.stringify(run, null, 2)}\n`);
