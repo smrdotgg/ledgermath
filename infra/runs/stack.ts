@@ -16,13 +16,19 @@
  *
  * A second Lambda terminates any box of this stage that outlives its own
  * 45-minute timer.
+ *
+ * GitHub's OIDC provider and a role that only this repository's workflows on
+ * main can assume let .github/workflows/runs.yml read Runs, boot summaries
+ * and blobs from the bucket (infra/runs/github-role.ts).
  */
 
 import { execFileSync } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 
+import { GITHUB_OIDC_AUDIENCE, GITHUB_OIDC_URL, readPolicy, trustPolicy } from "./github-role";
 import { SCHEDULED_EVENT } from "./launch-event";
+import { PLACEMENT } from "./placement";
 
 /**
  * Amazon Linux 2023 2023.12.20260710.0, kernel 6.1: the image July's pipeline
@@ -30,8 +36,9 @@ import { SCHEDULED_EVENT } from "./launch-event";
  * compiler, changes only when this line does.
  */
 const IMAGE_ID = "ami-03499a87bbb39a09a";
-const ZONE = "us-east-2c";
-const INSTANCE_TYPE = "c6i.8xlarge";
+/** Shared with the alarm, which watches the Series of schedule.json here. */
+const ZONE = PLACEMENT.zone;
+const INSTANCE_TYPE = PLACEMENT.instanceType;
 /**
  * An hour before July's 23:10. Two 32-vCPU runners and the dev machine's 4
  * vCPUs exceed the account's 64-vCPU quota, so the two must never overlap.
@@ -201,8 +208,27 @@ export function runsStack() {
 		},
 	});
 
+	// The workflow's way in: GitHub's OIDC provider (one per account; AWS checks
+	// GitHub's certificate against its own trusted CAs, so no thumbprint) and a
+	// role that only workflows of this repository on main can assume, which
+	// may list the bucket and read runs/, boots/ and blobs/.
+	const githubOidc = new aws.iam.OpenIdConnectProvider("GitHubOidc", {
+		url: GITHUB_OIDC_URL,
+		clientIdLists: [GITHUB_OIDC_AUDIENCE],
+	});
+	const readerRole = new aws.iam.Role("RunsReaderRole", {
+		description: "Assumed by .github/workflows/runs.yml on main: lists the bucket, reads runs/, boots/, blobs/",
+		assumeRolePolicy: githubOidc.arn.apply((arn) => JSON.stringify(trustPolicy(arn))),
+		maxSessionDuration: 3600,
+	});
+	new aws.iam.RolePolicy("RunsReaderPolicy", {
+		role: readerRole.id,
+		policy: bucket.arn.apply((arn) => JSON.stringify(readPolicy(arn))),
+	});
+
 	return {
 		bucket: bucket.name,
+		runsReaderRole: readerRole.arn,
 		launchFunction: launch.nodes.function.name,
 		reaperFunction: reaper.nodes.function.name,
 		launchSchedule: `${LAUNCH_SCHEDULE} UTC`,
