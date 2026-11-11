@@ -60,13 +60,28 @@ cannot, the order of the stream.
 | Path | What it is |
 |------|------------|
 | `benchmarks/harness/c/` | The C harness (`lm.h`, `lm.c`), which prints the stream. A benchmark in another language prints the same lines without it. |
-| `benchmarks/<name>/` | One benchmark: its source, and a `Makefile` offering `make BUILD=static` or `BUILD=dynamic` (one file at `build/<build>/<name>`), `make -s compiler` and `make -s resolved`. Only `memory_read` is on the stream so far; the other twelve are July's, in `benchmarks/c/`. |
+| `benchmarks/<name>/` | One benchmark: its source, a `README.md` (what it measures, its parameters, its observed values, its elision guard, and every difference from July's version), and a `Makefile` offering `make BUILD=static` or `BUILD=dynamic` (one file at `build/<build>/<name>`), `make -s compiler` and `make -s resolved`. Eight are on the stream: `memory_read`, `compressed_memory_read`, `memory_read_random`, `memory_write`, `syscall`, `hash`, `sort` and `tcp_echo`. The other five, `mutex` and the four disk benchmarks, are still only July's, in `benchmarks/c/`. |
 | `schemas/events.schema.json` | One line of the stream. |
 | `scripts/check-events.py` | The order of a stream: `./build/static/memory_read --quick \| python3 scripts/check-events.py --quick`. Needs only Python 3. |
+| `scripts/check-scratch.py` | Runs every static build of `schedule.json` as the only file in a `FROM scratch` container, once per parameter set, and checks each stream. Needs Docker. |
 | `schedule.json` | What a box runs: benchmarks, builds, samples, timeout, parameter sets. Not part of the runner. |
 | `runner/` | The box side. `box.sh` is the user-data; `run.py` builds, launches each binary, dumps the environment around it and writes one Run per execution; `cpuid.c` is the raw cpuid dump. |
 | `schemas/run.schema.json` | The Run, which holds the stream as `events`. |
 | `scripts/check-runs.ts` | Checks Runs laid out as in the bucket: schemas, file names, every hash, events against stdout, stream order, and each runner manifest against the source archive when that is present. |
+
+The benchmarks on the stream, each with one parameter set per execution. The values are
+`schedule.json`'s; each `README.md` says what every key means.
+
+| Benchmark | Parameters (`LM_PARAM_*`) | Observed | July's variants |
+|---|---|---|---|
+| `memory_read` | `size_bytes` 1 GiB, `threads` `1` or `all`, `path` `scalar` or `avx2` | `bytes_per_repetition`, `threads_used`, `path_taken` | the four of `memory_read` |
+| `compressed_memory_read` | `blocks` 1000000, `bits` 8 | `bytes_per_repetition`, `compressed_bytes_per_repetition`, `blocks_verified`, `bits_per_value` | `bitpacker` |
+| `memory_read_random` | `size_bytes` 1 GiB, `threads` `1` | `bytes_per_repetition`, `reads_per_repetition`, `threads_used` | `1 thread` |
+| `memory_write` | `size_bytes` 1 GiB, `threads` `1`, `order` `sequential` or `random` | `bytes_per_repetition`, `threads_used`, `order_taken` | `1 thread, Sequential`, `1 thread, Random` |
+| `syscall` | `call` `getpid`, `gettimeofday`, `getrusage` or `stat`; `path` `/tmp` with `stat` | `call_made`; `path_fs_type` with `stat` | `getpid`, `gettimeofday`, `getrusage`, `stat` |
+| `hash` | `algorithm` `crc32`, `siphash` or `sha256`, `size_bytes` 64 | `bytes_per_repetition`, `algorithm_run`, `path_taken` | `crc32`, `siphash`, `sha256` |
+| `sort` | `size_bytes` 1 MiB | `bytes_per_repetition` | `u64` |
+| `tcp_echo` | `size_bytes` 32 KiB | `bytes_per_repetition` | `32 KiB` |
 
 ### What the binary receives
 
@@ -384,4 +399,23 @@ A migrated benchmark is done only when **all** of these hold:
   (stopped mid-execution, budget run out, blobs refused or dropped). Sample Runs and the
   schema test are in `tests/`; `.github/workflows/check.yml` runs the `FROM scratch` check
   and the tests.
+- **2026-11-11** — Step 4 of the build plan (#36, brief #42), first part, not yet
+  deployed. Seven of July's benchmarks moved to the event stream, each in its own
+  directory with a `README.md` listing every difference from July's version:
+  `compressed_memory_read`, `memory_read_random`, `memory_write`, `syscall`, `hash`,
+  `sort`, `tcp_echo`. Each reads its parameters from `LM_PARAM_*` and runs one parameter
+  set per process, so July's multi-variant binaries became 13 executions, each built
+  static only. The measured code is July's: built by gcc 11.5 with July's flags, the
+  measured functions' machine code is identical to July's except in `syscall`, whose
+  four functions differ by an instruction or two beside the system call, and
+  `tcp_echo`, whose round trip now takes its length from a variable. `lm.c` and `lm.h`
+  are unchanged, and `memory_read`'s static binary still hashes to `a3674893…`.
+  `scripts/check-scratch.py` runs every static build alone in a `FROM scratch`
+  container, once per scheduled parameter set; `check.yml` runs it. The container
+  test's full-schedule scenarios now require one Run of every scheduled execution, each
+  exiting 0. A whole boot in `amazonlinux:2023.12.20260710.0` took about 6.6 minutes:
+  21 s before `run.py`, then 376 s for the 21 executions (13 to 23 s each, 0.2 to 0.8 s
+  of dumps and builds between them), of which the seven new benchmarks took 233 s. All
+  seven scenarios pass. The new binaries came out byte-identical in two separate
+  container builds.
 - _(agents: append your entry here, one per merged benchmark)_

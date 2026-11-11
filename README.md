@@ -17,7 +17,7 @@ until step 4 of the plan replaces it.
 | Path | What it is |
 |------|------------|
 | `benchmarks/harness/c/` | The C harness that prints the event stream |
-| `benchmarks/memory_read/` | The first benchmark on the stream, with a `Makefile` (`make BUILD=static`, `BUILD=dynamic`, `make -s compiler`, `make -s resolved`) |
+| `benchmarks/<name>/` | One benchmark on the stream: its source, a `README.md` (what it measures, its parameters and observed values, how it differs from July's), and a `Makefile` (`make BUILD=static`, `BUILD=dynamic`, `make -s compiler`, `make -s resolved`). Eight so far: `memory_read`, `compressed_memory_read`, `memory_read_random`, `memory_write`, `syscall`, `hash`, `sort`, `tcp_echo` |
 | `schedule.json` | What a box runs: benchmarks, builds, samples, timeout, parameter sets |
 | `runner/` | The box side: `box.sh` (user-data), `run.py` (builds, runs, dumps, writes Runs), `cpuid.c` |
 | `schemas/` | `run.schema.json` (the Run) and `events.schema.json` (one line of the stream) |
@@ -45,17 +45,22 @@ LM_PARAM_SIZE_BYTES=1073741824 LM_PARAM_THREADS=all LM_PARAM_PATH=avx2 LM_SAMPLE
 ```
 
 `--quick` is a developer mode (small buffer, three samples); its stream is never recorded.
+Every benchmark directory works the same way; its `README.md` lists its `LM_PARAM_*`
+variables, and `schedule.json` the values a box gives them.
 
 ## Tests
 
 ```bash
 bun install
 bun test
+python3 scripts/check-scratch.py    # needs Docker
 ```
 
-`.github/workflows/check.yml` runs the tests and builds `memory_read`, then runs the static
-build with `--quick` as the only file in a `FROM scratch` container and checks its stream.
-No measured Run goes through Docker.
+`.github/workflows/check.yml` runs the tests, then `scripts/check-scratch.py`: it builds
+every benchmark that `schedule.json` builds static, and runs each binary as the only file
+in a `FROM scratch` container, once per parameter set with `--quick`, checking every
+stream. It then shows that the same container refuses `memory_read`'s dynamic build. No
+measured Run goes through Docker.
 
 To boot the box script the way a box does, in `amazonlinux:2023.12.20260710.0` (the
 release the pinned image is locked to), with the bucket as a local directory:
@@ -67,7 +72,7 @@ scripts/box-in-container/run.sh --scenario terminated /tmp/box-test     # see be
 ```
 
 Each scenario boots the box and checks what it should have left
-(`scripts/box-in-container/expect.ts`): `ok` (the whole schedule, about five minutes),
+(`scripts/box-in-container/expect.ts`): `ok` (the whole schedule, about seven minutes),
 `terminated` (run.py told to stop mid-execution), `shutdown` (every process told to stop,
 as a shutdown does), `budget` (the time budget runs out), `blobs-rejected` (the bucket
 refuses every blob), `blobs-flaky` (the first upload of blobs drops halfway) and
@@ -94,11 +99,12 @@ stage and the scheduled time, so one slot can start at most one box. Its user-da
 3. fetches `source/<commit>.tar.gz`, a `git archive` of the deployed commit, and refuses to
    go on if the archive's commit or its own text is not that commit's;
 4. builds `runner/cpuid.c` and runs `runner/run.py` until 35 minutes after the box
-   started. `run.py` builds every benchmark in `schedule.json` both static and dynamic and
-   writes one Run per execution. At 35 minutes it is sent TERM: it kills the binary it is
-   running, still writes that execution's Run, starts nothing more, writes the boot
-   summary, which lists what was not run, and exits. If it has not exited three minutes
-   later, it is killed outright;
+   started. `run.py` builds every benchmark in `schedule.json` in each build the schedule
+   names (`memory_read` static and dynamic, the others static) and writes one Run per
+   execution. At 35 minutes it is sent TERM: it kills the binary it is running, still
+   writes that execution's Run, starts nothing more, writes the boot summary, which lists
+   what was not run, and exits. If it has not exited three minutes later, it is killed
+   outright;
 5. uploads the blobs the bucket does not hold yet, then the Runs and the boot summary, then
    its log, and shuts down, which terminates the instance.
 
