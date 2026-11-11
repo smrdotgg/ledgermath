@@ -977,8 +977,9 @@ describe.skipIf(!AVAILABLE)("what should be deterministic is", () => {
 		const hashOf = () => createHash("sha256").update(readFileSync(BINARY)).digest("hex");
 		const first = hashOf();
 		const again = make("-B", "BUILD=static");
-		expect(again.status).toBe(0);
-		expect(hashOf()).toBe(first);
+		if (again.status !== 0) throw new Error(`make -B exited ${again.status}:\n${again.stdout}${again.stderr}`);
+		const second = hashOf();
+		if (second !== first) throw new Error(`the rebuild hashes ${second}, the first build ${first}:\n${again.stdout}${again.stderr}`);
 		expect(again.stdout).toContain("aws-lc: AWS-LC 5.14.0 is already built");
 	}, BUILD_TIMEOUT_MS);
 });
