@@ -4,7 +4,7 @@
  * the alarm issue already open instead of opening a second.
  *
  *     bun scripts/alarm.ts --runs DIR --copy succeeded|failed --schedule-changed-at ISO-8601
- *         [--now 2026-11-12T22:40:00Z] [--schedule FILE] [--dry-run]
+ *         [--prices-since ISO-8601] [--now 2026-11-12T22:40:00Z] [--schedule FILE] [--dry-run]
  *
  * A watched Series is one schedule.json runs (benchmark, params, build) on one
  * of its targets (instance type and zone), where the entry's instance_types,
@@ -27,17 +27,28 @@
  * that state in a hidden marker, which the next pass compares with. When every
  * Series has a Run again, it says so once on the open issue.
  *
+ * It also watches the price files (issue #45): when the newest one in the
+ * Runs repository, prices/<yyyy>/<mm>/<dd>/aws.json, was fetched more than 48
+ * hours before "now", it says so in the same issue, by the same rule of
+ * writing only when something changed. With no price file at all, it stays
+ * quiet until 48 hours after the prices workflow first existed, the same idea
+ * as for a Series that has never had a Run: --prices-since is when that was,
+ * which the workflow takes from git (the commit time of the first commit on
+ * main's first-parent line that touched .github/workflows/prices.yml). Without
+ * --prices-since, or with it empty, an absence of price files is not reported.
+ *
  * GitHub is reached through IssueTracker, so tests use a fake. The real one
  * reads GITHUB_REPOSITORY and GITHUB_TOKEN, as a workflow sets them.
  * --dry-run prints what would be posted and posts nothing.
  */
 
-import { readFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { join, relative, resolve, sep } from "node:path";
 import { parseArgs } from "node:util";
 
 import { appliesTo, parseSchedule, type Schedule } from "../infra/runs/schedule";
 import { canonicalJson, compareText, type ParamValue, type RunFile } from "../methods/run";
+import { PRICE_FILE_PATH } from "./lib/prices";
 import { readRunFiles } from "./lib/run-files";
 import { RUNS_REPOSITORY_BLOB_URL } from "./lib/runs-repository";
 
@@ -46,7 +57,7 @@ export const MAX_AGE_MS = 48 * 3_600_000;
 export const ALARM_MARKER = "<!-- ledgermath-alarm: stale-series -->";
 /** Begins the hidden marker each alarm post ends with: the state it reported. */
 export const STATE_MARKER = "<!-- ledgermath-alarm-state: ";
-export const ALARM_TITLE = "Stale Series: no Run for 48 hours";
+export const ALARM_TITLE = "Stale: no Run, or no price file, for 48 hours";
 
 export interface WatchedSeries {
 	benchmark: string;
@@ -149,6 +160,56 @@ export function staleSeries(
 	return stale;
 }
 
+/** The newest price file of the Runs repository: its path there, and when it was fetched. */
+export interface NewestPriceFile {
+	path: string;
+	fetchedAt: string;
+}
+
+/**
+ * The price file under prices/ with the latest fetched_at, or null when there
+ * is none. A file whose path is not shaped like a price file's, or whose
+ * fetched_at is not a time, is passed over, as a malformed Run file is.
+ */
+export function newestPriceFile(repository: string): NewestPriceFile | null {
+	const directory = join(repository, "prices");
+	if (!existsSync(directory)) return null;
+	let newest: NewestPriceFile | null = null;
+	for (const entry of readdirSync(directory, { recursive: true, withFileTypes: true })) {
+		if (!entry.isFile()) continue;
+		const path = relative(repository, join(entry.parentPath, entry.name)).split(sep).join("/");
+		if (!PRICE_FILE_PATH.test(path)) continue;
+		let fetchedAt: unknown;
+		try {
+			fetchedAt = (JSON.parse(readFileSync(join(repository, path), "utf8")) as { fetched_at?: unknown }).fetched_at;
+		} catch {
+			continue;
+		}
+		if (typeof fetchedAt !== "string" || Number.isNaN(Date.parse(fetchedAt))) continue;
+		if (newest === null || Date.parse(fetchedAt) > Date.parse(newest.fetchedAt)) newest = { path, fetchedAt };
+	}
+	return newest;
+}
+
+/** The price files are stale: the newest is too old, or there is none (newest null). */
+export interface StalePrices {
+	newest: NewestPriceFile | null;
+	/** When the prices workflow first existed, when there is no price file. */
+	since: string | null;
+}
+
+/**
+ * Whether the price files are stale: the newest was fetched more than maxAgeMs
+ * before now, or there is none and the prices workflow has existed for more
+ * than maxAgeMs. pricesSince null means it is not known to exist, and then
+ * no price file is not stale.
+ */
+export function stalePrices(newest: NewestPriceFile | null, now: Date, pricesSince: Date | null, maxAgeMs = MAX_AGE_MS): StalePrices | null {
+	if (newest !== null) return now.getTime() - Date.parse(newest.fetchedAt) > maxAgeMs ? { newest, since: null } : null;
+	if (pricesSince === null || now.getTime() - pricesSince.getTime() <= maxAgeMs) return null;
+	return { newest: null, since: pricesSince.toISOString() };
+}
+
 export function describeSeries(series: WatchedSeries): string {
 	const params = Object.entries(series.params)
 		.map(([key, value]) => `${key}=${String(value)}`)
@@ -161,10 +222,14 @@ export interface AlarmState {
 	/** describeSeries() of each stale Series, sorted. */
 	stale: string[];
 	copy_failed: boolean;
+	/** Present only when the price files are stale: the newest one's path, or "none". Posts from before prices were watched lack it. */
+	stale_prices?: string;
 }
 
-export function alarmState(stale: readonly StaleSeries[], copyFailed: boolean): AlarmState {
-	return { stale: stale.map(describeSeries).sort(compareText), copy_failed: copyFailed };
+export function alarmState(stale: readonly StaleSeries[], copyFailed: boolean, prices: StalePrices | null = null): AlarmState {
+	const state: AlarmState = { stale: stale.map(describeSeries).sort(compareText), copy_failed: copyFailed };
+	if (prices !== null) state.stale_prices = prices.newest?.path ?? "none";
+	return state;
 }
 
 /** The state the newest alarm post carries, or null when it carries none. */
@@ -175,7 +240,9 @@ export function stateOf(post: string): AlarmState | null {
 	try {
 		const state = JSON.parse(post.slice(at + STATE_MARKER.length, end)) as Partial<AlarmState>;
 		if (!Array.isArray(state.stale) || typeof state.copy_failed !== "boolean") return null;
-		return { stale: state.stale.map(String), copy_failed: state.copy_failed };
+		const parsed: AlarmState = { stale: state.stale.map(String), copy_failed: state.copy_failed };
+		if (typeof state.stale_prices === "string") parsed.stale_prices = state.stale_prices;
+		return parsed;
 	} catch {
 		return null;
 	}
@@ -185,8 +252,17 @@ const COPY_FAILED =
 	"**The copy job failed on this pass.** The Runs repository may be behind the bucket, so what follows may be out of " +
 	"date, and a Series listed may in fact be getting Runs. Look at the copy job first.";
 
-/** The text posted: the stale Series, each with its newest Run and how old it is, and the state marker. */
-export function alarmText(stale: readonly StaleSeries[], now: Date, copyFailed: boolean, runUrlBase = RUNS_REPOSITORY_BLOB_URL): string {
+/** The text posted: the stale Series, each with its newest Run and how old it is, the price files if stale, and the state marker. */
+export function alarmText(
+	stale: readonly StaleSeries[],
+	now: Date,
+	copyFailed: boolean,
+	runUrlBase = RUNS_REPOSITORY_BLOB_URL,
+	prices: StalePrices | null = null,
+	pricesWatched = false,
+	/** Whether the last post said the price files were stale. */
+	pricesWereStale = false,
+): string {
 	const hours = (startedAt: string): string => ((now.getTime() - Date.parse(startedAt)) / 3_600_000).toFixed(1);
 	const lines = stale
 		.slice()
@@ -197,16 +273,33 @@ export function alarmText(stale: readonly StaleSeries[], now: Date, copyFailed: 
 				: `- \`${describeSeries(series)}\`: newest Run [${series.newest.id}](${runUrlBase}${series.newest.path}) started ${series.newest.startedAt}, ${hours(series.newest.startedAt)} hours ago`,
 		);
 	const summary =
-		stale.length === 0
-			? `Checked at ${now.toISOString()}: every watched Series has had a Run in the last 48 hours again.`
-			: `Checked at ${now.toISOString()}: ${stale.length} watched Series ${stale.length === 1 ? "has" : "have"} had no Run for more than 48 hours.`;
+		stale.length > 0
+			? `Checked at ${now.toISOString()}: ${stale.length} watched Series ${stale.length === 1 ? "has" : "have"} had no Run for more than 48 hours.`
+			: prices !== null
+				? `Checked at ${now.toISOString()}: every watched Series has had a Run in the last 48 hours.`
+				: `Checked at ${now.toISOString()}: every watched Series has had a Run in the last 48 hours again${pricesWatched ? ", and the newest price file is no more than 48 hours old" : ""}.`;
+	const pricesLine =
+		prices === null
+			? pricesWereStale && stale.length > 0
+				? ["", "The newest price file is no more than 48 hours old again."]
+				: []
+			: prices.newest === null
+				? [
+						"",
+						`**No price file.** The Runs repository holds no price file at all, and the prices workflow has existed since ${prices.since}, more than 48 hours. Look at the prices workflow.`,
+					]
+				: [
+						"",
+						`**No new price file for more than 48 hours.** The newest, [${prices.newest.path}](${runUrlBase}${prices.newest.path}), was fetched at ${prices.newest.fetchedAt}, ${hours(prices.newest.fetchedAt)} hours ago. Look at the prices workflow.`,
+					];
 	return [
 		...(copyFailed ? [COPY_FAILED, ""] : []),
 		summary,
 		...(lines.length ? ["", ...lines] : []),
+		...pricesLine,
 		"",
-		"A watched Series is one `schedule.json` runs on one of its targets, the instance types and zone the stage launches. Written by `scripts/alarm.ts`, which writes again only when the stale Series, or whether the copy job is failing, change.",
-		`${STATE_MARKER}${JSON.stringify(alarmState(stale, copyFailed))} -->`,
+		"A watched Series is one `schedule.json` runs on one of its targets, the instance types and zone the stage launches. Written by `scripts/alarm.ts`, which writes again only when the stale Series, whether the copy job is failing, or whether the price files are stale, change.",
+		`${STATE_MARKER}${JSON.stringify(alarmState(stale, copyFailed, prices))} -->`,
 	].join("\n");
 }
 
@@ -225,13 +318,16 @@ export interface IssueTracker {
 }
 
 export type AlarmOutcome =
-	| { action: "none"; stale: StaleSeries[] }
-	| { action: "opened"; issue: number; stale: StaleSeries[] }
-	| { action: "commented"; issue: number; stale: StaleSeries[] }
-	| { action: "unchanged"; issue: number; stale: StaleSeries[] };
+	| { action: "none"; stale: StaleSeries[]; prices: StalePrices | null }
+	| { action: "opened"; issue: number; stale: StaleSeries[]; prices: StalePrices | null }
+	| { action: "commented"; issue: number; stale: StaleSeries[]; prices: StalePrices | null }
+	| { action: "unchanged"; issue: number; stale: StaleSeries[]; prices: StalePrices | null };
 
 const sameState = (a: AlarmState, b: AlarmState): boolean =>
-	a.copy_failed === b.copy_failed && a.stale.length === b.stale.length && a.stale.every((series, i) => series === b.stale[i]);
+	a.copy_failed === b.copy_failed &&
+	(a.stale_prices ?? null) === (b.stale_prices ?? null) &&
+	a.stale.length === b.stale.length &&
+	a.stale.every((series, i) => series === b.stale[i]);
 
 /** One pass of the alarm. */
 export async function runAlarm(options: {
@@ -244,21 +340,30 @@ export async function runAlarm(options: {
 	copyFailed: boolean;
 	tracker: IssueTracker;
 	runUrlBase?: string;
+	/** The newest price file of the Runs repository, or null when it has none. */
+	newestPrices?: NewestPriceFile | null;
+	/** When the prices workflow first existed: no price file is not stale until 48 hours after. Null or absent: not known to exist. */
+	pricesSince?: Date | null;
 }): Promise<AlarmOutcome> {
 	const stale = staleSeries(watchedSeries(options.schedule), options.runs, options.now, options.scheduleChangedAt);
+	const newestPrices = options.newestPrices ?? null;
+	const pricesSince = options.pricesSince ?? null;
+	const prices = stalePrices(newestPrices, options.now, pricesSince);
+	const pricesWatched = newestPrices !== null || pricesSince !== null;
 	const open = await options.tracker.findOpen(ALARM_MARKER);
-	const text = alarmText(stale, options.now, options.copyFailed, options.runUrlBase);
+	const last = open === null ? null : stateOf(open.lastPost);
+	const text = alarmText(stale, options.now, options.copyFailed, options.runUrlBase, prices, pricesWatched, last?.stale_prices !== undefined);
+	const allWell = stale.length === 0 && prices === null;
 	if (open === null) {
-		if (stale.length === 0) return { action: "none", stale };
+		if (allWell) return { action: "none", stale, prices };
 		const issue = await options.tracker.open(ALARM_TITLE, `${ALARM_MARKER}\n${text}`);
-		return { action: "opened", issue, stale };
+		return { action: "opened", issue, stale, prices };
 	}
-	const last = stateOf(open.lastPost);
-	if (last !== null && sameState(last, alarmState(stale, options.copyFailed))) return { action: "unchanged", issue: open.number, stale };
+	if (last !== null && sameState(last, alarmState(stale, options.copyFailed, prices))) return { action: "unchanged", issue: open.number, stale, prices };
 	// Nothing to say on an issue whose last word was already that all is well, if only the copy changed.
-	if (last === null && stale.length === 0) return { action: "unchanged", issue: open.number, stale };
+	if (last === null && allWell) return { action: "unchanged", issue: open.number, stale, prices };
 	await options.tracker.comment(open.number, text);
-	return { action: "commented", issue: open.number, stale };
+	return { action: "commented", issue: open.number, stale, prices };
 }
 
 type Fetch = (url: string, init: RequestInit) => Promise<Response>;
@@ -340,13 +445,15 @@ async function main(): Promise<void> {
 			schedule: { type: "string" },
 			"schedule-changed-at": { type: "string" },
 			copy: { type: "string" },
+			"prices-since": { type: "string" },
 			"dry-run": { type: "boolean" },
 		},
 	});
 	if (!values.runs || (values.copy !== "succeeded" && values.copy !== "failed") || values["schedule-changed-at"] === undefined) {
 		console.error(
-			"usage: bun scripts/alarm.ts --runs DIR --copy succeeded|failed --schedule-changed-at ISO-8601 [--now ISO-8601] [--schedule FILE] [--dry-run]\n" +
-				'  --schedule-changed-at: when the schedule last changed, such as "$(git log -1 --first-parent --format=%cI -- schedule.json)"',
+			"usage: bun scripts/alarm.ts --runs DIR --copy succeeded|failed --schedule-changed-at ISO-8601 [--prices-since ISO-8601] [--now ISO-8601] [--schedule FILE] [--dry-run]\n" +
+				'  --schedule-changed-at: when the schedule last changed, such as "$(git log -1 --first-parent --format=%cI -- schedule.json)"\n' +
+				'  --prices-since: when the prices workflow first existed, such as "$(git log --first-parent --reverse --format=%cI -- .github/workflows/prices.yml | sed -n 1p)"',
 		);
 		process.exit(2);
 	}
@@ -356,6 +463,9 @@ async function main(): Promise<void> {
 	if (values["schedule-changed-at"] === "" || Number.isNaN(scheduleChangedAt.getTime())) {
 		throw new Error(`--schedule-changed-at ${JSON.stringify(values["schedule-changed-at"])} is not a time`);
 	}
+	// Empty when git finds no commit of the prices workflow: then it is not known to exist.
+	const pricesSince = values["prices-since"] === undefined || values["prices-since"] === "" ? null : new Date(values["prices-since"]);
+	if (pricesSince !== null && Number.isNaN(pricesSince.getTime())) throw new Error(`--prices-since ${JSON.stringify(values["prices-since"])} is not a time`);
 	const schedulePath = values.schedule ?? join(resolve(import.meta.dir, ".."), "schedule.json");
 	const schedule = parseSchedule(JSON.parse(readFileSync(schedulePath, "utf8")), schedulePath);
 
@@ -369,7 +479,8 @@ async function main(): Promise<void> {
 	}
 	const runs = readRunFiles(values.runs);
 	const copyFailed = values.copy === "failed";
-	const outcome = await runAlarm({ schedule, runs, now, scheduleChangedAt, copyFailed, tracker });
+	const newestPrices = newestPriceFile(values.runs);
+	const outcome = await runAlarm({ schedule, runs, now, scheduleChangedAt, copyFailed, tracker, newestPrices, pricesSince });
 	const watched = watchedSeries(schedule);
 	// Those with no Run at all, whatever the schedule's age.
 	const neverRun = staleSeries(watched, runs, now, new Date(0)).filter((series) => series.newest === null).length;
@@ -381,6 +492,9 @@ async function main(): Promise<void> {
 		);
 	}
 	console.log(`${now.toISOString()}: ${outcome.stale.length} of ${watched.length} watched Series stale`);
+	if (newestPrices !== null) console.log(`newest price file: ${newestPrices.path}, fetched at ${newestPrices.fetchedAt}${outcome.prices === null ? "" : ", stale"}`);
+	else if (pricesSince === null) console.log("no price file, and the prices workflow is not known to exist: not watched");
+	else console.log(`no price file; the prices workflow has existed since ${pricesSince.toISOString()}${outcome.prices === null ? ", so it is not stale yet" : ", stale"}`);
 	if (outcome.action !== "none" && !values["dry-run"]) {
 		console.log(outcome.action === "unchanged" ? `nothing changed since the last post on issue #${outcome.issue}` : `${outcome.action} issue #${outcome.issue}`);
 	}

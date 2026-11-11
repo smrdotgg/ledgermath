@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
@@ -7,6 +7,9 @@ import { join, relative, sep } from "node:path";
 
 import { copyRuns, CopyRefused } from "../scripts/copy-runs";
 import { type Bucket, type BucketObject, DirectoryBucket, etagHex } from "../scripts/lib/bucket";
+
+// They copy directories and run git; on a loaded machine that can take far longer than bun's five-second default.
+setDefaultTimeout(60_000);
 
 const SAMPLE = join(import.meta.dir, "samples", "scheduled");
 const scratch = mkdtempSync(join(tmpdir(), "copy-runs-test-"));

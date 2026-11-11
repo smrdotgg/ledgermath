@@ -684,4 +684,47 @@ A migrated benchmark is done only when **all** of these hold:
   load average at 3.7 to 5.9 on 4 CPUs: 10 passed, 322 tests each. All binaries keep
   their bytes. The `/dev/ledgermath` path has not yet run on a real box: AWS access was
   expired for this round.
+- **2026-11-11** — Step 6 of the build plan (#36, brief #45), prices, on branch `prices`,
+  not yet merged or run by the workflow. `scripts/fetch-prices.ts` follows AWS's public
+  offer index to the versioned `us-east-2` files of `AmazonEC2` (442 MB), `AmazonS3` and
+  `AWSDataTransfer`, streams them to disk, and cuts, in one pass that never holds a file
+  in memory (`scripts/lib/offer-file.ts`, a byte scanner of AWS's layout; no
+  dependency), the products rule set 1 selects (`scripts/lib/price-rules.ts`: each
+  scheduled type On-Demand Linux shared tenancy, gp3 storage, IOPS and throughput, S3
+  Standard storage and Tier1/Tier2 requests, data out to the internet and its global free
+  tier) with their On-Demand terms, verbatim: each record, parsed and written back, must
+  equal the file's text with its whitespace removed. Every rule says how many products it
+  must select and stops the fetch otherwise. The day's file,
+  `prices/<yyyy>/<mm>/<dd>/aws.json` in the Runs repository, names each source's
+  versioned URL, version, publication date, size and SHA-256, and is written through the
+  Runs repository's add-only writing (moved from the copy job to
+  `scripts/lib/runs-repository.ts`); a second run that day does nothing.
+  `scripts/check-prices.ts` downloads each source again and requires the recut to be the
+  file byte for byte. `prices.yml` runs at 03:17 and 15:17 UTC in `runs.yml`'s
+  concurrency group with the same deploy key and no AWS credentials, and the alarm also
+  reports a newest price file more than 48 hours old (or none, 48 hours after the
+  workflow first existed on main). The real fetch into a scratch clone took 12 s and
+  96 MB; the check passed; `m5.large` (SKU `8D49XP354UEYTHGM`, $0.096/h) and S3 Standard
+  GET (`DJEKB32FV4HNZJZY`, $0.0000004 per request) match the data AWS's EC2 and S3
+  pricing pages render, rate code for rate code. Found about AWS's files: the version
+  index lists one version per month or so, but unlisted versions back to 2019 are still
+  at their versioned URLs; the gp3 throughput record's unit is `GiBps-mo` at 40.96 while
+  its description says $0.04 per MiBps-month.
+- **2026-11-11** — Step 6, after an independent review. (1) `addFile`, which the copy job
+  and the price fetch both use, ignored the count `writeSync` returned: under `ulimit -f
+  16` the fetch "added" a price file of 16,384 bytes out of 34,010, the next fetch said
+  it existed, and under `ulimit -f 4` the copy job added eight Run files cut to 4,096
+  bytes that every later copy refused. Now it writes until every byte is written, flushes,
+  reads the file back through the same descriptor and compares length and bytes before
+  the file gets its name; a short write adds nothing and fails loudly. (2) The price
+  reader tracked brackets but not JSON's grammar, and kept no record of keys: a source
+  with `"products":{},"terms":{}` appended, which `JSON.parse` reads as empty, was cut
+  and certified, and the recompute check passed. It now checks the whole file against the
+  grammar (structure, strings and escapes, UTF-8, numbers and literals) and refuses any
+  repeated top-level member, key under `products` or `terms`, or SKU under a kind of
+  terms, and the cut refuses a repeated key inside a record it keeps; on the real files
+  its products and On-Demand terms still equal `JSON.parse`'s, all 109,733 and 109,644.
+  (3) Every test file the branch added or touched sets a sixty-second default per test
+  (`setDefaultTimeout`, per file); no repository-wide setting. Ten full `bun test` runs
+  under `nice -n 10`, with the load rising from 1.3 to 7.9, all passed.
 - _(agents: append your entry here, one per merged benchmark)_
