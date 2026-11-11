@@ -33,7 +33,7 @@ tests run it against a local stand-in (see "Testing").
 | `LM_PARAM_KEY` | `http_get/v1/<object_bytes>` | The object key, sent as the path, encoded as S3 wants (once, every byte but `A-Z a-z 0-9 - . _ ~ /` as `%XX`) |
 | `LM_PARAM_CONNECTION` | `new`, `reused` | `new`: every request resolves the name, connects and secures a connection of its own, inside its sample. `reused`: one kept connection, opened outside any sample, carries every request; it is reopened (outside a sample) when the server closes it |
 | `LM_PARAM_GAP_MEAN_MS` | `200` | The mean of the pause before each request after the first: exponential, from a fixed seed, so every Run pauses the same sequence |
-| `LM_PARAM_BUDGET_SECONDS` | `240` (`120` for 16 MiB) | No request starts after this long from the first; the Run then ends early |
+| `LM_PARAM_BUDGET_SECONDS` | `240` (`120` for 16 MiB) | No request starts once this long has passed since the Run began preparing its first request (signing it and, over a reused connection, opening that connection); the Run then ends early. See "What ends a Run early" |
 | `LM_PARAM_TIMEOUT_MS` | `10000` | The longest the binary waits for any one thing: the DNS reply, `connect`, and each TLS read or write (the sockets' `SO_RCVTIMEO` and `SO_SNDTIMEO`; the latter also bounds a blocking `connect` on Linux) |
 | `LM_PARAM_CA_FILE` | `/etc/pki/tls/certs/ca-bundle.crt` | The PEM bundle the server's chain is verified against: the box's own trust store |
 | `LM_PARAM_RESOLV_CONF` | `/etc/resolv.conf` | The file whose first IPv4 `nameserver` line is the resolver queried. An address may carry a port, `<address>:<port>`, which no system resolver reads; the tests' stand-in listens on one |
@@ -88,14 +88,14 @@ these points and nowhere else inside a sample:
 | `sample_started`, new connection | just before the DNS query's `send`, after the UDP socket, the TCP socket, the TLS object and the signed request are made and the budget is checked | nothing of the request has left the program |
 | `sample_started`, reused connection | just before the request's `SSL_write`, after the idle check, any reopening and the budget check | the same |
 | `name_resolved` | after `recv` returned the reply and the reply was parsed and judged (its ID, question, TC bit, rcode, and an A record at the end of the CNAME chain) | the program knows the address to connect to, or that the reply gives none. Formatting the records as text waits until the request has ended |
-| `connection_opened` | just after the blocking `connect` returns | the kernel has the server's SYN-ACK and has sent its ACK: TCP is established on our side |
+| `connection_opened` | just after the blocking `connect` returns, whether it succeeded or failed (refused, unreachable, or not established within `timeout_ms`) | on success, the kernel has the server's SYN-ACK and has sent its ACK: TCP is established on our side. On failure, `connect` has said so; `nodelay` and `local` are then absent, and the `request_failed` (or `connection_failed`) that follows has the same `t` |
 | `connection_secured` | just after `SSL_connect` returns 1 | our side of the handshake is done: the server's Finished is verified and ours is written. The server may not have read ours yet |
 | `certificate` | the same read as `connection_secured`, or as the failure that refused the chain | |
 | `request_sent` | just after `SSL_write` of the whole request returns | the encrypted request is in the kernel's send buffer, not necessarily on the wire. Written only when the write succeeded |
 | `first_byte` | just after the first `SSL_read` that returns more than 0 | the first decrypted bytes of the response are available to the program. The library has read and decrypted the whole first TLS record by then (and any post-handshake messages before it); this is not the arrival of the first byte from the network |
 | `response_headers` | just after the parser has taken the blank line that ends the header block, and parsed the block, before any body byte of the same read is handled | the program has the whole header block |
 | `response_ended` | after the read that completed the body (`Content-Length` reached, the chunked terminator and any trailers, or close_notify for a body framed by the connection's end) has been handled, and after the look for bytes beyond it | the program has the whole body |
-| `request_failed` | just after the call that failed returns, or as soon as the parser stops at the byte that breaks the response, or the bytes beyond the response are found | the failure is known |
+| `request_failed` | just after the call that failed returns, or as soon as the parser stops at the byte that breaks the response, or the bytes beyond the response are found. The clock is read before anything is made of the failure: a failed TLS call keeps only what the library returned and `errno`, and is classified, with its words formatted, after the read | the failure is known. For a failed `send`, `recv`, `connect` or TLS call, the moment that call returned |
 | `sample_ended` | the same read as `response_ended` or `request_failed` | |
 | `connection_closed` | after `close` returns, outside the sample | |
 
@@ -127,7 +127,7 @@ session and not a ticket.
 | Send | `request_sent` − `connection_secured` (reused: − `sample_started`) | encrypting and writing the request |
 | First byte | `first_byte` − `request_sent` | reading and decrypting the first record (at most 16 KiB) and any post-handshake messages (S3 sends none) |
 | Headers | `response_headers` − `first_byte` | 0 to microseconds: the header block usually arrives in the first read; parsing it |
-| Body | `response_ended` − `response_headers` | decrypting, copying and parsing every body byte, those that arrived in the header block's own record included |
+| Body | `response_ended` − `response_headers` | copying and parsing the body bytes that came in the header block's own record (already decrypted, before `first_byte`), and every later read with its decryption |
 | Transfer | `response_ended` − `first_byte` | Headers and Body together, the study's transfer |
 | Total | `sample_ended` − `sample_started` | |
 
@@ -160,7 +160,9 @@ never completed or did not parse; once it has, a failure is in `body`. `error` i
 - `protocol`: the response broke HTTP/1.1. That covers folding, a bare CR or LF, a header
   block over 64 KiB, disagreeing `Content-Length` values, a transfer coding other than
   chunked, an interim 1xx response, a malformed chunk or trailer line, a body larger than
-  the buffer, or bytes after the response's end (see "Bytes after a response").
+  the buffer, or bytes after the response's end (see "Bytes after a response"). A body may
+  fill the buffer exactly, in any framing; for one framed by the connection's end the binary
+  reads on to find the end, and only a further body byte makes it too large.
 - `system`: another error from the kernel.
 
 `detail` is the library's or the kernel's words. For TLS failures the library's own error
@@ -178,6 +180,8 @@ What had arrived is kept:
 - `content_length`, `body_bytes_received`: when the headers had completed; and for a 2xx
   status `body_sha256_received`, the digest of what had arrived (an error body leaves no
   digest, see below).
+- `trailers`, the trailer lines already read and checked when a chunked response fails
+  after them (bytes after its end, or a later trailer line that breaks the rules).
 - `peer_chain_sha256`, after a failed handshake whose server had sent its certificates: the
   fingerprints of the chain it showed, each new certificate also a `certificate` event, so a
   reader can tell which chain was refused.
@@ -207,9 +211,12 @@ to send them hundreds of milliseconds after its response for this to happen.
 Nothing retries. Every request is attempted, with two exceptions, after which the Run goes
 straight to its closing `observed`, `verified` and `finished`:
 
-- **The budget.** No request starts once `budget_seconds` have passed since the first. The
-  budget is asked immediately before every sample starts, after any reopening of a kept
-  connection, as well as before each pause.
+- **The budget.** No request starts once `budget_seconds` have passed. They are counted
+  from just before the first request is prepared: its signing, its socket and TLS object,
+  and over a reused connection the first opening of that connection, all fall inside the
+  budget. A first lookup or handshake that takes the whole budget therefore leaves a Run
+  that made no request. The budget is asked immediately before every sample starts, after
+  any reopening of a kept connection, as well as before each pause.
   Waiting is bounded: the last request can still take a few `timeout_ms` (the DNS reply,
   `connect`, the handshake, and then each read). A server that sends one byte just inside
   every `timeout_ms` is not cut off; the runner's timeout is the backstop. The schedule's
@@ -427,8 +434,9 @@ was running on it), with the Amazon Linux build. Medians of the counted requests
 - **TCP phase:** our 0.1 ms is the kernel's own work on our thread, sending the SYN and the
   final ACK through a virtual NIC.
 - **Body of a small object:** the body arrives with or just after the headers, so the Body
-  phase is almost entirely our decrypting and copying. Its wall time is not a network
-  number.
+  phase is almost entirely our own work on bytes already received: copying and parsing what
+  came in the header block's record, and reading and decrypting any record after it. Its
+  wall time is not a network number.
 - **Send on a reused connection:** five times a new connection's, all of it CPU. It is the
   first write after a 200 ms sleep, with cold caches.
 

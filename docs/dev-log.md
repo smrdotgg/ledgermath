@@ -759,4 +759,13 @@ A migrated benchmark is done only when **all** of these hold:
   every sample, and that one response split three ways gives the same events. The
   reviewers' reflection driver recovered something in 296 of 639 Runs before, 27 after
   (encodings the rule does not claim, listed in the README).
+- **2026-11-11** — Step 5, the timing reviewer's second pass (branch `http-get`). A body
+  framed by the connection's end that fills the body buffer exactly now completes: the
+  binary reads on for the end, and only a further body byte is "larger than the buffer"
+  (a 69,632-byte close-delimited 403 failed three times before). Trailer lines read before
+  a response fails are kept in the failure. A failed TLS call keeps only what the library
+  returned until the clock is read, so failure timestamps no longer include classifying
+  and formatting the error. The README's clock table now says that `connection_opened` is
+  also written for a failed `connect`, what the Body phase holds, and what the budget is
+  counted from (the first request's preparation, its first connection included).
 - _(agents: append your entry here, one per merged benchmark)_
