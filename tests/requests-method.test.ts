@@ -180,7 +180,7 @@ describe("the histogram", () => {
 		expect(sum.tally()).toEqual(tallyOf(runs.flat()));
 	});
 
-	test("a percentile read from a tally is within 0.79% of the exact one", () => {
+	test("a percentile read from a tally is within 0.78% of the exact one", () => {
 		const next = lcg(11);
 		for (const n of [2, 10, 37, 200, 1000, 5000]) {
 			const values = Array.from({ length: n }, () => Math.floor(150_000 + 60_000_000 * next() ** 6));

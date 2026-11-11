@@ -130,7 +130,7 @@ export function binLower(bin: number): number {
  * itself for a bin of width 1, else its lower bound plus half its width. A
  * time in the bin is at most half a width from it, and a width is at most
  * 1/64 of the bin's lower bound, so the error is at most 1/128 of the time
- * (0.79%).
+ * (0.78%).
  */
 export function binValue(bin: number): number {
 	const width = binWidth(bin);

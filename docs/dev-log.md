@@ -823,4 +823,33 @@ A migrated benchmark is done only when **all** of these hold:
   those Runs, 4.5 KB each on average). Run files: 5.5 to 12.8 KB before for the small
   benchmarks, 1.7 to 2.0 KB now; `http_get`'s, from 208 to 985 KB with events inside to
   3.8 KB.
+- **2026-11-11** — Step 5, item 8 of the brief (#43): the Method for Series whose samples
+  are requests, on branch `request-percentiles`. It is Method `requests` version 1
+  (`methods/requests/v1/`), not version 2 of `series`: `series` v1 goes on charting every
+  Series, `http_get`'s included, one number per Run, byte for byte as on `main` for the real
+  Runs repository (316 Runs, compared with `cmp`, records kept or not). A Series is the new
+  Method's when any of its Runs' streams holds a `response_ended` or `request_failed` with a
+  `request`. Per request, the eight phases from the timestamps the binary's README names;
+  per Run, each phase's count, least, greatest and percentiles exactly, a percentile only
+  when n × (1000 − q) ≥ 1000, with how many requests are ranked at or above it; pooled
+  across the Series and series v1's groups through fixed histograms (64 bins per doubling,
+  so within 0.78%), with the figures as they stood through each Run kept for citations of
+  an earlier moment; broken down by address block, cipher, TLS version and group where more
+  than one occurs; failed requests counted by phase and kind, never timed. A Run that exited
+  4 counts; one cut short, killed, exiting 1, or breaking the request contract is shown with
+  why. Each Method now reduces a stream once to a record kept under
+  `<method>-v<version>-r<revision>/<stdout hex>` (`methods/records.ts`), and the workflow
+  caches those and the dump blobs, not the stdout blobs. The page gains a part per Series of
+  requests (time charts of each Run's median, 95th and 99th of the whole request and of the
+  first byte, cumulative distributions with the tail given room, breakdowns, failures); the
+  lookup tool, citations (`[lm:requests/<id>/<phase>/<stat>@v1,<moment>]`), checker and skill
+  learn the new figures. On the ten real Runs of 2026-11-11 21:33 to 21:38 UTC: 1,680
+  requests, none failed; 4 KiB over a new connection 27.3 and 27.9 ms at the median and 43.9
+  and 37.6 ms at the 99th (m5.large, c8a.2xlarge), each 99th resting on the 2 slowest of 200
+  requests. The brief's first look gave 54 and 47 ms for those: it took the 199th of 200
+  times, where R type 7 puts the 99th between the 198th and 199th, 1% of the way. The
+  front ends at 52.219.0.0/16 connect in 0.28 to 0.39 ms at the median, those at 3.5.0.0/16
+  in 0.46 to 0.91 ms and those at 16.12.0.0/16 in 0.91 to 1.03 ms; the first byte does not
+  differ by block. Records: 3.5 KB (series) and 5 to 16 KB (requests) per `http_get` Run,
+  against 150 to 750 KB of stream.
 - _(agents: append your entry here, one per merged benchmark)_

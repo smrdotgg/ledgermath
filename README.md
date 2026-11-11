@@ -28,9 +28,9 @@ until step 4 of the plan replaces it.
 | `scripts/check-targets.ts` | Checks `schedule.json`'s targets' `vcpus`, their zone offerings and `vcpu_quota.limit` against AWS, read-only; needs AWS access, so not part of `bun test` |
 | `scripts/box-in-container/` | Boots `runner/box.sh` in Amazon Linux 2023 with S3 and shutdown stubbed, in several scenarios, `http_get` against a stand-in for S3 among them |
 | `infra/runs/` | The `-runs` SST stage: stack, launch Lambda, reaper, user-data, the schedule's check (`schedule.ts`), the targets and their launch schedules (`placement.ts`), the workflow's AWS role, the `s3_fixtures` Service's bucket, objects and role (`fixtures.ts`), AWS-LC's source archive (`tls-archive.ts`) |
-| `methods/` | Methods, versioned: `v1/` turns Runs into Derivations (`methods/README.md`) |
+| `methods/` | Methods, versioned, turning Runs into Derivations (`methods/README.md`): `series` v1 (`v1/`) one number per Run for every Series; `requests` v1 (`requests/v1/`) each phase of a request across requests, for the Series of requests; `records.ts` the reduced record of a stream, kept between runs |
 | `scripts/copy-runs.ts` | The copy job: the bucket's Run files and boot summaries into the Runs repository |
-| `scripts/derive.ts`, `scripts/build-page.ts` | Run a Method over the Runs; turn its Derivations into the page |
+| `scripts/derive.ts`, `scripts/build-page.ts` | Run the Methods over the Runs; turn their Derivations into the page |
 | `scripts/alarm.ts` | Opens, or comments on, one issue when a watched Series has had no Run for 48 hours, or the newest price file is more than 48 hours old |
 | `.github/workflows/runs.yml` | All four on a schedule: copy, push, derive, page, alarm |
 | `scripts/fetch-prices.ts`, `scripts/check-prices.ts` | Make the day's price file from AWS's public price lists; check a price file by downloading its sources again and cutting them again |
@@ -590,12 +590,19 @@ runner manifest against it too.
 
 Step 3 (#39). The Run files and boot summaries are copied, byte for byte and under the
 same paths, into the private repository `smrdotgg/ledgermath-runs`; blobs stay in the
-bucket and are fetched by hash when needed. Method version 1 (`methods/README.md`) turns
-the Runs into a file of Derivations, one per Series. The page is one static HTML file
-built from that file: one chart per Series, every point a link to its Run file in the
-Runs repository, percentiles with the number of Runs behind them, groups by colour and
-shape, failed Runs as crosses, and what differed between consecutive Runs. It opens from
-disk with no network. Until step 7 it is a build artifact, not hosted.
+bucket and are fetched by hash when needed. Method series v1 (`methods/README.md`) turns
+the Runs into a file of Derivations, one per Series, and Method requests v1 another, one
+per Series whose samples are requests (`http_get`'s): each phase of a request (name
+lookup, connect, TLS, send, first byte, headers, body, the whole request) across the
+requests, within each Run and pooled, with 99th and 99.9th percentiles where the requests
+support them, a histogram of each phase, the breakdown by the server's address block and
+the cipher, and failed requests counted. The page is one static HTML file built from both:
+one chart per Series, every point a link to its Run file in the Runs repository,
+percentiles with the number of Runs behind them, groups by colour and shape, failed Runs as
+crosses, and what differed between consecutive Runs; then, for each Series of requests,
+each Run's median, 95th and 99th percentile of the whole request and of the first byte over
+time, and every phase's distribution. It opens from disk with no network. Until step 7 it
+is a build artifact, not hosted.
 
 ### Locally
 
@@ -616,12 +623,13 @@ git -C /tmp/ledgermath-runs remote set-url --push origin no-push   # a scratch c
 # back the same; a write that comes up short stops the job and adds no part of the file.
 bun scripts/copy-runs.ts --bucket "$BUCKET" /tmp/ledgermath-runs
 
-# The Method, with blobs fetched by hash and kept in a cache.
+# The Methods, with dump blobs fetched by hash and kept in a cache, and each stream reduced
+# once to a record per Method and kept: a stream is fetched again only for a Run without one.
 bun scripts/derive.ts --runs /tmp/ledgermath-runs --bucket "$BUCKET" --cache /tmp/blob-cache \
-  --out /tmp/page/derivations.json
+  --records /tmp/records --out /tmp/page/derivations.json --requests-out /tmp/page/requests-derivations.json
 
 # The page.
-bun scripts/build-page.ts /tmp/page/derivations.json /tmp/page/index.html
+bun scripts/build-page.ts /tmp/page/derivations.json /tmp/page/index.html --requests /tmp/page/requests-derivations.json
 
 # The alarm, posting nothing; --now sets the clock, --copy says whether the copy job worked,
 # --schedule-changed-at says when main last changed schedule.json, --prices-since when the
@@ -639,7 +647,8 @@ bun scripts/build-page.ts /tmp/samples.json /tmp/samples.html
 ```
 
 The same Runs and blobs give the same Derivations, byte for byte, whatever the blobs come
-from, so a Derivation is checked by computing it again and comparing with `cmp`.
+from and whether the records were kept or not, so a Derivation is checked by computing it
+again and comparing with `cmp`.
 
 ### The workflow
 
@@ -647,9 +656,12 @@ from, so a Derivation is checked by computing it again and comparing with `cmp`.
 six hours, and by hand (`workflow_dispatch`), one run at a time. It checks out this
 repository with its whole history (for the alarm's `--schedule-changed-at`), takes AWS
 credentials through OIDC, checks out `smrdotgg/ledgermath-runs` with the deploy key,
-runs the copy job, commits and pushes what it added, runs the Method, builds the page,
-uploads the page and the Derivations as the artifact `page`, and runs the alarm with the
-workflow's own token. The alarm runs even when an earlier
+runs the copy job, commits and pushes what it added, runs both Methods, builds the page,
+uploads the page and both files of Derivations as the artifact `page`, and runs the alarm
+with the workflow's own token. Between runs it keeps, in GitHub's cache, the dump blobs it
+fetched and each stream's reduced record per Method (`.cache/records`), never the stdout
+blobs: a stream is fetched only for a Run no Method has a record of yet, about 2 MB of
+records a day where the stdout blobs were about 44 MB. The alarm runs even when an earlier
 step failed, as long as the Runs repository was checked out, and is told whether the copy
 and its push succeeded on this pass.
 
@@ -874,15 +886,16 @@ LedgerMath with its citation or marked as an assumption, the arithmetic shown, a
 from the 5th and 95th percentiles.
 
 `scripts/lookup.ts` is what it reads LedgerMath with. Its input is a location holding
-`derivations.json` (the Method's output), `runs/` and `prices/`: a clone of the Runs
-repository with a derivations file beside `runs/`, or a base web address serving the same
-paths (a web address cannot be listed, so the newest price file there is found by trying
+`derivations.json` (Method series v1's output), `requests-derivations.json` (Method
+requests v1's, if there is one), `runs/` and `prices/`: a clone of the Runs repository with
+the derivations files beside `runs/`, or a base web address serving the same paths (a web address cannot be listed, so the newest price file there is found by trying
 each of the last 14 days). It derives no number of its own and reads no clock.
 
 ```bash
 bun scripts/lookup.ts --data DIR about                  # what the data hold
 bun scripts/lookup.ts --data DIR series memory_read     # the Series matching every word
-bun scripts/lookup.ts --data DIR show cdd7309941eb      # one Series: p5, p50, p95, groups, Runs
+bun scripts/lookup.ts --data DIR show cdd7309941eb      # one Series: p5, p50, p95, groups, Runs; and for a
+                                                        # Series of requests each phase's p50 to p99.9 across requests
 bun scripts/lookup.ts --data DIR prices c6i.8xlarge     # prices matching every word, in AWS's words
 bun scripts/check-answer.ts --data DIR --question q.txt answer.md
 ```
@@ -893,13 +906,21 @@ a Series' percentile or its number of counted Runs, with the Run files behind it
 `runs/<yyyy>/<mm>/<dd>/<id>.json`; `[lm:prices/<yyyy>/<mm>/<dd>/aws.json#<sku>/<rate code>]`
 for a price, the file, SKU and rate code of "Citing a price" above (`/beginRange` or
 `/endRange` after it for its tier's bounds); `[assumption: <where it comes from>]` for
-anything else.
+anything else. A figure across a Series' requests is
+`[lm:requests/<id>/<phase>/<count|min|p50|p90|p95|p99|p99.9|max>@v1,<moment>]`, how many
+requests are ranked at or above a percentile `…/<phase>/<p99>/at_or_above@v1,<moment>`, how
+many counted Runs and failed requests `[lm:requests/<id>/runs@v1,<moment>]` and
+`…/failed[/<phase>/<kind>]@v1,<moment>`, each also of one group (`requests/<id>/group/<G>/…`)
+or of the requests with one value of a fact they record
+(`requests/<id>/by/address_block/52.219.0.0/16/…`, as of the newest Run only).
 
 `<moment>` is the start of the Series' newest Run, to the second: a citation is of the
 Series as it stood then, under Method series version 1. When more Runs have arrived, the
 checker recomputes the cited statistic from the Runs that had started by that moment (each
 Run's number depends on that Run alone, so the population then is the Derivation's points
-up to it, through Method version 1's own `percentile`). It is the Series' own newest Run,
+up to it, through Method version 1's own `percentile`). A figure across requests, pooled
+from histograms, is checked against the pooled figures Method requests v1 keeps on each
+Run, as they stood through it. It is the Series' own newest Run,
 not the file's, because boots of one instance type never overlap and upload all their Runs
 at once, while another type's boot still running when the Derivations were made can add
 Runs that started earlier.

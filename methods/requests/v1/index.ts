@@ -17,7 +17,7 @@
  * supported percentiles over its succeeded counted requests, exactly. Pooled,
  * across the counted Runs of the Series and of each group (series v1's split
  * facts): the same statistics read from the sum of the Runs' tallies, within
- * 0.79% (numbers.ts), and each phase's histogram; broken down by what each
+ * 0.78% (numbers.ts), and each phase's histogram; broken down by what each
  * request recorded of its connection, where that took more than one value;
  * failures counted by phase and kind, never in a time.
  *
