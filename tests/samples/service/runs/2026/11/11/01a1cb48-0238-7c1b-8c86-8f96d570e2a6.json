@@ -1,0 +1,90 @@
+{
+  "schema": "ledgermath.run/1",
+  "id": "01a1cb48-0238-7c1b-8c86-8f96d570e2a6",
+  "boot": "dcd56b11-cf5d-44ed-88b2-439006c8343e",
+  "started_at": "2026-11-11T15:44:16.440029716Z",
+  "ended_at": "2026-11-11T15:44:16.447801916Z",
+  "benchmark": "fake",
+  "params": {
+    "n": 2
+  },
+  "samples": 1,
+  "service": {
+    "name": "s3_fixtures",
+    "inputs": {
+      "endpoint": "https://ledgermath-test-fixtures.s3.us-east-2.amazonaws.com",
+      "region": "us-east-2"
+    },
+    "secret_inputs": [
+      "aws_access_key_id",
+      "aws_secret_access_key",
+      "aws_session_token"
+    ]
+  },
+  "source_commit": "0000000000000000000000000000000000000000",
+  "source": "sha256:89533939dcf7240cbb7a8d109386497342d4321a1db5faed11d9440b430e1921",
+  "binary": {
+    "blob": "sha256:94e3a73647dfef9797d2d075b05fa3df656b1e0c591b985105217d225bc24156",
+    "build": "static",
+    "compiler": "fake-cc 1.0",
+    "command": "mkdir -p build/static\ncp fake.sh build/static/fake\nchmod +x build/static/fake",
+    "resolved_flags": "sha256:19b9cab4e16a04ba95aaefd6bc607ab19ea626fd479403cc75b0b0ce570d8b96"
+  },
+  "provider": {
+    "name": "aws",
+    "instance_type": "m5.large",
+    "region": "us-east-2",
+    "availability_zone": "us-east-2c",
+    "availability_zone_id": "use2-az3",
+    "image_id": "ami-0123456789abcdef0",
+    "instance_id": "i-0123456789abcdef0"
+  },
+  "environment": {
+    "before": "sha256:982fded0ec7cf867ea012b2ccde6152b684c55b120a96d1238fdb4cd0857ab2f",
+    "after": "sha256:3385cebad5564a9f1a576bd4288a3f91f1d0e4a1a553a8758e52852ee6958b72"
+  },
+  "runner": "sha256:addbab75b9320702b7e052be4943e07521e745ff5386522a7326f1bc4be712d1",
+  "exit": {
+    "code": 0
+  },
+  "events": [
+    {
+      "event": "started",
+      "t": 1,
+      "schema": "ledgermath.events/1",
+      "wall_utc": "2026-11-11T00:00:00.000000000Z",
+      "clock": "CLOCK_MONOTONIC_RAW",
+      "clock_read_ns": 20
+    },
+    {
+      "event": "observed",
+      "t": 2,
+      "values": {
+        "service_variables": "LM_SERVICE_AWS_ACCESS_KEY_ID LM_SERVICE_AWS_SECRET_ACCESS_KEY LM_SERVICE_AWS_SESSION_TOKEN LM_SERVICE_ENDPOINT LM_SERVICE_REGION "
+      }
+    },
+    {
+      "event": "sample_started",
+      "t": 3,
+      "sample": 0,
+      "warmup": false,
+      "repetitions": 1
+    },
+    {
+      "event": "sample_ended",
+      "t": 4,
+      "sample": 0
+    },
+    {
+      "event": "verified",
+      "t": 5,
+      "checksum": "0x0000000000000000"
+    },
+    {
+      "event": "finished",
+      "t": 6
+    }
+  ],
+  "stdout": "sha256:e157d58e56608daf7ba05271efe6bff5d153a6017dc9b6d3157b567375c45235",
+  "stderr": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+}

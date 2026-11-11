@@ -31,6 +31,25 @@
       "additionalProperties": { "anyOf": [{ "type": "string" }, { "type": "number" }, { "type": "boolean" }] }
     },
     "samples": { "description": "Delivered to the binary as LM_SAMPLES.", "type": "integer", "minimum": 1 },
+    "service": {
+      "description": "Present when the schedule entry named a Service the benchmark measures, such as s3_fixtures (the stage's private bucket of Fixtures). Its inputs were delivered to the binary beside its params, each as LM_SERVICE_<KEY>. `inputs` holds every input that is not secret, exactly as delivered; `secret_inputs` names the ones that are, such as short-lived keys, whose values are never written anywhere: not here, not in a blob, a dump, the boot summary or a log.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "inputs", "secret_inputs"],
+      "properties": {
+        "name": { "description": "The Service, as the schedule entry names it.", "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
+        "inputs": {
+          "type": "object",
+          "propertyNames": { "pattern": "^[a-z][a-z0-9_]*$" },
+          "additionalProperties": { "type": "string" }
+        },
+        "secret_inputs": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" }
+        }
+      }
+    },
     "source_commit": {
       "description": "The git commit the source archive was made from.",
       "type": "string",

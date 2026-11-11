@@ -13,6 +13,15 @@ environment, and it records what happened without judging it: a crash, a
 timeout, and a clean exit all produce a Run. The executions of entries for
 other instance types are listed in the boot summary under left_out.
 
+An entry may name a Service it measures ("service": "s3_fixtures"). Its
+executions then get the Service's inputs as LM_SERVICE_<NAME> beside their
+parameters, and their Runs say which inputs were delivered: the values of
+those that are not secret, the names alone of those that are. The secret ones
+(short-lived keys, from an AssumeRole made once per boot when an entry first
+needs them) go into that execution's environment and nowhere else. When they
+cannot be had, the entry's executions are not run, the boot summary says why
+under not_run, and the rest of the boot goes on.
+
 Everything is written under --out, ready to be copied to the bucket as it is:
 
     runs/<yyyy>/<mm>/<dd>/<id>.json    one Run (schemas/run.schema.json)
@@ -33,6 +42,7 @@ import glob
 import hashlib
 import json
 import os
+import re
 import secrets
 import signal
 import subprocess
@@ -599,6 +609,121 @@ def stopping():
     return Stop.signal is not None
 
 
+# ---- Services ----
+
+class Secret:
+    """A value that may reach a benchmark's environment and nowhere else. It
+    prints as <withheld> in a log line, a repr, an exception or a traceback,
+    and json refuses it, so only reveal() gives it up."""
+
+    __slots__ = ("_value",)
+
+    def __init__(self, value):
+        self._value = value
+
+    def reveal(self):
+        return self._value
+
+    def __repr__(self):
+        return "<withheld>"
+
+    __str__ = __repr__
+
+
+class ServiceUnavailable(Exception):
+    """Why a Service's inputs cannot be had. Its message never holds a secret."""
+
+
+S3_FIXTURES = "s3_fixtures"
+KEY_ID = re.compile(r"^[A-Z0-9]{16,128}$")
+
+
+class S3Fixtures:
+    """The s3_fixtures Service: the stage's private bucket of Fixtures
+    (infra/runs/fixtures.ts). Its inputs reach a benchmark as LM_SERVICE_<NAME>:
+    the endpoint and the Region as the stage gave them (the user-data's
+    LEDGERMATH_FIXTURES_*), and three secret ones, short-lived keys from one
+    AssumeRole of the fixtures reader role per boot, made through the aws CLI
+    when an entry first needs them. The keys stay in this object's memory
+    until a binary's environment is built from them; they are never written
+    to a file, a log line or this process's own environment, and never put on
+    a command line. A session assumed from the box's own role (role chaining)
+    lasts at most an hour, which outlasts what is left of a boot."""
+
+    SECRET_INPUTS = ("aws_access_key_id", "aws_secret_access_key", "aws_session_token")
+
+    def __init__(self, endpoint, region, role):
+        self.endpoint, self.region, self.role = endpoint, region, role
+        self.keys = None
+        self.failure = None
+        self.record = None
+
+    def inputs(self, session_name):
+        """The inputs not secret (as given) and the secret ones (as Secrets),
+        assuming the role the first time; raises ServiceUnavailable, the same
+        reason every time, when they cannot be had."""
+        if self.keys is None and self.failure is None:
+            try:
+                self.keys = self._assume(session_name)
+                log("s3_fixtures: assumed %s as %s; its keys expire at %s" % (self.role, session_name, self.record["expires_at"]))
+            except ServiceUnavailable as error:
+                self.failure = str(error)
+                self.record = {"failed": self.failure}
+        if self.failure is not None:
+            raise ServiceUnavailable(self.failure)
+        return {"endpoint": self.endpoint, "region": self.region}, self.keys
+
+    def _assume(self, session_name):
+        arguments = ["aws", "sts", "assume-role", "--role-arn", self.role, "--role-session-name", session_name,
+                     "--duration-seconds", "3600", "--region", self.region, "--output", "json"]
+        asked_at = time.time_ns()
+        try:
+            done = subprocess.run(arguments, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                  timeout=90, env=dict(os.environ, AWS_PAGER=""))
+        except (OSError, subprocess.TimeoutExpired) as error:
+            raise ServiceUnavailable("%s failed: %s" % (command_key(arguments[:3]), error)) from None
+        if done.returncode != 0:
+            said = done.stderr.decode("utf-8", "replace").strip()[-1000:]
+            raise ServiceUnavailable("%s exited %d: %s" % (command_key(arguments[:3]), done.returncode, said))
+        # What it printed holds the keys: it is read here and never recorded,
+        # whatever shape it has.
+        try:
+            credentials = json.loads(done.stdout.decode("utf-8"))["Credentials"]
+            values = [credentials[name] for name in ("AccessKeyId", "SecretAccessKey", "SessionToken")]
+            expiration = credentials["Expiration"]
+        except (ValueError, KeyError, TypeError, IndexError):
+            raise ServiceUnavailable("%s printed no Credentials with AccessKeyId, SecretAccessKey, SessionToken and Expiration "
+                                     "(%d bytes, not recorded)" % (command_key(arguments[:3]), len(done.stdout))) from None
+        if not (all(isinstance(value, str) and value for value in values) and KEY_ID.match(values[0])
+                and isinstance(expiration, str)):
+            raise ServiceUnavailable("%s printed Credentials that are not shaped as keys (not recorded)" % command_key(arguments[:3]))
+        self.record = {"role_session_name": session_name, "asked_at": rfc3339(asked_at), "expires_at": expiration}
+        return dict(zip(self.SECRET_INPUTS, (Secret(value) for value in values)))
+
+
+class Services:
+    """The Services the stage gave this box, by the name a schedule entry uses."""
+
+    def __init__(self, fixtures_endpoint, fixtures_region, fixtures_role, boot):
+        given = [fixtures_endpoint, fixtures_region, fixtures_role]
+        self.fixtures = S3Fixtures(*given) if all(given) else None
+        self.session_name = ("ledgermath-" + boot)[:64] if boot else "ledgermath-box"
+
+    def inputs(self, name):
+        if name != S3_FIXTURES:
+            raise ServiceUnavailable("this runner knows no Service named %r" % name)
+        if self.fixtures is None:
+            raise ServiceUnavailable("the stage gave this box no s3_fixtures values (LEDGERMATH_FIXTURES_ENDPOINT, "
+                                     "LEDGERMATH_FIXTURES_REGION and LEDGERMATH_FIXTURES_ROLE)")
+        return self.fixtures.inputs(self.session_name)
+
+    def records(self):
+        """What became of each Service an entry asked for, for the boot summary: never a key."""
+        if self.fixtures is None or self.fixtures.record is None:
+            return {}
+        return {S3_FIXTURES: self.fixtures.record}
+
+
 # ---- one execution ----
 
 def param_text(value):
@@ -738,6 +863,10 @@ def main():
     parser.add_argument("--cpuid", help="the built runner/cpuid.c; without it the dump has no cpuid section")
     parser.add_argument("--provision-record", help="runner/provision.py's record, dumped as the section provision")
     parser.add_argument("--quick", action="store_true", help="developer mode: pass --quick to every binary")
+    # The s3_fixtures Service's values, which the box's user-data exports.
+    for name, variable in (("endpoint", "ENDPOINT"), ("region", "REGION"), ("role", "ROLE")):
+        parser.add_argument("--fixtures-" + name, default=os.environ.get("LEDGERMATH_FIXTURES_" + variable) or None,
+                            help="the s3_fixtures Service's %s (default: $LEDGERMATH_FIXTURES_%s)" % (name, variable))
     args = parser.parse_args()
 
     root = os.path.abspath(args.root)
@@ -759,6 +888,7 @@ def main():
         % (boot, json.dumps(provider), args.source_commit, source, runner))
     once = boot_sections(blobs, imds, args.provision_record)
     log("taken once for this boot: %s" % ", ".join("%s %s" % item for item in sorted(once.items())))
+    services = Services(args.fixtures_endpoint, args.fixtures_region, args.fixtures_role, boot)
 
     boot_started = time.time_ns()
     summary = {
@@ -775,9 +905,12 @@ def main():
         "left_out": [],
     }
     day = datetime.datetime.fromtimestamp(boot_started // 10 ** 9, datetime.timezone.utc)
+    unavailable = []  # executions not run because their Service's inputs could not be had
 
-    def not_run(name, build_name, params):
-        summary["not_run"].append({"benchmark": name, "build": build_name, "params": params})
+    def not_run(name, build_name, params, reason=None):
+        if reason is None:
+            reason = "the runner was told to stop by %s" % signal.Signals(Stop.signal).name
+        summary["not_run"].append({"benchmark": name, "build": build_name, "params": params, "reason": reason})
 
     instance_type = provider.get("instance_type")
     # (benchmark, build) -> what build() returned, or None when it failed. Two
@@ -829,6 +962,21 @@ def main():
                         continue
                     environment = {"LM_PARAM_" + key.upper(): param_text(value) for key, value in params.items()}
                     environment["LM_SAMPLES"] = str(benchmark["samples"])
+                    service = benchmark.get("service")
+                    if service is not None:
+                        # This execution's environment alone gets the Service's
+                        # inputs; the Run records the names of the secret ones.
+                        try:
+                            public, secret = services.inputs(service)
+                        except ServiceUnavailable as error:
+                            log("NOT RUN %s %s %s: %s" % (name, build_name, json.dumps(params), error))
+                            not_run(name, build_name, params, "%s: %s" % (service, error))
+                            unavailable.append(name)
+                            continue
+                        for key, value in public.items():
+                            environment["LM_SERVICE_" + key.upper()] = value
+                        for key, value in secret.items():
+                            environment["LM_SERVICE_" + key.upper()] = value.reveal()
 
                     before = take_dump(blobs, cpuid_tool, imds, once)
                     if stopping():
@@ -854,6 +1002,10 @@ def main():
                         "benchmark": name,
                         "params": params,
                         "samples": benchmark["samples"],
+                    }
+                    if service is not None:
+                        run["service"] = {"name": service, "inputs": public, "secret_inputs": list(secret)}
+                    run.update({
                         "source_commit": args.source_commit,
                         "source": source,
                         "binary": one["record"],
@@ -864,7 +1016,7 @@ def main():
                         "events": events,
                         "stdout": blobs.put(stdout),
                         "stderr": blobs.put(stderr),
-                    }
+                    })
                     if events_error is not None:
                         run["events_error"] = events_error
 
@@ -889,6 +1041,8 @@ def main():
         # that failed, still says what it ran and what it did not.
         if stopping():
             summary["stopped_by"] = Stop.signal
+        if services.records():
+            summary["services"] = services.records()
         summary["ended_at"] = rfc3339(time.time_ns())
         boot_path = os.path.join(out, "boots", day.strftime("%Y/%m/%d"), (boot or "unknown") + ".json")
         write_atomically(boot_path, as_json(summary))
@@ -897,7 +1051,7 @@ def main():
 
     if Stop.signal is not None:
         return 128 + Stop.signal
-    return 1 if summary["build_failures"] else 0
+    return 1 if summary["build_failures"] or unavailable else 0
 
 if __name__ == "__main__":
     sys.exit(main())

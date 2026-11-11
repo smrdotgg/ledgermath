@@ -46,6 +46,8 @@ export interface Run {
 	benchmark: string;
 	params: Record<string, ParamValue>;
 	samples: number;
+	/** The Service whose inputs were delivered beside the params: those not secret by value, the secret ones by name. */
+	service?: { name: string; inputs: Record<string, string>; secret_inputs: string[] };
 	source_commit: string;
 	source: string;
 	binary: { blob: string; build: string; compiler: string; command: string; resolved_flags: string };

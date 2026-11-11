@@ -1,8 +1,8 @@
 # Sample Runs
 
-Three directories laid out like a `-runs` stage's bucket (`runs/`, `blobs/sha256/`,
-`boots/`), used by `tests/schemas.test.ts` and readable as examples of the record. All
-three were recorded by `tests/samples/record.sh` on 2026-11-10 from commit `fc12694`,
+Directories laid out like a `-runs` stage's bucket (`runs/`, `blobs/sha256/`,
+`boots/`), used by `tests/schemas.test.ts` and readable as examples of the record. The
+first three below were recorded by `tests/samples/record.sh` on 2026-11-10 from commit `fc12694`,
 the commit before the one that added them, in `amazonlinux:2023.12.20260710.0`.
 
 | Directory | What it holds | How it was recorded |
@@ -76,6 +76,25 @@ committed. `omitted-blobs.json` lists each with its size. The source archive can
 rebuilt: `git archive --format=tar.gz fc12694 | sha256sum` prints
 `47e2fbfd596df3359e093ba5ee3fff2b3fd6304b028b3468c8391b81a0626e5c` with git 2.43. Without
 it, `scripts/check-runs.ts` cannot check the runner manifests, and says so.
+
+## `service/`: an entry that measures a Service
+
+`service/` holds 3 Runs of a boot whose schedule (`service/schedule.json`) has an entry
+naming the `s3_fixtures` Service. It shows the record's `service` object: the endpoint and
+Region delivered by value, the three keys by name only. It was made by
+`python3 tests/service-runs.py keys DIR` on 2026-11-11, and `DIR/out/{runs,blobs,boots}`
+copied here unchanged:
+
+- the benchmark is a stand-in, a shell script that prints a valid stream naming the
+  `LM_SERVICE_*` variables it got;
+- the keys came from a stand-in `aws` CLI and are not credentials; the test asserts that
+  no file here holds one, in any of the forms `scripts/lib/secret-search.ts` looks for;
+- the dump, the EC2 API and IMDS were stubbed, so the dumps hold a stub section and the
+  provider fields are the documentation's example ids;
+- the source archive is the stand-in tree's, so the runner manifests check out.
+
+It describes no machine. Re-record it with the same command and copy, when `runner/run.py`
+changes what such a Run holds.
 
 ## Re-recording
 

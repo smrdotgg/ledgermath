@@ -251,6 +251,15 @@ describe("the schedule's check", () => {
 			expect(problemsAfter((s) => (entry(s, 1).instance_types = []))[0]).toStartWith("benchmarks[1]: instance_types, when given, must be a non-empty list");
 			expect(problemsAfter((s) => (entry(s, 1).instance_types = "m5.large" as never))[0]).toStartWith("benchmarks[1]: instance_types, when given");
 		});
+
+		test("may name a Service its benchmark measures, one runner/run.py can give", () => {
+			expect(problemsAfter((s) => (entry(s, 0).service = "s3_fixtures"))).toEqual([]);
+			expect(problemsAfter((s) => (entry(s, 0).service = "s3" as never))).toEqual([
+				'benchmarks[0]: service must be one of s3_fixtures, the Services runner/run.py can give, got "s3"',
+			]);
+			expect(problemsAfter((s) => (entry(s, 0).service = ["s3_fixtures"] as never))[0]).toStartWith("benchmarks[0]: service must be one of");
+			expect(problemsAfter((s) => (entry(s, 0).services = "s3_fixtures"))).toEqual(['benchmarks[0]: unknown key "services"']);
+		});
 	});
 
 	describe("a parameter set", () => {
