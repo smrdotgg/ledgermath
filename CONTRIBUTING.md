@@ -131,9 +131,20 @@ python3 scripts/check-scratch.py sort
 scripts/box-in-container/run.sh --worktree /tmp/box-test
 ```
 
-`check-scratch.py` decides whether this machine can provide a parameter set that asks for
-CPUs; if a new benchmark can refuse a set, teach its `refusal()` the binary's line. GitHub
-runs `bun test` and `check-scratch.py` on every push (`.github/workflows/check.yml`).
+A benchmark that can refuse a parameter set (exit 2 after `started` alone, as above) needs
+two additions to `scripts/check-scratch.py`, or `check-scratch.py` fails it on any machine
+that lacks the capability:
+
+- `unmet(name, params, topology)` decides, from this machine and before running the binary,
+  that it cannot provide what the set asks for, and returns why (`mutex` reads the CPU
+  topology in `/sys`, `disk_read_io_uring` reads `kernel.io_uring_disabled`). It returns
+  `None` for a benchmark it does not know, and a set with no reason must then run and pass:
+  its exit 2 is a failure, and nothing else is consulted.
+- `refusal(name, params)` gives the start of the stderr line with which the binary refuses
+  that set. Only when `unmet()` gave a reason does the check accept the run as skipped, and
+  only if the binary exited 2, printed `started` alone, and wrote that line.
+
+GitHub runs `bun test` and `check-scratch.py` on every push (`.github/workflows/check.yml`).
 
 ## What a pull request says
 
