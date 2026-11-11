@@ -25,13 +25,12 @@
  * Credentials for --bucket come from the environment (scripts/lib/bucket.ts).
  */
 
-import { randomBytes } from "node:crypto";
-import { closeSync, fsyncSync, linkSync, lstatSync, mkdirSync, openSync, readFileSync, type Stats, unlinkSync, writeSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 
 import { type Bucket, type BucketObject, DirectoryBucket, md5Of, S3Bucket } from "./lib/bucket";
-import { RUNS_BUCKET_REGION } from "./lib/runs-repository";
+import { addFile, lstatOrNull, RUNS_BUCKET_REGION, symlinkOnPath } from "./lib/runs-repository";
 
 /** What is copied, and the only shape a key under those prefixes may have. */
 export const COPIED_PREFIXES = ["runs/", "boots/"] as const;
@@ -64,30 +63,6 @@ export class CopyRefused extends Error {
 	}
 }
 
-function lstatOrNull(path: string): Stats | null {
-	try {
-		return lstatSync(path);
-	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
-		throw error;
-	}
-}
-
-/** The first of the repository directory and the components of key under it that is a symbolic link, or null. */
-export function symlinkOnPath(repository: string, key: string): string | null {
-	if (lstatOrNull(repository)?.isSymbolicLink()) return repository;
-	let path = repository;
-	let shown = "";
-	for (const part of key.split("/")) {
-		path = join(path, part);
-		shown = shown === "" ? part : `${shown}/${part}`;
-		const stat = lstatOrNull(path);
-		if (stat === null) return null; // nothing below a missing component exists
-		if (stat.isSymbolicLink()) return shown;
-	}
-	return null;
-}
-
 type Comparison = "same" | "differs" | "gone";
 
 async function compareWithBucket(bucket: Bucket, object: BucketObject, path: string): Promise<Comparison> {
@@ -98,46 +73,6 @@ async function compareWithBucket(bucket: Bucket, object: BucketObject, path: str
 	const remote = await bucket.get(object.key);
 	if (remote === null) return "gone";
 	return Buffer.from(remote).equals(local) ? "same" : "differs";
-}
-
-/**
- * Creates repository/key holding bytes, and never replaces anything: the
- * directories on the way must be plain directories, the bytes go to a fresh
- * temporary file opened with O_EXCL under a random name, and link() gives it
- * its name, failing if a file of that name appeared meanwhile.
- */
-function addFile(repository: string, key: string, bytes: Uint8Array): "added" | "appeared" {
-	const parts = key.split("/");
-	const name = parts.pop() as string;
-	let directory = repository;
-	let shown = "";
-	for (const part of parts) {
-		directory = join(directory, part);
-		shown = shown === "" ? part : `${shown}/${part}`;
-		try {
-			mkdirSync(directory);
-		} catch (error) {
-			if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-		}
-		if (!lstatSync(directory).isDirectory()) throw new Error(`${key}: ${shown} is not a plain directory`);
-	}
-	const temporary = join(directory, `.${name}.${randomBytes(12).toString("hex")}.partial`);
-	const descriptor = openSync(temporary, "wx", 0o644);
-	try {
-		try {
-			writeSync(descriptor, bytes);
-			fsyncSync(descriptor);
-		} finally {
-			closeSync(descriptor);
-		}
-		linkSync(temporary, join(directory, name));
-		return "added";
-	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code === "EEXIST") return "appeared";
-		throw error;
-	} finally {
-		unlinkSync(temporary);
-	}
 }
 
 export async function copyRuns(bucket: Bucket, repository: string): Promise<CopyResult> {
