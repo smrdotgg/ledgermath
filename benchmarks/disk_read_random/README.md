@@ -122,8 +122,16 @@ in the span or a hole (reads of never-written blocks return zeros without touchi
 device), or when any word of its first, middle and last block differs from the pattern
 (`benchmarks/harness/c/lm_fixture.h`). `verified` is the running sum of the first word of
 every block read. After measuring, the binary recomputes that sum from the pattern at the
-offsets it read, warmups included, and exits 1 if it differs: every read returned the
-Fixture, not zeros, another block or stale data.
+offsets it read, warmups included, and exits 1 if it differs.
+
+What that shows, and what it does not. A read whose first word is not the Fixture's
+(zeros, another block's, stale data) changes the sum, so a matching sum says that the
+blocks read began with the Fixture's words (wrong words could pass only by adding up to
+exactly the right sum, modulo 2^64). It says nothing of the rest of each block, and nothing
+of the blocks not read. Which blocks are read depends on how many reads the calibration
+settles on, and so on the disk's speed: the first reads of the permutation always, the
+whole span only when the Run makes at least as many reads as it has blocks. The whole of a
+block is checked only for the first, middle and last blocks, before measuring.
 
 ## Tying a Run to its dump
 

@@ -94,6 +94,8 @@ The Fixture's checks before measuring are `disk_read_random`'s, and exit 1 the s
 `verified` is the running sum of the first word of every block whose read completed while
 measuring. After the drain, every read submitted must have completed, and the sum over all
 of them must equal the pattern's at the offsets submitted; otherwise the binary exits 1.
+The sum's reach is `disk_read_random`'s: it shows that the blocks read began with the
+Fixture's words, not that the rest of each block is, nor anything of the blocks not read.
 A read that fails or comes back short exits 1 at once. `io_uring_setup` refused with
 `ENOSYS` or `EPERM` (a kernel without it, `kernel.io_uring_disabled`, or a seccomp filter
 such as Docker's default) exits 2, saying so.
