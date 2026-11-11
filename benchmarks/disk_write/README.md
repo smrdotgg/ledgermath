@@ -9,7 +9,7 @@ The design is section 2 of the step-4 brief's study (#42) and the decisions on i
 
 | Parameter set | What the reader gets | `i4i.2xlarge`, 2026-11-11 | `m5.large`, 2026-11-11 |
 |---|---|---|---|
-| `disk` `root_volume`, `dir` `/var/tmp/ledgermath/disk`, `request_bytes` 8192, `sync` `none`, `file_bytes` 256 MiB | A buffered 8 KiB write absorbed by the page cache: the page cache's number | 1.47 µs a write; 0 device writes while measuring | 2.62 µs; 0 device writes |
+| `disk` `root_volume`, `dir` `/var/tmp/ledgermath/disk`, `request_bytes` 8192, `sync` `none`, `file_bytes` 256 MiB | A buffered 8 KiB write absorbed by the page cache: the page cache's number | 1.47 µs a write; 60 device writes while measuring, for 12.6 million writes | 2.62 µs; 49 device writes for 6.3 million |
 | `disk` `root_volume`, `dir` `/var/tmp/ledgermath/disk`, `request_bytes` 8192, `sync` `fdatasync`, `file_bytes` 1 GiB | A durable 8 KiB write to the root gp3 volume at queue depth 1 | 913.5 µs, 0.11% between samples; 1.0002 device writes and 0 flushes a write | 910.8 µs; 1.0024 device writes, 0 flushes |
 | `disk` `instance_store`, `dir` `/mnt/lm/instance-store`, `request_bytes` 8192, `sync` `fdatasync`, `file_bytes` 1 GiB; `i4i.2xlarge` only | A durable 8 KiB write to the instance's own NVMe disk, through XFS | 29.9 to 30.1 µs (two Runs); 1.0000 device writes and 0 flushes a write; device mean 22.6 µs | |
 
@@ -65,8 +65,9 @@ device, here the scratch file (`o_direct` is false: the measured writes are buff
 **`device_counters`**, as in `disk_read_random`, over `lm_measure`. Writes and flushes per
 repetition are what a durable write cost the device: on both disks exactly one write and
 no flush, because both report `write_cache` "write through", so `fdatasync` sends no flush
-command. With no sync, the device saw no write at all while measuring (its 1,088 writes
-in that Run were the scratch file's preallocation).
+command. With no sync, the root volume saw 60 writes while measuring, for 12.6 million
+`pwrite`s (5 per million, which the box's own background writes could account for); the
+1,088 writes of that Run's whole life were mostly the scratch file's preallocation.
 
 **`work`**: `writes` (the checked write before measuring included),
 `writes_checked_before_measuring`, `fdatasyncs`, `bytes_written`, `file_passes`.
