@@ -2,7 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { PLACEMENT, PLACEMENTS } from "../infra/runs/placement";
+import { TARGETS } from "../infra/runs/placement";
+import { parseSchedule, type Schedule, type Target } from "../infra/runs/schedule";
 import {
 	ALARM_MARKER,
 	ALARM_TITLE,
@@ -10,7 +11,6 @@ import {
 	type IssueTracker,
 	type OpenAlarm,
 	runAlarm,
-	type Schedule,
 	STATE_MARKER,
 	staleSeries,
 	stateOf,
@@ -18,14 +18,18 @@ import {
 } from "../scripts/alarm";
 import { HandMade } from "./hand-made-runs";
 
-/** The schedule the box runs. Only the first test reads it: it changes whenever a benchmark is added. */
-const REAL_SCHEDULE = JSON.parse(readFileSync(join(import.meta.dir, "..", "schedule.json"), "utf8")) as Schedule;
-/** The schedule the alarm's behaviour is tested on: eight Series, four parameter sets under two builds. */
+/** The schedule the box runs. Only the first tests read it: it changes whenever a benchmark is added. */
+const REAL_SCHEDULE = parseSchedule(JSON.parse(readFileSync(join(import.meta.dir, "..", "schedule.json"), "utf8")));
+const C6I: Target = { instance_type: "c6i.8xlarge", zone: "us-east-2c", boots_utc: ["22:10"] };
+/** The schedule the alarm's behaviour is tested on: one target, eight Series, four parameter sets under two builds. */
 const SCHEDULE: Schedule = {
+	targets: [C6I],
 	benchmarks: [
 		{
 			name: "memory_read",
 			builds: ["static", "dynamic"],
+			samples: 10,
+			timeout_seconds: 600,
 			params: [
 				{ size_bytes: 1073741824, threads: 1, path: "scalar" },
 				{ size_bytes: 1073741824, threads: 1, path: "avx2" },
@@ -66,35 +70,85 @@ class FakeIssues implements IssueTracker {
 	}
 }
 
-/** One Run of every watched Series at `startedAt`, a minute apart, on the stage's instance type and zone. */
-function oneBoot(made: HandMade, startedAt: string, schedule: Schedule = SCHEDULE): void {
+/** One Run of every Series the schedule runs on `target`, a minute apart from `startedAt`, as one boot of that target would leave. */
+function oneBoot(made: HandMade, startedAt: string, schedule: Schedule = SCHEDULE, target: Target = schedule.targets[0] as Target): void {
 	let minute = 0;
 	for (const benchmark of schedule.benchmarks) {
+		if (benchmark.instance_types !== undefined && !benchmark.instance_types.includes(target.instance_type)) continue;
 		for (const params of benchmark.params) {
 			for (const build of benchmark.builds) {
 				const at = new Date(Date.parse(startedAt) + minute++ * 60_000).toISOString();
-				made.run({ startedAt: at, benchmark: benchmark.name, params, build, instanceType: PLACEMENT.instanceType, zone: PLACEMENT.zone });
+				made.run({ startedAt: at, benchmark: benchmark.name, params, build, instanceType: target.instance_type, zone: target.zone });
 			}
 		}
 	}
 }
 
 describe("the watched Series", () => {
-	test("are every parameter set and build of schedule.json, on the instance type and zone the stage launches", () => {
-		const watched = watchedSeries(REAL_SCHEDULE, PLACEMENTS);
-		const planned = REAL_SCHEDULE.benchmarks.reduce((sum, b) => sum + b.builds.length * b.params.length, 0);
-		expect(watched.length).toBe(planned * PLACEMENTS.length);
-		expect(new Set(watched.map((series) => series.benchmark))).toEqual(new Set(REAL_SCHEDULE.benchmarks.map((b) => b.name)));
-		for (const series of watched) {
-			expect(series.instanceType).toBe("c6i.8xlarge");
-			expect(series.zone).toBe("us-east-2c");
+	test("are every parameter set and build of schedule.json, on every target the entry is for, the targets the stage launches", () => {
+		const watched = watchedSeries(REAL_SCHEDULE);
+		const planned = REAL_SCHEDULE.targets.reduce(
+			(sum, target) =>
+				sum +
+				REAL_SCHEDULE.benchmarks
+					.filter((b) => b.instance_types === undefined || b.instance_types.includes(target.instance_type))
+					.reduce((inner, b) => inner + b.builds.length * b.params.length, 0),
+			0,
+		);
+		expect(watched.length).toBe(planned);
+		expect(REAL_SCHEDULE.targets).toEqual([...TARGETS]);
+		expect(new Set(watched.map((series) => series.instanceType))).toEqual(new Set(TARGETS.map((target) => target.instance_type)));
+		for (const series of watched) expect(series.zone).toBe("us-east-2c");
+		for (const target of TARGETS) {
+			const here = watched.filter((series) => series.instanceType === target.instance_type);
+			expect(new Set(here.map((series) => series.benchmark))).toEqual(
+				new Set(
+					REAL_SCHEDULE.benchmarks
+						.filter((b) => b.instance_types === undefined || b.instance_types.includes(target.instance_type))
+						.map((b) => b.name),
+				),
+			);
 		}
 	});
 
-	test("are all kept fresh by one boot of schedule.json", () => {
-		const boot = new HandMade();
-		oneBoot(boot, "2026-11-12T22:10:00Z", REAL_SCHEDULE);
-		expect(staleSeries(watchedSeries(REAL_SCHEDULE, PLACEMENTS), boot.files, new Date("2026-11-13T22:10:00Z"))).toEqual([]);
+	test("are all kept fresh by one boot of schedule.json on each target", () => {
+		const boots = new HandMade();
+		for (const target of REAL_SCHEDULE.targets) oneBoot(boots, "2026-11-12T22:10:00Z", REAL_SCHEDULE, target);
+		expect(staleSeries(watchedSeries(REAL_SCHEDULE), boots.files, new Date("2026-11-13T22:10:00Z"))).toEqual([]);
+	});
+});
+
+describe("the watched Series across targets", () => {
+	const M5: Target = { instance_type: "m5.large", zone: "us-east-2c", boots_utc: ["22:20"] };
+	const schedule: Schedule = {
+		targets: [C6I, M5],
+		benchmarks: [
+			{ name: "syscall", builds: ["static"], samples: 10, timeout_seconds: 120, params: [{ call: "getpid" }] },
+			{ name: "mutex", builds: ["static"], samples: 10, timeout_seconds: 180, params: [{ threads: 1 }] },
+			{ name: "mutex", builds: ["static"], samples: 10, timeout_seconds: 180, params: [{ threads: 2, placement: "distinct_cores" }], instance_types: ["c6i.8xlarge"] },
+		],
+	};
+	const label = (series: { benchmark: string; params: Record<string, unknown>; instanceType: string }) =>
+		`${series.benchmark} ${JSON.stringify(series.params)} ${series.instanceType}`;
+
+	test("are each entry on every target it is for, and only those", () => {
+		expect(watchedSeries(schedule).map(label)).toEqual([
+			'syscall {"call":"getpid"} c6i.8xlarge',
+			'mutex {"threads":1} c6i.8xlarge',
+			'mutex {"threads":2,"placement":"distinct_cores"} c6i.8xlarge',
+			'syscall {"call":"getpid"} m5.large',
+			'mutex {"threads":1} m5.large',
+		]);
+	});
+
+	test("one target's boots do not keep another's Series fresh, and a Series not for a type is never stale there", () => {
+		const made = new HandMade();
+		oneBoot(made, "2026-11-12T22:10:00Z", schedule, C6I);
+		const now = new Date("2026-11-13T22:10:00Z");
+		// m5.large has not booted: both of its Series are stale, and the c6i.8xlarge-only one is not listed for it.
+		expect(staleSeries(watchedSeries(schedule), made.files, now).map(label)).toEqual(['syscall {"call":"getpid"} m5.large', 'mutex {"threads":1} m5.large']);
+		oneBoot(made, "2026-11-12T22:20:00Z", schedule, M5);
+		expect(staleSeries(watchedSeries(schedule), made.files, now)).toEqual([]);
 	});
 });
 
@@ -106,7 +160,7 @@ describe("the alarm", () => {
 	// The newest Run's start: the last of the boot, seven minutes after its first.
 	const newestStart = Date.parse(newest) + 7 * 60_000;
 	const pass = (tracker: FakeIssues, at: number, copyFailed = false, runs = made.files) =>
-		runAlarm({ schedule: SCHEDULE, placements: PLACEMENTS, runs, now: new Date(at), copyFailed, tracker });
+		runAlarm({ schedule: SCHEDULE, runs, now: new Date(at), copyFailed, tracker });
 
 	test("with the clock 49 hours past the newest Run, opens one issue listing every stale Series", async () => {
 		const tracker = new FakeIssues();
@@ -214,9 +268,13 @@ describe("the alarm", () => {
 			partial.run({ startedAt: "2026-11-12T22:30:00Z", params, build: "static" });
 		}
 		const schedule: Schedule = {
-			benchmarks: [...SCHEDULE.benchmarks, { name: "memory_read", builds: ["static"], params: [{ size_bytes: 4096, threads: 1, path: "scalar" }] }],
+			...SCHEDULE,
+			benchmarks: [
+				...SCHEDULE.benchmarks,
+				{ name: "memory_read", builds: ["static"], samples: 10, timeout_seconds: 600, params: [{ size_bytes: 4096, threads: 1, path: "scalar" }] },
+			],
 		};
-		const stale = staleSeries(watchedSeries(schedule, PLACEMENTS), partial.files, new Date("2026-11-13T12:00:00Z"));
+		const stale = staleSeries(watchedSeries(schedule), partial.files, new Date("2026-11-13T12:00:00Z"));
 		expect(stale.map((series) => [series.build, series.params.size_bytes, series.newest === null])).toEqual([
 			["dynamic", 1073741824, false],
 			["dynamic", 1073741824, false],
@@ -233,14 +291,14 @@ describe("the alarm", () => {
 		oneOff.run({ startedAt: "2026-11-01T10:00:00Z", instanceType: "c6i.large" });
 		oneOff.run({ startedAt: "2026-11-01T11:00:00Z", zone: "us-east-2a", zoneId: "use2-az1" });
 		const now = new Date("2026-11-13T22:10:00Z");
-		expect(staleSeries(watchedSeries(SCHEDULE, PLACEMENTS), oneOff.files, now)).toEqual([]);
+		expect(staleSeries(watchedSeries(SCHEDULE), oneOff.files, now)).toEqual([]);
 
 		// And a Run elsewhere does not keep a watched Series fresh.
 		const elsewhere = new HandMade();
 		for (const params of SCHEDULE.benchmarks[0]?.params ?? []) {
 			for (const build of SCHEDULE.benchmarks[0]?.builds ?? []) elsewhere.run({ startedAt: "2026-11-13T20:00:00Z", params, build, instanceType: "c6i.large" });
 		}
-		expect(staleSeries(watchedSeries(SCHEDULE, PLACEMENTS), elsewhere.files, now).length).toBe(8);
+		expect(staleSeries(watchedSeries(SCHEDULE), elsewhere.files, now).length).toBe(8);
 	});
 });
 

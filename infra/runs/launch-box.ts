@@ -3,19 +3,22 @@ import { EC2Client, RunInstancesCommand, type _InstanceType, type Tag } from "@a
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { chooseInstanceType, clientToken, lateness } from "./launch-event";
+import { clientToken, lateness, requestedInstanceType, unscheduledType } from "./launch-event";
 import { buildUserData } from "./user-data";
 
 /**
- * Launches one box of a -runs stage: invoked daily by the stage's schedule, or
- * by hand. Its configuration is the function's environment, set in
- * infra/runs/stack.ts. For a smoke test the payload may name another instance
- * type, such as {"instanceType": "c6i.large"}; its Runs are real Runs of that
- * type. The schedule's payload carries the scheduled time, from which the
- * launch's client token comes (infra/runs/launch-event.ts). The function is
+ * Launches one box of a -runs stage: invoked by the schedule of one of the
+ * stage's targets, or by hand. Its configuration is the function's
+ * environment, set in infra/runs/stack.ts. Every payload names its instance
+ * type. A scheduled payload also carries the scheduled time, from which, with
+ * the stage and the type, the launch's client token comes
+ * (infra/runs/launch-event.ts), and its type must be one of the deployed
+ * schedule's targets. A launch by hand, such as {"instanceType": "c6i.large"},
+ * may name any type; its Runs are real Runs of that type. The function is
  * never retried, Lambda drops an asynchronous event older than a minute
  * (infra/runs/stack.ts), and a scheduled launch more than ten minutes late is
- * refused here, so a late box never overlaps July's.
+ * refused here, so a late box never overlaps the boots the schedule keeps
+ * apart.
  */
 
 export interface LaunchResult {
@@ -66,11 +69,16 @@ export async function launch(event: unknown, now: Date): Promise<LaunchResult | 
 		console.log(JSON.stringify({ message: "refused a late scheduled launch", reason: late }));
 		return { launched: false, reason: late };
 	}
+	const instanceType = requestedInstanceType(event);
+	const unscheduled = unscheduledType(event, required("LEDGERMATH_TARGET_INSTANCE_TYPES").split(","));
+	if (unscheduled !== undefined) {
+		console.log(JSON.stringify({ message: "refused a scheduled launch of a type that is not a target", reason: unscheduled }));
+		return { launched: false, reason: unscheduled };
+	}
 
 	const stage = required("LEDGERMATH_STAGE");
 	const imageId = required("LEDGERMATH_IMAGE_ID");
 	const sourceCommit = required("LEDGERMATH_SOURCE_COMMIT");
-	const instanceType = chooseInstanceType(event, required("LEDGERMATH_INSTANCE_TYPE"));
 	const token = clientToken(stage, event);
 
 	// Copied into the bundle from runner/box.sh (copyFiles in infra/runs/stack.ts).

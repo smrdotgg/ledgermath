@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -12,8 +13,16 @@ import {
 	trustPolicy,
 } from "../infra/runs/github-role";
 import { boxTags, launch } from "../infra/runs/launch-box";
-import { chooseInstanceType, clientToken, LATEST_START_MS, lateness, SCHEDULED_EVENT } from "../infra/runs/launch-event";
-import { PLACEMENT, PLACEMENTS } from "../infra/runs/placement";
+import {
+	clientToken,
+	LATEST_START_MS,
+	lateness,
+	requestedInstanceType,
+	SCHEDULED_TIME_PLACEHOLDER,
+	scheduledEvent,
+	unscheduledType,
+} from "../infra/runs/launch-event";
+import { LAUNCH_SCHEDULES, launchSchedules, SCHEDULE, TARGETS, ZONE } from "../infra/runs/placement";
 import { MAX_AGE_MS, staleBoxes } from "../infra/runs/reap-boxes";
 import { BOX_MARKER, buildUserData, USER_DATA_LIMIT_BYTES } from "../infra/runs/user-data";
 
@@ -63,22 +72,26 @@ describe("the user-data", () => {
 });
 
 describe("the launch", () => {
-	test("uses the configured instance type unless the payload names one", () => {
-		expect(chooseInstanceType(undefined, "c6i.8xlarge")).toBe("c6i.8xlarge");
-		expect(chooseInstanceType({}, "c6i.8xlarge")).toBe("c6i.8xlarge");
-		expect(chooseInstanceType({ instanceType: "c6i.large" }, "c6i.8xlarge")).toBe("c6i.large");
-		expect(chooseInstanceType({ instanceType: "u-6tb1.metal" }, "c6i.8xlarge")).toBe("u-6tb1.metal");
+	test("launches the instance type the payload names, any type for a launch by hand", () => {
+		expect(requestedInstanceType({ instanceType: "c6i.large" })).toBe("c6i.large");
+		expect(requestedInstanceType({ instanceType: "u-6tb1.metal" })).toBe("u-6tb1.metal");
+	});
+
+	test("refuses a payload that names no instance type, so none is launched by omission", () => {
+		expect(() => requestedInstanceType(undefined)).toThrow("the payload must name an EC2 instance type");
+		expect(() => requestedInstanceType({})).toThrow("the payload must name an EC2 instance type");
+		expect(() => requestedInstanceType({ scheduledTime: "2026-11-12T22:10:00Z" })).toThrow();
 	});
 
 	test("refuses an instance type that is not one", () => {
-		expect(() => chooseInstanceType({ instanceType: 5 }, "c6i.8xlarge")).toThrow();
-		expect(() => chooseInstanceType({ instanceType: "c6i.large --dry-run" }, "c6i.8xlarge")).toThrow();
+		expect(() => requestedInstanceType({ instanceType: 5 })).toThrow();
+		expect(() => requestedInstanceType({ instanceType: "c6i.large --dry-run" })).toThrow();
 	});
 });
 
-/** The schedule's payload as EventBridge Scheduler delivers it at `time`. */
-const delivered = (time: string): unknown =>
-	JSON.parse(JSON.stringify(SCHEDULED_EVENT).replace("<aws.scheduler.scheduled-time>", time));
+/** One target's payload as EventBridge Scheduler delivers it at `time`. */
+const delivered = (time: string, instanceType = "c6i.8xlarge"): unknown =>
+	JSON.parse(JSON.stringify(scheduledEvent(instanceType)).replace(SCHEDULED_TIME_PLACEHOLDER, time));
 
 describe("a late scheduled launch", () => {
 	const slot = delivered("2026-11-12T22:10:00Z");
@@ -110,6 +123,35 @@ describe("a late scheduled launch", () => {
 	});
 });
 
+describe("a scheduled launch of a type that is not a target", () => {
+	const targets = ["c6i.8xlarge", "m5.large"];
+
+	test("is refused, saying why", () => {
+		expect(unscheduledType(delivered("2026-11-12T22:10:00Z", "c6i.8xlarge"), targets)).toBeUndefined();
+		expect(unscheduledType(delivered("2026-11-12T22:20:00Z", "m5.large"), targets)).toBeUndefined();
+		const reason = unscheduledType(delivered("2026-11-12T22:10:00Z", "c6i.32xlarge"), targets);
+		expect(reason).toContain("names c6i.32xlarge, which is not a target of the deployed schedule (c6i.8xlarge, m5.large)");
+	});
+
+	test("is any type at all when launched by hand, without a scheduled time", () => {
+		expect(unscheduledType({ instanceType: "c6i.32xlarge" }, targets)).toBeUndefined();
+		expect(unscheduledType({ instanceType: "c6i.large" }, [])).toBeUndefined();
+	});
+
+	test("is refused by the handler before any configuration or AWS call is needed", async () => {
+		const before = process.env.LEDGERMATH_TARGET_INSTANCE_TYPES;
+		process.env.LEDGERMATH_TARGET_INSTANCE_TYPES = targets.join(",");
+		try {
+			const outcome = await launch(delivered("2026-11-12T22:10:00Z", "c6i.32xlarge"), new Date("2026-11-12T22:10:01Z"));
+			expect(outcome.launched).toBe(false);
+			expect(outcome.launched === false && outcome.reason).toContain("c6i.32xlarge, which is not a target");
+		} finally {
+			if (before === undefined) delete process.env.LEDGERMATH_TARGET_INSTANCE_TYPES;
+			else process.env.LEDGERMATH_TARGET_INSTANCE_TYPES = before;
+		}
+	});
+});
+
 describe("the launch's client token", () => {
 	test("is the same for every invocation of one scheduled slot, so EC2 starts one box", () => {
 		const first = clientToken("smr-runs", delivered("2026-11-12T22:10:00Z"));
@@ -119,13 +161,45 @@ describe("the launch's client token", () => {
 		expect(first?.length).toBeLessThanOrEqual(64); // EC2's limit
 	});
 
-	test("differs from day to day and from stage to stage", () => {
+	test("differs from slot to slot, from stage to stage, and from type to type", () => {
 		const tokens = new Set([
 			clientToken("smr-runs", delivered("2026-11-12T22:10:00Z")),
 			clientToken("smr-runs", delivered("2026-11-13T22:10:00Z")),
+			clientToken("smr-runs", delivered("2026-11-13T04:10:00Z")),
 			clientToken("dev-runs", delivered("2026-11-12T22:10:00Z")),
+			clientToken("smr-runs", delivered("2026-11-12T22:10:00Z", "m5.large")),
 		]);
-		expect(tokens.size).toBe(3);
+		expect(tokens.size).toBe(5);
+	});
+
+	test("comes from the stage, the instance type and the scheduled time", () => {
+		const expected = createHash("sha256").update("ledgermath-box smr-runs c8i.2xlarge 2026-11-12T04:30:00Z").digest("hex");
+		expect(clientToken("smr-runs", delivered("2026-11-12T04:30:00Z", "c8i.2xlarge"))).toBe(expected);
+	});
+
+	test("is two tokens, so two boxes, for two targets that boot at the same minute", () => {
+		const schedules = launchSchedules([
+			{ instance_type: "c8i.2xlarge", zone: "us-east-2c", boots_utc: ["04:30"] },
+			{ instance_type: "c8a.2xlarge", zone: "us-east-2c", boots_utc: ["04:30"] },
+		]);
+		expect(schedules.map((schedule) => [schedule.expression, schedule.event])).toEqual([
+			["cron(30 4 * * ? *)", { scheduledTime: "<aws.scheduler.scheduled-time>", instanceType: "c8i.2xlarge" }],
+			["cron(30 4 * * ? *)", { scheduledTime: "<aws.scheduler.scheduled-time>", instanceType: "c8a.2xlarge" }],
+		]);
+		// What each schedule delivers at 04:30, and the token each launch uses.
+		const payloads = schedules.map((schedule) =>
+			JSON.parse(JSON.stringify(schedule.event).replace(SCHEDULED_TIME_PLACEHOLDER, "2026-11-12T04:30:00Z")),
+		);
+		expect(payloads).toEqual([
+			{ scheduledTime: "2026-11-12T04:30:00Z", instanceType: "c8i.2xlarge" },
+			{ scheduledTime: "2026-11-12T04:30:00Z", instanceType: "c8a.2xlarge" },
+		]);
+		const [first, second] = payloads.map((payload) => clientToken("smr-runs", payload));
+		expect(first).toHaveLength(64);
+		expect(second).toHaveLength(64);
+		expect(first).not.toBe(second);
+		// And each is stable across repeated invocations of its slot.
+		expect(clientToken("smr-runs", payloads[0])).toBe(first);
 	});
 
 	test("is left to the SDK, fresh each time, for a launch by hand", () => {
@@ -135,8 +209,12 @@ describe("the launch's client token", () => {
 	});
 
 	test("refuses a payload whose placeholder was not replaced, rather than reuse one token every day", () => {
-		expect(() => clientToken("smr-runs", SCHEDULED_EVENT)).toThrow();
-		expect(() => clientToken("smr-runs", { scheduledTime: "yesterday" })).toThrow();
+		expect(() => clientToken("smr-runs", scheduledEvent("c6i.8xlarge"))).toThrow();
+		expect(() => clientToken("smr-runs", { scheduledTime: "yesterday", instanceType: "c6i.8xlarge" })).toThrow();
+	});
+
+	test("refuses a scheduled payload that names no instance type", () => {
+		expect(() => clientToken("smr-runs", { scheduledTime: "2026-11-12T22:10:00Z" })).toThrow("the payload must name an EC2 instance type");
 	});
 });
 
@@ -172,15 +250,55 @@ describe("the reaper", () => {
 	});
 });
 
-describe("where the stage launches", () => {
-	test("is one shared placement, which the stack takes its instance type and zone from", () => {
-		expect(PLACEMENT).toEqual({ instanceType: "c6i.8xlarge", zone: "us-east-2c" });
-		expect(PLACEMENTS).toEqual([PLACEMENT]);
-		expect(STACK).toContain('import { PLACEMENT } from "./placement";');
-		expect(STACK).toContain("const ZONE = PLACEMENT.zone;");
-		expect(STACK).toContain("const INSTANCE_TYPE = PLACEMENT.instanceType;");
-		// No second copy of either in the stack.
-		expect(STACK).not.toMatch(/"c6i\.|"us-east-2[a-z]"/);
+describe("where and when the stage launches", () => {
+	test("is schedule.json's targets, checked, in one zone", () => {
+		expect(TARGETS).toEqual(SCHEDULE.targets);
+		expect(TARGETS.map((target) => target.instance_type)).toEqual(["c6i.8xlarge", "m5.large", "c8i.2xlarge", "c8a.2xlarge", "i4i.2xlarge"]);
+		expect(ZONE).toBe("us-east-2c");
+	});
+
+	test("is one EventBridge schedule per target, a cron of its boot times, invoking the launch with the scheduled time and the type", () => {
+		const payload = (instanceType: string) => ({ scheduledTime: "<aws.scheduler.scheduled-time>", instanceType });
+		expect(LAUNCH_SCHEDULES).toEqual([
+			{ name: "BoxLaunchC6i8xlargeAt10", instanceType: "c6i.8xlarge", zone: "us-east-2c", boots: ["04:10", "10:10", "16:10", "22:10"], expression: "cron(10 4,10,16,22 * * ? *)", event: payload("c6i.8xlarge") },
+			{ name: "BoxLaunchM5LargeAt20", instanceType: "m5.large", zone: "us-east-2c", boots: ["04:20", "10:20", "16:20", "22:20"], expression: "cron(20 4,10,16,22 * * ? *)", event: payload("m5.large") },
+			{ name: "BoxLaunchC8i2xlargeAt30", instanceType: "c8i.2xlarge", zone: "us-east-2c", boots: ["04:30", "10:30", "16:30", "22:30"], expression: "cron(30 4,10,16,22 * * ? *)", event: payload("c8i.2xlarge") },
+			{ name: "BoxLaunchC8a2xlargeAt40", instanceType: "c8a.2xlarge", zone: "us-east-2c", boots: ["04:40", "10:40", "16:40", "22:40"], expression: "cron(40 4,10,16,22 * * ? *)", event: payload("c8a.2xlarge") },
+			{ name: "BoxLaunchI4i2xlargeAt50", instanceType: "i4i.2xlarge", zone: "us-east-2c", boots: ["04:50", "10:50", "16:50", "22:50"], expression: "cron(50 4,10,16,22 * * ? *)", event: payload("i4i.2xlarge") },
+		]);
+		expect(new Set(LAUNCH_SCHEDULES.map((schedule) => schedule.name)).size).toBe(LAUNCH_SCHEDULES.length);
+	});
+
+	test("fires at exactly the boot times: a target whose boots fall at two minutes gets a schedule for each", () => {
+		const schedules = launchSchedules([{ instance_type: "c6i.8xlarge", zone: "us-east-2c", boots_utc: ["22:10", "13:45", "04:10", "00:00"] }]);
+		expect(schedules.map((schedule) => [schedule.name, schedule.expression, schedule.boots])).toEqual([
+			["BoxLaunchC6i8xlargeAt00", "cron(0 0 * * ? *)", ["00:00"]],
+			["BoxLaunchC6i8xlargeAt10", "cron(10 4,22 * * ? *)", ["04:10", "22:10"]],
+			["BoxLaunchC6i8xlargeAt45", "cron(45 13 * * ? *)", ["13:45"]],
+		]);
+	});
+
+	test("is made by the stack from placement.ts alone: one launch function, a CronV2 per schedule, nothing hard-coded", () => {
+		expect(STACK).toContain('import { LAUNCH_SCHEDULES, TARGETS, ZONE } from "./placement";');
+		expect(STACK).toContain('new sst.aws.Function("BoxLaunch", {');
+		expect(STACK).toContain("for (const schedule of LAUNCH_SCHEDULES) {");
+		expect(STACK).toContain("new sst.aws.CronV2(schedule.name, {");
+		expect(STACK).toContain("schedule: schedule.expression,");
+		expect(STACK).toContain("event: schedule.event,");
+		expect(STACK).toContain("function: launch,");
+		expect(STACK).toContain('LEDGERMATH_TARGET_INSTANCE_TYPES: TARGETS.map((target) => target.instance_type).join(","),');
+		expect(STACK).toContain('{ name: "availability-zone", values: [ZONE] }');
+		// Never retried; an event older than a minute is dropped.
+		expect(STACK).toMatch(/new sst\.aws\.Function\("BoxLaunch", \{[^]*?retries: 0,\n\t\ttransform: \{ eventInvokeConfig: \{ maximumEventAgeInSeconds: 60 \} \},/);
+		expect(STACK).toContain('\t\t\ttimezone: "UTC",\n\t\t\tretries: 0,\n\t\t\tevent: schedule.event,');
+		// No instance type, zone, launch time or launch cron of its own.
+		expect(STACK).not.toMatch(/"[a-z][a-z0-9-]*\.[0-9]*(nano|micro|small|medium|large|xlarge|metal)"|"us-east-2[a-z]"|cron\(|LEDGERMATH_INSTANCE_TYPE:/);
+	});
+
+	test("lists every target and its schedules among the stack's outputs", () => {
+		expect(STACK).toContain("targets: TARGETS.map((target) => ({");
+		expect(STACK).toContain("expression: `${schedule.expression} UTC`,");
+		expect(STACK).toContain("payload: schedule.event,");
 	});
 });
 
