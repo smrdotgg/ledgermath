@@ -49,6 +49,9 @@ More, for the reviews of step 5:
 - surplus (bytes after a Content-Length body in the same write), surpluslater
   (the same bytes in a later record), trailers, padded (a header value with
   whitespace around it), nulhead (a NUL in a header value).
+- cap-<framing>-<minus|exact|plus>: a 200 whose body is one byte less than,
+  exactly, or one byte more than http_get's body buffer (object_bytes plus
+  64 KiB), framed by length, by the connection's end, or chunked.
 - TLS failures, answered below TLS: plainhttp (an HTTP reply to the
   ClientHello), alert (a fatal handshake_failure alert), tls11only (a TLS 1.1
   ServerHello), badserverhello (a ServerHello cut short); and nosharedcipher
@@ -440,6 +443,21 @@ def respond(conn, request, log_path):
             conn.unwrap().close()
             return False
         return kind in ("ok", "okchunked", "oktrailers")
+    if what.startswith("cap-"):
+        _, framing, delta = what.split("-")
+        n = size + BODY_SLACK + {"minus": -1, "exact": 0, "plus": 1}[delta]
+        data = fixture(n)
+        head = (b"HTTP/1.1 200 OK\r\nx-amz-request-id: " + request_id.encode() + b"\r\nx-amz-checksum-sha256: " +
+                base64.b64encode(hashlib.sha256(data).digest()) + b"\r\n")
+        if framing == "length":
+            conn.sendall(head + b"Content-Length: %d\r\n\r\n" % n + data)
+            return True
+        if framing == "chunked":
+            conn.sendall(head + b"Transfer-Encoding: chunked\r\n\r\n" + chunked(data, 4096))
+            return True
+        conn.sendall(head + b"Connection: close\r\n\r\n" + data)
+        conn.unwrap().close()
+        return False
     if what in ("surplus", "surpluslater"):
         whole = object_head(size, checksum, request_id) + body
         if what == "surplus":

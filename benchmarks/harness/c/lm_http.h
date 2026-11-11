@@ -95,8 +95,11 @@ size_t lm_http_feed(lm_http_response *r, const unsigned char *data, size_t len);
 /* In LM_HTTP_BODY with a body framed by length or by the connection's end:
  * true, with where the next body bytes go and how many may go there (never
  * past the end of a length-framed body). False otherwise; then feed bytes
- * instead. Sets an error, and returns false, when the body buffer is full and
- * the body is not over. */
+ * instead. When the body buffer is full: for a length-framed body that is not
+ * over, sets an error and returns false; for a body framed by the
+ * connection's end, returns false with no error, since the body may end
+ * exactly there. Feeding a further byte is then the error, and
+ * lm_http_eof() ends the body. */
 bool lm_http_direct(lm_http_response *r, unsigned char **where, size_t *room);
 /* After reading `n` bytes to where lm_http_direct() said. */
 void lm_http_direct_done(lm_http_response *r, size_t n);

@@ -411,10 +411,12 @@ bool lm_http_direct(lm_http_response *r, unsigned char **where, size_t *room) {
     if (r->framing == LM_HTTP_LENGTH) {
         uint64_t left = r->content_length - r->body_len;
         if (left < n) n = (size_t)left;
-        else if (left > free_bytes && free_bytes == 0) n = 0;
     }
     if (n == 0) {
-        fail(r, "a body larger than the buffer for it");
+        /* A length-framed body that has not ended needs more room than there
+         * is. A body framed by the connection's end may end right here: only
+         * a further body byte, fed with lm_http_feed(), says it does not. */
+        if (r->framing == LM_HTTP_LENGTH) fail(r, "a body larger than the buffer for it");
         return false;
     }
     *where = r->body + r->body_len;

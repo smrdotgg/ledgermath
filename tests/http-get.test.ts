@@ -629,6 +629,28 @@ describe.skipIf(!AVAILABLE)("the HTTP/1.1 response parser (benchmarks/harness/c/
 		}
 	});
 
+	test("a body exactly the size of the buffer is whole in every framing, one byte less too; one byte more is too large", () => {
+		const cap = 64;
+		for (const [n, fits] of [[cap - 1, true], [cap, true], [cap + 1, false]] as const) {
+			const body = "b".repeat(n);
+			const wires: Record<string, string> = {
+				length: `HTTP/1.1 200 OK\r\nContent-Length: ${n}\r\n\r\n${body}`,
+				chunked: `HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n${n.toString(16)}\r\n${body}\r\n0\r\n\r\n`,
+				close: `HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n${body}`,
+			};
+			for (const [framing, wire] of Object.entries(wires)) {
+				for (const step of [1, 7, 4096]) {
+					for (const flags of [[], ["--direct"]]) {
+						// --eof: the connection then ends, which is what ends a body framed by it.
+						const r = parse(wire, step, "--body-cap", String(cap), "--eof", ...flags);
+						const seen = [framing, n, step, flags.join(""), r.state, r.body_bytes, r.error ?? null];
+						expect(seen).toEqual([framing, n, step, flags.join(""), fits ? "done" : "error", fits ? n : cap, fits ? null : "a body larger than the buffer for it"]);
+					}
+				}
+			}
+		}
+	});
+
 	test("trailer lines follow the header lines' rules", () => {
 		const head = "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n1\r\nx\r\n0\r\n";
 		expect(parse(`${head}x-a: 1\r\n folded\r\n\r\n`, 4096)).toMatchObject({ state: "error", error: "obsolete line folding in the trailers" });
@@ -1182,6 +1204,30 @@ describe.skipIf(!AVAILABLE)("everything the resolver and the server sent is reco
 		const padded = run("padded", { samples: 1 });
 		expectExit(padded, 0);
 		expect(of(padded, "response_headers")[0]?.headers).toContainEqual(["x-spaced", "alpha  beta"]);
+	});
+
+	test("a body exactly the size of the buffer completes in each framing, one byte less too, and one byte more fails", () => {
+		const cap = 64 + 64 * 1024;
+		for (const connection of ["new", "reused"] as const) {
+			for (const framing of ["length", "close", "chunked"]) {
+				for (const [delta, size] of [["minus", cap - 1], ["exact", cap], ["plus", cap + 1]] as const) {
+					const r = run(`cap-${framing}-${delta}`, { samples: 1, objectBytes: 64, connection });
+					checkStream(r, 1);
+					const label = `${connection} ${framing} ${delta}`;
+					if (size <= cap) {
+						// Whole, with S3's checksum right; not the 64-byte Fixture, so exit 1.
+						expectExit(r, 1);
+						expect([label, of(r, "response_ended").map((event) => [event.framing, event.bytes, event.s3_checksum])]).toEqual([label, [[framing, size, "match"], [framing, size, "match"]]]);
+						expect([label, of(r, "request_failed")]).toEqual([label, []]);
+					} else {
+						expectExit(r, 4);
+						const failed = of(r, "request_failed").map((event) => [event.phase, event.error, event.detail, event.body_bytes_received]);
+						const expected = ["body", "protocol", "a body larger than the buffer for it", cap];
+						expect([label, failed]).toEqual([label, [expected, expected]]);
+					}
+				}
+			}
+		}
 	});
 
 	test("bytes after a Content-Length body, in the same record, make that request a protocol error", () => {
