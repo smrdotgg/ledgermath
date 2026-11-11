@@ -23,6 +23,7 @@ until step 4 of the plan replaces it.
 | `schemas/` | `run.schema.json` (the Run) and `events.schema.json` (one line of the stream) |
 | `scripts/check-events.py` | Checks a stream's order; needs only Python 3 |
 | `scripts/check-runs.ts` | Checks a directory laid out like the bucket: schemas, every hash, events against stdout, runner manifests |
+| `scripts/check-targets.ts` | Checks `schedule.json`'s targets' `vcpus`, their zone offerings and `vcpu_quota.limit` against AWS, read-only; needs AWS access, so not part of `bun test` |
 | `scripts/box-in-container/` | Boots `runner/box.sh` in Amazon Linux 2023 with S3 and shutdown stubbed, in several scenarios |
 | `infra/runs/` | The `-runs` SST stage: stack, launch Lambda, reaper, user-data, the schedule's check (`schedule.ts`), the targets and their launch schedules (`placement.ts`), the workflow's AWS role |
 | `methods/` | Methods, versioned: `v1/` turns Runs into Derivations (`methods/README.md`) |
@@ -150,7 +151,8 @@ minutes. It touches nothing else; July's reaper cannot touch these boxes either.
 ### Targets, boot times, and which types an entry runs on
 
 To add a boot time, add it to the target's `boots_utc`. To add a target, add
-`{ "instance_type": ..., "zone": "us-east-2c", "boots_utc": [...] }` to `targets`. To run a
+`{ "instance_type": ..., "vcpus": ..., "zone": "us-east-2c", "boots_utc": [...] }` to
+`targets`. To run a
 benchmark entry on some types only, give it `"instance_types": [...]`; without it, it runs
 on every target. Two entries may have the same `name`, so one benchmark can run different
 parameter sets on different types:
@@ -179,11 +181,15 @@ pipeline is retired). A target's boots usually share one minute past the hour an
 one schedule; boots at other minutes get a schedule each, named by the minute
 (`BoxLaunchC6i8xlargeAt10`).
 
-Mind the account's 64-vCPU quota. A box lives at most 55 minutes (the reaper's 50 plus
-its five-minute interval), so the boots from HH:10 to HH:50 can all be up from HH:50 to
-HH+1:05: the five targets' 58 vCPUs and the dev machine's 4 make 62. July's 32-vCPU box
-starts at 23:10, while the small types' 26 vCPUs booted from 22:20 may still be up: 62
-again, which is why no `c6i.8xlarge` boots from 22:20 to 23:40 while July's pipeline runs.
+The check also keeps every box inside the account's vCPU quota, whatever the times.
+`"vcpu_quota": { "limit": 64, "reserved_outside_schedule": 4 }` declares the quota and
+the dev machine's share. Every target's `vcpus` added together, plus what is reserved,
+must fit the limit (58 + 4 = 62 of 64 today), and two boots of one target must be at least
+60 minutes apart, across midnight too, because a box lives at most 55 minutes. A new
+target's `vcpus` is AWS's `DefaultVCpus` for the type. Check every declared number against
+AWS, read-only, with `AWS_PROFILE=tabot-dev bun scripts/check-targets.ts`. While July's
+pipeline runs, its 23:10 box is the one thing these rules do not cover, hence the July
+rule.
 
 A boot's summary (`boots/<yyyy>/<mm>/<dd>/<boot>.json`) accounts for every execution the
 schedule names: `runs`; `not_run`, told to stop before starting it; `build_failures`, a

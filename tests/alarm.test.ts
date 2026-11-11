@@ -21,9 +21,11 @@ import { HandMade } from "./hand-made-runs";
 
 /** The schedule the box runs. Only the first tests read it: it changes whenever a benchmark is added. */
 const REAL_SCHEDULE = parseSchedule(JSON.parse(readFileSync(join(import.meta.dir, "..", "schedule.json"), "utf8")));
-const C6I: Target = { instance_type: "c6i.8xlarge", zone: "us-east-2c", boots_utc: ["22:10"] };
+const C6I: Target = { instance_type: "c6i.8xlarge", vcpus: 32, zone: "us-east-2c", boots_utc: ["22:10"] };
+const QUOTA = { limit: 64, reserved_outside_schedule: 4 };
 /** The schedule the alarm's behaviour is tested on: one target, eight Series, four parameter sets under two builds. */
 const SCHEDULE: Schedule = {
+	vcpu_quota: QUOTA,
 	targets: [C6I],
 	benchmarks: [
 		{
@@ -122,8 +124,9 @@ describe("the watched Series", () => {
 });
 
 describe("the watched Series across targets", () => {
-	const M5: Target = { instance_type: "m5.large", zone: "us-east-2c", boots_utc: ["22:20"] };
+	const M5: Target = { instance_type: "m5.large", vcpus: 2, zone: "us-east-2c", boots_utc: ["22:20"] };
 	const schedule: Schedule = {
+		vcpu_quota: QUOTA,
 		targets: [C6I, M5],
 		benchmarks: [
 			{ name: "syscall", builds: ["static"], samples: 10, timeout_seconds: 120, params: [{ call: "getpid" }] },

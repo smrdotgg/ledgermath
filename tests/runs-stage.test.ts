@@ -179,8 +179,8 @@ describe("the launch's client token", () => {
 
 	test("is two tokens, so two boxes, for two targets that boot at the same minute", () => {
 		const schedules = launchSchedules([
-			{ instance_type: "c8i.2xlarge", zone: "us-east-2c", boots_utc: ["04:30"] },
-			{ instance_type: "c8a.2xlarge", zone: "us-east-2c", boots_utc: ["04:30"] },
+			{ instance_type: "c8i.2xlarge", vcpus: 8, zone: "us-east-2c", boots_utc: ["04:30"] },
+			{ instance_type: "c8a.2xlarge", vcpus: 8, zone: "us-east-2c", boots_utc: ["04:30"] },
 		]);
 		expect(schedules.map((schedule) => [schedule.expression, schedule.event])).toEqual([
 			["cron(30 4 * * ? *)", { scheduledTime: "<aws.scheduler.scheduled-time>", instanceType: "c8i.2xlarge" }],
@@ -270,7 +270,7 @@ describe("where and when the stage launches", () => {
 	});
 
 	test("fires at exactly the boot times: a target whose boots fall at two minutes gets a schedule for each", () => {
-		const schedules = launchSchedules([{ instance_type: "c6i.8xlarge", zone: "us-east-2c", boots_utc: ["22:10", "13:45", "04:10", "00:00"] }]);
+		const schedules = launchSchedules([{ instance_type: "c6i.8xlarge", vcpus: 32, zone: "us-east-2c", boots_utc: ["22:10", "13:45", "04:10", "00:00"] }]);
 		expect(schedules.map((schedule) => [schedule.name, schedule.expression, schedule.boots])).toEqual([
 			["BoxLaunchC6i8xlargeAt00", "cron(0 0 * * ? *)", ["00:00"]],
 			["BoxLaunchC6i8xlargeAt10", "cron(10 4,22 * * ? *)", ["04:10", "22:10"]],

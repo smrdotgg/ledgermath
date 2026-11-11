@@ -1,7 +1,8 @@
 {
+  "vcpu_quota": { "limit": 64, "reserved_outside_schedule": 4 },
   "targets": [
-    { "instance_type": "c6i.8xlarge", "zone": "us-east-2c", "boots_utc": ["04:10"] },
-    { "instance_type": "m5.large", "zone": "us-east-2c", "boots_utc": ["04:20"] }
+    { "instance_type": "c6i.8xlarge", "vcpus": 32, "zone": "us-east-2c", "boots_utc": ["04:10"] },
+    { "instance_type": "m5.large", "vcpus": 2, "zone": "us-east-2c", "boots_utc": ["04:20"] }
   ],
   "benchmarks": [
     {

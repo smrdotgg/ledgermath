@@ -6,8 +6,9 @@
  * only what it must to run safely and leaves the rest to this file).
  *
  *     {
+ *       "vcpu_quota": { "limit": 64, "reserved_outside_schedule": 4 },
  *       "targets": [
- *         { "instance_type": "c6i.8xlarge", "zone": "us-east-2c", "boots_utc": ["04:10", "22:10"] }
+ *         { "instance_type": "c6i.8xlarge", "vcpus": 32, "zone": "us-east-2c", "boots_utc": ["04:10", "22:10"] }
  *       ],
  *       "benchmarks": [
  *         { "name": "syscall", "builds": ["static"], "samples": 10, "timeout_seconds": 120,
@@ -16,10 +17,17 @@
  *     }
  *
  * A target is an instance type the stage launches, in a zone, at each of the
- * times of day in boots_utc. A benchmark entry runs on every target unless it
- * names instance_types, in which case it runs only on those. Two entries may
- * share a name, so one benchmark can run different parameter sets on
- * different types.
+ * times of day in boots_utc; vcpus is how many vCPUs one box of it counts
+ * against the account's quota (scripts/check-targets.ts compares it with
+ * AWS). vcpu_quota is the account's quota of vCPUs for these instances, and
+ * how many of them are held outside the schedule (the dev machine). The check
+ * keeps every box the schedule launches inside the quota: all targets
+ * together fit beside what is reserved, and a target's boots are far enough
+ * apart that it never overlaps itself.
+ *
+ * A benchmark entry runs on every target unless it names instance_types, in
+ * which case it runs only on those. Two entries may share a name, so one
+ * benchmark can run different parameter sets on different types.
  *
  * Plain data: no SST global and no file access, so the launch Lambda, tests
  * and scripts can import it.
@@ -30,6 +38,8 @@ export type ParamValue = string | number | boolean;
 export interface Target {
 	/** An EC2 instance type, in AWS's words. */
 	instance_type: string;
+	/** The vCPUs one box of this type counts against the quota: AWS's DefaultVCpus for the type. */
+	vcpus: number;
 	/** The availability zone whose default subnet the box is launched in. */
 	zone: string;
 	/** The times of day, UTC, as HH:MM, at which the stage launches a box of this type. */
@@ -48,7 +58,16 @@ export interface BenchmarkEntry {
 	instance_types?: string[];
 }
 
+/** The account's quota of vCPUs for the instances the schedule launches. */
+export interface VcpuQuota {
+	/** The quota's value: Running On-Demand Standard instances, L-1216C47A, in the stage's region. */
+	limit: number;
+	/** vCPUs held outside the schedule, all the time: the dev machine. */
+	reserved_outside_schedule: number;
+}
+
 export interface Schedule {
+	vcpu_quota: VcpuQuota;
 	targets: Target[];
 	benchmarks: BenchmarkEntry[];
 }
@@ -60,16 +79,31 @@ const TIME = /^([01][0-9]|2[0-3]):[0-5][0-9]$/;
 /** A directory name, a build name, or a parameter's key (which becomes LM_PARAM_<KEY>). */
 const WORD = /^[a-z][a-z0-9_]*$/;
 
-const TARGET_KEYS = new Set(["instance_type", "zone", "boots_utc"]);
+const TARGET_KEYS = new Set(["instance_type", "vcpus", "zone", "boots_utc"]);
 const ENTRY_KEYS = new Set(["name", "builds", "samples", "timeout_seconds", "params", "instance_types"]);
-const SCHEDULE_KEYS = new Set(["targets", "benchmarks"]);
+const SCHEDULE_KEYS = new Set(["vcpu_quota", "targets", "benchmarks"]);
+const QUOTA_KEYS = new Set(["limit", "reserved_outside_schedule"]);
+
+/**
+ * Two boots of one target are at least this far apart, across midnight too, so
+ * a box has ended before the next of its type starts: a box lives at most 55
+ * minutes (its own 45-minute timer as a rule; the reaper ends it after 50, and
+ * runs every 5). With this, and every target's vCPUs together fitting the
+ * quota beside what is reserved, no box the schedule launches can be refused
+ * for the quota, whatever the times.
+ */
+export const MIN_BOOT_GAP_MINUTES = 60;
+const MINUTES_PER_DAY = 24 * 60;
 
 /**
  * July's pipeline (stage `smr`, sst.config.ts) launches a 32-vCPU c6i.8xlarge
- * every day at 23:10 UTC. Two 32-vCPU boxes and the dev machine's 4 vCPUs do
- * not fit the account's 64-vCPU quota, and a box of ours can hold its vCPUs
- * for up to 55 minutes (the reaper's 50, plus its 5-minute interval), so no
- * c6i.8xlarge boot is scheduled from 22:20 to 23:40 UTC, both included.
+ * every day at 23:10 UTC. While it runs, that box is the one thing the quota
+ * rules above do not cover: it is not a target, so its vCPUs are not in the
+ * sum. Two 32-vCPU boxes and the dev machine's 4 vCPUs do not fit the
+ * account's 64-vCPU quota, and a box of ours can hold its vCPUs for up to 55
+ * minutes (the reaper's 50, plus its 5-minute interval), so no c6i.8xlarge
+ * boot is scheduled from 22:20 to 23:40 UTC, both included. The smaller
+ * targets fit beside July's box (26 + 32 + 4 = 62).
  * This rule goes away when July's pipeline is retired (step 4 of #36).
  */
 export const JULY_RULE = { instanceType: "c6i.8xlarge", from: "22:20", to: "23:40" } as const;
@@ -78,6 +112,8 @@ export const JULY_RULE = { instanceType: "c6i.8xlarge", from: "22:20", to: "23:4
 export function minuteOfDay(time: string): number {
 	return Number(time.slice(0, 2)) * 60 + Number(time.slice(3, 5));
 }
+
+const isCount = (value: unknown, least: number): value is number => typeof value === "number" && Number.isInteger(value) && value >= least;
 
 /** Whether a schedule entry runs on a box of this instance type. An entry without instance_types runs on every type. */
 export function appliesTo(entry: Pick<BenchmarkEntry, "instance_types">, instanceType: string | null | undefined): boolean {
@@ -110,6 +146,9 @@ function checkTarget(where: string, target: unknown, problems: string[]): target
 	const before = problems.length;
 	if (typeof target.instance_type !== "string" || !INSTANCE_TYPE.test(target.instance_type)) {
 		problems.push(`${where}: instance_type must be an EC2 instance type such as "c6i.8xlarge", got ${show(target.instance_type)}`);
+	}
+	if (!isCount(target.vcpus, 1)) {
+		problems.push(`${where}: vcpus must be the type's vCPUs as AWS counts them, a whole number of at least 1, got ${show(target.vcpus)}`);
 	}
 	if (typeof target.zone !== "string" || !ZONE.test(target.zone)) {
 		problems.push(`${where}: zone must be an availability zone such as "us-east-2c", got ${show(target.zone)}`);
@@ -193,7 +232,7 @@ export function scheduleProblems(value: unknown): string[] {
 	unknownKeys("the schedule", value, SCHEDULE_KEYS, problems);
 
 	const listed: unknown[] = Array.isArray(value.targets) ? value.targets : [];
-	if (listed.length === 0) problems.push("targets must be a non-empty list of { instance_type, zone, boots_utc }");
+	if (listed.length === 0) problems.push("targets must be a non-empty list of { instance_type, vcpus, zone, boots_utc }");
 	const targets: Target[] = [];
 	listed.forEach((target, index) => {
 		if (checkTarget(`targets[${index}]`, target, problems)) targets.push(target);
@@ -211,6 +250,45 @@ export function scheduleProblems(value: unknown): string[] {
 	const zones = [...new Set(targets.map((target) => target.zone))];
 	if (zones.length > 1) {
 		problems.push(`targets: every target must be in one zone, because the stage launches into one subnet; found ${zones.join(", ")}`);
+	}
+
+	// Rule A: every target's box at once fits the quota beside what is reserved.
+	const quota = value.vcpu_quota;
+	let quotaValid = false;
+	if (!isObject(quota)) {
+		problems.push('vcpu_quota must be an object such as { "limit": 64, "reserved_outside_schedule": 4 }');
+	} else {
+		unknownKeys("vcpu_quota", quota, QUOTA_KEYS, problems);
+		const before = problems.length;
+		if (!isCount(quota.limit, 1)) problems.push(`vcpu_quota: limit must be the account's vCPU quota, a whole number of at least 1, got ${show(quota.limit)}`);
+		if (!isCount(quota.reserved_outside_schedule, 0)) {
+			problems.push(`vcpu_quota: reserved_outside_schedule must be a whole number of vCPUs, 0 or more, got ${show(quota.reserved_outside_schedule)}`);
+		}
+		quotaValid = problems.length === before;
+	}
+	const counts = listed.map((target) => (isObject(target) ? target.vcpus : undefined));
+	if (quotaValid && listed.length > 0 && counts.every((count) => isCount(count, 1))) {
+		const { limit, reserved_outside_schedule: reserved } = quota as unknown as VcpuQuota;
+		const sum = (counts as number[]).reduce((total, count) => total + count, 0);
+		if (sum + reserved > limit) {
+			problems.push(
+				`targets: their vCPUs together (${sum}) and the ${reserved} reserved outside the schedule make ${sum + reserved}, over the quota of ${limit}; with every target's box up at once, a launch would be refused`,
+			);
+		}
+	}
+
+	// Rule B: a target never overlaps itself.
+	for (const target of targets) {
+		const minutes = target.boots_utc.map(minuteOfDay).sort((a, b) => a - b);
+		if (minutes.length < 2) continue;
+		minutes.forEach((minute, index) => {
+			const next = index + 1 < minutes.length ? (minutes[index + 1] as number) : (minutes[0] as number) + MINUTES_PER_DAY;
+			if (next - minute >= MIN_BOOT_GAP_MINUTES) return;
+			const time = (m: number) => `${String(Math.floor(m / 60) % 24).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+			problems.push(
+				`targets: ${target.instance_type} boots at ${time(minute)} and ${time(next)}, ${next - minute} minute${next - minute === 1 ? "" : "s"} apart; a target's boots must be at least ${MIN_BOOT_GAP_MINUTES} minutes apart, across midnight too, so one box has ended before the next starts`,
+			);
+		});
 	}
 
 	// July's 32-vCPU box; see JULY_RULE. Goes away when July's pipeline is retired.

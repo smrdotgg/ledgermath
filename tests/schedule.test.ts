@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { appliesTo, JULY_RULE, parseSchedule, type Schedule, scheduleProblems } from "../infra/runs/schedule";
+import { appliesTo, JULY_RULE, MIN_BOOT_GAP_MINUTES, parseSchedule, type Schedule, scheduleProblems } from "../infra/runs/schedule";
 
 const ROOT = join(import.meta.dir, "..");
 const FILE = JSON.parse(readFileSync(join(ROOT, "schedule.json"), "utf8")) as Schedule;
@@ -10,9 +10,10 @@ const FILE = JSON.parse(readFileSync(join(ROOT, "schedule.json"), "utf8")) as Sc
 /** A small valid schedule: two targets, one entry for all and one for m5.large only. */
 function valid(): Schedule {
 	return {
+		vcpu_quota: { limit: 64, reserved_outside_schedule: 4 },
 		targets: [
-			{ instance_type: "c6i.8xlarge", zone: "us-east-2c", boots_utc: ["04:10", "22:10"] },
-			{ instance_type: "m5.large", zone: "us-east-2c", boots_utc: ["04:20"] },
+			{ instance_type: "c6i.8xlarge", vcpus: 32, zone: "us-east-2c", boots_utc: ["04:10", "22:10"] },
+			{ instance_type: "m5.large", vcpus: 2, zone: "us-east-2c", boots_utc: ["04:20"] },
 		],
 		benchmarks: [
 			{ name: "syscall", builds: ["static"], samples: 10, timeout_seconds: 120, params: [{ call: "getpid" }] },
@@ -45,12 +46,17 @@ describe("schedule.json", () => {
 
 	test("launches the five types of step 4, in us-east-2c, four times a day each, keeping today's 22:10 c6i.8xlarge boot", () => {
 		expect(FILE.targets).toEqual([
-			{ instance_type: "c6i.8xlarge", zone: "us-east-2c", boots_utc: ["04:10", "10:10", "16:10", "22:10"] },
-			{ instance_type: "m5.large", zone: "us-east-2c", boots_utc: ["04:20", "10:20", "16:20", "22:20"] },
-			{ instance_type: "c8i.2xlarge", zone: "us-east-2c", boots_utc: ["04:30", "10:30", "16:30", "22:30"] },
-			{ instance_type: "c8a.2xlarge", zone: "us-east-2c", boots_utc: ["04:40", "10:40", "16:40", "22:40"] },
-			{ instance_type: "i4i.2xlarge", zone: "us-east-2c", boots_utc: ["04:50", "10:50", "16:50", "22:50"] },
+			{ instance_type: "c6i.8xlarge", vcpus: 32, zone: "us-east-2c", boots_utc: ["04:10", "10:10", "16:10", "22:10"] },
+			{ instance_type: "m5.large", vcpus: 2, zone: "us-east-2c", boots_utc: ["04:20", "10:20", "16:20", "22:20"] },
+			{ instance_type: "c8i.2xlarge", vcpus: 8, zone: "us-east-2c", boots_utc: ["04:30", "10:30", "16:30", "22:30"] },
+			{ instance_type: "c8a.2xlarge", vcpus: 8, zone: "us-east-2c", boots_utc: ["04:40", "10:40", "16:40", "22:40"] },
+			{ instance_type: "i4i.2xlarge", vcpus: 8, zone: "us-east-2c", boots_utc: ["04:50", "10:50", "16:50", "22:50"] },
 		]);
+	});
+
+	test("declares the account's 64-vCPU quota and the dev machine's 4, and its targets fit beside them: 58 + 4 = 62", () => {
+		expect(FILE.vcpu_quota).toEqual({ limit: 64, reserved_outside_schedule: 4 });
+		expect(FILE.targets.reduce((sum, target) => sum + target.vcpus, 0)).toBe(58);
 	});
 
 	test("names only benchmarks that have a directory with a Makefile", () => {
@@ -87,7 +93,7 @@ describe("the schedule's check", () => {
 	test("refuses a schedule without targets, or that is not an object", () => {
 		expect(scheduleProblems([])).toEqual(["the schedule must be a JSON object with targets and benchmarks"]);
 		expect(problemsAfter((s) => delete (s as Partial<Schedule>).targets)).toEqual([
-			"targets must be a non-empty list of { instance_type, zone, boots_utc }",
+			"targets must be a non-empty list of { instance_type, vcpus, zone, boots_utc }",
 		]);
 	});
 
@@ -114,7 +120,7 @@ describe("the schedule's check", () => {
 					`targets[1]: boots_utc holds ${JSON.stringify(time)}, which is not a time of day as HH:MM, 00:00 to 23:59`,
 				]);
 			}
-			expect(problemsAfter((s) => (target(s, 1).boots_utc = ["00:00", "23:59"]))).toEqual([]);
+			expect(problemsAfter((s) => (target(s, 1).boots_utc = ["00:00", "23:00"]))).toEqual([]);
 		});
 
 		test("lists each of its times once", () => {
@@ -122,7 +128,7 @@ describe("the schedule's check", () => {
 		});
 
 		test("is the only target of its instance type", () => {
-			expect(problemsAfter((s) => s.targets.push({ instance_type: "m5.large", zone: "us-east-2c", boots_utc: ["16:20"] }))).toEqual([
+			expect(problemsAfter((s) => s.targets.push({ instance_type: "m5.large", vcpus: 2, zone: "us-east-2c", boots_utc: ["16:20"] }))).toEqual([
 				"targets: m5.large is listed twice; give one target all of its boot times",
 			]);
 		});
@@ -138,19 +144,81 @@ describe("the schedule's check", () => {
 		});
 	});
 
+	describe("the vCPU quota", () => {
+		test("is declared once, as a limit and what is reserved outside the schedule", () => {
+			expect(problemsAfter((s) => delete (s as Partial<Schedule>).vcpu_quota)).toEqual([
+				'vcpu_quota must be an object such as { "limit": 64, "reserved_outside_schedule": 4 }',
+			]);
+			expect(problemsAfter((s) => (s.vcpu_quota.limit = 0))).toEqual(["vcpu_quota: limit must be the account's vCPU quota, a whole number of at least 1, got 0"]);
+			expect(problemsAfter((s) => (s.vcpu_quota.reserved_outside_schedule = -1))).toEqual([
+				"vcpu_quota: reserved_outside_schedule must be a whole number of vCPUs, 0 or more, got -1",
+			]);
+			expect(problemsAfter((s) => (s.vcpu_quota.reserved_outside_schedule = 0))).toEqual([]);
+			expect(problemsAfter((s) => ((s.vcpu_quota as unknown as Record<string, unknown>).dev_machine = 4))).toEqual(['vcpu_quota: unknown key "dev_machine"']);
+		});
+
+		test("needs every target's vcpus", () => {
+			expect(problemsAfter((s) => delete (target(s, 1) as Partial<Schedule["targets"][number]>).vcpus)).toEqual([
+				"targets[1]: vcpus must be the type's vCPUs as AWS counts them, a whole number of at least 1, got undefined",
+			]);
+			expect(problemsAfter((s) => (target(s, 1).vcpus = 1.5))[0]).toStartWith("targets[1]: vcpus must be");
+		});
+
+		test("rule A: refuses targets whose vCPUs together, beside what is reserved, exceed the quota", () => {
+			// 58 + 4 = 62 of 64 fits; a sixth target of 4 vCPUs makes 66.
+			const five = (s: Schedule) => {
+				s.targets = FILE.targets.map((t) => ({ ...t, boots_utc: [...t.boots_utc] }));
+			};
+			expect(problemsAfter(five)).toEqual([]);
+			expect(
+				problemsAfter((s) => {
+					five(s);
+					s.targets.push({ instance_type: "c6i.xlarge", vcpus: 4, zone: "us-east-2c", boots_utc: ["05:00"] });
+				}),
+			).toEqual([
+				"targets: their vCPUs together (62) and the 4 reserved outside the schedule make 66, over the quota of 64; with every target's box up at once, a launch would be refused",
+			]);
+			// Whatever the boot times: two 32-vCPU targets that never boot within hours of each other still cannot both be targets.
+			expect(problemsAfter((s) => s.targets.push({ instance_type: "c7i.8xlarge", vcpus: 32, zone: "us-east-2c", boots_utc: ["12:00"] })).at(-1)).toStartWith(
+				"targets: their vCPUs together (66)",
+			);
+			// Exactly the quota fits.
+			expect(problemsAfter((s) => (s.vcpu_quota.limit = 38))).toEqual([]);
+			expect(problemsAfter((s) => (s.vcpu_quota.limit = 37))[0]).toStartWith("targets: their vCPUs together (34) and the 4 reserved outside the schedule make 38, over the quota of 37");
+		});
+
+		test(`rule B: refuses two boots of one target less than ${MIN_BOOT_GAP_MINUTES} minutes apart`, () => {
+			expect(MIN_BOOT_GAP_MINUTES).toBe(60);
+			expect(problemsAfter((s) => (target(s, 0).boots_utc = ["04:10", "04:11"]))).toEqual([
+				"targets: c6i.8xlarge boots at 04:10 and 04:11, 1 minute apart; a target's boots must be at least 60 minutes apart, across midnight too, so one box has ended before the next starts",
+			]);
+			expect(problemsAfter((s) => (target(s, 1).boots_utc = ["10:20", "04:20", "10:50"]))).toEqual([
+				"targets: m5.large boots at 10:20 and 10:50, 30 minutes apart; a target's boots must be at least 60 minutes apart, across midnight too, so one box has ended before the next starts",
+			]);
+			expect(problemsAfter((s) => (target(s, 0).boots_utc = ["04:10", "05:10"]))).toEqual([]); // exactly 60
+		});
+
+		test("rule B: across midnight too", () => {
+			expect(problemsAfter((s) => (target(s, 1).boots_utc = ["23:30", "00:10"]))).toEqual([
+				"targets: m5.large boots at 23:30 and 00:10, 40 minutes apart; a target's boots must be at least 60 minutes apart, across midnight too, so one box has ended before the next starts",
+			]);
+			expect(problemsAfter((s) => (target(s, 1).boots_utc = ["23:30", "00:30"]))).toEqual([]);
+		});
+	});
+
 	describe("while July's pipeline runs", () => {
 		test("no c6i.8xlarge boots from 22:20 to 23:40 UTC, both included", () => {
 			expect(JULY_RULE).toEqual({ instanceType: "c6i.8xlarge", from: "22:20", to: "23:40" });
 			for (const time of ["22:20", "22:30", "23:10", "23:40"]) {
-				const problems = problemsAfter((s) => target(s, 0).boots_utc.push(time));
+				const problems = problemsAfter((s) => (target(s, 0).boots_utc = ["10:10", time]));
 				expect(problems.length).toBe(1);
 				expect(problems[0]).toStartWith(`targets: c6i.8xlarge boots at ${time}, but no c6i.8xlarge may boot from 22:20 to 23:40 UTC`);
 			}
-			for (const time of ["22:19", "23:41", "00:00"]) expect(problemsAfter((s) => target(s, 0).boots_utc.push(time))).toEqual([]);
+			for (const time of ["22:19", "23:41", "00:00"]) expect(problemsAfter((s) => (target(s, 0).boots_utc = ["10:10", time]))).toEqual([]);
 		});
 
 		test("other types may boot then", () => {
-			expect(problemsAfter((s) => (target(s, 1).boots_utc = ["22:20", "23:10", "23:40"]))).toEqual([]);
+			for (const time of ["22:20", "23:10", "23:40"]) expect(problemsAfter((s) => (target(s, 1).boots_utc = [time]))).toEqual([]);
 		});
 	});
 

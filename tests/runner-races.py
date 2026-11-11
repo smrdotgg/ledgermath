@@ -82,6 +82,10 @@ def main():
     if case in ("instance-types", "no-instance-type"):
         def entry(params, **more):
             return dict({"name": "fake", "builds": ["static"], "samples": 1, "timeout_seconds": 60, "params": params}, **more)
+        # What schedule.json holds besides benchmarks, which run.py does not read.
+        schedule["vcpu_quota"] = {"limit": 64, "reserved_outside_schedule": 4}
+        schedule["targets"] = [{"instance_type": t, "vcpus": v, "zone": "us-east-2c", "boots_utc": [b]}
+                               for t, v, b in (("m5.large", 2, "04:20"), ("c6i.8xlarge", 32, "04:10"))]
         schedule["benchmarks"] = [
             entry([{"mode": "quick", "n": 1}]),
             entry([{"mode": "quick", "n": 2}], instance_types=["m5.large", "c8i.2xlarge"]),
