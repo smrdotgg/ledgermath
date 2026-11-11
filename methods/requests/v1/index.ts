@@ -96,7 +96,7 @@ export const DEFINITIONS: Record<string, string> = {
 		"as of a Run's start is checked against these.",
 	breakdown:
 		"The pooled figures again for the requests that had each value of a fact each request records of its connection " +
-		"(see request_facts), for every fact that took more than one value among the pool's succeeded requests.",
+		"or of itself (see request_facts), for every fact that took more than one value among the pool's succeeded requests.",
 	groups:
 		"Method series v1's groups: within a Series, the Runs whose split facts are all equal, lettered in the order each " +
 		"first appears; the same letters series v1 gives the same Runs.",
@@ -104,9 +104,13 @@ export const DEFINITIONS: Record<string, string> = {
 		"A Run counts when its binary exited 0 or 4 (4: the Run completed and holds at least one failed request), every " +
 		"stdout line is an event that matches the events schema and the stream obeys every order rule of " +
 		"scripts/check-events.py, the stream has as many counted samples as the Run asked for (fewer: the Run was cut " +
-		"short), every request in it reads as the binary's README says (each phase at least 0, sample_ended at the clock " +
-		"read that ended the request), and an exit 0 has no failed request. Any other Run is failed: shown, with the " +
-		"reasons, and in no figure. A counted Run's failed requests are counted; its succeeded requests are in the figures.",
+		"short), every timestamp is a whole number a JavaScript number holds exactly (at most 2^53 − 1), every request " +
+		"in it reads as the binary's README says (every event naming a request names its sample's; a complete response's " +
+		"events in their order on one open connection, each phase at least 0, sample_ended at the clock read that ended " +
+		"the request; a failed request's events, before its request_failed, the start of that order up to where its " +
+		"phase says it got), and an exit 0 has no failed request, no failed warmup request and no failed setup of a kept " +
+		"connection. Any other Run is failed: shown, with the reasons, and in no figure. A counted Run's failed requests " +
+		"are counted; its succeeded requests are in the figures.",
 };
 
 // ---------------------------------------------------------------- gather
@@ -200,8 +204,16 @@ export function failures(run: Run, record: RequestsRecord): string[] {
 	if (record.problems.length === 0 && !record.holds_requests) reasons.push("its stream holds no request (no response_ended or request_failed carrying request)");
 	const count = countProblem(record.counted, run.samples);
 	if (count.length > 0) reasons.push(record.counted !== null && record.counted < run.samples ? `${count[0]}: the Run was cut short` : (count[0] as string));
-	if ("code" in run.exit && run.exit.code === 0 && record.failed > 0) {
-		reasons.push(`exit code 0, which says every request succeeded, but ${record.failed} counted request${record.failed === 1 ? "" : "s"} failed`);
+	if ("code" in run.exit && run.exit.code === 0) {
+		// The binary's README: any failed request, the warmup's included, or failed setup of a kept connection, is exit 4.
+		const contrary = [
+			...(record.failed > 0 ? [`${record.failed} counted request${record.failed === 1 ? "" : "s"} failed`] : []),
+			...(record.warmup_failure !== null ? [`the warmup request failed (${record.warmup_failure.phase} ${record.warmup_failure.kind})`] : []),
+			...(record.setups_failed.length > 0
+				? [`${record.setups_failed.reduce((sum, f) => sum + f.count, 0)} setup${record.setups_failed.reduce((sum, f) => sum + f.count, 0) === 1 ? "" : "s"} of a kept connection failed`]
+				: []),
+		];
+		if (contrary.length > 0) reasons.push(`exit code 0, which says every request succeeded, but ${contrary.join(", and ")}`);
 	}
 	return reasons;
 }

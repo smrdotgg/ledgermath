@@ -85,6 +85,13 @@ export function reduceRequests(stdout: Uint8Array): RequestsRecord {
 		warmup_failure: null,
 		setups_failed: [],
 	};
+	// A t past 2^53 − 1 has been rounded by the parser already: no time is computed from it.
+	const unsafe = stream.events.findIndex((event) => typeof event.t === "number" && !Number.isSafeInteger(event.t));
+	if (unsafe >= 0) {
+		record.problems.push(
+			`line ${unsafe + 1}: t is ${String((stream.events[unsafe] as { t: number }).t)} ns, past 2^53 − 1 (about 104 days on the clock), which a JavaScript number does not hold exactly: no time is computed from this stream`,
+		);
+	}
 	if (!record.holds_requests || record.problems.length > 0) return record;
 	const read = readRequests(stream.events);
 	if (read.problems.length > 0) {

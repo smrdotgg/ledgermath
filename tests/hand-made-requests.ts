@@ -51,6 +51,8 @@ export interface Stream {
 	endedEarlyAfter?: number;
 	/** Gap between requests, in ns. */
 	gap?: number;
+	/** sigv4 (the default): every request_sent carries `signing`; none: none does. */
+	auth?: "sigv4" | "none";
 }
 
 export const DEFAULT_PHASES: Phases = { dns: 200_000, connect: 900_000, tls: 2_200_000, send: 10_000, first_byte: 25_000_000, headers: 8_000, body: 12_000 };
@@ -76,9 +78,13 @@ export function requestStream(spec: Stream): string {
 		const withRequest = request === null ? {} : { request };
 		t += phases.dns;
 		push("name_resolved", { ...withRequest, server: "172.31.0.2:53", name: HOST, rcode: 0, truncated: false, answers: [`s3-r-w.us-east-2.amazonaws.com. 5 A ${address}`], address });
-		if (failAt === "connect") return false;
 		connection++;
 		t += phases.connect;
+		// As the binary does, a connect that failed is still written, without nodelay and local.
+		if (failAt === "connect") {
+			push("connection_opened", { connection, ...withRequest, address, port: 443 });
+			return false;
+		}
 		push("connection_opened", { connection, ...withRequest, address, port: 443, nodelay: true, local: "192.0.2.10:50000" });
 		if (failAt === "tls") return false;
 		t += phases.tls;
@@ -128,7 +134,7 @@ export function requestStream(spec: Stream): string {
 			}
 			const opened = openConnection(sample, request.address ?? "3.5.133.225", request.cipher ?? "TLS_AES_128_GCM_SHA256", phases, fail?.phase === "connect" || fail?.phase === "tls" ? fail.phase : null);
 			if (!opened) {
-				t += fail?.phase === "connect" ? phases.connect : phases.tls;
+				if (fail?.phase === "tls") t += phases.tls;
 				failed();
 				if (!warmup) made++;
 				continue;
@@ -141,7 +147,8 @@ export function requestStream(spec: Stream): string {
 			continue;
 		}
 		t += phases.send;
-		push("request_sent", { request: sample, connection, method: "GET", target: "/http_get/v1/4096", request_bytes: 1386 });
+		const signing = (spec.auth ?? "sigv4") === "sigv4" ? { signing: { algorithm: "AWS4-HMAC-SHA256", credential_scope: "20261111/us-east-2/s3/aws4_request", signed_headers: ["host", "x-amz-date"] } } : {};
+		push("request_sent", { request: sample, connection, method: "GET", target: "/http_get/v1/4096", request_bytes: 1386, ...signing });
 		used++;
 		if (fail?.phase === "first_byte") {
 			t += phases.first_byte;
@@ -209,7 +216,7 @@ export function requestRun(made: HandMade, options: Partial<HandMadeRun> & { sta
 	return made.run({
 		benchmark: "http_get",
 		binary: "http_get",
-		params: paramsOf(objectBytes ?? 4096, stream.connection),
+		params: { ...paramsOf(objectBytes ?? 4096, stream.connection), auth: stream.auth ?? "sigv4" },
 		samples: stream.requests.length,
 		networkSections: true,
 		...rest,

@@ -23,7 +23,7 @@ import {
 import type { DerivationsFile, SeriesDerivation } from "../methods/requests/v1/output";
 import { REQUESTS_RECORD, REQUESTS_RECORD_KEY, type RequestsRecord, type RunPhase, reduceRequests } from "../methods/requests/v1/record";
 import { addressBlock, readRequests } from "../methods/requests/v1/requests";
-import { readStream, type RunFile } from "../methods/run";
+import { readStream, type RunEvent, type RunFile } from "../methods/run";
 import * as series from "../methods/v1";
 import { percentile } from "../methods/v1/numbers";
 import { SERIES_RECORD_KEY } from "../methods/v1/record";
@@ -62,14 +62,22 @@ describe("one request's phases, from the event timestamps", () => {
 		expect(read.succeeded.length).toBe(1);
 		const total = Object.values(phases).reduce((a, b) => a + b, 0);
 		expect(read.succeeded[0]?.phases).toEqual({ ...phases, total });
-		expect(read.succeeded[0]?.facts).toEqual({ address_block: "3.5.0.0/16", cipher: "TLS_AES_128_GCM_SHA256", tls_version: "TLSv1.3", tls_group: "X25519MLKEM768" });
+		expect(read.succeeded[0]?.facts).toEqual({
+			address_block: "3.5.0.0/16",
+			cipher: "TLS_AES_128_GCM_SHA256",
+			tls_version: "TLSv1.3",
+			tls_group: "X25519MLKEM768",
+			method: "GET",
+			target: "/http_get/v1/4096",
+			signing: "AWS4-HMAC-SHA256",
+		});
 	});
 
 	test("the README's real exchange gives its own table: 0.21, 1.27, 2.19, 0.01, 28.48, 0.01 and 32.17 ms", () => {
 		// benchmarks/http_get/README.md, "A real exchange": the one counted request's events, its fields trimmed.
 		const text = [
 			{ event: "started", t: 327318500000000, schema: "ledgermath.events/1", wall_utc: "2026-11-11T11:53:12.000000000Z", clock: "CLOCK_MONOTONIC_RAW", clock_read_ns: 20 },
-			{ event: "sample_started", t: 327318522624393, sample: 0, warmup: false, repetitions: 1 },
+			{ event: "sample_started", t: 327318522624393, sample: 1, warmup: false, repetitions: 1 },
 			{ event: "name_resolved", t: 327318522831979, request: 1, address: "3.5.92.92" },
 			{ event: "connection_opened", t: 327318524098388, connection: 1, request: 1, address: "3.5.92.92", port: 443 },
 			{ event: "connection_secured", t: 327318526289638, connection: 1, tls: "TLSv1.3", cipher: "TLS_AES_128_GCM_SHA256", group: "X25519MLKEM768" },
@@ -77,7 +85,7 @@ describe("one request's phases, from the event timestamps", () => {
 			{ event: "first_byte", t: 327318554774556, request: 1 },
 			{ event: "response_headers", t: 327318554780793, request: 1, status: 200 },
 			{ event: "response_ended", t: 327318554790612, request: 1, bytes: 5545, fixture: "match", s3_checksum: "match" },
-			{ event: "sample_ended", t: 327318554790612, sample: 0 },
+			{ event: "sample_ended", t: 327318554790612, sample: 1 },
 			{ event: "connection_closed", t: 327318554850258, connection: 1, reason: "done" },
 			{ event: "verified", t: 327318554900000, checksum: "0x0000000000000001" },
 			{ event: "finished", t: 327318554910000 },
@@ -114,7 +122,7 @@ describe("one request's phases, from the event timestamps", () => {
 		const firstByte = swapped.findIndex((event) => event.event === "first_byte" && event.request === 1);
 		const headers = swapped.findIndex((event) => event.event === "response_headers" && event.request === 1);
 		[swapped[firstByte], swapped[headers]] = [swapped[headers] as (typeof swapped)[number], swapped[firstByte] as (typeof swapped)[number]];
-		expect(readRequests(swapped).problems.join()).toContain("sample 1: a 2xx response whose events are");
+		expect(readRequests(swapped).problems.join()).toContain("sample 1: a request that neither failed (request_failed) nor has a complete response's events in order");
 		const late = good.map((event) => (event.event === "sample_ended" && event.sample === 1 ? { ...event, t: event.t + 1 } : event));
 		expect(readRequests(late).problems).toEqual(["sample 1: sample_ended is not at response_ended's t"]);
 	});
@@ -370,6 +378,98 @@ describe("Method requests v1 over Runs", () => {
 		expect(s.points[2]?.group_through?.runs).toBe(2);
 		expect(s.points[2]?.through?.runs).toBe(3);
 		expect(s.points[1]?.group_through?.phases.total?.min).toBe(11_000_000);
+	});
+
+	test("a request may fail in each phase, over a new connection or a reused one, and its Run counts", async () => {
+		for (const [connection, phases] of [
+			["new", ["dns", "connect", "tls", "send", "first_byte", "headers", "body"]],
+			["reused", ["send", "first_byte", "headers", "body"]],
+		] as const) {
+			for (const phase of phases) {
+				const made = new HandMade();
+				requestRun(made, { startedAt: "2026-11-11T21:35:00Z", exit: { code: 4 }, stream: { connection, requests: [{}, { fail: { phase, error: "timeout" } }, {}] } });
+				const [point] = only(await derived(made)).points;
+				if (point?.counted !== true) throw new Error(`${connection} ${phase}: ${point?.failure}`);
+				expect([point.succeeded, point.failed, point.failures]).toEqual([2, 1, [{ phase, kind: "timeout", count: 1 }]]);
+			}
+		}
+	});
+
+	test("a failed request is held to the same order and identity up to its failure, and a request on a closed connection breaks the contract: such a Run is in no figure", async () => {
+		/** A Run whose stream is edited, derived. */
+		async function edited(spec: Parameters<typeof requestStream>[0], edit: (events: RunEvent[]) => RunEvent[], exit = { code: 4 }) {
+			const made = new HandMade();
+			const text = `${edit(events(requestStream(spec))).map((event) => JSON.stringify(event)).join("\n")}\n`;
+			made.run({ startedAt: "2026-11-11T21:35:00Z", benchmark: "http_get", binary: "http_get", params: requestRunParams(), samples: spec.requests.length, exit, stdout: text });
+			return only(await derived(made)).points[0];
+		}
+		const failing = { connection: "new" as const, requests: [{}, { fail: { phase: "body" as const, error: "eof" } }] };
+		const cases: Array<[string, Parameters<typeof requestStream>[0], (events: RunEvent[]) => RunEvent[], string]> = [
+			["a failed sample with first_byte twice", failing, (es) => es.flatMap((e) => (e.event === "first_byte" && e.request === 2 ? [e, e] : [e])), "sample 2: a request that failed in phase body after"],
+			[
+				"a failed sample with its headers before its first byte",
+				failing,
+				(es) => {
+					const a = es.findIndex((e) => e.event === "first_byte" && e.request === 2);
+					const b = es.findIndex((e) => e.event === "response_headers" && e.request === 2);
+					const out = [...es];
+					[out[a], out[b]] = [out[b] as RunEvent, out[a] as RunEvent];
+					return out;
+				},
+				"sample 2: a request that failed in phase body after",
+			],
+			["a failure naming another request", failing, (es) => es.map((e) => (e.event === "request_failed" ? { ...e, request: 999 } : e)), "sample 2: request_failed names request 999, not the sample's 2"],
+			[
+				"a failure in a phase the request had passed",
+				failing,
+				(es) => es.map((e) => (e.event === "request_failed" ? { ...e, phase: "dns" } : e)),
+				"sample 2: a request that failed in phase dns after name_resolved, connection_opened, connection_secured, request_sent, first_byte, response_headers",
+			],
+			[
+				"a request on a kept connection already closed",
+				{ connection: "reused", requests: [{}, {}] },
+				(es) => es.flatMap((e) => (e.event === "sample_started" && e.sample === 1 ? [{ event: "connection_closed", t: e.t, connection: 0, reason: "end_of_run" }, e] : [e])),
+				"sample 1: request_sent names connection 0, which a connection_closed before it closed",
+			],
+			["every request naming request 0", { connection: "new", requests: [{}, {}] }, (es) => es.map((e) => ("request" in e ? { ...e, request: 0 } : e)), "sample 1: name_resolved names request 0, not the sample's 1"],
+		];
+		for (const [what, spec, edit, reason] of cases) {
+			const point = await edited(spec, edit);
+			if (point?.counted !== false) throw new Error(`${what}: counted`);
+			expect(point.failure).toContain(reason);
+			expect([point.succeeded, point.failed, Object.keys(point.phases).length]).toEqual([0, 0, 0]);
+		}
+	});
+
+	test("an exit 0 whose stream holds a failed warmup request or a failed setup of a kept connection contradicts its Run: in no figure; with exit 4 it counts", async () => {
+		const warmup = { connection: "new" as const, requests: [{}, {}], warmup: { fail: { phase: "tls" as const, error: "reset" } } };
+		const setup = { connection: "reused" as const, requests: [{}, {}], setupFailure: { phase: "tls", error: "reset" } };
+		for (const [stream, words] of [
+			[warmup, "exit code 0, which says every request succeeded, but the warmup request failed (tls reset)"],
+			[setup, "exit code 0, which says every request succeeded, but 1 setup of a kept connection failed"],
+		] as const) {
+			const zero = new HandMade();
+			requestRun(zero, { startedAt: "2026-11-11T21:35:00Z", exit: { code: 0 }, stream });
+			const [failed] = only(await derived(zero)).points;
+			expect(failed?.counted).toBe(false);
+			expect(failed?.failure).toBe(words);
+			const four = new HandMade();
+			requestRun(four, { startedAt: "2026-11-11T21:35:00Z", exit: { code: 4 }, stream });
+			expect(only(await derived(four)).points[0]?.counted).toBe(true);
+		}
+	});
+
+	test("a Run with a timestamp past 2^53 − 1 ns is in no figure: the parser rounded it", async () => {
+		const small = events(requestStream({ connection: "new", requests: [{ phases: { dns: 1, connect: 1, tls: 1, send: 1, first_byte: 1, headers: 1, body: 1 } }] }));
+		const text = `${small.map((e) => JSON.stringify({ ...e, t: "T" }).replace('"t":"T"', `"t":${String(BigInt(e.t) + (1n << 54n))}`)).join("\n")}\n`;
+		const record = reduceRequests(bytes(text));
+		expect(record.problems[0]).toMatch(/^line 1: t is \d+ ns, past 2\^53 − 1 \(about 104 days on the clock\), which a JavaScript number does not hold exactly/);
+		expect(record.phases).toEqual({});
+		const made = new HandMade();
+		made.run({ startedAt: "2026-11-11T21:35:00Z", benchmark: "http_get", binary: "http_get", params: requestRunParams(), samples: 1, stdout: text });
+		const [point] = only(await derived(made)).points;
+		expect(point?.counted).toBe(false);
+		expect(point?.failure).toContain("past 2^53 − 1");
 	});
 
 	test("a Series is the Method's from its streams alone: a broken stream beside request Runs is shown failed; alone it is not a Series of requests", async () => {

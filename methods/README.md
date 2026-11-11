@@ -201,9 +201,12 @@ benchmark's name; a Series whose Runs' streams never hold a request is not this 
 failed request), its stream passes every check `series` v1 makes (each line an event of the
 schema, every order rule of `scripts/check-events.py`), it has as many counted samples as
 the Run asked for (fewer: the Run was cut short, at its budget or because nothing was
-reachable), every request reads as below, and an exit 0 has no failed request. Any other
-Run is failed: shown, with the reasons, in no figure. A Run that exited 1 (a body that did
-not match the Fixture) or was killed is failed.
+reachable), every timestamp is a safe integer (at most 2^53 − 1 ns, about 104 days of the
+clock: past that the parser has already rounded it), every request reads as below, and an
+exit 0 has no failed request, no failed warmup request and no failed setup of a kept
+connection (the binary's README makes each of these exit 4). Any other Run is failed:
+shown, with the reasons, in no figure. A Run that exited 1 (a body that did not match the
+Fixture) or was killed is failed.
 
 ### One request
 
@@ -232,10 +235,23 @@ timestamps, in nanoseconds of the Run's clock, exactly as the binary's README de
   status is not 2xx (phase `response`, kind `status_<code>`), or a line of it was withheld
   (phase `record`, kind `line_withheld_<event>`). Counted per Run and pooled, never timed.
   The warmup request's failure, and reused-connection setups that failed outside any sample
-  (`connection_failed`), are counted apart.
-- **Its connection's facts**, from the connection it went over: `address_block` (the /16 of
-  the IPv4 address connected to, `a.b.0.0/16`; any other address whole), `cipher`,
-  `tls_version` and `tls_group` (`connection_secured`'s `cipher`, `tls`, `group`).
+  (`connection_failed`), are counted apart. A `request_failed` must be the sample's last
+  event, at `sample_ended`'s `t`, and the events before it the start of the order above up
+  to where its phase says the request got, as the binary writes them: `dns` after none or
+  `name_resolved`; `connect` and `tls` after `connection_opened` (written for a failed
+  connect too); `send` after `connection_secured`, or none over a reused connection;
+  `first_byte` after `request_sent`; `headers` after `first_byte`; `body` after
+  `response_headers`. What it opened is one connection, and a request it sent went over one
+  still open.
+- **One request, one number.** Every event in a sample that names a request names the
+  sample's own number, as the binary numbers them.
+- **A kept connection** is open from its `connection_opened` to its `connection_closed`; a
+  request sent on it after that breaks the contract.
+- **Its facts**, from the connection it went over and from what it sent: `address_block`
+  (the /16 of the IPv4 address connected to, `a.b.0.0/16`; any other address whole),
+  `cipher`, `tls_version` and `tls_group` (`connection_secured`'s `cipher`, `tls`, `group`),
+  `method` and `target` (`request_sent`'s), and `signing` (`request_sent.signing.algorithm`,
+  or `unsigned` when the request carries none).
 
 Anything else in a sample is a problem: the Run breaks the contract.
 
@@ -278,7 +294,7 @@ group: what a citation of the Series as of that Run's start is checked against.
 
 **What the requests showed differed.** The pooled figures again for the requests that had
 each value of a fact each request records (`address_block`, `cipher`, `tls_version`,
-`tls_group`), for every fact that took more than one value among the pool's requests, with
+`tls_group`, `method`, `target`, `signing`), for every fact that took more than one value among the pool's requests, with
 how many Runs and requests each value had. Only the newest moment's breakdown is kept.
 
 ### Memory and the record

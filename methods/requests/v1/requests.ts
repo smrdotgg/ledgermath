@@ -38,8 +38,8 @@ export const PHASE_WORDS: Readonly<Record<Phase, { name: string; interval: strin
 	total: { name: "whole request", interval: "sample_ended.t − sample_started.t" },
 };
 
-/** The facts each request records about its connection, which the pooled figures are broken down by. */
-export const REQUEST_FACTS = ["address_block", "cipher", "tls_version", "tls_group"] as const;
+/** The facts each succeeded request records, of its connection and of itself, which the pooled figures are broken down by. */
+export const REQUEST_FACTS = ["address_block", "cipher", "tls_version", "tls_group", "method", "target", "signing"] as const;
 export type RequestFact = (typeof REQUEST_FACTS)[number];
 
 export const REQUEST_FACT_WORDS: Readonly<Record<RequestFact, string>> = {
@@ -48,6 +48,9 @@ export const REQUEST_FACT_WORDS: Readonly<Record<RequestFact, string>> = {
 	cipher: "the TLS cipher suite negotiated (connection_secured.cipher)",
 	tls_version: "the TLS version negotiated (connection_secured.tls)",
 	tls_group: "the key-exchange group negotiated (connection_secured.group)",
+	method: "the request's method, as sent (request_sent.method)",
+	target: "the request's target, as sent (request_sent.target)",
+	signing: "how the request was signed, as sent: request_sent.signing.algorithm, or unsigned when the request carries no signing",
 };
 
 /** A request that succeeded: each of its phases in nanoseconds, and its connection's facts. */
@@ -102,11 +105,32 @@ interface Connection {
 	tls: string | null;
 	cipher: string | null;
 	group: string | null;
+	/** A connection_closed for it has been seen. */
+	closed: boolean;
 }
 
 const WORD = /^[a-z][a-z0-9_]*$/;
 const NEW_CONNECTION = ["name_resolved", "connection_opened", "connection_secured", "request_sent", "first_byte", "response_headers", "response_ended"];
 const REUSED_CONNECTION = ["request_sent", "first_byte", "response_headers", "response_ended"];
+
+/**
+ * Where a request that failed must have got to, by its request_failed.phase,
+ * as the binary writes it (benchmarks/http_get/http_get.c, setup_events,
+ * setup_failure and exchange_events): the last event before request_failed,
+ * or "" for none, over a new connection and over a reused one (null: the
+ * phase cannot fail there).
+ */
+const LAST_BEFORE_FAILURE: Readonly<Record<string, { new: readonly string[]; reused: readonly string[] }>> = {
+	dns: { new: ["", "name_resolved"], reused: [] },
+	connect: { new: ["connection_opened"], reused: [] },
+	tls: { new: ["connection_opened"], reused: [] },
+	send: { new: ["connection_secured"], reused: [""] },
+	first_byte: { new: ["request_sent"], reused: ["request_sent"] },
+	headers: { new: ["first_byte"], reused: ["first_byte"] },
+	body: { new: ["response_headers"], reused: ["response_headers"] },
+};
+
+const isPrefix = (names: readonly string[], of: readonly string[]): boolean => names.length <= of.length && names.every((name, i) => name === of[i]);
 /** Events a sample may hold that are not part of its request's sequence. */
 const ASIDE = new Set(["certificate"]);
 
@@ -115,20 +139,25 @@ const text = (value: unknown): string | null => (typeof value === "string" && va
 /**
  * Reads the requests of a stream that obeys the contract's order (no problem
  * from the schema or the order rules, which the caller has checked). Each
- * sample is one request:
+ * sample is one request, and every event in it that names a request names
+ * the sample's own number (the binary's request number is its sample's).
  *
- * - it failed when it holds a request_failed (phase and error from it), or
- *   its response's status (response_headers.status) is not 2xx; a request
- *   one of whose lines was withheld (line_withheld, but for a certificate's)
- *   is counted apart, as a failure of the record, and in no time;
- * - it succeeded when its status is 2xx and its body matched the Fixture and
- *   S3's checksum (response_ended.fixture and .s3_checksum "match"). Its events
- *   must then be, in order, name_resolved, connection_opened,
- *   connection_secured, request_sent, first_byte, response_headers,
- *   response_ended (a new connection), or the last four (a reused one, whose
- *   connection was opened and secured before the sample), every phase at
- *   least 0, sample_ended at the same t as response_ended, and every
- *   `request` in the sample the same.
+ * - It failed when it holds a request_failed: that must be its last event, at
+ *   sample_ended's t, and the events before it must be the start of a new
+ *   connection's sequence or a reused one's (below), up to where its phase
+ *   says the request got (LAST_BEFORE_FAILURE), on one connection. It failed
+ *   too when its response is complete and its status (response_headers.status)
+ *   is not 2xx. A request one of whose lines was withheld (line_withheld, but
+ *   for a certificate's) is counted apart, as a failure of the record. No
+ *   failed request is timed.
+ * - It succeeded when its status is 2xx and its body matched the Fixture and
+ *   S3's checksum (response_ended.fixture and .s3_checksum "match").
+ * - A complete response, 2xx or not, must have its events in order:
+ *   name_resolved, connection_opened, connection_secured, request_sent,
+ *   first_byte, response_headers, response_ended (a new connection, the
+ *   three first on one connection), or the last four (a reused one, opened and
+ *   secured before the sample and not closed since), every phase at least 0,
+ *   and sample_ended at response_ended's t.
  *
  * Anything else is a problem: the Run breaks the contract and is in no figure.
  */
@@ -138,22 +167,25 @@ export function readRequests(events: readonly RunEvent[]): ReadRequests {
 	let open: { start: RunEvent; inside: RunEvent[] } | null = null;
 
 	const connectionOf = (id: unknown): Connection => {
-		if (!Number.isInteger(id)) return { address: null, tls: null, cipher: null, group: null };
+		if (!Number.isInteger(id)) return { address: null, tls: null, cipher: null, group: null, closed: false };
 		let found = connections.get(id as number);
 		if (found === undefined) {
-			found = { address: null, tls: null, cipher: null, group: null };
+			found = { address: null, tls: null, cipher: null, group: null, closed: false };
 			connections.set(id as number, found);
 		}
 		return found;
 	};
 	const note = (event: RunEvent): void => {
-		if (event.event === "connection_opened") connectionOf(event.connection).address = text(event.address);
-		else if (event.event === "connection_secured") {
+		if (event.event === "connection_opened") {
+			const connection = connectionOf(event.connection);
+			connection.address = text(event.address);
+			connection.closed = false;
+		} else if (event.event === "connection_secured") {
 			const connection = connectionOf(event.connection);
 			connection.tls = text(event.tls);
 			connection.cipher = text(event.cipher);
 			connection.group = text(event.group);
-		}
+		} else if (event.event === "connection_closed") connectionOf(event.connection).closed = true;
 	};
 
 	const failure = (where: string, phase: unknown, kind: unknown): Failure | null => {
@@ -167,6 +199,10 @@ export function readRequests(events: readonly RunEvent[]): ReadRequests {
 	const close = (start: RunEvent, inside: RunEvent[], end: RunEvent): void => {
 		const sample = start.sample as number;
 		const warmup = start.warmup === true;
+		const where = `sample ${sample}`;
+		const problem = (words: string): void => {
+			result.problems.push(`${where}: ${words}`);
+		};
 		// A withheld line stands for the event it replaced: a certificate's is aside like the certificate.
 		const sequence = inside.filter((event) => !ASIDE.has(event.event) && !(event.event === "line_withheld" && ASIDE.has(String(event.withheld_event))));
 		const keep = (outcome: Failure | null): void => {
@@ -174,99 +210,123 @@ export function readRequests(events: readonly RunEvent[]): ReadRequests {
 			if (warmup) result.warmupFailure ??= outcome;
 			else result.failed.push(outcome);
 		};
+		const stranger = inside.find((event) => "request" in event && event.request !== sample);
+		if (stranger !== undefined) return problem(`${stranger.event} names request ${JSON.stringify(stranger.request)}, not the sample's ${sample}`);
 		const withheld = sequence.find((event) => event.event === "line_withheld");
 		if (withheld !== undefined) {
 			const kind = typeof withheld.withheld_event === "string" && WORD.test(withheld.withheld_event) ? `line_withheld_${withheld.withheld_event}` : "line_withheld";
 			keep({ phase: "record", kind });
 			return;
 		}
-		const failed = sequence.find((event) => event.event === "request_failed");
-		if (failed !== undefined) {
-			if (sequence.at(-1) !== failed) result.problems.push(`sample ${sample}: request_failed is not the request's last event`);
-			if (failed.t !== end.t) result.problems.push(`sample ${sample}: sample_ended is not at request_failed's t`);
-			keep(failure(`sample ${sample}: request_failed`, failed.phase, failed.error));
-			return;
-		}
-		const headers = sequence.find((event) => event.event === "response_headers");
-		const ended = sequence.find((event) => event.event === "response_ended");
-		if (headers === undefined || ended === undefined) {
-			result.problems.push(`sample ${sample}: the request neither failed (request_failed) nor ended with a response (response_headers and response_ended)`);
-			return;
-		}
-		const status = headers.status;
-		if (!Number.isInteger(status)) {
-			result.problems.push(`sample ${sample}: response_headers.status is not a whole number`);
-			return;
-		}
-		if ((status as number) < 200 || (status as number) > 299) {
-			if (ended.t !== end.t) result.problems.push(`sample ${sample}: sample_ended is not at response_ended's t`);
-			keep({ phase: "response", kind: `status_${status as number}` });
-			return;
-		}
-		if (ended.fixture !== "match" || ended.s3_checksum !== "match") {
-			result.problems.push(
-				`sample ${sample}: a ${status as number} response whose body did not match (fixture ${JSON.stringify(ended.fixture)}, s3_checksum ${JSON.stringify(ended.s3_checksum)}), which the binary reports with exit code 1`,
-			);
-			return;
-		}
 		const names = sequence.map((event) => event.event);
+		const at = (name: string): RunEvent | undefined => sequence.find((event) => event.event === name);
+		/**
+		 * The connection a request went over: opened and secured in the sample
+		 * (new), or before it and not closed since (reused). "unsent" when the
+		 * request was never sent (and what the sample opened is one connection);
+		 * null, with a problem, when the events do not say one open connection.
+		 */
+		const connectionFor = (isNew: boolean): Connection | "unsent" | null => {
+			const opened = at("connection_opened");
+			const secured = at("connection_secured");
+			const sent = at("request_sent");
+			if (isNew && secured !== undefined && opened?.connection !== secured.connection) {
+				problem("the connection opened and the connection secured are not one connection");
+				return null;
+			}
+			if (sent === undefined) return "unsent";
+			if (isNew && sent.connection !== opened?.connection) {
+				problem("the request was sent on another connection than the one the sample opened");
+				return null;
+			}
+			const connection = Number.isInteger(sent.connection) ? connections.get(sent.connection as number) : undefined;
+			if (connection === undefined || connection.address === null || connection.cipher === null || connection.tls === null || connection.group === null) {
+				problem(`request_sent names connection ${JSON.stringify(sent.connection)}, which no connection_opened and connection_secured before it describe`);
+				return null;
+			}
+			if (connection.closed) {
+				problem(`request_sent names connection ${JSON.stringify(sent.connection)}, which a connection_closed before it closed`);
+				return null;
+			}
+			return connection;
+		};
+
+		const failedAt = names.indexOf("request_failed");
+		if (failedAt >= 0) {
+			const failed = sequence[failedAt] as RunEvent;
+			if (failedAt !== names.length - 1) return problem("request_failed is not the request's last event");
+			if (failed.t !== end.t) return problem("sample_ended is not at request_failed's t");
+			const outcome = failure(`${where}: request_failed`, failed.phase, failed.error);
+			if (outcome === null) return;
+			const before = names.slice(0, failedAt);
+			const last = before.at(-1) ?? "";
+			const expected = LAST_BEFORE_FAILURE[outcome.phase];
+			if (expected === undefined) return problem(`request_failed's phase ${JSON.stringify(outcome.phase)} is none of ${Object.keys(LAST_BEFORE_FAILURE).join(", ")}`);
+			const asNew = isPrefix(before, NEW_CONNECTION.slice(0, -1)) && expected.new.includes(last);
+			const asReused = isPrefix(before, REUSED_CONNECTION.slice(0, -1)) && expected.reused.includes(last);
+			if (!asNew && !asReused) {
+				return problem(
+					`a request that failed in phase ${outcome.phase} after ${before.length === 0 ? "no event" : before.join(", ")}: that is not where a new connection's (${NEW_CONNECTION.join(", ")}) or a reused one's (${REUSED_CONNECTION.join(", ")}) request fails in that phase`,
+				);
+			}
+			// What it opened is one connection, and a request that got as far as being sent went over an open one.
+			if (connectionFor(asNew) === null) return;
+			keep(outcome);
+			return;
+		}
+
 		const isNew = names.length === NEW_CONNECTION.length && names.every((name, i) => name === NEW_CONNECTION[i]);
 		const isReused = names.length === REUSED_CONNECTION.length && names.every((name, i) => name === REUSED_CONNECTION[i]);
 		if (!isNew && !isReused) {
-			result.problems.push(`sample ${sample}: a 2xx response whose events are ${names.join(", ")}, neither a new connection's (${NEW_CONNECTION.join(", ")}) nor a reused one's (${REUSED_CONNECTION.join(", ")})`);
-			return;
+			return problem(
+				`a request that neither failed (request_failed) nor has a complete response's events in order: ${names.length === 0 ? "none" : names.join(", ")}, neither a new connection's (${NEW_CONNECTION.join(", ")}) nor a reused one's (${REUSED_CONNECTION.join(", ")})`,
+			);
 		}
-		const at = (name: string): RunEvent => sequence.find((event) => event.event === name) as RunEvent;
-		const requests = new Set(sequence.filter((event) => "request" in event).map((event) => event.request));
-		if (requests.size !== 1 || !Number.isInteger([...requests][0])) {
-			result.problems.push(`sample ${sample}: its events name ${requests.size === 1 ? "no whole-number request" : `${requests.size} requests`}`);
-			return;
-		}
-		const sent = at("request_sent");
-		if (isNew) {
-			const opened = at("connection_opened");
-			const secured = at("connection_secured");
-			if (opened.connection !== secured.connection || secured.connection !== sent.connection) {
-				result.problems.push(`sample ${sample}: the connection opened, secured and sent on are not one connection`);
-				return;
-			}
-		}
-		const connection = Number.isInteger(sent.connection) ? connections.get(sent.connection as number) : undefined;
-		if (connection === undefined || connection.address === null || connection.cipher === null || connection.tls === null || connection.group === null) {
-			result.problems.push(`sample ${sample}: request_sent names connection ${JSON.stringify(sent.connection)}, which no connection_opened and connection_secured before it describe`);
-			return;
-		}
-		if (ended.t !== end.t) {
-			result.problems.push(`sample ${sample}: sample_ended is not at response_ended's t`);
-			return;
-		}
+		const connection = connectionFor(isNew);
+		if (connection === null || connection === "unsent") return;
+		const sent = at("request_sent") as RunEvent;
+		const headers = at("response_headers") as RunEvent;
+		const ended = at("response_ended") as RunEvent;
+		if (ended.t !== end.t) return problem("sample_ended is not at response_ended's t");
 		const phases: Partial<Record<Phase, number>> = {};
 		const span = (phase: Phase, from: RunEvent, to: RunEvent): void => {
 			phases[phase] = to.t - from.t;
 		};
 		if (isNew) {
-			span("dns", start, at("name_resolved"));
-			span("connect", at("name_resolved"), at("connection_opened"));
-			span("tls", at("connection_opened"), at("connection_secured"));
-			span("send", at("connection_secured"), sent);
+			span("dns", start, at("name_resolved") as RunEvent);
+			span("connect", at("name_resolved") as RunEvent, at("connection_opened") as RunEvent);
+			span("tls", at("connection_opened") as RunEvent, at("connection_secured") as RunEvent);
+			span("send", at("connection_secured") as RunEvent, sent);
 		} else span("send", start, sent);
-		span("first_byte", sent, at("first_byte"));
-		span("headers", at("first_byte"), headers);
+		span("first_byte", sent, at("first_byte") as RunEvent);
+		span("headers", at("first_byte") as RunEvent, headers);
 		span("body", headers, ended);
 		span("total", start, end);
 		const negative = PHASES.filter((phase) => (phases[phase] ?? 0) < 0);
-		if (negative.length > 0) {
-			result.problems.push(`sample ${sample}: ${negative.join(", ")} ${negative.length === 1 ? "is" : "are"} less than 0`);
+		if (negative.length > 0) return problem(`${negative.join(", ")} ${negative.length === 1 ? "is" : "are"} less than 0`);
+		const status = headers.status;
+		if (!Number.isInteger(status)) return problem("response_headers.status is not a whole number");
+		if ((status as number) < 200 || (status as number) > 299) {
+			keep({ phase: "response", kind: `status_${status as number}` });
 			return;
 		}
+		if (ended.fixture !== "match" || ended.s3_checksum !== "match") {
+			return problem(
+				`a ${status as number} response whose body did not match (fixture ${JSON.stringify(ended.fixture)}, s3_checksum ${JSON.stringify(ended.s3_checksum)}), which the binary reports with exit code 1`,
+			);
+		}
 		if (!warmup) {
+			const signing = sent.signing as { algorithm?: unknown } | undefined;
 			result.succeeded.push({
 				phases,
 				facts: {
-					address_block: addressBlock(connection.address),
-					cipher: connection.cipher,
-					tls_version: connection.tls,
-					tls_group: connection.group,
+					address_block: addressBlock(connection.address as string),
+					cipher: connection.cipher as string,
+					tls_version: connection.tls as string,
+					tls_group: connection.group as string,
+					method: text(sent.method) ?? "(none)",
+					target: text(sent.target) ?? "(none)",
+					signing: signing === undefined ? "unsigned" : (text(signing.algorithm) ?? "(no algorithm)"),
 				},
 			});
 		}
