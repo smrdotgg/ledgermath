@@ -418,4 +418,37 @@ A migrated benchmark is done only when **all** of these hold:
   of dumps and builds between them), of which the seven new benchmarks took 233 s. All
   seven scenarios pass. The new binaries came out byte-identical in two separate
   container builds.
+- **2026-11-11** — Step 4 of the build plan (#36, brief #42), the targets, not yet
+  deployed. `schedule.json` names the targets: `c6i.8xlarge`, `m5.large`, `c8i.2xlarge`,
+  `c8a.2xlarge` and `i4i.2xlarge`, all in `us-east-2c`, booting at 04, 10, 16 and 22 UTC
+  at :10, :20, :30, :40 and :50 respectively (58 vCPUs if all are up at once, 62 with the
+  dev machine). The five types are offered in `us-east-2c`
+  (`describe-instance-type-offerings`, this day). A benchmark entry may carry
+  `instance_types`; two entries may share a name. `infra/runs/schedule.ts` is the one
+  check of the file, run by the tests and at deploy; while July's pipeline runs it
+  refuses a `c6i.8xlarge` boot from 22:20 to 23:40 UTC. `infra/runs/placement.ts` reads
+  the targets and makes one EventBridge schedule per target (per minute past the hour,
+  one each today), such as `cron(10 4,10,16,22 * * ? *)` with the payload
+  `{"scheduledTime": "<aws.scheduler.scheduled-time>", "instanceType": "c6i.8xlarge"}`;
+  the stack makes one launch function (`BoxLaunchHandler`) and a `CronV2` per schedule
+  invoking it. Every payload names its instance type. A scheduled launch is refused
+  when more than ten minutes late or when its type is not a target; the client token is
+  the sha256 of the stage, the type and the scheduled time. `run.py` runs the entries
+  for the type IMDS gives (none of the restricted ones when IMDS gives none), builds each
+  benchmark once however many entries name it, and lists the executions of the other
+  entries under a new boot summary field, `left_out`; the Run record is unchanged, but
+  the runner's hash changes. The alarm watches every entry on every target it is for,
+  and lists a Series that has never had a Run only once `schedule.json` has been
+  unchanged on main for 48 hours (the workflow passes the commit time with
+  `--schedule-changed-at`). The container test's new `instance-types` scenario runs a
+  fake IMDS in a sidecar container whose network namespace the box joins, so the host's
+  own IMDS is untouched; the box said `m5.large`, ran the two `syscall` entries for it
+  from one build, and left out three executions, in about a minute. The `ok` scenario
+  still runs the whole schedule (21 Runs; this machine is an `m6id.xlarge`, not a
+  target, and no entry names types yet, so nothing is left out). Deploying this removes
+  the stage's `BoxLaunch` CronV2, whose 22:10 schedule and scheduler role are deleted,
+  and adds five `CronV2`s, each a schedule and a role. The launch function stays: a
+  Pulumi alias to its old parent makes the standalone `BoxLaunchHandler` the same
+  resource, so it is updated in place and keeps its name and its log group. None of
+  this was checked with `sst diff`.
 - _(agents: append your entry here, one per merged benchmark)_
