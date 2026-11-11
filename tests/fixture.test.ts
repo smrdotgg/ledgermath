@@ -33,10 +33,16 @@ const tool = join(scratch, "fixture");
 const sh = (command: string[], env?: Record<string, string>) =>
 	spawnSync(command[0] as string, command.slice(1), { encoding: "utf8", env: env ?? process.env });
 
+// Builds take seconds, and longer on a loaded machine: far more than bun's
+// default five-second limit for a hook.
+const BUILD_TIMEOUT_MS = 120_000;
+/** A test that runs a binary or two under --quick. */
+const RUN_TIMEOUT_MS = 60_000;
+
 beforeAll(() => {
 	const built = sh(["cc", "-O2", "-Wall", "-Wextra", "-Werror", "-I", HARNESS, "-o", tool, join(ROOT, "runner", "fixture.c")]);
 	if (built.status !== 0) throw new Error(`runner/fixture.c did not build:\n${built.stderr}`);
-});
+}, BUILD_TIMEOUT_MS);
 
 describe("runner/fixture.c", () => {
 	test("writes the pattern, every word of it, and says what it did", () => {
@@ -56,7 +62,7 @@ describe("runner/fixture.c", () => {
 		// Spot values, so the pattern itself cannot drift unnoticed.
 		expect(view.getBigUint64(0, true)).toBe(mix64(SEED));
 		expect(`0x${view.getBigUint64(8, true).toString(16).padStart(16, "0")}`).toBe(`0x${word(8).toString(16).padStart(16, "0")}`);
-	});
+	}, RUN_TIMEOUT_MS);
 
 	test("is July's io_uring pattern", () => {
 		const july = readFileSync(join(ROOT, "benchmarks", "c", "bench_disk_read_io_uring.c"), "utf8");
@@ -67,7 +73,7 @@ describe("runner/fixture.c", () => {
 			expect(july).toContain(constant);
 			expect(header).toContain(constant);
 		}
-	});
+	}, RUN_TIMEOUT_MS);
 
 	test("never overwrites a file, takes whole MiB only, and leaves nothing behind when it fails", () => {
 		const path = join(scratch, "exists");
@@ -78,7 +84,7 @@ describe("runner/fixture.c", () => {
 		expect(sh([tool, join(scratch, "odd"), "1000"]).status).toBe(2);
 		expect(sh([tool, join(scratch, "zero"), "0"]).status).toBe(2);
 		expect(existsSync(join(scratch, "odd"))).toBe(false);
-	});
+	}, RUN_TIMEOUT_MS);
 });
 
 describe("a disk benchmark checks the Fixture outside its measured interval", () => {
@@ -86,7 +92,7 @@ describe("a disk benchmark checks the Fixture outside its measured interval", ()
 	beforeAll(() => {
 		const built = sh(["make", "--no-print-directory", "-s", "-C", join(ROOT, "benchmarks", "disk_read_random"), "-B", "BUILD=dynamic"]);
 		if (built.status !== 0) throw new Error(`disk_read_random did not build:\n${built.stdout}${built.stderr}`);
-	});
+	}, BUILD_TIMEOUT_MS);
 	const run = (dir: string, span: number) =>
 		sh([binary, "--quick"], { LM_PARAM_DIR: dir, LM_PARAM_REQUEST_BYTES: "8192", LM_PARAM_SPAN_BYTES: String(span) });
 	const fixtureIn = (name: string, bytes: number): string => {
@@ -112,7 +118,7 @@ describe("a disk benchmark checks the Fixture outside its measured interval", ()
 		expect(observed.values).toHaveProperty("device_found");
 		const check = spawnSync("python3", [join(ROOT, "scripts", "check-events.py"), "--quick"], { input: done.stdout, encoding: "utf8" });
 		expect(check.status).toBe(0);
-	});
+	}, RUN_TIMEOUT_MS);
 
 	test("exits 1 when there is none, saying where it comes from", () => {
 		const done = run(join(scratch, "empty-dir"), 4 * MIB);
@@ -120,13 +126,13 @@ describe("a disk benchmark checks the Fixture outside its measured interval", ()
 		expect(done.stderr).toContain("cannot open the Fixture");
 		expect(done.stderr).toContain("runner/provision.py");
 		expect(done.stdout).not.toContain('"event":"observed"');
-	});
+	}, RUN_TIMEOUT_MS);
 
 	test("exits 1 when it is shorter than the span", () => {
 		const done = run(fixtureIn("short", 2 * MIB), 4 * MIB);
 		expect(done.status).toBe(1);
 		expect(done.stderr).toContain("fewer than the span");
-	});
+	}, RUN_TIMEOUT_MS);
 
 	test("exits 1, before measuring, when a block it checks is not the pattern", () => {
 		const dir = fixtureIn("bad-middle", 4 * MIB);
@@ -135,7 +141,7 @@ describe("a disk benchmark checks the Fixture outside its measured interval", ()
 		expect(done.status).toBe(1);
 		expect(done.stderr).toContain("not the pattern's");
 		expect(done.stdout).not.toContain("sample_started");
-	});
+	}, RUN_TIMEOUT_MS);
 
 	test("exits 1, after measuring, when a block it read held something else: the checksum is the elision guard", () => {
 		// A span of 128 blocks, so the warmup alone reads every block whatever the disk.
@@ -146,5 +152,5 @@ describe("a disk benchmark checks the Fixture outside its measured interval", ()
 		expect(done.stderr).toContain("the Fixture's pattern at those offsets sums to");
 		expect(done.stdout).toContain('"event":"verified"');
 		expect(done.stdout).not.toContain('"event":"finished"');
-	});
+	}, RUN_TIMEOUT_MS);
 });
