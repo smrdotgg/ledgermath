@@ -6,24 +6,35 @@ import { join } from "node:path";
 
 import { describeErrors, loadValidators, type RunRecord } from "../scripts/check-runs";
 
-// runner/run.py driven through races a box can hit; tests/runner-races.py
-// sets each one up and forces it.
+// runner/run.py driven through races a box can hit, and through a schedule
+// naming instance types; tests/runner-races.py sets each one up.
 
 const HARNESS = join(import.meta.dir, "runner-races.py");
 const validators = loadValidators();
 const scratch = mkdtempSync(join(tmpdir(), "runner-races-"));
 afterAll(() => rmSync(scratch, { recursive: true, force: true }));
 
+interface Execution {
+	benchmark: string;
+	build: string;
+	params: Record<string, unknown>;
+}
+
 interface BootSummary {
 	stopped_by?: number;
-	runs: unknown[];
-	not_run: unknown[];
+	provider: { name: string; instance_type?: string | null };
+	runs: Array<Execution & { id: string }>;
+	not_run: Execution[];
+	build_failures: unknown[];
+	left_out: Array<Execution & { instance_types: string[] }>;
 }
 
 interface Outcome {
 	status: number;
 	runs: RunRecord[];
 	boot: BootSummary;
+	/** Every `make -B` run.py ran, as [directory, BUILD=...]. */
+	builds: string[][];
 }
 
 function jsonUnder<T>(directory: string): T[] {
@@ -39,7 +50,12 @@ function race(name: string): Outcome {
 	const runs = jsonUnder<RunRecord>(join(out, "runs")).sort((a, b) => a.started_at.localeCompare(b.started_at));
 	const [boot] = jsonUnder<BootSummary>(join(out, "boots"));
 	if (!boot) throw new Error(`${name}: no boot summary`);
-	return { status: Number(readFileSync(join(out, "status"), "utf8")), runs, boot };
+	return {
+		status: Number(readFileSync(join(out, "status"), "utf8")),
+		runs,
+		boot,
+		builds: JSON.parse(readFileSync(join(out, "builds.json"), "utf8")) as string[][],
+	};
 }
 
 function expectValid(runs: RunRecord[]): void {
@@ -108,4 +124,52 @@ describe("a stop signal", () => {
 			SLOW,
 		);
 	}
+});
+
+describe("a schedule naming instance types", () => {
+	test(
+		"on an m5.large, runs the entries for every type and for m5.large, builds each benchmark once, and lists the rest as left out",
+		() => {
+			const { status, runs, boot, builds } = race("instance-types");
+			expectValid(runs);
+			expect(status).toBe(0);
+			expect(boot.provider.instance_type).toBe("m5.large");
+			expect(runs.map((run) => run.params)).toEqual([
+				{ mode: "quick", n: 1 },
+				{ mode: "quick", n: 2 },
+			]);
+			expect(boot.runs.map((run) => run.params)).toEqual([
+				{ mode: "quick", n: 1 },
+				{ mode: "quick", n: 2 },
+			]);
+			// Two entries of fake ran here; its one build served both. absent, for
+			// another type only, was never built (its directory does not exist).
+			expect(builds).toEqual([["benchmarks/fake", "BUILD=static"]]);
+			expect(boot.build_failures).toEqual([]);
+			expect(boot.not_run).toEqual([]);
+			expect(boot.left_out).toEqual([
+				{ benchmark: "fake", build: "static", params: { mode: "quick", n: 3 }, instance_types: ["c6i.8xlarge"] },
+				{ benchmark: "absent", build: "static", params: { n: 4 }, instance_types: ["c8a.2xlarge"] },
+				{ benchmark: "absent", build: "dynamic", params: { n: 4 }, instance_types: ["c8a.2xlarge"] },
+				{ benchmark: "absent", build: "static", params: { n: 5 }, instance_types: ["c8a.2xlarge"] },
+				{ benchmark: "absent", build: "dynamic", params: { n: 5 }, instance_types: ["c8a.2xlarge"] },
+			]);
+			// The summary accounts for every execution the schedule names.
+			expect(boot.runs.length + boot.not_run.length + boot.left_out.length).toBe(7);
+		},
+		SLOW,
+	);
+
+	test(
+		"on a box whose type is unknown, runs only the entries for every type",
+		() => {
+			const { status, runs, boot } = race("no-instance-type");
+			expectValid(runs);
+			expect(status).toBe(0);
+			expect(boot.provider).toEqual({ name: "unknown" });
+			expect(runs.map((run) => run.params)).toEqual([{ mode: "quick", n: 1 }]);
+			expect(boot.left_out.map((execution) => execution.params.n)).toEqual([2, 3, 4, 4, 5, 5]);
+		},
+		SLOW,
+	);
 });

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Drives runner/run.py through races a real box can hit. Used by tests/runner.test.ts.
+"""Drives runner/run.py through races a real box can hit, and through a
+schedule that names instance types. Used by tests/runner.test.ts.
 
     python3 tests/runner-races.py CASE OUT [RUN_PY]
 
@@ -14,8 +15,16 @@ executions through run.py's main(), and forces one case:
     stop-after-exit     the runner is sent SIGTERM just after it reaped the binary
     stop-in-after-dump  the runner is sent SIGTERM as the dump after the binary starts
 
-OUT gets runs/, blobs/ and boots/ as run.py writes them, and status, run.py's
-exit status. RUN_PY defaults to runner/run.py of this checkout.
+or runs a schedule of four entries, two of them for other instance types, on
+a box that says it is an m5.large, or on one whose instance metadata answers
+nothing:
+
+    instance-types      the box is an m5.large
+    no-instance-type    the box's type is unknown
+
+OUT gets runs/, blobs/ and boots/ as run.py writes them, status, run.py's exit
+status, and builds.json, every `make -B` run.py ran as [directory, BUILD=...].
+RUN_PY defaults to runner/run.py of this checkout.
 """
 
 import importlib.util
@@ -28,7 +37,18 @@ import threading
 import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-CASES = ("timeout-kills", "alarm-after-exit", "stop-while-running", "stop-after-exit", "stop-in-after-dump")
+CASES = ("timeout-kills", "alarm-after-exit", "stop-while-running", "stop-after-exit", "stop-in-after-dump",
+         "instance-types", "no-instance-type")
+
+# What IMDS answers in the instance-types case: the documentation's example ids.
+M5_LARGE = {
+    "meta-data/instance-id": "i-0123456789abcdef0",
+    "meta-data/instance-type": "m5.large",
+    "meta-data/ami-id": "ami-0123456789abcdef0",
+    "meta-data/placement/region": "us-east-2",
+    "meta-data/placement/availability-zone": "us-east-2c",
+    "meta-data/placement/availability-zone-id": "use2-az3",
+}
 
 
 def main():
@@ -59,13 +79,24 @@ def main():
         "timeout_seconds": 1 if case in ("timeout-kills", "alarm-after-exit") else 60,
         "params": [{"mode": "sleep" if sleeping else "quick", "n": n} for n in (1, 2)],
     }]}
+    if case in ("instance-types", "no-instance-type"):
+        def entry(params, **more):
+            return dict({"name": "fake", "builds": ["static"], "samples": 1, "timeout_seconds": 60, "params": params}, **more)
+        schedule["benchmarks"] = [
+            entry([{"mode": "quick", "n": 1}]),
+            entry([{"mode": "quick", "n": 2}], instance_types=["m5.large", "c8i.2xlarge"]),
+            entry([{"mode": "quick", "n": 3}], instance_types=["c6i.8xlarge"]),
+            # No directory: building it would fail, so a left-out entry is never built.
+            dict(entry([{"n": 4}, {"n": 5}], instance_types=["c8a.2xlarge"]), name="absent", builds=["static", "dynamic"]),
+        ]
     with open(os.path.join(out, "schedule.json"), "w") as handle:
         json.dump(schedule, handle)
     archive = os.path.join(out, "source.tar.gz")
     with open(archive, "wb") as handle:
         handle.write(b"a stand-in source archive\n")
 
-    run.Imds.get = lambda self, path: None
+    metadata = M5_LARGE if case == "instance-types" else {}
+    run.Imds.get = lambda self, path: metadata.get(path)
     run.dump_sections = lambda cpuid_tool, imds: {"kernel": {"stub": "the dump is stubbed in this test"}}
 
     real_wait = subprocess.Popen.wait
@@ -93,6 +124,16 @@ def main():
         return real_take_dump(*args)
 
     run.take_dump = take_dump
+
+    real_make = run.make
+    builds = []
+
+    def make(directory, *arguments):
+        if "-B" in arguments:
+            builds.append([os.path.relpath(directory, root)] + [a for a in arguments if a.startswith("BUILD=")])
+        return real_make(directory, *arguments)
+
+    run.make = make
     if case == "stop-while-running":
         threading.Timer(2.0, os.kill, (os.getpid(), signal.SIGTERM)).start()
 
@@ -101,6 +142,8 @@ def main():
     status = run.main()
     with open(os.path.join(out, "status"), "w") as handle:
         handle.write("%d\n" % status)
+    with open(os.path.join(out, "builds.json"), "w") as handle:
+        json.dump(builds, handle)
 
 
 if __name__ == "__main__":

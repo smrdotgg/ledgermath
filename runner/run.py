@@ -5,10 +5,13 @@ The schedule is schedule.json at the root of the source tree. It is not part of
 the runner: a Run carries its own parameters, so editing the schedule changes
 no recorded fact of any Run it does not touch.
 
-For each benchmark in the schedule it builds every named build, then runs each
+For each benchmark entry in the schedule that is for this box's instance type
+(an entry without instance_types is for every type), it builds every named
+build, once per benchmark however many entries name it, then runs each
 parameter set under each build. Around every execution it dumps the box's
 environment, and it records what happened without judging it: a crash, a
-timeout, and a clean exit all produce a Run.
+timeout, and a clean exit all produce a Run. The executions of entries for
+other instance types are listed in the boot summary under left_out.
 
 Everything is written under --out, ready to be copied to the bucket as it is:
 
@@ -525,6 +528,24 @@ def put_tree(blobs, directory, skip=("build", "__pycache__")):
 
 # ---- the schedule ----
 
+def check_instance_types(schedule):
+    """The one check of the schedule made here (infra/runs/schedule.ts makes the
+    rest before a deploy): instance_types, when given, is a list of names, so
+    `in` below never matches part of a string."""
+    for benchmark in schedule["benchmarks"]:
+        types = benchmark.get("instance_types")
+        if types is not None and not (isinstance(types, list) and all(isinstance(t, str) for t in types)):
+            raise ValueError("%s: instance_types must be a list of instance types, got %r" % (benchmark["name"], types))
+
+
+def applies(benchmark, instance_type):
+    """Whether a schedule entry is for a box of this instance type. An entry
+    without instance_types is for every type; one with them is never for a box
+    whose type IMDS did not give."""
+    types = benchmark.get("instance_types")
+    return types is None or (instance_type is not None and instance_type in types)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Run the schedule on this box and write one Run per execution.")
     parser.add_argument("--root", required=True, help="the source tree (holds benchmarks/ and runner/)")
@@ -566,25 +587,47 @@ def main():
         "runs": [],
         "build_failures": [],
         "not_run": [],
+        "left_out": [],
     }
     day = datetime.datetime.fromtimestamp(boot_started // 10 ** 9, datetime.timezone.utc)
 
     def not_run(name, build_name, params):
         summary["not_run"].append({"benchmark": name, "build": build_name, "params": params})
 
+    instance_type = provider.get("instance_type")
+    # (benchmark, build) -> what build() returned, or None when it failed. Two
+    # entries of one benchmark share its binaries.
+    builds = {}
+
     try:
+        check_instance_types(schedule)
         for benchmark in schedule["benchmarks"]:
             name = benchmark["name"]
+            if not applies(benchmark, instance_type):
+                for params in benchmark["params"]:
+                    for build_name in benchmark["builds"]:
+                        summary["left_out"].append({"benchmark": name, "build": build_name, "params": params,
+                                                    "instance_types": benchmark["instance_types"]})
+                log("left out %s %s: for %s only, and this box is %s"
+                    % (name, json.dumps(benchmark["params"]), ", ".join(benchmark["instance_types"]),
+                       instance_type or "of a type IMDS did not give"))
+                continue
             built = []
             unbuilt = []  # told to stop before these were built
             for build_name in benchmark["builds"]:
+                if (name, build_name) in builds:
+                    if builds[(name, build_name)] is not None:
+                        built.append(builds[(name, build_name)])
+                    continue
                 if stopping():
                     unbuilt.append(build_name)
                     continue
                 try:
-                    built.append(build(root, name, build_name, blobs))
+                    builds[(name, build_name)] = build(root, name, build_name, blobs)
+                    built.append(builds[(name, build_name)])
                     log("built %s %s %s" % (name, build_name, built[-1]["record"]["blob"]))
                 except BuildFailed as error:
+                    builds[(name, build_name)] = None
                     log("BUILD FAILED: %s" % error)
                     summary["build_failures"].append({"benchmark": name, "build": build_name, "message": str(error)})
 
@@ -664,8 +707,8 @@ def main():
         summary["ended_at"] = rfc3339(time.time_ns())
         boot_path = os.path.join(out, "boots", day.strftime("%Y/%m/%d"), (boot or "unknown") + ".json")
         write_atomically(boot_path, as_json(summary))
-        log("wrote %d runs; %d failures; %d not run" % (
-            len(summary["runs"]), len(summary["build_failures"]), len(summary["not_run"])))
+        log("wrote %d runs; %d failures; %d not run; %d left out for other instance types" % (
+            len(summary["runs"]), len(summary["build_failures"]), len(summary["not_run"]), len(summary["left_out"])))
 
     if Stop.signal is not None:
         return 128 + Stop.signal
