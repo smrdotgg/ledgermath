@@ -38,7 +38,10 @@ x-amz-checksum-sha256), nosum (none), wrongbody (other bytes of the right
 length, with their own correct checksum), slow (the first byte 300 ms late),
 close (Connection: close on every response), idleclose (the connection closed
 10 ms after each response), bigheaders (a header block over 64 KiB), folded
-(obsolete line folding), chunked (the Fixture, chunked), badcert, wrongname.
+(obsolete line folding), chunked (the Fixture, chunked), badcert, wrongname,
+nulhead (a NUL in a header value), and guardlf, guardlfhead, guardb64,
+guardb64head (inputs where a check of the bytes alone and a check of the text
+written for them disagree).
 """
 
 import base64
@@ -279,6 +282,15 @@ def object_head(size, checksum, request_id, extra=b""):
             (b"" if b"Transfer-Encoding" in extra else b"Content-Length: %d\r\n" % size) + b"Server: ledgermath-standin\r\n\r\n")
 
 
+def reflections(request):
+    """What the binary sent that it must never print: its key ID, its session token, its signature."""
+    authorization = header(request, "authorization") or ""
+    key_id = authorization.split("Credential=", 1)[-1].split("/", 1)[0]
+    signature = authorization.rsplit("Signature=", 1)[-1]
+    token = header(request, "x-amz-security-token") or ""
+    return key_id, token, signature
+
+
 def respond(conn, request, log_path):
     host = header(request, "host") or ""
     what, number = behaviour(host)
@@ -289,6 +301,31 @@ def respond(conn, request, log_path):
     body = fixture(size)
     checksum = base64.b64encode(hashlib.sha256(body).digest())
 
+    if what == "nulhead":
+        conn.sendall(b"HTTP/1.1 200 OK\r\nx-a: b\x00c\r\nContent-Length: 0\r\n\r\n")
+        return False
+    if what in ("guardlf", "guardlfhead", "guardb64", "guardb64head"):
+        key_id, token, signature = reflections(request)
+        # Where the bytes hold no secret but the text written for them would: a LF written as \u000a (or a
+        # SUB as \u001a) puts an "a" before the rest of the key ID; base64 of bytes made from the key ID
+        # holds the key ID.
+        blob = base64.b64decode("AAAA" + key_id + "AAAA")
+        if what == "guardlf":
+            body_ = b"<Error><Code>InvalidAccessKeyId</Code><Message>Unknown key:\n" + key_id[1:].encode() + b"</Message></Error>"
+            conn.sendall(b"HTTP/1.1 403 Forbidden\r\nContent-Length: %d\r\n\r\n" % len(body_) + body_)
+            return True
+        if what == "guardlfhead":
+            # A control character fails the header block only once it is whole, so all of it is kept.
+            conn.sendall(b"HTTP/1.1 400 Bad Request\r\nx-a: b\x1a" + key_id[1:].encode() + b"\r\n\r\n")
+            return False
+        if what == "guardb64":
+            body_ = b"<Error><Code>\xff\xfe\xfd" + blob + b"</Code></Error>"
+            conn.sendall(b"HTTP/1.1 500 Internal Error\r\nContent-Length: %d\r\n\r\n" % len(body_) + body_)
+            return True
+        prefix = b"HTTP/1.1 500 Internal Error\r\nx-a: \xff\xfe\xfd"
+        prefix += b"p" * (-len(prefix) % 3)
+        conn.sendall(prefix + blob + b"\r\n\r\n")
+        return False
     if what == "forbidden":
         conn.sendall(error_response(403, "Forbidden", "AccessDenied", "Access Denied", request_id))
         return True

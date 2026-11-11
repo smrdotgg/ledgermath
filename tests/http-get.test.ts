@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { type ChildProcess, spawn, spawnSync } from "node:child_process";
 import { createHash, createHmac } from "node:crypto";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -20,6 +20,8 @@ import { describeErrors, loadValidators } from "../scripts/check-runs";
 //
 // Without CMake or the archive (and no library built before), these tests
 // are skipped with a message, unless LM_HTTP_GET_REQUIRED=1, as CI sets it.
+
+setDefaultTimeout(60_000);
 
 const ROOT = join(import.meta.dir, "..");
 const DIR = join(ROOT, "benchmarks", "http_get");
@@ -606,20 +608,76 @@ describe.skipIf(!AVAILABLE)("the HTTP/1.1 response parser (benchmarks/harness/c/
 });
 
 describe.skipIf(!AVAILABLE)("event lines (benchmarks/harness/c/lm_lines.c)", () => {
-	test("received bytes are a JSON string when they are UTF-8, and base64 when they are not", () => {
+	test("received bytes are a JSON string when they are UTF-8 without NUL, and base64 otherwise", () => {
 		const value = (bytes: Buffer) => driverJson(["bytes"], bytes).value;
 		expect(value(Buffer.from('café "q" \\ \u{1f600}\n'))).toBe('café "q" \\ \u{1f600}\n');
-		for (const bad of [[0xff], [0xc0, 0x80], [0xed, 0xa0, 0x80], [0xe2, 0x82], [0xf5, 0x80, 0x80, 0x80]]) {
+		for (const bad of [[0xff], [0xc0, 0x80], [0xed, 0xa0, 0x80], [0xe2, 0x82], [0xf5, 0x80, 0x80, 0x80], [0x61, 0x00, 0x62], [0x00]]) {
 			expect(value(Buffer.from(bad))).toEqual({ base64: Buffer.from(bad).toString("base64") });
 		}
 	});
 
-	test("the guard refuses to write a registered secret, in any case, and says nothing of it", () => {
-		const done = driver(["guard", "SeCrEt-Value-123"], "prefix secret-value-123 suffix");
-		expect(done.status).toBe(1);
-		expect(done.stdout).toBe("");
-		expect(done.stderr).toBe("error: a credential or signature was about to be written; nothing was written\n");
-		expect(driver(["guard", "SeCrEt-Value-123"], "nothing of it").status).toBe(0);
+	/** The stream the driver printed, parsed. */
+	const lines = (text: string) => text.split("\n").filter((line) => line !== "").map((line) => JSON.parse(line) as Record<string, unknown>);
+
+	test("received bytes holding a registered secret become a marker; the line and the stream go on", () => {
+		const done = driver(["received", "SeCrEt-Value-1234"], "prefix secret-value-1234 suffix");
+		expect(done.status).toBe(0);
+		expect(done.stdout.toLowerCase()).not.toContain("secret-value-1234");
+		expect(lines(done.stdout).map((line) => line.event)).toEqual(["before", "received", "after"]);
+		expect(lines(done.stdout)[1]).toEqual({ event: "received", t: 2, kept: "before", value: { withheld_bytes: 31 }, also: "after" });
+	});
+
+	test("the decision is made on the text written: a LF written as \\u000a, base64 of non-UTF-8 bytes", () => {
+		// Neither input holds the secret; the text written for each would.
+		const lf = driver(["received", "ASIAQLEDGERMATHTEST1"], Buffer.from("key:\nSIAQLEDGERMATHTEST1"));
+		expect(lines(lf.stdout)[1]?.value).toEqual({ withheld_bytes: 24 });
+		const blob = Buffer.concat([Buffer.from([0xff, 0xfe, 0xfd]), Buffer.from("AAAAASIAQLEDGERMATHTEST1AAAA", "base64")]);
+		const b64 = driver(["received", "ASIAQLEDGERMATHTEST1"], blob);
+		expect(lines(b64.stdout)[1]?.value).toEqual({ withheld_bytes: blob.length });
+		for (const done of [lf, b64]) {
+			expect(done.status).toBe(0);
+			expect(done.stdout.toLowerCase()).not.toContain("asiaqledgermathtest1");
+		}
+	});
+
+	test("the guard replaces a line that still holds a secret with a fixed event, says nothing of it, and goes on", () => {
+		const done = driver(["guard", "SeCrEt-Value-1234"], "prefix secret-value-1234 suffix");
+		expect(done.status).toBe(0);
+		expect(done.stderr).toBe("");
+		expect(done.stdout.toLowerCase()).not.toContain("secret-value-1234");
+		expect(lines(done.stdout)).toEqual([
+			{ event: "before", t: 1 },
+			{ event: "line_withheld", t: 2, withheld_event: "guarded", withheld_bytes: 99 },
+			{ event: "after", t: 3, fields_withheld: 0, lines_withheld: 0 },
+		]);
+		expect(lines(driver(["guard", "SeCrEt-Value-1234"], "nothing of it").stdout)[1]).toMatchObject({ event: "guarded", value: "nothing of it" });
+	});
+
+	test("a secret is searched for in its common encodings too", () => {
+		const secret = "lmTestSecret/abcdefghijklmnopqrstuvwxyz+0123";
+		const bytes = Buffer.from(secret);
+		const hex = bytes.toString("hex");
+		const forms = [
+			secret.toUpperCase(),
+			encodeURIComponent(secret),
+			[...bytes].map((b) => `%${b.toString(16).padStart(2, "0")}`).join(""),
+			...[0, 1, 2].map((k) => Buffer.concat([Buffer.alloc(k, 0x41), bytes, Buffer.from("tail")]).toString("base64")),
+			...[0, 1, 2].map((k) => Buffer.concat([Buffer.alloc(k, 0x41), bytes]).toString("base64url")),
+			hex,
+			hex.toUpperCase(),
+			hex.replace(/(..)(?!$)/g, "$1 "),
+			hex.replace(/(..)(?!$)/g, "$1:"),
+			hex.replace(/(..)(?!$)/g, "$1-"),
+		];
+		for (const form of forms) expect([form, driverJson(["found", secret], `before ${form} after`).found]).toEqual([form, true]);
+		expect(driverJson(["found", secret], "lmTestSecret/abcdefghijklmnopqrstuvwxyz 0123").found).toBe(false);
+	});
+
+	test("a secret that could be read inside the stream's own sample or verified lines is refused", () => {
+		for (const refused of ["1234567890123456", "0,\"sample\":12345", "0123456789abcdef"]) expect(driverJson(["secret", refused]).accepted).toBe(false);
+		for (const accepted of [KEY_ID, SECRET, TOKEN, "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"]) {
+			expect(driverJson(["secret", accepted]).accepted).toBe(true);
+		}
 	});
 });
 
@@ -904,6 +962,30 @@ describe.skipIf(!AVAILABLE)("http_get against the stand-in", () => {
 			expect(ended.error_fields).toMatchObject({ Code: "AccessDenied", Message: { withheld_bytes: expect.any(Number) } });
 		}
 	}, RUN_TIMEOUT_MS);
+
+	test("where a check of the bytes and a check of the text written would disagree, the field is withheld and the Run goes on", () => {
+		const cases: Array<[string, (r: Run) => unknown]> = [
+			["guardlf", (r) => (of(r, "response_ended")[0]?.error_fields as Record<string, unknown>).Message],
+			["guardb64", (r) => (of(r, "response_ended")[0]?.error_fields as Record<string, unknown>).Code],
+			["guardlfhead", (r) => of(r, "request_failed")[0]?.head_received],
+			["guardb64head", (r) => of(r, "request_failed")[0]?.head_received],
+		];
+		for (const [scenario, field] of cases) {
+			const r = run(scenario, { samples: 1 });
+			expectExit(r, 4);
+			checkStream(r, 1);
+			expect([scenario, field(r)]).toEqual([scenario, { withheld_bytes: expect.any(Number) }]);
+		}
+	});
+
+	test("bytes holding a NUL are written as base64, not as \\u0000", () => {
+		const r = run("nulhead", { samples: 1 });
+		expectExit(r, 4);
+		checkStream(r, 1);
+		const head = of(r, "request_failed")[0]?.head_received as { base64: string };
+		expect(Buffer.from(head.base64, "base64").toString("latin1")).toContain("x-a: b\u0000c");
+		expect(r.stdout).not.toContain("\\u0000");
+	});
 
 	test("auth none sends no signing headers and reads no credentials", () => {
 		const before = standinLog().length;

@@ -11,7 +11,13 @@
  *                                               feeds the bytes STEP at a time
  *   http_get_test bytes               < bytes   lm_lines_bytes of the bytes
  *   http_get_test guard SECRET        < bytes   registers SECRET, then writes the bytes as an event
+ *                                               of the program's own (lm_lines_str): the guard's case
+ *   http_get_test received SECRET     < bytes   registers SECRET, then writes the bytes as received
+ *                                               (lm_lines_bytes), between two fields that stay
+ *   http_get_test found SECRET        < bytes   registers SECRET; whether the bytes hold it in any form
+ *   http_get_test secret SECRET                 whether lm_secret_add accepts SECRET
  */
+
 #include "lm.h"
 #include "lm_dns.h"
 #include "lm_http.h"
@@ -248,14 +254,40 @@ int main(int argc, char **argv) {
         lm_lines_flush(&out);
         return 0;
     }
-    if (strcmp(command, "guard") == 0 && argc == 3) {
-        lm_secret_add(0, argv[2], strlen(argv[2]));
+    if (strcmp(command, "secret") == 0 && argc == 3) {
+        lm_lines_begin(&out, "secret", 1);
+        lm_lines_bool(&out, "accepted", lm_secret_add(0, argv[2], strlen(argv[2])));
+        lm_lines_end(&out);
+        lm_secret_add(0, "", 0);
+        lm_lines_flush(&out);
+        return 0;
+    }
+    if ((strcmp(command, "guard") == 0 || strcmp(command, "received") == 0 || strcmp(command, "found") == 0) && argc == 3) {
+        if (!lm_secret_add(0, argv[2], strlen(argv[2]))) lm_die("the secret was refused");
         size_t len;
         unsigned char *data = read_all(&len);
         data = realloc(data, len + 1);
         data[len] = '\0';
-        lm_lines_begin(&out, "guarded", 0);
-        lm_lines_str(&out, "value", (const char *)data);
+        if (strcmp(command, "found") == 0) {
+            bool found = lm_secret_found(data, len);
+            lm_secret_add(0, "", 0);
+            lm_lines_begin(&out, "found", 1);
+            lm_lines_bool(&out, "found", found);
+            lm_lines_end(&out);
+            lm_lines_flush(&out);
+            return 0;
+        }
+        lm_lines_begin(&out, "before", 1);
+        lm_lines_end(&out);
+        lm_lines_begin(&out, strcmp(command, "guard") == 0 ? "guarded" : "received", 2);
+        lm_lines_str(&out, "kept", "before");
+        if (strcmp(command, "guard") == 0) lm_lines_str(&out, "value", (const char *)data);
+        else lm_lines_bytes(&out, "value", data, len);
+        lm_lines_str(&out, "also", "after");
+        lm_lines_end(&out);
+        lm_lines_begin(&out, "after", 3);
+        lm_lines_u64(&out, "fields_withheld", lm_lines_withheld_fields());
+        lm_lines_u64(&out, "lines_withheld", lm_lines_withheld_lines());
         lm_lines_end(&out);
         lm_lines_flush(&out);
         return 0;
