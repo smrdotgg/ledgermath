@@ -923,6 +923,10 @@ describe.skipIf(!AVAILABLE)("http_get against the stand-in", () => {
 		expect(badKey.stdout + badKey.stderr).not.toContain("asia-not-a-key-id-but-secret");
 		const http = run("ok", { env: { LM_SERVICE_ENDPOINT: "http://ok.s3.lm.test" } });
 		expectExit(http, 2);
+		// A secret this short could turn up by chance in what is printed, and the guard would refuse it there.
+		const short = run("ok", { env: { LM_SERVICE_AWS_SECRET_ACCESS_KEY: "x/y" } });
+		expectExit(short, 2);
+		expect(short.stderr).toBe("usage error: LM_SERVICE_AWS_SECRET_ACCESS_KEY is shorter than any secret key (16 characters)\n");
 	}, RUN_TIMEOUT_MS);
 });
 

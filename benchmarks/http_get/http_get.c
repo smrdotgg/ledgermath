@@ -197,6 +197,10 @@ static void read_service(void) {
     lm_secret_add(SECRET_KEY, S.secret, strlen(S.secret));
     if (S.token != NULL) lm_secret_add(SECRET_TOKEN, S.token, strlen(S.token));
     if (!id_ok) lm_usage("LM_SERVICE_AWS_ACCESS_KEY_ID is not an access key ID (16 to 128 capital letters and digits)");
+    /* Every real one is far longer; a short one could be matched by chance in
+     * what is printed, and the guard (lm_lines.h) would refuse it there. */
+    if (strlen(S.secret) < 16) lm_usage("LM_SERVICE_AWS_SECRET_ACCESS_KEY is shorter than any secret key (16 characters)");
+    if (S.token != NULL && strlen(S.token) < 16) lm_usage("LM_SERVICE_AWS_SESSION_TOKEN is shorter than any session token (16 characters)");
     for (const char *p = S.secret; *p; p++) {
         if (*p <= ' ' || *p > '~') lm_usage("LM_SERVICE_AWS_SECRET_ACCESS_KEY holds a character no secret key holds");
     }
