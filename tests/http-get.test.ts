@@ -658,6 +658,9 @@ describe.skipIf(!AVAILABLE)("http_get against the stand-in", () => {
 			["Authorization", "<withheld>"],
 		]);
 		expect(sent.signing).toMatchObject({ algorithm: "AWS4-HMAC-SHA256", signed_headers: "host;x-amz-checksum-mode;x-amz-content-sha256;x-amz-date;x-amz-security-token" });
+		// Twelve digits between hex letters are not an account ID: the ETag is printed as received.
+		const response = of(r, "response_headers")[0] as Event;
+		expect(response.headers).toContainEqual(["ETag", '"f123456789012a0123456789abcdef01"']);
 		// The two edges of each sample are the first and last phase boundaries.
 		const sample = sampleEvents(r, 2);
 		expect((sample.at(-1) as Event).t).toBe((sample.at(-2) as Event).t);

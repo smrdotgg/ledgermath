@@ -273,7 +273,7 @@ def error_response(status, reason, code, message, request_id, extra=""):
 def object_head(size, checksum, request_id, extra=b""):
     return (b"HTTP/1.1 200 OK\r\nx-amz-id-2: c3RhbmQtaW4gaG9zdCBpZA==\r\nx-amz-request-id: " + request_id.encode() +
             b"\r\nDate: " + http_date().encode() + b"\r\nLast-Modified: Thu, 12 Nov 2026 10:00:00 GMT\r\n"
-            b"ETag: \"0123456789abcdef0123456789abcdef\"\r\nx-amz-server-side-encryption: AES256\r\n" +
+            b"ETag: \"f123456789012a0123456789abcdef01\"\r\nx-amz-server-side-encryption: AES256\r\n" +
             (b"x-amz-checksum-sha256: " + checksum + b"\r\nx-amz-checksum-type: FULL_OBJECT\r\n" if checksum else b"") +
             b"Accept-Ranges: bytes\r\nContent-Type: application/octet-stream\r\n" + extra +
             (b"" if b"Transfer-Encoding" in extra else b"Content-Length: %d\r\n" % size) + b"Server: ledgermath-standin\r\n\r\n")

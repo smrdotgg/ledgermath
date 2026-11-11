@@ -309,20 +309,31 @@ static bool has_key_id_pattern(const unsigned char *p, size_t len) {
     return false;
 }
 
-static bool has_twelve_digits(const unsigned char *p, size_t len) {
-    size_t run = 0;
-    for (size_t i = 0; i < len; i++) {
-        run = isdigit(p[i]) ? run + 1 : 0;
-        if (run >= 12) return true;
+/* A number of exactly twelve digits standing alone, with no letter or digit
+ * on either side: how an account ID appears (arn:aws:iam::123456789012:...,
+ * >123456789012<, "account 123456789012"). Digits inside a hex or base64
+ * value (an ETag, a request ID) touch letters, and are not one. */
+static bool has_account_id(const unsigned char *p, size_t len) {
+    size_t i = 0;
+    while (i < len) {
+        if (!isdigit(p[i])) {
+            i++;
+            continue;
+        }
+        size_t start = i;
+        while (i < len && isdigit(p[i])) i++;
+        bool alone = (start == 0 || !isalpha(p[start - 1])) && (i == len || !isalpha(p[i]));
+        if (i - start == 12 && alone) return true;
     }
     return false;
 }
 
 /* The one rule for printing anything received: it holds none of our
  * credentials or signatures, nothing shaped like an access key ID (AKIA or
- * ASIA and sixteen more), and no run of twelve digits (an account ID). */
+ * ASIA and sixteen more), and no twelve-digit number standing alone (an
+ * account ID). */
 static bool may_print(const void *data, size_t len) {
-    return !lm_secret_found(data, len) && !has_key_id_pattern(data, len) && !has_twelve_digits(data, len);
+    return !lm_secret_found(data, len) && !has_key_id_pattern(data, len) && !has_account_id(data, len);
 }
 
 /* Received bytes under `key`: verbatim when they may be printed, otherwise
