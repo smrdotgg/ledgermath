@@ -5,6 +5,9 @@ import { checkAnswer } from "../scripts/lib/answer-check";
 import { requestFailedCitation, requestRunsCitation, requestStatCitation, requestTailCitation, resolveCitation, seriesMoment } from "../scripts/lib/citation";
 import { type LedgerData, loadLedger, openLocation } from "../scripts/lib/ledger-data";
 import { about, aboutText, listSeries, seriesListText, showSeries, showText } from "../scripts/lib/lookup";
+import * as requests from "../methods/requests/v1";
+import * as series from "../methods/v1";
+import { HandMade, rampRequests, requestRun } from "./hand-made-requests";
 import { makeRequestFixture, type RequestFixture } from "./request-lookup-fixtures";
 
 setDefaultTimeout(120_000);
@@ -77,7 +80,14 @@ describe("the lookup tool and Series of requests", () => {
 		const text = showText(data, answer);
 		expect(text).toContain("Percentiles across requests, Method requests version 1");
 		expect(text).toContain(`p99   ${(p99?.value?.text ?? "").padEnd(14)} ${p99?.value?.citation}, 4 requests at or above it ${p99?.at_or_above?.citation}`);
-		expect(text).toContain("an HTTPS GET from this EC2 instance to an S3 bucket in the same Region (us-east-2)");
+		expect(text).toContain(
+			"Note: What the Runs record: params auth=sigv4 budget_seconds=240 ca_file=/etc/pki/tls/certs/ca-bundle.crt connection=new gap_mean_ms=200 key=http_get/v1/4096 object_bytes=4096 resolv_conf=/etc/resolv.conf timeout_ms=10000; the Service s3_fixtures, with the inputs endpoint=https://fixtures.s3.us-east-2.amazonaws.com region=us-east-2 as delivered to the binary; the box in Region us-east-2, as its provider names it.",
+		);
+		expect(text).toContain(
+			"Note: What the succeeded requests' own events show: requests sent as GET /http_get/v1/4096; signing AWS4-HMAC-SHA256; each opened a connection of its own (a name lookup, connect and TLS handshake in its time); TLS version TLSv1.3; cipher TLS_AES_128_GCM_SHA256; key-exchange group X25519MLKEM768; server address block 3.5.0.0/16 and 52.219.0.0/16 (both among them).",
+		);
+		expect(text).toContain("Note: The path between the box and the server is not stated here: each Run's dumps record it (sections network, ec2_route_tables and ec2_vpc_endpoints).");
+		expect(text).not.toMatch(/internet gateway|same Region|SigV4/);
 	});
 
 	test("a percentile the requests cannot support is not given, and says why", () => {
@@ -93,6 +103,35 @@ describe("the lookup tool and Series of requests", () => {
 		if (answer.found !== "one") throw new Error("expected one Series");
 		expect(answer.series.request_figures).toBeNull();
 		expect(showText(data, answer)).toContain("LedgerMath holds no 99th percentile of this Series: its percentiles are across Runs (5th, 50th, 95th).");
+	});
+});
+
+describe("what the tool says a Series of requests measured", () => {
+	async function notesOf(build: (made: HandMade) => void): Promise<string> {
+		const made = new HandMade();
+		build(made);
+		const v1 = series.derive(made.files, await series.gather(made.files, made.fetch));
+		const r = requests.derive(made.files, await requests.gather(made.files, made.fetch));
+		const loaded = { ...data, derivations: v1, requests: r, requestsFrom: "made by hand" } as LedgerData;
+		const answer = showSeries(loaded, [r.derivations[0]?.series.id as string], 1);
+		if (answer.found !== "one") throw new Error("expected one Series");
+		return (answer.series.request_figures?.notes ?? []).join("\n");
+	}
+
+	test("unsigned requests are said to be unsigned, from their own events, and nothing is said of the path", async () => {
+		const notes = await notesOf((made) => requestRun(made, { startedAt: "2026-11-11T21:35:00Z", stream: { connection: "new", auth: "none", requests: rampRequests(100) } }));
+		expect(notes).toContain("params auth=none ");
+		expect(notes).toContain("signing unsigned;");
+		expect(notes).not.toMatch(/SigV4|AWS4-HMAC|internet gateway|same Region/);
+	});
+
+	test("a benchmark of another name whose stream qualifies is described by what its Runs record: no Service, kept connections, no S3", async () => {
+		const notes = await notesOf((made) =>
+			requestRun(made, { startedAt: "2026-11-11T21:35:00Z", benchmark: "https_get_elsewhere", service: null, stream: { connection: "reused", requests: rampRequests(30) } }),
+		);
+		expect(notes).toContain("the Runs name no Service; the box in Region us-east-2, as its provider names it.");
+		expect(notes).toContain("each went over a connection kept open from before it (no name lookup, connect or TLS in its time)");
+		expect(notes).not.toMatch(/S3|s3_fixtures|internet gateway|same Region|SigV4/);
 	});
 });
 

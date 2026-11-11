@@ -55,6 +55,12 @@ export interface Breakdown {
 	values: BreakdownValue[];
 }
 
+/** Every value a request fact took among a pool's succeeded requests, with how many had it, one value or more. */
+export interface FactValues {
+	fact: RequestFact;
+	values: Array<{ value: string; requests: number }>;
+}
+
 /** Every succeeded request of a set of counted Runs, pooled. */
 export interface Pool {
 	runs: number;
@@ -65,6 +71,18 @@ export interface Pool {
 	setups_failed: FailureCount[];
 	/** Each request fact with more than one value in the pool; none when every request had the same. */
 	by: Breakdown[];
+	/** Every request fact's values among the pool's succeeded requests, a single value included: what the requests recorded. */
+	facts: FactValues[];
+}
+
+/** What a Series' Runs record of where they ran and what they asked, beside their requests: words for a reader, no figure. */
+export interface Recorded {
+	/** The box's Region as each Run's provider block names it, with how many Runs. */
+	regions: Array<{ value: string | null; runs: number }>;
+	/** The Service each Run names (Run.service): its name and its inputs not secret, as delivered, with how many Runs. */
+	services: Array<{ name: string; inputs: Record<string, string>; runs: number }>;
+	/** Runs that name no Service. */
+	without_service: number;
 }
 
 /** One Run of a Series. */
@@ -117,6 +135,8 @@ export interface SeriesDerivation {
 	};
 	/** Every Run this Derivation used, in time order. */
 	runs: CitedRun[];
+	/** What every Run of the Series records beside its requests, counted or not. */
+	recorded: Recorded;
 	points: Point[];
 	/** Across every counted Run of the Series, whatever its group. */
 	pool: Pool;

@@ -69,6 +69,8 @@ export interface HandMadeRun {
 	 * API's route tables and VPC endpoints, are the same on every boot.
 	 */
 	networkSections?: boolean;
+	/** The Service whose inputs were delivered beside the params, as runner/run.py records it. */
+	service?: Run["service"];
 }
 
 export const DEFAULT_PARAMS = { size_bytes: 1073741824, threads: 1, path: "scalar" };
@@ -234,6 +236,7 @@ export class HandMade {
 			benchmark: options.benchmark ?? "memory_read",
 			params: options.params ?? DEFAULT_PARAMS,
 			samples: options.samples ?? samplesNs.length,
+			...(options.service === undefined ? {} : { service: options.service }),
 			source_commit: "0123456789abcdef0123456789abcdef01234567",
 			source: this.put("a source archive"),
 			binary: {

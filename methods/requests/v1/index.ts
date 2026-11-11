@@ -45,7 +45,7 @@ import {
 import { groupLetter, readRuns } from "../../v1/index";
 import type { CitedRun } from "../../v1/output";
 import { leastCount, PERCENTILES, SUB_BINS, type Stats, TALLY_PRECISION, type Tally, TallySum, tallyStats } from "./numbers";
-import type { Breakdown, DerivationsFile, Group, MethodName, Point, Pool, PooledPhase, PoolSummary, SeriesDerivation } from "./output";
+import type { Breakdown, DerivationsFile, FactValues, Group, MethodName, Point, Pool, PooledPhase, PoolSummary, Recorded, SeriesDerivation } from "./output";
 import { type FailureCount, REQUESTS_RECORD, type RequestsRecord } from "./record";
 import { PHASE_WORDS, PHASES, type Phase, REQUEST_FACT_WORDS, REQUEST_FACTS, type RequestFact } from "./requests";
 
@@ -97,6 +97,11 @@ export const DEFINITIONS: Record<string, string> = {
 	breakdown:
 		"The pooled figures again for the requests that had each value of a fact each request records of its connection " +
 		"or of itself (see request_facts), for every fact that took more than one value among the pool's succeeded requests.",
+	recorded:
+		"What a Series' Runs record beside their requests, for a reader: the box's Region (provider.region), the Service " +
+		"each Run names and its inputs that are not secret, as delivered (Run.service), and in each pool every value each " +
+		"request fact took. Words, not figures, and nothing about the path between the box and the server, which each " +
+		"Run's environment dumps record (network, ec2_route_tables, ec2_vpc_endpoints).",
 	groups:
 		"Method series v1's groups: within a Series, the Runs whose split facts are all equal, lettered in the order each " +
 		"first appears; the same letters series v1 gives the same Runs.",
@@ -336,6 +341,41 @@ function breakdowns(records: readonly RequestsRecord[]): Breakdown[] {
 	return found;
 }
 
+/** Every value each request fact took among these records' succeeded requests. */
+function factValues(records: readonly RequestsRecord[]): FactValues[] {
+	return REQUEST_FACTS.flatMap((fact) => {
+		const counts = new Map<string, number>();
+		for (const record of records) for (const item of record.by[fact] ?? []) counts.set(item.value, (counts.get(item.value) ?? 0) + item.requests);
+		if (counts.size === 0) return [];
+		return [{ fact, values: [...counts].sort(([a], [b]) => compareText(a, b)).map(([value, requests]) => ({ value, requests })) }];
+	});
+}
+
+/** What the Runs record of where they ran and what they asked. */
+function recorded(runs: readonly Run[]): Recorded {
+	const regions = new Map<string, { value: string | null; runs: number }>();
+	const services = new Map<string, { name: string; inputs: Record<string, string>; runs: number }>();
+	let withoutService = 0;
+	for (const run of runs) {
+		const region = run.provider.region ?? null;
+		const key = JSON.stringify(region);
+		regions.set(key, { value: region, runs: (regions.get(key)?.runs ?? 0) + 1 });
+		if (run.service === undefined) {
+			withoutService++;
+			continue;
+		}
+		const text = canonicalJson({ name: run.service.name, inputs: run.service.inputs });
+		const found = services.get(text);
+		if (found === undefined) services.set(text, { name: run.service.name, inputs: run.service.inputs, runs: 1 });
+		else found.runs++;
+	}
+	return {
+		regions: [...regions].sort(([a], [b]) => compareText(a, b)).map(([, value]) => value),
+		services: [...services].sort(([a], [b]) => compareText(a, b)).map(([, value]) => value),
+		without_service: withoutService,
+	};
+}
+
 function pool(records: readonly RequestsRecord[]): Pool {
 	const sums = new PhaseSums();
 	for (const record of records) sums.add(record);
@@ -349,6 +389,7 @@ function pool(records: readonly RequestsRecord[]): Pool {
 		failures: sums.failures(),
 		setups_failed: sums.setupsFailed(),
 		by: breakdowns(records),
+		facts: factValues(records),
 	};
 }
 
@@ -412,6 +453,7 @@ function deriveSeries(list: Analysed[]): SeriesDerivation {
 			availability_zone_id: key.availability_zone_id,
 		},
 		runs: cited,
+		recorded: recorded(list.map(({ run }) => run)),
 		points,
 		pool: pool(countedRecords(list)),
 		groups,

@@ -398,6 +398,58 @@ function poolFigures(
 	};
 }
 
+/** The values, in words: "a", or "a and b", or "a, b and c". No count: those are figures, cited where they are shown. */
+function valuesText(values: ReadonlyArray<string | null>): string {
+	const words = values.map((value) => value ?? "(none)");
+	return words.length <= 1 ? (words[0] ?? "(none)") : `${words.slice(0, -1).join(", ")} and ${words.at(-1)}`;
+}
+
+/**
+ * What the Series' Runs and requests record of what was measured, and
+ * nothing they do not record: the params as given, the Service and its inputs
+ * as delivered, the box's Region as its provider names it, and what the
+ * requests' own events show (method and target, signing, whether each opened
+ * its own connection, TLS, address blocks). The path between box and server
+ * is not stated: the Runs' dumps record it.
+ */
+export function describeRequests(series: RequestsSeries): string[] {
+	const facts = new Map(series.pool.facts.map((f) => [f.fact as string, f.values.map(({ value }) => value)]));
+	const seen = (fact: string): string | null => {
+		const values = facts.get(fact);
+		return values === undefined ? null : `${valuesText(values)}${values.length > 1 ? ` (${values.length > 2 ? "all" : "both"} among them)` : ""}`;
+	};
+	const { recorded } = series;
+	const lines: string[] = [];
+	const asked = [seen("method"), seen("target")].filter((part) => part !== null).join(" ");
+	const service =
+		recorded.services.length === 0
+			? "the Runs name no Service"
+			: recorded.services
+					.map((one) => `the Service ${one.name}, with the inputs ${Object.keys(one.inputs).sort(compareText).map((key) => `${key}=${one.inputs[key]}`).join(" ") || "(none)"} as delivered to the binary`)
+					.join("; ") + (recorded.without_service > 0 ? "; some Runs name no Service" : "");
+	const region = valuesText(recorded.regions.map(({ value }) => value));
+	lines.push(
+		`What the Runs record: params ${paramsText(series.series.params)}; ${service}; the box in Region ${region}, as its provider names it.` +
+			(series.pool.requests === 0 ? " No request succeeded, so the requests show nothing more." : ""),
+	);
+	if (series.pool.requests > 0) {
+		const shown: string[] = [];
+		if (asked !== "") shown.push(`requests sent as ${asked}`);
+		const signing = seen("signing");
+		if (signing !== null) shown.push(`signing ${signing}`);
+		shown.push(series.pool.phases.dns !== undefined ? "each opened a connection of its own (a name lookup, connect and TLS handshake in its time)" : "each went over a connection kept open from before it (no name lookup, connect or TLS in its time)");
+		for (const [fact, words] of [["tls_version", "TLS version"], ["cipher", "cipher"], ["tls_group", "key-exchange group"], ["address_block", "server address block"]] as const) {
+			const value = seen(fact);
+			if (value !== null) shown.push(`${words} ${value}`);
+		}
+		lines.push(`What the succeeded requests' own events show: ${shown.join("; ")}.`);
+	}
+	lines.push(
+		"The path between the box and the server is not stated here: each Run's dumps record it (sections network, ec2_route_tables and ec2_vpc_endpoints). Failed requests are counted, never timed.",
+	);
+	return lines;
+}
+
 function requestDetail(data: LedgerData, series: RequestsSeries): RequestDetail {
 	const requests = data.requests as NonNullable<LedgerData["requests"]>;
 	const id = series.series.id;
@@ -408,7 +460,7 @@ function requestDetail(data: LedgerData, series: RequestsSeries): RequestDetail 
 	const notes: string[] = [
 		"Percentiles here are across requests, each request one sample, pooled across the counted Runs; a percentile is given only when the requests support it (a 99th needs 100, a 99.9th 1000), with how many requests are ranked at or above it.",
 		`Pooled percentiles are read from histograms of ${requests.histogram.bins_per_doubling} bins per doubling of time: within ${(requests.histogram.precision * 100).toFixed(2)}% of the exact figure.`,
-		"What is measured: an HTTPS GET from this EC2 instance to an S3 bucket in the same Region (us-east-2), through the internet gateway, signed with SigV4; failed requests are counted, never timed.",
+		...describeRequests(series),
 	];
 	if (counted === 1) notes.push("One counted Run: the requests are those of one box at one time; the spread across boxes is not known yet.");
 	if (series.groups.length > 1) notes.push(`Split into ${series.groups.length} groups by Method series v1's split facts; the Series-wide figures mix them.`);

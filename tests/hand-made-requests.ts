@@ -210,15 +210,26 @@ export const paramsOf = (objectBytes: number, connection: "new" | "reused"): Rec
 	auth: "sigv4",
 });
 
-/** Adds an http_get Run with this stream to `made`. */
-export function requestRun(made: HandMade, options: Partial<HandMadeRun> & { startedAt: string; stream: Stream; objectBytes?: number }): ReturnType<HandMade["run"]> {
-	const { stream, objectBytes, ...rest } = options;
+/** The Service the real http_get Runs name, with a made-up endpoint. */
+export const S3_FIXTURES = {
+	name: "s3_fixtures",
+	inputs: { endpoint: "https://fixtures.s3.us-east-2.amazonaws.com", region: "us-east-2" },
+	secret_inputs: ["aws_access_key_id", "aws_secret_access_key", "aws_session_token"],
+};
+
+/** Adds an http_get Run with this stream to `made`; it names S3_FIXTURES as its Service unless told `service: null`. */
+export function requestRun(
+	made: HandMade,
+	options: Omit<Partial<HandMadeRun>, "service"> & { startedAt: string; stream: Stream; objectBytes?: number; service?: HandMadeRun["service"] | null },
+): ReturnType<HandMade["run"]> {
+	const { stream, objectBytes, service, ...rest } = options;
 	return made.run({
 		benchmark: "http_get",
 		binary: "http_get",
 		params: { ...paramsOf(objectBytes ?? 4096, stream.connection), auth: stream.auth ?? "sigv4" },
 		samples: stream.requests.length,
 		networkSections: true,
+		...(service === null ? {} : { service: service ?? S3_FIXTURES }),
 		...rest,
 		stdout: requestStream(stream),
 	});
