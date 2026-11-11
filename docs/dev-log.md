@@ -529,8 +529,9 @@ A migrated benchmark is done only when **all** of these hold:
   `ec2:DescribeVolumes`, `ec2:DescribeVolumeStatus` and `ec2:DescribeInstances`
   (`infra/runs/box-role.ts`). The Run record is unchanged; nothing restricts dump section
   names. Method version 1 reads the new sections, lists them under what differed, and
-  splits on none. `schedule.json` has the study's ten sets, the instance store's for
-  `i4i.2xlarge`, after every other benchmark. Departures from the study: a refused
+  splits on none. `schedule.json` has the study's eleven sets (six on the root volume, five
+  on the instance store, for `i4i.2xlarge`; the study's prose counts four), after every
+  other benchmark. Departures from the study: a refused
   `io_uring_setup` exits 2 (as `mutex`'s impossible placement does), so
   `check-scratch.py` can skip it from `kernel.io_uring_disabled`; on a file system with
   no `FIEMAP` (tmpfs) the extent checks are skipped and `observed` says so, the checksum
