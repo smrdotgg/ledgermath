@@ -4,12 +4,18 @@
 It understands only the `aws s3 cp` and `aws s3 sync` calls runner/box.sh
 makes, and keeps the bucket as a directory: s3://<bucket>/<key> is
 /fake-s3/<bucket>/<key>. It allows what the box's instance role allows
-(infra/runs/stack.ts) and refuses the rest, so a box.sh that reads, lists or
+(infra/runs/box-role.ts) and refuses the rest, so a box.sh that reads, lists or
 writes elsewhere fails here too:
 
-    read   source/<anything>
+    read   source/<anything>, and AWS-LC's source archive, the one blob
+           FAKE_S3_TLS_ARCHIVE names (blobs/sha256/<hash>), when it is set
     list   blobs/
     write  runs/, blobs/, boots/, logs/
+
+and `aws sts assume-role`, which runner/run.py calls for the s3_fixtures
+Service's keys: it answers with STANDIN_KEYS below, which are not
+credentials, or, with FAKE_STS_REFUSE set, is refused as AWS refuses a role
+the caller may not assume. Every call is appended to /fake-calls/sts.log.
 
 and the six read-only EC2 calls runner/provision.py and runner/run.py make,
 which the role allows and nothing else of EC2:
@@ -49,6 +55,7 @@ import json
 import os
 import shutil
 import sys
+import time
 
 ROOT = "/fake-s3"
 READ = ("source/",)
@@ -58,6 +65,11 @@ PUTS = "/fake-calls/puts.log"
 REJECT = os.environ.get("FAKE_S3_REJECT", "")
 FAIL_ONCE = os.environ.get("FAKE_S3_FAIL_ONCE", "")
 FAILED_ONCE = "/fake-calls/failed-once"
+TLS_ARCHIVE = os.environ.get("FAKE_S3_TLS_ARCHIVE", "")
+STS_REFUSE = os.environ.get("FAKE_STS_REFUSE", "")
+# The keys `sts assume-role` hands out: stand-ins, shaped as AWS's are. Each
+# must reach http_get's environment and nowhere else (expect.ts searches for them).
+STANDIN_KEYS = {"AccessKeyId": "ASIAQBOXINCONTAINER7", "SecretAccessKey": "boxInContainer/Secret+Key/0123456789abcdefghijklmn", "SessionToken": "IQoJb3JpZ2luX2VjEBoxInContainer//////////wEaCXVzLWVhc3QtMiJHMEUCIQBoxInContainerToken+zz=="}
 
 
 def fail(message):
@@ -165,12 +177,36 @@ def ec2(args):
     sys.stdout.write("\n")
 
 
+def sts(args):
+    with open("/fake-calls/sts.log", "a") as handle:
+        handle.write(" ".join(args) + "\n")
+    if args[:1] != ["assume-role"]:
+        fail("only `aws sts assume-role` is stubbed, got: aws sts " + " ".join(args))
+    options = dict(zip(args[1::2], args[2::2]))
+    if not options.get("--role-arn") or not options.get("--role-session-name") or options.get("--output") != "json":
+        fail("expected --role-arn, --role-session-name and --output json, got %r" % options)
+    if STS_REFUSE:
+        print("\nAn error occurred (AccessDenied) when calling the AssumeRole operation: User: arn:aws:sts::123456789012:"
+              "assumed-role/ledgermath-container-test-box/i-0123456789abcdef0 is not authorized to perform: sts:AssumeRole "
+              "on resource: %s" % options["--role-arn"], file=sys.stderr)
+        sys.exit(254)
+    expiration = time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime(time.time() + int(options.get("--duration-seconds", "3600"))))
+    json.dump({"Credentials": dict(STANDIN_KEYS, Expiration=expiration),
+               "AssumedRoleUser": {"AssumedRoleId": "AROA0123456789EXAMPLE:" + options["--role-session-name"],
+                                   "Arn": "arn:aws:sts::123456789012:assumed-role/ledgermath-container-test-fixtures/" + options["--role-session-name"]}},
+              sys.stdout, indent=4)
+    sys.stdout.write("\n")
+
+
 def main(args):
     if args[:1] == ["ec2"]:
         ec2(args[1:])
         return
+    if args[:1] == ["sts"]:
+        sts(args[1:])
+        return
     if args[:2] not in (["s3", "cp"], ["s3", "sync"]):
-        fail("only `aws s3 cp` and `aws s3 sync`, and four EC2 calls, are stubbed, got: aws " + " ".join(args))
+        fail("only `aws s3 cp` and `aws s3 sync`, six EC2 calls and `aws sts assume-role` are stubbed, got: aws " + " ".join(args))
     syncing = args[1] == "sync"
     size_only = False
     recursive = syncing
@@ -200,8 +236,8 @@ def main(args):
         if recursive:
             fail("recursive download is not stubbed")
         bucket, key = split(source)
-        if not key.startswith(READ):
-            fail("AccessDenied: GetObject on %s is outside %s" % (key, ", ".join(READ)))
+        if not key.startswith(READ) and not (TLS_ARCHIVE and key == TLS_ARCHIVE):
+            fail("AccessDenied: GetObject on %s is outside %s" % (key, ", ".join(READ + ((TLS_ARCHIVE,) if TLS_ARCHIVE else ()))))
         path = os.path.join(ROOT, bucket, key)
         if not os.path.isfile(path):
             fail("NoSuchKey: " + source)

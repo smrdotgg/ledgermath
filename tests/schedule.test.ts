@@ -121,6 +121,22 @@ describe("the container test's instance-types schedule", () => {
 	});
 });
 
+describe("the container test's http-get schedule", () => {
+	const file = JSON.parse(readFileSync(join(ROOT, "scripts", "box-in-container", "http-get.json"), "utf8")) as Schedule;
+
+	test("is valid, and runs one other benchmark, then http_get's entries as schedule.json has them but for the stand-in's CA and resolver", () => {
+		expect(scheduleProblems(file)).toEqual([]);
+		expect(file.benchmarks.filter((entry) => entry.name !== "http_get").map((entry) => entry.name)).toEqual(["syscall"]);
+		const pointed = FILE.benchmarks
+			.filter((entry) => entry.name === "http_get")
+			.map((entry) => ({
+				...entry,
+				params: entry.params.map((params) => ({ ...params, ca_file: "/lm-standin/ca.pem", resolv_conf: "/lm-standin/resolv.conf" })),
+			}));
+		expect(file.benchmarks.filter((entry) => entry.name === "http_get")).toEqual(pointed);
+	});
+});
+
 describe("the schedule's check", () => {
 	test("passes a valid schedule, and parseSchedule returns it", () => {
 		expect(scheduleProblems(valid())).toEqual([]);

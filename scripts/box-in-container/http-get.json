@@ -1,0 +1,44 @@
+{
+  "vcpu_quota": { "limit": 64, "reserved_outside_schedule": 4 },
+  "targets": [
+    { "instance_type": "c6i.8xlarge", "vcpus": 32, "zone": "us-east-2c", "boots_utc": ["04:10", "10:10", "16:10", "22:10"] },
+    { "instance_type": "m5.large", "vcpus": 2, "zone": "us-east-2c", "boots_utc": ["04:20", "10:20", "16:20", "22:20"] },
+    { "instance_type": "c8i.2xlarge", "vcpus": 8, "zone": "us-east-2c", "boots_utc": ["04:30", "10:30", "16:30", "22:30"] },
+    { "instance_type": "c8a.2xlarge", "vcpus": 8, "zone": "us-east-2c", "boots_utc": ["04:40", "10:40", "16:40", "22:40"] },
+    { "instance_type": "i4i.2xlarge", "vcpus": 8, "zone": "us-east-2c", "boots_utc": ["04:50", "10:50", "16:50", "22:50"] }
+  ],
+  "benchmarks": [
+    {
+      "name": "syscall",
+      "builds": ["static"],
+      "samples": 10,
+      "timeout_seconds": 120,
+      "params": [
+        { "call": "getpid" }
+      ]
+    },
+    {
+      "name": "http_get",
+      "builds": ["static"],
+      "samples": 200,
+      "timeout_seconds": 300,
+      "service": "s3_fixtures",
+      "params": [
+        { "object_bytes": 4096, "key": "http_get/v1/4096", "connection": "new", "budget_seconds": 240, "gap_mean_ms": 200, "timeout_ms": 10000, "ca_file": "/lm-standin/ca.pem", "resolv_conf": "/lm-standin/resolv.conf", "auth": "sigv4" },
+        { "object_bytes": 4096, "key": "http_get/v1/4096", "connection": "reused", "budget_seconds": 240, "gap_mean_ms": 200, "timeout_ms": 10000, "ca_file": "/lm-standin/ca.pem", "resolv_conf": "/lm-standin/resolv.conf", "auth": "sigv4" },
+        { "object_bytes": 131072, "key": "http_get/v1/131072", "connection": "new", "budget_seconds": 240, "gap_mean_ms": 200, "timeout_ms": 10000, "ca_file": "/lm-standin/ca.pem", "resolv_conf": "/lm-standin/resolv.conf", "auth": "sigv4" },
+        { "object_bytes": 131072, "key": "http_get/v1/131072", "connection": "reused", "budget_seconds": 240, "gap_mean_ms": 200, "timeout_ms": 10000, "ca_file": "/lm-standin/ca.pem", "resolv_conf": "/lm-standin/resolv.conf", "auth": "sigv4" }
+      ]
+    },
+    {
+      "name": "http_get",
+      "builds": ["static"],
+      "samples": 40,
+      "timeout_seconds": 180,
+      "service": "s3_fixtures",
+      "params": [
+        { "object_bytes": 16777216, "key": "http_get/v1/16777216", "connection": "new", "budget_seconds": 120, "gap_mean_ms": 200, "timeout_ms": 10000, "ca_file": "/lm-standin/ca.pem", "resolv_conf": "/lm-standin/resolv.conf", "auth": "sigv4" }
+      ]
+    }
+  ]
+}
