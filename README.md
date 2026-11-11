@@ -534,7 +534,11 @@ MB) and their three copies in the fixtures bucket, AWS-LC's source archive as a 
 MB), the fixtures reader role and its policy; it changes the box's policy (the archive, two
 EC2 actions, `sts:AssumeRole` on that role) and the launch function's environment (the
 fixtures bucket and role). The Fixture files are written under `.sst/ledgermath-fixtures/`
-at every deploy and `sst diff`. Because `run.py` and `box.sh` change, every Run records a
+at every deploy and `sst diff`. The archive and the Fixture blobs are kept for ever like
+every blob: they are declared `retainOnDelete`, so when a new pin or recipe changes a key,
+the old object is left in the bucket (Pulumi drops it from the stage's state and does not
+delete it), and `sst remove` leaves them too, in the bucket the stage's `removal: "retain"`
+keeps. Because `run.py` and `box.sh` change, every Run records a
 new `runner` hash, and the new packages change the `packages` section (`cmake`, `gcc-c++`
 and what they pull in: on the image, judging from the container and a real boot's package
 list, `cmake-data`, `cmake-filesystem`, `cmake-rpm-macros`, `emacs-filesystem`, `jsoncpp`,

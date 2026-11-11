@@ -105,13 +105,23 @@ export function runsStack() {
 		source: $asset(archive.path),
 		contentType: "application/gzip",
 	});
-	// AWS-LC's source archive, a blob like any other, named by its hash.
-	new aws.s3.BucketObjectv2("TlsArchive", {
-		bucket: bucket.name,
-		key: tls.key,
-		source: $asset(tls.path),
-		contentType: "application/gzip",
-	});
+	// AWS-LC's source archive, a blob like any other, named by its hash. Blobs
+	// are kept for ever: a new pin gives a new key, so the resource is replaced,
+	// and without retainOnDelete the provider would delete every version of the
+	// old archive, which a reader needs to rebuild an older binary. With it, a
+	// replacement, a resource taken out of this file, and `sst remove` all
+	// leave the object in the bucket and only drop it from the stage's state.
+	// (The stage's removal "retain" covers the bucket itself, not its objects.)
+	new aws.s3.BucketObjectv2(
+		"TlsArchive",
+		{
+			bucket: bucket.name,
+			key: tls.key,
+			source: $asset(tls.path),
+			contentType: "application/gzip",
+		},
+		{ retainOnDelete: true },
+	);
 
 	// The s3_fixtures Service (infra/runs/fixtures.ts). Its bucket holds the
 	// Fixtures and nothing else: never versioned, private, SSE-S3 by default,
@@ -121,12 +131,17 @@ export function runsStack() {
 	const fixturesBucket = new sst.aws.Bucket("FixturesBucket", { cors: false });
 	const fixtureFiles = writeFixtureFiles(join($cli.paths.root, ".sst", "ledgermath-fixtures"));
 	for (const fixture of fixtureFiles) {
-		const blob = new aws.s3.BucketObjectv2(`FixtureBlob${fixture.bytes}`, {
-			bucket: bucket.name,
-			key: fixture.blobKey,
-			source: $asset(fixture.path),
-			contentType: "application/octet-stream",
-		});
+		// A blob too, kept for ever: see TlsArchive.
+		const blob = new aws.s3.BucketObjectv2(
+			`FixtureBlob${fixture.bytes}`,
+			{
+				bucket: bucket.name,
+				key: fixture.blobKey,
+				source: $asset(fixture.path),
+				contentType: "application/octet-stream",
+			},
+			{ retainOnDelete: true },
+		);
 		new aws.s3.ObjectCopy(`Fixture${fixture.bytes}`, {
 			bucket: fixturesBucket.name,
 			key: fixture.key,

@@ -25,6 +25,18 @@ const scratch = mkdtempSync(join(tmpdir(), "fixtures-stage-"));
 afterAll(() => rmSync(scratch, { recursive: true, force: true }));
 const sha256 = (bytes: Uint8Array): string => createHash("sha256").update(bytes).digest("hex");
 
+/** The text of one resource declaration in stack.ts: from `new aws.s3.<type>(` with that name to its closing parenthesis. */
+function declaration(type: string, name: string): string {
+	const opening = new RegExp(`new aws\\.s3\\.${type}\\(\\s*${name.replace(/[$.*+?^{}()|[\]\\`]/g, "\\$&")},`).exec(STACK);
+	if (!opening) throw new Error(`no ${type} ${name} in stack.ts`);
+	let depth = 0;
+	for (let i = opening.index; i < STACK.length; i++) {
+		if (STACK[i] === "(") depth++;
+		if (STACK[i] === ")" && --depth === 0) return STACK.slice(opening.index, i + 1);
+	}
+	throw new Error(`${type} ${name} is not closed`);
+}
+
 /** Building runner/fixture.c and writing 16 MiB with O_DIRECT: seconds, more on a loaded machine. */
 const C_TIMEOUT_MS = 120_000;
 
@@ -105,8 +117,8 @@ describe("the Fixture objects", () => {
 	test("are copied by S3 from their blob in the Runs bucket, with a SHA-256 over the whole object, into a bucket of their own", () => {
 		expect(STACK).toContain('const fixturesBucket = new sst.aws.Bucket("FixturesBucket", { cors: false });');
 		expect(STACK).toContain("const fixtureFiles = writeFixtureFiles(join($cli.paths.root, \".sst\", \"ledgermath-fixtures\"));");
-		expect(STACK).toMatch(
-			/new aws\.s3\.BucketObjectv2\(`FixtureBlob\$\{fixture\.bytes\}`, \{\n\t\t\tbucket: bucket\.name,\n\t\t\tkey: fixture\.blobKey,\n\t\t\tsource: \$asset\(fixture\.path\),/,
+		expect(declaration("BucketObjectv2", "`FixtureBlob${fixture.bytes}`")).toContain(
+			"{\n\t\t\t\tbucket: bucket.name,\n\t\t\t\tkey: fixture.blobKey,\n\t\t\t\tsource: $asset(fixture.path),",
 		);
 		const start = STACK.indexOf("new aws.s3.ObjectCopy(`Fixture${fixture.bytes}`, {");
 		expect(start).toBeGreaterThan(0);
@@ -124,6 +136,20 @@ describe("the Fixture objects", () => {
 		// Not versioned: no versioning argument at all, and nothing uploaded into it but by copy.
 		expect(STACK).not.toMatch(/FixturesBucket", \{[^}]*versioning/);
 		expect(STACK.match(/bucket: fixturesBucket\.name/g)?.length).toBe(1);
+	});
+});
+
+describe("the blobs the deploy puts in the Runs bucket", () => {
+	test("are never deleted by a deploy or by sst remove: AWS-LC's archive and each Fixture's bytes are retained on delete", () => {
+		for (const [type, name] of [
+			["BucketObjectv2", '"TlsArchive"'],
+			["BucketObjectv2", "`FixtureBlob${fixture.bytes}`"],
+		] as const) {
+			expect(declaration(type, name)).toMatch(/\{ retainOnDelete: true \},\n\t*\)$/);
+		}
+		// Every object the stack puts under blobs/ is one of those two declarations.
+		const blobKeys = [...STACK.matchAll(/key: ([a-zA-Z.]+),/g)].map((match) => match[1]).filter((key) => key === "tls.key" || key === "fixture.blobKey");
+		expect(blobKeys.sort()).toEqual(["fixture.blobKey", "tls.key"]);
 	});
 });
 
@@ -249,7 +275,7 @@ describe("AWS-LC's source archive", () => {
 	test("is checked by the stack before anything is made, uploaded as a blob, and readable by the box", () => {
 		expect(STACK).toContain("const tls = tlsArchive($cli.paths.root);");
 		expect(STACK.indexOf("const tls = tlsArchive($cli.paths.root);")).toBeLessThan(STACK.indexOf("new sst.aws.Bucket"));
-		expect(STACK).toMatch(/new aws\.s3\.BucketObjectv2\("TlsArchive", \{\n\t\tbucket: bucket\.name,\n\t\tkey: tls\.key,\n\t\tsource: \$asset\(tls\.path\),/);
+		expect(declaration("BucketObjectv2", '"TlsArchive"')).toContain("{\n\t\t\tbucket: bucket.name,\n\t\t\tkey: tls.key,\n\t\t\tsource: $asset(tls.path),");
 	});
 
 	test("this tree's lock pins a release, a URL and a 64-digit SHA-256, and the stack reads it", () => {
