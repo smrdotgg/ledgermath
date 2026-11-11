@@ -295,7 +295,12 @@ def check_all(benchmarks, topology, cpuset, disk, standin=None):
     failures = []
     for name, sets in benchmarks.items():
         directory = os.path.join(ROOT, "benchmarks", name)
-        subprocess.run(["make", "--no-print-directory", "-C", directory, "-B", "BUILD=static"], check=True)
+        built = subprocess.run(["make", "--no-print-directory", "-C", directory, "-B", "BUILD=static"])
+        if built.returncode != 0:
+            # make has said why above (for http_get, often that AWS_LC_ARCHIVE is not set); the others still run.
+            failures.append(name)
+            print("FAIL %s: make BUILD=static exited %d" % (name, built.returncode))
+            continue
         context = os.path.join(directory, "build", "static")
         image = "lm-scratch-" + name.replace("_", "-")
         subprocess.run(["docker", "build", "-q", "-t", image, "-f", "-", context],
