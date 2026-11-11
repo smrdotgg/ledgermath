@@ -1,0 +1,15 @@
+#!/bin/sh
+# A stand-in in front of dnf, for scripts/box-in-container/run.sh's
+# build-tools-refused scenario: a command naming a package listed in
+# FAKE_DNF_REFUSE fails as dnf fails for a package it cannot find, and
+# installs nothing; any other command is the real dnf's.
+for arg in "$@"; do
+  for refused in $FAKE_DNF_REFUSE; do
+    if [ "$arg" = "$refused" ]; then
+      echo "No match for argument: $refused" >&2
+      echo "Error: Unable to find a match: $refused" >&2
+      exit 1
+    fi
+  done
+done
+exec /usr/bin/dnf "$@"

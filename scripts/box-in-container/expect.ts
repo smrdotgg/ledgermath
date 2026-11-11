@@ -449,6 +449,23 @@ switch (scenario) {
 		noKeyAnywhere();
 		break;
 	}
+	case "build-tools-refused": {
+		// The tools only http_get needs could not be installed: the box goes on,
+		// http_get alone fails to build, and everything else runs.
+		expect(status === 1, `exit status ${status}, expected 1 (a build failed)`);
+		expect(log.includes("Error: Unable to find a match: cmake"), "the log does not show dnf refusing cmake");
+		expect(log.includes("http_get will not build"), "the log does not say http_get will not build");
+		expect(boots.length === 1, `${boots.length} boot summaries, expected 1`);
+		everyRunChecksOut();
+		const failures = boot?.build_failures ?? [];
+		expect(failures.length === 1 && failures[0]?.benchmark === "http_get" && failures[0]?.build === "static", `build failures: ${JSON.stringify(failures)}`);
+		expect((failures[0]?.message ?? "").includes("cmake is not installed"), "http_get's build failure does not say cmake is missing");
+		expect(httpGetRuns().length === 0, "an http_get Run exists, though it did not build");
+		const others = scheduled.filter((execution) => execution.benchmark !== "http_get");
+		expect(others.length > 0 && runs.length === others.length && runs.every((run) => "code" in run.exit && run.exit.code === 0), "every other execution did not run once and exit 0");
+		expect(!existsSync(join(out, "calls", "sts.log")), "assume-role was asked for, though nothing could use the keys");
+		break;
+	}
 	default:
 		problems.push(`unknown scenario ${scenario}`);
 }

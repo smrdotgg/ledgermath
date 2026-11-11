@@ -97,8 +97,15 @@ describe("AWS-LC's source archive on the box", () => {
 		expect(at).toBeLessThan(BOX_SH.indexOf('python3 "$SRC/runner/run.py"'));
 	});
 
-	test("is built with the packages box.sh installs: cmake and g++, and ethtool for the dump", () => {
-		const install = /^dnf install -y (.*)$/m.exec(BOX_SH)?.[1]?.split(" ") ?? [];
-		for (const name of ["gcc", "gcc-c++", "cmake", "make", "glibc-static", "ethtool"]) expect(install).toContain(name);
+	test("is built with cmake and g++, which box.sh installs in a step of their own that can fail without stopping the boot", () => {
+		const installs = [...BOX_SH.matchAll(/^dnf install -y (.*)$/gm)].map((match) => match[1] as string);
+		expect(installs.length).toBe(2);
+		const [everyone, httpGet] = installs as [string, string];
+		for (const name of ["gcc", "make", "glibc-static", "ethtool"]) expect(everyone.split(" ")).toContain(name);
+		expect(everyone.split(" ")).not.toContain("cmake");
+		expect(everyone.split(" ")).not.toContain("gcc-c++");
+		// Under set -e, the || is what keeps a failure of this one from ending the boot.
+		expect(httpGet).toBe('cmake gcc-c++ || say "cmake and gcc-c++ did not install; http_get will not build"');
+		expect(BOX_SH.indexOf(`dnf install -y ${httpGet}`)).toBeLessThan(BOX_SH.indexOf('python3 "$SRC/runner/run.py"'));
 	});
 });

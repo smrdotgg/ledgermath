@@ -137,6 +137,9 @@ AWS_LC_ARCHIVE=/tmp/aws-lc.tar.gz scripts/box-in-container/run.sh --scenario htt
   recorded as a build failure; `syscall` runs.
 - `http-get-refused`: `assume-role` is refused. `http_get` builds, its five executions are
   listed under `not_run` with AWS's words, and `syscall` runs.
+- `build-tools-refused`: a stand-in in front of `dnf` refuses `cmake` and `gcc-c++`. The
+  box goes on, `http_get` alone fails to build (its build failure says `cmake` is
+  missing), and `syscall` runs.
 
 The archive is `--aws-lc-archive FILE`, or `$AWS_LC_ARCHIVE` as for the Makefile and
 `scripts/check-scratch.py`; without either, `run.sh` fetches it into OUT with
@@ -173,9 +176,11 @@ scheduled time, so one slot of one target can start at most one box. Its user-da
 `runner/box.sh`, which:
 
 1. sets a shutdown timer that ends the box 45 minutes after it started, whatever happens;
-2. installs `gcc`, `gcc-c++`, `cmake`, `make`, `glibc-static`, `tar`, `gzip`, `util-linux`,
-   `nvme-cli`, `xfsprogs` and `ethtool` from the image's own release (`cmake` and `gcc-c++`
-   for AWS-LC, the TLS library `http_get` links; the image already has `ethtool`);
+2. installs `gcc`, `make`, `glibc-static`, `tar`, `gzip`, `util-linux`, `nvme-cli`,
+   `xfsprogs` and `ethtool` from the image's own release (the image already has
+   `ethtool`); then, in a step of their own that may fail without stopping the boot,
+   `cmake` and `gcc-c++` for AWS-LC, the TLS library `http_get` links: without them only
+   `http_get` fails to build;
 3. fetches `source/<commit>.tar.gz`, a `git archive` of the deployed commit, and refuses to
    go on if the archive's commit or its own text is not that commit's; then fetches
    AWS-LC's source archive, a blob the deploy put in the bucket, checks it against

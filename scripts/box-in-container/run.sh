@@ -65,6 +65,9 @@
 #                to build, recorded as a build failure, and syscall runs
 #   http-get-refused  assume-role is refused: http_get builds, its executions
 #                are not run and the boot summary says why, and syscall runs
+#   build-tools-refused  dnf refuses cmake and gcc-c++ (a stand-in in front of
+#                dnf): the box goes on, http_get alone fails to build, recorded
+#                as a build failure, and syscall runs
 #
 # What this shows: box.sh, provision.py, run.py, the Makefiles, cpuid.c and
 # fixture.c work on the image's own packages (Python 3.9, gcc 11,
@@ -141,10 +144,11 @@ SCHEDULE_FILE=""      # when set, the booted commit's schedule.json is this file
 HTTP_GET=false        # the stand-in for S3, AWS-LC's archive, the http_get source
 case "$SCENARIO" in
   ok | terminated | shutdown | blobs-present) ;;
-  http-get | http-get-no-archive | http-get-refused)
+  http-get | http-get-no-archive | http-get-refused | build-tools-refused)
     HTTP_GET=true
     SCHEDULE_FILE=scripts/box-in-container/http-get.json
     [ "$SCENARIO" = http-get-refused ] && ENVIRONMENT+=(-e FAKE_STS_REFUSE=1)
+    [ "$SCENARIO" = build-tools-refused ] && ENVIRONMENT+=(-e "FAKE_DNF_REFUSE=cmake gcc-c++")
     ;;
   instance-types)
     FAKE_IMDS_TYPE=m5.large
@@ -206,7 +210,7 @@ KEY="source/$COMMIT.tar.gz"
 mkdir -p "$OUT/s3/$BUCKET/source" "$OUT/calls" "$OUT/stubs"
 OUT="$(cd "$OUT" && pwd)"
 # Mounted from OUT, so the box's dump (findmnt) shows no path of this checkout.
-cp "$HERE/aws" "$HERE/power" "$OUT/stubs/"
+cp "$HERE/aws" "$HERE/power" "$HERE/dnf" "$OUT/stubs/"
 cp -R "$HERE/ec2" "$OUT/stubs/ec2"
 git archive --format=tar.gz -o "$OUT/s3/$BUCKET/$KEY" "$COMMIT"
 if [ "$SCENARIO" = blobs-present ]; then
@@ -235,7 +239,10 @@ if $HTTP_GET; then
   fi
   git show "$COMMIT:tests/http-get/standin.py" >"$OUT/stubs/standin.py"
   mkdir -p "$OUT/standin" "$OUT/standin-box"
-  if [ -n "$AWS_LC_CACHE" ] && [ "$SCENARIO" != http-get-no-archive ]; then
+  # dnf's stand-in only where it refuses something; the box's dnf otherwise.
+  if [ "$SCENARIO" = build-tools-refused ]; then ENVIRONMENT+=(-v "$OUT/stubs/dnf:/usr/local/bin/dnf:ro"); fi
+  # A box has no cache: the scenarios about what the build lacks get none either.
+  if [ -n "$AWS_LC_CACHE" ] && [ "$SCENARIO" != http-get-no-archive ] && [ "$SCENARIO" != build-tools-refused ]; then
     ENVIRONMENT+=(-e AWS_LC_DIR=/var/cache/ledgermath-aws-lc -v "$AWS_LC_CACHE:/var/cache/ledgermath-aws-lc")
   fi
 fi

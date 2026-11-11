@@ -166,15 +166,17 @@ imds() {
 }
 say "instance=$(imds instance-id) type=$(imds instance-type) image=$(imds ami-id) zone=$(imds placement/availability-zone)"
 
-# The compiler and static C library for the builds; cmake and g++ for
-# AWS-LC, which http_get links; tar and gzip for the source; util-linux for
-# the dump's lscpu, lsblk and findmnt; nvme-cli for the NVMe disks' own
-# records and latency histograms; xfsprogs for the instance store's file
-# system and the dump's xfs_info; ethtool for the network's counters.
-# Whatever the image already has stays as it is, and the dump lists every
-# package.
-dnf install -y gcc gcc-c++ cmake make glibc-static python3 tar gzip util-linux nvme-cli xfsprogs ethtool
-say "$(rpm -q system-release gcc gcc-c++ cmake glibc-static python3 nvme-cli xfsprogs ethtool | tr '\n' ' ')"
+# The compiler and static C library for the builds; tar and gzip for the
+# source; util-linux for the dump's lscpu, lsblk and findmnt; nvme-cli for
+# the NVMe disks' own records and latency histograms; xfsprogs for the
+# instance store's file system and the dump's xfs_info; ethtool for the
+# network's counters. Whatever the image already has stays as it is, and the
+# dump lists every package.
+dnf install -y gcc make glibc-static python3 tar gzip util-linux nvme-cli xfsprogs ethtool
+say "$(rpm -q system-release gcc glibc-static python3 nvme-cli xfsprogs ethtool | tr '\n' ' ')"
+# cmake and g++ for AWS-LC, which http_get alone links: without them only
+# http_get fails to build.
+dnf install -y cmake gcc-c++ || say "cmake and gcc-c++ did not install; http_get will not build"
 
 rm -rf "$SRC" "$OUT"
 mkdir -p "$SRC"
