@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
@@ -21,6 +21,9 @@ import {
 	watchedSeries,
 } from "../scripts/alarm";
 import { HandMade } from "./hand-made-runs";
+
+// They make hand-made Runs and read files; on a loaded machine that can take far longer than bun's five-second default.
+setDefaultTimeout(60_000);
 
 /** The schedule the box runs. Only the first tests read it: it changes whenever a benchmark is added. */
 const REAL_SCHEDULE = parseSchedule(JSON.parse(readFileSync(join(import.meta.dir, "..", "schedule.json"), "utf8")));

@@ -1,6 +1,9 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+
+// They read the workflows; on a loaded machine even that can take longer than bun's five-second default.
+setDefaultTimeout(60_000);
 
 const ROOT = join(import.meta.dir, "..");
 

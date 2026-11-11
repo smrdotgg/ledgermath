@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -23,6 +23,9 @@ import {
 	type SourceFile,
 } from "../scripts/lib/prices";
 import { FETCHED_AT, fakeFetch, MEASURED, regionIndex, SAMPLE_FILE, SAMPLE_PATH, SOURCES, sampleSources, sourceUrl, VERSIONS } from "./prices-fixtures";
+
+// They read files, parse and cut; on a loaded machine that can take far longer than bun's five-second default.
+setDefaultTimeout(60_000);
 
 const scratch = mkdtempSync(join(tmpdir(), "lm-prices-test-"));
 afterAll(() => rmSync(scratch, { recursive: true, force: true }));

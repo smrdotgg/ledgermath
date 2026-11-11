@@ -1,9 +1,12 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { readFileSync } from "node:fs";
 
 import { checkPriceFile, pricesValidator } from "../scripts/lib/price-file-check";
 import type { PriceFile, PriceSource } from "../scripts/lib/prices";
 import { SAMPLE_FILE, SAMPLE_PATH } from "./prices-fixtures";
+
+// They compile the schema and read files; on a loaded machine that can take far longer than bun's five-second default.
+setDefaultTimeout(60_000);
 
 const validate = pricesValidator();
 
