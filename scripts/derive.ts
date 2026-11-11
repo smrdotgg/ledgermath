@@ -24,11 +24,19 @@
  * At least one of --out and --requests-out. With --records, a stream that
  * lacks a record for any Method asked for is fetched once and reduced for
  * each, and one with a record for each is not fetched; without, each Method
- * reads every stream. The same Runs and blobs give the same bytes, records
- * kept or not, so a Derivation can be recomputed and compared with cmp.
+ * reads every stream. Only a Run file that validates against the Run schema
+ * is asked for its stream; any other is listed as unreadable by each Method.
+ * The same Runs and blobs give the same bytes, records kept or not, so a
+ * Derivation can be recomputed and compared with cmp.
+ *
+ * Each Method runs on its own: when one fails, the other's Derivations are
+ * still written, and in place of the failed one's goes a note saying why
+ * (scripts/lib/method-failure.ts: page/requests-derivations.failed.json for
+ * page/requests-derivations.json), which the page shows. The exit code is
+ * then 1, so the failure is seen; 0 when every Method asked for succeeded.
  */
 
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { parseArgs } from "node:util";
 
@@ -40,6 +48,7 @@ import * as series from "../methods/v1";
 import { SERIES_RECORD } from "../methods/v1/record";
 import { S3Bucket } from "./lib/bucket";
 import { blobsFromBucket, blobsFromDirectories, firstOf } from "./lib/blobs";
+import { failurePath, methodFailure } from "./lib/method-failure";
 import { readRunFiles } from "./lib/run-files";
 import { RUNS_BUCKET_REGION } from "./lib/runs-repository";
 
@@ -50,6 +59,26 @@ const USAGE =
 function write(path: string, text: string): void {
 	mkdirSync(dirname(path), { recursive: true });
 	writeFileSync(path, text);
+}
+
+/**
+ * Runs one Method and writes its Derivations, or, when it throws, the note
+ * saying why in their place. Returns whether it succeeded.
+ */
+async function runMethod(method: { name: string; version: number }, out: string, make: () => Promise<{ text: string; summary: string }>): Promise<boolean> {
+	try {
+		const { text, summary } = await make();
+		write(out, text);
+		rmSync(failurePath(out), { force: true });
+		console.log(summary);
+		return true;
+	} catch (error) {
+		if (existsSync(out)) rmSync(out);
+		const failure = methodFailure(method, error);
+		write(failurePath(out), `${JSON.stringify(failure, null, 2)}\n`);
+		console.error(`method ${method.name} v${method.version} failed, and wrote no Derivations: ${failure.error} -> ${failurePath(out)}`);
+		return false;
+	}
 }
 
 async function main(): Promise<void> {
@@ -87,54 +116,61 @@ async function main(): Promise<void> {
 
 	const files = readRunFiles(values.runs);
 	const counts: ReduceCounts = { fetched: 0, kept: 0 };
-	let gatherOptions: { records: RecordStore | null; fetchStream: FetchBlob } = { records: null, fetchStream };
 	if (records !== null) {
 		// One pass over the streams for every Method asked for, so that a stream
-		// lacking a record is fetched once, not once per Method; each Method then
-		// reads its records alone.
+		// lacking a record is fetched once, not once per Method. Only Run files
+		// that validate are asked for their streams. Should the pass fail, each
+		// Method below reads what it still lacks itself, and fails on its own.
 		const reducers: Array<StreamReducer<unknown>> = [];
 		if (values.out) reducers.push(SERIES_RECORD as StreamReducer<unknown>);
 		if (values["requests-out"]) reducers.push(REQUESTS_RECORD as StreamReducer<unknown>);
-		const stdouts = files.flatMap((file) => {
-			const record = file.record as { stdout?: unknown } | null;
-			return typeof record?.stdout === "string" && /^sha256:[0-9a-f]{64}$/.test(record.stdout) ? [record.stdout] : [];
-		});
-		await keepRecords(stdouts, reducers, fetchStream, records, 16, counts);
-		gatherOptions = {
-			records,
-			fetchStream: async (hash) => {
-				throw new Error(`stream ${hash} has no record after the first pass`);
-			},
-		};
+		const stdouts = series.readRuns(files).runs.map(({ run }) => run.stdout);
+		try {
+			await keepRecords(stdouts, reducers, fetchStream, records, 16, counts);
+		} catch (error) {
+			console.error(`reading every stream once for every Method stopped (${error instanceof Error ? error.message : String(error)}); each Method reads what it lacks itself`);
+		}
 	}
+	const gatherOptions = { records, fetchStream };
 
+	let ok = true;
 	if (values.out) {
-		const gathered = await series.gather(files, fetchBlob, gatherOptions);
-		const derivations = series.derive(files, gathered);
-		write(values.out, series.serialize(derivations));
-		const counted = derivations.derivations.reduce((sum, d) => sum + d.points.filter((point) => point.counted).length, 0);
-		console.log(
-			`method ${derivations.method.name} v${derivations.method.version}: ${files.length} Run files, ` +
-				`${derivations.derivations.length} Series, ${counted} counted Runs, ${files.length - derivations.unreadable.length - counted} failed, ` +
-				`${derivations.unreadable.length} unreadable; ${gathered.blobs.size} dump blobs read -> ${values.out}`,
-		);
+		const out = values.out;
+		ok =
+			(await runMethod(series.METHOD, out, async () => {
+				const gathered = await series.gather(files, fetchBlob, gatherOptions);
+				const derivations = series.derive(files, gathered);
+				const counted = derivations.derivations.reduce((sum, d) => sum + d.points.filter((point) => point.counted).length, 0);
+				return {
+					text: series.serialize(derivations),
+					summary:
+						`method ${derivations.method.name} v${derivations.method.version}: ${files.length} Run files, ` +
+						`${derivations.derivations.length} Series, ${counted} counted Runs, ${files.length - derivations.unreadable.length - counted} failed, ` +
+						`${derivations.unreadable.length} unreadable; ${gathered.blobs.size} dump blobs read -> ${out}`,
+				};
+			})) && ok;
 	}
 	if (values["requests-out"]) {
 		const out = values["requests-out"];
-		const gathered = await requests.gather(files, fetchBlob, gatherOptions);
-		const derivations = requests.derive(files, gathered);
-		write(out, requests.serialize(derivations));
-		const points = derivations.derivations.flatMap((d) => d.points);
-		const counted = points.filter((point) => point.counted);
-		const succeeded = counted.reduce((sum, point) => sum + point.succeeded, 0);
-		const failed = counted.reduce((sum, point) => sum + point.failed, 0);
-		console.log(
-			`method ${derivations.method.name} v${derivations.method.version}: ${files.length} Run files, ` +
-				`${derivations.derivations.length} Series of requests, ${counted.length} counted Runs, ${points.length - counted.length} failed; ` +
-				`${succeeded} requests succeeded, ${failed} failed; ${gathered.blobs.size} dump blobs read -> ${out}`,
-		);
+		ok =
+			(await runMethod(requests.METHOD, out, async () => {
+				const gathered = await requests.gather(files, fetchBlob, gatherOptions);
+				const derivations = requests.derive(files, gathered);
+				const points = derivations.derivations.flatMap((d) => d.points);
+				const counted = points.filter((point) => point.counted);
+				const succeeded = counted.reduce((sum, point) => sum + point.succeeded, 0);
+				const failed = counted.reduce((sum, point) => sum + point.failed, 0);
+				return {
+					text: requests.serialize(derivations),
+					summary:
+						`method ${derivations.method.name} v${derivations.method.version}: ${files.length} Run files, ` +
+						`${derivations.derivations.length} Series of requests, ${counted.length} counted Runs, ${points.length - counted.length} failed; ` +
+						`${succeeded} requests succeeded, ${failed} failed; ${derivations.unreadable.length} unreadable; ${gathered.blobs.size} dump blobs read -> ${out}`,
+				};
+			})) && ok;
 	}
 	if (records !== null) console.log(`streams: ${counts.fetched} fetched and reduced, ${counts.kept} records read back from ${values.records}`);
+	if (!ok) process.exit(1);
 }
 
 if (import.meta.main) {

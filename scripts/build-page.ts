@@ -7,12 +7,14 @@
  * repository (or under --run-url-base). With --requests, Method requests v1's
  * Derivations add a part after every Series (scripts/lib/request-page.ts),
  * and a link to it after the list of Series; version 1's part is the same
- * bytes with or without it. It opens from disk with no network: no script, no
+ * bytes with or without it. When a Method failed, scripts/derive.ts left a
+ * note in place of its Derivations (scripts/lib/method-failure.ts): the page
+ * is still built from what there is, and says which part is missing and why. It opens from disk with no network: no script, no
  * stylesheet, font or image from anywhere; the charts are SVG drawn here. The
  * same Derivations give the same bytes.
  */
 
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { parseArgs } from "node:util";
 
@@ -29,6 +31,7 @@ import {
 	type Unit,
 	withUnit,
 } from "./lib/chart";
+import { type MethodFailure, readPart } from "./lib/method-failure";
 import { renderRequestsPart } from "./lib/request-page";
 import { RUNS_REPOSITORY_BLOB_URL } from "./lib/runs-repository";
 
@@ -37,6 +40,8 @@ export interface PageOptions {
 	runUrlBase: string;
 	/** Method requests v1's Derivations, for the part after every Series. */
 	requests?: RequestsDerivationsFile;
+	/** Why Method requests v1 made no Derivations, when it failed: said where its part would be. */
+	requestsFailure?: MethodFailure;
 }
 
 interface Metric {
@@ -323,6 +328,53 @@ function requestsLink(requests: RequestsDerivationsFile): string {
 	return `<p class="meta"><a href="#requests">Per request: ${n} Series of requests (Method ${esc(requests.method.name)} v${requests.method.version})</a>, after every Series below: percentiles of each phase across requests, and their distributions.</p>`;
 }
 
+const failureWords = (failure: MethodFailure): string => `Method ${failure.method.name} v${failure.method.version} failed on this run and made no Derivations: ${failure.error}`;
+
+/** A Method's part, where it would be, when the Method failed. */
+function missingPart(failure: MethodFailure, id: string, title: string): string {
+	return [
+		`<section class="missing-part" id="${esc(id)}">`,
+		`<h1>${esc(title)}</h1>`,
+		`<p class="missing"><b>This part is missing.</b> ${esc(failureWords(failure))}. The rest of the page is from the Derivations that were made.</p>`,
+		"</section>",
+	].join("\n");
+}
+
+/** The link line, and the requests' part: the part, or what says it is missing, or nothing when neither was asked for. */
+function requestsPieces(options: PageOptions): { link: string[]; part: string[] } {
+	if (options.requests !== undefined) {
+		return { link: [requestsLink(options.requests)], part: [renderRequestsPart(options.requests, { runUrlBase: options.runUrlBase, label: seriesLabel })] };
+	}
+	if (options.requestsFailure !== undefined) {
+		return {
+			link: [`<p class="meta missing"><a href="#requests">Per request: missing</a>. ${esc(failureWords(options.requestsFailure))}.</p>`],
+			part: [missingPart(options.requestsFailure, "requests", "Per request: Method requests, version 1")],
+		};
+	}
+	return { link: [], part: [] };
+}
+
+/** The page when Method series v1 failed: what says so, and the requests' part. */
+export function renderWithoutSeries(failure: MethodFailure, options: PageOptions): string {
+	const { part } = requestsPieces(options);
+	return [
+		"<!doctype html>",
+		'<html lang="en">',
+		"<head>",
+		'<meta charset="utf-8">',
+		'<meta name="viewport" content="width=device-width, initial-scale=1">',
+		"<title>LedgerMath: every Series (Method series v1 missing)</title>",
+		`<style>${STYLE}</style>`,
+		"</head>",
+		"<body>",
+		missingPart(failure, "series", "LedgerMath: every Series"),
+		...part,
+		"</body>",
+		"</html>",
+		"",
+	].join("\n");
+}
+
 export function renderPage(file: DerivationsFile, options: PageOptions): string {
 	if (file.schema !== "ledgermath.derivations/1" || file.method.name !== "series" || file.method.version !== 1) {
 		throw new Error(`this page knows Method series version 1, not ${JSON.stringify(file.method)}`);
@@ -358,7 +410,7 @@ export function renderPage(file: DerivationsFile, options: PageOptions): string 
 		"<h1>LedgerMath: every Series</h1>",
 		`<p class="meta">Derived by <b>Method ${esc(file.method.name)}, version ${file.method.version}</b>, from ${file.runs_read} Run file${file.runs_read === 1 ? "" : "s"}: ${counted} counted, ${runs.length - counted} failed, ${file.unreadable.length} that do not validate. Newest Run started ${newest === null ? "never" : esc(time(Date.parse(newest)))}. Every point, and every time below, links to its Run file.</p>`,
 		`<nav><h2>${file.derivations.length} Series</h2><ol>${toc.join("")}</ol></nav>`,
-		...(options.requests === undefined ? [] : [requestsLink(options.requests)]),
+		...requestsPieces(options).link,
 		`<details><summary>How the numbers are made (Method ${esc(file.method.name)} v${file.method.version})</summary><dl>${definitions}</dl>`,
 		`<h3>Split on</h3><ul>${facts(file.split_on)}</ul>`,
 		`<h3>Left out of the split</h3><ul>${file.left_out
@@ -368,7 +420,7 @@ export function renderPage(file: DerivationsFile, options: PageOptions): string 
 		`<h3>How often each dump section changed, over every Run</h3>${evidenceTable(file)}</details>`,
 		unreadable,
 		...file.derivations.map((derivation) => seriesSection(derivation, file, options)),
-		...(options.requests === undefined ? [] : [renderRequestsPart(options.requests, { runUrlBase: options.runUrlBase, label: seriesLabel })]),
+		...requestsPieces(options).part,
 		"</body>",
 		"</html>",
 		"",
@@ -382,10 +434,19 @@ if (import.meta.main) {
 		console.error("usage: bun scripts/build-page.ts DERIVATIONS OUT.html [--requests REQUESTS_DERIVATIONS] [--run-url-base URL]");
 		process.exit(2);
 	}
-	const file = JSON.parse(readFileSync(input, "utf8")) as DerivationsFile;
-	const requests = values.requests === undefined ? undefined : (JSON.parse(readFileSync(values.requests, "utf8")) as RequestsDerivationsFile);
-	const html = renderPage(file, { runUrlBase: values["run-url-base"] ?? RUNS_REPOSITORY_BLOB_URL, ...(requests === undefined ? {} : { requests }) });
+	const options: PageOptions = { runUrlBase: values["run-url-base"] ?? RUNS_REPOSITORY_BLOB_URL };
+	let requests: RequestsDerivationsFile | undefined;
+	if (values.requests !== undefined) {
+		const part = readPart<RequestsDerivationsFile>(values.requests);
+		if (part.file !== null) options.requests = requests = part.file;
+		else options.requestsFailure = part.failure;
+	}
+	const seriesPart = readPart<DerivationsFile>(input);
+	const html = seriesPart.file !== null ? renderPage(seriesPart.file, options) : renderWithoutSeries(seriesPart.failure, options);
 	mkdirSync(dirname(output), { recursive: true });
 	writeFileSync(output, html);
+	const missing = [seriesPart.failure, options.requestsFailure].flatMap((failure) => (failure === null || failure === undefined ? [] : [`Method ${failure.method.name} v${failure.method.version}`]));
+	if (missing.length > 0) console.error(`the page says these parts are missing: ${missing.join(", ")}`);
+	const file = seriesPart.file ?? { derivations: [] };
 	console.log(`${file.derivations.length} Series${requests === undefined ? "" : `, ${requests.derivations.length} of requests`} -> ${output} (${Buffer.byteLength(html)} bytes)`);
 }

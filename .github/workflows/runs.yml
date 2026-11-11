@@ -99,16 +99,25 @@ jobs:
           key: derive-${{ github.run_id }}
           restore-keys: derive-
 
+      # Each Method runs on its own: when one fails, derive.ts still writes the
+      # other's Derivations, a note in place of the failed one's
+      # (page/<name>.failed.json), and exits 1. The page is then built from
+      # what there is and says which part is missing and why, the artifact is
+      # kept, and the run still ends as failed, so the failure is seen.
       - name: Derive every Series (Method series v1) and every Series of requests (Method requests v1)
+        id: derive
         run: >-
           bun scripts/derive.ts --runs ledgermath-runs --bucket "$RUNS_BUCKET"
           --cache .cache/blobs --records .cache/records
           --out page/derivations.json --requests-out page/requests-derivations.json
 
       - name: Build the page
+        id: page
+        if: ${{ !cancelled() && (steps.derive.outcome == 'success' || steps.derive.outcome == 'failure') }}
         run: bun scripts/build-page.ts page/derivations.json page/index.html --requests page/requests-derivations.json
 
       - name: Keep the page and the Derivations
+        if: ${{ !cancelled() && (steps.derive.outcome == 'success' || steps.derive.outcome == 'failure') }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: page

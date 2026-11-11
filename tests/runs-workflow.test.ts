@@ -91,6 +91,15 @@ describe("the runs workflow", () => {
 		// Caches made before the records held stdout blobs: their prefix is never restored.
 		expect(cache.with?.["restore-keys"]).toBe("derive-");
 		expect(steps.indexOf(cache)).toBeLessThan(steps.indexOf(derive));
+		// A failed Method still leaves the other's Derivations, the page and the artifact; the run ends failed all the same.
+		const ran = "${{ !cancelled() && (steps.derive.outcome == 'success' || steps.derive.outcome == 'failure') }}";
+		expect(derive.id).toBe("derive");
+		expect(derive.if).toBeUndefined();
+		expect(page.if).toBe(ran);
+		const upload = steps.find((step) => step.uses?.startsWith("actions/upload-artifact@")) as Step;
+		expect(upload.if).toBe(ran);
+		expect(steps.indexOf(upload)).toBeGreaterThan(steps.indexOf(page));
+		expect(JSON.stringify(workflow)).not.toContain("continue-on-error");
 		// The alarm still runs whatever the Methods and the page did.
 		const alarm = steps.find((step) => step.run?.includes("scripts/alarm.ts")) as Step;
 		expect(alarm.if).toBe("${{ !cancelled() && steps.runs-repository.outcome == 'success' }}");

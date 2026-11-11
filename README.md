@@ -658,7 +658,10 @@ repository with its whole history (for the alarm's `--schedule-changed-at`), tak
 credentials through OIDC, checks out `smrdotgg/ledgermath-runs` with the deploy key,
 runs the copy job, commits and pushes what it added, runs both Methods, builds the page,
 uploads the page and both files of Derivations as the artifact `page`, and runs the alarm
-with the workflow's own token. Between runs it keeps, in GitHub's cache, the dump blobs it
+with the workflow's own token. Each Method runs on its own: when one fails, `derive.ts`
+still writes the other's Derivations and, in place of the failed one's, a note saying why
+(`page/<name>.failed.json`); the page is built from what there is and says which part is
+missing and why, the artifact is kept, and the run still ends as failed. Between runs it keeps, in GitHub's cache, the dump blobs it
 fetched and each stream's reduced record per Method (`.cache/records`), never the stdout
 blobs: a stream is fetched only for a Run no Method has a record of yet, about 2 MB of
 records a day where the stdout blobs were about 44 MB. The alarm runs even when an earlier
