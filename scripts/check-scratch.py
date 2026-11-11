@@ -17,10 +17,13 @@ Some parameter sets ask for CPUs this machine may not have: `mutex`'s
 that many hardware threads. Whether this machine can provide them is decided
 here, from the topology in /sys of the CPUs this process may run on, and the
 container is given exactly those CPUs. A set this machine cannot provide is
-reported as skipped, with the reason, and is still run once to show that the
-binary agrees: it must exit 2 without a `finished` event. Every other set must
-pass, and every benchmark must have at least one set that runs (for `mutex`, the
-one-thread set needs one CPU, so it always runs).
+still run once, and is reported as skipped only when the binary agrees in its
+own words: it exits 2, its stream is `started` and nothing after it, and its
+stderr has the line that refuses exactly that set (`error: placement
+<placement> is impossible here: ...`). Anything else, such as an exit 2 for
+another reason, fails. Every other set must pass, and every benchmark must have
+at least one set that runs (for `mutex`, the one-thread sets need one CPU, so
+they always run).
 
 The container's only addition is an empty tmpfs at /tmp, which `syscall`'s
 `stat` set is given as its path; the box's /tmp is a tmpfs too. No measured Run
@@ -36,7 +39,8 @@ so the schedule's sets run against it as they are. The directory is removed
 at the end. disk_read_io_uring runs without Docker's seccomp filter, whose
 default refuses io_uring (the box has no such filter); when this machine's
 kernel refuses io_uring itself (kernel.io_uring_disabled), its sets are
-skipped, and the binary must agree by exiting 2.
+skipped, held to the same standard: the binary must exit 2 after `started`
+alone, saying `error: io_uring is not available here: ...`.
 
 Needs make, a C compiler with the static C library, Docker, and Python 3.
 Exit status 0 when every execution ran and every stream is valid, 1 when not.
@@ -150,6 +154,40 @@ def unmet(name, params, topology):
     return None
 
 
+def refusal(name, params):
+    """The start of the stderr line with which the binary refuses a parameter set
+    this machine cannot provide, or None for a benchmark that never does."""
+    if name == "mutex":
+        return "error: placement %s is impossible here: " % params.get("placement")
+    if name == "disk_read_io_uring":
+        return "error: io_uring is not available here: "
+    return None
+
+
+def skip_problem(name, params, returncode, stdout, stderr):
+    """Why a run of a set this machine cannot provide is not the binary refusing
+    it, or None when it is: exit 2, a stream of `started` and nothing after it,
+    and the refusal line for this very set on stderr. stdout and stderr are bytes."""
+    problems = []
+    if returncode != 2:
+        problems.append("it exited %d, not 2" % returncode)
+    lines = stdout.decode("utf-8", "replace").splitlines()
+    try:
+        events = [json.loads(line) for line in lines]
+    except ValueError:
+        events = None
+    alone = (events is not None and len(events) == 1 and isinstance(events[0], dict)
+             and events[0].get("event") == "started" and events[0].get("schema") == "ledgermath.events/1")
+    if not alone:
+        problems.append("its stream is not `started` alone (%d line%s)" % (len(lines), "" if len(lines) == 1 else "s"))
+    expected = refusal(name, params)
+    if expected is None:
+        problems.append("%s never refuses a parameter set" % name)
+    elif not any(line.startswith(expected) for line in stderr.decode("utf-8", "replace").splitlines()):
+        problems.append("its stderr has no line starting %r" % expected)
+    return "; ".join(problems) or None
+
+
 def main():
     with open(os.path.join(ROOT, "schedule.json"), encoding="utf-8") as handle:
         schedule = json.load(handle)
@@ -201,14 +239,14 @@ def check_all(benchmarks, topology, cpuset, disk):
                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             stderr = done.stderr.decode("utf-8", "replace")
             if reason is not None:
-                finished = '"event":"finished"' in done.stdout.decode("utf-8", "replace").replace(" ", "")
-                if done.returncode != 2 or finished:
+                problem = skip_problem(name, params, done.returncode, done.stdout, done.stderr)
+                if problem is not None:
                     failures.append(label)
-                    print("FAIL %s: this machine cannot provide it (%s), yet the binary exited %d%s\n%s"
-                          % (label, reason, done.returncode, " with a finished event" if finished else "", stderr))
+                    print("FAIL %s: this machine cannot provide it (%s), but the binary did not refuse it: %s\n%s"
+                          % (label, reason, problem, stderr))
                     continue
-                said = (stderr.strip().splitlines() or ["nothing on stderr"])[-1]
-                print("skip %s: %s; the binary agrees: exit 2, %s" % (label, reason, said))
+                said = next(line for line in stderr.splitlines() if line.startswith(refusal(name, params)))
+                print("skip %s: %s; the binary agrees: exit 2 after `started` alone, %s" % (label, reason, said))
                 continue
             ran += 1
             if done.returncode != 0:
