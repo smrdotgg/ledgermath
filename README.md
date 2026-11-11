@@ -5,7 +5,8 @@ binary that prints a stream of events to stdout, one JSON object per line, and
 diagnostics to stderr. A box on EC2 builds it, runs it as an ordinary process, dumps
 its own environment around every execution, and writes one Run per execution: a
 self-describing record kept forever. The plan is GitHub issue #36; step 2, one Run end
-to end, is #37. `docs/dev-log.md` section 2 is the event contract.
+to end, is #37; step 3, the first Method and a page, is #39. `docs/dev-log.md` section 2
+is the event contract.
 
 Two pipelines live here side by side. The new one, described first, writes Runs.
 July's proof of concept (`benchmarks/c/`, its own JSON format) keeps running unchanged
@@ -23,8 +24,13 @@ until step 4 of the plan replaces it.
 | `scripts/check-events.py` | Checks a stream's order; needs only Python 3 |
 | `scripts/check-runs.ts` | Checks a directory laid out like the bucket: schemas, every hash, events against stdout, runner manifests |
 | `scripts/box-in-container/` | Boots `runner/box.sh` in Amazon Linux 2023 with S3 and shutdown stubbed, in several scenarios |
-| `infra/runs/` | The `-runs` SST stage: stack, launch Lambda, reaper, user-data |
-| `tests/` | `bun test`: the schemas against sample Runs, the Run checker, the runner's timeout and stop races, and the launch and reap logic |
+| `infra/runs/` | The `-runs` SST stage: stack, launch Lambda, reaper, user-data, the placement it launches at, the workflow's AWS role |
+| `methods/` | Methods, versioned: `v1/` turns Runs into Derivations (`methods/README.md`) |
+| `scripts/copy-runs.ts` | The copy job: the bucket's Run files and boot summaries into the Runs repository |
+| `scripts/derive.ts`, `scripts/build-page.ts` | Run a Method over the Runs; turn its Derivations into the page |
+| `scripts/alarm.ts` | Opens, or comments on, one issue when a watched Series has had no Run for 48 hours |
+| `.github/workflows/runs.yml` | All four on a schedule: copy, push, derive, page, alarm |
+| `tests/` | `bun test`: the schemas against sample Runs, the Run checker, the runner's timeout and stop races, the launch and reap logic, the role, the Method, the copy job, the page, the alarm and the workflow |
 
 ## A benchmark, locally
 
@@ -201,6 +207,106 @@ bun scripts/check-runs.ts /tmp/runs-bucket
 
 The source archive is also in `blobs/` (a Run's `source`), so this checks every Run's
 runner manifest against it too.
+
+## The Runs repository, the Method and the page
+
+Step 3 (#39). The Run files and boot summaries are copied, byte for byte and under the
+same paths, into the private repository `smrdotgg/ledgermath-runs`; blobs stay in the
+bucket and are fetched by hash when needed. Method version 1 (`methods/README.md`) turns
+the Runs into a file of Derivations, one per Series. The page is one static HTML file
+built from that file: one chart per Series, every point a link to its Run file in the
+Runs repository, percentiles with the number of Runs behind them, groups by colour and
+shape, failed Runs as crosses, and what differed between consecutive Runs. It opens from
+disk with no network. Until step 7 it is a build artifact, not hosted.
+
+### Locally
+
+```bash
+export AWS_PROFILE=tabot-dev AWS_REGION=us-east-2
+eval "$(aws configure export-credentials --format env)"   # Bun's S3 client reads keys from the environment
+BUCKET=$(jq -r .bucket .sst/outputs.json)                 # or: aws s3 ls | grep ledgermath-smr-runs
+
+git clone git@github.com:smrdotgg/ledgermath-runs.git /tmp/ledgermath-runs
+git -C /tmp/ledgermath-runs remote set-url --push origin no-push   # a scratch clone pushes nowhere
+
+# The copy job: adds what the bucket has and the clone does not; a second run adds nothing.
+# It stops, writing nothing, if a file already in the clone differs from the bucket's (an
+# ETag that is not the file's MD5 is settled by downloading and comparing the bytes), if a
+# key is not shaped like a Run file or boot summary, or if any path passes through a
+# symbolic link. Each file is created exclusively, so one that appears meanwhile stops it
+# rather than being overwritten.
+bun scripts/copy-runs.ts --bucket "$BUCKET" /tmp/ledgermath-runs
+
+# The Method, with blobs fetched by hash and kept in a cache.
+bun scripts/derive.ts --runs /tmp/ledgermath-runs --bucket "$BUCKET" --cache /tmp/blob-cache \
+  --out /tmp/page/derivations.json
+
+# The page.
+bun scripts/build-page.ts /tmp/page/derivations.json /tmp/page/index.html
+
+# The alarm, posting nothing; --now sets the clock, --copy says whether the copy job worked.
+bun scripts/alarm.ts --runs /tmp/ledgermath-runs --copy succeeded --dry-run --now 2026-11-13T00:00:00Z
+```
+
+Without AWS, the samples are a directory of Runs with their blobs:
+
+```bash
+bun scripts/derive.ts --runs tests/samples/scheduled --blobs tests/samples/scheduled/blobs --out /tmp/samples.json
+bun scripts/build-page.ts /tmp/samples.json /tmp/samples.html
+```
+
+The same Runs and blobs give the same Derivations, byte for byte, whatever the blobs come
+from, so a Derivation is checked by computing it again and comparing with `cmp`.
+
+### The workflow
+
+`.github/workflows/runs.yml` runs at 22:40 UTC (half an hour after the boot), every six
+hours, and by hand (`workflow_dispatch`), one run at a time. It checks out this
+repository, takes AWS credentials through OIDC, checks out `smrdotgg/ledgermath-runs`
+with the deploy key, runs the copy job, commits and pushes what it added, runs the
+Method, builds the page, uploads the page and the Derivations as the artifact `page`,
+and runs the alarm with the workflow's own token. The alarm runs even when an earlier
+step failed, as long as the Runs repository was checked out, and is told whether the copy
+and its push succeeded on this pass.
+
+It needs:
+
+| Where | Name | What it holds |
+|-------|------|---------------|
+| Variable | `RUNS_AWS_ROLE_ARN` | The stage's output `runsReaderRole` (`jq -r .runsReaderRole .sst/outputs.json` after a deploy) |
+| Variable | `RUNS_BUCKET` | The stage's output `bucket`, the bucket's name |
+| Secret | `RUNS_REPO_DEPLOY_KEY` | The private half of an SSH key whose public half is a deploy key of `smrdotgg/ledgermath-runs` **with write access** (it pushes) |
+
+For the key: `ssh-keygen -t ed25519 -N '' -C ledgermath-runs-copy -f runs-deploy-key`,
+add `runs-deploy-key.pub` under the Runs repository's Settings → Deploy keys with
+"Allow write access", put the contents of `runs-deploy-key` in the secret, and delete
+both files. The alarm needs nothing more: the workflow asks for `issues: write`.
+
+The role comes with the stage. A deploy of a `-runs` stage creates GitHub's OIDC provider
+for `token.actions.githubusercontent.com` (audience `sts.amazonaws.com`; an account holds
+one per URL, so only one `-runs` stage per account can create it) and the role
+`RunsReaderRole`, which only workflows of `smrdotgg/ledgermath` on `refs/heads/main` can
+assume and which may list the bucket and read `runs/*`, `boots/*` and `blobs/*`, nothing
+else (`infra/runs/github-role.ts`). A workflow started from another branch cannot assume
+it.
+
+### The alarm
+
+A watched Series is one `schedule.json` lists (benchmark, params, build) at the instance
+type and zone the stage launches, taken from `infra/runs/placement.ts`, which the stack
+uses too. A one-off launch on another instance type is not watched; a Series taken out of
+the schedule is not watched any more. When the newest Run of any watched Series started
+more than 48 hours ago, or a watched Series has no Run at all, the alarm opens one issue
+listing them all, or comments on the alarm issue already open (found by a marker in its
+body; no label). Any Run counts, failed or not.
+
+It writes only when something changed since its last post: the set of stale Series, or
+whether the copy job is failing. Each post ends with that state in a hidden marker, which
+the next pass compares with; otherwise it stays silent. When the copy or its push failed on
+a pass, the Runs repository may be behind the bucket, and anything it writes says so at
+the top, before the list. When every watched Series has a Run again it says so once on the
+open issue, so a later incident is not mistaken for the old one. Closing the issue lets
+the next incident open a new one.
 
 ## July's pipeline (`benchmarks/c/`, stage `smr`)
 

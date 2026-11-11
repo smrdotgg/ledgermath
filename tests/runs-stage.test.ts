@@ -4,12 +4,21 @@ import { join } from "node:path";
 
 import type { Instance, Tag } from "@aws-sdk/client-ec2";
 
+import {
+	GITHUB_OIDC_AUDIENCE,
+	GITHUB_OIDC_URL,
+	type PolicyDocument,
+	readPolicy,
+	trustPolicy,
+} from "../infra/runs/github-role";
 import { boxTags, launch } from "../infra/runs/launch-box";
 import { chooseInstanceType, clientToken, LATEST_START_MS, lateness, SCHEDULED_EVENT } from "../infra/runs/launch-event";
+import { PLACEMENT, PLACEMENTS } from "../infra/runs/placement";
 import { MAX_AGE_MS, staleBoxes } from "../infra/runs/reap-boxes";
 import { BOX_MARKER, buildUserData, USER_DATA_LIMIT_BYTES } from "../infra/runs/user-data";
 
 const BOX_SH = readFileSync(join(import.meta.dir, "..", "runner", "box.sh"), "utf8");
+const STACK = readFileSync(join(import.meta.dir, "..", "infra", "runs", "stack.ts"), "utf8");
 const COMMIT = "537d4f1bd2fa883c897456d16a9b7c9a49548b05";
 const VARIABLES = {
 	bucket: "ledgermath-smr-runs-runsbucketbucket-abcdefgh",
@@ -160,5 +169,86 @@ describe("the reaper", () => {
 
 	test("a box never carries the tag July's reaper selects on", () => {
 		expect(boxTags("smr-runs", COMMIT).map((tag) => tag.Key)).not.toContain("ledgermath-runner");
+	});
+});
+
+describe("where the stage launches", () => {
+	test("is one shared placement, which the stack takes its instance type and zone from", () => {
+		expect(PLACEMENT).toEqual({ instanceType: "c6i.8xlarge", zone: "us-east-2c" });
+		expect(PLACEMENTS).toEqual([PLACEMENT]);
+		expect(STACK).toContain('import { PLACEMENT } from "./placement";');
+		expect(STACK).toContain("const ZONE = PLACEMENT.zone;");
+		expect(STACK).toContain("const INSTANCE_TYPE = PLACEMENT.instanceType;");
+		// No second copy of either in the stack.
+		expect(STACK).not.toMatch(/"c6i\.|"us-east-2[a-z]"/);
+	});
+});
+
+/**
+ * Whether a policy allows an action on a resource, by IAM's rules for what
+ * these documents use: Allow statements, exact actions, and resources where *
+ * matches anything. Conditions are left out; trust policies are checked apart.
+ */
+function allows(policy: PolicyDocument, action: string, resource: string): boolean {
+	const matches = (pattern: string, value: string): boolean =>
+		new RegExp(`^${pattern.split("*").map((part) => part.replace(/[.+?^${}()|[\]\\]/g, "\\$&")).join(".*")}$`).test(value);
+	return policy.Statement.some(
+		(statement) =>
+			statement.Effect === "Allow" &&
+			statement.Action.some((allowed) => matches(allowed, action)) &&
+			(statement.Resource ?? []).some((allowed) => matches(allowed, resource)),
+	);
+}
+
+describe("the role the runs workflow assumes", () => {
+	const providerArn = "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com";
+	const bucketArn = "arn:aws:s3:::ledgermath-smr-runs-runsbucketbucket-abcdefgh";
+
+	test("trusts GitHub's OIDC provider, for this repository's workflows on main alone", () => {
+		const policy = trustPolicy(providerArn);
+		expect(policy.Statement).toEqual([
+			{
+				Effect: "Allow",
+				Principal: { Federated: providerArn },
+				Action: ["sts:AssumeRoleWithWebIdentity"],
+				Condition: {
+					StringEquals: {
+						"token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
+						"token.actions.githubusercontent.com:sub": "repo:smrdotgg/ledgermath:ref:refs/heads/main",
+					},
+				},
+			},
+		]);
+		// An exact match: no StringLike, no wildcard that a branch, a tag, a pull
+		// request or another repository could satisfy.
+		expect(JSON.stringify(policy)).not.toContain("*");
+		expect(JSON.stringify(policy)).not.toContain("StringLike");
+	});
+
+	test("may list the bucket and read Runs, boot summaries and blobs, and nothing else", () => {
+		const policy = readPolicy(bucketArn);
+		expect(allows(policy, "s3:ListBucket", bucketArn)).toBe(true);
+		for (const key of ["runs/2026/11/10/a.json", "boots/2026/11/10/b.json", "blobs/sha256/0123"]) {
+			expect(allows(policy, "s3:GetObject", `${bucketArn}/${key}`)).toBe(true);
+		}
+		for (const key of ["logs/2026/11/10/b.log", "source/abc.tar.gz", "runsx/a", "other"]) {
+			expect(allows(policy, "s3:GetObject", `${bucketArn}/${key}`)).toBe(false);
+		}
+		for (const action of ["s3:PutObject", "s3:DeleteObject", "s3:GetObjectVersion", "s3:ListBucketVersions", "s3:PutBucketPolicy", "iam:PassRole"]) {
+			expect(allows(policy, action, bucketArn)).toBe(false);
+			expect(allows(policy, action, `${bucketArn}/runs/a.json`)).toBe(false);
+		}
+		expect(allows(policy, "s3:ListBucket", "arn:aws:s3:::another-bucket")).toBe(false);
+		expect(policy.Statement.flatMap((statement) => statement.Action).sort()).toEqual(["s3:GetObject", "s3:ListBucket"]);
+	});
+
+	test("is made by the stack: GitHub's provider, the role from these documents, and its ARN as an output", () => {
+		expect(GITHUB_OIDC_URL).toBe("https://token.actions.githubusercontent.com");
+		expect(GITHUB_OIDC_AUDIENCE).toBe("sts.amazonaws.com");
+		expect(STACK).toContain('new aws.iam.OpenIdConnectProvider("GitHubOidc"');
+		expect(STACK).toContain("clientIdLists: [GITHUB_OIDC_AUDIENCE]");
+		expect(STACK).toContain("JSON.stringify(trustPolicy(arn))");
+		expect(STACK).toContain("JSON.stringify(readPolicy(arn))");
+		expect(STACK).toContain("runsReaderRole: readerRole.arn");
 	});
 });

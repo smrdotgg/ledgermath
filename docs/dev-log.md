@@ -101,7 +101,7 @@ on stdout. Every object has `event` and `t`, where `t` is whole nanoseconds from
 | `observed` | `values` | The observed counterparts of the declared parameters, as the benchmark documents them (`memory_read`: `bytes_per_repetition`, `threads_used`, `path_taken`): bytes actually copied per repetition, threads actually joined, the code path actually dispatched. Never a value read back from the environment. May be emitted more than once, anywhere between `started` and `finished`, each key exactly once; a Service Benchmark emits what it learned from responses after its last sample. |
 | `sample_started` | `sample`, `warmup`, `repetitions` | Opens one sample. Warmup samples are emitted and tagged, never dropped. |
 | `sample_ended` | `sample` | Closes it. The sample's time is the difference of the two `t` values; dividing by `repetitions` is a Method's job, not the binary's. |
-| `verified` | `checksum` | The elision guard, as a hex string (`0x` and sixteen lowercase digits). |
+| `verified` | `checksum` | The elision guard, as a hex string (`0x` and sixteen lowercase digits). Exactly once. |
 | `finished` | | Always last. Its absence is evidence of a crash. |
 
 A Benchmark with phases of its own, such as `http_get` with `connected` and `first_byte`,
