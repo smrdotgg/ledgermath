@@ -9,6 +9,15 @@
  *       <version>  the version of Method series, which "series/" names
  *       <moment>   yyyy-mm-ddThh:mm:ssZ, the start of the Series' newest Run, to the second:
  *                  the citation is of the Series as it stood then
+ *   [lm:requests/<id>/<phase>/<stat>@v<version>,<moment>]           a percentile across a Series' requests (Method requests)
+ *   [lm:requests/<id>/<phase>/<pct>/at_or_above@v<version>,<moment>] how many requests are ranked at or above it
+ *   [lm:requests/<id>/runs@v<version>,<moment>]                      how many counted Runs the requests are from
+ *   [lm:requests/<id>/failed[/<phase>/<kind>]@v<version>,<moment>]   how many counted requests failed (of a phase and kind)
+ *       each after requests/<id>/ may be scoped to one group, group/<G>/, and (all but failed) to the
+ *       requests that had one value of a request fact, by/<fact>/<value>/ (held only as of the newest Run)
+ *       <phase>    dns | connect | tls | send | first_byte | headers | body | total
+ *       <stat>     count (requests) | min | p50 | p90 | p95 | p99 | p99.9 | max, in ns but count
+ *       <version>  the version of Method requests, which "requests/" names
  *   [lm:series/<id>/params/<key>]                 a parameter of the Series (they never change)
  *   [lm:prices/<yyyy>/<mm>/<dd>/aws.json#<sku>/<rate code>]          a price, in AWS's unit
  *   [lm:prices/<yyyy>/<mm>/<dd>/aws.json#<sku>/<rate code>/beginRange]   where its tier begins, in AWS's unit
@@ -26,6 +35,9 @@
  * type's boot still running when the Derivations were made can.
  */
 
+import type { Stats } from "../../methods/requests/v1/numbers";
+import type { PoolSummary, SeriesDerivation as RequestsSeries } from "../../methods/requests/v1/output";
+import { PHASES, type Phase, REQUEST_FACTS, type RequestFact } from "../../methods/requests/v1/requests";
 import type { ParamValue } from "../../methods/run";
 import { percentile } from "../../methods/v1/numbers";
 import type { Point, SeriesDerivation } from "../../methods/v1/output";
@@ -48,11 +60,30 @@ export const NUMBER_UNIT: Readonly<Record<NumberName, { dims: Dims; toBase: numb
 export const momentOf = (startedAt: string): string => `${startedAt.slice(0, 19)}Z`;
 
 /** The start of the Series' newest Run, to the second: the moment its citations are of. */
-export function seriesMoment(series: SeriesDerivation): string {
+export function seriesMoment(series: { points: ReadonlyArray<{ started_at: string }> }): string {
 	let newest = "";
 	for (const point of series.points) if (point.started_at > newest) newest = point.started_at;
 	return momentOf(newest);
 }
+
+/** The statistics of one phase a citation of Method requests may name. */
+export const REQUEST_STATS = ["count", "min", "p50", "p90", "p95", "p99", "p99.9", "max"] as const;
+export type RequestStat = (typeof REQUEST_STATS)[number];
+export const REQUEST_PERCENTILES = ["p50", "p90", "p95", "p99", "p99.9"] as const;
+export type RequestPercentile = (typeof REQUEST_PERCENTILES)[number];
+
+/** A citation of Method requests is of the Series' requests, of one group's, or of those with one value of a request fact. */
+export type RequestScope = null | { group: string } | { fact: RequestFact; value: string };
+
+const scopePath = (scope: RequestScope): string => (scope === null ? "" : "group" in scope ? `group/${scope.group}/` : `by/${scope.fact}/${scope.value}/`);
+
+export const requestStatCitation = (id: string, phase: Phase, stat: RequestStat, version: number, moment: string, scope: RequestScope = null): string =>
+	`[lm:requests/${id}/${scopePath(scope)}${phase}/${stat}@v${version},${moment}]`;
+export const requestTailCitation = (id: string, phase: Phase, stat: RequestPercentile, version: number, moment: string, scope: RequestScope = null): string =>
+	`[lm:requests/${id}/${scopePath(scope)}${phase}/${stat}/at_or_above@v${version},${moment}]`;
+export const requestRunsCitation = (id: string, version: number, moment: string, scope: RequestScope = null): string => `[lm:requests/${id}/${scopePath(scope)}runs@v${version},${moment}]`;
+export const requestFailedCitation = (id: string, version: number, moment: string, group: string | null = null, failure: { phase: string; kind: string } | null = null): string =>
+	`[lm:requests/${id}/${group === null ? "" : `group/${group}/`}failed${failure === null ? "" : `/${failure.phase}/${failure.kind}`}@v${version},${moment}]`;
 
 export const seriesCitation = (id: string, number: NumberName, stat: StatName, version: number, moment: string, group?: string): string =>
 	`[lm:series/${id}/${group === undefined ? "" : `group/${group}/`}${number}/${stat}@v${version},${moment}]`;
@@ -66,6 +97,11 @@ const MOMENT = String.raw`\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z`;
 const SERIES = new RegExp(String.raw`^series/([0-9a-f]{12})/(?:group/([A-Z]+)/)?(time_per_repetition_ns|bytes_per_second)/(p5|p50|p95|count)@v(\d+),(${MOMENT})$`);
 const SERIES_WITHOUT_MOMENT = /^series\/[0-9a-f]{12}\/(?:group\/[A-Z]+\/)?(?:time_per_repetition_ns|bytes_per_second)\/(?:p5|p50|p95|count)$/;
 const PARAM = /^series\/([0-9a-f]{12})\/params\/([A-Za-z0-9_]+)$/;
+const REQUESTS = new RegExp(
+	String.raw`^requests/([0-9a-f]{12})/(?:group/([A-Z]+)/|by/(${REQUEST_FACTS.join("|")})/(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/\d{1,2}|[A-Za-z0-9_.:-]+)/)?` +
+		String.raw`(?:(${PHASES.join("|")})/(count|min|max|p50|p90|p95|p99|p99\.9)(/at_or_above)?|(runs)|(failed)(?:/([a-z][a-z0-9_]*)/([a-z][a-z0-9_]*))?)@v(\d+),(${MOMENT})$`,
+);
+const REQUESTS_WITHOUT_MOMENT = /^requests\/[0-9a-f]{12}\/[^@]*$/;
 const PRICE = /^(prices\/[0-9]{4}\/[0-9]{2}\/[0-9]{2}\/aws\.json)#([A-Z0-9]+)\/([A-Z0-9]+\.[A-Z0-9]+\.[A-Z0-9]+)(?:\/(beginRange|endRange))?$/;
 const ATTRIBUTE = /^(prices\/[0-9]{4}\/[0-9]{2}\/[0-9]{2}\/aws\.json)#([A-Z0-9]+)\/attributes\/([A-Za-z0-9_]+)$/;
 const BENCHMARK = /^benchmark\/([a-z0-9_]+)$/;
@@ -87,6 +123,26 @@ export type Resolved =
 			/** "current" when the data loaded end at the cited moment; "earlier" when recomputed from the Runs that started by it. */
 			asOf: "current" | "earlier";
 			/** The counted Runs the value is taken over. */
+			runs: number;
+	  }
+	| {
+			ok: true;
+			kind: "requests";
+			series: RequestsSeries;
+			group: string | null;
+			by: { fact: RequestFact; value: string } | null;
+			/** The phase, or null for runs and failed. */
+			phase: Phase | null;
+			/** count | min | p50 … max, p99/at_or_above and the like, runs, failed, failed/<phase>/<kind>. */
+			stat: string;
+			/** "ns" for a time; "count" for requests or Runs. */
+			unit: "ns" | "count";
+			/** A count of Runs: only it accounts for a number of Runs. */
+			countsRuns: boolean;
+			value: number;
+			moment: string;
+			asOf: "current" | "earlier";
+			/** The counted Runs the figure is pooled from. */
 			runs: number;
 	  }
 	| { ok: true; kind: "param"; series: SeriesDerivation; key: string; value: ParamValue }
@@ -144,6 +200,86 @@ function resolveSeries(match: RegExpExecArray, data: LedgerData): Resolved {
 	return { ok: true, kind: "measured", series, number, stat, group: group ?? null, value: at.value, moment, asOf: moment === loaded ? "current" : "earlier", runs: at.runs };
 }
 
+const PCT_WORDS: Record<RequestPercentile, { words: string; perMille: number }> = {
+	p50: { words: "50th", perMille: 500 },
+	p90: { words: "90th", perMille: 900 },
+	p95: { words: "95th", perMille: 950 },
+	p99: { words: "99th", perMille: 990 },
+	"p99.9": { words: "99.9th", perMille: 999 },
+};
+
+/** The fewest requests that support a percentile (Method requests v1's rule, n × (1000 − q) ≥ 1000). */
+export const leastRequests = (stat: RequestPercentile): number => Math.ceil(1000 / (1000 - PCT_WORDS[stat].perMille));
+
+/** Why a phase's figure is not held, in words. */
+export function requestStatMissing(stats: Stats | undefined, phase: Phase, stat: string): string | null {
+	if (stats === undefined) return `there is no ${phase} phase among these requests${["dns", "connect", "tls"].includes(phase) ? " (over a reused connection a request has no name lookup, connect or TLS phase)" : " (no succeeded request)"}`;
+	if ((REQUEST_PERCENTILES as readonly string[]).includes(stat) && stats[stat as RequestPercentile] === null) {
+		const pct = stat as RequestPercentile;
+		return `its ${PCT_WORDS[pct].words} percentile is not reported: ${stats.count} requests, and it needs at least ${leastRequests(pct)}`;
+	}
+	return null;
+}
+
+function resolveRequests(match: RegExpExecArray, data: LedgerData): Resolved {
+	const [, id, group, fact, factValue, phase, stat, tail, runsWord, failedWord, failedPhase, failedKind, version, moment] = match as unknown as Array<string | undefined>;
+	const requests = data.requests;
+	if (requests === null) return { ok: false, reason: "the data loaded hold no Derivations of Method requests (requests-derivations.json beside derivations.json)" };
+	const series = requests.derivations.find((d) => d.series.id === id);
+	if (series === undefined) return { ok: false, reason: `no Series of requests ${id} in ${data.requestsFrom}` };
+	if (Number(version) !== requests.method.version) {
+		return { ok: false, reason: `it cites Method requests version ${version}; the data loaded are version ${requests.method.version}` };
+	}
+	if (group !== undefined && !series.groups.some((g) => g.id === group)) return { ok: false, reason: `Series ${id} has no group ${group}` };
+	if (fact !== undefined && failedWord !== undefined) return { ok: false, reason: "failed requests are counted per Series and per group, not by what a request recorded of its connection" };
+	if (tail !== undefined && !(REQUEST_PERCENTILES as readonly string[]).includes(stat as string)) return { ok: false, reason: "at_or_above follows a percentile: p50, p90, p95, p99 or p99.9" };
+	const loaded = seriesMoment(series);
+	const at = moment as string;
+	if (at > loaded) return { ok: false, reason: `it cites Series ${id} as of ${at}, but the data loaded hold its Runs only to ${loaded}: it is of data the checker does not have` };
+	const asOf = at === loaded ? "current" : "earlier";
+
+	// The figures as they stood at the moment.
+	let summary: { runs: number; requests: number; failed: number; phases: Partial<Record<Phase, Stats>>; failures: PoolSummary["failures"] } | null;
+	let by: { fact: RequestFact; value: string } | null = null;
+	if (fact !== undefined) {
+		by = { fact: fact as RequestFact, value: factValue as string };
+		if (asOf === "earlier") {
+			return { ok: false, reason: `the breakdown by ${fact} is held only as of Series ${id}'s newest Run (${loaded}); this citation is of ${at}: check it against the Derivations of that moment` };
+		}
+		const pool = group === undefined ? series.pool : (series.groups.find((g) => g.id === group) as (typeof series.groups)[number]).pool;
+		const value = pool.by.find((b) => b.fact === fact)?.values.find((v) => v.value === factValue);
+		if (value === undefined) {
+			const values = pool.by.find((b) => b.fact === fact)?.values.map((v) => v.value) ?? [];
+			return { ok: false, reason: values.length === 0 ? `the requests of Series ${id}${group === undefined ? "" : ` group ${group}`} had one ${fact} only: there is no breakdown by it` : `no ${fact} ${factValue} among the requests of Series ${id}${group === undefined ? "" : ` group ${group}`} (${values.join(", ")})` };
+		}
+		summary = { runs: value.runs, requests: value.requests, failed: 0, phases: value.phases, failures: [] };
+	} else if (asOf === "current") {
+		const pool = group === undefined ? series.pool : (series.groups.find((g) => g.id === group) as (typeof series.groups)[number]).pool;
+		summary = pool.runs === 0 ? null : pool;
+	} else {
+		const before = series.points.filter((point) => momentOf(point.started_at) <= at && (group === undefined || point.group === group));
+		const last = before.at(-1);
+		summary = last === undefined ? null : group === undefined || series.groups.length < 2 ? last.through : last.group_through;
+	}
+	if (summary === null) return { ok: false, reason: `Series ${id}${group === undefined ? "" : ` group ${group}`} has no counted Run that started by ${at}` };
+	const base = { ok: true as const, kind: "requests" as const, series, group: group ?? null, by, moment: at, asOf: asOf as "current" | "earlier", runs: summary.runs };
+	if (runsWord !== undefined) return { ...base, phase: null, stat: "runs", unit: "count", countsRuns: true, value: summary.runs };
+	if (failedWord !== undefined) {
+		if (failedPhase === undefined) return { ...base, phase: null, stat: "failed", unit: "count", countsRuns: false, value: summary.failed };
+		const count = summary.failures.find((f) => f.phase === failedPhase && f.kind === failedKind)?.count ?? 0;
+		return { ...base, phase: null, stat: `failed/${failedPhase}/${failedKind}`, unit: "count", countsRuns: false, value: count };
+	}
+	const stats = summary.phases[phase as Phase];
+	const missing = requestStatMissing(stats, phase as Phase, stat as string);
+	if (missing !== null) return { ok: false, reason: `Series ${id}${group === undefined ? "" : ` group ${group}`}${by === null ? "" : ` ${by.fact} ${by.value}`}: ${missing}` };
+	const held = stats as Stats;
+	if (tail !== undefined) {
+		return { ...base, phase: phase as Phase, stat: `${stat}/at_or_above`, unit: "count", countsRuns: false, value: held.at_or_above[stat as RequestPercentile] as number };
+	}
+	if (stat === "count") return { ...base, phase: phase as Phase, stat: "count", unit: "count", countsRuns: false, value: held.count };
+	return { ...base, phase: phase as Phase, stat: stat as string, unit: "ns", countsRuns: false, value: held[stat as "min" | "max" | RequestPercentile] as number };
+}
+
 async function resolvePrice(path: string, sku: string, rest: { rateCode?: string; attribute?: string; end?: "beginRange" | "endRange" }, data: LedgerData): Promise<Resolved> {
 	const prices = await data.readPrices(path);
 	if (prices === null) return { ok: false, reason: `no price file ${path} at ${data.location.base}` };
@@ -178,6 +314,15 @@ export async function resolveCitation(inside: string, data: LedgerData): Promise
 	if (SERIES_WITHOUT_MOMENT.test(inside)) {
 		return { ok: false, reason: "a Series citation must say which data it was read from, @v<version>,<moment> at its end, as the tool prints it" };
 	}
+	m = REQUESTS.exec(inside);
+	if (m !== null) return resolveRequests(m, data);
+	if (REQUESTS_WITHOUT_MOMENT.test(inside)) {
+		return {
+			ok: false,
+			reason:
+				"a citation of Method requests is requests/<id>[/group/<G>|/by/<fact>/<value>]/<phase>/<count|min|p50|p90|p95|p99|p99.9|max>[/at_or_above], /runs or /failed[/<phase>/<kind>], with @v<version>,<moment> at its end, as the tool prints it",
+		};
+	}
 	m = PARAM.exec(inside);
 	if (m !== null) {
 		const [, id, key] = m as unknown as [string, string, string];
@@ -195,7 +340,11 @@ export async function resolveCitation(inside: string, data: LedgerData): Promise
 		const name = m[1] as string;
 		return name in BENCHMARK_NOTES ? { ok: true, kind: "benchmark", name } : { ok: false, reason: `no benchmark ${name}` };
 	}
-	return { ok: false, reason: "not a LedgerMath citation: expected series/…@v<version>,<moment>, series/…/params/<key>, prices/…#<sku>/<rate code>[/beginRange|/endRange], prices/…#<sku>/attributes/<name> or benchmark/<name>" };
+	return {
+		ok: false,
+		reason:
+			"not a LedgerMath citation: expected series/…@v<version>,<moment>, requests/…@v<version>,<moment>, series/…/params/<key>, prices/…#<sku>/<rate code>[/beginRange|/endRange], prices/…#<sku>/attributes/<name> or benchmark/<name>",
+	};
 }
 
 /** Why a number does not match what its citation resolved to, or null when it does. */
@@ -207,6 +356,14 @@ export function citationMismatch(resolved: Resolved, q: Quantity): string | null
 			const { dims, toBase } = NUMBER_UNIT[resolved.number];
 			if (q.unit.text === "") return `it has no unit; the citation is in ${NUMBER_UNIT[resolved.number].unit}`;
 			return agrees(q, resolved.value * toBase, dims) ? null : `the citation is ${resolved.value} ${NUMBER_UNIT[resolved.number].unit}`;
+		}
+		case "requests": {
+			if (resolved.unit === "count") {
+				// A count of requests may be written bare or with its noun ("2 requests"); a count of Runs is read bare.
+				return agrees(q, resolved.value, {}) || agrees(q, resolved.value, { req: 1 }) ? null : `the citation is a count of ${resolved.value}`;
+			}
+			if (q.unit.text === "") return "it has no unit; the citation is in ns";
+			return agrees(q, resolved.value * 1e-9, { s: 1 }) ? null : `the citation is ${resolved.value} ns`;
 		}
 		case "param": {
 			if (typeof resolved.value !== "number") return `the parameter ${resolved.key} is ${JSON.stringify(resolved.value)}, not a number`;

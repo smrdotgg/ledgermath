@@ -8,12 +8,13 @@ description: Napkin math with cited numbers. Estimate what something costs, or h
 LedgerMath runs small benchmarks on real AWS machines several times a day and keeps every
 execution as a **Run**. Runs of one benchmark, parameter set, build, instance type and zone
 make a **Series**. For each Series it holds the 5th, 50th and 95th percentiles across its
-Runs (each Run is a different boot, often a different box) and a link to every Run. It also
+Runs (each Run is a different boot, often a different box) and a link to every Run. For the
+Series of requests (below) it also holds percentiles across the requests themselves. It also
 keeps a daily copy of AWS's public On-Demand prices for what it measures, in AWS's words.
 
 That is all it holds. It is not a calculator and it does not estimate: you do, from its
 numbers. Anything it has not measured (a network between machines, a CDN, a GPU, another
-Region or provider, a 99th percentile) is not in it.
+Region or provider, a 99th percentile of anything but a request's phases) is not in it.
 
 ## The tool
 
@@ -29,11 +30,23 @@ the data at other paths, use those.
 |---|---|
 | `about` | What the data hold: benchmarks, instance types, the price file and its date. Run it first. |
 | `series [WORD...]` | The Series matching every word: `series memory_read c6i.8xlarge`, `series disk instance_store` |
-| `show <id> [--runs N\|all]` | One Series: p5, p50, p95 with citations, what it measures, how many Runs, its groups, its Runs |
+| `show <id> [--runs N\|all]` | One Series: p5, p50, p95 with citations, what it measures, how many Runs, its groups, its Runs; for a Series of requests, each phase's percentiles across requests too |
 | `prices WORD...` | Prices matching every word: `prices c6i.8xlarge`, `prices transfer`, `prices GET`, `prices gp3` |
 
 `--json` gives the same answer as JSON. When something is not held, the tool says so and
 lists what is.
+
+## Series of requests
+
+The `http_get` Series are HTTPS GETs of an object (4 KiB, 128 KiB, 16 MiB) from an EC2
+instance to an S3 bucket **in the same Region (us-east-2)**, through the internet gateway,
+over a new connection per request or one kept connection. Their percentiles (Method
+requests) are **across requests**, each request one sample, pooled across the Runs: p50 to
+p99.9 of each phase (`dns`, `connect`, `tls`, `send`, `first_byte`, `headers`, `body`,
+`total`). A tail figure rests on few requests: `show` prints how many are ranked at or above
+each one; say it, citing it, beside the figure ("47 ms, 2 requests at or above it"). A
+percentile the requests cannot support (a 99th below 100 requests) is not given: do not make
+one up. The figures may differ by the server's address block, and `show` breaks them down.
 
 ## Building an estimate
 
@@ -52,7 +65,8 @@ lists what is.
    (`$1.36 per hour`, never `$1.36` for it); round with an arrow, `71.3 → 72`. Changing a
    price's unit (per request to per 1000000 requests, per hour to per month) is such a line.
 5. **Give a low and a high figure** from the p5 and p95 where the spread matters (for a
-   time, the slow end is the p95; for a rate, the p5). Name the factor that dominates the
+   time, the slow end is the p95; for a rate, the p5). For a request's time, the tail is its
+   p99 across requests, with the requests behind it. Name the factor that dominates the
    uncertainty; it is usually an assumption.
 6. **List the sources**: for every Series cited, link its Runs as `show` prints them; for
    prices, name the price file by its path. An answer from prices alone says that no Series
@@ -71,6 +85,9 @@ the same unit.
 |---|---|
 | A Series' percentile | `[lm:series/<id>/<number>/<p5\|p50\|p95>@v1,<moment>]`, and at least one of its Runs in the answer: `runs/<yyyy>/<mm>/<dd>/<id>.json` |
 | How many Runs it is over | `[lm:series/<id>/<number>/count@v1,<moment>]` |
+| A percentile across a Series' requests | `[lm:requests/<id>/<phase>/<p50\|p90\|p95\|p99\|p99.9\|min\|max>@v1,<moment>]` |
+| How many requests are at or above it | `[lm:requests/<id>/<phase>/<p90\|p95\|p99\|p99.9>/at_or_above@v1,<moment>]` |
+| How many requests, Runs, failed requests | `[lm:requests/<id>/<phase>/count@v1,<moment>]`, `[lm:requests/<id>/runs@v1,<moment>]`, `[lm:requests/<id>/failed@v1,<moment>]` |
 | One group's, when a Series is split | `[lm:series/<id>/group/<G>/<number>/<stat>@v1,<moment>]` |
 | A price, in AWS's unit | `[lm:prices/<yyyy>/<mm>/<dd>/aws.json#<sku>/<rate code>]`, with the price file's date in words |
 | Where a price's tier begins or ends | `[lm:prices/<yyyy>/<mm>/<dd>/aws.json#<sku>/<rate code>/endRange]` (or `/beginRange`) |
@@ -109,8 +126,8 @@ stood then, so it can be checked after more Runs arrive.
 ## When LedgerMath does not hold it
 
 Say so first, plainly. Stopping there is the better answer when every factor that decides
-the result would be an assumption (a latency between machines, a 99th percentile): say what
-would have to be measured. Otherwise carry on, marking each missing factor as an assumption
+the result would be an assumption (a latency between machines, a 99th percentile of
+anything but a request's phases): say what would have to be measured. Otherwise carry on, marking each missing factor as an assumption
 and keeping it apart from what is measured, for example:
 
 > LedgerMath holds no CDN price, so the CDN's part below is assumed; the rest is cited.
