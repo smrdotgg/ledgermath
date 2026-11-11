@@ -30,6 +30,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:f
 import { join, relative, resolve } from "node:path";
 import { parseArgs } from "node:util";
 
+import { repeatedKey } from "./lib/offer-file";
 import { checkPriceFile } from "./lib/price-file-check";
 import { type OfferCode, OFFER_CODES, RULE_SETS } from "./lib/price-rules";
 import { CutRefused, cutPrices, download, type Fetch, type PriceFile, PRICE_FILE_PATH, serializePriceFile, type SourceFile } from "./lib/prices";
@@ -95,6 +96,11 @@ export async function checkPrices(options: {
 		file = JSON.parse(text);
 	} catch (error) {
 		return { problems: [`not JSON: ${error instanceof Error ? error.message : String(error)}`], sources: [] };
+	}
+	// A key twice in one object: a standard parser keeps the last, and the file would say two things.
+	const repeated = repeatedKey(text);
+	if (repeated !== null) {
+		return { problems: [`the key ${JSON.stringify(repeated.key)} appears twice in one object, under ${repeated.within.map((part) => JSON.stringify(part)).join(" > ") || "the top level"}`], sources: [] };
 	}
 	const shapeProblems = checkPriceFile(file, repositoryPath(options.path) ?? undefined);
 	if (shapeProblems.length > 0) return { problems: shapeProblems, sources: [] };

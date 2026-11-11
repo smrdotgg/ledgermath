@@ -620,6 +620,15 @@ The cut proves this record by record (written back, a record must equal the file
 with its whitespace removed, so no key moved, no number lost its digits and no escape
 changed) and stops if it does not hold. Reserved terms are not kept.
 
+The cut never reads a file differently from a standard JSON parser. The reader checks
+the whole file against JSON's grammar as it goes (structure, strings and escapes, UTF-8,
+numbers and literals, one top-level object and nothing after it), and stops on a key a
+standard parser would silently keep only the last of: a repeated top-level member, a
+repeated key directly under `products` or `terms`, a repeated SKU under any kind of
+terms, and any repeated key inside a record it keeps (an offer term code, a rate code,
+an attribute). The recompute check cuts with the same reader, so it refuses the same
+files, and it refuses a price file that itself repeats a key.
+
 Rule set 1 selects, in the Region:
 
 | Rule | Offer | What it selects | Exactly |

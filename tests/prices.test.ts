@@ -103,20 +103,110 @@ describe("reading an offer file", () => {
 		for (const chunkBytes of [1, 7, 64, 4096]) expect(read(chunkBytes)).toEqual(whole);
 	});
 
-	test("refuses a file that ends early, holds no object, or holds a product that is not an object", () => {
-		const bad = (name: string, content: string): string => {
-			const file = join(fresh("bad"), name);
-			writeFileSync(file, content);
-			return file;
+	const bad = (name: string, content: string | Uint8Array): string => {
+		const file = join(fresh("bad"), name);
+		writeFileSync(file, content);
+		return file;
+	};
+
+	test("refuses whatever a standard JSON parser refuses, saying what and where", () => {
+		const cases: Array<[string, string, RegExp]> = [
+			["ends early", text.slice(0, Math.floor(text.length / 2)), /ends inside/],
+			["nothing", "", /holds no top-level object/],
+			["only whitespace", " \n", /holds no top-level object/],
+			["a byte-order mark", "﻿{}", /holds something other than one object/],
+			["two objects", "{} {}", /holds something after its top-level object/],
+			["something after", "{} x", /holds something after its top-level object/],
+			["the wrong bracket", '{"products": {]}', /a \] where JSON does not allow one \(at byte 14\)/],
+			["no colon", '{"products" {}}', /an object where JSON does not allow one/],
+			["no comma", '{"a": "x" "b": "y"}', /a string where JSON does not allow one/],
+			["a trailing comma", '{"a": "x",}', /a \} where JSON does not allow one/],
+			["two commas", '{"a": ["x",,"y"]}', /a comma where JSON does not allow one/],
+			["a key that is not a string", "{a: 1}", /the byte 0x61 where JSON does not allow it/],
+			["a single quote", "{'a': 1}", /the byte 0x27 where JSON does not allow it/],
+			["a misspelt literal", '{"a": tru}', /"tru" is not a JSON number, true, false or null/],
+			["a leading zero", '{"a": 01}', /"01" is not a JSON number/],
+			["a bare dot", '{"a": 1.}', /"1\." is not a JSON number/],
+			["a plus sign", '{"a": +1}', /the byte 0x2b where JSON does not allow it/],
+			["a raw newline in a string", '{"a": "x\ny"}', /a control character JSON requires escaped/],
+			["an unknown escape", '{"a": "\\x"}', /an escape JSON does not have/],
+			["a short \\u escape", '{"a": "\\u12G4"}', /four hex digits/],
+		];
+		const outcome = (content: string, message: RegExp): { reader: string; parser: string } => {
+			const file = bad("grammar.json", content);
+			let reader = "accepted";
+			try {
+				scanOfferFile(file, {});
+			} catch (error) {
+				reader = message.test(String(error)) ? "refused as expected" : String(error);
+			}
+			let parser = "accepted";
+			try {
+				JSON.parse(readFileSync(file, "utf8"));
+			} catch {
+				parser = "refused";
+			}
+			return { reader, parser };
 		};
-		const refuses = (file: string, message: RegExp): void => expect(() => scanOfferFile(file, {})).toThrow(message);
-		refuses(bad("truncated.json", text.slice(0, Math.floor(text.length / 2))), /ends inside/);
-		refuses(bad("array.json", "[1, 2]"), /holds something other than one object|more than one|no top-level/);
-		refuses(bad("empty.json", ""), /no top-level object/);
-		refuses(bad("two.json", "{} {}"), /more than one top-level value/);
-		refuses(bad("scalar-product.json", '{"products": {"A": "x"}, "terms": {}}'), /products\.A is not an object/);
-		refuses(bad("scalar-terms.json", '{"products": {}, "terms": {"OnDemand": {"A": 5}}}'), /terms\.OnDemand\.A is not an object/);
-		refuses(bad("unbalanced.json", '{"products": {]}'), /wrong bracket/);
+		for (const [what, content, message] of cases) {
+			// The reference: JavaScript's own parser refuses each of these too.
+			expect({ what, ...outcome(content, message) }).toEqual({ what, reader: "refused as expected", parser: "refused" });
+		}
+		// JSON, but not one object: not an offer file.
+		for (const content of ["[1, 2]", '"abc"', "5"]) {
+			expect({ content, ...outcome(content, /holds something other than one object/) }).toEqual({ content, reader: "refused as expected", parser: "accepted" });
+		}
+		// Bytes that are not UTF-8, inside a string: refused (a decoder that replaces them would hide them).
+		for (const bytes of [[0xc3, 0x28], [0xe0, 0x80, 0x80], [0xed, 0xa0, 0x80], [0xf4, 0x90, 0x80, 0x80], [0xff]]) {
+			const file = bad(`utf8-${bytes.join("-")}.json`, new Uint8Array([...new TextEncoder().encode('{"a": "'), ...bytes, ...new TextEncoder().encode('"}')]));
+			expect(() => scanOfferFile(file, {})).toThrow(/a string is not UTF-8/);
+		}
+	});
+
+	test("accepts what JSON allows, and hands back what a standard parser reads", () => {
+		const valid = '{\t"formatVersion" :"v1.0" ,\r\n "n": -1.5e+3, "z": 0, "e": 2E-2, "t": true, "f": false, "nothing": null,'
+			+ ' "esc": "a\\"b\\\\c\\/d\\b\\f\\n\\r\\t\\u00e9\\uD83D\\uDE00", "utf8": "é – 😀", "nested": [[], {}, [1, {"k": [null]}]],'
+			+ ' "products": {"A": {"sku": "A", "attributes": {"x": "1"}}}, "terms": {"OnDemand": {"A": {"A.T": {}}}, "Reserved": {}}, "attributesList" : { } }';
+		const header: Record<string, unknown> = {};
+		const products: string[] = [];
+		const onDemand: string[] = [];
+		const file = bad("valid.json", valid);
+		for (const chunkBytes of [1, 3, 4096]) {
+			scanOfferFile(file, { header: (span) => (header[span.key] = JSON.parse(span.text)), product: (span) => products.push(span.text), onDemand: (span) => onDemand.push(span.text) }, chunkBytes);
+		}
+		const parsed = JSON.parse(valid) as Record<string, unknown>;
+		const { products: _p, terms: _t, ...rest } = parsed;
+		expect(header).toEqual(rest);
+		expect(products.map((span) => JSON.parse(span))).toEqual(Array(3).fill((parsed.products as Record<string, unknown>).A));
+		expect(onDemand.map((span) => JSON.parse(span))).toEqual(Array(3).fill(((parsed.terms as Record<string, Record<string, unknown>>).OnDemand as Record<string, unknown>).A));
+	});
+
+	test("refuses a product, a SKU's terms, products, terms or a kind of terms that is not an object", () => {
+		const refuses = (content: string, message: RegExp): void => expect(() => scanOfferFile(bad("shape.json", content), {})).toThrow(message);
+		refuses('{"products": {"A": "x"}, "terms": {}}', /products\.A is not an object/);
+		refuses('{"products": {"A": []}, "terms": {}}', /products\.A is not an object/);
+		refuses('{"products": {}, "terms": {"OnDemand": {"A": 5}}}', /terms\.OnDemand\.A is not an object/);
+		refuses('{"products": [], "terms": {}}', /products is not an object/);
+		refuses('{"products": {}, "terms": "none"}', /terms is not an object/);
+		refuses('{"products": {}, "terms": {"OnDemand": []}}', /terms\.OnDemand is not an object/);
+	});
+
+	test("refuses a key a standard parser would keep only the last of: at the top level, under products or terms, or a SKU under a kind of terms", () => {
+		const refuses = (content: string, message: string): void => {
+			const file = bad("repeated.json", content);
+			expect(() => scanOfferFile(file, {})).toThrow(`the key ${message}; a standard JSON parser would keep only the last`);
+			expect(() => JSON.parse(content)).not.toThrow();
+		};
+		refuses('{"products": {"A": {}}, "terms": {}, "products": {}}', '"products" appears twice in the top level');
+		refuses('{"version": "1", "version": "2", "products": {}, "terms": {}}', '"version" appears twice in the top level');
+		refuses('{"products": {"A": {}, "B": {}, "A": {}}, "terms": {}}', '"A" appears twice in products');
+		refuses('{"products": {}, "terms": {"OnDemand": {}, "OnDemand": {}}}', '"OnDemand" appears twice in terms');
+		refuses('{"products": {}, "terms": {"OnDemand": {"A": {}, "A": {}}}}', '"A" appears twice in terms.OnDemand');
+		refuses('{"products": {}, "terms": {"Reserved": {"A": {}, "A": {}}}}', '"A" appears twice in terms.Reserved');
+		// The same key written two ways is the same key.
+		refuses('{"products": {"A": {}, "\\u0041": {}}, "terms": {}}', '"A" appears twice in products');
+		// A key may repeat in different objects.
+		expect(() => scanOfferFile(bad("fine.json", '{"products": {"A": {}}, "terms": {"OnDemand": {"A": {}}, "Reserved": {"A": {}}}}'), {})).not.toThrow();
 	});
 
 	test("keeps a value only if it can be written back as the file has it", () => {
@@ -407,6 +497,118 @@ describe("the cut of the hand-made sources", () => {
 		);
 		expect(swapped).toContainEqual(expect.stringContaining('the file\'s offerCode is "AWSDataTransfer"'));
 		expect(refusal(() => cutSample(sampleSources().slice(0, 2)))).toEqual(["AWSDataTransfer: 0 source files given, and the rules read exactly one"]);
+	});
+});
+
+describe("a source a standard JSON parser reads differently", () => {
+	const ec2Text = readFileSync(join(SOURCES, "AmazonEC2.json"), "utf8");
+	/** The excerpts, with the EC2 one's text changed by edit. */
+	const ec2Edited = (edit: (text: string) => string): SourceFile[] => {
+		const directory = fresh("sources");
+		for (const source of sampleSources()) writeFileSync(join(directory, `${source.offerCode}.json`), readFileSync(source.path));
+		const changed = edit(ec2Text);
+		expect(changed).not.toBe(ec2Text);
+		writeFileSync(join(directory, "AmazonEC2.json"), changed);
+		return sampleSources(directory);
+	};
+	/** text with insert put just after the first occurrence of anchor at or after the first occurrence of after. */
+	const insertAfter = (text: string, anchor: string, insert: string, after = ""): string => {
+		const at = text.indexOf(anchor, text.indexOf(after));
+		if (at < 0) throw new Error(`no ${anchor}`);
+		return text.slice(0, at + anchor.length) + insert + text.slice(at + anchor.length);
+	};
+	/** The reviewer's case: products and terms again, empty, at the end. A standard parser sees no products. */
+	const repeatedAtTheEnd = (text: string): string => `${text.trimEnd().slice(0, -1)},"products":{},"terms":{}}`;
+
+	test("the reviewer's case: products and terms repeated at the end, which a standard parser reads as empty, stops the cut", () => {
+		const sources = ec2Edited(repeatedAtTheEnd);
+		expect(Object.keys((JSON.parse(readFileSync((sources[0] as SourceFile).path, "utf8")) as { products: object }).products)).toEqual([]);
+		expect(refusal(() => cutSample(sources))).toEqual([
+			expect.stringMatching(/^AmazonEC2 \(https:.*\): .*AmazonEC2\.json: the key "products" appears twice in the top level; a standard JSON parser would keep only the last \(at byte \d+\)$/),
+		]);
+	});
+
+	const insideKept: Array<[string, (text: string) => string, string]> = [
+		[
+			"a SKU repeated under products",
+			(text) => insertAfter(text, '"products" : {', '"W2MK87PHAESV3EZK" : {"sku":"W2MK87PHAESV3EZK","attributes":{}},'),
+			'the key "W2MK87PHAESV3EZK" appears twice in products',
+		],
+		["a kind of terms repeated", (text) => insertAfter(text, '"terms" : {', '"OnDemand" : {},'), 'the key "OnDemand" appears twice in terms'],
+		[
+			"a SKU repeated under terms.OnDemand",
+			(text) => insertAfter(text, '"OnDemand" : {', '"M7SNV383JPWT8MVX" : {},'),
+			'the key "M7SNV383JPWT8MVX" appears twice in terms.OnDemand',
+		],
+		[
+			"an offer term code repeated in a selected SKU's terms",
+			(text) =>
+				insertAfter(
+					text,
+					'"M7SNV383JPWT8MVX" : {',
+					'"M7SNV383JPWT8MVX.JRTCKXETXF" : {"offerTermCode":"JRTCKXETXF","sku":"M7SNV383JPWT8MVX","effectiveDate":"2020-01-01T00:00:00Z","priceDimensions":{},"termAttributes":{}},',
+					'"OnDemand" : {',
+				),
+			'the key "M7SNV383JPWT8MVX.JRTCKXETXF" appears twice in one object under "M7SNV383JPWT8MVX"',
+		],
+		[
+			"a rate code repeated",
+			(text) =>
+				insertAfter(
+					text,
+					'"priceDimensions" : {',
+					'"M7SNV383JPWT8MVX.JRTCKXETXF.6YS6EN2CT7" : {"rateCode":"M7SNV383JPWT8MVX.JRTCKXETXF.6YS6EN2CT7","unit":"IOPS-Mo","pricePerUnit":{"USD":"0.0010000000"}},',
+					'"M7SNV383JPWT8MVX.JRTCKXETXF" : {',
+				),
+			'the key "M7SNV383JPWT8MVX.JRTCKXETXF.6YS6EN2CT7" appears twice in one object under "M7SNV383JPWT8MVX" > "M7SNV383JPWT8MVX.JRTCKXETXF" > "priceDimensions"',
+		],
+		[
+			"an attribute repeated in a selected product",
+			(text) => insertAfter(text, '"attributes" : {', '"volumeApiName" : "io2",', '"M7SNV383JPWT8MVX" : {'),
+			'the key "volumeApiName" appears twice in one object under "M7SNV383JPWT8MVX" > "attributes"',
+		],
+	];
+	for (const [what, edit, message] of insideKept) {
+		test(`${what} stops the cut, though a standard parser would read it`, () => {
+			const sources = ec2Edited(edit);
+			expect(() => JSON.parse(readFileSync((sources[0] as SourceFile).path, "utf8"))).not.toThrow();
+			const problems = refusal(() => cutSample(sources));
+			expect(problems.length).toBe(1);
+			expect(problems[0]).toContain(message);
+		});
+	}
+
+	test("stops the fetch, which writes nothing, and fails the recompute check of a file certified from it", async () => {
+		const tampered = (ec2Edited(repeatedAtTheEnd)[0] as SourceFile).path;
+		const repository = fresh("repository");
+		const work = fresh("work");
+		const schedule = parseSchedule({
+			vcpu_quota: { limit: 64, reserved_outside_schedule: 4 },
+			targets: MEASURED.instance_types.map((type, i) => ({ instance_type: type, vcpus: 2, zone: "us-east-2c", boots_utc: [`0${i}:10`] })),
+			benchmarks: [{ name: "syscall", builds: ["static"], samples: 10, timeout_seconds: 120, params: [{ call: "getpid" }] }],
+		});
+		const served = fakeFetch({ [sourceUrl("AmazonEC2")]: { file: tampered } });
+		await expect(fetchPrices({ repository, work, schedule, now: FETCHED_AT, fetcher: served.fetch, log: () => {} })).rejects.toThrow(/the key "products" appears twice in the top level/);
+		expect(readdirSync(repository)).toEqual([]);
+
+		// A file certified from the tampered source before the reader refused it: its hash is that source's, and the check still refuses it.
+		const stored = JSON.parse(readFileSync(SAMPLE_FILE, "utf8")) as PriceFile;
+		const bytes = readFileSync(tampered);
+		const ec2 = stored.sources[0] as PriceFile["sources"][number];
+		ec2.bytes = bytes.length;
+		ec2.sha256 = sha256(bytes);
+		const directory = fresh("certified");
+		writeFileSync(join(directory, "aws.json"), serializePriceFile(stored));
+		const result = await checkPrices({ path: join(directory, "aws.json"), work: fresh("work"), fetcher: served.fetch, log: () => {} });
+		expect(result.problems).toEqual([expect.stringMatching(/^the recut stopped: AmazonEC2 .*the key "products" appears twice in the top level/)]);
+	});
+
+	test("the recompute check refuses a price file that repeats a key itself", async () => {
+		const text = readFileSync(SAMPLE_FILE, "utf8");
+		const directory = fresh("repeated");
+		writeFileSync(join(directory, "aws.json"), text.replace('"provider": "aws",', '"provider": "aws",\n  "provider": "aws",'));
+		const result = await checkPrices({ path: join(directory, "aws.json"), work: fresh("work"), fetcher: fakeFetch().fetch, log: () => {} });
+		expect(result.problems).toEqual(['the key "provider" appears twice in one object, under the top level']);
 	});
 });
 

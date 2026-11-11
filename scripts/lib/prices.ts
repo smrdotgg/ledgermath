@@ -132,37 +132,41 @@ function cutSource(source: SourceFile, rules: RuleSet, measured: Measured, probl
 	let productsSeen = 0;
 	const local: string[] = [];
 
-	scanOfferFile(source.path, {
-		bytes: (chunk) => {
-			hash.update(chunk);
-			size += chunk.length;
-		},
-		header: (member) => {
-			if (Object.hasOwn(header, member.key)) local.push(`the top-level member ${JSON.stringify(member.key)} appears twice`);
-			header[member.key] = parseVerbatim(member, where);
-		},
-		product: (span) => {
-			productsSeen++;
-			const product = JSON.parse(span.text) as Partial<Product> | null;
-			if (product === null || typeof product !== "object" || product.sku !== span.key) {
-				local.push(`products.${span.key} is not a product whose sku is its key`);
-				return;
-			}
-			const attributes = typeof product.attributes === "object" && product.attributes !== null ? product.attributes : {};
-			const shaped: Product = { sku: product.sku, productFamily: product.productFamily, attributes };
-			for (const rule of offerRules) {
-				if (!rule.matches(shaped, measured)) continue;
-				(matched.get(rule.name) as Product[]).push(shaped);
-				if (selected.has(span.key) && selected.get(span.key)?.text !== span.text) local.push(`products.${span.key} appears twice, differently`);
-				selected.set(span.key, span);
-			}
-		},
-		onDemand: (span) => {
-			if (!selected.has(span.key)) return;
-			if (onDemand.has(span.key)) local.push(`terms.OnDemand.${span.key} appears twice`);
-			onDemand.set(span.key, span);
-		},
-	});
+	// The reader refuses a file a standard JSON parser would read differently: one that breaks
+	// JSON's grammar, or repeats a top-level member, a key under products or terms, or a SKU
+	// under a kind of terms. parseVerbatim refuses a repeated key inside a record it keeps.
+	try {
+		scanOfferFile(source.path, {
+			bytes: (chunk) => {
+				hash.update(chunk);
+				size += chunk.length;
+			},
+			header: (member) => {
+				header[member.key] = parseVerbatim(member, "the header");
+			},
+			product: (span) => {
+				productsSeen++;
+				const product = JSON.parse(span.text) as Partial<Product> | null;
+				if (product === null || typeof product !== "object" || product.sku !== span.key) {
+					local.push(`products.${span.key} is not a product whose sku is its key`);
+					return;
+				}
+				const attributes = typeof product.attributes === "object" && product.attributes !== null ? product.attributes : {};
+				const shaped: Product = { sku: product.sku, productFamily: product.productFamily, attributes };
+				for (const rule of offerRules) {
+					if (!rule.matches(shaped, measured)) continue;
+					(matched.get(rule.name) as Product[]).push(shaped);
+					selected.set(span.key, span);
+				}
+			},
+			onDemand: (span) => {
+				if (selected.has(span.key)) onDemand.set(span.key, span);
+			},
+		});
+	} catch (error) {
+		problems.push(`${where}: ${error instanceof Error ? error.message : String(error)}`);
+		return null;
+	}
 
 	const url = parseVersionedUrl(source.url);
 	if (url === null) local.push("its URL is not a versioned offer file's URL");
@@ -185,14 +189,24 @@ function cutSource(source: SourceFile, rules: RuleSet, measured: Measured, probl
 
 	const products: Record<string, unknown> = {};
 	const terms: Record<string, unknown> = {};
+	/** parseVerbatim, with a record that cannot be kept verbatim listed as a problem. */
+	const keep = (span: Span, part: string): unknown => {
+		try {
+			return parseVerbatim(span, part);
+		} catch (error) {
+			local.push(error instanceof Error ? error.message : String(error));
+			return undefined;
+		}
+	};
 	for (const [sku, span] of selected) {
-		products[sku] = parseVerbatim(span, `${where} products`);
+		products[sku] = keep(span, "products");
 		const term = onDemand.get(sku);
 		if (term === undefined) {
 			local.push(`products.${sku} was selected and has no On-Demand terms`);
 			continue;
 		}
-		const parsed = parseVerbatim(term, `${where} terms.OnDemand`);
+		const parsed = keep(term, "terms.OnDemand");
+		if (parsed === undefined) continue;
 		if (typeof parsed !== "object" || parsed === null || Object.keys(parsed).length === 0) local.push(`terms.OnDemand.${sku} is empty`);
 		terms[sku] = parsed;
 	}
