@@ -1,0 +1,8 @@
+{
+  "schema": "ledgermath.dump/1",
+  "taken_at": "2026-11-11T15:44:16.432440778Z",
+  "sections": {
+    "kernel": "sha256:b3e902f15e9f3b2a63bb5832fa2ace2696685244d575f2d721e58477af34bcbc",
+    "ec2_instance": "sha256:4734e04a1a3824169e6f092e378d1d6f630a5f3b31c2c2e21110ad54b373f2e1"
+  }
+}

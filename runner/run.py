@@ -13,6 +13,15 @@ environment, and it records what happened without judging it: a crash, a
 timeout, and a clean exit all produce a Run. The executions of entries for
 other instance types are listed in the boot summary under left_out.
 
+An entry may name a Service it measures ("service": "s3_fixtures"). Its
+executions then get the Service's inputs as LM_SERVICE_<NAME> beside their
+parameters, and their Runs say which inputs were delivered: the values of
+those that are not secret, the names alone of those that are. The secret ones
+(short-lived keys, from an AssumeRole made once per boot when an entry first
+needs them) go into that execution's environment and nowhere else. When they
+cannot be had, the entry's executions are not run, the boot summary says why
+under not_run, and the rest of the boot goes on.
+
 Everything is written under --out, ready to be copied to the bucket as it is:
 
     runs/<yyyy>/<mm>/<dd>/<id>.json    one Run (schemas/run.schema.json)
@@ -28,11 +37,13 @@ Runs on the box's own Python (3.9 on Amazon Linux 2023) with no packages.
 """
 
 import argparse
+import ctypes
 import datetime
 import glob
 import hashlib
 import json
 import os
+import re
 import secrets
 import signal
 import subprocess
@@ -69,6 +80,28 @@ def uuid7(unix_ms):
     value |= random_bits & ((1 << 62) - 1)
     text = "%032x" % value
     return "-".join((text[0:8], text[8:12], text[12:16], text[16:20], text[20:32]))
+
+
+PR_SET_DUMPABLE = 4
+
+
+def mark_not_dumpable():
+    """Marks this process not dumpable, prctl(PR_SET_DUMPABLE, 0): a crash
+    leaves no core file, and no other process of the same user may read its
+    memory, which may hold a Service's keys. Resource limits are left as they
+    are: every benchmark inherits them and the dump records them, and the box
+    is stock. The flag is not inherited across execve, so the benchmarks this
+    process starts are as dumpable as before; its own /proc/self files are
+    then owned by root, and the dump's reads of them (limits, cgroup,
+    mountinfo, all readable by anyone) still work. Returns None, or why it
+    could not."""
+    try:
+        libc = ctypes.CDLL(None, use_errno=True)
+        if libc.prctl(PR_SET_DUMPABLE, 0, 0, 0, 0) != 0:
+            return "prctl(PR_SET_DUMPABLE, 0) failed: %s" % os.strerror(ctypes.get_errno())
+    except (OSError, AttributeError) as error:
+        return "prctl(PR_SET_DUMPABLE, 0) is not available: %s" % error
+    return None
 
 
 def sha256_hex(data):
@@ -238,6 +271,55 @@ def nvme_stats(sys_root="/sys"):
     return stats
 
 
+def primary_interface(route_table):
+    """The interface of the default IPv4 route with the lowest metric, from
+    /proc/net/route's text, or None."""
+    found = None
+    for line in route_table.splitlines()[1:]:
+        fields = line.split()
+        if len(fields) >= 8 and fields[1] == "00000000" and fields[7] == "00000000":
+            metric = int(fields[6]) if fields[6].isdigit() else 0
+            if found is None or metric < found[0]:
+                found = (metric, fields[0])
+    return found[1] if found else None
+
+
+# The kernel's TCP and socket settings that shape a connection to a Service.
+NET_SETTINGS = ["/proc/sys/net/ipv4/" + name for name in (
+    "tcp_congestion_control", "tcp_available_congestion_control", "tcp_slow_start_after_idle", "tcp_rmem",
+    "tcp_wmem", "tcp_mem", "tcp_timestamps", "tcp_sack", "tcp_window_scaling", "tcp_mtu_probing", "tcp_ecn",
+    "tcp_no_metrics_save", "tcp_fin_timeout", "tcp_keepalive_time", "tcp_syn_retries", "tcp_tw_reuse",
+    "ip_local_port_range")] + ["/proc/sys/net/core/" + name for name in (
+        "rmem_default", "rmem_max", "wmem_default", "wmem_max", "default_qdisc", "netdev_max_backlog", "somaxconn")]
+
+
+def network_sections():
+    """The network, in two sections. `network` holds what is set: the routes,
+    each interface's MTU, the TCP and socket settings, the resolver's files (a
+    Service benchmark asks the resolver /etc/resolv.conf names), and the
+    driver of the interface the default route uses (ethtool -i). It holds no
+    address of the box's own. `net_counters` holds what counts traffic, and so
+    changes on every read: that interface's own statistics (ethtool -S; on
+    ENA, the *_allowance_exceeded counters are the instance's limits on
+    bandwidth, packets per second, connections and traffic to link-local
+    services such as the VPC resolver), and the kernel's per-interface and
+    per-protocol counters. Taken before and after every Run, so the change
+    over a Run is the card's and the kernel's own account of it."""
+    route_table = read_text("/proc/net/route") or ""
+    interface = primary_interface(route_table)
+    network = read_files(["/proc/net/route", "/sys/class/net/*/mtu"] + NET_SETTINGS + [
+        "/etc/resolv.conf", "/etc/nsswitch.conf", "/etc/systemd/resolved.conf", "/etc/systemd/resolved.conf.d/*",
+        "/usr/lib/systemd/resolved.conf.d/*", "/run/systemd/resolve/resolv.conf"])
+    counters = read_files(["/proc/net/dev", "/proc/net/snmp", "/proc/net/netstat"])
+    for option, section in (("-i", network), ("-S", counters)):
+        if interface is None:
+            section[command_key(["ethtool", option])] = {"not taken": "/proc/net/route has no default route"}
+        else:
+            arguments = ["ethtool", option, interface]
+            section[command_key(arguments)] = run_command(arguments, timeout=10)
+    return network, counters
+
+
 def dump_sections(cpuid_tool, imds):
     """Everything the box reports about itself, raw and unmasked.
 
@@ -367,6 +449,8 @@ def dump_sections(cpuid_tool, imds):
     # own counters and latency histograms.
     sections["block_stat"] = read_files(["/sys/block/*/stat", "/sys/block/*/*/stat"])
     sections["nvme_stats"] = nvme_stats()
+    # The same for the network: its settings once per boot, its counters apart.
+    sections["network"], sections["net_counters"] = network_sections()
 
     process = read_files(["/proc/self/limits", "/proc/self/cgroup"])
     process["allowed_cpus"] = sorted(os.sched_getaffinity(0))
@@ -404,15 +488,17 @@ def take_dump(blobs, cpuid_tool, imds, boot_sections=None):
 # ---- what is taken once per boot ----
 
 def ec2_sections(imds):
-    """What the EC2 API says about this box, once per boot, in three sections
+    """What the EC2 API says about this box, once per boot, in five sections
     of their own: the instance type's catalog record, the volumes attached and
-    their status, and the instance's own record. The calls are read-only
-    (infra/runs/stack.ts gives the box's role exactly these four actions), and
-    one that fails is recorded with what it printed, never fatal."""
+    their status, the instance's own record, and the path to S3 (the route
+    tables that decide the subnet's routes, and the VPC's endpoints). The calls
+    are read-only (infra/runs/box-role.ts gives the box's role exactly these
+    six actions), and one that fails is recorded with what it printed, never
+    fatal."""
     instance_id = imds.get("meta-data/instance-id")
     instance_type = imds.get("meta-data/instance-type")
     region = imds.get("meta-data/placement/region")
-    names = ("ec2_instance_type", "ec2_volumes", "ec2_instance")
+    names = ("ec2_instance_type", "ec2_volumes", "ec2_instance", "ec2_route_tables", "ec2_vpc_endpoints")
     if not (instance_id and instance_type and region):
         return {name: {"not taken": "IMDS gave no instance id, instance type or region"} for name in names}
     environment = dict(os.environ, AWS_PAGER="")
@@ -437,6 +523,25 @@ def ec2_sections(imds):
         sections["ec2_volumes"]["$ aws ec2 describe-volume-status"] = {"not taken": "describe-volumes gave no volume ids"}
     key, result = call("describe-instances", "--instance-ids", instance_id)
     sections["ec2_instance"] = {key: result}
+
+    # The path out of the subnet: a route table associated with the subnet
+    # decides its routes; when none is, the VPC's main table does. A gateway
+    # endpoint to S3 would add a route to S3's prefix list in the tables it
+    # serves, and is listed among the VPC's endpoints.
+    mac = (imds.get("meta-data/mac") or "").strip()
+    interface = "meta-data/network/interfaces/macs/%s/" % mac
+    subnet = imds.get(interface + "subnet-id") if mac else None
+    vpc = imds.get(interface + "vpc-id") if mac else None
+    if subnet and vpc:
+        key, result = call("describe-route-tables", "--filters", "Name=association.subnet-id,Values=" + subnet.strip())
+        sections["ec2_route_tables"] = {key: result}
+        key, result = call("describe-route-tables", "--filters", "Name=vpc-id,Values=" + vpc.strip(), "Name=association.main,Values=true")
+        sections["ec2_route_tables"][key] = result
+        key, result = call("describe-vpc-endpoints", "--filters", "Name=vpc-id,Values=" + vpc.strip())
+        sections["ec2_vpc_endpoints"] = {key: result}
+    else:
+        for name in ("ec2_route_tables", "ec2_vpc_endpoints"):
+            sections[name] = {"not taken": "IMDS gave no subnet id or VPC id for the instance's interface"}
     return sections
 
 
@@ -527,6 +632,126 @@ def stopping():
     return Stop.signal is not None
 
 
+# ---- Services ----
+
+class Secret:
+    """A value that may reach a benchmark's environment and nowhere else. It
+    prints as <withheld> in a log line, a repr, an exception or a traceback,
+    and json refuses it, so only reveal() gives it up."""
+
+    __slots__ = ("_value",)
+
+    def __init__(self, value):
+        self._value = value
+
+    def reveal(self):
+        return self._value
+
+    def __repr__(self):
+        return "<withheld>"
+
+    __str__ = __repr__
+
+
+class ServiceUnavailable(Exception):
+    """Why a Service's inputs cannot be had. Its message never holds a secret."""
+
+
+S3_FIXTURES = "s3_fixtures"
+KEY_ID = re.compile(r"^[A-Z0-9]{16,128}$")
+
+
+class S3Fixtures:
+    """The s3_fixtures Service: the stage's private bucket of Fixtures
+    (infra/runs/fixtures.ts). Its inputs reach a benchmark as LM_SERVICE_<NAME>:
+    the endpoint and the Region as the stage gave them (the user-data's
+    LEDGERMATH_FIXTURES_*), and three secret ones, short-lived keys from one
+    AssumeRole of the fixtures reader role per boot, made through the aws CLI
+    when an entry first needs them. The keys stay in this object's memory
+    until a binary's environment is built from them; they are never written
+    to a file, a log line or this process's own environment, and never put on
+    a command line. A session assumed from the box's own role (role chaining)
+    lasts at most an hour, which outlasts what is left of a boot."""
+
+    SECRET_INPUTS = ("aws_access_key_id", "aws_secret_access_key", "aws_session_token")
+
+    def __init__(self, endpoint, region, role):
+        self.endpoint, self.region, self.role = endpoint, region, role
+        self.keys = None
+        self.failure = None
+        self.record = None
+
+    def inputs(self, session_name):
+        """The inputs not secret (as given) and the secret ones (as Secrets),
+        assuming the role the first time; raises ServiceUnavailable, the same
+        reason every time, when they cannot be had."""
+        if self.keys is None and self.failure is None:
+            try:
+                self.keys = self._assume(session_name)
+                log("s3_fixtures: assumed %s as %s; its keys expire at %s" % (self.role, session_name, self.record["expires_at"]))
+            except ServiceUnavailable as error:
+                self.failure = str(error)
+                self.record = {"failed": self.failure}
+        if self.failure is not None:
+            raise ServiceUnavailable(self.failure)
+        return {"endpoint": self.endpoint, "region": self.region}, self.keys
+
+    def _assume(self, session_name):
+        arguments = ["aws", "sts", "assume-role", "--role-arn", self.role, "--role-session-name", session_name,
+                     "--duration-seconds", "3600", "--region", self.region, "--output", "json"]
+        asked_at = time.time_ns()
+        try:
+            done = subprocess.run(arguments, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                  timeout=90, env=dict(os.environ, AWS_PAGER=""))
+        except (OSError, subprocess.TimeoutExpired) as error:
+            raise ServiceUnavailable("%s failed: %s" % (command_key(arguments[:3]), error)) from None
+        if done.returncode != 0:
+            said = done.stderr.decode("utf-8", "replace").strip()[-1000:]
+            raise ServiceUnavailable("%s exited %d: %s" % (command_key(arguments[:3]), done.returncode, said))
+        # What it printed holds the keys: it is read here and never recorded,
+        # whatever shape it has.
+        try:
+            credentials = json.loads(done.stdout.decode("utf-8"))["Credentials"]
+            values = [credentials[name] for name in ("AccessKeyId", "SecretAccessKey", "SessionToken")]
+            expiration = credentials["Expiration"]
+        except (ValueError, KeyError, TypeError, IndexError):
+            raise ServiceUnavailable("%s printed no Credentials with AccessKeyId, SecretAccessKey, SessionToken and Expiration "
+                                     "(%d bytes, not recorded)" % (command_key(arguments[:3]), len(done.stdout))) from None
+        if not (all(isinstance(value, str) and value for value in values) and KEY_ID.match(values[0])
+                and isinstance(expiration, str)):
+            raise ServiceUnavailable("%s printed Credentials that are not shaped as keys (not recorded)" % command_key(arguments[:3]))
+        self.record = {"role_session_name": session_name, "asked_at": rfc3339(asked_at), "expires_at": expiration}
+        return dict(zip(self.SECRET_INPUTS, (Secret(value) for value in values)))
+
+
+class Services:
+    """The Services the stage gave this box, by the name a schedule entry uses.
+    No keys are asked for by a runner that could not mark itself not dumpable
+    (mark_not_dumpable): `undumpable` is None, or why it could not."""
+
+    def __init__(self, fixtures_endpoint, fixtures_region, fixtures_role, boot, undumpable=None):
+        given = [fixtures_endpoint, fixtures_region, fixtures_role]
+        self.fixtures = S3Fixtures(*given) if all(given) else None
+        self.session_name = ("ledgermath-" + boot)[:64] if boot else "ledgermath-box"
+        self.undumpable = undumpable
+
+    def inputs(self, name):
+        if name != S3_FIXTURES:
+            raise ServiceUnavailable("this runner knows no Service named %r" % name)
+        if self.undumpable is not None:
+            raise ServiceUnavailable("no keys are asked for: this runner could not mark itself not dumpable (%s)" % self.undumpable)
+        if self.fixtures is None:
+            raise ServiceUnavailable("the stage gave this box no s3_fixtures values (LEDGERMATH_FIXTURES_ENDPOINT, "
+                                     "LEDGERMATH_FIXTURES_REGION and LEDGERMATH_FIXTURES_ROLE)")
+        return self.fixtures.inputs(self.session_name)
+
+    def records(self):
+        """What became of each Service an entry asked for, for the boot summary: never a key."""
+        if self.fixtures is None or self.fixtures.record is None:
+            return {}
+        return {S3_FIXTURES: self.fixtures.record}
+
+
 # ---- one execution ----
 
 def param_text(value):
@@ -606,22 +831,10 @@ def execute(binary, arguments, environment, timeout_seconds):
     return started, ended, exit_record, stdout, stderr
 
 
-def parse_events(stdout):
-    """Every stdout line, parsed, in order; stops at the first line that is not a JSON object."""
-    events = []
-    text = stdout.decode("utf-8", "replace")
-    lines = text.split("\n")
-    if lines and lines[-1] == "":
-        lines.pop()
-    for number, line in enumerate(lines, start=1):
-        try:
-            event = json.loads(line)
-        except ValueError as error:
-            return events, {"line": number, "message": "not JSON: %s" % error}
-        if not isinstance(event, dict):
-            return events, {"line": number, "message": "not a JSON object"}
-        events.append(event)
-    return events, None
+def stdout_lines(stdout):
+    """The number of lines in stdout, as a reader splits it: at newlines, a
+    last line without one counted too."""
+    return stdout.count(b"\n") + (1 if stdout and not stdout.endswith(b"\n") else 0)
 
 
 def put_tree(blobs, directory, skip=("build", "__pycache__")):
@@ -666,7 +879,15 @@ def main():
     parser.add_argument("--cpuid", help="the built runner/cpuid.c; without it the dump has no cpuid section")
     parser.add_argument("--provision-record", help="runner/provision.py's record, dumped as the section provision")
     parser.add_argument("--quick", action="store_true", help="developer mode: pass --quick to every binary")
+    # The s3_fixtures Service's values, which the box's user-data exports.
+    for name, variable in (("endpoint", "ENDPOINT"), ("region", "REGION"), ("role", "ROLE")):
+        parser.add_argument("--fixtures-" + name, default=os.environ.get("LEDGERMATH_FIXTURES_" + variable) or None,
+                            help="the s3_fixtures Service's %s (default: $LEDGERMATH_FIXTURES_%s)" % (name, variable))
     args = parser.parse_args()
+    # First, before anything could hold a key.
+    undumpable = mark_not_dumpable()
+    if undumpable is not None:
+        log("warning: %s; no Service's keys will be asked for" % undumpable)
 
     root = os.path.abspath(args.root)
     out = os.path.abspath(args.out)
@@ -687,6 +908,7 @@ def main():
         % (boot, json.dumps(provider), args.source_commit, source, runner))
     once = boot_sections(blobs, imds, args.provision_record)
     log("taken once for this boot: %s" % ", ".join("%s %s" % item for item in sorted(once.items())))
+    services = Services(args.fixtures_endpoint, args.fixtures_region, args.fixtures_role, boot, undumpable)
 
     boot_started = time.time_ns()
     summary = {
@@ -703,9 +925,12 @@ def main():
         "left_out": [],
     }
     day = datetime.datetime.fromtimestamp(boot_started // 10 ** 9, datetime.timezone.utc)
+    unavailable = []  # executions not run because their Service's inputs could not be had
 
-    def not_run(name, build_name, params):
-        summary["not_run"].append({"benchmark": name, "build": build_name, "params": params})
+    def not_run(name, build_name, params, reason=None):
+        if reason is None:
+            reason = "the runner was told to stop by %s" % signal.Signals(Stop.signal).name
+        summary["not_run"].append({"benchmark": name, "build": build_name, "params": params, "reason": reason})
 
     instance_type = provider.get("instance_type")
     # (benchmark, build) -> what build() returned, or None when it failed. Two
@@ -757,6 +982,21 @@ def main():
                         continue
                     environment = {"LM_PARAM_" + key.upper(): param_text(value) for key, value in params.items()}
                     environment["LM_SAMPLES"] = str(benchmark["samples"])
+                    service = benchmark.get("service")
+                    if service is not None:
+                        # This execution's environment alone gets the Service's
+                        # inputs; the Run records the names of the secret ones.
+                        try:
+                            public, secret = services.inputs(service)
+                        except ServiceUnavailable as error:
+                            log("NOT RUN %s %s %s: %s" % (name, build_name, json.dumps(params), error))
+                            not_run(name, build_name, params, "%s: %s" % (service, error))
+                            unavailable.append(name)
+                            continue
+                        for key, value in public.items():
+                            environment["LM_SERVICE_" + key.upper()] = value
+                        for key, value in secret.items():
+                            environment["LM_SERVICE_" + key.upper()] = value.reveal()
 
                     before = take_dump(blobs, cpuid_tool, imds, once)
                     if stopping():
@@ -772,7 +1012,6 @@ def main():
                         continue
                     after = take_dump(blobs, cpuid_tool, imds, once)
 
-                    events, events_error = parse_events(stdout)
                     run = {
                         "schema": RUN_SCHEMA,
                         "id": uuid7(started // 10 ** 6),
@@ -782,6 +1021,10 @@ def main():
                         "benchmark": name,
                         "params": params,
                         "samples": benchmark["samples"],
+                    }
+                    if service is not None:
+                        run["service"] = {"name": service, "inputs": public, "secret_inputs": list(secret)}
+                    run.update({
                         "source_commit": args.source_commit,
                         "source": source,
                         "binary": one["record"],
@@ -789,12 +1032,13 @@ def main():
                         "environment": {"before": before, "after": after},
                         "runner": runner,
                         "exit": exit_record,
-                        "events": events,
+                        # The stdout blob is the Run's events, read by every
+                        # reader (methods/run.ts); its size and lines save a fetch.
                         "stdout": blobs.put(stdout),
+                        "stdout_bytes": len(stdout),
+                        "stdout_lines": stdout_lines(stdout),
                         "stderr": blobs.put(stderr),
-                    }
-                    if events_error is not None:
-                        run["events_error"] = events_error
+                    })
 
                     moment = datetime.datetime.fromtimestamp(started // 10 ** 9, datetime.timezone.utc)
                     path = os.path.join(out, "runs", moment.strftime("%Y/%m/%d"), run["id"] + ".json")
@@ -806,9 +1050,9 @@ def main():
                         "params": params,
                         "exit": exit_record,
                     })
-                    log("run %s %s %s %s exit=%s events=%d seconds=%.1f"
+                    log("run %s %s %s %s exit=%s stdout_lines=%d seconds=%.1f"
                         % (run["id"], name, build_name, json.dumps(params), json.dumps(exit_record),
-                           len(events), (ended - started) / 1e9))
+                           run["stdout_lines"], (ended - started) / 1e9))
     except BaseException as error:
         summary["error"] = repr(error)
         raise
@@ -817,6 +1061,8 @@ def main():
         # that failed, still says what it ran and what it did not.
         if stopping():
             summary["stopped_by"] = Stop.signal
+        if services.records():
+            summary["services"] = services.records()
         summary["ended_at"] = rfc3339(time.time_ns())
         boot_path = os.path.join(out, "boots", day.strftime("%Y/%m/%d"), (boot or "unknown") + ".json")
         write_atomically(boot_path, as_json(summary))
@@ -825,7 +1071,7 @@ def main():
 
     if Stop.signal is not None:
         return 128 + Stop.signal
-    return 1 if summary["build_failures"] else 0
+    return 1 if summary["build_failures"] or unavailable else 0
 
 if __name__ == "__main__":
     sys.exit(main())

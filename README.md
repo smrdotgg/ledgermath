@@ -20,14 +20,14 @@ until step 4 of the plan replaces it.
 | `benchmarks/harness/c/` | The C harness that prints the event stream (`lm.h`, `lm.c`); `lm_event.h` and `lm_event.c`, which emit a benchmark's own events and further `observed` events; `lm_fixed.h` and `lm_fixed.c`, samples of fixed work; `lm_disk.h` and `lm_disk.c`, what a disk benchmark observes about its file and device; `lm_fixture.h`, the disk Fixture's pattern |
 | `benchmarks/<name>/` | One benchmark on the stream: its source, a `README.md` (what it measures, its parameters and observed values, how it differs from July's), and a `Makefile` (`make BUILD=static`, `BUILD=dynamic`, `make -s compiler`, `make -s resolved`). All thirteen: `memory_read`, `compressed_memory_read`, `memory_read_random`, `memory_write`, `syscall`, `hash`, `sort`, `tcp_echo`, `mutex`, `disk_read_random`, `disk_read_io_uring`, `disk_read_sequential`, `disk_write` |
 | `schedule.json` | The targets (instance types, their zone, the times of day each boots) and what a box runs: benchmarks, builds, samples, timeout, parameter sets, and the instance types an entry is for. Checked by `infra/runs/schedule.ts` |
-| `runner/` | The box side: `box.sh` (user-data), `provision.py` (prepares the disks at boot and records it), `fixture.c` (writes a disk Fixture), `run.py` (builds, runs, dumps, writes Runs), `cpuid.c` |
+| `runner/` | The box side: `box.sh` (user-data), `provision.py` (prepares the disks at boot and records it), `fixture.c` (writes a disk Fixture), `aws-lc-archive.sh` (fetches and checks the TLS library's source for `http_get`'s build), `run.py` (builds, runs, dumps, gives a Service's inputs to the entries that name it, writes Runs), `cpuid.c` |
 | `schemas/` | `run.schema.json` (the Run), `events.schema.json` (one line of the stream) and `prices.schema.json` (a price file) |
 | `scripts/check-events.py` | Checks a stream's order; needs only Python 3 |
-| `scripts/check-runs.ts` | Checks a directory laid out like the bucket: schemas, every hash, events against stdout, runner manifests |
+| `scripts/check-runs.ts` | Checks a directory laid out like the bucket: schemas, every hash, every stream read from its stdout blob, runner manifests |
 | `scripts/check-disk-runs.ts` | Checks that every disk Run in such a directory found the disk it declares, that its evidence adds up, and that its dump bears it out |
 | `scripts/check-targets.ts` | Checks `schedule.json`'s targets' `vcpus`, their zone offerings and `vcpu_quota.limit` against AWS, read-only; needs AWS access, so not part of `bun test` |
-| `scripts/box-in-container/` | Boots `runner/box.sh` in Amazon Linux 2023 with S3 and shutdown stubbed, in several scenarios |
-| `infra/runs/` | The `-runs` SST stage: stack, launch Lambda, reaper, user-data, the schedule's check (`schedule.ts`), the targets and their launch schedules (`placement.ts`), the workflow's AWS role |
+| `scripts/box-in-container/` | Boots `runner/box.sh` in Amazon Linux 2023 with S3 and shutdown stubbed, in several scenarios, `http_get` against a stand-in for S3 among them |
+| `infra/runs/` | The `-runs` SST stage: stack, launch Lambda, reaper, user-data, the schedule's check (`schedule.ts`), the targets and their launch schedules (`placement.ts`), the workflow's AWS role, the `s3_fixtures` Service's bucket, objects and role (`fixtures.ts`), AWS-LC's source archive (`tls-archive.ts`) |
 | `methods/` | Methods, versioned: `v1/` turns Runs into Derivations (`methods/README.md`) |
 | `scripts/copy-runs.ts` | The copy job: the bucket's Run files and boot summaries into the Runs repository |
 | `scripts/derive.ts`, `scripts/build-page.ts` | Run a Method over the Runs; turn its Derivations into the page |
@@ -91,10 +91,12 @@ scripts/box-in-container/run.sh --scenario terminated /tmp/box-test     # see be
 ```
 
 Each scenario boots the box and checks what it should have left
-(`scripts/box-in-container/expect.ts`): `ok` (the whole schedule for this machine's type
-as IMDS gives it, about nine minutes; this machine is not a target, so the entries naming
-instance types, `mutex`'s two-thread sets and the instance-store sets, are left out; every
-disk Run must tie to its dump, `scripts/check-disk-runs.ts`),
+(`scripts/box-in-container/expect.ts`). The container reaches no S3, so every scenario but
+the `http-get` ones (below) boots `schedule.json` without the entries that name a Service.
+The scenarios are `ok` (the whole schedule for this machine's type as IMDS gives it,
+about nine minutes; this machine is not a target, so the entries naming instance types,
+`mutex`'s two-thread sets and the instance-store sets, are left out; every disk Run must
+tie to its dump, `scripts/check-disk-runs.ts`),
 `terminated` (run.py told to stop mid-execution), `shutdown` (every process told to stop,
 as a shutdown does), `budget` (the time budget runs out), `blobs-rejected` (the bucket
 refuses every blob), `blobs-flaky` (the first upload of blobs drops halfway),
@@ -104,7 +106,7 @@ refuses every blob), `blobs-flaky` (the first upload of blobs drops halfway),
 types are left out and listed in the boot summary, and `mutex`'s one-thread and siblings
 sets run from one build, about two minutes). The Runs describe this machine, seen from a
 container; in `instance-types` their provider fields are the fake IMDS's. The stand-in
-`aws` answers the four EC2 calls the box makes (the catalog records saved in
+`aws` answers the six EC2 calls the box makes (the catalog records saved in
 `scripts/box-in-container/ec2/`). The container has no device node of this machine's
 disks, so `provision.py` prepares none, whatever it finds in `/sys`, and the scenarios
 check that it did not; the root volume's disk directory is a tmpfs of the container's
@@ -112,6 +114,38 @@ own (the schedule's 1 GiB Fixture and 1 GiB scratch file do not fit beside every
 else on a development machine's disk), so the disk Runs there read and write memory and
 say so (`device_found` false). The container runs without a seccomp filter, as the box
 does.
+
+Three scenarios run `http_get`, booting `scripts/box-in-container/http-get.json` (`syscall`
+once, then `http_get`'s five sets as `schedule.json` has them, with the stand-in's CA and
+resolver as `ca_file` and `resolv_conf`):
+
+```bash
+benchmarks/harness/c/vendor/fetch-aws-lc.sh /tmp/aws-lc.tar.gz      # once, as CI does
+AWS_LC_ARCHIVE=/tmp/aws-lc.tar.gz scripts/box-in-container/run.sh --scenario http-get \
+  --aws-lc-cache /tmp/aws-lc-cache /tmp/box-http-get
+```
+
+- `http-get`: `tests/http-get/standin.py`, the binary's own stand-in for S3 and the
+  resolver, runs in a container whose network namespace the box joins, and the user-data
+  names it as the fixtures endpoint. The stand-in `aws` answers `sts assume-role` with
+  stand-in keys. Every execution must exit 0 and every Run check out; the `http_get` Runs
+  must name their Service inputs; the stand-in must have received every request signed
+  with the stand-in key ID and carrying its token; and no key may appear in the bucket,
+  the box's work directory (apart from the source files it was given, as given), its log,
+  or an `aws` command line. About four minutes with AWS-LC already built.
+- `http-get-no-archive`: the bucket has no AWS-LC archive. `http_get` alone fails to build,
+  recorded as a build failure; `syscall` runs.
+- `http-get-refused`: `assume-role` is refused. `http_get` builds, its five executions are
+  listed under `not_run` with AWS's words, and `syscall` runs.
+- `build-tools-refused`: a stand-in in front of `dnf` refuses `cmake` and `gcc-c++`. The
+  box goes on, `http_get` alone fails to build (its build failure says `cmake` is
+  missing), and `syscall` runs.
+
+The archive is `--aws-lc-archive FILE`, or `$AWS_LC_ARCHIVE` as for the Makefile and
+`scripts/check-scratch.py`; without either, `run.sh` fetches it into OUT with
+`vendor/fetch-aws-lc.sh`. `--aws-lc-cache DIR` keeps AWS-LC's build from one boot to the
+next, as `AWS_LC_DIR`; a box has no such cache and builds it every boot. The stand-in is not S3: a throwaway CA, answers in a millisecond, no signature
+checked. These scenarios show the path, not S3's numbers.
 
 ## The daily box: a `-runs` stage
 
@@ -142,10 +176,16 @@ scheduled time, so one slot of one target can start at most one box. Its user-da
 `runner/box.sh`, which:
 
 1. sets a shutdown timer that ends the box 45 minutes after it started, whatever happens;
-2. installs `gcc`, `make`, `glibc-static`, `tar`, `gzip`, `util-linux`, `nvme-cli` and
-   `xfsprogs` from the image's own release;
+2. installs `gcc`, `make`, `glibc-static`, `tar`, `gzip`, `util-linux`, `nvme-cli`,
+   `xfsprogs` and `ethtool` from the image's own release (the image already has
+   `ethtool`); then, in a step of their own that may fail without stopping the boot,
+   `cmake` and `gcc-c++` for AWS-LC, the TLS library `http_get` links: without them only
+   `http_get` fails to build;
 3. fetches `source/<commit>.tar.gz`, a `git archive` of the deployed commit, and refuses to
-   go on if the archive's commit or its own text is not that commit's;
+   go on if the archive's commit or its own text is not that commit's; then fetches
+   AWS-LC's source archive, a blob the deploy put in the bucket, checks it against
+   `benchmarks/harness/c/vendor/aws-lc.lock` (`runner/aws-lc-archive.sh`), and gives its
+   path to the builds as `AWS_LC_ARCHIVE`. If that fails, only `http_get` fails to build;
 4. builds `runner/cpuid.c` and `runner/fixture.c`, and prepares the disks with
    `runner/provision.py` (below, "The disks"), which records everything it runs; nothing
    it does or fails to do stops the boot;
@@ -174,19 +214,99 @@ holding:
 
 ```
 runs/<yyyy>/<mm>/<dd>/<id>.json      one Run (schemas/run.schema.json)
-blobs/sha256/<hex>                   every blob a Run cites: binaries, dumps, stdout, stderr
+blobs/sha256/<hex>                   every blob a Run cites: binaries, dumps, stdout, stderr;
+                                     and, put there by the deploy, AWS-LC's source archive and
+                                     the bytes of each Fixture of the s3_fixtures Service
 boots/<yyyy>/<mm>/<dd>/<boot>.json   what one boot ran, and what it did not
 logs/<yyyy>/<mm>/<dd>/<boot>.log     the box's log
 source/<commit>.tar.gz               the deployed source
 ```
 
+A Run's events are its stdout blob, for every Run. `run.py` copies none of them into the
+record and does not parse stdout: the Run names the blob and gives its size and number of
+lines (`stdout_bytes`, `stdout_lines`), so Run files stay at about 2 KB for the small
+benchmarks and 4 KB for `http_get`, whose streams are 130 to 620 KB. Runs written before
+this change also hold their events as `events` (and, had a line failed to parse,
+`events_error`); they are never edited, and they stay valid. Every reader reads the stdout
+blob, for every Run, through one function, `readStream` in `methods/run.ts`:
+`scripts/check-runs.ts` (which also checks that an older Run's `events` equal its blob),
+`scripts/check-disk-runs.ts`, the container checks, and Method version 1. The lookup tool
+and the page read Derivations, not events.
+
 A reaper runs every five minutes and terminates any box of the stage older than 50
 minutes. It touches nothing else; July's reaper cannot touch these boxes either.
 
-The box's role reads its source, lists `blobs/`, writes `runs/`, `blobs/`, `boots/` and
-`logs/`, and calls four read-only EC2 actions: `ec2:DescribeInstanceTypes`,
-`ec2:DescribeVolumes`, `ec2:DescribeVolumeStatus` and `ec2:DescribeInstances`
-(`infra/runs/box-role.ts`).
+The box's role reads its source and AWS-LC's archive, lists `blobs/`, writes `runs/`,
+`blobs/`, `boots/` and `logs/`, calls six read-only EC2 actions
+(`ec2:DescribeInstanceTypes`, `ec2:DescribeVolumes`, `ec2:DescribeVolumeStatus`,
+`ec2:DescribeInstances`, `ec2:DescribeRouteTables`, `ec2:DescribeVpcEndpoints`), and may
+assume the fixtures reader role, nothing else (`infra/runs/box-role.ts`).
+
+### The Service benchmarks: `s3_fixtures`
+
+`http_get` measures S3 from outside: HTTPS GETs of objects in a private bucket the stage
+makes, signed with short-lived keys. A schedule entry says which Service its benchmark
+measures, `"service": "s3_fixtures"`, the one Service there is (`infra/runs/schedule.ts`
+refuses another name).
+
+The fixtures bucket (`FixturesBucket`, `infra/runs/fixtures.ts`) is separate from the Runs
+bucket: never versioned, private, SSE-S3 by default, HTTPS only, no CORS, lifecycle or
+logging, and named without dots (S3's certificate covers one label). It holds three
+objects, `http_get/v1/4096`, `http_get/v1/131072` and `http_get/v1/16777216`: the first N
+bytes of the Fixture pattern of `benchmarks/harness/c/lm_fixture.h`, the pattern
+`runner/fixture.c` writes to disk, generated in TypeScript at deploy (the tests compare
+them with `fixture.c`'s bytes and the digests `benchmarks/http_get/README.md` lists).
+`http_get` checks every body against the pattern and against the `x-amz-checksum-sha256`
+S3 returns, so each object needs a SHA-256 checksum over the whole object, in the STANDARD
+class. The provider uploads anything over 5 MiB in parts, and S3's SHA-256 of a multipart
+object is a checksum of the parts' checksums, so the deploy does not upload into the
+fixtures bucket: it uploads each Fixture to the Runs bucket as `blobs/sha256/<hex>`, and
+S3 copies that blob into the fixtures bucket (`aws.s3.ObjectCopy`, the SHA256 algorithm).
+A copy is one object in a single part, and S3 computes its checksum over the whole of it.
+A new pattern or size gets a new key; an object is never overwritten with other bytes.
+
+The fixtures reader role may be assumed by the box's role alone, and may do one thing:
+`s3:GetObject` on those three objects. A session assumed from a role the box already holds
+is role chaining, and lasts at most an hour.
+
+How the keys travel. The launch puts the Service's values in the user-data,
+`LEDGERMATH_FIXTURES_ENDPOINT` (`https://<fixtures bucket>.s3.us-east-2.amazonaws.com`),
+`LEDGERMATH_FIXTURES_REGION` and `LEDGERMATH_FIXTURES_ROLE`, none of them secret. When an
+entry naming `s3_fixtures` is first about to run, after its build, `run.py` runs `aws sts
+assume-role` once for the boot and reads the keys from what it printed. They stay in
+`run.py`'s memory until an execution of such an entry starts; that execution's
+environment, and no other, gets `LM_SERVICE_ENDPOINT`, `LM_SERVICE_REGION`,
+`LM_SERVICE_AWS_ACCESS_KEY_ID`, `LM_SERVICE_AWS_SECRET_ACCESS_KEY` and
+`LM_SERVICE_AWS_SESSION_TOKEN` beside its `LM_PARAM_*`. Where they must never go, and
+`tests/service.test.ts` and the `http-get` container scenario search for them: a Run, a
+blob, a dump, the boot summary, a log line, an exception message, `run.py`'s own
+environment (every command the dump runs inherits it, and its output is recorded), or a
+command line. What `assume-role` printed is never recorded, whatever its shape: a reply
+that does not parse is reported by its length. The binary's own guard keeps them out of
+its stdout and stderr (`benchmarks/http_get/README.md`).
+
+The Run says which Service inputs it was given, as it says which params: `service` holds
+the Service's name, `inputs` (the endpoint and the Region, exactly as delivered) and
+`secret_inputs` (the names of the three keys, never their values). A Run of an entry
+without a Service has no `service` and is written exactly as before. When the keys cannot
+be had (no values in the user-data, `assume-role` refused or failing, a reply without
+keys), the entry's executions are not run: the boot summary lists them under `not_run`
+with the reason, `services` says what became of the Service (the session's name and when
+its keys expire, or why there are none), the rest of the boot goes on, and `run.py` exits
+1, as for a build failure.
+
+The dump records the path to S3 rather than assuming it. Once per boot, stored once,
+`ec2_route_tables` (`describe-route-tables` for the table associated with the box's
+subnet, and for the VPC's main table, which decides when none is) and
+`ec2_vpc_endpoints` (`describe-vpc-endpoints` for the VPC); today the subnet has no table
+of its own, the main table sends `0.0.0.0/0` to an internet gateway, and the VPC has no
+endpoint. Around every Run, `network` (the routes, every interface's MTU, the TCP and
+socket settings, `/etc/resolv.conf` and the resolver's other files, and `ethtool -i` of the
+default route's interface) and `net_counters` (`ethtool -S` of that interface, whose ENA
+`*_allowance_exceeded` counters say whether the instance shaped the traffic, and
+`/proc/net/dev`, `/proc/net/snmp`, `/proc/net/netstat`). `net_counters` changes on every
+read, so Method version 1 neither fetches nor splits on it, as with `block_stat`; it splits
+on none of the four.
 
 ### The disks
 
@@ -337,9 +457,10 @@ pipeline runs, its 23:10 box is the one thing these rules do not cover, hence th
 rule.
 
 A boot's summary (`boots/<yyyy>/<mm>/<dd>/<boot>.json`) accounts for every execution the
-schedule names: `runs`; `not_run`, told to stop before starting it; `build_failures`, a
-build that failed, whose executions did not run; and `left_out`, each execution of an
-entry for other instance types, with the `instance_types` it is for. A box whose type
+schedule names: `runs`; `not_run`, with the `reason` (told to stop before starting it, or
+its Service's inputs could not be had); `build_failures`, a build that failed, whose
+executions did not run; and `left_out`, each execution of an entry for other instance
+types, with the `instance_types` it is for. A box whose type
 IMDS did not give runs only the entries for every type.
 
 ### What a boot guarantees, and what it does not
@@ -391,6 +512,9 @@ Not guaranteed:
 ```bash
 aws sso login --profile tabot-dev
 bun install
+# AWS-LC's source archive, once: the deploy uploads it as a blob, and stops if it is missing
+# or its hash is not aws-lc.lock's. AWS_LC_ARCHIVE=<path> points it at a copy elsewhere.
+benchmarks/harness/c/vendor/fetch-aws-lc.sh .sst/ledgermath-vendor/aws-lc-5.14.0.tar.gz
 git status                        # must be clean (sst-env.d.ts aside): a deploy refuses a tree that differs from HEAD
 bunx sst diff --stage smr-runs    # what the deploy would add, change and delete; changes nothing
 bunx sst deploy --stage smr-runs  # the stage uses profile tabot-dev in us-east-2
@@ -403,6 +527,23 @@ schedules' cron expressions and payloads, commit) are printed and written to
 schedules, change. Avoid deploying within ten minutes of a boot time: a schedule the
 deploy creates, changes or removes could miss its slot, and while an old schedule and its
 replacement both exist, one slot could launch twice.
+
+What the first deploy with `http_get` adds to a stage: the fixtures bucket (with its
+public access block and HTTPS-only policy), three Fixture blobs in the Runs bucket (16.9
+MB) and their three copies in the fixtures bucket, AWS-LC's source archive as a blob (155
+MB), the fixtures reader role and its policy; it changes the box's policy (the archive, two
+EC2 actions, `sts:AssumeRole` on that role) and the launch function's environment (the
+fixtures bucket and role). The Fixture files are written under `.sst/ledgermath-fixtures/`
+at every deploy and `sst diff`. The archive and the Fixture blobs are kept for ever like
+every blob: they are declared `retainOnDelete`, so when a new pin or recipe changes a key,
+the old object is left in the bucket (Pulumi drops it from the stage's state and does not
+delete it), and `sst remove` leaves them too, in the bucket the stage's `removal: "retain"`
+keeps. Because `run.py` and `box.sh` change, every Run records a
+new `runner` hash, and the new packages change the `packages` section (`cmake`, `gcc-c++`
+and what they pull in: on the image, judging from the container and a real boot's package
+list, `cmake-data`, `cmake-filesystem`, `cmake-rpm-macros`, `emacs-filesystem`, `jsoncpp`,
+`libstdc++-devel` and `rhash`): every existing Series starts a new group at that deploy.
+That is expected, and says exactly what changed.
 
 ### Trigger a boot by hand, and watch it
 

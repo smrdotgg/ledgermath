@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 
-import type { RunEvent } from "../methods/run";
+import { readStream } from "../methods/run";
 import { derive, gather } from "../methods/v1";
 import { streamProblems } from "../methods/v1/stream";
 import { HandMade } from "./hand-made-runs";
@@ -134,24 +134,6 @@ add("an event without t", false, (e) => {
 	return e;
 });
 
-/** As runner/run.py parses stdout: line by line, stopping at the first line that is not a JSON object. */
-function parseLikeTheRunner(text: string): { events: Event[]; error?: { line: number; message: string } } {
-	const parts = text.split("\n");
-	if (parts.at(-1) === "") parts.pop();
-	const events: Event[] = [];
-	for (const [index, line] of parts.entries()) {
-		let value: unknown;
-		try {
-			value = JSON.parse(line);
-		} catch (error) {
-			return { events, error: { line: index + 1, message: `not JSON: ${String(error)}` } };
-		}
-		if (typeof value !== "object" || value === null || Array.isArray(value)) return { events, error: { line: index + 1, message: "not a JSON object" } };
-		events.push(value as Event);
-	}
-	return { events };
-}
-
 function checkEventsAccepts(text: string): boolean {
 	const result = spawnSync("python3", [CHECK_EVENTS, "--samples", String(SAMPLES)], { input: text, encoding: "utf8" });
 	if (result.status !== 0 && result.status !== 1) throw new Error(`check-events.py: ${result.stderr || result.error?.message}`);
@@ -161,10 +143,7 @@ function checkEventsAccepts(text: string): boolean {
 /** Whether Method version 1 counts a Run that exited 0 with this stdout. */
 async function methodCounts(text: string): Promise<{ counted: boolean; failure: string | null; time: number | null }> {
 	const made = new HandMade();
-	const run = made.run({ startedAt: "2026-11-11T22:15:00Z", samples: SAMPLES });
-	const parsed = parseLikeTheRunner(text);
-	run.events = parsed.events as RunEvent[];
-	if (parsed.error) run.events_error = parsed.error;
+	made.run({ startedAt: "2026-11-11T22:15:00Z", samples: SAMPLES, stdout: text });
 	const file = derive(made.files, await gather(made.files, made.fetch));
 	if (file.unreadable.length > 0) return { counted: false, failure: file.unreadable[0]?.reason ?? "", time: null };
 	const point = file.derivations[0]?.points[0];
@@ -183,8 +162,8 @@ describe("a Run counts only when its stream obeys scripts/check-events.py", () =
 				expect(method.time).toBeNull();
 			}
 			// The port alone, where every line parsed, agrees too.
-			const parsed = parseLikeTheRunner(stream.text);
-			if (parsed.error === undefined) expect(streamProblems(parsed.events, SAMPLES).length === 0).toBe(python);
+			const parsed = readStream(new TextEncoder().encode(stream.text));
+			if (parsed.error === null) expect(streamProblems(parsed.events, SAMPLES).length === 0).toBe(python);
 		}, SUBPROCESS_TIMEOUT_MS);
 	}
 });

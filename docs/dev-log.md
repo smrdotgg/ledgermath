@@ -67,8 +67,8 @@ cannot, the order of the stream.
 | `schedule.json` | What a box runs: benchmarks, builds, samples, timeout, parameter sets. Not part of the runner. |
 | `runner/` | The box side. `box.sh` is the user-data; `provision.py` prepares the disks at boot (the instance's own NVMe disk, where there is one, and the Fixtures, which `fixture.c` writes) and records all it did; `run.py` builds, launches each binary, dumps the environment around it and writes one Run per execution; `cpuid.c` is the raw cpuid dump. |
 | `scripts/check-disk-runs.ts` | Checks that every disk Run found the disk its parameters declare (the checker, never the binary, knows what `instance_store` and `root_volume` mean) and that its evidence adds up and its dump bears it out: `file_device` is lsblk's number for the device, the device's model and serial in `/sys`, `device_counters`' change equal to its after minus its before and lying between the dumps', the device's own `nvme amzn stats`, the EBS volume in the EC2 API, the instance-store device number in the provision record. Every number it compares must be present and finite. |
-| `schemas/run.schema.json` | The Run, which holds the stream as `events`. |
-| `scripts/check-runs.ts` | Checks Runs laid out as in the bucket: schemas, file names, every hash, events against stdout, stream order, and each runner manifest against the source archive when that is present. |
+| `schemas/run.schema.json` | The Run, which names its stdout blob, the stream, with the blob's size and lines. Runs written before the runner stopped copying stdout into the record also hold the stream as `events`; every reader reads the blob, for every Run (`readStream`, `methods/run.ts`). |
+| `scripts/check-runs.ts` | Checks Runs laid out as in the bucket: schemas, file names, every hash, each stream read from its stdout blob (every event against the events schema, an older Run's `events` against the blob, stream order), and each runner manifest against the source archive when that is present. |
 
 The benchmarks on the stream, each with one parameter set per execution. The values are
 `schedule.json`'s; each `README.md` says what every key means.
@@ -95,10 +95,14 @@ Exactly these environment variables and nothing else:
 
 - `LM_PARAM_<KEY>` for every parameter of the Variant, key upper-cased. Values are plain
   strings: integers in decimal, booleans as `true` or `false`, strings verbatim.
-- `LM_<ROLE>_<OUTPUT>` for every output of every role's Provisioner, such as
-  `LM_BOX_DISK_DEVICE=/dev/nvme1n1`, `LM_BOX_FILE_PATH=/mnt/lm/fixture`, or
-  `LM_SERVICE_URL_REGIONAL=https://…`. None exist yet: there is no Provisioner in step 2,
-  and `memory_read` needs none.
+- `LM_SERVICE_<NAME>` for every input of the Service a schedule entry names (`"service":
+  "s3_fixtures"`, the stage's private bucket of Fixtures): `LM_SERVICE_ENDPOINT`,
+  `LM_SERVICE_REGION`, and three short-lived keys, `LM_SERVICE_AWS_ACCESS_KEY_ID`,
+  `LM_SERVICE_AWS_SECRET_ACCESS_KEY` and `LM_SERVICE_AWS_SESSION_TOKEN`, given to that
+  entry's executions alone. The Run records the inputs by value and the keys by name
+  (`service`), never their values. The spec's general form, `LM_<ROLE>_<OUTPUT>` for every
+  output of every role's Provisioner (such as `LM_BOX_DISK_DEVICE=/dev/nvme1n1`), has no
+  other instance yet.
 - `LM_SAMPLES`, the number of counted samples to take, a Benchmark constant (default 10).
 
 `runner/run.py` gives the binary exactly these variables and no others (no `PATH`, no
@@ -156,8 +160,9 @@ Exit code 0 means the binary completed. Any other exit, a signal, or a missing `
 is still a Run: its `exit` holds the code or the signal, with `timeout_seconds` when the
 runner's timeout killed it (`schedule.json` sets the limit, 600 seconds for
 `memory_read`), and only then: a binary that ended by itself an instant before keeps its
-own exit alone. Its `events` are whatever reached the pipe. Nothing in the Run judges
-it.
+own exit alone. Its stdout blob holds whatever reached the pipe, and is the Run's events:
+the runner copies none of it into the record and parses none of it. A reader that finds a
+line that is not an event finds it in the blob. Nothing in the Run judges it.
 `tests/samples/failures/` holds two such Runs.
 
 When the runner is told to stop (SIGTERM, SIGINT or SIGHUP), it kills the binary it is
@@ -768,4 +773,54 @@ A migrated benchmark is done only when **all** of these hold:
   and formatting the error. The README's clock table now says that `connection_opened` is
   also written for a failed `connect`, what the Body phase holds, and what the budget is
   counted from (the first request's preparation, its first connection included).
+- **2026-11-11** — Step 5 of the build plan (#36, brief #43), second part, on branch
+  `http-get-box`, not yet merged or deployed: everything around `http_get`, whose binary
+  is on `main` since `460149f`. The stage (`infra/runs/fixtures.ts`, `tls-archive.ts`,
+  `stack.ts`) makes a private fixtures bucket holding the three Fixtures, generated in
+  TypeScript (equal, byte for byte, to `runner/fixture.c`'s, with the binary README's
+  digests). The provider uploads anything over 5 MiB in parts, and S3's SHA-256 of a
+  multipart object is a checksum of the parts' checksums, which `http_get` would refuse; so
+  each Fixture goes to the Runs bucket as a blob and S3 copies it into the fixtures bucket
+  with the SHA256 algorithm (a copy is one part, its checksum over the whole object). A
+  role only the box's role may assume can `s3:GetObject` on those three objects and nothing
+  else. AWS-LC's source archive becomes a blob too; the deploy stops, saying how to fetch
+  it, when the local copy is missing or its hash is not the lock's. The box installs
+  `cmake`, `gcc-c++` and `ethtool`, fetches and checks the archive
+  (`runner/aws-lc-archive.sh`), and exports it as `AWS_LC_ARCHIVE`; any failure there is
+  `http_get`'s build failure alone. A schedule entry may name a Service (`"service":
+  "s3_fixtures"`): `run.py` assumes the role once per boot through the `aws` CLI and gives
+  the endpoint, the Region and the three keys to that entry's executions alone; the Run
+  gains `service` (inputs by value, secret inputs by name); keys that cannot be had leave
+  the entry not run, with the reason, and the boot going on. The dump gains, once per
+  boot, the subnet's route tables and the VPC's endpoints, and around every Run `network`
+  and `net_counters` (`ethtool -S`, `/proc/net/*`), which Method version 1 neither fetches
+  nor splits on. `schedule.json` runs the study's five sets last, on every target, as two
+  entries (200 and 40 counted requests; one entry holds one `samples`). Checked: `bun test`
+  (`tests/service.test.ts` searches everything a boot writes for the stand-in keys, in
+  their encodings), `scripts/check-scratch.py` (`http_get`'s five sets against its
+  stand-in), and three container boots against the binary's stand-in for S3: a normal one
+  (six Runs, every request signed with the stand-in keys, no key in the bucket, the box's
+  work directory, its log or an `aws` command line), one with no archive (`http_get` alone
+  fails to build) and one with `assume-role` refused (`http_get` not run, with AWS's
+  words). AWS-LC built in 34 s at `-j2` here. Run files with every event inside: 981 KB
+  and 984 KB for the new-connection sets, 682 KB and 684 KB for the reused ones, 208 KB for
+  16 MiB (200 and 40 requests). Read-only AWS showed the stage's default VPC as the study
+  assumed: no table on the subnet, `0.0.0.0/0` to an internet gateway in the main table,
+  no endpoint; and the image already has `ethtool`.
+- **2026-11-11** — Step 5: the stdout blob is every Run's events (brief #43, decision 4,
+  the maintainer's rule; the last commit on `http-get-box`, to drop if they change their
+  mind before the first S3 Run). `run.py` no longer copies stdout into the Run, nor parses
+  it: the Run names its stdout blob, as every Run did, and gives `stdout_bytes` and
+  `stdout_lines`. Every reader reads the blob, for every Run, through `readStream`
+  (`methods/run.ts`): `check-runs.ts` (each event against the schema, the two facts, and for
+  a Run written before, that its `events` equal the blob), `check-disk-runs.ts`, the
+  container checks, Method version 1. Runs written before keep their `events` and stay
+  valid: still `ledgermath.run/1`, `events` now optional, because nothing else changed and
+  a reader's rule is the same for both. Method version 1 gives the same bytes as before for
+  the 15 older sample Runs (`tests/samples/older-shape-derivations.json`, made by its code
+  before the change) and for the 245 real Runs in the bucket (162 Series, compared with
+  `cmp`); it now fetches one more blob per Run, the stdout (816 blobs instead of 571 for
+  those Runs, 4.5 KB each on average). Run files: 5.5 to 12.8 KB before for the small
+  benchmarks, 1.7 to 2.0 KB now; `http_get`'s, from 208 to 985 KB with events inside to
+  3.8 KB.
 - _(agents: append your entry here, one per merged benchmark)_

@@ -1,0 +1,2879 @@
+{
+  "schema": "ledgermath.derivations/1",
+  "method": {
+    "name": "series",
+    "version": 1
+  },
+  "definitions": {
+    "series": "The Runs that share a benchmark, params, build, instance type and zone ID.",
+    "time_per_repetition": "Per Run: for each counted sample (warmup samples left out), sample_ended.t minus sample_started.t, divided by the sample's repetitions; the Run's number is the median of those (the mean of the two middle values when there is an even number of samples).",
+    "bytes_per_second": "Per Run, where the benchmark observed bytes_per_repetition: bytes_per_repetition × 10^9 / the Run's time per repetition in nanoseconds.",
+    "percentiles": "5th, 50th and 95th percentiles across the counted Runs of a Series, and of each group, by linear interpolation between closest ranks (R type 7): with n values sorted, h = (n − 1) × p / 100 and the percentile is x[⌊h⌋] + (h − ⌊h⌋) × (x[⌊h⌋+1] − x[⌊h⌋]). Each number's percentiles are taken over that number's values, so the bytes-per-second percentiles are not the time percentiles inverted.",
+    "counted": "A Run counts when its binary exited 0, every stdout line is an event that matches the events schema, and the stream obeys every order rule scripts/check-events.py checks: started first and once (not a --quick stream), finished last and once, samples numbered from 0, each closed by its own sample_ended before the next starts and never ending before it starts, observed keys once, exactly one verified, and as many counted samples as the Run asked for. Any other Run is failed: shown, with the reasons, and in no percentile.",
+    "groups": "Within a Series, the Runs whose split facts are all equal make one group. Groups are lettered in the order each first appears, and may interleave in time. A dump section is compared whole, apart from the per-boot values listed as left out; a fact read from such a section is canonical-json-sha256:<hex>, the sha256 of what remains as JSON with keys sorted and no whitespace (lscpu's output is re-written that way too).",
+    "differed": "For each pair of consecutive Runs in a Series, every split fact and every dump section of the before-dump whose hash changed, split on or not, with the top-level keys that changed for the sections that are read. Each changed section is marked: it splits, its change lies only in what is left out, or it is not split on."
+  },
+  "split_on": [
+    {
+      "fact": "binary",
+      "what": "binary.blob: the bytes that ran"
+    },
+    {
+      "fact": "runner",
+      "what": "runner: the manifest of runner/ that launched the binary"
+    },
+    {
+      "fact": "samples",
+      "what": "samples: LM_SAMPLES"
+    },
+    {
+      "fact": "image",
+      "what": "provider.image_id"
+    },
+    {
+      "fact": "cpuid",
+      "what": "dump section cpuid: the raw cpuid leaves of every CPU, without what is left out",
+      "section": "cpuid"
+    },
+    {
+      "fact": "lscpu",
+      "what": "dump section lscpu, without what is left out",
+      "section": "lscpu"
+    },
+    {
+      "fact": "sys_cpu",
+      "what": "dump section sys_cpu: topology, caches, vulnerabilities, microcode, cpufreq, cpuidle",
+      "section": "sys_cpu"
+    },
+    {
+      "fact": "kernel",
+      "what": "dump section kernel, without what is left out",
+      "section": "kernel"
+    },
+    {
+      "fact": "process",
+      "what": "dump section process: limits, cgroup, allowed CPUs",
+      "section": "process"
+    },
+    {
+      "fact": "packages",
+      "what": "dump section packages: every installed package and version",
+      "section": "packages"
+    }
+  ],
+  "left_out": [
+    {
+      "section": "cpuid",
+      "what": "the lines of hypervisor leaf 0x40000010, one per CPU",
+      "why": "its eax is the TSC frequency in kHz as calibrated for the boot: 2,899,996 (0x002c401c) on the c6i.8xlarge boot of 2026-11-10 23:36 UTC, 2,899,978 (0x002c400a) on the one of 2026-11-11 00:23 UTC; the other 2,208 lines of the two dumps are identical"
+    },
+    {
+      "section": "lscpu",
+      "what": "the BogoMIPS field",
+      "why": "the kernel's delay-loop calibration at boot, from the same TSC frequency: 5799.99 and 5799.95 on those two boots"
+    },
+    {
+      "section": "kernel",
+      "what": "the \"$ uname -a\" entry",
+      "why": "it holds the host name, which comes from the private address and is new on every launch"
+    }
+  ],
+  "not_split_on": [
+    {
+      "fact": "source_commit, source",
+      "what": "they change with every commit, whether or not the benchmark did"
+    },
+    {
+      "fact": "cpuinfo",
+      "what": "changes on every read (each CPU's current MHz)"
+    },
+    {
+      "fact": "memory",
+      "what": "changes on every read (meminfo, loadavg, uptime, pressure)"
+    },
+    {
+      "fact": "block_stat",
+      "what": "changes on every read (each block device's I/O counters, /sys/block/*/stat)"
+    },
+    {
+      "fact": "nvme_stats",
+      "what": "changes on every read (each Amazon NVMe disk's I/O counters and latency histograms, nvme amzn stats)"
+    },
+    {
+      "fact": "net_counters",
+      "what": "changes on every read (the default route's interface's own statistics, ethtool -S, with ENA's allowance-exceeded counters; /proc/net/dev, /proc/net/snmp, /proc/net/netstat)"
+    },
+    {
+      "fact": "network",
+      "what": "the routes, MTUs, TCP and socket settings, resolver files and network driver; added for the Service benchmarks after version 1's facts were chosen, and left to the Method that reads their requests"
+    },
+    {
+      "fact": "devices",
+      "what": "holds the root volume's serial, which is new on every launch"
+    },
+    {
+      "fact": "provider",
+      "what": "holds the instance ID, private address and launch time, new on every launch; its instance type and zone ID make the Series, and its image is split on"
+    },
+    {
+      "fact": "provision",
+      "what": "the box script's record of preparing the disks at boot: every command with its start and end times, new on every boot, and what it printed, which names the disks by serial"
+    },
+    {
+      "fact": "ec2_instance_type",
+      "what": "the EC2 API's catalog record of the instance type, taken once per boot: the instance type already makes the Series, AWS may revise the record without the machine changing, and a failed call records its error instead"
+    },
+    {
+      "fact": "ec2_volumes",
+      "what": "names the instance's volumes and holds their creation times and status, new on every launch"
+    },
+    {
+      "fact": "ec2_instance",
+      "what": "names the instance and holds its addresses and launch time, new on every launch"
+    },
+    {
+      "fact": "ec2_route_tables, ec2_vpc_endpoints",
+      "what": "the EC2 API's record of the path out of the box's subnet, taken once per boot: the route tables and the VPC's endpoints, shared by every box of the stage; a failed call records its error instead"
+    }
+  ],
+  "runs_read": 15,
+  "unreadable": [],
+  "sections": [
+    {
+      "section": "cpuid",
+      "runs": 12,
+      "changed_within_run": 0,
+      "boot_pairs": 12,
+      "changed_within_boot": 1,
+      "series_pairs": 3,
+      "changed_between_runs": 0,
+      "split_on": "cpuid"
+    },
+    {
+      "section": "cpuinfo",
+      "runs": 12,
+      "changed_within_run": 12,
+      "boot_pairs": 12,
+      "changed_within_boot": 12,
+      "series_pairs": 3,
+      "changed_between_runs": 3,
+      "split_on": null
+    },
+    {
+      "section": "devices",
+      "runs": 12,
+      "changed_within_run": 0,
+      "boot_pairs": 12,
+      "changed_within_boot": 3,
+      "series_pairs": 3,
+      "changed_between_runs": 3,
+      "split_on": null
+    },
+    {
+      "section": "ec2_instance",
+      "runs": 3,
+      "changed_within_run": 0,
+      "boot_pairs": 3,
+      "changed_within_boot": 1,
+      "series_pairs": 0,
+      "changed_between_runs": 0,
+      "split_on": null
+    },
+    {
+      "section": "kernel",
+      "runs": 15,
+      "changed_within_run": 0,
+      "boot_pairs": 14,
+      "changed_within_boot": 1,
+      "series_pairs": 3,
+      "changed_between_runs": 0,
+      "split_on": "kernel"
+    },
+    {
+      "section": "lscpu",
+      "runs": 12,
+      "changed_within_run": 0,
+      "boot_pairs": 12,
+      "changed_within_boot": 1,
+      "series_pairs": 3,
+      "changed_between_runs": 0,
+      "split_on": "lscpu"
+    },
+    {
+      "section": "memory",
+      "runs": 12,
+      "changed_within_run": 12,
+      "boot_pairs": 12,
+      "changed_within_boot": 12,
+      "series_pairs": 3,
+      "changed_between_runs": 3,
+      "split_on": null
+    },
+    {
+      "section": "packages",
+      "runs": 12,
+      "changed_within_run": 0,
+      "boot_pairs": 12,
+      "changed_within_boot": 1,
+      "series_pairs": 3,
+      "changed_between_runs": 0,
+      "split_on": "packages"
+    },
+    {
+      "section": "process",
+      "runs": 12,
+      "changed_within_run": 0,
+      "boot_pairs": 12,
+      "changed_within_boot": 1,
+      "series_pairs": 3,
+      "changed_between_runs": 0,
+      "split_on": "process"
+    },
+    {
+      "section": "provider",
+      "runs": 12,
+      "changed_within_run": 0,
+      "boot_pairs": 12,
+      "changed_within_boot": 1,
+      "series_pairs": 3,
+      "changed_between_runs": 0,
+      "split_on": null
+    },
+    {
+      "section": "sys_cpu",
+      "runs": 12,
+      "changed_within_run": 0,
+      "boot_pairs": 12,
+      "changed_within_boot": 1,
+      "series_pairs": 3,
+      "changed_between_runs": 0,
+      "split_on": "sys_cpu"
+    }
+  ],
+  "derivations": [
+    {
+      "method": {
+        "name": "series",
+        "version": 1
+      },
+      "series": {
+        "id": "392fbc05ee42",
+        "benchmark": "fake",
+        "params": {
+          "n": 1
+        },
+        "build": "static",
+        "instance_type": "m5.large",
+        "availability_zone_id": "use2-az3"
+      },
+      "runs": [
+        {
+          "id": "01a1cb48-0230-7a69-98f6-7dbbcfb87035",
+          "path": "runs/2026/11/11/01a1cb48-0230-7a69-98f6-7dbbcfb87035.json",
+          "sha256": "887c77e2718c32a0322c19df5edede5503de423fa95f18cfa9211ceaaafcd7e6"
+        }
+      ],
+      "points": [
+        {
+          "run": "01a1cb48-0230-7a69-98f6-7dbbcfb87035",
+          "path": "runs/2026/11/11/01a1cb48-0230-7a69-98f6-7dbbcfb87035.json",
+          "started_at": "2026-11-11T15:44:16.432794110Z",
+          "boot": "dcd56b11-cf5d-44ed-88b2-439006c8343e",
+          "group": "A",
+          "counted": true,
+          "failure": null,
+          "samples": [
+            {
+              "sample": 0,
+              "ns": 1,
+              "repetitions": 1,
+              "ns_per_repetition": 1
+            }
+          ],
+          "time_per_repetition_ns": 1,
+          "bytes_per_repetition": null,
+          "bytes_per_second": null
+        }
+      ],
+      "percentiles": {
+        "time_per_repetition_ns": {
+          "count": 1,
+          "runs": [
+            "01a1cb48-0230-7a69-98f6-7dbbcfb87035"
+          ],
+          "p5": 1,
+          "p50": 1,
+          "p95": 1
+        },
+        "bytes_per_second": null
+      },
+      "groups": [
+        {
+          "id": "A",
+          "facts": {
+            "binary": "sha256:94e3a73647dfef9797d2d075b05fa3df656b1e0c591b985105217d225bc24156",
+            "runner": "sha256:addbab75b9320702b7e052be4943e07521e745ff5386522a7326f1bc4be712d1",
+            "samples": 1,
+            "image": "ami-0123456789abcdef0",
+            "cpuid": null,
+            "lscpu": null,
+            "sys_cpu": null,
+            "kernel": "canonical-json-sha256:19251c596f443de8bc2c924a19a0507fd7839f01f7f470a41e3b23b6d8d91e8f",
+            "process": null,
+            "packages": null
+          },
+          "runs": [
+            "01a1cb48-0230-7a69-98f6-7dbbcfb87035"
+          ],
+          "percentiles": {
+            "time_per_repetition_ns": {
+              "count": 1,
+              "runs": [
+                "01a1cb48-0230-7a69-98f6-7dbbcfb87035"
+              ],
+              "p5": 1,
+              "p50": 1,
+              "p95": 1
+            },
+            "bytes_per_second": null
+          }
+        }
+      ],
+      "differed": [],
+      "sections": [
+        {
+          "section": "ec2_instance",
+          "runs": 1,
+          "changed_within_run": 0,
+          "pairs": 0,
+          "changed_between_runs": 0,
+          "split_on": null
+        },
+        {
+          "section": "kernel",
+          "runs": 1,
+          "changed_within_run": 0,
+          "pairs": 0,
+          "changed_between_runs": 0,
+          "split_on": "kernel"
+        }
+      ]
+    },
+    {
+      "method": {
+        "name": "series",
+        "version": 1
+      },
+      "series": {
+        "id": "313a49c3d043",
+        "benchmark": "fake",
+        "params": {
+          "n": 2
+        },
+        "build": "static",
+        "instance_type": "m5.large",
+        "availability_zone_id": "use2-az3"
+      },
+      "runs": [
+        {
+          "id": "01a1cb48-0238-7c1b-8c86-8f96d570e2a6",
+          "path": "runs/2026/11/11/01a1cb48-0238-7c1b-8c86-8f96d570e2a6.json",
+          "sha256": "bc4e3d1ee87d5a25f4345cc7bb03c471aeb918411d9071a67c510bf0727045f0"
+        }
+      ],
+      "points": [
+        {
+          "run": "01a1cb48-0238-7c1b-8c86-8f96d570e2a6",
+          "path": "runs/2026/11/11/01a1cb48-0238-7c1b-8c86-8f96d570e2a6.json",
+          "started_at": "2026-11-11T15:44:16.440029716Z",
+          "boot": "dcd56b11-cf5d-44ed-88b2-439006c8343e",
+          "group": "A",
+          "counted": true,
+          "failure": null,
+          "samples": [
+            {
+              "sample": 0,
+              "ns": 1,
+              "repetitions": 1,
+              "ns_per_repetition": 1
+            }
+          ],
+          "time_per_repetition_ns": 1,
+          "bytes_per_repetition": null,
+          "bytes_per_second": null
+        }
+      ],
+      "percentiles": {
+        "time_per_repetition_ns": {
+          "count": 1,
+          "runs": [
+            "01a1cb48-0238-7c1b-8c86-8f96d570e2a6"
+          ],
+          "p5": 1,
+          "p50": 1,
+          "p95": 1
+        },
+        "bytes_per_second": null
+      },
+      "groups": [
+        {
+          "id": "A",
+          "facts": {
+            "binary": "sha256:94e3a73647dfef9797d2d075b05fa3df656b1e0c591b985105217d225bc24156",
+            "runner": "sha256:addbab75b9320702b7e052be4943e07521e745ff5386522a7326f1bc4be712d1",
+            "samples": 1,
+            "image": "ami-0123456789abcdef0",
+            "cpuid": null,
+            "lscpu": null,
+            "sys_cpu": null,
+            "kernel": "canonical-json-sha256:19251c596f443de8bc2c924a19a0507fd7839f01f7f470a41e3b23b6d8d91e8f",
+            "process": null,
+            "packages": null
+          },
+          "runs": [
+            "01a1cb48-0238-7c1b-8c86-8f96d570e2a6"
+          ],
+          "percentiles": {
+            "time_per_repetition_ns": {
+              "count": 1,
+              "runs": [
+                "01a1cb48-0238-7c1b-8c86-8f96d570e2a6"
+              ],
+              "p5": 1,
+              "p50": 1,
+              "p95": 1
+            },
+            "bytes_per_second": null
+          }
+        }
+      ],
+      "differed": [],
+      "sections": [
+        {
+          "section": "ec2_instance",
+          "runs": 1,
+          "changed_within_run": 0,
+          "pairs": 0,
+          "changed_between_runs": 0,
+          "split_on": null
+        },
+        {
+          "section": "kernel",
+          "runs": 1,
+          "changed_within_run": 0,
+          "pairs": 0,
+          "changed_between_runs": 0,
+          "split_on": "kernel"
+        }
+      ]
+    },
+    {
+      "method": {
+        "name": "series",
+        "version": 1
+      },
+      "series": {
+        "id": "d964707d80b0",
+        "benchmark": "fake",
+        "params": {
+          "n": 3
+        },
+        "build": "static",
+        "instance_type": "m5.large",
+        "availability_zone_id": "use2-az3"
+      },
+      "runs": [
+        {
+          "id": "01a1cb48-0240-7731-b254-58764658f6d2",
+          "path": "runs/2026/11/11/01a1cb48-0240-7731-b254-58764658f6d2.json",
+          "sha256": "035ccfdb8cf49a7e086435e8bcb21084a8901d36d49678022de4c46ae01b672b"
+        }
+      ],
+      "points": [
+        {
+          "run": "01a1cb48-0240-7731-b254-58764658f6d2",
+          "path": "runs/2026/11/11/01a1cb48-0240-7731-b254-58764658f6d2.json",
+          "started_at": "2026-11-11T15:44:16.448543418Z",
+          "boot": "dcd56b11-cf5d-44ed-88b2-439006c8343e",
+          "group": "A",
+          "counted": true,
+          "failure": null,
+          "samples": [
+            {
+              "sample": 0,
+              "ns": 1,
+              "repetitions": 1,
+              "ns_per_repetition": 1
+            }
+          ],
+          "time_per_repetition_ns": 1,
+          "bytes_per_repetition": null,
+          "bytes_per_second": null
+        }
+      ],
+      "percentiles": {
+        "time_per_repetition_ns": {
+          "count": 1,
+          "runs": [
+            "01a1cb48-0240-7731-b254-58764658f6d2"
+          ],
+          "p5": 1,
+          "p50": 1,
+          "p95": 1
+        },
+        "bytes_per_second": null
+      },
+      "groups": [
+        {
+          "id": "A",
+          "facts": {
+            "binary": "sha256:94e3a73647dfef9797d2d075b05fa3df656b1e0c591b985105217d225bc24156",
+            "runner": "sha256:addbab75b9320702b7e052be4943e07521e745ff5386522a7326f1bc4be712d1",
+            "samples": 1,
+            "image": "ami-0123456789abcdef0",
+            "cpuid": null,
+            "lscpu": null,
+            "sys_cpu": null,
+            "kernel": "canonical-json-sha256:19251c596f443de8bc2c924a19a0507fd7839f01f7f470a41e3b23b6d8d91e8f",
+            "process": null,
+            "packages": null
+          },
+          "runs": [
+            "01a1cb48-0240-7731-b254-58764658f6d2"
+          ],
+          "percentiles": {
+            "time_per_repetition_ns": {
+              "count": 1,
+              "runs": [
+                "01a1cb48-0240-7731-b254-58764658f6d2"
+              ],
+              "p5": 1,
+              "p50": 1,
+              "p95": 1
+            },
+            "bytes_per_second": null
+          }
+        }
+      ],
+      "differed": [],
+      "sections": [
+        {
+          "section": "ec2_instance",
+          "runs": 1,
+          "changed_within_run": 0,
+          "pairs": 0,
+          "changed_between_runs": 0,
+          "split_on": null
+        },
+        {
+          "section": "kernel",
+          "runs": 1,
+          "changed_within_run": 0,
+          "pairs": 0,
+          "changed_between_runs": 0,
+          "split_on": "kernel"
+        }
+      ]
+    },
+    {
+      "method": {
+        "name": "series",
+        "version": 1
+      },
+      "series": {
+        "id": "8893a1541b84",
+        "benchmark": "memory_read",
+        "params": {
+          "size_bytes": 1073741824,
+          "threads": "all",
+          "path": "avx2"
+        },
+        "build": "dynamic",
+        "instance_type": "m6id.xlarge",
+        "availability_zone_id": "use2-az1"
+      },
+      "runs": [
+        {
+          "id": "01a1c7a7-ba7f-7e72-9c5c-a89ccc00f89f",
+          "path": "runs/2026/11/10/01a1c7a7-ba7f-7e72-9c5c-a89ccc00f89f.json",
+          "sha256": "daf0bc24ff6961311d28801b47fd5c1a387170fdb752101aae20d72112b130cc"
+        }
+      ],
+      "points": [
+        {
+          "run": "01a1c7a7-ba7f-7e72-9c5c-a89ccc00f89f",
+          "path": "runs/2026/11/10/01a1c7a7-ba7f-7e72-9c5c-a89ccc00f89f.json",
+          "started_at": "2026-11-10T22:50:20.671082506Z",
+          "boot": "dcd56b11-cf5d-44ed-88b2-439006c8343e",
+          "group": "A",
+          "counted": true,
+          "failure": null,
+          "samples": [
+            {
+              "sample": 7,
+              "ns": 1280268085,
+              "repetitions": 32,
+              "ns_per_repetition": 40008377.65625
+            },
+            {
+              "sample": 8,
+              "ns": 1273691024,
+              "repetitions": 32,
+              "ns_per_repetition": 39802844.5
+            },
+            {
+              "sample": 9,
+              "ns": 1276660276,
+              "repetitions": 32,
+              "ns_per_repetition": 39895633.625
+            },
+            {
+              "sample": 10,
+              "ns": 1284139108,
+              "repetitions": 32,
+              "ns_per_repetition": 40129347.125
+            },
+            {
+              "sample": 11,
+              "ns": 1272701349,
+              "repetitions": 32,
+              "ns_per_repetition": 39771917.15625
+            },
+            {
+              "sample": 12,
+              "ns": 1279362314,
+              "repetitions": 32,
+              "ns_per_repetition": 39980072.3125
+            },
+            {
+              "sample": 13,
+              "ns": 1269758211,
+              "repetitions": 32,
+              "ns_per_repetition": 39679944.09375
+            },
+            {
+              "sample": 14,
+              "ns": 1278748703,
+              "repetitions": 32,
+              "ns_per_repetition": 39960896.96875
+            },
+            {
+              "sample": 15,
+              "ns": 1280758942,
+              "repetitions": 32,
+              "ns_per_repetition": 40023716.9375
+            },
+            {
+              "sample": 16,
+              "ns": 1272046003,
+              "repetitions": 32,
+              "ns_per_repetition": 39751437.59375
+            }
+          ],
+          "time_per_repetition_ns": 39928265.296875,
+          "bytes_per_repetition": 1073741824,
+          "bytes_per_second": 26891772432.799297
+        }
+      ],
+      "percentiles": {
+        "time_per_repetition_ns": {
+          "count": 1,
+          "runs": [
+            "01a1c7a7-ba7f-7e72-9c5c-a89ccc00f89f"
+          ],
+          "p5": 39928265.296875,
+          "p50": 39928265.296875,
+          "p95": 39928265.296875
+        },
+        "bytes_per_second": {
+          "count": 1,
+          "runs": [
+            "01a1c7a7-ba7f-7e72-9c5c-a89ccc00f89f"
+          ],
+          "p5": 26891772432.799297,
+          "p50": 26891772432.799297,
+          "p95": 26891772432.799297
+        }
+      },
+      "groups": [
+        {
+          "id": "A",
+          "facts": {
+            "binary": "sha256:184aff50cde3c2f6fda3dea2790357c276be4ff1949f4f0cb36f2583c0f5e5b5",
+            "runner": "sha256:a9a18272499d5f25543a50de4261b64a357df6a76dd9a2677042a8979bcc8464",
+            "samples": 10,
+            "image": "ami-0123456789abcdef0",
+            "cpuid": "canonical-json-sha256:082961b5dfde4cbb8b67a56494c2b55dc57561d85f3a329b3c4dc2e82c40429d",
+            "lscpu": "canonical-json-sha256:533c2c60c939b31a6d33a9907bc6f33d7b9b43c7ccd0ef6fd2da53f09702f983",
+            "sys_cpu": "sha256:4fc9c1461575db852913b5f68aa7c117ccd5787c6defdc773d9fd9a7cc5f99fa",
+            "kernel": "canonical-json-sha256:294bfc7d275c49dbe18e915ab46ba39774372183b8d600316b1de0b5218a39c5",
+            "process": "sha256:a3bc926a55d87c6504c23a1336e807ea602b3a4fce3015b63d0648cb868b02e2",
+            "packages": "sha256:49919a08c2ceb10060cbd4f426a21c868567fc0df176e5e110a8ea137ce420ed"
+          },
+          "runs": [
+            "01a1c7a7-ba7f-7e72-9c5c-a89ccc00f89f"
+          ],
+          "percentiles": {
+            "time_per_repetition_ns": {
+              "count": 1,
+              "runs": [
+                "01a1c7a7-ba7f-7e72-9c5c-a89ccc00f89f"
+              ],
+              "p5": 39928265.296875,
+              "p50": 39928265.296875,
+              "p95": 39928265.296875
+            },
+            "bytes_per_second": {
+              "count": 1,
+              "runs": [
+                "01a1c7a7-ba7f-7e72-9c5c-a89ccc00f89f"
+              ],
+              "p5": 26891772432.799297,
+              "p50": 26891772432.799297,
+              "p95": 26891772432.799297
+            }
+          }
+        }
+      ],
+      "differed": [],
+      "sections": [
+        {
+          "section": "cpuid",
+          "runs": 1,
+          "changed_within_run": 0,
+          "pairs": 0,
+          "changed_between_runs": 0,
+          "split_on": "cpuid"
+        },
+        {
+          "section": "cpuinfo",
+          "runs": 1,
+          "changed_within_run": 1,
+          "pairs": 0,
+          "changed_between_runs": 0,
+          "split_on": null
+        },
+        {
+          "section": "devices",
+          "runs": 1,
+          "changed_within_run": 0,
+          "pairs": 0,
+          "changed_between_runs": 0,
+          "split_on": null
+        },
+        {
+          "section": "kernel",
+          "runs": 1,
+          "changed_within_run": 0,
+          "pairs": 0,
+          "changed_between_runs": 0,
+          "split_on": "kernel"
+        },
+        {
+          "section": "lscpu",
+          "runs": 1,
+          "changed_within_run": 0,
+          "pairs": 0,
+          "changed_between_runs": 0,
+          "split_on": "lscpu"
+        },
+        {
+          "section": "memory",
+          "runs": 1,
+          "changed_within_run": 1,
+          "pairs": 0,
+          "changed_between_runs": 0,
+          "split_on": null
+        },
+        {
+          "section": "packages",
+          "runs": 1,
+          "changed_within_run": 0,
+          "pairs": 0,
+          "changed_between_runs": 0,
+          "split_on": "packages"
+        },
+        {
+          "section": "process",
+          "runs": 1,
+          "changed_within_run": 0,
+          "pairs": 0,
+          "changed_between_runs": 0,
+          "split_on": "process"
+        },
+        {
+          "section": "provider",
+          "runs": 1,
+          "changed_within_run": 0,
+          "pairs": 0,
+          "changed_between_runs": 0,
+          "split_on": null
+        },
+        {
+          "section": "sys_cpu",
+          "runs": 1,
+          "changed_within_run": 0,
+          "pairs": 0,
+          "changed_between_runs": 0,
+          "split_on": "sys_cpu"
+        }
+      ]
+    },
+    {
+      "method": {
+        "name": "series",
+        "version": 1
+      },
+      "series": {
+        "id": "d58ce975f40a",
+        "benchmark": "memory_read",
+        "params": {
+          "size_bytes": 1073741824,
+          "threads": "all",
+          "path": "avx2"
+        },
+        "build": "static",
+        "instance_type": "m6id.xlarge",
+        "availability_zone_id": "use2-az1"
+      },
+      "runs": [
+        {
+          "id": "01a1c7a7-f804-7207-bb94-f3620b7629c1",
+          "path": "runs/2026/11/10/01a1c7a7-f804-7207-bb94-f3620b7629c1.json",
+          "sha256": "5bebbb3a2f57ba5fb17f929762b09bfe7997dc819c2ec14fc5d19ff0f907b43a"
+        }
+      ],
+      "points": [
+        {
+          "run": "01a1c7a7-f804-7207-bb94-f3620b7629c1",
+          "path": "runs/2026/11/10/01a1c7a7-f804-7207-bb94-f3620b7629c1.json",
+          "started_at": "2026-11-10T22:50:36.420905948Z",
+          "boot": "dcd56b11-cf5d-44ed-88b2-439006c8343e",
+          "group": "A",
+          "counted": true,
+          "failure": null,
+          "samples": [
+            {
+              "sample": 7,
+              "ns": 1275660823,
+              "repetitions": 32,
+              "ns_per_repetition": 39864400.71875
+            },
+            {
+              "sample": 8,
+              "ns": 1270746279,
+              "repetitions": 32,
+              "ns_per_repetition": 39710821.21875
+            },
+            {
+              "sample": 9,
+              "ns": 1279374775,
+              "repetitions": 32,
+              "ns_per_repetition": 39980461.71875
+            },
+            {
+              "sample": 10,
+              "ns": 1273341282,
+              "repetitions": 32,
+              "ns_per_repetition": 39791915.0625
+            },
+            {
+              "sample": 11,
+              "ns": 1262137808,
+              "repetitions": 32,
+              "ns_per_repetition": 39441806.5
+            },
+            {
+              "sample": 12,
+              "ns": 1263785805,
+              "repetitions": 32,
+              "ns_per_repetition": 39493306.40625
+            },
+            {
+              "sample": 13,
+              "ns": 1268473614,
+              "repetitions": 32,
+              "ns_per_repetition": 39639800.4375
+            },
+            {
+              "sample": 14,
+              "ns": 1278370632,
+              "repetitions": 32,
+              "ns_per_repetition": 39949082.25
+            },
+            {
+              "sample": 15,
+              "ns": 1278173616,
+              "repetitions": 32,
+              "ns_per_repetition": 39942925.5
+            },
+            {
+              "sample": 16,
+              "ns": 1271990722,
+              "repetitions": 32,
+              "ns_per_repetition": 39749710.0625
+            }
+          ],
+          "time_per_repetition_ns": 39770812.5625,
+          "bytes_per_repetition": 1073741824,
+          "bytes_per_second": 26998237018.98497
+        }
+      ],
+      "percentiles": {
+        "time_per_repetition_ns": {
+          "count": 1,
+          "runs": [
+            "01a1c7a7-f804-7207-bb94-f3620b7629c1"
+          ],
+          "p5": 39770812.5625,
+          "p50": 39770812.5625,
+          "p95": 39770812.5625
+        },
+        "bytes_per_second": {
+          "count": 1,
+          "runs": [
+            "01a1c7a7-f804-7207-bb94-f3620b7629c1"
+          ],
+          "p5": 26998237018.98497,
+          "p50": 26998237018.98497,
+          "p95": 26998237018.98497
+        }
+      },
+      "groups": [
+        {
+          "id": "A",
+          "facts": {
+            "binary": "sha256:a3674893a396548874757acdd23df1028ce8789a4a82e35e41b209205b88f5f2",
+            "runner": "sha256:a9a18272499d5f25543a50de4261b64a357df6a76dd9a2677042a8979bcc8464",
+            "samples": 10,
+            "image": "ami-0123456789abcdef0",
+            "cpuid": "canonical-json-sha256:082961b5dfde4cbb8b67a56494c2b55dc57561d85f3a329b3c4dc2e82c40429d",
+            "lscpu": "canonical-json-sha256:533c2c60c939b31a6d33a9907bc6f33d7b9b43c7ccd0ef6fd2da53f09702f983",
+            "sys_cpu": "sha256:4fc9c1461575db852913b5f68aa7c117ccd5787c6defdc773d9fd9a7cc5f99fa",
+            "kernel": "canonical-json-sha256:294bfc7d275c49dbe18e915ab46ba39774372183b8d600316b1de0b5218a39c5",
+            "process": "sha256:a3bc926a55d87c6504c23a1336e807ea602b3a4fce3015b63d0648cb868b02e2",
+            "packages": "sha256:49919a08c2ceb10060cbd4f426a21c868567fc0df176e5e110a8ea137ce420ed"
+          },
+          "runs": [
+            "01a1c7a7-f804-7207-bb94-f3620b7629c1"
+          ],
+          "percentiles": {
+            "time_per_repetition_ns": {
+              "count": 1,
+              "runs": [
+                "01a1c7a7-f804-7207-bb94-f3620b7629c1"
+              ],
+              "p5": 39770812.5625,
+              "p50": 39770812.5625,
+              "p95": 39770812.5625
+            },
+            "bytes_per_second": {
+              "count": 1,
+              "runs": [
+                "01a1c7a7-f804-7207-bb94-f3620b7629c1"
+              ],
+              "p5": 26998237018.98497,
+              "p50": 26998237018.98497,
+              "p95": 26998237018.98497
+            }
+          }
+        }
+      ],
+      "differed": [],
+      "sections": [
+        {
+          "section": "cpuid",
+          "runs": 1,
+          "changed_within_run": 0,
+          "pairs": 0,
+          "changed_between_runs": 0,
+          "split_on": "cpuid"
+        },
+        {
+          "section": "cpuinfo",
+          "runs": 1,
+          "changed_within_run": 1,
+          "pairs": 0,
+          "changed_between_runs": 0,
+          "split_on": null
+        },
+        {
+          "section": "devices",
+          "runs": 1,
+          "changed_within_run": 0,
+          "pairs": 0,
+          "changed_between_runs": 0,
+          "split_on": null
+        },
+        {
+          "section": "kernel",
+          "runs": 1,
+          "changed_within_run": 0,
+          "pairs": 0,
+          "changed_between_runs": 0,
+          "split_on": "kernel"
+        },
+        {
+          "section": "lscpu",
+          "runs": 1,
+          "changed_within_run": 0,
+          "pairs": 0,
+          "changed_between_runs": 0,
+          "split_on": "lscpu"
+        },
+        {
+          "section": "memory",
+          "runs": 1,
+          "changed_within_run": 1,
+          "pairs": 0,
+          "changed_between_runs": 0,
+          "split_on": null
+        },
+        {
+          "section": "packages",
+          "runs": 1,
+          "changed_within_run": 0,
+          "pairs": 0,
+          "changed_between_runs": 0,
+          "split_on": "packages"
+        },
+        {
+          "section": "process",
+          "runs": 1,
+          "changed_within_run": 0,
+          "pairs": 0,
+          "changed_between_runs": 0,
+          "split_on": "process"
+        },
+        {
+          "section": "provider",
+          "runs": 1,
+          "changed_within_run": 0,
+          "pairs": 0,
+          "changed_between_runs": 0,
+          "split_on": null
+        },
+        {
+          "section": "sys_cpu",
+          "runs": 1,
+          "changed_within_run": 0,
+          "pairs": 0,
+          "changed_between_runs": 0,
+          "split_on": "sys_cpu"
+        }
+      ]
+    },
+    {
+      "method": {
+        "name": "series",
+        "version": 1
+      },
+      "series": {
+        "id": "aa2a56a772a6",
+        "benchmark": "memory_read",
+        "params": {
+          "size_bytes": 1073741824,
+          "threads": 1,
+          "path": "avx2"
+        },
+        "build": "dynamic",
+        "instance_type": "m6id.xlarge",
+        "availability_zone_id": "use2-az1"
+      },
+      "runs": [
+        {
+          "id": "01a1c7a6-aee3-7d5f-b7b3-f2a0df5a70a2",
+          "path": "runs/2026/11/10/01a1c7a6-aee3-7d5f-b7b3-f2a0df5a70a2.json",
+          "sha256": "e17500cfa3ce8f4402e97e40b4d7182728fb96892a874109d30231ff821b013a"
+        }
+      ],
+      "points": [
+        {
+          "run": "01a1c7a6-aee3-7d5f-b7b3-f2a0df5a70a2",
+          "path": "runs/2026/11/10/01a1c7a6-aee3-7d5f-b7b3-f2a0df5a70a2.json",
+          "started_at": "2026-11-10T22:49:12.163097190Z",
+          "boot": "dcd56b11-cf5d-44ed-88b2-439006c8343e",
+          "group": "A",
+          "counted": true,
+          "failure": null,
+          "samples": [
+            {
+              "sample": 6,
+              "ns": 1420934727,
+              "repetitions": 16,
+              "ns_per_repetition": 88808420.4375
+            },
+            {
+              "sample": 7,
+              "ns": 1416260931,
+              "repetitions": 16,
+              "ns_per_repetition": 88516308.1875
+            },
+            {
+              "sample": 8,
+              "ns": 1412872465,
+              "repetitions": 16,
+              "ns_per_repetition": 88304529.0625
+            },
+            {
+              "sample": 9,
+              "ns": 1421140253,
+              "repetitions": 16,
+              "ns_per_repetition": 88821265.8125
+            },
+            {
+              "sample": 10,
+              "ns": 1420721664,
+              "repetitions": 16,
+              "ns_per_repetition": 88795104
+            },
+            {
+              "sample": 11,
+              "ns": 1423999426,
+              "repetitions": 16,
+              "ns_per_repetition": 88999964.125
+            },
+            {
+              "sample": 12,
+              "ns": 1430447635,
+              "repetitions": 16,
+              "ns_per_repetition": 89402977.1875
+            },
+            {
+              "sample": 13,
+              "ns": 1429836218,
+              "repetitions": 16,
+              "ns_per_repetition": 89364763.625
+            },
+            {
+              "sample": 14,
+              "ns": 1425972714,
+              "repetitions": 16,
+              "ns_per_repetition": 89123294.625
+            },
+            {
+              "sample": 15,
+              "ns": 1427074573,
+              "repetitions": 16,
+              "ns_per_repetition": 89192160.8125
+            }
+          ],
+          "time_per_repetition_ns": 88910614.96875,
+          "bytes_per_repetition": 1073741824,
+          "bytes_per_second": 12076643766.072197
+        }
+      ],
+      "percentiles": {
+        "time_per_repetition_ns": {
+          "count": 1,
+          "runs": [
+            "01a1c7a6-aee3-7d5f-b7b3-f2a0df5a70a2"
+          ],
+          "p5": 88910614.96875,
+          "p50": 88910614.96875,
+          "p95": 88910614.96875
+        },
+        "bytes_per_second": {
+          "count": 1,
+          "runs": [
+            "01a1c7a6-aee3-7d5f-b7b3-f2a0df5a70a2"
+          ],
+          "p5": 12076643766.072197,
+          "p50": 12076643766.072197,
+          "p95": 12076643766.072197
+        }
+      },
+      "groups": [
+        {
+          "id": "A",
+          "facts": {
+            "binary": "sha256:184aff50cde3c2f6fda3dea2790357c276be4ff1949f4f0cb36f2583c0f5e5b5",
+            "runner": "sha256:a9a18272499d5f25543a50de4261b64a357df6a76dd9a2677042a8979bcc8464",
+            "samples": 10,
+            "image": "ami-0123456789abcdef0",
+            "cpuid": "canonical-json-sha256:082961b5dfde4cbb8b67a56494c2b55dc57561d85f3a329b3c4dc2e82c40429d",
+            "lscpu": "canonical-json-sha256:533c2c60c939b31a6d33a9907bc6f33d7b9b43c7ccd0ef6fd2da53f09702f983",
+            "sys_cpu": "sha256:4fc9c1461575db852913b5f68aa7c117ccd5787c6defdc773d9fd9a7cc5f99fa",
+            "kernel": "canonical-json-sha256:294bfc7d275c49dbe18e915ab46ba39774372183b8d600316b1de0b5218a39c5",
+            "process": "sha256:a3bc926a55d87c6504c23a1336e807ea602b3a4fce3015b63d0648cb868b02e2",
+            "packages": "sha256:49919a08c2ceb10060cbd4f426a21c868567fc0df176e5e110a8ea137ce420ed"
+          },
+          "runs": [
+            "01a1c7a6-aee3-7d5f-b7b3-f2a0df5a70a2"
+          ],
+          "percentiles": {
+            "time_per_repetition_ns": {
+              "count": 1,
+              "runs": [
+                "01a1c7a6-aee3-7d5f-b7b3-f2a0df5a70a2"
+              ],
+              "p5": 88910614.96875,
+              "p50": 88910614.96875,
+              "p95": 88910614.96875
+            },
+            "bytes_per_second": {
+              "count": 1,
+              "runs": [
+                "01a1c7a6-aee3-7d5f-b7b3-f2a0df5a70a2"
+              ],
+              "p5": 12076643766.072197,
+              "p50": 12076643766.072197,
+              "p95": 12076643766.072197
+            }
+          }
+        }
+      ],
+      "differed": [],
+      "sections": [
+        {
+          "section": "cpuid",
+          "runs": 1,
+          "changed_within_run": 0,
+          "pairs": 0,
+          "changed_between_runs": 0,
+          "split_on": "cpuid"
+        },
+        {
+          "section": "cpuinfo",
+          "runs": 1,
+          "changed_within_run": 1,
+          "pairs": 0,
+          "changed_between_runs": 0,
+          "split_on": null
+        },
+        {
+          "section": "devices",
+          "runs": 1,
+          "changed_within_run": 0,
+          "pairs": 0,
+          "changed_between_runs": 0,
+          "split_on": null
+        },
+        {
+          "section": "kernel",
+          "runs": 1,
+          "changed_within_run": 0,
+          "pairs": 0,
+          "changed_between_runs": 0,
+          "split_on": "kernel"
+        },
+        {
+          "section": "lscpu",
+          "runs": 1,
+          "changed_within_run": 0,
+          "pairs": 0,
+          "changed_between_runs": 0,
+          "split_on": "lscpu"
+        },
+        {
+          "section": "memory",
+          "runs": 1,
+          "changed_within_run": 1,
+          "pairs": 0,
+          "changed_between_runs": 0,
+          "split_on": null
+        },
+        {
+          "section": "packages",
+          "runs": 1,
+          "changed_within_run": 0,
+          "pairs": 0,
+          "changed_between_runs": 0,
+          "split_on": "packages"
+        },
+        {
+          "section": "process",
+          "runs": 1,
+          "changed_within_run": 0,
+          "pairs": 0,
+          "changed_between_runs": 0,
+          "split_on": "process"
+        },
+        {
+          "section": "provider",
+          "runs": 1,
+          "changed_within_run": 0,
+          "pairs": 0,
+          "changed_between_runs": 0,
+          "split_on": null
+        },
+        {
+          "section": "sys_cpu",
+          "runs": 1,
+          "changed_within_run": 0,
+          "pairs": 0,
+          "changed_between_runs": 0,
+          "split_on": "sys_cpu"
+        }
+      ]
+    },
+    {
+      "method": {
+        "name": "series",
+        "version": 1
+      },
+      "series": {
+        "id": "ad3f2e9bc87d",
+        "benchmark": "memory_read",
+        "params": {
+          "size_bytes": 1073741824,
+          "threads": 1,
+          "path": "avx2"
+        },
+        "build": "static",
+        "instance_type": "m6id.xlarge",
+        "availability_zone_id": "use2-az1"
+      },
+      "runs": [
+        {
+          "id": "01a1c7a6-f472-70d1-970c-e0b36fdcd642",
+          "path": "runs/2026/11/10/01a1c7a6-f472-70d1-970c-e0b36fdcd642.json",
+          "sha256": "9b723e623ed10f37ff733352ad667835884553c3cc3d1b89ef054cd7eae3136a"
+        }
+      ],
+      "points": [
+        {
+          "run": "01a1c7a6-f472-70d1-970c-e0b36fdcd642",
+          "path": "runs/2026/11/10/01a1c7a6-f472-70d1-970c-e0b36fdcd642.json",
+          "started_at": "2026-11-10T22:49:29.970019427Z",
+          "boot": "dcd56b11-cf5d-44ed-88b2-439006c8343e",
+          "group": "A",
+          "counted": true,
+          "failure": null,
+          "samples": [
+            {
+              "sample": 6,
+              "ns": 1435436872,
+              "repetitions": 16,
+              "ns_per_repetition": 89714804.5
+            },
+            {
+              "sample": 7,
+              "ns": 1439389119,
+              "repetitions": 16,
+              "ns_per_repetition": 89961819.9375
+            },
+            {
+              "sample": 8,
+              "ns": 1455482100,
+              "repetitions": 16,
+              "ns_per_repetition": 90967631.25
+            },
+            {
+              "sample": 9,
+              "ns": 1448653435,
+              "repetitions": 16,
+              "ns_per_repetition": 90540839.6875
+            },
+            {
+              "sample": 10,
+              "ns": 1439541419,
+              "repetitions": 16,
+              "ns_per_repetition": 89971338.6875
+            },
+            {
+              "sample": 11,
+              "ns": 1432843212,
+              "repetitions": 16,
+              "ns_per_repetition": 89552700.75
+            },
+            {
+              "sample": 12,
+              "ns": 1428900280,
+              "repetitions": 16,
+              "ns_per_repetition": 89306267.5
+            },
+            {
+              "sample": 13,
+              "ns": 1428400918,
+              "repetitions": 16,
+              "ns_per_repetition": 89275057.375
+            },
+            {
+              "sample": 14,
+              "ns": 1432570024,
+              "repetitions": 16,
+              "ns_per_repetition": 89535626.5
+            },
+            {
+              "sample": 15,
+              "ns": 1441229721,
+              "repetitions": 16,
+              "ns_per_repetition": 90076857.5625
+            }
+          ],
+          "time_per_repetition_ns": 89838312.21875,
+          "bytes_per_repetition": 1073741824,
+          "bytes_per_second": 11951936734.80323
+        }
+      ],
+      "percentiles": {
+        "time_per_repetition_ns": {
+          "count": 1,
+          "runs": [
+            "01a1c7a6-f472-70d1-970c-e0b36fdcd642"
+          ],
+          "p5": 89838312.21875,
+          "p50": 89838312.21875,
+          "p95": 89838312.21875
+        },
+        "bytes_per_second": {
+          "count": 1,
+          "runs": [
+            "01a1c7a6-f472-70d1-970c-e0b36fdcd642"
+          ],
+          "p5": 11951936734.80323,
+          "p50": 11951936734.80323,
+          "p95": 11951936734.80323
+        }
+      },
+      "groups": [
+        {
+          "id": "A",
+          "facts": {
+            "binary": "sha256:a3674893a396548874757acdd23df1028ce8789a4a82e35e41b209205b88f5f2",
+            "runner": "sha256:a9a18272499d5f25543a50de4261b64a357df6a76dd9a2677042a8979bcc8464",
+            "samples": 10,
+            "image": "ami-0123456789abcdef0",
+            "cpuid": "canonical-json-sha256:082961b5dfde4cbb8b67a56494c2b55dc57561d85f3a329b3c4dc2e82c40429d",
+            "lscpu": "canonical-json-sha256:533c2c60c939b31a6d33a9907bc6f33d7b9b43c7ccd0ef6fd2da53f09702f983",
+            "sys_cpu": "sha256:4fc9c1461575db852913b5f68aa7c117ccd5787c6defdc773d9fd9a7cc5f99fa",
+            "kernel": "canonical-json-sha256:294bfc7d275c49dbe18e915ab46ba39774372183b8d600316b1de0b5218a39c5",
+            "process": "sha256:a3bc926a55d87c6504c23a1336e807ea602b3a4fce3015b63d0648cb868b02e2",
+            "packages": "sha256:49919a08c2ceb10060cbd4f426a21c868567fc0df176e5e110a8ea137ce420ed"
+          },
+          "runs": [
+            "01a1c7a6-f472-70d1-970c-e0b36fdcd642"
+          ],
+          "percentiles": {
+            "time_per_repetition_ns": {
+              "count": 1,
+              "runs": [
+                "01a1c7a6-f472-70d1-970c-e0b36fdcd642"
+              ],
+              "p5": 89838312.21875,
+              "p50": 89838312.21875,
+              "p95": 89838312.21875
+            },
+            "bytes_per_second": {
+              "count": 1,
+              "runs": [
+                "01a1c7a6-f472-70d1-970c-e0b36fdcd642"
+              ],
+              "p5": 11951936734.80323,
+              "p50": 11951936734.80323,
+              "p95": 11951936734.80323
+            }
+          }
+        }
+      ],
+      "differed": [],
+      "sections": [
+        {
+          "section": "cpuid",
+          "runs": 1,
+          "changed_within_run": 0,
+          "pairs": 0,
+          "changed_between_runs": 0,
+          "split_on": "cpuid"
+        },
+        {
+          "section": "cpuinfo",
+          "runs": 1,
+          "changed_within_run": 1,
+          "pairs": 0,
+          "changed_between_runs": 0,
+          "split_on": null
+        },
+        {
+          "section": "devices",
+          "runs": 1,
+          "changed_within_run": 0,
+          "pairs": 0,
+          "changed_between_runs": 0,
+          "split_on": null
+        },
+        {
+          "section": "kernel",
+          "runs": 1,
+          "changed_within_run": 0,
+          "pairs": 0,
+          "changed_between_runs": 0,
+          "split_on": "kernel"
+        },
+        {
+          "section": "lscpu",
+          "runs": 1,
+          "changed_within_run": 0,
+          "pairs": 0,
+          "changed_between_runs": 0,
+          "split_on": "lscpu"
+        },
+        {
+          "section": "memory",
+          "runs": 1,
+          "changed_within_run": 1,
+          "pairs": 0,
+          "changed_between_runs": 0,
+          "split_on": null
+        },
+        {
+          "section": "packages",
+          "runs": 1,
+          "changed_within_run": 0,
+          "pairs": 0,
+          "changed_between_runs": 0,
+          "split_on": "packages"
+        },
+        {
+          "section": "process",
+          "runs": 1,
+          "changed_within_run": 0,
+          "pairs": 0,
+          "changed_between_runs": 0,
+          "split_on": "process"
+        },
+        {
+          "section": "provider",
+          "runs": 1,
+          "changed_within_run": 0,
+          "pairs": 0,
+          "changed_between_runs": 0,
+          "split_on": null
+        },
+        {
+          "section": "sys_cpu",
+          "runs": 1,
+          "changed_within_run": 0,
+          "pairs": 0,
+          "changed_between_runs": 0,
+          "split_on": "sys_cpu"
+        }
+      ]
+    },
+    {
+      "method": {
+        "name": "series",
+        "version": 1
+      },
+      "series": {
+        "id": "1a2a41553f9e",
+        "benchmark": "memory_read",
+        "params": {
+          "size_bytes": 1073741824,
+          "threads": "all",
+          "path": "scalar"
+        },
+        "build": "dynamic",
+        "instance_type": "m6id.xlarge",
+        "availability_zone_id": "use2-az1"
+      },
+      "runs": [
+        {
+          "id": "01a1c7a7-8071-763f-a6fd-3f50b5b38992",
+          "path": "runs/2026/11/10/01a1c7a7-8071-763f-a6fd-3f50b5b38992.json",
+          "sha256": "9515c0f01aa6b0b9a45af480ea6bd7fb9fc7d5fff6cd98c15b0ffa8a58223c58"
+        }
+      ],
+      "points": [
+        {
+          "run": "01a1c7a7-8071-763f-a6fd-3f50b5b38992",
+          "path": "runs/2026/11/10/01a1c7a7-8071-763f-a6fd-3f50b5b38992.json",
+          "started_at": "2026-11-10T22:50:05.809236237Z",
+          "boot": "dcd56b11-cf5d-44ed-88b2-439006c8343e",
+          "group": "A",
+          "counted": true,
+          "failure": null,
+          "samples": [
+            {
+              "sample": 7,
+              "ns": 1224359777,
+              "repetitions": 32,
+              "ns_per_repetition": 38261243.03125
+            },
+            {
+              "sample": 8,
+              "ns": 1192792707,
+              "repetitions": 32,
+              "ns_per_repetition": 37274772.09375
+            },
+            {
+              "sample": 9,
+              "ns": 1201949266,
+              "repetitions": 32,
+              "ns_per_repetition": 37560914.5625
+            },
+            {
+              "sample": 10,
+              "ns": 1192095909,
+              "repetitions": 32,
+              "ns_per_repetition": 37252997.15625
+            },
+            {
+              "sample": 11,
+              "ns": 1193961305,
+              "repetitions": 32,
+              "ns_per_repetition": 37311290.78125
+            },
+            {
+              "sample": 12,
+              "ns": 1194006014,
+              "repetitions": 32,
+              "ns_per_repetition": 37312687.9375
+            },
+            {
+              "sample": 13,
+              "ns": 1191002218,
+              "repetitions": 32,
+              "ns_per_repetition": 37218819.3125
+            },
+            {
+              "sample": 14,
+              "ns": 1226836786,
+              "repetitions": 32,
+              "ns_per_repetition": 38338649.5625
+            },
+            {
+              "sample": 15,
+              "ns": 1198843422,
+              "repetitions": 32,
+              "ns_per_repetition": 37463856.9375
+            },
+            {
+              "sample": 16,
+              "ns": 1194487871,
+              "repetitions": 32,
+              "ns_per_repetition": 37327745.96875
+            }
+          ],
+          "time_per_repetition_ns": 37320216.953125,
+          "bytes_per_repetition": 1073741824,
+          "bytes_per_second": 28771049893.64459
+        }
+      ],
+      "percentiles": {
+        "time_per_repetition_ns": {
+          "count": 1,
+          "runs": [
+            "01a1c7a7-8071-763f-a6fd-3f50b5b38992"
+          ],
+          "p5": 37320216.953125,
+          "p50": 37320216.953125,
+          "p95": 37320216.953125
+        },
+        "bytes_per_second": {
+          "count": 1,
+          "runs": [
+            "01a1c7a7-8071-763f-a6fd-3f50b5b38992"
+          ],
+          "p5": 28771049893.64459,
+          "p50": 28771049893.64459,
+          "p95": 28771049893.64459
+        }
+      },
+      "groups": [
+        {
+          "id": "A",
+          "facts": {
+            "binary": "sha256:184aff50cde3c2f6fda3dea2790357c276be4ff1949f4f0cb36f2583c0f5e5b5",
+            "runner": "sha256:a9a18272499d5f25543a50de4261b64a357df6a76dd9a2677042a8979bcc8464",
+            "samples": 10,
+            "image": "ami-0123456789abcdef0",
+            "cpuid": "canonical-json-sha256:082961b5dfde4cbb8b67a56494c2b55dc57561d85f3a329b3c4dc2e82c40429d",
+            "lscpu": "canonical-json-sha256:533c2c60c939b31a6d33a9907bc6f33d7b9b43c7ccd0ef6fd2da53f09702f983",
+            "sys_cpu": "sha256:4fc9c1461575db852913b5f68aa7c117ccd5787c6defdc773d9fd9a7cc5f99fa",
+            "kernel": "canonical-json-sha256:294bfc7d275c49dbe18e915ab46ba39774372183b8d600316b1de0b5218a39c5",
+            "process": "sha256:a3bc926a55d87c6504c23a1336e807ea602b3a4fce3015b63d0648cb868b02e2",
+            "packages": "sha256:49919a08c2ceb10060cbd4f426a21c868567fc0df176e5e110a8ea137ce420ed"
+          },
+          "runs": [
+            "01a1c7a7-8071-763f-a6fd-3f50b5b38992"
+          ],
+          "percentiles": {
+            "time_per_repetition_ns": {
+              "count": 1,
+              "runs": [
+                "01a1c7a7-8071-763f-a6fd-3f50b5b38992"
+              ],
+              "p5": 37320216.953125,
+              "p50": 37320216.953125,
+              "p95": 37320216.953125
+            },
+            "bytes_per_second": {
+              "count": 1,
+              "runs": [
+                "01a1c7a7-8071-763f-a6fd-3f50b5b38992"
+              ],
+              "p5": 28771049893.64459,
+              "p50": 28771049893.64459,
+              "p95": 28771049893.64459
+            }
+          }
+        }
+      ],
+      "differed": [],
+      "sections": [
+        {
+          "section": "cpuid",
+          "runs": 1,
+          "changed_within_run": 0,
+          "pairs": 0,
+          "changed_between_runs": 0,
+          "split_on": "cpuid"
+        },
+        {
+          "section": "cpuinfo",
+          "runs": 1,
+          "changed_within_run": 1,
+          "pairs": 0,
+          "changed_between_runs": 0,
+          "split_on": null
+        },
+        {
+          "section": "devices",
+          "runs": 1,
+          "changed_within_run": 0,
+          "pairs": 0,
+          "changed_between_runs": 0,
+          "split_on": null
+        },
+        {
+          "section": "kernel",
+          "runs": 1,
+          "changed_within_run": 0,
+          "pairs": 0,
+          "changed_between_runs": 0,
+          "split_on": "kernel"
+        },
+        {
+          "section": "lscpu",
+          "runs": 1,
+          "changed_within_run": 0,
+          "pairs": 0,
+          "changed_between_runs": 0,
+          "split_on": "lscpu"
+        },
+        {
+          "section": "memory",
+          "runs": 1,
+          "changed_within_run": 1,
+          "pairs": 0,
+          "changed_between_runs": 0,
+          "split_on": null
+        },
+        {
+          "section": "packages",
+          "runs": 1,
+          "changed_within_run": 0,
+          "pairs": 0,
+          "changed_between_runs": 0,
+          "split_on": "packages"
+        },
+        {
+          "section": "process",
+          "runs": 1,
+          "changed_within_run": 0,
+          "pairs": 0,
+          "changed_between_runs": 0,
+          "split_on": "process"
+        },
+        {
+          "section": "provider",
+          "runs": 1,
+          "changed_within_run": 0,
+          "pairs": 0,
+          "changed_between_runs": 0,
+          "split_on": null
+        },
+        {
+          "section": "sys_cpu",
+          "runs": 1,
+          "changed_within_run": 0,
+          "pairs": 0,
+          "changed_between_runs": 0,
+          "split_on": "sys_cpu"
+        }
+      ]
+    },
+    {
+      "method": {
+        "name": "series",
+        "version": 1
+      },
+      "series": {
+        "id": "c3c6637093cf",
+        "benchmark": "memory_read",
+        "params": {
+          "size_bytes": 1073741824,
+          "threads": "all",
+          "path": "scalar"
+        },
+        "build": "static",
+        "instance_type": "m6id.xlarge",
+        "availability_zone_id": "use2-az1"
+      },
+      "runs": [
+        {
+          "id": "01a1c7a7-3ac2-7b8d-adde-a2f5ff740e5c",
+          "path": "runs/2026/11/10/01a1c7a7-3ac2-7b8d-adde-a2f5ff740e5c.json",
+          "sha256": "5ad1e8a22f9c7a1089b44b20c3a3af8fcdb1c425c4ae6653258ba3e03f7b09f1"
+        }
+      ],
+      "points": [
+        {
+          "run": "01a1c7a7-3ac2-7b8d-adde-a2f5ff740e5c",
+          "path": "runs/2026/11/10/01a1c7a7-3ac2-7b8d-adde-a2f5ff740e5c.json",
+          "started_at": "2026-11-10T22:49:47.970206722Z",
+          "boot": "dcd56b11-cf5d-44ed-88b2-439006c8343e",
+          "group": "A",
+          "counted": true,
+          "failure": null,
+          "samples": [
+            {
+              "sample": 7,
+              "ns": 1442127710,
+              "repetitions": 32,
+              "ns_per_repetition": 45066490.9375
+            },
+            {
+              "sample": 8,
+              "ns": 1440424208,
+              "repetitions": 32,
+              "ns_per_repetition": 45013256.5
+            },
+            {
+              "sample": 9,
+              "ns": 1437857492,
+              "repetitions": 32,
+              "ns_per_repetition": 44933046.625
+            },
+            {
+              "sample": 10,
+              "ns": 1443326584,
+              "repetitions": 32,
+              "ns_per_repetition": 45103955.75
+            },
+            {
+              "sample": 11,
+              "ns": 1443653186,
+              "repetitions": 32,
+              "ns_per_repetition": 45114162.0625
+            },
+            {
+              "sample": 12,
+              "ns": 1441215560,
+              "repetitions": 32,
+              "ns_per_repetition": 45037986.25
+            },
+            {
+              "sample": 13,
+              "ns": 1460936875,
+              "repetitions": 32,
+              "ns_per_repetition": 45654277.34375
+            },
+            {
+              "sample": 14,
+              "ns": 1487390151,
+              "repetitions": 32,
+              "ns_per_repetition": 46480942.21875
+            },
+            {
+              "sample": 15,
+              "ns": 1461709646,
+              "repetitions": 32,
+              "ns_per_repetition": 45678426.4375
+            },
+            {
+              "sample": 16,
+              "ns": 1435365796,
+              "repetitions": 32,
+              "ns_per_repetition": 44855181.125
+            }
+          ],
+          "time_per_repetition_ns": 45085223.34375,
+          "bytes_per_repetition": 1073741824,
+          "bytes_per_second": 23815825770.969566
+        }
+      ],
+      "percentiles": {
+        "time_per_repetition_ns": {
+          "count": 1,
+          "runs": [
+            "01a1c7a7-3ac2-7b8d-adde-a2f5ff740e5c"
+          ],
+          "p5": 45085223.34375,
+          "p50": 45085223.34375,
+          "p95": 45085223.34375
+        },
+        "bytes_per_second": {
+          "count": 1,
+          "runs": [
+            "01a1c7a7-3ac2-7b8d-adde-a2f5ff740e5c"
+          ],
+          "p5": 23815825770.969566,
+          "p50": 23815825770.969566,
+          "p95": 23815825770.969566
+        }
+      },
+      "groups": [
+        {
+          "id": "A",
+          "facts": {
+            "binary": "sha256:a3674893a396548874757acdd23df1028ce8789a4a82e35e41b209205b88f5f2",
+            "runner": "sha256:a9a18272499d5f25543a50de4261b64a357df6a76dd9a2677042a8979bcc8464",
+            "samples": 10,
+            "image": "ami-0123456789abcdef0",
+            "cpuid": "canonical-json-sha256:082961b5dfde4cbb8b67a56494c2b55dc57561d85f3a329b3c4dc2e82c40429d",
+            "lscpu": "canonical-json-sha256:533c2c60c939b31a6d33a9907bc6f33d7b9b43c7ccd0ef6fd2da53f09702f983",
+            "sys_cpu": "sha256:4fc9c1461575db852913b5f68aa7c117ccd5787c6defdc773d9fd9a7cc5f99fa",
+            "kernel": "canonical-json-sha256:294bfc7d275c49dbe18e915ab46ba39774372183b8d600316b1de0b5218a39c5",
+            "process": "sha256:a3bc926a55d87c6504c23a1336e807ea602b3a4fce3015b63d0648cb868b02e2",
+            "packages": "sha256:49919a08c2ceb10060cbd4f426a21c868567fc0df176e5e110a8ea137ce420ed"
+          },
+          "runs": [
+            "01a1c7a7-3ac2-7b8d-adde-a2f5ff740e5c"
+          ],
+          "percentiles": {
+            "time_per_repetition_ns": {
+              "count": 1,
+              "runs": [
+                "01a1c7a7-3ac2-7b8d-adde-a2f5ff740e5c"
+              ],
+              "p5": 45085223.34375,
+              "p50": 45085223.34375,
+              "p95": 45085223.34375
+            },
+            "bytes_per_second": {
+              "count": 1,
+              "runs": [
+                "01a1c7a7-3ac2-7b8d-adde-a2f5ff740e5c"
+              ],
+              "p5": 23815825770.969566,
+              "p50": 23815825770.969566,
+              "p95": 23815825770.969566
+            }
+          }
+        }
+      ],
+      "differed": [],
+      "sections": [
+        {
+          "section": "cpuid",
+          "runs": 1,
+          "changed_within_run": 0,
+          "pairs": 0,
+          "changed_between_runs": 0,
+          "split_on": "cpuid"
+        },
+        {
+          "section": "cpuinfo",
+          "runs": 1,
+          "changed_within_run": 1,
+          "pairs": 0,
+          "changed_between_runs": 0,
+          "split_on": null
+        },
+        {
+          "section": "devices",
+          "runs": 1,
+          "changed_within_run": 0,
+          "pairs": 0,
+          "changed_between_runs": 0,
+          "split_on": null
+        },
+        {
+          "section": "kernel",
+          "runs": 1,
+          "changed_within_run": 0,
+          "pairs": 0,
+          "changed_between_runs": 0,
+          "split_on": "kernel"
+        },
+        {
+          "section": "lscpu",
+          "runs": 1,
+          "changed_within_run": 0,
+          "pairs": 0,
+          "changed_between_runs": 0,
+          "split_on": "lscpu"
+        },
+        {
+          "section": "memory",
+          "runs": 1,
+          "changed_within_run": 1,
+          "pairs": 0,
+          "changed_between_runs": 0,
+          "split_on": null
+        },
+        {
+          "section": "packages",
+          "runs": 1,
+          "changed_within_run": 0,
+          "pairs": 0,
+          "changed_between_runs": 0,
+          "split_on": "packages"
+        },
+        {
+          "section": "process",
+          "runs": 1,
+          "changed_within_run": 0,
+          "pairs": 0,
+          "changed_between_runs": 0,
+          "split_on": "process"
+        },
+        {
+          "section": "provider",
+          "runs": 1,
+          "changed_within_run": 0,
+          "pairs": 0,
+          "changed_between_runs": 0,
+          "split_on": null
+        },
+        {
+          "section": "sys_cpu",
+          "runs": 1,
+          "changed_within_run": 0,
+          "pairs": 0,
+          "changed_between_runs": 0,
+          "split_on": "sys_cpu"
+        }
+      ]
+    },
+    {
+      "method": {
+        "name": "series",
+        "version": 1
+      },
+      "series": {
+        "id": "46a331b34985",
+        "benchmark": "memory_read",
+        "params": {
+          "size_bytes": 1073741824,
+          "threads": 1,
+          "path": "scalar"
+        },
+        "build": "dynamic",
+        "instance_type": "m6id.xlarge",
+        "availability_zone_id": "use2-az1"
+      },
+      "runs": [
+        {
+          "id": "01a1c7a6-59ce-745c-a266-d09d811edf60",
+          "path": "runs/2026/11/10/01a1c7a6-59ce-745c-a266-d09d811edf60.json",
+          "sha256": "f3a2f282e1c804e8c2cc6026db86701b1052e61d868ba8cc7fb30cdbbc44b24d"
+        },
+        {
+          "id": "01a1c7a8-e40d-74f1-87df-d74b4beabe73",
+          "path": "runs/2026/11/10/01a1c7a8-e40d-74f1-87df-d74b4beabe73.json",
+          "sha256": "3c77057d13aef818ccc07e422b84f474c6d22f1f0eb30157d5afa86a7b779eb3"
+        }
+      ],
+      "points": [
+        {
+          "run": "01a1c7a6-59ce-745c-a266-d09d811edf60",
+          "path": "runs/2026/11/10/01a1c7a6-59ce-745c-a266-d09d811edf60.json",
+          "started_at": "2026-11-10T22:48:50.382563342Z",
+          "boot": "dcd56b11-cf5d-44ed-88b2-439006c8343e",
+          "group": "A",
+          "counted": true,
+          "failure": null,
+          "samples": [
+            {
+              "sample": 6,
+              "ns": 1735665351,
+              "repetitions": 16,
+              "ns_per_repetition": 108479084.4375
+            },
+            {
+              "sample": 7,
+              "ns": 1750089752,
+              "repetitions": 16,
+              "ns_per_repetition": 109380609.5
+            },
+            {
+              "sample": 8,
+              "ns": 1733918898,
+              "repetitions": 16,
+              "ns_per_repetition": 108369931.125
+            },
+            {
+              "sample": 9,
+              "ns": 1736693239,
+              "repetitions": 16,
+              "ns_per_repetition": 108543327.4375
+            },
+            {
+              "sample": 10,
+              "ns": 1741184475,
+              "repetitions": 16,
+              "ns_per_repetition": 108824029.6875
+            },
+            {
+              "sample": 11,
+              "ns": 1749431981,
+              "repetitions": 16,
+              "ns_per_repetition": 109339498.8125
+            },
+            {
+              "sample": 12,
+              "ns": 1778517717,
+              "repetitions": 16,
+              "ns_per_repetition": 111157357.3125
+            },
+            {
+              "sample": 13,
+              "ns": 1737879524,
+              "repetitions": 16,
+              "ns_per_repetition": 108617470.25
+            },
+            {
+              "sample": 14,
+              "ns": 1737174823,
+              "repetitions": 16,
+              "ns_per_repetition": 108573426.4375
+            },
+            {
+              "sample": 15,
+              "ns": 1744302888,
+              "repetitions": 16,
+              "ns_per_repetition": 109018930.5
+            }
+          ],
+          "time_per_repetition_ns": 108720749.96875,
+          "bytes_per_repetition": 1073741824,
+          "bytes_per_second": 9876144381.901611
+        },
+        {
+          "run": "01a1c7a8-e40d-74f1-87df-d74b4beabe73",
+          "path": "runs/2026/11/10/01a1c7a8-e40d-74f1-87df-d74b4beabe73.json",
+          "started_at": "2026-11-10T22:51:36.845574932Z",
+          "boot": "dcd56b11-cf5d-44ed-88b2-439006c8343e",
+          "group": "A",
+          "counted": false,
+          "failure": "killed by signal 9; the runner was told to stop by signal 15; line 12: the last event must be \"finished\", got \"sample_ended\"; no \"verified\" event; no counted sample (warmup false); expected 10 counted samples, found 0",
+          "samples": [],
+          "time_per_repetition_ns": null,
+          "bytes_per_repetition": null,
+          "bytes_per_second": null
+        }
+      ],
+      "percentiles": {
+        "time_per_repetition_ns": {
+          "count": 1,
+          "runs": [
+            "01a1c7a6-59ce-745c-a266-d09d811edf60"
+          ],
+          "p5": 108720749.96875,
+          "p50": 108720749.96875,
+          "p95": 108720749.96875
+        },
+        "bytes_per_second": {
+          "count": 1,
+          "runs": [
+            "01a1c7a6-59ce-745c-a266-d09d811edf60"
+          ],
+          "p5": 9876144381.901611,
+          "p50": 9876144381.901611,
+          "p95": 9876144381.901611
+        }
+      },
+      "groups": [
+        {
+          "id": "A",
+          "facts": {
+            "binary": "sha256:184aff50cde3c2f6fda3dea2790357c276be4ff1949f4f0cb36f2583c0f5e5b5",
+            "runner": "sha256:a9a18272499d5f25543a50de4261b64a357df6a76dd9a2677042a8979bcc8464",
+            "samples": 10,
+            "image": "ami-0123456789abcdef0",
+            "cpuid": "canonical-json-sha256:082961b5dfde4cbb8b67a56494c2b55dc57561d85f3a329b3c4dc2e82c40429d",
+            "lscpu": "canonical-json-sha256:533c2c60c939b31a6d33a9907bc6f33d7b9b43c7ccd0ef6fd2da53f09702f983",
+            "sys_cpu": "sha256:4fc9c1461575db852913b5f68aa7c117ccd5787c6defdc773d9fd9a7cc5f99fa",
+            "kernel": "canonical-json-sha256:294bfc7d275c49dbe18e915ab46ba39774372183b8d600316b1de0b5218a39c5",
+            "process": "sha256:a3bc926a55d87c6504c23a1336e807ea602b3a4fce3015b63d0648cb868b02e2",
+            "packages": "sha256:49919a08c2ceb10060cbd4f426a21c868567fc0df176e5e110a8ea137ce420ed"
+          },
+          "runs": [
+            "01a1c7a6-59ce-745c-a266-d09d811edf60",
+            "01a1c7a8-e40d-74f1-87df-d74b4beabe73"
+          ],
+          "percentiles": {
+            "time_per_repetition_ns": {
+              "count": 1,
+              "runs": [
+                "01a1c7a6-59ce-745c-a266-d09d811edf60"
+              ],
+              "p5": 108720749.96875,
+              "p50": 108720749.96875,
+              "p95": 108720749.96875
+            },
+            "bytes_per_second": {
+              "count": 1,
+              "runs": [
+                "01a1c7a6-59ce-745c-a266-d09d811edf60"
+              ],
+              "p5": 9876144381.901611,
+              "p50": 9876144381.901611,
+              "p95": 9876144381.901611
+            }
+          }
+        }
+      ],
+      "differed": [
+        {
+          "from": "01a1c7a6-59ce-745c-a266-d09d811edf60",
+          "to": "01a1c7a8-e40d-74f1-87df-d74b4beabe73",
+          "facts": [],
+          "sections": [
+            {
+              "section": "cpuinfo",
+              "effect": "not split on",
+              "keys": null
+            },
+            {
+              "section": "devices",
+              "effect": "not split on",
+              "keys": [
+                "$ findmnt -J"
+              ]
+            },
+            {
+              "section": "memory",
+              "effect": "not split on",
+              "keys": null
+            }
+          ]
+        }
+      ],
+      "sections": [
+        {
+          "section": "cpuid",
+          "runs": 2,
+          "changed_within_run": 0,
+          "pairs": 1,
+          "changed_between_runs": 0,
+          "split_on": "cpuid"
+        },
+        {
+          "section": "cpuinfo",
+          "runs": 2,
+          "changed_within_run": 2,
+          "pairs": 1,
+          "changed_between_runs": 1,
+          "split_on": null
+        },
+        {
+          "section": "devices",
+          "runs": 2,
+          "changed_within_run": 0,
+          "pairs": 1,
+          "changed_between_runs": 1,
+          "split_on": null
+        },
+        {
+          "section": "kernel",
+          "runs": 2,
+          "changed_within_run": 0,
+          "pairs": 1,
+          "changed_between_runs": 0,
+          "split_on": "kernel"
+        },
+        {
+          "section": "lscpu",
+          "runs": 2,
+          "changed_within_run": 0,
+          "pairs": 1,
+          "changed_between_runs": 0,
+          "split_on": "lscpu"
+        },
+        {
+          "section": "memory",
+          "runs": 2,
+          "changed_within_run": 2,
+          "pairs": 1,
+          "changed_between_runs": 1,
+          "split_on": null
+        },
+        {
+          "section": "packages",
+          "runs": 2,
+          "changed_within_run": 0,
+          "pairs": 1,
+          "changed_between_runs": 0,
+          "split_on": "packages"
+        },
+        {
+          "section": "process",
+          "runs": 2,
+          "changed_within_run": 0,
+          "pairs": 1,
+          "changed_between_runs": 0,
+          "split_on": "process"
+        },
+        {
+          "section": "provider",
+          "runs": 2,
+          "changed_within_run": 0,
+          "pairs": 1,
+          "changed_between_runs": 0,
+          "split_on": null
+        },
+        {
+          "section": "sys_cpu",
+          "runs": 2,
+          "changed_within_run": 0,
+          "pairs": 1,
+          "changed_between_runs": 0,
+          "split_on": "sys_cpu"
+        }
+      ]
+    },
+    {
+      "method": {
+        "name": "series",
+        "version": 1
+      },
+      "series": {
+        "id": "31faa050d430",
+        "benchmark": "memory_read",
+        "params": {
+          "size_bytes": 1073741824,
+          "threads": 1,
+          "path": "scalar"
+        },
+        "build": "static",
+        "instance_type": "m6id.xlarge",
+        "availability_zone_id": "use2-az1"
+      },
+      "runs": [
+        {
+          "id": "01a1c7a6-0108-7db1-8ec4-3d1f9390b22b",
+          "path": "runs/2026/11/10/01a1c7a6-0108-7db1-8ec4-3d1f9390b22b.json",
+          "sha256": "76fccdfb641228be5fc3311ce7a027ca5a4eca424fdecaa5739c8e44ac89f0a1"
+        },
+        {
+          "id": "01a1c7a8-8dba-72ac-9f77-27c42f05f1a8",
+          "path": "runs/2026/11/10/01a1c7a8-8dba-72ac-9f77-27c42f05f1a8.json",
+          "sha256": "924cb3b2ac8100a0aab9755bbdf0f1058b11fb0e4a110e436ae025e8a7396ebe"
+        },
+        {
+          "id": "01a1c7a9-47f0-7e5e-acaa-7df1872ac6c1",
+          "path": "runs/2026/11/10/01a1c7a9-47f0-7e5e-acaa-7df1872ac6c1.json",
+          "sha256": "8900a1d951ced606e80fd26078a0595f70a3ed57a0b2267b5965f336a0a4fdc0"
+        }
+      ],
+      "points": [
+        {
+          "run": "01a1c7a6-0108-7db1-8ec4-3d1f9390b22b",
+          "path": "runs/2026/11/10/01a1c7a6-0108-7db1-8ec4-3d1f9390b22b.json",
+          "started_at": "2026-11-10T22:48:27.656817919Z",
+          "boot": "dcd56b11-cf5d-44ed-88b2-439006c8343e",
+          "group": "A",
+          "counted": true,
+          "failure": null,
+          "samples": [
+            {
+              "sample": 6,
+              "ns": 1761893646,
+              "repetitions": 16,
+              "ns_per_repetition": 110118352.875
+            },
+            {
+              "sample": 7,
+              "ns": 1776510460,
+              "repetitions": 16,
+              "ns_per_repetition": 111031903.75
+            },
+            {
+              "sample": 8,
+              "ns": 1773521029,
+              "repetitions": 16,
+              "ns_per_repetition": 110845064.3125
+            },
+            {
+              "sample": 9,
+              "ns": 1760973995,
+              "repetitions": 16,
+              "ns_per_repetition": 110060874.6875
+            },
+            {
+              "sample": 10,
+              "ns": 1763752740,
+              "repetitions": 16,
+              "ns_per_repetition": 110234546.25
+            },
+            {
+              "sample": 11,
+              "ns": 1760726749,
+              "repetitions": 16,
+              "ns_per_repetition": 110045421.8125
+            },
+            {
+              "sample": 12,
+              "ns": 1767739792,
+              "repetitions": 16,
+              "ns_per_repetition": 110483737
+            },
+            {
+              "sample": 13,
+              "ns": 1963660919,
+              "repetitions": 16,
+              "ns_per_repetition": 122728807.4375
+            },
+            {
+              "sample": 14,
+              "ns": 2024174029,
+              "repetitions": 16,
+              "ns_per_repetition": 126510876.8125
+            },
+            {
+              "sample": 15,
+              "ns": 2055430410,
+              "repetitions": 16,
+              "ns_per_repetition": 128464400.625
+            }
+          ],
+          "time_per_repetition_ns": 110664400.65625,
+          "bytes_per_repetition": 1073741824,
+          "bytes_per_second": 9702685033.602612
+        },
+        {
+          "run": "01a1c7a8-8dba-72ac-9f77-27c42f05f1a8",
+          "path": "runs/2026/11/10/01a1c7a8-8dba-72ac-9f77-27c42f05f1a8.json",
+          "started_at": "2026-11-10T22:51:14.746860001Z",
+          "boot": "dcd56b11-cf5d-44ed-88b2-439006c8343e",
+          "group": "A",
+          "counted": true,
+          "failure": null,
+          "samples": [
+            {
+              "sample": 6,
+              "ns": 1770679158,
+              "repetitions": 16,
+              "ns_per_repetition": 110667447.375
+            },
+            {
+              "sample": 7,
+              "ns": 1797415775,
+              "repetitions": 16,
+              "ns_per_repetition": 112338485.9375
+            },
+            {
+              "sample": 8,
+              "ns": 1778865856,
+              "repetitions": 16,
+              "ns_per_repetition": 111179116
+            },
+            {
+              "sample": 9,
+              "ns": 1775124988,
+              "repetitions": 16,
+              "ns_per_repetition": 110945311.75
+            },
+            {
+              "sample": 10,
+              "ns": 1783975749,
+              "repetitions": 16,
+              "ns_per_repetition": 111498484.3125
+            },
+            {
+              "sample": 11,
+              "ns": 1768073953,
+              "repetitions": 16,
+              "ns_per_repetition": 110504622.0625
+            },
+            {
+              "sample": 12,
+              "ns": 1757254426,
+              "repetitions": 16,
+              "ns_per_repetition": 109828401.625
+            },
+            {
+              "sample": 13,
+              "ns": 1779087560,
+              "repetitions": 16,
+              "ns_per_repetition": 111192972.5
+            },
+            {
+              "sample": 14,
+              "ns": 1760982565,
+              "repetitions": 16,
+              "ns_per_repetition": 110061410.3125
+            },
+            {
+              "sample": 15,
+              "ns": 1774993691,
+              "repetitions": 16,
+              "ns_per_repetition": 110937105.6875
+            }
+          ],
+          "time_per_repetition_ns": 110941208.71875,
+          "bytes_per_repetition": 1073741824,
+          "bytes_per_second": 9678475982.013783
+        },
+        {
+          "run": "01a1c7a9-47f0-7e5e-acaa-7df1872ac6c1",
+          "path": "runs/2026/11/10/01a1c7a9-47f0-7e5e-acaa-7df1872ac6c1.json",
+          "started_at": "2026-11-10T22:52:02.416699265Z",
+          "boot": "dcd56b11-cf5d-44ed-88b2-439006c8343e",
+          "group": "A",
+          "counted": false,
+          "failure": "killed by signal 9 (the runner's 1 s timeout); line 8: the last event must be \"finished\", got \"sample_ended\"; no \"verified\" event; no counted sample (warmup false); expected 10 counted samples, found 0",
+          "samples": [],
+          "time_per_repetition_ns": null,
+          "bytes_per_repetition": null,
+          "bytes_per_second": null
+        }
+      ],
+      "percentiles": {
+        "time_per_repetition_ns": {
+          "count": 2,
+          "runs": [
+            "01a1c7a6-0108-7db1-8ec4-3d1f9390b22b",
+            "01a1c7a8-8dba-72ac-9f77-27c42f05f1a8"
+          ],
+          "p5": 110678241.059375,
+          "p50": 110802804.6875,
+          "p95": 110927368.315625
+        },
+        "bytes_per_second": {
+          "count": 2,
+          "runs": [
+            "01a1c7a6-0108-7db1-8ec4-3d1f9390b22b",
+            "01a1c7a8-8dba-72ac-9f77-27c42f05f1a8"
+          ],
+          "p5": 9679686434.593224,
+          "p50": 9690580507.808197,
+          "p95": 9701474581.02317
+        }
+      },
+      "groups": [
+        {
+          "id": "A",
+          "facts": {
+            "binary": "sha256:a3674893a396548874757acdd23df1028ce8789a4a82e35e41b209205b88f5f2",
+            "runner": "sha256:a9a18272499d5f25543a50de4261b64a357df6a76dd9a2677042a8979bcc8464",
+            "samples": 10,
+            "image": "ami-0123456789abcdef0",
+            "cpuid": "canonical-json-sha256:082961b5dfde4cbb8b67a56494c2b55dc57561d85f3a329b3c4dc2e82c40429d",
+            "lscpu": "canonical-json-sha256:533c2c60c939b31a6d33a9907bc6f33d7b9b43c7ccd0ef6fd2da53f09702f983",
+            "sys_cpu": "sha256:4fc9c1461575db852913b5f68aa7c117ccd5787c6defdc773d9fd9a7cc5f99fa",
+            "kernel": "canonical-json-sha256:294bfc7d275c49dbe18e915ab46ba39774372183b8d600316b1de0b5218a39c5",
+            "process": "sha256:a3bc926a55d87c6504c23a1336e807ea602b3a4fce3015b63d0648cb868b02e2",
+            "packages": "sha256:49919a08c2ceb10060cbd4f426a21c868567fc0df176e5e110a8ea137ce420ed"
+          },
+          "runs": [
+            "01a1c7a6-0108-7db1-8ec4-3d1f9390b22b",
+            "01a1c7a8-8dba-72ac-9f77-27c42f05f1a8",
+            "01a1c7a9-47f0-7e5e-acaa-7df1872ac6c1"
+          ],
+          "percentiles": {
+            "time_per_repetition_ns": {
+              "count": 2,
+              "runs": [
+                "01a1c7a6-0108-7db1-8ec4-3d1f9390b22b",
+                "01a1c7a8-8dba-72ac-9f77-27c42f05f1a8"
+              ],
+              "p5": 110678241.059375,
+              "p50": 110802804.6875,
+              "p95": 110927368.315625
+            },
+            "bytes_per_second": {
+              "count": 2,
+              "runs": [
+                "01a1c7a6-0108-7db1-8ec4-3d1f9390b22b",
+                "01a1c7a8-8dba-72ac-9f77-27c42f05f1a8"
+              ],
+              "p5": 9679686434.593224,
+              "p50": 9690580507.808197,
+              "p95": 9701474581.02317
+            }
+          }
+        }
+      ],
+      "differed": [
+        {
+          "from": "01a1c7a6-0108-7db1-8ec4-3d1f9390b22b",
+          "to": "01a1c7a8-8dba-72ac-9f77-27c42f05f1a8",
+          "facts": [],
+          "sections": [
+            {
+              "section": "cpuinfo",
+              "effect": "not split on",
+              "keys": null
+            },
+            {
+              "section": "devices",
+              "effect": "not split on",
+              "keys": [
+                "$ findmnt -J"
+              ]
+            },
+            {
+              "section": "memory",
+              "effect": "not split on",
+              "keys": null
+            }
+          ]
+        },
+        {
+          "from": "01a1c7a8-8dba-72ac-9f77-27c42f05f1a8",
+          "to": "01a1c7a9-47f0-7e5e-acaa-7df1872ac6c1",
+          "facts": [],
+          "sections": [
+            {
+              "section": "cpuinfo",
+              "effect": "not split on",
+              "keys": null
+            },
+            {
+              "section": "devices",
+              "effect": "not split on",
+              "keys": [
+                "$ findmnt -J",
+                "$ lsblk -J -b -o NAME,TYPE,SIZE,MODEL,SERIAL,ROTA,FSTYPE,MOUNTPOINT"
+              ]
+            },
+            {
+              "section": "memory",
+              "effect": "not split on",
+              "keys": null
+            }
+          ]
+        }
+      ],
+      "sections": [
+        {
+          "section": "cpuid",
+          "runs": 3,
+          "changed_within_run": 0,
+          "pairs": 2,
+          "changed_between_runs": 0,
+          "split_on": "cpuid"
+        },
+        {
+          "section": "cpuinfo",
+          "runs": 3,
+          "changed_within_run": 3,
+          "pairs": 2,
+          "changed_between_runs": 2,
+          "split_on": null
+        },
+        {
+          "section": "devices",
+          "runs": 3,
+          "changed_within_run": 0,
+          "pairs": 2,
+          "changed_between_runs": 2,
+          "split_on": null
+        },
+        {
+          "section": "kernel",
+          "runs": 3,
+          "changed_within_run": 0,
+          "pairs": 2,
+          "changed_between_runs": 0,
+          "split_on": "kernel"
+        },
+        {
+          "section": "lscpu",
+          "runs": 3,
+          "changed_within_run": 0,
+          "pairs": 2,
+          "changed_between_runs": 0,
+          "split_on": "lscpu"
+        },
+        {
+          "section": "memory",
+          "runs": 3,
+          "changed_within_run": 3,
+          "pairs": 2,
+          "changed_between_runs": 2,
+          "split_on": null
+        },
+        {
+          "section": "packages",
+          "runs": 3,
+          "changed_within_run": 0,
+          "pairs": 2,
+          "changed_between_runs": 0,
+          "split_on": "packages"
+        },
+        {
+          "section": "process",
+          "runs": 3,
+          "changed_within_run": 0,
+          "pairs": 2,
+          "changed_between_runs": 0,
+          "split_on": "process"
+        },
+        {
+          "section": "provider",
+          "runs": 3,
+          "changed_within_run": 0,
+          "pairs": 2,
+          "changed_between_runs": 0,
+          "split_on": null
+        },
+        {
+          "section": "sys_cpu",
+          "runs": 3,
+          "changed_within_run": 0,
+          "pairs": 2,
+          "changed_between_runs": 0,
+          "split_on": "sys_cpu"
+        }
+      ]
+    },
+    {
+      "method": {
+        "name": "series",
+        "version": 1
+      },
+      "series": {
+        "id": "be2187bd6194",
+        "benchmark": "memory_read",
+        "params": {
+          "size_bytes": 1073741824,
+          "threads": 1,
+          "path": "sse"
+        },
+        "build": "static",
+        "instance_type": "m6id.xlarge",
+        "availability_zone_id": "use2-az1"
+      },
+      "runs": [
+        {
+          "id": "01a1c7a9-4e16-76e2-9439-73b434157666",
+          "path": "runs/2026/11/10/01a1c7a9-4e16-76e2-9439-73b434157666.json",
+          "sha256": "712e05b3b71b503cb49bf6c141dfb2c0f3fcf4dbf67c8562a6dbea2a5839bd82"
+        }
+      ],
+      "points": [
+        {
+          "run": "01a1c7a9-4e16-76e2-9439-73b434157666",
+          "path": "runs/2026/11/10/01a1c7a9-4e16-76e2-9439-73b434157666.json",
+          "started_at": "2026-11-10T22:52:03.990537561Z",
+          "boot": "dcd56b11-cf5d-44ed-88b2-439006c8343e",
+          "group": "A",
+          "counted": false,
+          "failure": "exit code 2; line 1: the last event must be \"finished\", got \"started\"; no \"verified\" event; no counted sample (warmup false); expected 10 counted samples, found 0",
+          "samples": [],
+          "time_per_repetition_ns": null,
+          "bytes_per_repetition": null,
+          "bytes_per_second": null
+        }
+      ],
+      "percentiles": {
+        "time_per_repetition_ns": null,
+        "bytes_per_second": null
+      },
+      "groups": [
+        {
+          "id": "A",
+          "facts": {
+            "binary": "sha256:a3674893a396548874757acdd23df1028ce8789a4a82e35e41b209205b88f5f2",
+            "runner": "sha256:a9a18272499d5f25543a50de4261b64a357df6a76dd9a2677042a8979bcc8464",
+            "samples": 10,
+            "image": "ami-0123456789abcdef0",
+            "cpuid": "canonical-json-sha256:082961b5dfde4cbb8b67a56494c2b55dc57561d85f3a329b3c4dc2e82c40429d",
+            "lscpu": "canonical-json-sha256:533c2c60c939b31a6d33a9907bc6f33d7b9b43c7ccd0ef6fd2da53f09702f983",
+            "sys_cpu": "sha256:4fc9c1461575db852913b5f68aa7c117ccd5787c6defdc773d9fd9a7cc5f99fa",
+            "kernel": "canonical-json-sha256:294bfc7d275c49dbe18e915ab46ba39774372183b8d600316b1de0b5218a39c5",
+            "process": "sha256:a3bc926a55d87c6504c23a1336e807ea602b3a4fce3015b63d0648cb868b02e2",
+            "packages": "sha256:49919a08c2ceb10060cbd4f426a21c868567fc0df176e5e110a8ea137ce420ed"
+          },
+          "runs": [
+            "01a1c7a9-4e16-76e2-9439-73b434157666"
+          ],
+          "percentiles": {
+            "time_per_repetition_ns": null,
+            "bytes_per_second": null
+          }
+        }
+      ],
+      "differed": [],
+      "sections": [
+        {
+          "section": "cpuid",
+          "runs": 1,
+          "changed_within_run": 0,
+          "pairs": 0,
+          "changed_between_runs": 0,
+          "split_on": "cpuid"
+        },
+        {
+          "section": "cpuinfo",
+          "runs": 1,
+          "changed_within_run": 1,
+          "pairs": 0,
+          "changed_between_runs": 0,
+          "split_on": null
+        },
+        {
+          "section": "devices",
+          "runs": 1,
+          "changed_within_run": 0,
+          "pairs": 0,
+          "changed_between_runs": 0,
+          "split_on": null
+        },
+        {
+          "section": "kernel",
+          "runs": 1,
+          "changed_within_run": 0,
+          "pairs": 0,
+          "changed_between_runs": 0,
+          "split_on": "kernel"
+        },
+        {
+          "section": "lscpu",
+          "runs": 1,
+          "changed_within_run": 0,
+          "pairs": 0,
+          "changed_between_runs": 0,
+          "split_on": "lscpu"
+        },
+        {
+          "section": "memory",
+          "runs": 1,
+          "changed_within_run": 1,
+          "pairs": 0,
+          "changed_between_runs": 0,
+          "split_on": null
+        },
+        {
+          "section": "packages",
+          "runs": 1,
+          "changed_within_run": 0,
+          "pairs": 0,
+          "changed_between_runs": 0,
+          "split_on": "packages"
+        },
+        {
+          "section": "process",
+          "runs": 1,
+          "changed_within_run": 0,
+          "pairs": 0,
+          "changed_between_runs": 0,
+          "split_on": "process"
+        },
+        {
+          "section": "provider",
+          "runs": 1,
+          "changed_within_run": 0,
+          "pairs": 0,
+          "changed_between_runs": 0,
+          "split_on": null
+        },
+        {
+          "section": "sys_cpu",
+          "runs": 1,
+          "changed_within_run": 0,
+          "pairs": 0,
+          "changed_between_runs": 0,
+          "split_on": "sys_cpu"
+        }
+      ]
+    }
+  ]
+}

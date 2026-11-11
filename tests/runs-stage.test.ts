@@ -36,6 +36,11 @@ const VARIABLES = {
 	sourceKey: `source/${COMMIT}.tar.gz`,
 	sourceCommit: COMMIT,
 	region: "us-east-2",
+	fixtures: {
+		endpoint: "https://ledgermath-smr-runs-fixturesbucketbucket-abcdefgh.s3.us-east-2.amazonaws.com",
+		region: "us-east-2",
+		role: "arn:aws:iam::123456789012:role/FixturesReaderRole-0123456",
+	},
 };
 
 describe("the user-data", () => {
@@ -51,6 +56,9 @@ describe("the user-data", () => {
 				`export LEDGERMATH_SOURCE_KEY=source/${COMMIT}.tar.gz`,
 				`export LEDGERMATH_SOURCE_COMMIT=${COMMIT}`,
 				"export AWS_DEFAULT_REGION=us-east-2",
+				`export LEDGERMATH_FIXTURES_ENDPOINT=${VARIABLES.fixtures.endpoint}`,
+				"export LEDGERMATH_FIXTURES_REGION=us-east-2",
+				`export LEDGERMATH_FIXTURES_ROLE=${VARIABLES.fixtures.role}`,
 				"",
 			].join("\n"),
 		);
@@ -69,6 +77,8 @@ describe("the user-data", () => {
 		expect(() => buildUserData(BOX_SH, { ...VARIABLES, bucket: "a b" })).toThrow();
 		expect(() => buildUserData(BOX_SH, { ...VARIABLES, stage: "$(reboot)" })).toThrow();
 		expect(() => buildUserData(BOX_SH, { ...VARIABLES, sourceCommit: "537d4f1" })).toThrow();
+		expect(() => buildUserData(BOX_SH, { ...VARIABLES, fixtures: { ...VARIABLES.fixtures, endpoint: "https://a b" } })).toThrow();
+		expect(() => buildUserData(BOX_SH, { ...VARIABLES, fixtures: { ...VARIABLES.fixtures, role: "`id`" } })).toThrow();
 	});
 });
 
@@ -325,12 +335,16 @@ function allows(policy: PolicyDocument, action: string, resource: string): boole
 describe("the box's role", () => {
 	const bucketArn = "arn:aws:s3:::ledgermath-smr-runs-runsbucketbucket-abcdefgh";
 	const sourceKey = `source/${COMMIT}.tar.gz`;
-	const policy = boxPolicy(bucketArn, sourceKey);
+	const tlsArchiveKey = `blobs/sha256/${"8".repeat(64)}`;
+	const fixturesRoleArn = "arn:aws:iam::123456789012:role/FixturesReaderRole-0123456";
+	const policy = boxPolicy(bucketArn, sourceKey, { tlsArchiveKey, fixturesRoleArn });
 
-	test("reads its source archive, lists blobs/, and writes runs/, blobs/, boots/ and logs/, and nothing else of the bucket", () => {
+	test("reads its source archive and AWS-LC's, lists blobs/, and writes runs/, blobs/, boots/ and logs/, and nothing else of the bucket", () => {
 		expect(allows(policy, "s3:GetObject", `${bucketArn}/${sourceKey}`)).toBe(true);
+		expect(allows(policy, "s3:GetObject", `${bucketArn}/${tlsArchiveKey}`)).toBe(true);
 		expect(allows(policy, "s3:GetObject", `${bucketArn}/source/another.tar.gz`)).toBe(false);
 		expect(allows(policy, "s3:GetObject", `${bucketArn}/runs/2026/11/10/a.json`)).toBe(false);
+		expect(allows(policy, "s3:GetObject", `${bucketArn}/blobs/sha256/${"9".repeat(64)}`)).toBe(false);
 		expect(allows(policy, "s3:ListBucket", bucketArn)).toBe(true);
 		const listing = policy.Statement.find((statement) => statement.Action.includes("s3:ListBucket"));
 		expect(listing?.Condition).toEqual({ StringLike: { "s3:prefix": ["blobs/", "blobs/*"] } });
@@ -341,26 +355,44 @@ describe("the box's role", () => {
 		}
 	});
 
-	test("calls exactly four read-only EC2 actions: the catalog record, the volumes and their status, and the instance", () => {
+	test("calls exactly six read-only EC2 actions: the catalog record, the volumes and their status, the instance, its route tables and the VPC's endpoints", () => {
 		const ec2 = policy.Statement.filter((statement) => statement.Action.some((action) => action.startsWith("ec2:")));
 		expect(ec2).toEqual([
 			{
 				Effect: "Allow",
-				Action: ["ec2:DescribeInstanceTypes", "ec2:DescribeVolumes", "ec2:DescribeVolumeStatus", "ec2:DescribeInstances"],
+				Action: [
+					"ec2:DescribeInstanceTypes",
+					"ec2:DescribeVolumes",
+					"ec2:DescribeVolumeStatus",
+					"ec2:DescribeInstances",
+					"ec2:DescribeRouteTables",
+					"ec2:DescribeVpcEndpoints",
+				],
 				Resource: ["*"],
 			},
 		]);
 		for (const action of BOX_EC2_READS) expect(allows(policy, action, "*")).toBe(true);
-		for (const action of ["ec2:RunInstances", "ec2:TerminateInstances", "ec2:CreateTags", "ec2:DescribeSnapshots", "ec2:ModifyVolume", "ec2:*"]) {
+		for (const action of ["ec2:RunInstances", "ec2:TerminateInstances", "ec2:CreateTags", "ec2:DescribeSnapshots", "ec2:ModifyVolume", "ec2:CreateRoute", "ec2:*"]) {
 			expect(allows(policy, action, "*")).toBe(false);
 		}
 		expect(policy.Statement.flatMap((statement) => statement.Action).sort()).toEqual(
-			[...BOX_EC2_READS, "s3:GetObject", "s3:ListBucket", "s3:PutObject"].sort(),
+			[...BOX_EC2_READS, "s3:GetObject", "s3:ListBucket", "s3:PutObject", "sts:AssumeRole"].sort(),
 		);
 	});
 
+	test("may assume the fixtures reader role and no other, and touches the fixtures bucket only through it", () => {
+		expect(policy.Statement.filter((statement) => statement.Action.includes("sts:AssumeRole"))).toEqual([
+			{ Effect: "Allow", Action: ["sts:AssumeRole"], Resource: [fixturesRoleArn] },
+		]);
+		expect(allows(policy, "sts:AssumeRole", "arn:aws:iam::123456789012:role/Another")).toBe(false);
+		const fixturesBucket = "arn:aws:s3:::ledgermath-smr-runs-fixturesbucketbucket-abcdefgh";
+		expect(allows(policy, "s3:GetObject", `${fixturesBucket}/http_get/v1/4096`)).toBe(false);
+		expect(allows(policy, "s3:ListBucket", fixturesBucket)).toBe(false);
+	});
+
 	test("is the stack's, and the container's aws stand-in allows the same EC2 actions", () => {
-		expect(STACK).toContain("policy: bucket.arn.apply((arn) => JSON.stringify(boxPolicy(arn, archive.key))),");
+		expect(STACK).toContain("JSON.stringify(boxPolicy(arn, archive.key, { tlsArchiveKey: tls.key, fixturesRoleArn })),");
+		expect(STACK).toContain("policy: $resolve({ arn: bucket.arn, fixturesRoleArn: fixturesRole.arn }).apply(({ arn, fixturesRoleArn }) =>");
 		const stub = readFileSync(join(import.meta.dir, "..", "scripts", "box-in-container", "aws"), "utf8");
 		const listed = /^EC2_ACTIONS = \(([^)]*)\)$/m.exec(stub)?.[1] ?? "";
 		const stubActions = [...listed.matchAll(/"([a-z-]+)"/g)].map((match) => match[1]);

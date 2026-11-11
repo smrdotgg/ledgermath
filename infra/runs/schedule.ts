@@ -27,7 +27,9 @@
  *
  * A benchmark entry runs on every target unless it names instance_types, in
  * which case it runs only on those. Two entries may share a name, so one
- * benchmark can run different parameter sets on different types.
+ * benchmark can run different parameter sets on different types. An entry
+ * may name a Service its benchmark measures, one of SERVICES; runner/run.py
+ * then gives its executions that Service's inputs (LM_SERVICE_*).
  *
  * Plain data: no SST global and no file access, so the launch Lambda, tests
  * and scripts can import it.
@@ -56,7 +58,16 @@ export interface BenchmarkEntry {
 	params: Array<Record<string, ParamValue>>;
 	/** The instance types this entry runs on. Absent means every target. */
 	instance_types?: string[];
+	/** The Service the benchmark measures, whose inputs runner/run.py delivers. */
+	service?: (typeof SERVICES)[number];
 }
+
+/**
+ * The Services runner/run.py can give a benchmark's executions. s3_fixtures:
+ * the stage's private bucket of Fixtures (infra/runs/fixtures.ts), as
+ * LM_SERVICE_ENDPOINT, LM_SERVICE_REGION and three short-lived keys.
+ */
+export const SERVICES = ["s3_fixtures"] as const;
 
 /** The account's quota of vCPUs for the instances the schedule launches. */
 export interface VcpuQuota {
@@ -80,7 +91,7 @@ const TIME = /^([01][0-9]|2[0-3]):[0-5][0-9]$/;
 const WORD = /^[a-z][a-z0-9_]*$/;
 
 const TARGET_KEYS = new Set(["instance_type", "vcpus", "zone", "boots_utc"]);
-const ENTRY_KEYS = new Set(["name", "builds", "samples", "timeout_seconds", "params", "instance_types"]);
+const ENTRY_KEYS = new Set(["name", "builds", "samples", "timeout_seconds", "params", "instance_types", "service"]);
 const SCHEDULE_KEYS = new Set(["vcpu_quota", "targets", "benchmarks"]);
 const QUOTA_KEYS = new Set(["limit", "reserved_outside_schedule"]);
 
@@ -221,6 +232,9 @@ function checkEntry(where: string, entry: unknown, targetTypes: Set<string> | nu
 			}
 			if (new Set(types).size !== types.length) problems.push(`${where}: instance_types lists a type twice`);
 		}
+	}
+	if (entry.service !== undefined && !(SERVICES as readonly unknown[]).includes(entry.service)) {
+		problems.push(`${where}: service must be one of ${SERVICES.join(", ")}, the Services runner/run.py can give, got ${show(entry.service)}`);
 	}
 	return problems.length === before;
 }

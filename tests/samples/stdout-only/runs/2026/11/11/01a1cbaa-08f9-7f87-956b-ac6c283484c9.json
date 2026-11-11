@@ -1,0 +1,42 @@
+{
+  "schema": "ledgermath.run/1",
+  "id": "01a1cbaa-08f9-7f87-956b-ac6c283484c9",
+  "boot": "dcd56b11-cf5d-44ed-88b2-439006c8343e",
+  "started_at": "2026-11-11T17:31:20.697233318Z",
+  "ended_at": "2026-11-11T17:31:20.702011793Z",
+  "benchmark": "fake",
+  "params": {
+    "n": 1
+  },
+  "samples": 1,
+  "source_commit": "0000000000000000000000000000000000000000",
+  "source": "sha256:c5bdaea6db6806243aba8cdca6622348fad92b85aed52d7be483d3ac565826de",
+  "binary": {
+    "blob": "sha256:5f6e309f63da4cbbb5bd148b84cdec387ffd22e8fcee12a1296595f51ee048d8",
+    "build": "static",
+    "compiler": "fake-cc 1.0",
+    "command": "mkdir -p build/static\ncp fake.sh build/static/fake\nchmod +x build/static/fake",
+    "resolved_flags": "sha256:19b9cab4e16a04ba95aaefd6bc607ab19ea626fd479403cc75b0b0ce570d8b96"
+  },
+  "provider": {
+    "name": "aws",
+    "instance_type": "m5.large",
+    "region": "us-east-2",
+    "availability_zone": "us-east-2c",
+    "availability_zone_id": "use2-az3",
+    "image_id": "ami-0123456789abcdef0",
+    "instance_id": "i-0123456789abcdef0"
+  },
+  "environment": {
+    "before": "sha256:5e022d0bad0c5bcd9d092ebc96fd1f1f1f4fbf58d157a80d3deba129d2ba8cc7",
+    "after": "sha256:aea557f32c8cc507f051acbb01c75c9c0586d4b1e220aaf3d71c124aa149e72b"
+  },
+  "runner": "sha256:addbab75b9320702b7e052be4943e07521e745ff5386522a7326f1bc4be712d1",
+  "exit": {
+    "code": 0
+  },
+  "stdout": "sha256:02141118b44bfc6ada17824bcf2df700dc9f82a2cb4ed0eac17761ccad40cd68",
+  "stdout_bytes": 414,
+  "stdout_lines": 6,
+  "stderr": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+}

@@ -21,7 +21,7 @@ export const READABLE_PREFIXES = ["runs/", "boots/", "blobs/"] as const;
 export interface PolicyStatement {
 	Effect: "Allow" | "Deny";
 	Action: string[];
-	Principal?: { Federated: string };
+	Principal?: { Federated: string } | { AWS: string };
 	Resource?: string[];
 	Condition?: Record<string, Record<string, string | string[]>>;
 }

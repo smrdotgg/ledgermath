@@ -3,7 +3,7 @@
  * Pure arithmetic on numbers already in the Run; nothing here reads a blob.
  */
 
-import type { Run, RunEvent } from "../run";
+import type { RunEvent } from "../run";
 
 /** One counted sample: its two event timestamps' difference, and that per repetition. */
 export interface SampleTime {
@@ -74,8 +74,8 @@ export function countedSamples(events: readonly RunEvent[]): SampleTime[] {
 }
 
 /** What the benchmark observed as bytes_per_repetition, if it did, as a positive number. */
-export function observedBytesPerRepetition(run: Run): number | null {
-	for (const event of run.events) {
+export function observedBytesPerRepetition(events: readonly RunEvent[]): number | null {
+	for (const event of events) {
 		if (event.event !== "observed") continue;
 		const values = event.values as Record<string, unknown>;
 		const bytes = values.bytes_per_repetition;

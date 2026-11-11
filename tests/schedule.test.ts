@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { HTTP_GET_FIXTURES } from "../infra/runs/fixtures";
 import { appliesTo, JULY_RULE, MIN_BOOT_GAP_MINUTES, parseSchedule, type Schedule, scheduleProblems } from "../infra/runs/schedule";
 
 const ROOT = join(import.meta.dir, "..");
@@ -62,6 +63,49 @@ describe("schedule.json", () => {
 	test("names only benchmarks that have a directory with a Makefile", () => {
 		for (const benchmark of FILE.benchmarks) expect(existsSync(join(ROOT, "benchmarks", benchmark.name, "Makefile"))).toBe(true);
 	});
+
+	test("gives http_get every parameter benchmarks/http_get/README.md lists, and no other", () => {
+		const readme = readFileSync(join(ROOT, "benchmarks", "http_get", "README.md"), "utf8");
+		const listed = [...readme.matchAll(/^\| `LM_PARAM_([A-Z_]+)` \|/gm)].map((match) => (match[1] as string).toLowerCase()).sort();
+		expect(listed.length).toBeGreaterThan(0);
+		for (const entry of FILE.benchmarks.filter((candidate) => candidate.name === "http_get")) {
+			for (const params of entry.params) expect(Object.keys(params).sort()).toEqual(listed);
+		}
+	});
+
+	test("runs http_get last, on every target, static only, against s3_fixtures: the study's five sets", () => {
+		const entries = FILE.benchmarks.filter((entry) => entry.name === "http_get");
+		expect(FILE.benchmarks.slice(-entries.length)).toEqual(entries);
+		const common = {
+			gap_mean_ms: 200,
+			timeout_ms: 10000,
+			ca_file: "/etc/pki/tls/certs/ca-bundle.crt",
+			resolv_conf: "/etc/resolv.conf",
+			auth: "sigv4",
+		};
+		const set = (size: number, connection: string, budget: number) => ({ object_bytes: size, key: `http_get/v1/${size}`, connection, budget_seconds: budget, ...common });
+		expect(entries.map(({ samples, timeout_seconds, params }) => ({ samples, timeout_seconds, params }))).toEqual([
+			{ samples: 200, timeout_seconds: 300, params: [set(4096, "new", 240), set(4096, "reused", 240), set(131072, "new", 240), set(131072, "reused", 240)] },
+			{ samples: 40, timeout_seconds: 180, params: [set(16777216, "new", 120)] },
+		]);
+		for (const entry of entries) {
+			expect(entry.builds).toEqual(["static"]);
+			expect(entry.service).toBe("s3_fixtures");
+			expect(entry.instance_types).toBeUndefined();
+			// The runner's timeout is the backstop behind the binary's own budget: a minute more at least.
+			for (const params of entry.params) expect(entry.timeout_seconds).toBeGreaterThanOrEqual(Number(params.budget_seconds) + 60);
+		}
+	});
+
+	test("asks http_get only for the Fixtures the stage makes", () => {
+		const keys = FILE.benchmarks.filter((entry) => entry.name === "http_get").flatMap((entry) => entry.params.map((params) => [params.key, params.object_bytes]));
+		expect(keys).toEqual(
+			[4096, 4096, 131072, 131072, 16777216].map((size) => {
+				const fixture = HTTP_GET_FIXTURES.find((candidate) => candidate.bytes === size);
+				return [fixture?.key, fixture?.bytes];
+			}),
+		);
+	});
 });
 
 describe("the container test's instance-types schedule", () => {
@@ -74,6 +118,22 @@ describe("the container test's instance-types schedule", () => {
 		expect(here.length).toBeLessThan(file.benchmarks.length);
 		expect(here.length).toBeGreaterThan(new Set(here.map((entry) => entry.name)).size);
 		for (const benchmark of file.benchmarks) expect(existsSync(join(ROOT, "benchmarks", benchmark.name, "Makefile"))).toBe(true);
+	});
+});
+
+describe("the container test's http-get schedule", () => {
+	const file = JSON.parse(readFileSync(join(ROOT, "scripts", "box-in-container", "http-get.json"), "utf8")) as Schedule;
+
+	test("is valid, and runs one other benchmark, then http_get's entries as schedule.json has them but for the stand-in's CA and resolver", () => {
+		expect(scheduleProblems(file)).toEqual([]);
+		expect(file.benchmarks.filter((entry) => entry.name !== "http_get").map((entry) => entry.name)).toEqual(["syscall"]);
+		const pointed = FILE.benchmarks
+			.filter((entry) => entry.name === "http_get")
+			.map((entry) => ({
+				...entry,
+				params: entry.params.map((params) => ({ ...params, ca_file: "/lm-standin/ca.pem", resolv_conf: "/lm-standin/resolv.conf" })),
+			}));
+		expect(file.benchmarks.filter((entry) => entry.name === "http_get")).toEqual(pointed);
 	});
 });
 
@@ -250,6 +310,15 @@ describe("the schedule's check", () => {
 			expect(problemsAfter((s) => (entry(s, 1).instance_types = ["m5.large", "m5.large"]))).toEqual(["benchmarks[1]: instance_types lists a type twice"]);
 			expect(problemsAfter((s) => (entry(s, 1).instance_types = []))[0]).toStartWith("benchmarks[1]: instance_types, when given, must be a non-empty list");
 			expect(problemsAfter((s) => (entry(s, 1).instance_types = "m5.large" as never))[0]).toStartWith("benchmarks[1]: instance_types, when given");
+		});
+
+		test("may name a Service its benchmark measures, one runner/run.py can give", () => {
+			expect(problemsAfter((s) => (entry(s, 0).service = "s3_fixtures"))).toEqual([]);
+			expect(problemsAfter((s) => (entry(s, 0).service = "s3" as never))).toEqual([
+				'benchmarks[0]: service must be one of s3_fixtures, the Services runner/run.py can give, got "s3"',
+			]);
+			expect(problemsAfter((s) => (entry(s, 0).service = ["s3_fixtures"] as never))[0]).toStartWith("benchmarks[0]: service must be one of");
+			expect(problemsAfter((s) => (entry(s, 0).services = "s3_fixtures"))).toEqual(['benchmarks[0]: unknown key "services"']);
 		});
 	});
 

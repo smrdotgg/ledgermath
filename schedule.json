@@ -198,6 +198,29 @@
       "params": [
         { "disk": "instance_store", "dir": "/mnt/lm/instance-store", "request_bytes": 8192, "sync": "fdatasync", "file_bytes": 1073741824 }
       ]
+    },
+    {
+      "name": "http_get",
+      "builds": ["static"],
+      "samples": 200,
+      "timeout_seconds": 300,
+      "service": "s3_fixtures",
+      "params": [
+        { "object_bytes": 4096, "key": "http_get/v1/4096", "connection": "new", "budget_seconds": 240, "gap_mean_ms": 200, "timeout_ms": 10000, "ca_file": "/etc/pki/tls/certs/ca-bundle.crt", "resolv_conf": "/etc/resolv.conf", "auth": "sigv4" },
+        { "object_bytes": 4096, "key": "http_get/v1/4096", "connection": "reused", "budget_seconds": 240, "gap_mean_ms": 200, "timeout_ms": 10000, "ca_file": "/etc/pki/tls/certs/ca-bundle.crt", "resolv_conf": "/etc/resolv.conf", "auth": "sigv4" },
+        { "object_bytes": 131072, "key": "http_get/v1/131072", "connection": "new", "budget_seconds": 240, "gap_mean_ms": 200, "timeout_ms": 10000, "ca_file": "/etc/pki/tls/certs/ca-bundle.crt", "resolv_conf": "/etc/resolv.conf", "auth": "sigv4" },
+        { "object_bytes": 131072, "key": "http_get/v1/131072", "connection": "reused", "budget_seconds": 240, "gap_mean_ms": 200, "timeout_ms": 10000, "ca_file": "/etc/pki/tls/certs/ca-bundle.crt", "resolv_conf": "/etc/resolv.conf", "auth": "sigv4" }
+      ]
+    },
+    {
+      "name": "http_get",
+      "builds": ["static"],
+      "samples": 40,
+      "timeout_seconds": 180,
+      "service": "s3_fixtures",
+      "params": [
+        { "object_bytes": 16777216, "key": "http_get/v1/16777216", "connection": "new", "budget_seconds": 120, "gap_mean_ms": 200, "timeout_ms": 10000, "ca_file": "/etc/pki/tls/certs/ca-bundle.crt", "resolv_conf": "/etc/resolv.conf", "auth": "sigv4" }
+      ]
     }
   ]
 }

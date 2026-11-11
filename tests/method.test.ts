@@ -37,12 +37,19 @@ function onlySeries(file: DerivationsFile): SeriesDerivation {
 	return file.derivations[0] as SeriesDerivation;
 }
 
-/** The time per repetition of a Run, worked out here from its events, apart from the Method's code. */
+/**
+ * The time per repetition of a Run, worked out here apart from the Method's
+ * code, from the events the sample Runs (written before the runner stopped
+ * copying stdout into the record) still carry: so it also shows that the
+ * Method's reading of the stdout blob gives what the record said.
+ */
 function byHand(run: Run): number {
 	const perRepetition: number[] = [];
-	for (const start of run.events) {
+	const events = run.events;
+	if (events === undefined) throw new Error(`run ${run.id} carries no events to work from`);
+	for (const start of events) {
 		if (start.event !== "sample_started" || start.warmup !== false) continue;
-		const end = run.events.find((event) => event.event === "sample_ended" && event.sample === start.sample);
+		const end = events.find((event) => event.event === "sample_ended" && event.sample === start.sample);
 		perRepetition.push(((end?.t as number) - start.t) / (start.repetitions as number));
 	}
 	perRepetition.sort((a, b) => a - b);
@@ -235,6 +242,27 @@ describe("Method version 1 on hand-made Runs", () => {
 		const notSplit = file.not_split_on.map((entry) => entry.fact);
 		for (const name of ["block_stat", "nvme_stats", "provision", "ec2_instance_type", "ec2_volumes", "ec2_instance"]) expect(notSplit).toContain(name);
 		expect(file.split_on.map((entry) => entry.section).filter(Boolean)).toEqual(["cpuid", "lscpu", "sys_cpu", "kernel", "process", "packages"]);
+	});
+
+	test("the Service benchmarks' dump sections are never split on; the network's counters, which change on every read, are not fetched", async () => {
+		const made = new HandMade();
+		made.run({ startedAt: "2026-11-11T22:15:00Z", boot: "first", networkSections: true });
+		made.run({ startedAt: "2026-11-11T22:16:00Z", boot: "first", networkSections: true });
+		made.run({ startedAt: "2026-11-12T22:15:00Z", boot: "second", networkSections: true });
+		const asked = new Set<string>();
+		const file = derive(made.files, await gather(made.files, async (hash) => (asked.add(hash), made.fetch(hash))));
+		const series = onlySeries(file);
+		expect(series.points.map((point) => point.group)).toEqual(["A", "A", "A"]);
+		const effects = (i: number) => Object.fromEntries((series.differed[i]?.sections ?? []).map((s) => [s.section, s.effect]));
+		expect(effects(0)).toEqual({ cpuinfo: "not split on", memory: "not split on", net_counters: "not split on" });
+		expect(series.differed[0]?.sections.find((s) => s.section === "net_counters")?.keys).toBeNull();
+		expect(series.differed.flatMap((pair) => pair.facts)).toEqual([]);
+		const sectionHashes = (name: string) =>
+			made.files.map((f) => JSON.parse(new TextDecoder().decode(made.blobs.get((f.record as Run).environment.before))).sections[name] as string);
+		for (const hash of sectionHashes("net_counters")) expect(asked.has(hash)).toBe(false);
+		for (const name of ["network", "ec2_route_tables", "ec2_vpc_endpoints"]) for (const hash of sectionHashes(name)) expect(asked.has(hash)).toBe(true);
+		const notSplit = file.not_split_on.map((entry) => entry.fact);
+		for (const name of ["net_counters", "network", "ec2_route_tables, ec2_vpc_endpoints"]) expect(notSplit).toContain(name);
 	});
 
 	test("any other difference in cpuid or lscpu still splits, anticipated or not", async () => {

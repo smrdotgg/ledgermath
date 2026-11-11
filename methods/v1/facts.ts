@@ -5,9 +5,9 @@
 
 import { createHash } from "node:crypto";
 
-import { canonicalJson, type ParamValue, type Run, type RunExit, schemaValidators } from "../run";
-import { countedSamples, type SampleTime } from "./numbers";
-import { streamProblems } from "./stream";
+import { canonicalJson, type ParamValue, type Run, type RunExit, type Stream, schemaValidators } from "../run";
+import { countedSamples, observedBytesPerRepetition, type SampleTime } from "./numbers";
+import { countProblem, streamCheck } from "./stream";
 
 /** The Runs that share these make one Series. */
 export interface SeriesKey {
@@ -40,12 +40,12 @@ export function seriesId(key: SeriesKey): string {
 /**
  * Dump sections whose contents version 1 does not read. Each changes on every
  * read (cpuinfo's "cpu MHz"; meminfo, loadavg, uptime; every block device's
- * I/O counters; every Amazon NVMe disk's counters and latency histograms), so
- * only their hashes are compared, and "what differed" says they changed
- * without naming keys; reading cpuinfo and memory alone would cost about 50 KB
- * of fetches per Run.
+ * I/O counters; every Amazon NVMe disk's counters and latency histograms; the
+ * network card's and the kernel's traffic counters), so only their hashes are
+ * compared, and "what differed" says they changed without naming keys;
+ * reading cpuinfo and memory alone would cost about 50 KB of fetches per Run.
  */
-export const UNREAD_SECTIONS: ReadonlySet<string> = new Set(["cpuinfo", "memory", "block_stat", "nvme_stats"]);
+export const UNREAD_SECTIONS: ReadonlySet<string> = new Set(["cpuinfo", "memory", "block_stat", "nvme_stats", "net_counters"]);
 
 /** The key in the kernel section that holds the box's host name. */
 export const KERNEL_HOST_KEY = "$ uname -a";
@@ -87,6 +87,18 @@ export const NOT_SPLIT_ON: readonly SplitFact[] = [
 	{ fact: "memory", what: "changes on every read (meminfo, loadavg, uptime, pressure)" },
 	{ fact: "block_stat", what: "changes on every read (each block device's I/O counters, /sys/block/*/stat)" },
 	{ fact: "nvme_stats", what: "changes on every read (each Amazon NVMe disk's I/O counters and latency histograms, nvme amzn stats)" },
+	{
+		fact: "net_counters",
+		what:
+			"changes on every read (the default route's interface's own statistics, ethtool -S, with ENA's allowance-exceeded " +
+			"counters; /proc/net/dev, /proc/net/snmp, /proc/net/netstat)",
+	},
+	{
+		fact: "network",
+		what:
+			"the routes, MTUs, TCP and socket settings, resolver files and network driver; added for the Service benchmarks " +
+			"after version 1's facts were chosen, and left to the Method that reads their requests",
+	},
 	{ fact: "devices", what: "holds the root volume's serial, which is new on every launch" },
 	{
 		fact: "provider",
@@ -108,6 +120,12 @@ export const NOT_SPLIT_ON: readonly SplitFact[] = [
 	},
 	{ fact: "ec2_volumes", what: "names the instance's volumes and holds their creation times and status, new on every launch" },
 	{ fact: "ec2_instance", what: "names the instance and holds its addresses and launch time, new on every launch" },
+	{
+		fact: "ec2_route_tables, ec2_vpc_endpoints",
+		what:
+			"the EC2 API's record of the path out of the box's subnet, taken once per boot: the route tables and the " +
+			"VPC's endpoints, shared by every box of the stage; a failed call records its error instead",
+	},
 ];
 
 /** A value left out of a section before it is compared for the split. */
@@ -277,21 +295,61 @@ export interface Outcome {
  *
  * A stop signal the runner received (exit.runner_signal) does not by itself
  * keep a Run out: beside exit code 0 it means the binary had already finished.
+ *
+ * The events are the Run's stdout, read by readStream (methods/run.ts) and
+ * summarised once by summarizeStream, for every Run: a Run written before the
+ * runner stopped copying them into the record counts as it did when they were
+ * read from there.
  */
-export function outcome(run: Run): Outcome {
+export function outcome(run: Run, stream: StreamSummary): Outcome {
 	const failures: string[] = [];
 	const exit = describeExit(run.exit);
 	if (exit !== null) failures.push(exit);
 	if (run.exit.runner_signal !== undefined && exit !== null) {
 		failures.push(`the runner was told to stop by signal ${run.exit.runner_signal}`);
 	}
-	if (run.events_error !== undefined) {
-		failures.push(`stdout line ${run.events_error.line} is not an event: ${run.events_error.message}`);
+	failures.push(...stream.problems, ...countProblem(stream.counted, run.samples));
+	if (failures.length > 0) return { failures, samples: [] };
+	if (stream.samples instanceof Error) throw stream.samples;
+	return { failures, samples: stream.samples };
+}
+
+/**
+ * What version 1 needs of a Run's stream, and nothing proportional to the
+ * stream's size: the problems the stream has of itself, in outcome()'s order
+ * (where parsing stopped, each event that breaks the events schema, each
+ * break of the order rules but the count, which needs the Run's `samples`),
+ * the number of counted samples, those samples' times when the stream has no
+ * problem of its own, and the bytes per repetition it observed. gather()
+ * makes one per stdout blob as it reads it, and lets the blob go.
+ */
+export interface StreamSummary {
+	problems: string[];
+	/** Null when the stream had no event to count. */
+	counted: number | null;
+	/** The counted samples; the error countedSamples threw, if it did (a stream with problems is never asked). */
+	samples: SampleTime[] | Error;
+	bytesPerRepetition: number | null;
+}
+
+export function summarizeStream(stream: Stream): StreamSummary {
+	const problems: string[] = [];
+	if (stream.error !== null) {
+		problems.push(`stdout line ${stream.error.line} is not an event: ${stream.error.message}`);
 	}
 	const validate = schemaValidators().event;
-	run.events.forEach((event, index) => {
-		if (!validate(event)) failures.push(`event ${index + 1} does not match schemas/events.schema.json`);
+	stream.events.forEach((event, index) => {
+		if (!validate(event)) problems.push(`event ${index + 1} does not match schemas/events.schema.json`);
 	});
-	failures.push(...streamProblems(run.events, run.samples));
-	return { failures, samples: failures.length === 0 ? countedSamples(run.events) : [] };
+	const check = streamCheck(stream.events);
+	problems.push(...check.problems);
+	let samples: SampleTime[] | Error = [];
+	if (problems.length === 0) {
+		try {
+			samples = countedSamples(stream.events);
+		} catch (error) {
+			samples = error as Error;
+		}
+	}
+	return { problems, counted: check.counted, samples, bytesPerRepetition: observedBytesPerRepetition(stream.events) };
 }

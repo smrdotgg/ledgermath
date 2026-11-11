@@ -1,0 +1,63 @@
+{
+  "schema": "ledgermath.boot/1",
+  "boot": "dcd56b11-cf5d-44ed-88b2-439006c8343e",
+  "provider": {
+    "name": "aws",
+    "instance_type": "m5.large",
+    "region": "us-east-2",
+    "availability_zone": "us-east-2c",
+    "availability_zone_id": "use2-az3",
+    "image_id": "ami-0123456789abcdef0",
+    "instance_id": "i-0123456789abcdef0"
+  },
+  "source_commit": "0000000000000000000000000000000000000000",
+  "source": "sha256:c5bdaea6db6806243aba8cdca6622348fad92b85aed52d7be483d3ac565826de",
+  "runner": "sha256:addbab75b9320702b7e052be4943e07521e745ff5386522a7326f1bc4be712d1",
+  "started_at": "2026-11-11T17:31:20.688270370Z",
+  "runs": [
+    {
+      "id": "01a1cbaa-08f9-7f87-956b-ac6c283484c9",
+      "benchmark": "fake",
+      "build": "static",
+      "params": {
+        "n": 1
+      },
+      "exit": {
+        "code": 0
+      }
+    },
+    {
+      "id": "01a1cbaa-0900-7857-9ebd-2bc31e604090",
+      "benchmark": "fake",
+      "build": "static",
+      "params": {
+        "n": 2
+      },
+      "exit": {
+        "code": 0
+      }
+    },
+    {
+      "id": "01a1cbaa-0907-74a8-9b2d-461ecd7bb113",
+      "benchmark": "fake",
+      "build": "static",
+      "params": {
+        "n": 3
+      },
+      "exit": {
+        "code": 0
+      }
+    }
+  ],
+  "build_failures": [],
+  "not_run": [],
+  "left_out": [],
+  "services": {
+    "s3_fixtures": {
+      "role_session_name": "ledgermath-dcd56b11-cf5d-44ed-88b2-439006c8343e",
+      "asked_at": "2026-11-11T17:31:20.702529127Z",
+      "expires_at": "2026-11-11T01:00:00+00:00"
+    }
+  },
+  "ended_at": "2026-11-11T17:31:20.719490502Z"
+}

@@ -9,6 +9,8 @@ import {
 	type RunEvent,
 	type RunRecord,
 } from "../scripts/check-runs";
+import { readStream } from "../methods/run";
+import { findSecrets } from "../scripts/lib/secret-search";
 import { allFields, EXAMPLE, identifyingProblems, sectionFields, shapedValues } from "./samples/identifying";
 
 const SAMPLES = join(import.meta.dir, "samples");
@@ -36,8 +38,13 @@ function goodRun(): Record<string, unknown> {
 	return structuredClone(run) as Record<string, unknown>;
 }
 
+/** A sample Run's events: its stdout blob's lines, as every reader reads them. */
+function eventsOf(directory: string, run: RunRecord): RunEvent[] {
+	return readStream(readFileSync(join(SAMPLES, directory, "blobs", "sha256", run.stdout.replace("sha256:", "")))).events;
+}
+
 function eventOf(run: RunRecord, name: string): RunEvent {
-	const event = run.events.find((candidate) => candidate.event === name);
+	const event = eventsOf("scheduled", run).find((candidate) => candidate.event === name);
 	if (!event) throw new Error(`no ${name} event`);
 	return structuredClone(event);
 }
@@ -104,6 +111,118 @@ describe("the sample Runs", () => {
 	}
 });
 
+describe("the sample Runs of an entry that measures a Service", () => {
+	// Made by tests/service-runs.py (tests/samples/README.md): a stand-in
+	// benchmark, given the s3_fixtures Service's inputs by runner/run.py.
+	const runs = (): RunRecord[] => samplesIn("service").sort((a, b) => a.started_at.localeCompare(b.started_at));
+
+	test("validate, and every hash resolves", () => {
+		const result = checkBucketDirectory(join(SAMPLES, "service"), { blobs: true });
+		expect(result.problems).toEqual([]);
+		expect(result.runs).toBe(3);
+	}, SAMPLE_TIMEOUT_MS);
+
+	test("say which Service inputs were delivered: those not secret by value, the keys by name", () => {
+		const [plain, ...measured] = runs();
+		expect(plain?.service).toBeUndefined();
+		expect(measured.length).toBe(2);
+		for (const run of measured) {
+			expect(run.service).toEqual({
+				name: "s3_fixtures",
+				inputs: { endpoint: "https://ledgermath-test-fixtures.s3.us-east-2.amazonaws.com", region: "us-east-2" },
+				secret_inputs: ["aws_access_key_id", "aws_secret_access_key", "aws_session_token"],
+			});
+		}
+	});
+
+	test("hold none of the stand-in keys, in any file", () => {
+		const keys = {
+			aws_access_key_id: "ASIAQSTANDINTESTKEY7",
+			aws_secret_access_key: "stand+in/Secret/Access/Key/0123456789abcdefghijk",
+			aws_session_token: "IQoJb3JpZ2luX2VjEStandIn//////////wEaCXVzLWVhc3QtMiJHMEUCIQStandInSessionToken+test==",
+		};
+		expect(findSecrets([join(SAMPLES, "service")], keys)).toEqual([]);
+	});
+});
+
+describe("the Run schema's service", () => {
+	const measured = (): Record<string, unknown> => {
+		const run = samplesIn("service").find((candidate) => candidate.service !== undefined);
+		if (!run) throw new Error("no sample Run with a service");
+		return structuredClone(run) as Record<string, unknown>;
+	};
+	const withService = (service: unknown) => ({ ...measured(), service });
+
+	test("is optional: a Run without one, as every Run before it, is valid", () => {
+		const run = goodRun();
+		expect(run.service).toBeUndefined();
+		expect(validators.run(run)).toBe(true);
+		expect(validators.run(measured())).toBe(true);
+	});
+
+	test("is closed: no field for a secret's value", () => {
+		const service = measured().service as Record<string, unknown>;
+		expect(validators.run(withService({ ...service, secrets: { aws_session_token: "x" } }))).toBe(false);
+		expect(validators.run(withService({ ...service, secret_inputs: undefined }))).toBe(false);
+	});
+
+	test("holds inputs as strings, and each secret input's name once", () => {
+		const service = measured().service as Record<string, unknown>;
+		expect(validators.run(withService({ ...service, inputs: { port: 443 } }))).toBe(false);
+		expect(validators.run(withService({ ...service, secret_inputs: ["aws_session_token", "aws_session_token"] }))).toBe(false);
+		expect(validators.run(withService({ ...service, secret_inputs: ["LM_SERVICE_AWS_SESSION_TOKEN"] }))).toBe(false);
+	});
+});
+
+describe("the two shapes of a Run", () => {
+	// Runs written before the runner stopped copying stdout into the record
+	// carry events; Runs written since carry stdout_bytes and stdout_lines, and
+	// no events. Both are ledgermath.run/1, and both are read from stdout.
+	const newer = (): Record<string, unknown> => structuredClone(samplesIn("stdout-only")[0]) as Record<string, unknown>;
+
+	test("both validate: every older sample Run, and the newer samples", () => {
+		for (const directory of [...SAMPLE_DIRECTORIES, "service"]) {
+			for (const run of samplesIn(directory)) {
+				expect(run.events).toBeDefined();
+				expect(validators.run(run)).toBe(true);
+			}
+		}
+		const runs = samplesIn("stdout-only");
+		expect(runs.length).toBe(3);
+		for (const run of runs) {
+			expect(run.events).toBeUndefined();
+			expect(typeof run.stdout_bytes).toBe("number");
+			expect(validators.run(run)).toBe(true);
+		}
+	});
+
+	test("the newer shape carries no events and no events_error", () => {
+		expect(validators.run({ ...newer(), events: [] })).toBe(false);
+		expect(validators.run({ ...newer(), events_error: { line: 1, message: "not JSON" } })).toBe(false);
+	});
+
+	test("stdout_bytes and stdout_lines come together", () => {
+		const { stdout_lines: _lines, ...withoutLines } = newer();
+		expect(validators.run(withoutLines)).toBe(false);
+		const { stdout_bytes: _bytes, ...withoutBytes } = newer();
+		expect(validators.run(withoutBytes)).toBe(false);
+		expect(validators.run({ ...newer(), stdout_lines: -1 })).toBe(false);
+	});
+
+	test("a Run of neither shape, without events and without the stdout facts, is refused", () => {
+		const { stdout_bytes: _bytes, stdout_lines: _lines, ...bare } = newer();
+		expect(validators.run(bare)).toBe(false);
+		const older = structuredClone(samplesIn("scheduled")[0]) as Record<string, unknown>;
+		delete older.events;
+		expect(validators.run(older)).toBe(false);
+	});
+
+	test("a Run of both shapes is refused: events beside the stdout facts", () => {
+		const older = structuredClone(samplesIn("scheduled")[0]) as Record<string, unknown>;
+		expect(validators.run({ ...older, stdout_bytes: 1, stdout_lines: 1 })).toBe(false);
+	});
+});
+
 describe("the Run schema rejects", () => {
 	test("a good Run, as a control, is accepted", () => {
 		expect(validators.run(goodRun())).toBe(true);
@@ -136,7 +255,7 @@ describe("the Run schema rejects", () => {
 	test("an event without its clock reading", () => {
 		const run = goodRun() as unknown as RunRecord;
 		const { t: _dropped, ...withoutT } = eventOf(run, "finished");
-		run.events = [...run.events.slice(0, -1), withoutT as RunEvent];
+		run.events = [...eventsOf("scheduled", run).slice(0, -1), withoutT as RunEvent];
 		expect(validators.run(run)).toBe(false);
 	});
 });
@@ -145,7 +264,7 @@ describe("the event schema rejects", () => {
 	const run = goodRun() as unknown as RunRecord;
 
 	test("good events, as a control, are accepted", () => {
-		for (const event of run.events) expect(validators.event(event)).toBe(true);
+		for (const event of eventsOf("scheduled", run)) expect(validators.event(event)).toBe(true);
 	});
 
 	test("a universal event with an extra field", () => {

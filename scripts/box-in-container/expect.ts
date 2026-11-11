@@ -7,8 +7,10 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { appliesTo, type Schedule } from "../../infra/runs/schedule";
+import { readStream } from "../../methods/run";
 import { checkDiskRuns } from "../check-disk-runs";
-import { checkBucketDirectory, type RunRecord } from "../check-runs";
+import { checkBucketDirectory, readTarGz, type RunRecord } from "../check-runs";
+import { filesUnder as everyFileUnder, findSecrets } from "../lib/secret-search";
 
 interface Execution {
 	benchmark: string;
@@ -19,8 +21,9 @@ interface Execution {
 interface BootSummary {
 	provider: { instance_type?: string | null };
 	runs: Array<{ id: string }>;
-	not_run: unknown[];
-	build_failures: unknown[];
+	not_run: Array<Execution & { reason?: string }>;
+	build_failures: Array<{ benchmark: string; build: string; message: string }>;
+	services?: Record<string, Record<string, string>>;
 	left_out: Array<Execution & { instance_types: string[] }>;
 	stopped_by?: number;
 }
@@ -48,6 +51,8 @@ const readJson = <T>(path: string): T => JSON.parse(readFileSync(path, "utf8")) 
 
 const status = Number(statusText);
 const runs = filesUnder("runs", ".json").map((path) => readJson<RunRecord>(path));
+/** A Run's events: its stdout blob's lines, as every reader reads them. */
+const eventsOf = (run: RunRecord) => readStream(readFileSync(join(bucket, "blobs", "sha256", run.stdout.replace("sha256:", "")))).events;
 const logs = filesUnder("logs", ".log");
 const log = logs[0] ? readFileSync(logs[0], "utf8") : "";
 const putsPath = join(out, "calls", "puts.log");
@@ -121,7 +126,7 @@ function mutexRunsSayWhereTheyRan(): void {
 		const label = `mutex run ${run.id} ${JSON.stringify(params)}`;
 		const observed: Record<string, unknown> = Object.assign(
 			{},
-			...run.events.filter((event) => event.event === "observed").map((event) => event.values as Record<string, unknown>),
+			...eventsOf(run).filter((event) => event.event === "observed").map((event) => event.values as Record<string, unknown>),
 		);
 		const cpus = String(observed.cpus).split(",");
 		const packages = String(observed.package_ids).split(",");
@@ -134,9 +139,9 @@ function mutexRunsSayWhereTheyRan(): void {
 		);
 		if (params.placement === "distinct_cores") expect(new Set(cores).size === params.threads, `${label}: its threads share a core (${cores})`);
 		if (params.placement === "smt_siblings") expect(new Set(cores).size === 1, `${label}: its threads are on more than one core (${cores})`);
-		const pairs = run.events.filter((event) => event.event === "cpu_pair").length;
+		const pairs = eventsOf(run).filter((event) => event.event === "cpu_pair").length;
 		expect(pairs === params.threads - 1, `${label}: ${pairs} cpu_pair events, expected ${params.threads - 1}`);
-		const threads = run.events.find((event) => event.event === "mutex_threads")?.threads;
+		const threads = eventsOf(run).find((event) => event.event === "mutex_threads")?.threads;
 		expect(Array.isArray(threads) && threads.length === params.threads, `${label}: mutex_threads does not list its ${params.threads} threads`);
 	}
 }
@@ -176,6 +181,116 @@ function provisionPreparedNothing(): void {
 	expect(!record.steps.some((step) => step.command[0] === "mkfs.xfs" || step.command[0] === "mount"), "provision.py ran mkfs.xfs or mount in the container");
 	expect(record.state === "done" || record.state === "failed", `the provision record's state is ${String(record.state)}, expected done, or failed for the refusal`);
 	expect(record.fixtures.some((fixture) => fixture.disk === "root_volume" && fixture.made), "the root volume's Fixture was not made");
+}
+
+// ---- http_get against the stand-in for S3 ----
+
+/** The keys the aws stand-in's `sts assume-role` hands out (scripts/box-in-container/aws). */
+function standinKeys(): Record<string, string> {
+	const stub = readFileSync(join(import.meta.dir, "aws"), "utf8");
+	const line = /^STANDIN_KEYS = (\{.*\})$/m.exec(stub)?.[1];
+	if (line === undefined) throw new Error("scripts/box-in-container/aws has no STANDIN_KEYS line");
+	return JSON.parse(line) as Record<string, string>;
+}
+
+const blobJson = <T>(hash: string): T => readJson<T>(join(bucket, "blobs", "sha256", hash.replace("sha256:", "")));
+const httpGetRuns = (): RunRecord[] => runs.filter((run) => run.benchmark === "http_get");
+
+// Each http_get Run says which Service inputs it was given: the stand-in's
+// endpoint and the Region, and the keys by name; no other Run names a Service.
+function httpGetRunsSayTheirService(): void {
+	const endpoint = readFileSync(join(out, "fixtures-endpoint"), "utf8").trim();
+	for (const run of runs) {
+		if (run.benchmark !== "http_get") {
+			expect(run.service === undefined, `run ${run.id} (${run.benchmark}) names a Service`);
+			continue;
+		}
+		expect(
+			JSON.stringify(run.service) ===
+				JSON.stringify({
+					name: "s3_fixtures",
+					inputs: { endpoint, region: "us-east-2" },
+					secret_inputs: ["aws_access_key_id", "aws_secret_access_key", "aws_session_token"],
+				}),
+			`http_get run ${run.id}'s service is ${JSON.stringify(run.service)}`,
+		);
+	}
+}
+
+// The keys reached the binary: every request the stand-in received was signed
+// with the stand-in key ID and carried its session token.
+function standinGotTheKeys(): void {
+	const keys = standinKeys();
+	const path = join(out, "standin", "requests.ndjson");
+	const requests = existsSync(path)
+		? readFileSync(path, "utf8")
+				.split("\n")
+				.filter((line) => line !== "")
+				.map((line) => JSON.parse(line) as { target: string; headers: Array<[string, string]> })
+		: [];
+	const header = (request: (typeof requests)[number], name: string): string | undefined =>
+		request.headers.find(([key]) => key.toLowerCase() === name)?.[1];
+	const wanted = schedule.benchmarks
+		.filter((entry) => entry.name === "http_get")
+		.reduce((sum, entry) => sum + entry.params.length * (entry.samples + 1), 0);
+	expect(requests.length === wanted, `the stand-in received ${requests.length} requests, expected ${wanted} (each set's samples and its warmup)`);
+	for (const request of requests) {
+		expect(header(request, "x-amz-security-token") === keys.SessionToken, `a request for ${request.target} did not carry the stand-in session token`);
+		expect(
+			(header(request, "authorization") ?? "").startsWith(`AWS4-HMAC-SHA256 Credential=${keys.AccessKeyId}/`),
+			`a request for ${request.target} was not signed with the stand-in key ID`,
+		);
+	}
+}
+
+// No key is in anything the box wrote: the bucket (Runs, blobs, boot summary,
+// log; not AWS-LC's archive, which the deploy put there), the box's work
+// directory and log, and the aws command lines. Of the source tree the box
+// unpacked, what it was given as it was given is left out (this stand-in's
+// own file holds the keys); what it built there is searched.
+function noKeyAnywhere(): void {
+	const keys = standinKeys();
+	const tls = join(bucket, readFileSync(join(out, "tls-archive"), "utf8").trim());
+	const [archive] = filesUnder("source", ".tar.gz");
+	const given = archive ? readTarGz(readFileSync(archive)) : new Map<string, Buffer>();
+	const src = join(out, "box-work", "ledgermath", "src");
+	const written = everyFileUnder(join(out, "box-work")).filter((path) => {
+		if (!path.startsWith(`${src}/`)) return true;
+		const original = given.get(path.slice(src.length + 1));
+		return original === undefined || !original.equals(readFileSync(path));
+	});
+	expect(given.size > 0 && written.some((path) => path.startsWith(`${src}/benchmarks/`)), "the box's builds under its source tree were not searched");
+	const found = findSecrets(
+		[...everyFileUnder(bucket).filter((path) => path !== tls), ...written, join(out, "console.log"), join(out, "calls", "sts.log")],
+		{ aws_access_key_id: keys.AccessKeyId as string, aws_secret_access_key: keys.SecretAccessKey as string, aws_session_token: keys.SessionToken as string },
+	);
+	for (const { path, secret, form } of found) problems.push(`${path} holds ${secret} (as ${JSON.stringify(form)})`);
+	expect(existsSync(join(out, "box-work", "ledgermath", "out")), "the box's work directory was not copied out, so it was not searched");
+}
+
+// Around every Run the dump holds the network's settings and counters; once
+// per boot, the path to S3 from the EC2 API (or why it was not taken).
+function networkSectionsAroundEveryRun(): void {
+	for (const run of runs) {
+		for (const hash of [run.environment.before, run.environment.after]) {
+			const sections = blobJson<{ sections: Record<string, string> }>(hash).sections;
+			for (const name of ["network", "net_counters", "ec2_route_tables", "ec2_vpc_endpoints"]) {
+				expect(sections[name] !== undefined, `run ${run.id}'s dump ${hash} has no ${name} section`);
+			}
+			const counters = sections.net_counters ? blobJson<Record<string, unknown>>(sections.net_counters) : {};
+			expect(Object.keys(counters).some((key) => key.startsWith("$ ethtool -S")), `run ${run.id}'s net_counters has no ethtool -S`);
+		}
+	}
+}
+
+function printHttpGetSizes(): void {
+	for (const run of httpGetRuns()) {
+		const day = run.started_at.slice(0, 10).replaceAll("-", "/");
+		const size = readFileSync(join(bucket, "runs", day, `${run.id}.json`)).length;
+		const stdout = readFileSync(join(bucket, "blobs", "sha256", run.stdout.replace("sha256:", ""))).length;
+		const params = run.params as { object_bytes: number; connection: string };
+		console.log(`size ${params.object_bytes} ${params.connection}: Run file ${size} B, stdout ${stdout} B, ${eventsOf(run).length} events`);
+	}
 }
 
 const interrupted = runs.filter((run) => run.exit.runner_signal !== undefined);
@@ -284,6 +399,71 @@ switch (scenario) {
 				expect(built === wanted, `${entry.name} ${build} was built ${built} times, expected ${wanted}`);
 			}
 		}
+		break;
+	}
+	case "http-get": {
+		expect(status === 0, `exit status ${status}, expected 0`);
+		everyRunChecksOut();
+		everyExecutionRanOnceAndExitedZero();
+		expect(runs.length === planned, `${runs.length} Runs, expected ${planned}`);
+		expect(httpGetRuns().length === 5, `${httpGetRuns().length} http_get Runs, expected 5`);
+		httpGetRunsSayTheirService();
+		standinGotTheKeys();
+		noKeyAnywhere();
+		networkSectionsAroundEveryRun();
+		expect(typeof boot?.services?.s3_fixtures?.expires_at === "string", "the boot summary does not say until when the keys hold");
+		expect(log.includes("AWS-LC's source archive is"), "the log does not say AWS-LC's archive was fetched and checked");
+		expect(boot?.not_run.length === 0 && boot?.build_failures.length === 0, "the boot summary lists executions not run or builds that failed");
+		printHttpGetSizes();
+		break;
+	}
+	case "http-get-no-archive": {
+		expect(status === 1, `exit status ${status}, expected 1 (a build failed)`);
+		everyRunChecksOut();
+		expect(log.includes("could not fetch AWS-LC's source archive"), "the log does not say AWS-LC's archive could not be fetched");
+		const failures = boot?.build_failures ?? [];
+		expect(failures.length === 1 && failures[0]?.benchmark === "http_get" && failures[0]?.build === "static", `build failures: ${JSON.stringify(failures)}`);
+		expect((failures[0]?.message ?? "").includes("no source archive"), "http_get's build failure does not say it had no source archive");
+		expect(httpGetRuns().length === 0, "an http_get Run exists, though it did not build");
+		const others = scheduled.filter((execution) => execution.benchmark !== "http_get");
+		expect(runs.length === others.length && runs.every((run) => "code" in run.exit && run.exit.code === 0), "every other execution did not run once and exit 0");
+		expect(!existsSync(join(out, "calls", "sts.log")), "assume-role was asked for, though nothing could use the keys");
+		noKeyAnywhere();
+		break;
+	}
+	case "http-get-refused": {
+		expect(status === 1, `exit status ${status}, expected 1 (executions not run)`);
+		everyRunChecksOut();
+		expect(log.includes("ledgermath-run: built http_get static "), "http_get did not build");
+		const httpGet = scheduled.filter((execution) => execution.benchmark === "http_get");
+		const notRun = boot?.not_run ?? [];
+		expect(
+			JSON.stringify(notRun.map((execution) => executionKey(execution.benchmark, execution.build, execution.params))) ===
+				JSON.stringify(httpGet.map((execution) => executionKey(execution.benchmark, execution.build, execution.params))),
+			`not_run is ${JSON.stringify(notRun)}`,
+		);
+		for (const execution of notRun) expect((execution.reason ?? "").includes("AccessDenied"), `not_run's reason is ${execution.reason}`);
+		expect(typeof boot?.services?.s3_fixtures?.failed === "string", "the boot summary does not say the keys could not be had");
+		expect(httpGetRuns().length === 0, "an http_get Run exists, though it had no keys");
+		expect(runs.length === scheduled.length - httpGet.length, `${runs.length} Runs, expected ${scheduled.length - httpGet.length}`);
+		noKeyAnywhere();
+		break;
+	}
+	case "build-tools-refused": {
+		// The tools only http_get needs could not be installed: the box goes on,
+		// http_get alone fails to build, and everything else runs.
+		expect(status === 1, `exit status ${status}, expected 1 (a build failed)`);
+		expect(log.includes("Error: Unable to find a match: cmake"), "the log does not show dnf refusing cmake");
+		expect(log.includes("http_get will not build"), "the log does not say http_get will not build");
+		expect(boots.length === 1, `${boots.length} boot summaries, expected 1`);
+		everyRunChecksOut();
+		const failures = boot?.build_failures ?? [];
+		expect(failures.length === 1 && failures[0]?.benchmark === "http_get" && failures[0]?.build === "static", `build failures: ${JSON.stringify(failures)}`);
+		expect((failures[0]?.message ?? "").includes("cmake is not installed"), "http_get's build failure does not say cmake is missing");
+		expect(httpGetRuns().length === 0, "an http_get Run exists, though it did not build");
+		const others = scheduled.filter((execution) => execution.benchmark !== "http_get");
+		expect(others.length > 0 && runs.length === others.length && runs.every((run) => "code" in run.exit && run.exit.code === 0), "every other execution did not run once and exit 0");
+		expect(!existsSync(join(out, "calls", "sts.log")), "assume-role was asked for, though nothing could use the keys");
 		break;
 	}
 	default:

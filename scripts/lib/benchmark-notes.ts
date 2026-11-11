@@ -160,6 +160,18 @@ export const BENCHMARK_NOTES: Readonly<Record<string, BenchmarkNote>> = {
 		],
 		source: "benchmarks/disk_write/README.md",
 	},
+	http_get: {
+		measures:
+			"How long an HTTPS GET of an object in S3 takes, signed with SigV4, from the box to the stage's private bucket in us-east-2, through the internet gateway: every phase of every request (name resolved, connected, secured, request sent, first byte, headers, body) is an event, and every 2xx body is checked against the Fixture. Over a new connection per request (connection new) or one kept connection (connection reused); object_bytes is the object's size.",
+		repetition: "one GET, from just before its DNS query (new) or its request write (reused) to its whole body: one request per sample",
+		caveat:
+			"Method version 1 gives one number per Run, the median of the requests' total times; the phases (time to first byte, the TLS handshake) and the tail come with a Method that reads requests one by one. A Run with any failed request or non-2xx status exits 4 and is not counted.",
+		variants: [
+			{ match: { connection: "new" }, note: "each request resolves the name, connects and does a TLS handshake inside its sample: what a fresh client pays" },
+			{ match: { connection: "reused" }, note: "the request on a kept connection: send, first byte and body only" },
+		],
+		source: "benchmarks/http_get/README.md",
+	},
 };
 
 /** The notes of every variant whose match the params satisfy, in table order. */

@@ -122,6 +122,21 @@ describe("the watched Series", () => {
 		}
 	});
 
+	test("include http_get's five sets on each of the five targets", () => {
+		const httpGet = watchedSeries(REAL_SCHEDULE).filter((series) => series.benchmark === "http_get");
+		expect(httpGet.length).toBe(5 * TARGETS.length);
+		for (const target of TARGETS) {
+			const here = httpGet.filter((series) => series.instanceType === target.instance_type);
+			expect(here.map((series) => [series.params.object_bytes, series.params.connection, series.build])).toEqual([
+				[4096, "new", "static"],
+				[4096, "reused", "static"],
+				[131072, "new", "static"],
+				[131072, "reused", "static"],
+				[16777216, "new", "static"],
+			]);
+		}
+	});
+
 	test("are all kept fresh by one boot of schedule.json on each target", () => {
 		const boots = new HandMade();
 		for (const target of REAL_SCHEDULE.targets) oneBoot(boots, "2026-11-12T22:10:00Z", REAL_SCHEDULE, target);

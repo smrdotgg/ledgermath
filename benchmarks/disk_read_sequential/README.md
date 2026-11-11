@@ -86,7 +86,9 @@ The Fixture's checks before measuring are `disk_read_random`'s, and exit 1 the s
 they read through the page cache here, so the whole span is dropped from it before the
 first sample. `verified` is the running sum of the first word of every 8 KiB block read.
 After measuring, the binary checks that it made exactly the reads the samples ask for, and
-that the sum equals the pattern's over every region read; otherwise it exits 1. At the end
+that the sum equals the pattern's over every region read; otherwise it exits 1. The sum's
+reach is `disk_read_random`'s: it shows that each 8 KiB block read began with the
+Fixture's word, not that the rest of the block is, nor anything of the span not read. At the end
 the whole span is dropped from the page cache, so the next Run finds it as this one did.
 
 ## What will stay unstable, and what to read with care

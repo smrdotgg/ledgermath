@@ -42,11 +42,16 @@ never touches a stored Run; only the Run record is forever.
 - **What differed**: for each pair of consecutive Runs, every split fact and every
   before-dump section whose value changed, split on or not, with the top-level keys
   that changed, except for the sections it does not read: `cpuinfo`, `memory`,
-  `block_stat` and `nvme_stats`, which change on every read and are never fetched.
+  `block_stat`, `nvme_stats` and `net_counters`, which change on every read and are never
+  fetched.
 - **Which Runs count**: exit code 0, every stdout line an event matching the events
   schema, and every order rule of `scripts/check-events.py` (`v1/stream.ts` is a port of it,
   and `tests/stream.test.ts` checks the two agree), with the Run's own `samples` as the
-  count of counted samples to expect.
+  count of counted samples to expect. The events are read from each Run's stdout blob,
+  which `gather` fetches with its dumps (`readStream`, `methods/run.ts`), reduces to what
+  the Derivations need (`summarizeStream`, `v1/facts.ts`) and lets go, for every Run:
+  those written before the runner stopped copying them into the record count as they did
+  when version 1 read them there, byte for byte (`tests/samples/older-shape-derivations.json`).
 - **Failed Runs**: shown, with the reasons, in their group, in no percentile.
 
 ### What version 1 splits on, and why
@@ -83,6 +88,16 @@ and "what differed" lists each one that changed:
 - `ec2_instance_type`, the catalog record of the instance type, is taken once per boot:
   the instance type already makes the Series, AWS may revise the record without the
   machine changing, and a failed call records its error instead.
+
+Nor are those added for the Service benchmarks:
+
+- `net_counters` (the network card's own statistics, `ethtool -S`, and the kernel's
+  `/proc/net/dev`, `snmp` and `netstat`) changes on every read, so its contents are not
+  fetched.
+- `network` (routes, MTUs, TCP and socket settings, the resolver's files, the network
+  driver), and `ec2_route_tables` and `ec2_vpc_endpoints` (the EC2 API's record of the
+  path out of the subnet, once per boot) were added after version 1's facts were chosen;
+  a Method that reads requests one by one is the place to split on them.
 
 ### What is left out of a section before it is compared
 

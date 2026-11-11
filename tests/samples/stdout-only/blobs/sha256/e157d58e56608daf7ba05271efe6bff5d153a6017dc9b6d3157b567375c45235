@@ -1,0 +1,6 @@
+{"event":"started","t":1,"schema":"ledgermath.events/1","wall_utc":"2026-11-11T00:00:00.000000000Z","clock":"CLOCK_MONOTONIC_RAW","clock_read_ns":20}
+{"event":"observed","t":2,"values":{"service_variables":"LM_SERVICE_AWS_ACCESS_KEY_ID LM_SERVICE_AWS_SECRET_ACCESS_KEY LM_SERVICE_AWS_SESSION_TOKEN LM_SERVICE_ENDPOINT LM_SERVICE_REGION "}}
+{"event":"sample_started","t":3,"sample":0,"warmup":false,"repetitions":1}
+{"event":"sample_ended","t":4,"sample":0}
+{"event":"verified","t":5,"checksum":"0x0000000000000000"}
+{"event":"finished","t":6}
