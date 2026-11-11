@@ -16,13 +16,14 @@ until step 4 of the plan replaces it.
 
 | Path | What it is |
 |------|------------|
-| `benchmarks/harness/c/` | The C harness that prints the event stream (`lm.h`, `lm.c`), and `lm_event.h` and `lm_event.c`, which emit a benchmark's own events and further `observed` events |
-| `benchmarks/<name>/` | One benchmark on the stream: its source, a `README.md` (what it measures, its parameters and observed values, how it differs from July's), and a `Makefile` (`make BUILD=static`, `BUILD=dynamic`, `make -s compiler`, `make -s resolved`). Nine so far: `memory_read`, `compressed_memory_read`, `memory_read_random`, `memory_write`, `syscall`, `hash`, `sort`, `tcp_echo`, `mutex` |
+| `benchmarks/harness/c/` | The C harness that prints the event stream (`lm.h`, `lm.c`); `lm_event.h` and `lm_event.c`, which emit a benchmark's own events and further `observed` events; `lm_fixed.h` and `lm_fixed.c`, samples of fixed work; `lm_disk.h` and `lm_disk.c`, what a disk benchmark observes about its file and device; `lm_fixture.h`, the disk Fixture's pattern |
+| `benchmarks/<name>/` | One benchmark on the stream: its source, a `README.md` (what it measures, its parameters and observed values, how it differs from July's), and a `Makefile` (`make BUILD=static`, `BUILD=dynamic`, `make -s compiler`, `make -s resolved`). All thirteen: `memory_read`, `compressed_memory_read`, `memory_read_random`, `memory_write`, `syscall`, `hash`, `sort`, `tcp_echo`, `mutex`, `disk_read_random`, `disk_read_io_uring`, `disk_read_sequential`, `disk_write` |
 | `schedule.json` | The targets (instance types, their zone, the times of day each boots) and what a box runs: benchmarks, builds, samples, timeout, parameter sets, and the instance types an entry is for. Checked by `infra/runs/schedule.ts` |
-| `runner/` | The box side: `box.sh` (user-data), `run.py` (builds, runs, dumps, writes Runs), `cpuid.c` |
+| `runner/` | The box side: `box.sh` (user-data), `provision.py` (prepares the disks at boot and records it), `fixture.c` (writes a disk Fixture), `run.py` (builds, runs, dumps, writes Runs), `cpuid.c` |
 | `schemas/` | `run.schema.json` (the Run) and `events.schema.json` (one line of the stream) |
 | `scripts/check-events.py` | Checks a stream's order; needs only Python 3 |
 | `scripts/check-runs.ts` | Checks a directory laid out like the bucket: schemas, every hash, events against stdout, runner manifests |
+| `scripts/check-disk-runs.ts` | Checks that every disk Run in such a directory says which disk it measured, and that its dump proves it |
 | `scripts/check-targets.ts` | Checks `schedule.json`'s targets' `vcpus`, their zone offerings and `vcpu_quota.limit` against AWS, read-only; needs AWS access, so not part of `bun test` |
 | `scripts/box-in-container/` | Boots `runner/box.sh` in Amazon Linux 2023 with S3 and shutdown stubbed, in several scenarios |
 | `infra/runs/` | The `-runs` SST stage: stack, launch Lambda, reaper, user-data, the schedule's check (`schedule.ts`), the targets and their launch schedules (`placement.ts`), the workflow's AWS role |
@@ -31,7 +32,7 @@ until step 4 of the plan replaces it.
 | `scripts/derive.ts`, `scripts/build-page.ts` | Run a Method over the Runs; turn its Derivations into the page |
 | `scripts/alarm.ts` | Opens, or comments on, one issue when a watched Series has had no Run for 48 hours |
 | `.github/workflows/runs.yml` | All four on a schedule: copy, push, derive, page, alarm |
-| `tests/` | `bun test`: the schemas against sample Runs, the Run checker, the schedule's check, the runner's timeout and stop races and its instance-type filtering, the launch schedules, launch and reap logic, the role, the Method, the copy job, the page, the alarm and the workflow |
+| `tests/` | `bun test`: the schemas against sample Runs, the Run checker, the schedule's check, the runner's timeout and stop races and its instance-type filtering, the dump's sections, the disk provisioning's decisions, the disk Fixture and the binaries' checks of it, the launch schedules, launch and reap logic, the box's and the workflow's roles, the Method, the copy job, the page, the alarm and the workflow |
 
 ## A benchmark, locally
 
@@ -63,8 +64,12 @@ in a `FROM scratch` container, once per parameter set with `--quick`, checking e
 stream. A parameter set that asks for CPUs this machine does not have, such as `mutex` on
 two distinct cores on a machine with one, is reported as skipped with the reason, decided
 from the machine's topology; it is still run once, and must exit 2. Every other set must
-pass. It then shows that the same container refuses `memory_read`'s dynamic build. No
-measured Run goes through Docker.
+pass. The disk benchmarks get a 64 MiB Fixture, made by `runner/fixture.c` in a new
+directory under `/tmp` (or `$LM_SCRATCH_DISK_DIR`) and mounted at each set's `dir`; under
+`--quick` they read at most 64 MiB of a span. `disk_read_io_uring` runs without Docker's
+seccomp filter, whose default refuses `io_uring`, and is skipped where the kernel refuses
+it (`kernel.io_uring_disabled`). It then shows that the same container refuses
+`memory_read`'s dynamic build. No measured Run goes through Docker.
 
 To boot the box script the way a box does, in `amazonlinux:2023.12.20260710.0` (the
 release the pinned image is locked to), with the bucket as a local directory:
@@ -77,8 +82,9 @@ scripts/box-in-container/run.sh --scenario terminated /tmp/box-test     # see be
 
 Each scenario boots the box and checks what it should have left
 (`scripts/box-in-container/expect.ts`): `ok` (the whole schedule for this machine's type
-as IMDS gives it, about seven and a half minutes; this machine is not a target, so the
-entries naming instance types, `mutex`'s two-thread sets, are left out),
+as IMDS gives it, about nine minutes; this machine is not a target, so the entries naming
+instance types, `mutex`'s two-thread sets and the instance-store sets, are left out; every
+disk Run must tie to its dump, `scripts/check-disk-runs.ts`),
 `terminated` (run.py told to stop mid-execution), `shutdown` (every process told to stop,
 as a shutdown does), `budget` (the time budget runs out), `blobs-rejected` (the bucket
 refuses every blob), `blobs-flaky` (the first upload of blobs drops halfway),
@@ -87,7 +93,15 @@ refuses every blob), `blobs-flaky` (the first upload of blobs drops halfway),
 `scripts/box-in-container/instance-types.json` as its schedule: the entries for other
 types are left out and listed in the boot summary, and `mutex`'s one-thread and siblings
 sets run from one build, about two minutes). The Runs describe this machine, seen from a
-container; in `instance-types` their provider fields are the fake IMDS's.
+container; in `instance-types` their provider fields are the fake IMDS's. The stand-in
+`aws` answers the four EC2 calls the box makes (the catalog records saved in
+`scripts/box-in-container/ec2/`). The container has no device node of this machine's
+disks, so `provision.py` prepares none, whatever it finds in `/sys`, and the scenarios
+check that it did not; the root volume's disk directory is a tmpfs of the container's
+own (the schedule's 1 GiB Fixture and 1 GiB scratch file do not fit beside everything
+else on a development machine's disk), so the disk Runs there read and write memory and
+say so (`device_found` false). The container runs without a seccomp filter, as the box
+does.
 
 ## The daily box: a `-runs` stage
 
@@ -118,11 +132,14 @@ scheduled time, so one slot of one target can start at most one box. Its user-da
 `runner/box.sh`, which:
 
 1. sets a shutdown timer that ends the box 45 minutes after it started, whatever happens;
-2. installs `gcc`, `make`, `glibc-static`, `tar`, `gzip` and `util-linux` from the image's
-   own release;
+2. installs `gcc`, `make`, `glibc-static`, `tar`, `gzip`, `util-linux`, `nvme-cli` and
+   `xfsprogs` from the image's own release;
 3. fetches `source/<commit>.tar.gz`, a `git archive` of the deployed commit, and refuses to
    go on if the archive's commit or its own text is not that commit's;
-4. builds `runner/cpuid.c` and runs `runner/run.py` until 35 minutes after the box
+4. builds `runner/cpuid.c` and `runner/fixture.c`, and prepares the disks with
+   `runner/provision.py` (below, "The disks"), which records everything it runs; nothing
+   it does or fails to do stops the boot;
+5. runs `runner/run.py` until 35 minutes after the box
    started. `run.py` reads the box's instance type from IMDS and runs the entries of
    `schedule.json` for it: every entry without `instance_types`, and every entry whose
    `instance_types` names it. It builds each of their benchmarks once, in each build the
@@ -131,7 +148,7 @@ scheduled time, so one slot of one target can start at most one box. Its user-da
    writes that execution's Run, starts nothing more, writes the boot summary, which lists
    what was not run, and exits. If it has not exited three minutes later, it is killed
    outright;
-5. uploads the blobs the bucket does not hold yet, then the Runs and the boot summary, then
+6. uploads the blobs the bucket does not hold yet, then the Runs and the boot summary, then
    its log, and shuts down, which terminates the instance.
 
 The stage's bucket is versioned, so a second write to a key keeps the first. It ends up
@@ -147,6 +164,56 @@ source/<commit>.tar.gz               the deployed source
 
 A reaper runs every five minutes and terminates any box of the stage older than 50
 minutes. It touches nothing else; July's reaper cannot touch these boxes either.
+
+The box's role reads its source, lists `blobs/`, writes `runs/`, `blobs/`, `boots/` and
+`logs/`, and calls four read-only EC2 actions: `ec2:DescribeInstanceTypes`,
+`ec2:DescribeVolumes`, `ec2:DescribeVolumeStatus` and `ec2:DescribeInstances`
+(`infra/runs/box-role.ts`).
+
+### The disks
+
+The four disk benchmarks each name the disk a parameter set means, `"disk":
+"root_volume"` or `"instance_store"`, which makes the Series, and the directory the
+binary works in, `"dir"`. The binary never reads `disk`; it reports the file and device it
+found (`observed`) and the change in the device's counters while it measured
+(`device_counters`). On a `-runs` box, before `run.py`, `runner/provision.py`:
+
+- finds the instance's own NVMe disk by its model, `Amazon EC2 NVMe Instance Storage`,
+  never by number, and prepares it only when it is the one disk the catalog
+  (`describe-instance-types`) lists and is empty: no partition, no holder, not mounted,
+  its device node right, and nothing `blkid -p` can find. It records the disk first
+  (`lsblk`, `blkid`, `nvme id-ctrl`, `nvme id-ns`, `nvme amzn stats`), then makes a
+  default XFS file system (`mkfs.xfs`, never forced) and mounts it at
+  `/mnt/lm/instance-store`. Anything else is refused and recorded. Of the targets only
+  `i4i.2xlarge` has such a disk (one of 1,875 GB); the other types have no such step;
+- makes the Fixtures with `runner/fixture.c` (`O_DIRECT` writes of 1 MiB, then
+  `fdatasync`): 32 GiB on the instance store, and 1 GiB under `/var/tmp/ledgermath/disk` on
+  the root volume on every type;
+- writes every command, exit code, output and timing to
+  `/var/tmp/ledgermath/provision.json`, which every dump holds as the section `provision`.
+
+On a real `i4i.2xlarge` this took 43 seconds: `mkfs.xfs` 6 s (it discards the whole disk
+first), the 32 GiB Fixture 30 s, the root volume's 7 s. The root volume is the image's
+default, 8 GiB of gp3 (3000 IOPS, 125 MiB/s); with everything installed, the Fixture made
+and `disk_write`'s 1 GiB scratch file present, it still had 4.3 GB free.
+
+The dump gains, around every Run, `block_stat` (every `/sys/block/*/stat`) and
+`nvme_stats` (`nvme amzn stats` of every Amazon NVMe disk: its own counters, its read and
+write latency histograms, and the time it spent over its limits), kept apart from
+`devices`, which gains lsblk's sizes, queue and mount columns, the queue settings and
+`xfs_info` of every XFS file system; `kernel` gains `/proc/sys/vm/dirty_*`. Once per boot,
+stored once: `provision`, and what the EC2 API says, in three sections: `ec2_instance_type`
+(the catalog record), `ec2_volumes` (the volumes attached and their status, with their
+initialization state) and `ec2_instance` (the instance's own record). An API call that
+fails is recorded with what it printed. `ec2_volumes` and `ec2_instance` name the account,
+as the IMDS identity document in `provider` already does.
+
+`bun scripts/check-disk-runs.ts DIR` checks, for every disk Run in a directory laid out
+like the bucket, that the device it names is in its dump (model and serial in `/sys` and
+`lsblk`), that its counters lie between the dump's, that the device itself counted the
+reads and writes (`nvme amzn stats`), that an EBS serial `vol…` is a volume the EC2 API
+lists, with its type, size and limits, and that an instance-store disk is the one the
+provision record formatted and mounted.
 
 ### Targets, boot times, and which types an entry runs on
 

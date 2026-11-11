@@ -59,13 +59,14 @@ cannot, the order of the stream.
 
 | Path | What it is |
 |------|------------|
-| `benchmarks/harness/c/` | The C harness (`lm.h`, `lm.c`), which prints the stream, and `lm_event.h` and `lm_event.c`, which emit a benchmark's own events and further `observed` events (`lm.c` stays as it is, so `memory_read`'s binary keeps its bytes). A benchmark in another language prints the same lines without them. |
-| `benchmarks/<name>/` | One benchmark: its source, a `README.md` (what it measures, its parameters, its observed values, its elision guard, and every difference from July's version), and a `Makefile` offering `make BUILD=static` or `BUILD=dynamic` (one file at `build/<build>/<name>`), `make -s compiler` and `make -s resolved`. Nine are on the stream: `memory_read`, `compressed_memory_read`, `memory_read_random`, `memory_write`, `syscall`, `hash`, `sort`, `tcp_echo` and `mutex`. The other four, the disk benchmarks, are still only July's, in `benchmarks/c/`. |
+| `benchmarks/harness/c/` | The C harness (`lm.h`, `lm.c`), which prints the stream; `lm_event.h` and `lm_event.c`, which emit a benchmark's own events and further `observed` events; `lm_fixed.h` and `lm_fixed.c`, samples of fixed work with a step before each outside its interval (`disk_read_sequential`); `lm_disk.h` and `lm_disk.c`, what the disk benchmarks observe about the file they opened and its device, and their `device_counters` event; and `lm_fixture.h`, the disk Fixture's pattern, defined once. `lm.c` stays as it is, so `memory_read`'s binary keeps its bytes. A benchmark in another language prints the same lines without them. |
+| `benchmarks/<name>/` | One benchmark: its source, a `README.md` (what it measures, its parameters, its observed values, its elision guard, and every difference from July's version), and a `Makefile` offering `make BUILD=static` or `BUILD=dynamic` (one file at `build/<build>/<name>`), `make -s compiler` and `make -s resolved`. All thirteen are on the stream: `memory_read`, `compressed_memory_read`, `memory_read_random`, `memory_write`, `syscall`, `hash`, `sort`, `tcp_echo`, `mutex`, `disk_read_random`, `disk_read_io_uring`, `disk_read_sequential` and `disk_write`. July's copies stay in `benchmarks/c/` until July's pipeline is retired. |
 | `schemas/events.schema.json` | One line of the stream. |
 | `scripts/check-events.py` | The order of a stream: `./build/static/memory_read --quick \| python3 scripts/check-events.py --quick`. Needs only Python 3. |
-| `scripts/check-scratch.py` | Runs every static build of `schedule.json` as the only file in a `FROM scratch` container, once per parameter set, and checks each stream. A set asking for CPUs this machine's topology cannot provide (`mutex`'s `distinct_cores` or `smt_siblings`) is reported as skipped, with the reason, and must exit 2. Needs Docker. |
+| `scripts/check-scratch.py` | Runs every static build of `schedule.json` as the only file in a `FROM scratch` container, once per parameter set, and checks each stream. A set asking for CPUs this machine's topology cannot provide (`mutex`'s `distinct_cores` or `smt_siblings`), or for `io_uring` a kernel refuses (`kernel.io_uring_disabled`), is reported as skipped, with the reason, and must exit 2. The disk sets get a 64 MiB Fixture made by `runner/fixture.c`, mounted at their `dir`. Needs Docker. |
 | `schedule.json` | What a box runs: benchmarks, builds, samples, timeout, parameter sets. Not part of the runner. |
-| `runner/` | The box side. `box.sh` is the user-data; `run.py` builds, launches each binary, dumps the environment around it and writes one Run per execution; `cpuid.c` is the raw cpuid dump. |
+| `runner/` | The box side. `box.sh` is the user-data; `provision.py` prepares the disks at boot (the instance's own NVMe disk, where there is one, and the Fixtures, which `fixture.c` writes) and records all it did; `run.py` builds, launches each binary, dumps the environment around it and writes one Run per execution; `cpuid.c` is the raw cpuid dump. |
+| `scripts/check-disk-runs.ts` | Checks that every disk Run says which disk it measured and that its dump proves it: the device's model and serial in `/sys`, its counters between the dumps', the device's own `nvme amzn stats`, the EBS volume in the EC2 API, the instance-store disk in the provision record. |
 | `schemas/run.schema.json` | The Run, which holds the stream as `events`. |
 | `scripts/check-runs.ts` | Checks Runs laid out as in the bucket: schemas, file names, every hash, events against stdout, stream order, and each runner manifest against the source archive when that is present. |
 
@@ -83,6 +84,10 @@ The benchmarks on the stream, each with one parameter set per execution. The val
 | `sort` | `size_bytes` 1 MiB | `bytes_per_repetition` | `u64` |
 | `tcp_echo` | `size_bytes` 32 KiB | `bytes_per_repetition` | `32 KiB` |
 | `mutex` | `threads` `1` with `placement` `one_cpu`, or `2` with `distinct_cores` or `smt_siblings`; `critical_section_lines` `1`, or `8` with `distinct_cores`; `lock` `pthread_mutex_default` | `threads_used`, `cpus`, `core_ids`, `package_ids`, `lock_type`, `libc`, `critical_sections_per_repetition`, `protected_lines`; its own events `cpu_pair` and `mutex_threads` | none: July's `contended` Series ends, and this is a new measurement |
+| `disk_read_random` | `disk` `root_volume` or `instance_store` (the Series' name, never read by the binary), `dir` (where the Fixture is), `request_bytes` 8192, `span_bytes` 1 GiB or 32 GiB | the file and its device (every disk benchmark: `file_path`, `disk_device`, `disk_model`, `disk_serial`, `fs_type`, `mount_point`, `o_direct`, the queue settings, extents, resident pages; its README lists them), `request_bytes`, `queue_depth`, `span_bytes`, `span_blocks`, `bytes_per_repetition`; its own events `device_counters` and `work` | `8 KiB`, which measured the root EBS volume |
+| `disk_read_io_uring` | `disk`, `dir`, `access` `sequential` with `request_bytes` 32768 or `random` with 4096, `queue_depth` 64, `span_bytes` | the file and its device, `access`, `request_bytes`, `queue_depth`, `span_bytes`, `span_blocks`, `bytes_per_repetition`, `ring_sq_entries`, `ring_cq_entries`, `ring_features`; `device_counters`, `work` | `32 KiB × 64 in flight`, whose queue drained to zero each batch |
+| `disk_read_sequential` | `disk`, `dir`, `request_bytes` 8192, `bytes_per_sample` 128 MiB or 2 GiB, `span_bytes` | the file and its device, `request_bytes`, `bytes_per_sample`, `span_bytes`, `regions`, `bytes_per_repetition`; `device_counters`, `work` with each sample's resident pages | `8 KiB`, which read with `O_DIRECT`: now a cold buffered read |
+| `disk_write` | `disk`, `dir`, `request_bytes` 8192, `sync` `none` (root volume only: the page cache's number) or `fdatasync`, `file_bytes` 256 MiB or 1 GiB | the scratch file and its device, `request_bytes`, `sync_call`, `bytes_per_repetition`; `device_counters`, `work` | `8 KiB, No fsync`, `8 KiB, fsync` |
 
 ### What the binary receives
 
@@ -494,4 +499,65 @@ A migrated benchmark is done only when **all** of these hold:
   two to four times those. What only boxes can settle is item 15 of the study: about 20
   boots per type, the one-thread spread on a stock box, and whether the two-thread value
   follows `cpu_pair`.
+- **2026-11-11** — Step 4 of the build plan (#36, brief #42), the disk benchmarks, not yet
+  deployed. The four are section 2 of the brief's study as the decisions on it settled,
+  each in its own directory with a `README.md`: `disk_read_random` (one `O_DIRECT` read
+  at a time, at the offsets of a seeded permutation), `disk_read_io_uring` (a queue of 64
+  that stays full, by raw `io_uring` system calls: the image's `liburing-devel` 2.6 has no
+  static library), `disk_read_sequential` (cold buffered reads with stock readahead, a
+  region per sample, made cold outside the interval) and `disk_write` (the no-sync set,
+  the page cache's number, on the root volume only; `fdatasync` on both disks). Every set
+  carries `disk` (`root_volume` or `instance_store`, the Series' name, which the binary
+  never reads) and `dir`. Each binary reports in `observed` the file it opened and the
+  device behind it, and after measuring emits `device_counters`, the change in
+  `/sys/block/<disk>/stat` over the measured interval, and `work`. No clock is read
+  inside an interval and nothing is timed per operation. New harness files beside
+  `lm.c`, which is unchanged: `lm_fixture.h` (the pattern), `lm_disk.{h,c}` (the
+  observation and the counters) and `lm_fixed.{h,c}` (samples of fixed work). The box
+  prepares the disks at boot: `runner/provision.py`, run by `box.sh` after the packages
+  (now with `nvme-cli` and `xfsprogs`) and before `run.py`, finds the instance-store disk
+  by its model, compares the count with the catalog, records the disk, refuses anything
+  not an empty instance-store disk, makes a default XFS file system, mounts it at
+  `/mnt/lm/instance-store`, and has `runner/fixture.c` write the Fixtures (32 GiB there, 1
+  GiB under `/var/tmp/ledgermath/disk` on every type) with `O_DIRECT` and `fdatasync`;
+  every command, exit code, output and timing goes to one record, which every dump holds
+  as `provision`. Its failure never stops the boot. The dump gains `block_stat` and
+  `nvme_stats` around every Run (kept apart from `devices`, which stays the same within a
+  boot and so is stored once), lsblk's columns, the queue settings, `xfs_info`,
+  `/proc/sys/vm/dirty_*`, and once per boot `ec2_instance_type`, `ec2_volumes` and
+  `ec2_instance`; the box role gains exactly `ec2:DescribeInstanceTypes`,
+  `ec2:DescribeVolumes`, `ec2:DescribeVolumeStatus` and `ec2:DescribeInstances`
+  (`infra/runs/box-role.ts`). The Run record is unchanged; nothing restricts dump section
+  names. Method version 1 reads the new sections, lists them under what differed, and
+  splits on none. `schedule.json` has the study's ten sets, the instance store's for
+  `i4i.2xlarge`, after every other benchmark. Departures from the study: a refused
+  `io_uring_setup` exits 2 (as `mutex`'s impossible placement does), so
+  `check-scratch.py` can skip it from `kernel.io_uring_disabled`; on a file system with
+  no `FIEMAP` (tmpfs) the extent checks are skipped and `observed` says so, the checksum
+  staying the proof; provisioning refuses when the catalog cannot be read, and when
+  there is more than one instance-store disk; the decisions are a Python script so fake
+  sysfs trees can test them. Experiments on a real `i4i.2xlarge` (section 2.8, items 1 to
+  9): the disk is `nvme1` this boot, model exactly `Amazon EC2 NVMe Instance Storage`, one
+  namespace, write through, no FUA, `max_sectors_kb` 128, one 512-byte LBA format;
+  `mkfs.xfs` took 6 s with its discard, the 32 GiB Fixture 30 s (1.15 GB/s); random 8 KiB
+  reads at queue depth 1 took 120.3 µs at 0, 2 and 5 minutes after it (device mean 111.8
+  µs, identical histograms), and fio found sequential equal to random there; a durable
+  8 KiB write took 30.1 µs, one device write and no flush; a cold buffered read ran at
+  1054 to 1094 MiB/s in 128 KiB requests; at queue depth 64, 199,996 random 4 KiB IOPS
+  (AWS's 200,000) and 1356 MiB/s sequential, both at the instance store's limits (its
+  exceeded counters grew), from one thread at 29% of a CPU, after a burst of about 2 GiB
+  the warmup absorbed; `nvme amzn stats` gives JSON on both disks, with 28 power-of-two
+  bins and EBS's field names on the instance store too. On `m5.large` (items 10 to 13):
+  582.6 µs for a gp3 read at queue depth 1; the first ~128 MiB or ~4,000 reads of every
+  Run burst, then the counted samples hold 125.2 MiB/s and 3000 IOPS; the instance's own
+  EBS exceeded counters never moved; the root volume was `initializing`, 0%, at boot, and
+  `completed` when next looked at, 6 minutes after launch (11 on the `i4i.2xlarge`); 6.5 GB free after install, 4.33 GB at the least during
+  a boot, so the root volume stays the image's default. Whole boots of `box.sh` (S3,
+  the EC2 API and shutdown stubbed) took about 13 minutes on the `i4i.2xlarge` (36 Runs;
+  provisioning 43 s, the 11 disk executions 240 s) and 10.5 on the `m5.large` (29 Runs),
+  against the 35-minute budget; `scripts/check-disk-runs.ts` tied every disk Run to its
+  dump. The container test's disk directory is a tmpfs (this machine's disk has no room
+  for the schedule's Fixture and scratch file), and its box runs without Docker's seccomp
+  filter, which refuses `io_uring`. All other binaries keep their bytes; `memory_read`
+  still hashes to `a3674893…`. None of this was checked with `sst diff`.
 - _(agents: append your entry here, one per merged benchmark)_
