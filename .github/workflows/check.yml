@@ -16,7 +16,13 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Every static build in schedule.json runs as the only file in a scratch container, once per parameter set, and its stream is valid
+      - name: AWS-LC's source archive, as benchmarks/harness/c/vendor/aws-lc.lock pins it (http_get links it statically)
+        run: benchmarks/harness/c/vendor/fetch-aws-lc.sh "$RUNNER_TEMP/aws-lc.tar.gz"
+
+      - name: Every static build in schedule.json, and http_get against a local stand-in for S3, runs as the only file in a scratch container, once per parameter set, and its stream is valid
+        env:
+          AWS_LC_ARCHIVE: ${{ runner.temp }}/aws-lc.tar.gz
+          AWS_LC_JOBS: "4"
         run: python3 scripts/check-scratch.py
 
       - name: Build memory_read dynamic
@@ -45,4 +51,10 @@ jobs:
         with:
           bun-version: 1.4.4
       - run: bun install --frozen-lockfile
+      - name: AWS-LC's source archive, for http_get's tests
+        run: benchmarks/harness/c/vendor/fetch-aws-lc.sh "$RUNNER_TEMP/aws-lc.tar.gz"
       - run: bun test
+        env:
+          AWS_LC_ARCHIVE: ${{ runner.temp }}/aws-lc.tar.gz
+          AWS_LC_JOBS: "4"
+          LM_HTTP_GET_REQUIRED: "1"

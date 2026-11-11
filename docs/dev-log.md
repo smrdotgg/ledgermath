@@ -59,7 +59,7 @@ cannot, the order of the stream.
 
 | Path | What it is |
 |------|------------|
-| `benchmarks/harness/c/` | The C harness (`lm.h`, `lm.c`), which prints the stream; `lm_event.h` and `lm_event.c`, which emit a benchmark's own events and further `observed` events; `lm_fixed.h` and `lm_fixed.c`, samples of fixed work with a step before each outside its interval (`disk_read_sequential`); `lm_disk.h` and `lm_disk.c`, what the disk benchmarks observe about the file they opened and its device, and their `device_counters` event; and `lm_fixture.h`, the disk Fixture's pattern, defined once. `lm.c` stays as it is, so `memory_read`'s binary keeps its bytes. A benchmark in another language prints the same lines without them. |
+| `benchmarks/harness/c/` | The C harness (`lm.h`, `lm.c`), which prints the stream; `lm_event.h` and `lm_event.c`, which emit a benchmark's own events and further `observed` events; `lm_fixed.h` and `lm_fixed.c`, samples of fixed work with a step before each outside its interval (`disk_read_sequential`); `lm_disk.h` and `lm_disk.c`, what the disk benchmarks observe about the file they opened and its device, and their `device_counters` event; and `lm_fixture.h`, the disk Fixture's pattern, defined once. For `http_get`: `lm_lines.h` and `lm_lines.c`, a request's events built in one buffer and written after it ends, each received field decided once on the text written, and a guard that replaces any line still holding a registered secret; `lm_dns`, `lm_http`, `lm_sigv4` and `lm_tls` (a DNS client, an HTTP/1.1 parser, SigV4 signing, and AWS-LC with its offer pinned); `vendor/aws-lc.lock`, which pins AWS-LC's source archive by hash, with `vendor/build-aws-lc.sh` and `vendor/fetch-aws-lc.sh`. `lm.c` stays as it is, so `memory_read`'s binary keeps its bytes. A benchmark in another language prints the same lines without them. |
 | `benchmarks/<name>/` | One benchmark: its source, a `README.md` (what it measures, its parameters, its observed values, its elision guard, and every difference from July's version), and a `Makefile` offering `make BUILD=static` or `BUILD=dynamic` (one file at `build/<build>/<name>`), `make -s compiler` and `make -s resolved`. All thirteen are on the stream: `memory_read`, `compressed_memory_read`, `memory_read_random`, `memory_write`, `syscall`, `hash`, `sort`, `tcp_echo`, `mutex`, `disk_read_random`, `disk_read_io_uring`, `disk_read_sequential` and `disk_write`. July's copies stay in `benchmarks/c/` until July's pipeline is retired. |
 | `schemas/events.schema.json` | One line of the stream. |
 | `scripts/check-events.py` | The order of a stream: `./build/static/memory_read --quick \| python3 scripts/check-events.py --quick`. Needs only Python 3. |
@@ -727,4 +727,45 @@ A migrated benchmark is done only when **all** of these hold:
   (3) Every test file the branch added or touched sets a sixty-second default per test
   (`setDefaultTimeout`, per file); no repository-wide setting. Ten full `bun test` runs
   under `nice -n 10`, with the load rising from 1.3 to 7.9, all passed.
+- **2026-11-11** — Step 5, first part (branch `http-get`): `http_get`, the binary and all
+  that runs without AWS. One static binary (AWS-LC 5.14.0 built from its pinned archive,
+  never in git) makes HTTPS GETs to S3: its own DNS query, TCP, TLS, HTTP/1.1 by hand,
+  SigV4 by hand before each sample, no retry, one request per sample over a new or a kept
+  connection, every phase an event with its own CPU time. An error is an event; the Run
+  goes on and exits 4. Nothing secret is printed: credential values are withheld, and
+  anything received is printed only if it holds none of our credentials or signatures,
+  no key-ID shape and no lone twelve-digit number; a guard refuses any write that holds
+  a secret. A Python stand-in for S3 and the resolver (`tests/http-get/standin.py`)
+  misbehaves on demand for the tests and for `check-scratch.py`'s scratch container.
+  Once, 25 requests to real S3 (a public object unsigned, and invalid credentials signed):
+  the `InvalidToken` body echoes the session token, and a twelve-digit rule withheld an
+  ETag until it was narrowed. Existing binaries keep their bytes. The runner, the
+  stage's bucket and role, the schedule and Method version 2 are the next part;
+  `benchmarks/http_get/README.md` lists what they must provide.
+- **2026-11-11** — Step 5, the two reviews' findings fixed (branch `http-get`). Clocks:
+  a failed write is timed when seen and writes no `request_sent` (it wrote `t` 0 before);
+  the parser stops at the end of the header block, so the headers' moment is read before
+  any body byte and a block that completed is always `response_headers`; the budget is
+  asked before every sample, reopening included; `name_resolved` is read after the reply
+  is parsed, its text formatted after the request. Record: all three DNS sections, the
+  reply's real length, trailers, bytes after a response in its last record as a protocol
+  error; a handshake failure is classified by the library's own error (an alert as the
+  alert sent; `verify` only when the check ran), chains are uncut and a refused one is
+  kept, TLS 1.2 tickets are counted as tickets, names match subject alternative names
+  only. Keys: an error body is never printed (its length, four S3 fields, element
+  names); each credential is searched for in its percent, base64, base64url and hex
+  forms; one decision per field on the text written; the guard replaces a line instead
+  of exiting; NUL is base64; no core file. Tests assert no `t` of 0 and time order in
+  every sample, and that one response split three ways gives the same events. The
+  reviewers' reflection driver recovered something in 296 of 639 Runs before, 27 after
+  (encodings the rule does not claim, listed in the README).
+- **2026-11-11** — Step 5, the timing reviewer's second pass (branch `http-get`). A body
+  framed by the connection's end that fills the body buffer exactly now completes: the
+  binary reads on for the end, and only a further body byte is "larger than the buffer"
+  (a 69,632-byte close-delimited 403 failed three times before). Trailer lines read before
+  a response fails are kept in the failure. A failed TLS call keeps only what the library
+  returned until the clock is read, so failure timestamps no longer include classifying
+  and formatting the error. The README's clock table now says that `connection_opened` is
+  also written for a failed `connect`, what the Body phase holds, and what the budget is
+  counted from (the first request's preparation, its first connection included).
 - _(agents: append your entry here, one per merged benchmark)_
