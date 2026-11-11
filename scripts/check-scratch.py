@@ -42,6 +42,18 @@ kernel refuses io_uring itself (kernel.io_uring_disabled), its sets are
 skipped, held to the same standard: the binary must exit 2 after `started`
 alone, saying `error: io_uring is not available here: ...`.
 
+A benchmark that measures a Service (http_get) never reaches the real one
+here. tests/http-get/standin.py, a local stand-in for S3 and the resolver
+with a throwaway CA, runs on this machine's loopback; the container shares
+this machine's network (--network host) and is given only the stand-in's CA,
+mounted at the set's `ca_file`, and a resolver file naming the stand-in,
+mounted at its `resolv_conf`, with LM_SERVICE_* pointing at the stand-in and
+test credentials. Each stream must also hold none of those credentials. Its
+sets are the schedule's when the schedule has any, and otherwise
+SERVICE_SETS below, so it is checked before it is scheduled. Building it
+needs cmake, a C++ compiler and AWS-LC's source archive, whose path is
+AWS_LC_ARCHIVE (benchmarks/harness/c/vendor/aws-lc.lock).
+
 Needs make, a C compiler with the static C library, Docker, and Python 3.
 Exit status 0 when every execution ran and every stream is valid, 1 when not.
 """
@@ -98,6 +110,65 @@ class Topology:
 
 
 FIXTURE_BYTES = 64 << 20  # the most a --quick disk binary reads of a span
+
+# The sets of a Service benchmark that has no entry in the schedule yet: the
+# five of the step-5 study (#43), as the box would run them.
+_HTTP_GET = {"gap_mean_ms": 200, "budget_seconds": 240, "timeout_ms": 10000, "ca_file": "/etc/pki/tls/certs/ca-bundle.crt",
+             "resolv_conf": "/etc/resolv.conf", "auth": "sigv4"}
+SERVICE_SETS = {
+    "http_get": [dict(object_bytes=size, key="http_get/v1/%d" % size, connection=connection, **_HTTP_GET)
+                 for size, connection in ((4096, "new"), (4096, "reused"), (131072, "new"), (131072, "reused"), (16777216, "new"))],
+}
+# Test credentials for the stand-in. Not real; each must still never reach a stream or stderr.
+TEST_KEY_ID = "ASIAQLEDGERMATHTEST1"
+TEST_SECRET = "lmTestSecret/abcdefghijklmnopqrstuvwxyz+0123"
+TEST_TOKEN = "IQoJb3JpZ2luX2VjEPT//////////wEaCXVzLWVhc3QtMiJHMEUCIQLEDGERMATHTESTTOKEN+abc/def=="
+
+
+class Standin:
+    """tests/http-get/standin.py on this machine's loopback, until close()."""
+
+    def __init__(self):
+        self.directory = tempfile.mkdtemp(prefix="lm-scratch-standin-")
+        self.process = subprocess.Popen([sys.executable, "-I", os.path.join(ROOT, "tests", "http-get", "standin.py"),
+                                         os.path.join(self.directory, "standin")],
+                                        stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+        line = self.process.stdout.readline()
+        if not line:
+            self.close()
+            sys.exit("the stand-in for S3 did not start")
+        self.ports = json.loads(line)
+        self.resolv_conf = os.path.join(self.directory, "resolv.conf")
+        with open(self.resolv_conf, "w", encoding="ascii") as handle:
+            handle.write("nameserver 127.0.0.1:%d\n" % self.ports["dns_port"])
+        print("a stand-in for S3 on 127.0.0.1: DNS on port %d, HTTPS on port %d" % (self.ports["dns_port"], self.ports["https_port"]))
+
+    def arguments(self, params):
+        """What `docker run` needs for a set: the network, the two files, the Service's variables."""
+        service = {
+            "LM_SERVICE_ENDPOINT": "https://ok.s3.lm.test:%d" % self.ports["https_port"],
+            "LM_SERVICE_REGION": "us-east-2",
+            "LM_SERVICE_AWS_ACCESS_KEY_ID": TEST_KEY_ID,
+            "LM_SERVICE_AWS_SECRET_ACCESS_KEY": TEST_SECRET,
+            "LM_SERVICE_AWS_SESSION_TOKEN": TEST_TOKEN,
+        }
+        found = ["--network", "host", "-v", "%s:%s:ro" % (self.ports["ca_file"], params["ca_file"]),
+                 "-v", "%s:%s:ro" % (self.resolv_conf, params["resolv_conf"])]
+        for key, value in service.items():
+            found += ["-e", "%s=%s" % (key, value)]
+        return found
+
+    def close(self):
+        self.process.kill()
+        self.process.wait()
+        shutil.rmtree(self.directory, ignore_errors=True)
+
+
+def secrets_in(text):
+    """The test credentials found in `text`, ignoring case."""
+    lower = text.lower()
+    return [name for name, secret in (("the key ID", TEST_KEY_ID), ("the secret key", TEST_SECRET), ("the token", TEST_TOKEN))
+            if secret.lower() in lower]
 
 
 def io_uring_refused():
@@ -198,6 +269,9 @@ def main():
         if "static" in entry["builds"] and (not only or entry["name"] in only):
             sets = benchmarks.setdefault(entry["name"], [])
             sets.extend(params for params in entry["params"] if params not in sets)
+    for name, sets in SERVICE_SETS.items():
+        if name not in benchmarks and (not only or name in only):
+            benchmarks[name] = list(sets)
     unknown = only - set(benchmarks)
     if unknown:
         print("no static build of %s in schedule.json" % ", ".join(sorted(unknown)), file=sys.stderr)
@@ -207,14 +281,17 @@ def main():
     print("the CPUs this check may use, and gives the container: %s" % topology.describe())
     cpuset = ["--cpuset-cpus", cpu_list(topology.cpus)]
     disk = make_fixture_directory() if any(name.startswith("disk_") for name in benchmarks) else None
+    standin = Standin() if any(name in SERVICE_SETS for name in benchmarks) else None
     try:
-        return check_all(benchmarks, topology, cpuset, disk)
+        return check_all(benchmarks, topology, cpuset, disk, standin)
     finally:
         if disk is not None:
             shutil.rmtree(disk, ignore_errors=True)
+        if standin is not None:
+            standin.close()
 
 
-def check_all(benchmarks, topology, cpuset, disk):
+def check_all(benchmarks, topology, cpuset, disk, standin=None):
     failures = []
     for name, sets in benchmarks.items():
         directory = os.path.join(ROOT, "benchmarks", name)
@@ -235,6 +312,8 @@ def check_all(benchmarks, topology, cpuset, disk):
                 extra += ["-v", "%s:%s" % (disk, params["dir"])]
             if name == "disk_read_io_uring":
                 extra += ["--security-opt", "seccomp=unconfined"]
+            if name in SERVICE_SETS:
+                extra += standin.arguments(params)
             done = subprocess.run(["docker", "run", "--rm", "--tmpfs", "/tmp"] + cpuset + extra + environment + [image, "--quick"],
                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             stderr = done.stderr.decode("utf-8", "replace")
@@ -249,6 +328,12 @@ def check_all(benchmarks, topology, cpuset, disk):
                 print("skip %s: %s; the binary agrees: exit 2 after `started` alone, %s" % (label, reason, said))
                 continue
             ran += 1
+            if name in SERVICE_SETS:
+                leaked = secrets_in(done.stdout.decode("utf-8", "replace") + stderr)
+                if leaked:
+                    failures.append(label)
+                    print("FAIL %s: its output holds %s" % (label, ", ".join(leaked)))
+                    continue
             if done.returncode != 0:
                 failures.append(label)
                 print("FAIL %s: exit %d\n%s" % (label, done.returncode, stderr))
