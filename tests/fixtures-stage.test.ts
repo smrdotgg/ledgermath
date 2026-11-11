@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -39,6 +39,8 @@ function declaration(type: string, name: string): string {
 
 /** Building runner/fixture.c and writing 16 MiB with O_DIRECT: seconds, more on a loaded machine. */
 const C_TIMEOUT_MS = 120_000;
+// Several tests make the 16 MiB Fixture in TypeScript; on a loaded machine that takes longer than bun's five-second default.
+setDefaultTimeout(C_TIMEOUT_MS);
 
 describe("the Fixture objects", () => {
 	test("are the keys, sizes and digests benchmarks/http_get/README.md lists, and S3's base64 of each digest", () => {
