@@ -43,8 +43,18 @@
  *         Run found it, and the catalog lists instance storage;
  *   - when none was found: findmnt in the dump shows a file system of the
  *     type the Run found at its mount point.
- * Every number compared must be present and finite; one that is not is a
- * problem in itself, never a comparison that passes.
+ *   - what the binary observed of its own work is what was declared
+ *     (request_bytes, queue_depth, access, span_bytes, bytes_per_sample, sync),
+ *     and its `work` event agrees with the samples' repetitions and the request
+ *     size;
+ *   - the file's device is the disk the Run names, or one of its partitions;
+ *   - a device whose model says it is an Amazon NVMe disk comes with its
+ *     controller, which owns the disk, and its nvme amzn stats, whose counters
+ *     never go down.
+ * Every number compared must be present and a safe whole number (parsed
+ * exactly: a counter too long to be one is refused, never turned into
+ * Infinity); one that is not is a problem in itself, never a comparison that
+ * passes.
  *
  * An EC2 API section whose call failed is reported, not judged. Exit status 0
  * when all holds, 1 when not, 2 on bad usage. Used by
@@ -101,7 +111,6 @@ export interface DiskCheckOptions {
 	acceptNoDevice?: boolean;
 }
 
-const isFiniteNumber = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value);
 const isCount = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 
 function blobJson(dir: string, hash: string): unknown {
@@ -131,13 +140,32 @@ function commandStartingWith(section: Section | undefined, prefix: string): Comm
 	return key === undefined ? undefined : (section[key] as Command);
 }
 
-/** A /sys/block/<disk>/stat file's numbers, or undefined unless every one is a whole number. */
+/** A /sys/block/<disk>/stat file's numbers, or undefined unless every one is a safe whole number. */
 function statNumbers(text: unknown): number[] | undefined {
 	if (typeof text !== "string" || text.trim() === "") return undefined;
 	const words = text.trim().split(/\s+/);
 	if (!words.every((word) => /^[0-9]+$/.test(word))) return undefined;
-	return words.map(Number);
+	const numbers = words.map(Number);
+	return numbers.every((n) => Number.isSafeInteger(n)) ? numbers : undefined;
 }
+
+/** The lsblk row named `name`, and whether `child` is it or below it. */
+function holds(row: LsblkRow | undefined, child: unknown): boolean {
+	if (!row) return false;
+	if (row.name === child) return true;
+	return (row.children ?? []).some((below) => holds(below, child));
+}
+
+/** Declared parameters with an observed counterpart: [param, observed key]. */
+const DECLARED_OBSERVED: ReadonlyArray<[string, string]> = [
+	["request_bytes", "request_bytes"],
+	["queue_depth", "queue_depth"],
+	["access", "access"],
+	["span_bytes", "span_bytes"],
+	["bytes_per_sample", "bytes_per_sample"],
+	["sync", "sync_call"],
+];
+const NVME_MODELS: ReadonlySet<string> = new Set([EBS_MODEL, INSTANCE_STORE_MODEL]);
 
 interface LsblkRow {
 	name: string;
@@ -251,10 +279,10 @@ export function checkDiskRuns(dir: string, options: DiskCheckOptions = {}): Disk
 		const bad = (message: string): void => {
 			problems.push(`${label}: ${message}`);
 		};
-		/** The value if it is a finite number; otherwise a problem, and undefined. */
+		/** The value if it is a safe whole number, 0 or more; otherwise a problem, and undefined. */
 		const need = (value: unknown, what: string): number | undefined => {
-			if (isFiniteNumber(value)) return value;
-			bad(`${what} is ${JSON.stringify(value)}, not a finite number`);
+			if (isCount(value)) return value;
+			bad(`${what} is ${typeof value === "number" && !Number.isFinite(value) ? String(value) : JSON.stringify(value)}, not a safe whole number`);
 			return undefined;
 		};
 		if (!("code" in run.exit) || run.exit.code !== 0) {
@@ -282,7 +310,45 @@ export function checkDiskRuns(dir: string, options: DiskCheckOptions = {}): Disk
 		if (counted.length === 0) bad("no counted sample");
 		const nsPerRep = counted.length ? median(counted) : Number.NaN;
 		const request = need(observed.request_bytes, "observed request_bytes");
+		if (request === 0) bad("observed request_bytes is 0");
 		const paramDir = trimSlash(String(run.params.dir ?? ""));
+
+		// What the binary observed of its own work must be what was declared.
+		for (const [param, key] of DECLARED_OBSERVED) {
+			if (run.params[param] === undefined) continue;
+			if (observed[key] !== run.params[param]) {
+				bad(`it declares ${param} ${JSON.stringify(run.params[param])}, but observed ${key} is ${JSON.stringify(observed[key])}`);
+			}
+		}
+		if (request !== undefined && observed.bytes_per_repetition !== request) {
+			bad(`observed bytes_per_repetition is ${JSON.stringify(observed.bytes_per_repetition)}, not its request_bytes ${request}`);
+		}
+		const work = events.find((e) => e.event === "work") as Record<string, unknown> | undefined;
+		if (!work) {
+			bad("no work event");
+		} else if (request !== undefined) {
+			const counted = (key: string): number | undefined => need(work[key], `work ${key}`);
+			const agree = (key: string, value: number, why: string): void => {
+				const got = counted(key);
+				if (got !== undefined && got !== value) bad(`work ${key} is ${got}, but ${why} is ${value}`);
+			};
+			if (run.benchmark === "disk_read_random" || run.benchmark === "disk_read_sequential") {
+				agree("reads", repetitions, "the samples' repetitions");
+				agree("bytes_read", repetitions * request, "the repetitions times request_bytes");
+			} else if (run.benchmark === "disk_read_io_uring") {
+				agree("completed_during_measuring", repetitions, "the samples' repetitions");
+				const completed = counted("completed");
+				if (completed !== undefined) agree("bytes_read", completed * request, "its completed times request_bytes");
+			} else if (run.benchmark === "disk_write") {
+				const checked = counted("writes_checked_before_measuring");
+				if (checked !== undefined) agree("writes", repetitions + checked, "the repetitions and the writes checked before measuring");
+				const writes = counted("writes");
+				if (writes !== undefined) {
+					agree("bytes_written", writes * request, "its writes times request_bytes");
+					agree("fdatasyncs", run.params.sync === "fdatasync" ? writes : 0, `what sync ${JSON.stringify(run.params.sync)} calls for`);
+				}
+			}
+		}
 
 		if (typeof observed.file_path !== "string" || !observed.file_path.startsWith(`${paramDir}/`)) {
 			bad(`observed file_path ${JSON.stringify(observed.file_path)} is not under dir ${paramDir}`);
@@ -328,6 +394,12 @@ export function checkDiskRuns(dir: string, options: DiskCheckOptions = {}): Disk
 		if (observed.device_found === true) {
 			const disk = String(observed.disk_device);
 			const controller = String(observed.disk_controller ?? "");
+			const nvme = NVME_MODELS.has(String(observed.disk_model));
+			// A device whose model says it is an Amazon NVMe disk must come with its
+			// controller, which owns the disk, and its controller's statistics.
+			if (nvme && (!/^nvme[0-9]+$/.test(controller) || !new RegExp(`^${controller}n[0-9]+$`).test(disk))) {
+				bad(`the disk is "${String(observed.disk_model)}", an NVMe device, but observed disk_controller ${JSON.stringify(observed.disk_controller)} is not the controller of ${disk}`);
+			}
 			if (dc?.device_found !== true || dc.disk_device !== disk) bad(`device_counters names ${String(dc?.disk_device)}, observed ${disk}`);
 			summary += `; ${disk} "${String(observed.disk_model)}" ${String(observed.disk_serial)} ${String(observed.fs_type)} at ${String(observed.mount_point)}`;
 			for (const [which, sections] of [["before", before], ["after", after]] as const) {
@@ -348,6 +420,10 @@ export function checkDiskRuns(dir: string, options: DiskCheckOptions = {}): Disk
 				if (!fileRow || fileRow["maj:min"] !== observed.file_device) {
 					bad(`observed file_device is ${JSON.stringify(observed.file_device)}, but the ${which}-dump's lsblk gives ${String(observed.block_device)} the number ${JSON.stringify(fileRow?.["maj:min"])}`);
 				}
+				// The file's device must be the disk, or one of its partitions.
+				if (!holds(diskRow, observed.block_device)) {
+					bad(`observed block_device ${String(observed.block_device)} is neither ${disk} nor below it in the ${which}-dump's lsblk, so the disk's counters, model and serial are not the file's`);
+				}
 			}
 
 			const dumpBefore = statNumbers(before.block_stat?.[`/sys/block/${disk}/stat`]);
@@ -355,7 +431,7 @@ export function checkDiskRuns(dir: string, options: DiskCheckOptions = {}): Disk
 			const runBefore = Array.isArray(dc?.before) && dc.before.every(isCount) ? (dc.before as number[]) : undefined;
 			const runAfter = Array.isArray(dc?.after) && dc.after.every(isCount) ? (dc.after as number[]) : undefined;
 			if (!dumpBefore || !dumpAfter) {
-				bad(`the dumps hold no whole-number /sys/block/${disk}/stat before and after`);
+				bad(`the dumps hold no /sys/block/${disk}/stat of safe whole numbers before and after`);
 			} else if (runBefore && runAfter && runBefore.length > 0) {
 				if (dumpBefore.length !== runBefore.length || dumpAfter.length !== runAfter.length) {
 					bad(`the dumps' /sys/block/${disk}/stat has ${dumpBefore.length} and ${dumpAfter.length} numbers, the Run's ${runBefore.length} and ${runAfter.length}`);
@@ -393,13 +469,14 @@ export function checkDiskRuns(dir: string, options: DiskCheckOptions = {}): Disk
 			const statsBefore = nvmeStats(before, disk);
 			const statsAfter = nvmeStats(after, disk);
 			if (!statsBefore || !statsAfter) {
-				if (controller.startsWith("nvme") && String(observed.disk_model).startsWith("Amazon")) bad(`no nvme amzn stats of /dev/${disk} in both dumps`);
+				if (nvme || controller.startsWith("nvme")) bad(`no nvme amzn stats of /dev/${disk} in both dumps`);
 			} else {
 				const delta: Record<string, number | undefined> = {};
 				for (const key of NVME_COUNTERS) {
 					const a = need(statsBefore[key], `the before-dump's nvme amzn stats ${key}`);
 					const b = need(statsAfter[key], `the after-dump's nvme amzn stats ${key}`);
 					delta[key] = a !== undefined && b !== undefined ? b - a : undefined;
+					if (a !== undefined && b !== undefined && b < a) bad(`nvme amzn stats ${key} fell from ${a} to ${b} over the Run; a counter never goes down`);
 				}
 				const nvmeReads = delta.total_read_ops;
 				const nvmeWrites = delta.total_write_ops;
