@@ -1,8 +1,9 @@
 # Step 3 of the plan (#36, brief #39). Copies new Run files and boot summaries
 # from the -runs stage's bucket into smrdotgg/ledgermath-runs and pushes them,
-# derives every Series with Method version 1, builds the page, keeps the page
-# and the Derivations as an artifact, and opens (or comments on) one issue when
-# a watched Series has had no Run for 48 hours, or the newest price file
+# derives every Series with Method series v1 and every Series of requests with
+# Method requests v1, builds the page, keeps the page and both files of
+# Derivations as an artifact, and opens (or comments on) one issue when a
+# watched Series has had no Run for 48 hours, or the newest price file
 # (prices.yml) is more than 48 hours old.
 #
 # It needs, in this repository's settings (README, "The Runs repository, the
@@ -84,18 +85,28 @@ jobs:
               commit -q -m "Add $added files from the bucket"
           git push origin HEAD:main
 
-      - name: Keep the blobs fetched so far
+      # The dump blobs fetched so far, and each stream's reduced record per
+      # Method (methods/records.ts), never the stdout blobs themselves: a
+      # stream is fetched only for a Run no Method has a record of yet, and
+      # let go once reduced. The prefix is new with the records, so the caches
+      # of stdout blobs kept before (blobs-…) are not restored.
+      - name: Keep the dump blobs and the streams' reduced records
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: .cache/blobs
-          key: blobs-${{ github.run_id }}
-          restore-keys: blobs-
+          path: |
+            .cache/blobs
+            .cache/records
+          key: derive-${{ github.run_id }}
+          restore-keys: derive-
 
-      - name: Derive every Series (Method version 1)
-        run: bun scripts/derive.ts --runs ledgermath-runs --bucket "$RUNS_BUCKET" --cache .cache/blobs --out page/derivations.json
+      - name: Derive every Series (Method series v1) and every Series of requests (Method requests v1)
+        run: >-
+          bun scripts/derive.ts --runs ledgermath-runs --bucket "$RUNS_BUCKET"
+          --cache .cache/blobs --records .cache/records
+          --out page/derivations.json --requests-out page/requests-derivations.json
 
       - name: Build the page
-        run: bun scripts/build-page.ts page/derivations.json page/index.html
+        run: bun scripts/build-page.ts page/derivations.json page/index.html --requests page/requests-derivations.json
 
       - name: Keep the page and the Derivations
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

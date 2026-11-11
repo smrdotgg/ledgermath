@@ -76,6 +76,27 @@ describe("the runs workflow", () => {
 		expect(alarm?.if).toContain("steps.runs-repository.outcome == 'success'");
 	});
 
+	test("derives with both Methods into one page, and keeps dump blobs and reduced records between runs, never stdout blobs", () => {
+		const derive = steps.find((step) => step.run?.includes("scripts/derive.ts")) as Step;
+		const command = (derive.run as string).replace(/\s+/g, " ");
+		expect(command).toContain("--out page/derivations.json");
+		expect(command).toContain("--requests-out page/requests-derivations.json");
+		expect(command).toContain("--cache .cache/blobs");
+		expect(command).toContain("--records .cache/records");
+		const page = steps.find((step) => step.run?.includes("scripts/build-page.ts")) as Step;
+		expect(page.run).toContain("--requests page/requests-derivations.json");
+		const cache = steps.find((step) => step.uses?.startsWith("actions/cache@")) as Step;
+		expect((cache.with?.path ?? "").trim().split("\n").map((line) => line.trim())).toEqual([".cache/blobs", ".cache/records"]);
+		expect(cache.with?.key).toBe("derive-${{ github.run_id }}");
+		// Caches made before the records held stdout blobs: their prefix is never restored.
+		expect(cache.with?.["restore-keys"]).toBe("derive-");
+		expect(steps.indexOf(cache)).toBeLessThan(steps.indexOf(derive));
+		// The alarm still runs whatever the Methods and the page did.
+		const alarm = steps.find((step) => step.run?.includes("scripts/alarm.ts")) as Step;
+		expect(alarm.if).toBe("${{ !cancelled() && steps.runs-repository.outcome == 'success' }}");
+		expect(steps.indexOf(alarm)).toBeGreaterThan(steps.indexOf(page));
+	});
+
 	test("tells the alarm whether this pass's copy and push succeeded", () => {
 		expect(steps.find((step) => step.run?.includes("scripts/copy-runs.ts"))?.id).toBe("copy");
 		expect(steps.find((step) => step.run?.includes("git push"))?.id).toBe("push");
