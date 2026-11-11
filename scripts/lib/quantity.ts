@@ -111,11 +111,12 @@ export function unitOf(word: string): { dimension: Dimension; factor: number } |
 /**
  * One number: an optional $, digits (with thousands commas), a fraction, an
  * exponent (e9, × 10^9, ×10⁹), then an optional scale word and unit.
- * It is not part of a word: not preceded by a letter, digit, _, /, # or :,
- * nor by a letter or digit followed by . or - (c6i.8xlarge, use2-az3).
+ * It is not part of a word: not preceded by a letter, digit, _, /, #, : or ^,
+ * nor by a letter or digit followed by . or - (c6i.8xlarge, use2-az3), nor
+ * by a name and = (threads=1, a parameter).
  */
 const NUMBER = new RegExp(
-	String.raw`(?<![\p{L}\p{N}_/#:\\^])(?<![\p{L}\p{N}][.\-])` +
+	String.raw`(?<![\p{L}\p{N}_/#:\\^])(?<![\p{L}\p{N}][.\-])(?<![\p{L}_]=)` +
 		String.raw`(?<dollar>\$\s?)?(?<int>\d{1,3}(?:,\d{3})+|\d+)(?<frac>\.\d+)?` +
 		String.raw`(?:[eE](?<e>[+\-]?\d+)|\s?[×x*·]\s?10(?:\^(?<pow>[+\-]?\d+)|(?<sup>[⁰¹²³⁴⁵⁶⁷⁸⁹⁻]+)))?`,
 	"gu",
@@ -190,11 +191,15 @@ export function firstQuantity(text: string): Quantity | null {
 	return quantities(text)[0] ?? null;
 }
 
-/** How far a written number may be from a value and still be that value rounded: half its last digit, at least 0.5%. */
+/**
+ * How far a written number may be from a value and still be that value
+ * rounded: half its last digit, but never less than 0.5% nor more than 5%, so
+ * "1" is not 1.36 and "4 s" is not 3.79 s.
+ */
 export function tolerance(quantity: Pick<Quantity, "written" | "digits">): number {
 	const magnitude = Math.floor(Math.log10(Math.abs(quantity.written) || 1));
 	const lastDigit = 10 ** (magnitude - quantity.digits + 1);
-	return Math.max(0.005, lastDigit / 2 / Math.abs(quantity.written || 1));
+	return Math.min(0.05, Math.max(0.005, lastDigit / 2 / Math.abs(quantity.written || 1)));
 }
 
 function near(a: number, b: number, relative: number): boolean {

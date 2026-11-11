@@ -162,9 +162,9 @@ export async function checkAnswer(answer: string, data: LedgerData, question = "
 		for (const n of numbers) {
 			const after = masked.slice(n.quantity.end);
 			const before = masked.slice(0, n.quantity.start);
-			if (/^\s*(?:counted\s+)?(?:Runs?|boots?|groups?)\b/i.test(after)) {
+			if (/^\s*(?:counted\s+)?(?:Runs?|boots?|box(?:es)?|groups?)\b/i.test(after)) {
 				n.status = "count";
-				n.detail = "a count of Runs, boots or groups";
+				n.detail = "a count of Runs, boots, boxes or groups";
 			} else if (/\bper\s*$/i.test(before)) {
 				n.status = "unit";
 				n.detail = 'part of a unit, after "per"';

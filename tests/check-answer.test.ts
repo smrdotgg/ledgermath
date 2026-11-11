@@ -48,9 +48,19 @@ describe("reading numbers", () => {
 		expect(one("12%")).toEqual({ written: 12, dimension: "percent", value: 12 });
 	});
 
-	test("never inside a name: instance types, zone IDs, percentiles, services, SKUs", () => {
-		const text = "c6i.8xlarge in use2-az3, p50 and p95, S3 and gp3 on x86_64, SKU 8D49XP354UEYTHGM, AVX-512";
+	test("never inside a name: instance types, zone IDs, percentiles, services, SKUs, parameters", () => {
+		const text = "c6i.8xlarge in use2-az3, p50 and p95, S3 and gp3 on x86_64, SKU 8D49XP354UEYTHGM, AVX-512, threads=1 size_bytes=1073741824";
 		expect(quantities(text)).toEqual([]);
+		expect(quantities("x = 5")[0]?.written).toBe(5);
+	});
+
+	test("rounding is allowed up to 5%: 1 is not 1.36, 4 s is not 3.79 s", () => {
+		const [one] = quantities("1");
+		const [four] = quantities("4 s");
+		const [close] = quantities("1.4");
+		expect(sameQuantity(one as never, { written: 1.36, dimension: "usd", value: 1.36 })).toBe(false);
+		expect(sameQuantity(four as never, { written: 3.79, dimension: "seconds", value: 3.79 })).toBe(false);
+		expect(sameQuantity(close as never, { written: 1.36, dimension: "usd", value: 1.36 })).toBe(true);
 	});
 
 	test("a written number is a value rounded, in any unit of the same dimension", () => {
