@@ -9,7 +9,7 @@
  * each key once across all of them. This file does both, without changing
  * lm.c, whose bytes are part of every Artifact already built on it.
  *
- * Build one event, then emit it as one line with one write:
+ * Build one event, then emit it as one line:
  *
  *     lm_event e;
  *     lm_event_begin(&e, "device_counters", lm_now_ns());
@@ -25,10 +25,19 @@
  *
  * Inside an object every member has a key; inside an array none has one (pass
  * NULL). Call these between lm_start() and lm_finish(), never inside a measured
- * interval: they allocate, read nothing of the clock, and write to stdout. A key
- * given to lm_observed_begin's event must not be one lm_observe_*() gave, nor
- * one an earlier `observed` gave; this file cannot see lm.c's keys, so that is
- * the caller's to keep. Misuse exits 1 naming the mistake.
+ * interval: they allocate, read nothing of the clock, and write to stdout.
+ *
+ * Emit events only from the thread that owns stdout (the one that calls lm.h's
+ * functions), between samples. Nothing here serializes writers: a line is
+ * passed to write(2) in one call, retried for whatever part was not written,
+ * and the kernel writes a pipe's data in one piece only up to PIPE_BUF bytes
+ * (4096 on Linux). So a line longer than that, or any line while another
+ * thread or lm.c writes to stdout at the same moment, can interleave with
+ * other output.
+ *
+ * A key given to lm_observed_begin's event must not be one lm_observe_*() gave,
+ * nor one an earlier `observed` gave; this file cannot see lm.c's keys, so that
+ * is the caller's to keep. Misuse exits 1 naming the mistake.
  */
 
 #include <stdbool.h>
@@ -67,8 +76,9 @@ void lm_event_object(lm_event *e, const char *key);
 void lm_event_array(lm_event *e, const char *key);
 void lm_event_close(lm_event *e);
 
-/* Closes whatever is open, writes the event as one line to stdout with one
- * write(2) (as lm.c does, so lines never interleave or split), and frees it. */
+/* Closes whatever is open, writes the event as one line to stdout, as lm.c
+ * writes its own (one write(2), then more for any part not written), and frees
+ * it. It does not serialize writers; see the top of this file. */
 void lm_event_emit(lm_event *e);
 
 #endif /* LEDGERMATH_LM_EVENT_H */
