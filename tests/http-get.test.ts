@@ -20,13 +20,25 @@ import { describeErrors, loadValidators } from "../scripts/check-runs";
 //
 // Without CMake or the archive (and no library built before), these tests
 // are skipped with a message, unless LM_HTTP_GET_REQUIRED=1, as CI sets it.
+//
+// LM_HTTP_GET_BINARY runs every stream test against another build of the
+// binary instead, such as the sanitizer build (make BUILD=dynamic CFLAGS=...
+// -fsanitize=address,undefined); ASAN_OPTIONS and UBSAN_OPTIONS are passed
+// through, and any sanitizer report on stderr fails the test.
 
 setDefaultTimeout(60_000);
 
 const ROOT = join(import.meta.dir, "..");
 const DIR = join(ROOT, "benchmarks", "http_get");
-const BINARY = join(DIR, "build", "static", "http_get");
+const STATIC = join(DIR, "build", "static", "http_get");
+const OVERRIDE = process.env.LM_HTTP_GET_BINARY ?? "";
+const BINARY = OVERRIDE !== "" ? OVERRIDE : STATIC;
+/** A dynamically linked build, for the test that loads a shim with LD_PRELOAD. */
+const DYNAMIC = OVERRIDE !== "" ? OVERRIDE : join(DIR, "build", "dynamic", "http_get");
 const DRIVER = join(DIR, "build", "test", "http_get_test");
+const SANITIZER_ENV = Object.fromEntries(
+	["ASAN_OPTIONS", "UBSAN_OPTIONS"].filter((name) => process.env[name] !== undefined).map((name) => [name, process.env[name] as string]),
+);
 const ARCHIVE = process.env.AWS_LC_ARCHIVE ?? "";
 const REQUIRED = process.env.LM_HTTP_GET_REQUIRED === "1";
 const HAS_CMAKE = spawnSync("cmake", ["--version"]).status === 0;
@@ -67,12 +79,18 @@ const make = (...args: string[]) =>
 		env: { ...process.env, AWS_LC_ARCHIVE: ARCHIVE },
 	});
 
+const SHIM = join(scratch, "fail-write.so");
+
 beforeAll(async () => {
 	if (!AVAILABLE) return;
-	for (const target of [["BUILD=static"], ["test-driver"]]) {
+	const targets = [["BUILD=static"], ["test-driver"]];
+	if (OVERRIDE === "") targets.push(["BUILD=dynamic"]);
+	for (const target of targets) {
 		const built = make(...target);
 		if (built.status !== 0) throw new Error(`make ${target.join(" ")} failed:\n${built.stdout}${built.stderr}`);
 	}
+	const shim = spawnSync("cc", ["-shared", "-fPIC", "-O1", "-o", SHIM, join(import.meta.dir, "http-get", "fail-write.c"), "-ldl"], { encoding: "utf8" });
+	if (shim.status !== 0) throw new Error(`the write shim did not build:\n${shim.stderr}`);
 	standin = spawn("python3", ["-I", join(import.meta.dir, "http-get", "standin.py"), join(scratch, "standin")], {
 		stdio: ["pipe", "pipe", "pipe"],
 	});
@@ -106,6 +124,7 @@ type Options = {
 	timeoutMs?: number;
 	auth?: "sigv4" | "none";
 	env?: Record<string, string | undefined>;
+	binary?: string;
 };
 
 function environment(scenario: string, o: Options = {}): Record<string, string> {
@@ -126,15 +145,17 @@ function environment(scenario: string, o: Options = {}): Record<string, string> 
 		LM_SERVICE_AWS_ACCESS_KEY_ID: KEY_ID,
 		LM_SERVICE_AWS_SECRET_ACCESS_KEY: SECRET,
 		LM_SERVICE_AWS_SESSION_TOKEN: TOKEN,
+		...SANITIZER_ENV,
 		...o.env,
 	};
 	return Object.fromEntries(Object.entries(env).filter(([, value]) => value !== undefined)) as Record<string, string>;
 }
 
 function run(scenario: string, o: Options = {}): Run {
-	const done = spawnSync(BINARY, [], { encoding: "utf8", env: environment(scenario, o), timeout: RUN_TIMEOUT_MS });
+	const done = spawnSync(o.binary ?? BINARY, [], { encoding: "utf8", env: environment(scenario, o), timeout: RUN_TIMEOUT_MS });
 	const label = `${scenario} ${JSON.stringify(o)}`;
 	outputs.push({ label: `${label} stdout`, text: done.stdout }, { label: `${label} stderr`, text: done.stderr });
+	if (/Sanitizer|runtime error:/.test(done.stderr)) throw new Error(`${label}: a sanitizer report:\n${done.stderr}`);
 	const events = done.stdout
 		.split("\n")
 		.filter((line) => line !== "")
@@ -162,6 +183,30 @@ function checkStream(r: Run, expectSamples: number | null): void {
 		if (!validators.event(event)) throw new Error(`${name} breaks the schema: ${describeErrors(validators.event)}`);
 	}
 	expect(secretsIn(r.stdout + r.stderr)).toEqual([]);
+	expect(timeProblems(r)).toEqual([]);
+}
+
+/** Every clock read is real (no `t` of 0), and inside a sample the events are in time order, between its two edges. */
+function timeProblems(r: Run): string[] {
+	const problems: string[] = [];
+	let start: Event | null = null;
+	let previous = 0;
+	for (const event of r.events) {
+		if (event.t === 0) problems.push(`${event.event} has t 0`);
+		if (event.event === "sample_started") {
+			start = event;
+			previous = event.t;
+			continue;
+		}
+		if (start === null) continue;
+		if (event.t < previous) problems.push(`sample ${start.sample}: ${event.event} at ${event.t} is before the event before it, at ${previous}`);
+		previous = event.t;
+		if (event.event === "sample_ended") {
+			if (event.t < start.t) problems.push(`sample ${start.sample} ends before it starts`);
+			start = null;
+		}
+	}
+	return problems;
 }
 
 /** Every signature the stand-in has received so far, from its log. */
@@ -525,6 +570,24 @@ describe.skipIf(!AVAILABLE)("DNS (benchmarks/harness/c/lm_dns.c)", () => {
 		expect(driverJson(["dns-parse"], hex(self)).error).toBe("a compression pointer does not point backwards");
 	});
 
+	test("the additional section is read and kept like the others, and bytes after the last record are counted", () => {
+		const bytes = [
+			...reply({ qname: "a.test", answers: [record(name("a.test"), 1, 60, [1, 2, 3, 4])], authority: [record(name("test"), 2, 60, name("ns.test"))] }),
+			...record(name("ns.test"), 1, 60, [10, 0, 0, 53]),
+			...record(name("ns.test"), 16, 60, [5, ...Buffer.from("hello")]),
+			0,
+			0,
+			0,
+		];
+		bytes[11] = 2; // arcount
+		const r = driverJson(["dns-parse"], hex(bytes));
+		expect(r.error).toBeUndefined();
+		expect((r.authority as Array<{ text: string }>).map((a) => a.text)).toEqual(["test. 60 NS ns.test."]);
+		expect((r.additional as Array<{ text: string }>).map((a) => a.text)).toEqual(["ns.test. 60 A 10.0.0.53", "ns.test. 60 TXT \\# 6 0568656c6c6f"]);
+		expect(r.trailing_bytes).toBe(3);
+		expect(r.address).toBe("1.2.3.4");
+	});
+
 	test("an NXDOMAIN keeps its rcode and its authority section, an SOA in presentation form", () => {
 		const soa = [...name("ns.test"), ...name("host.test"), ...u32(1), ...u32(2), ...u32(3), ...u32(4), ...u32(5)];
 		const r = driverJson(["dns-parse"], hex(reply({ qname: "gone.test", flags: 0x8183, authority: [record(name("test"), 6, 60, soa)] })));
@@ -555,14 +618,30 @@ describe.skipIf(!AVAILABLE)("the HTTP/1.1 response parser (benchmarks/harness/c/
 		expect(parse(`${ok}EXTRA`, 4096)).toMatchObject({ state: "done", left_over: 5 });
 	});
 
-	test("chunked: extensions ignored, trailers read, the body de-chunked, the framing counted", () => {
-		const wire = "4;name=value\r\nWiki\r\n5\r\npedia\r\nE\r\n in\r\n\r\nchunks.\r\n0\r\nx-trailer: 1\r\n\r\n";
+	test("chunked: extensions ignored, trailers kept, the body de-chunked, the framing counted", () => {
+		const wire = "4;name=value\r\nWiki\r\n5\r\npedia\r\nE\r\n in\r\n\r\nchunks.\r\n0\r\nx-trailer: 1\r\nx-other:\t two \r\n\r\n";
 		const head = "HTTP/1.1 403 Forbidden\r\nTransfer-Encoding: chunked\r\nContent-Length: 999\r\n\r\n";
 		for (const step of [1, 4096]) {
 			const r = parse(head + wire, step);
-			expect(r).toMatchObject({ state: "done", status: 403, framing: "chunked", body_bytes: 23, wire_bytes: wire.length });
+			expect(r).toMatchObject({ state: "done", status: 403, framing: "chunked", body_bytes: 23, wire_bytes: wire.length, head_ended_at: head.length });
 			expect(Buffer.from(r.body_base64 as string, "base64").toString()).toBe("Wikipedia in\r\n\r\nchunks.");
+			expect(r.trailers).toEqual([["x-trailer", "1"], ["x-other", "two"]]);
 		}
+	});
+
+	test("trailer lines follow the header lines' rules", () => {
+		const head = "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n1\r\nx\r\n0\r\n";
+		expect(parse(`${head}x-a: 1\r\n folded\r\n\r\n`, 4096)).toMatchObject({ state: "error", error: "obsolete line folding in the trailers" });
+		expect(parse(`${head}no colon\r\n\r\n`, 4096)).toMatchObject({ state: "error", error: "a header line without a colon" });
+		expect(parse(`${head}x a: 1\r\n\r\n`, 4096)).toMatchObject({ state: "error", error: "whitespace in or after a header's name" });
+	});
+
+	test("the parser stops at the end of the header block, so the caller can mark it before any body byte", () => {
+		const head = "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\n";
+		for (const step of [1, 7, 4096]) expect(parse(`${head}hello`, step)).toMatchObject({ state: "done", head_ended_at: head.length, body_bytes: 5 });
+		// A header block that completes in the same read as a body error is still a complete header block.
+		const broken = parse("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\nzz\r\n", 4096);
+		expect(broken).toMatchObject({ state: "error", status: 200, head_ended_at: 47, error: "a chunk-size line that does not start with a hexadecimal size" });
 	});
 
 	test("refuses obsolete line folding, a bare LF or CR, and whitespace before a colon", () => {
@@ -602,7 +681,10 @@ describe.skipIf(!AVAILABLE)("the HTTP/1.1 response parser (benchmarks/harness/c/
 		expect(parse("HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n", 4096)).toMatchObject({ state: "done", framing: "none" });
 		expect(parse("HTTP/1.0 200 OK\r\nContent-Length: 0\r\n\r\n", 4096)).toMatchObject({ keep_alive: false, version_minor: 0 });
 		expect(parse("HTTP/1.1 200 OK\r\nConnection: keep-alive, close\r\nContent-Length: 0\r\n\r\n", 4096)).toMatchObject({ keep_alive: false });
-		expect(parse("HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\n0123456789", 4096, "--body-cap", "4")).toMatchObject({ state: "error", error: "a body larger than the buffer for it" });
+		// The buffer is filled before the error, however the bytes are fed.
+		for (const step of [1, 3, 4096]) {
+			expect(parse("HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\n0123456789", step, "--body-cap", "4")).toMatchObject({ state: "error", error: "a body larger than the buffer for it", body_bytes: 4 });
+		}
 		expect(parse("HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\n0123456789", 4096, "--body-cap", "4", "--direct")).toMatchObject({ state: "error" });
 	});
 });
@@ -693,6 +775,8 @@ describe.skipIf(!AVAILABLE)("http_get against the stand-in", () => {
 		expect(order).toEqual(["sample_started", "name_resolved", "connection_opened", "connection_secured", "request_sent", "first_byte", "response_headers", "response_ended", "sample_ended"]);
 		expect(of(r, "certificate").length).toBe(2);
 		expect(of(r, "connection_closed").map((event) => event.reason)).toEqual(["done", "done", "done", "done"]);
+		// Python's TLS 1.3 server sends two tickets: each is a session, and each is a ticket.
+		expect(of(r, "connection_closed").every((event) => event.sessions_received === 2 && event.session_tickets_received === 2)).toBe(true);
 		const ended = of(r, "response_ended");
 		expect(ended.every((event) => event.fixture === "match" && event.s3_checksum === "match" && event.bytes === 4096)).toBe(true);
 		expect(closing(r)).toMatchObject({ requests_made: 4, requests_not_made: 0, ended_early: null, responses_2xx_verified: 4, body_bytes: 4096, body_mismatch: false, statuses: { "200": 4 }, failures: {} });
@@ -789,8 +873,12 @@ describe.skipIf(!AVAILABLE)("http_get against the stand-in", () => {
 		for (const event of [short, stall]) expect(event).toMatchObject({ phase: "body", content_length: 4096, body_bytes_received: 2048 });
 		const ended = of(r, "response_ended");
 		const forbidden = ended.find((event) => event.request === 2) as Event;
-		expect(forbidden.body).toContain("<Code>AccessDenied</Code>");
+		// Of an error body: its length, S3's four fields, and the names of its elements. Nothing else, not even a digest.
+		expect(forbidden.body).toBeUndefined();
+		expect(forbidden.body_sha256).toBeUndefined();
+		expect(forbidden.bytes).toBeGreaterThan(0);
 		expect(forbidden.error_fields).toEqual({ Code: "AccessDenied", Message: "Access Denied", RequestId: "STANDIN000000002", HostId: "c3RhbmQtaW4gaG9zdCBpZA==" });
+		expect(forbidden.error_elements).toEqual(["Error", "Code", "Message", "RequestId", "HostId"]);
 		expect((ended.find((event) => event.request === 4) as Event).error_fields).toMatchObject({ Code: "SlowDown" });
 		const response403 = of(r, "response_headers").find((event) => event.request === 2) as Event;
 		expect(response403).toMatchObject({ status: 403, status_line: "HTTP/1.1 403 Forbidden" });
@@ -867,6 +955,10 @@ describe.skipIf(!AVAILABLE)("http_get against the stand-in", () => {
 		expect(of(bad, "request_failed").every((event) => event.phase === "tls" && event.error === "verify")).toBe(true);
 		// The stand-in sends the other CA after its leaf, so the library meets a root it does not trust.
 		expect(of(bad, "request_failed")[0]?.detail).toBe("self signed certificate in certificate chain");
+		// The refused chain is recorded: its fingerprints in the failure, each certificate once in the Run.
+		const refused = of(bad, "request_failed")[0]?.peer_chain_sha256 as string[];
+		expect(refused.length).toBe(2);
+		expect(of(bad, "certificate").map((event) => event.sha256)).toEqual(refused);
 		const wrong = run("wrongname", { samples: 1 });
 		expectExit(wrong, 4);
 		checkStream(wrong, 1);
@@ -938,7 +1030,7 @@ describe.skipIf(!AVAILABLE)("http_get against the stand-in", () => {
 		expect(reasons.slice(0, -1).every((reason) => reason === "close_notify_while_idle" || reason === "eof_while_idle")).toBe(true);
 	}, RUN_TIMEOUT_MS);
 
-	test("an error body that echoes the credentials and the signature is withheld, its safe fields kept", () => {
+	test("an error body that echoes the credentials and the signature is not printed, its safe fields kept", () => {
 		const before = standinLog().length;
 		const r = run("echo", { samples: 1 });
 		expectExit(r, 4);
@@ -946,22 +1038,254 @@ describe.skipIf(!AVAILABLE)("http_get against the stand-in", () => {
 		// The stand-in did echo them: its responses were built from what it received.
 		expect(standinLog().slice(before).every((request) => header(request, "x-amz-security-token") === TOKEN)).toBe(true);
 		for (const ended of of(r, "response_ended")) {
-			expect(ended.body).toEqual({ withheld_bytes: expect.any(Number) });
+			expect(ended.body).toBeUndefined();
 			expect(ended.error_fields).toMatchObject({ Code: "SignatureDoesNotMatch", RequestId: expect.stringMatching(/^STANDIN/) });
 			expect((ended.error_fields as Record<string, unknown>).Message).toContain("does not match");
+			expect(ended.error_elements).toEqual(["Error", "Code", "Message", "AWSAccessKeyId", "StringToSign", "SignatureProvided", "CanonicalRequest", "RequestId", "HostId"]);
 		}
 	}, RUN_TIMEOUT_MS);
 
-	test("an error body that names an account is withheld, and so is the field that names it", () => {
+	test("an error body that names an account is not printed, and the field that names it is withheld", () => {
 		const r = run("accountid", { samples: 1 });
 		expectExit(r, 4);
 		checkStream(r, 1);
 		expect(r.stdout).not.toContain("123456789012");
 		for (const ended of of(r, "response_ended")) {
-			expect(ended.body).toEqual({ withheld_bytes: expect.any(Number) });
+			expect(ended.body).toBeUndefined();
 			expect(ended.error_fields).toMatchObject({ Code: "AccessDenied", Message: { withheld_bytes: expect.any(Number) } });
 		}
 	}, RUN_TIMEOUT_MS);
+
+	test("auth none sends no signing headers and reads no credentials", () => {
+		const before = standinLog().length;
+		const r = run("ok", { samples: 1, auth: "none", env: { LM_SERVICE_AWS_ACCESS_KEY_ID: undefined, LM_SERVICE_AWS_SECRET_ACCESS_KEY: undefined, LM_SERVICE_AWS_SESSION_TOKEN: undefined, LM_SERVICE_REGION: undefined } });
+		expectExit(r, 0);
+		checkStream(r, 1);
+		expect((of(r, "request_sent")[0] as Event).headers).toEqual([["Host", `ok.s3.lm.test:${ports.https_port}`], ["User-Agent", "ledgermath-http_get/1"], ["x-amz-checksum-mode", "ENABLED"]]);
+		expect(of(r, "request_sent")[0]?.signing).toBeUndefined();
+		expect(standinLog().slice(before).every((request) => header(request, "authorization") === undefined)).toBe(true);
+	}, RUN_TIMEOUT_MS);
+
+	test("a missing input or a malformed credential is a usage error, after `started` alone, echoing nothing", () => {
+		const missing = run("ok", { env: { LM_SERVICE_ENDPOINT: undefined } });
+		expectExit(missing, 2);
+		expect(missing.events.map((event) => event.event)).toEqual(["started"]);
+		expect(missing.stderr).toBe("usage error: LM_SERVICE_ENDPOINT is not set\n");
+		const badKey = run("ok", { env: { LM_SERVICE_AWS_ACCESS_KEY_ID: "asia-not-a-key-id-but-secret" } });
+		expectExit(badKey, 2);
+		expect(badKey.stderr).toBe("usage error: LM_SERVICE_AWS_ACCESS_KEY_ID is not an access key ID (16 to 128 capital letters and digits)\n");
+		expect(badKey.stdout + badKey.stderr).not.toContain("asia-not-a-key-id-but-secret");
+		const http = run("ok", { env: { LM_SERVICE_ENDPOINT: "http://ok.s3.lm.test" } });
+		expectExit(http, 2);
+		// A secret this short could turn up by chance in what is printed, and the guard would refuse it there.
+		const short = run("ok", { env: { LM_SERVICE_AWS_SECRET_ACCESS_KEY: "x/y" } });
+		expectExit(short, 2);
+		expect(short.stderr).toBe("usage error: LM_SERVICE_AWS_SECRET_ACCESS_KEY is shorter than any secret key (16 characters)\n");
+	}, RUN_TIMEOUT_MS);
+});
+
+/** What two Runs of the same response must agree on, whatever the clocks and the connection: each request's events from request_sent on, with the fields the response decides. */
+function responseRecord(r: Run): unknown[] {
+	const keep: Record<string, string[]> = {
+		request_sent: ["request"],
+		first_byte: ["request"],
+		response_headers: ["request", "status_line", "status", "headers"],
+		response_ended: ["request", "bytes", "wire_bytes", "framing", "trailers", "body_sha256", "fixture", "s3_checksum", "error_fields", "error_elements"],
+		request_failed: ["request", "phase", "error", "detail", "bytes_received", "surplus_bytes", "head_received", "content_length", "body_bytes_received", "body_sha256_received"],
+		sample_ended: ["sample"],
+	};
+	return r.events
+		.filter((event) => event.event in keep)
+		.map((event) => Object.fromEntries([["event", event.event], ...(keep[event.event] as string[]).filter((key) => key in event).map((key) => [key, event[key]])]));
+}
+
+describe.skipIf(!AVAILABLE)("the clocks: every boundary read where the README says", () => {
+	test("a failed write of the request is timed when it is seen, and no request_sent is written for it", () => {
+		const sanitizer = OVERRIDE !== "" ? { ASAN_OPTIONS: `${process.env.ASAN_OPTIONS ?? ""}:verify_asan_link_order=0` } : {};
+		for (const connection of ["new", "reused"] as const) {
+			// The third write to a socket is the request's on both: the ClientHello and the client's Finished come first.
+			const r = run("ok", { samples: 2, connection, binary: DYNAMIC, env: { LD_PRELOAD: SHIM, LM_TEST_FAIL_SOCKET_WRITE: "3", ...sanitizer } });
+			expectExit(r, 4);
+			checkStream(r, 2);
+			expect(one(r, "request_failed")).toMatchObject({ request: 0, phase: "send", error: "reset", detail: "Broken pipe", bytes_received: 0 });
+			const names = sampleEvents(r, 0).map((event) => event.event).filter((name) => name !== "certificate");
+			expect(names).toEqual(connection === "new" ? ["sample_started", "name_resolved", "connection_opened", "connection_secured", "request_failed", "sample_ended"] : ["sample_started", "request_failed", "sample_ended"]);
+			expect(of(r, "request_sent").map((event) => event.request)).toEqual([1, 2]);
+		}
+	});
+
+	test("one response written in one write, in two, or a record per byte gives the same events, for a good response and each body error", () => {
+		const kinds = ["ok", "okchunked", "oktrailers", "short", "shortchunked", "badchunk", "chunkcrlf", "chunkbarelf", "chunklong", "trailerfold", "trailercolon", "bodybig", "bodybigchunked", "errbadchunk"];
+		for (const kind of kinds) {
+			const records = ["one", "two", "bytes"].map((how): unknown[] => {
+				const r = run(`split-${kind}-${how}`, { samples: 1, objectBytes: 64 });
+				checkStream(r, 1);
+				return [r.status, responseRecord(r)];
+			});
+			for (const other of records.slice(1)) expect([kind, other]).toEqual([kind, records[0] as unknown[]]);
+		}
+	});
+
+	test("a header block that completes in the same read as a body error is a response_headers, and the error is the body's", () => {
+		const r = run("split-badchunk-one", { samples: 1, objectBytes: 64 });
+		expectExit(r, 4);
+		for (const sample of [0, 1]) {
+			expect(sampleEvents(r, sample).map((event) => event.event).slice(-4)).toEqual(["first_byte", "response_headers", "request_failed", "sample_ended"]);
+		}
+		for (const failed of of(r, "request_failed")) {
+			expect(failed).toMatchObject({ phase: "body", error: "protocol", detail: "a chunk-size line that does not start with a hexadecimal size", body_bytes_received: 64 });
+			expect(failed.head_received).toBeUndefined();
+			expect(failed.body_sha256_received).toMatch(/^[0-9a-f]{64}$/);
+		}
+		// An error status's partial body leaves no digest.
+		const error = run("split-errbadchunk-one", { samples: 1 });
+		expect(of(error, "request_failed").every((event) => event.phase === "body" && event.body_sha256_received === undefined)).toBe(true);
+	});
+
+	test("no request starts after the budget, even when reopening a kept connection used the time up", () => {
+		// The third lookup is answered 1.2 s late, and every response closes the connection.
+		const r = run("budgetlate", { samples: 3, connection: "reused", budgetSeconds: 1, timeoutMs: 3000 });
+		expectExit(r, 4);
+		checkStream(r, null);
+		expect(of(r, "sample_started").length).toBe(2);
+		expect(of(r, "connection_opened").length).toBe(3);
+		expect(closing(r)).toMatchObject({ ended_early: "budget", requests_made: 2, requests_not_made: 2 });
+		const [first] = of(r, "sample_started") as [Event];
+		expect(of(r, "sample_started").every((event) => event.t - first.t < 1e9)).toBe(true);
+	});
+});
+
+describe.skipIf(!AVAILABLE)("everything the resolver and the server sent is recorded", () => {
+	test("the authority and additional sections of a DNS reply", () => {
+		const r = run("dnsextra", { samples: 1 });
+		expectExit(r, 0);
+		checkStream(r, 1);
+		const resolved = of(r, "name_resolved")[0] as Event;
+		expect(resolved.authority).toEqual(["lm.test. 3600 NS ns1.lm.test."]);
+		expect(resolved.additional).toEqual(["ns1.lm.test. 3600 A 127.0.0.53", `ns1.lm.test. 60 TXT \\# 18 11${Buffer.from("additional-record").toString("hex")}`]);
+	});
+
+	test("a reply longer than the buffer: its real length, how much was read, and the bytes no record holds", () => {
+		const r = run("dnsbig", { samples: 1 });
+		expectExit(r, 0);
+		checkStream(r, 1);
+		const resolved = of(r, "name_resolved")[0] as Event;
+		expect(resolved.reply_bytes as number).toBeGreaterThan(6000);
+		expect(resolved.reply_bytes_read).toBe(4096);
+		expect(resolved.trailing_bytes).toBe(4096 - ((resolved.reply_bytes as number) - 6000));
+	});
+
+	test("trailer fields have a field of their own; header and trailer values are kept without the whitespace around them", () => {
+		const trailers = run("split-oktrailers-one", { samples: 1, objectBytes: 64 });
+		expectExit(trailers, 0);
+		expect(of(trailers, "response_ended").every((event) => JSON.stringify(event.trailers) === JSON.stringify([["x-amz-checksum-crc32", "AAAAAA=="], ["x-extra", "two words"]]))).toBe(true);
+		const padded = run("padded", { samples: 1 });
+		expectExit(padded, 0);
+		expect(of(padded, "response_headers")[0]?.headers).toContainEqual(["x-spaced", "alpha  beta"]);
+	});
+
+	test("bytes after a Content-Length body, in the same record, make that request a protocol error", () => {
+		for (const connection of ["new", "reused"] as const) {
+			// 4 KiB arrives in one record with the header block; 128 KiB is read straight into the body buffer.
+			for (const objectBytes of [4096, 131072]) {
+				const r = run("surplus", { samples: 1, connection, objectBytes });
+				expectExit(r, 4);
+				checkStream(r, 1);
+				expect(of(r, "response_headers").length).toBe(2);
+				const failed = of(r, "request_failed");
+				expect(failed.length).toBe(2);
+				for (const event of failed) {
+					expect(event).toMatchObject({ phase: "body", error: "protocol", detail: "10 bytes after the end of the response", surplus_bytes: 10, content_length: objectBytes, body_bytes_received: objectBytes });
+				}
+			}
+		}
+	});
+
+	test("bytes that come later, while a kept connection is idle, close it before the next request; that request is clean", () => {
+		// The bytes come 50 ms after the response; the first pause is 181 ms at this mean.
+		const reused = run("surpluslater", { samples: 1, connection: "reused", gapMs: 1000 });
+		expectExit(reused, 0);
+		checkStream(reused, 1);
+		expect(of(reused, "connection_closed").map((event) => event.reason)).toEqual(["data_while_idle", "end_of_run"]);
+		expect(closing(reused)).toMatchObject({ responses_2xx_verified: 2, requests_failed: 0 });
+	});
+});
+
+describe.skipIf(!AVAILABLE)("the record of the server", () => {
+	test("five servers that fail the handshake are recorded by what the library says, none as a verification failure", () => {
+		const expected: Record<string, [string, RegExp]> = {
+			plainhttp: ["tls", /WRONG_VERSION_NUMBER/],
+			alert: ["alert", /ALERT_HANDSHAKE_FAILURE/],
+			tls11only: ["tls", /UNSUPPORTED_PROTOCOL/],
+			nosharedcipher: ["alert", /ALERT_HANDSHAKE_FAILURE/],
+			badserverhello: ["tls", /DECODE_ERROR/],
+		};
+		for (const [scenario, [error, detail]] of Object.entries(expected)) {
+			const r = run(scenario, { samples: 1 });
+			expectExit(r, 4);
+			checkStream(r, 1);
+			const failed = of(r, "request_failed");
+			expect(failed.length).toBe(2);
+			for (const event of failed) {
+				expect([scenario, event.phase, event.error]).toEqual([scenario, "tls", error]);
+				expect(event.detail as string).toMatch(detail);
+				if (error === "alert") expect(event).toMatchObject({ alert: 40, alert_name: "handshake failure" });
+				else expect(event.alert).toBeUndefined();
+			}
+		}
+		const reused = run("alert", { samples: 1, connection: "reused" });
+		expect(of(reused, "connection_failed")[0]).toMatchObject({ phase: "tls", error: "alert", alert: 40 });
+	});
+
+	test("a long chain is recorded whole; a certificate without a subject alternative name is refused", () => {
+		const long = run("longchain", { samples: 1 });
+		expectExit(long, 0);
+		checkStream(long, 1);
+		const secured = of(long, "connection_secured")[0] as Event;
+		expect((secured.peer_chain_sha256 as string[]).length).toBe(13);
+		expect(of(long, "certificate").length).toBe(13);
+		const cn = run("cnonly", { samples: 1 });
+		expectExit(cn, 4);
+		checkStream(cn, 1);
+		expect(of(cn, "request_failed").every((event) => event.error === "verify" && event.detail === "Hostname mismatch")).toBe(true);
+	});
+
+	test("under TLS 1.2 a session offered by its ID alone is a session, not a ticket", () => {
+		const ticket = run("tls12", { samples: 1 });
+		const noTicket = run("tls12noticket", { samples: 1 });
+		for (const r of [ticket, noTicket]) {
+			expectExit(r, 0);
+			checkStream(r, 1);
+			expect(of(r, "connection_secured").every((event) => event.tls === "TLSv1.2")).toBe(true);
+		}
+		expect(of(ticket, "connection_closed").every((event) => event.sessions_received === 1 && event.session_tickets_received === 1)).toBe(true);
+		expect(of(noTicket, "connection_closed").every((event) => event.sessions_received === 1 && event.session_tickets_received === 0)).toBe(true);
+	});
+});
+
+describe.skipIf(!AVAILABLE)("keeping the access keys out of the output", () => {
+	test("S3's SignatureDoesNotMatch body, the canonical request in hex included, leaves its four fields and the names of the rest", () => {
+		const r = run("echohex", { samples: 1 });
+		expectExit(r, 4);
+		checkStream(r, 1);
+		for (const ended of of(r, "response_ended")) {
+			expect(Object.keys(ended.error_fields as object)).toEqual(["Code", "Message", "RequestId", "HostId"]);
+			expect(ended.error_elements).toEqual(["Error", "Code", "Message", "AWSAccessKeyId", "StringToSign", "SignatureProvided", "StringToSignBytes", "CanonicalRequest", "CanonicalRequestBytes", "RequestId", "HostId"]);
+		}
+	});
+
+	test("a key sent back encoded, in a header or a printed field, is withheld: hex, base64, base64url, percent-encoded", () => {
+		const r = run("echoheaders", { samples: 1 });
+		expectExit(r, 4);
+		checkStream(r, 1);
+		for (const response of of(r, "response_headers")) {
+			const echoes = (response.headers as Array<[string, unknown]>).filter(([name]) => name.startsWith("x-echo-"));
+			expect(echoes.length).toBe(6);
+			for (const [name, value] of echoes) expect([name, value]).toEqual([name, { withheld_bytes: expect.any(Number) }]);
+		}
+		for (const ended of of(r, "response_ended")) expect((ended.error_fields as Record<string, unknown>).Message).toEqual({ withheld_bytes: expect.any(Number) });
+		expect((closing(r).fields_withheld as number) >= 14).toBe(true);
+	});
 
 	test("where a check of the bytes and a check of the text written would disagree, the field is withheld and the Run goes on", () => {
 		const cases: Array<[string, (r: Run) => unknown]> = [
@@ -975,6 +1299,7 @@ describe.skipIf(!AVAILABLE)("http_get against the stand-in", () => {
 			expectExit(r, 4);
 			checkStream(r, 1);
 			expect([scenario, field(r)]).toEqual([scenario, { withheld_bytes: expect.any(Number) }]);
+			expect(closing(r).lines_withheld).toBe(0);
 		}
 	});
 
@@ -1011,33 +1336,6 @@ describe.skipIf(!AVAILABLE)("http_get against the stand-in", () => {
 		await exited;
 		outputs.push({ label: "core stdout", text: stdout }, { label: "core stderr", text: stderr });
 	});
-
-	test("auth none sends no signing headers and reads no credentials", () => {
-		const before = standinLog().length;
-		const r = run("ok", { samples: 1, auth: "none", env: { LM_SERVICE_AWS_ACCESS_KEY_ID: undefined, LM_SERVICE_AWS_SECRET_ACCESS_KEY: undefined, LM_SERVICE_AWS_SESSION_TOKEN: undefined, LM_SERVICE_REGION: undefined } });
-		expectExit(r, 0);
-		checkStream(r, 1);
-		expect((of(r, "request_sent")[0] as Event).headers).toEqual([["Host", `ok.s3.lm.test:${ports.https_port}`], ["User-Agent", "ledgermath-http_get/1"], ["x-amz-checksum-mode", "ENABLED"]]);
-		expect(of(r, "request_sent")[0]?.signing).toBeUndefined();
-		expect(standinLog().slice(before).every((request) => header(request, "authorization") === undefined)).toBe(true);
-	}, RUN_TIMEOUT_MS);
-
-	test("a missing input or a malformed credential is a usage error, after `started` alone, echoing nothing", () => {
-		const missing = run("ok", { env: { LM_SERVICE_ENDPOINT: undefined } });
-		expectExit(missing, 2);
-		expect(missing.events.map((event) => event.event)).toEqual(["started"]);
-		expect(missing.stderr).toBe("usage error: LM_SERVICE_ENDPOINT is not set\n");
-		const badKey = run("ok", { env: { LM_SERVICE_AWS_ACCESS_KEY_ID: "asia-not-a-key-id-but-secret" } });
-		expectExit(badKey, 2);
-		expect(badKey.stderr).toBe("usage error: LM_SERVICE_AWS_ACCESS_KEY_ID is not an access key ID (16 to 128 capital letters and digits)\n");
-		expect(badKey.stdout + badKey.stderr).not.toContain("asia-not-a-key-id-but-secret");
-		const http = run("ok", { env: { LM_SERVICE_ENDPOINT: "http://ok.s3.lm.test" } });
-		expectExit(http, 2);
-		// A secret this short could turn up by chance in what is printed, and the guard would refuse it there.
-		const short = run("ok", { env: { LM_SERVICE_AWS_SECRET_ACCESS_KEY: "x/y" } });
-		expectExit(short, 2);
-		expect(short.stderr).toBe("usage error: LM_SERVICE_AWS_SECRET_ACCESS_KEY is shorter than any secret key (16 characters)\n");
-	}, RUN_TIMEOUT_MS);
 });
 
 describe.skipIf(!AVAILABLE)("what should be deterministic is", () => {
@@ -1081,7 +1379,7 @@ describe.skipIf(!AVAILABLE)("what should be deterministic is", () => {
 	}, RUN_TIMEOUT_MS);
 
 	test("two builds give the same bytes", () => {
-		const hashOf = () => createHash("sha256").update(readFileSync(BINARY)).digest("hex");
+		const hashOf = () => createHash("sha256").update(readFileSync(STATIC)).digest("hex");
 		const first = hashOf();
 		const again = make("-B", "BUILD=static");
 		if (again.status !== 0) throw new Error(`make -B exited ${again.status}:\n${again.stdout}${again.stderr}`);

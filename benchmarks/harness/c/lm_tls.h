@@ -25,16 +25,15 @@
 
 #include "lm_lines.h"
 
-#define LM_TLS_MAX_CHAIN 10
-
 enum {
     LM_TLS_OK = 0,
     LM_TLS_TIMEOUT = 1,     /* the socket's timeout ended a read or write */
     LM_TLS_RESET = 2,       /* ECONNRESET or EPIPE */
     LM_TLS_EOF = 3,         /* the peer closed TCP without close_notify */
-    LM_TLS_PROTOCOL = 4,    /* a TLS error: an alert, a bad record, a failed handshake */
-    LM_TLS_VERIFY = 5,      /* the server's certificate did not verify */
+    LM_TLS_PROTOCOL = 4,    /* a TLS error found on our side: a bad record, a malformed message, nothing in common */
+    LM_TLS_VERIFY = 5,      /* the certificate check ran on the server's chain and failed */
     LM_TLS_SYSTEM = 6,      /* another errno */
+    LM_TLS_ALERT = 7,       /* the server sent a fatal alert (lm_tls_alert says which) */
 };
 
 typedef struct lm_tls_conn lm_tls_conn;
@@ -57,7 +56,9 @@ unsigned lm_tls_ca_rejected(void);
  * before any sample. Returns false with a reason in err. */
 bool lm_tls_describe_offer(lm_lines *b, const char *host, char *err, size_t errlen);
 
-/* Before a sample: a connection object for `host` (SNI and the name to verify). */
+/* Before a sample: a connection object for `host` (SNI and the name to
+ * verify). The name is checked against the certificate's subject alternative
+ * names only, never its common name. */
 lm_tls_conn *lm_tls_new(const char *host);
 void lm_tls_free(lm_tls_conn *c);
 
@@ -85,11 +86,26 @@ const char *lm_tls_peer_signature(lm_tls_conn *c);
 void lm_tls_alpn(lm_tls_conn *c, char *out, size_t cap);
 bool lm_tls_hello_retry(lm_tls_conn *c);
 bool lm_tls_resumed(lm_tls_conn *c);
+/* Sessions the server offered (the library's new-session callback), and of
+ * those, how many came as a ticket (a NewSessionTicket message). Under TLS
+ * 1.3 every session is a ticket; under TLS 1.2 a session may be offered by
+ * its Session ID alone. */
+unsigned lm_tls_sessions(lm_tls_conn *c);
 unsigned lm_tls_tickets(lm_tls_conn *c);
-/* The certificates the server sent, leaf first, exactly as sent. */
-int lm_tls_peer_chain(lm_tls_conn *c, const unsigned char **der, size_t *len, int max);
+/* The certificates the server sent, leaf first, exactly as sent, all of
+ * them; also after a handshake that failed once the server's Certificate
+ * message was read (so a refused chain can be recorded). */
+size_t lm_tls_peer_chain_count(lm_tls_conn *c);
+void lm_tls_peer_cert(lm_tls_conn *c, size_t i, const unsigned char **der, size_t *len);
+/* Application data already decrypted and not yet read: bytes that arrived in
+ * the same record as the last ones read. */
+size_t lm_tls_pending(lm_tls_conn *c);
 /* Why the last call failed, in the library's or the kernel's words. */
 const char *lm_tls_error_detail(lm_tls_conn *c);
+/* After LM_TLS_ALERT: the alert's description code (RFC 8446 6) and the
+ * library's name for it; -1 and "" otherwise. */
+int lm_tls_alert(lm_tls_conn *c);
+const char *lm_tls_alert_name(lm_tls_conn *c);
 /* The certificate verification result, "ok" or the library's words. */
 const char *lm_tls_verify_result(lm_tls_conn *c);
 

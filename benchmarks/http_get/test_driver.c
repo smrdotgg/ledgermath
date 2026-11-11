@@ -17,7 +17,6 @@
  *   http_get_test found SECRET        < bytes   registers SECRET; whether the bytes hold it in any form
  *   http_get_test secret SECRET                 whether lm_secret_add accepts SECRET
  */
-
 #include "lm.h"
 #include "lm_dns.h"
 #include "lm_http.h"
@@ -98,14 +97,14 @@ static int hex_value(int c) {
     return -1;
 }
 
-static void record(lm_lines *b, const lm_dns_record *r) {
+static void record(lm_lines *b, const unsigned char *msg, size_t len, const lm_dns_record *r) {
     lm_lines_object(b, NULL);
-    lm_lines_str(b, "text", r->text);
-    lm_lines_str(b, "owner", r->owner);
+    char *text = lm_dns_record_text(msg, len, r);
+    lm_lines_str(b, "text", text);
+    free(text);
     lm_lines_u64(b, "type", r->type);
     lm_lines_u64(b, "class", r->class_);
     lm_lines_u64(b, "ttl", r->ttl);
-    lm_lines_str(b, "data", r->data);
     lm_lines_close(b);
 }
 
@@ -131,15 +130,26 @@ static int dns_parse(void) {
     lm_lines_u64(&out, "rcode", r.rcode);
     lm_lines_u64(&out, "qdcount", r.qdcount);
     lm_lines_u64(&out, "ancount", r.ancount);
-    lm_lines_str(&out, "qname", r.qname);
+    char name[LM_DNS_NAME_MAX];
+    if (r.has_question) {
+        lm_dns_name_text(msg, n, r.qname_at, name);
+        lm_lines_str(&out, "qname", name);
+    }
     lm_lines_u64(&out, "qtype", r.qtype);
     lm_lines_array(&out, "answers");
-    for (unsigned i = 0; i < r.answers; i++) record(&out, &r.answer[i]);
+    for (unsigned i = 0; i < r.answers; i++) record(&out, msg, n, &r.answer[i]);
     lm_lines_close(&out);
     lm_lines_array(&out, "authority");
-    for (unsigned i = 0; i < r.authorities; i++) record(&out, &r.authority[i]);
+    for (unsigned i = 0; i < r.authorities; i++) record(&out, msg, n, &r.authority[i]);
     lm_lines_close(&out);
-    lm_lines_str(&out, "canonical", r.canonical);
+    lm_lines_array(&out, "additional");
+    for (unsigned i = 0; i < r.additionals; i++) record(&out, msg, n, &r.additional[i]);
+    lm_lines_close(&out);
+    lm_lines_u64(&out, "trailing_bytes", why == NULL ? n - r.end : 0);
+    if (r.has_question) {
+        lm_dns_name_text(msg, n, r.canonical_at, name);
+        lm_lines_str(&out, "canonical", name);
+    }
     lm_lines_u64(&out, "chain", r.chain);
     lm_lines_bool(&out, "has_address", r.has_address);
     if (r.has_address) {
@@ -168,12 +178,13 @@ static int http_parse(int argc, char **argv) {
     unsigned char *body = malloc(body_cap + 1);
     lm_http_response r;
     lm_http_init(&r, body, body_cap, max_head);
-    size_t at = 0, left_over = 0;
+    size_t at = 0, left_over = 0, head_ended_at = 0;
+    bool head_ended = false;
     while (at < len && (r.state == LM_HTTP_HEAD || r.state == LM_HTTP_BODY)) {
         size_t n = len - at < step ? len - at : step;
         unsigned char *where;
         size_t room;
-        if (direct && lm_http_direct(&r, &where, &room)) {
+        if (direct && r.state == LM_HTTP_BODY && lm_http_direct(&r, &where, &room)) {
             if (n > room) n = room;
             memcpy(where, data + at, n);
             lm_http_direct_done(&r, n);
@@ -181,7 +192,14 @@ static int http_parse(int argc, char **argv) {
             continue;
         }
         if (r.state == LM_HTTP_ERROR) break;
+        /* As http_get does: the header block first, then what is left of the same read. */
+        bool in_head = r.state == LM_HTTP_HEAD;
         size_t used = lm_http_feed(&r, data + at, n);
+        if (in_head && r.state != LM_HTTP_HEAD && r.state != LM_HTTP_ERROR) {
+            head_ended = true;
+            head_ended_at = at + used;
+        }
+        if (in_head && r.state == LM_HTTP_BODY && used < n) used += lm_http_feed(&r, data + at + used, n - used);
         at += used;
         if (used < n) break;
     }
@@ -209,6 +227,15 @@ static int http_parse(int argc, char **argv) {
         lm_lines_u64(&out, "content_length", r.content_length);
         lm_lines_bool(&out, "keep_alive", r.keep_alive);
     }
+    if (head_ended) lm_lines_u64(&out, "head_ended_at", head_ended_at);
+    lm_lines_array(&out, "trailers");
+    for (unsigned i = 0; i < r.trailers; i++) {
+        lm_lines_array(&out, NULL);
+        lm_lines_bytes(&out, NULL, r.trailer + r.trailer_field[i].name, r.trailer_field[i].name_len);
+        lm_lines_bytes(&out, NULL, r.trailer + r.trailer_field[i].value, r.trailer_field[i].value_len);
+        lm_lines_close(&out);
+    }
+    lm_lines_close(&out);
     lm_lines_u64(&out, "body_bytes", r.body_len);
     lm_lines_base64(&out, "body_base64", body, r.body_len);
     lm_lines_u64(&out, "wire_bytes", r.wire_bytes);

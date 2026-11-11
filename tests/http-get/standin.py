@@ -38,10 +38,32 @@ x-amz-checksum-sha256), nosum (none), wrongbody (other bytes of the right
 length, with their own correct checksum), slow (the first byte 300 ms late),
 close (Connection: close on every response), idleclose (the connection closed
 10 ms after each response), bigheaders (a header block over 64 KiB), folded
-(obsolete line folding), chunked (the Fixture, chunked), badcert, wrongname,
-nulhead (a NUL in a header value), and guardlf, guardlfhead, guardb64,
-guardb64head (inputs where a check of the bytes alone and a check of the text
-written for them disagree).
+(obsolete line folding), chunked (the Fixture, chunked), badcert, wrongname.
+
+More, for the reviews of step 5:
+- split-<kind>-<delivery>: one response of a kind (ok, okchunked, oktrailers,
+  short, shortchunked, badchunk, chunkcrlf, chunkbarelf, chunklong,
+  trailerfold, trailercolon, bodybig, bodybigchunked, errbadchunk), written
+  in one write (one, as few records as possible), in two (two, split inside
+  the header block) or one byte per record (bytes).
+- surplus (bytes after a Content-Length body in the same write), surpluslater
+  (the same bytes in a later record), trailers, padded (a header value with
+  whitespace around it), nulhead (a NUL in a header value).
+- TLS failures, answered below TLS: plainhttp (an HTTP reply to the
+  ClientHello), alert (a fatal handshake_failure alert), tls11only (a TLS 1.1
+  ServerHello), badserverhello (a ServerHello cut short); and nosharedcipher
+  (a real TLS 1.2 server with one RSA suite).
+- Certificates: longchain (eleven unrelated certificates after the chain),
+  cnonly (a leaf with no subject alternative name); tls12 and tls12noticket
+  (TLS 1.2 with and without a session ticket).
+- Reflections of the request: echohex (S3's SignatureDoesNotMatch body with
+  the canonical request in hexadecimal), echoheaders (headers holding the
+  token and key in hex, base64 and percent-encoded forms), guardlf,
+  guardlfhead, guardb64 (inputs where a check of the bytes alone and a check
+  of the text written for them disagree).
+- DNS: dnsextra (authority and additional sections), dnsbig (a reply longer
+  than the binary's 4096-byte buffer), budgetlate (every lookup after the
+  second answered 1.2 s late, and Connection: close on every response).
 """
 
 import base64
@@ -49,6 +71,7 @@ import datetime
 import hashlib
 import json
 import os
+import re
 import socket
 import ssl
 import struct
@@ -103,45 +126,64 @@ def make_ca(directory, name):
     return key, cert
 
 
-def make_leaf(directory, name, ca_key, ca_cert, dns_name):
+def make_leaf(directory, name, ca_key, ca_cert, dns_name, san=True, extra_chain=()):
     key, csr, cert = (os.path.join(directory, name + suffix) for suffix in (".key", ".csr", ".pem"))
     extensions = os.path.join(directory, name + ".ext")
     with open(extensions, "w", encoding="ascii") as handle:
-        handle.write("subjectAltName=DNS:%s\nbasicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature\n"
-                     "extendedKeyUsage=serverAuth\n" % dns_name)
+        handle.write(("subjectAltName=DNS:%s\n" % dns_name if san else "") + "basicConstraints=critical,CA:FALSE\n"
+                     "keyUsage=critical,digitalSignature\nextendedKeyUsage=serverAuth\n")
     openssl("req", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:P-256", "-nodes", "-keyout", key, "-out", csr,
             "-subj", "/CN=" + dns_name)
     openssl("x509", "-req", "-in", csr, "-CA", ca_cert, "-CAkey", ca_key, "-CAcreateserial", "-out", cert, "-days", "2",
             "-extfile", extensions)
-    # The chain as a server sends it: the leaf, then the CA.
-    with open(cert, "a", encoding="ascii") as out, open(ca_cert, encoding="ascii") as ca:
-        out.write(ca.read())
+    # The chain as a server sends it: the leaf, then the CA, then anything else.
+    with open(cert, "a", encoding="ascii") as out:
+        for extra in (ca_cert,) + tuple(extra_chain):
+            with open(extra, encoding="ascii") as handle:
+                out.write(handle.read())
     return key, cert
+
+
+LONG_CHAIN_EXTRAS = 11
 
 
 def contexts(directory):
     ca_key, ca_cert = make_ca(directory, "ca")
     other_key, other_cert = make_ca(directory, "other-ca")
+    extras = [make_ca(directory, "unrelated-%02d" % i)[1] for i in range(LONG_CHAIN_EXTRAS)]
     made = {}
-    for name, (signing_key, signing_cert, dns_name) in {
-        "good": (ca_key, ca_cert, "*." + DOMAIN),
-        "badcert": (other_key, other_cert, "*." + DOMAIN),
-        "wrongname": (ca_key, ca_cert, "*.elsewhere.lm.test"),
+    for name, (signing_key, signing_cert, dns_name, san, extra) in {
+        "good": (ca_key, ca_cert, "*." + DOMAIN, True, ()),
+        "badcert": (other_key, other_cert, "*." + DOMAIN, True, ()),
+        "wrongname": (ca_key, ca_cert, "*.elsewhere.lm.test", True, ()),
+        # The host is in the common name, and there is no subject alternative name.
+        "cnonly": (ca_key, ca_cert, "cnonly." + DOMAIN, False, ()),
+        "longchain": (ca_key, ca_cert, "*." + DOMAIN, True, tuple(extras)),
     }.items():
-        key, cert = make_leaf(directory, name, signing_key, signing_cert, dns_name)
+        key, cert = make_leaf(directory, name, signing_key, signing_cert, dns_name, san, extra)
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         context.load_cert_chain(cert, key)
         context.set_alpn_protocols(["http/1.1"])
         made[name] = context
+    good_key, good_cert = os.path.join(directory, "good.key"), os.path.join(directory, "good.pem")
+    for name in ("tls12", "tls12noticket", "nosharedcipher"):
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.load_cert_chain(good_cert, good_key)
+        context.set_alpn_protocols(["http/1.1"])
+        context.maximum_version = ssl.TLSVersion.TLSv1_2
+        if name == "tls12noticket":
+            context.options |= ssl.OP_NO_TICKET
+        if name == "nosharedcipher":
+            context.set_ciphers("AES128-SHA256")  # RSA key exchange: nothing the binary offers
+        made[name] = context
 
-    def choose(sock, server_name, context):
-        scenario = scenario_of(server_name or "")
-        if scenario in ("badcert", "wrongname"):
-            sock.context = made[scenario]
-        return None
-
-    made["good"].sni_callback = choose
+    # serve_connection picks the context from the ClientHello's server name before the handshake: an SNI
+    # callback could swap the certificate but not the versions or suites.
+    CONTEXTS.update(made)
     return made["good"], ca_cert
+
+
+CONTEXTS = {}
 
 
 # ---- scenarios ----
@@ -185,6 +227,9 @@ def encode_name(name):
     return out + b"\x00"
 
 
+_dns_seen = {}
+
+
 def dns_reply(query, own_address):
     ident, flags = struct.unpack("!HH", query[:4])
     qname, after = read_name(query, 12)
@@ -192,8 +237,14 @@ def dns_reply(query, own_address):
     scenario = scenario_of(qname)
     if scenario == "dnsdrop":
         return None
+    if scenario == "budgetlate":
+        with _counters_lock:
+            _dns_seen[qname] = _dns_seen.get(qname, 0) + 1
+            late = _dns_seen[qname] > 2
+        if late:
+            time.sleep(1.2)
     rd = flags & 0x0100
-    header = lambda rcode, tc, an, ns: struct.pack("!HHHHHH", ident, 0x8080 | rd | (0x0200 if tc else 0) | rcode, 1, an, ns, 0)
+    header = lambda rcode, tc, an, ns, ar=0: struct.pack("!HHHHHH", ident, 0x8080 | rd | (0x0200 if tc else 0) | rcode, 1, an, ns, ar)
     if scenario == "nxdomain":
         soa = encode_name("lm.test") + struct.pack("!HHIH", 6, 1, 60, 0)
         rdata = encode_name("ns.lm.test") + encode_name("hostmaster.lm.test") + struct.pack("!IIIII", 1, 7200, 900, 1209600, 60)
@@ -208,16 +259,35 @@ def dns_reply(query, own_address):
     target_offset = 12 + len(question) + 12
     for address in (first, "127.0.0.3", "127.0.0.4"):
         answers += struct.pack("!HHHIH", 0xC000 | target_offset, 1, 1, 5, 4) + socket.inet_aton(address)
+    if scenario == "dnsextra":
+        # An NS record in the authority section; an A record for it and a TXT record in the additional one.
+        ns = encode_name("ns1.lm.test")
+        authority = encode_name("lm.test") + struct.pack("!HHIH", 2, 1, 3600, len(ns)) + ns
+        text = b"additional-record"
+        additional = (encode_name("ns1.lm.test") + struct.pack("!HHIH", 1, 1, 3600, 4) + socket.inet_aton("127.0.0.53") +
+                      encode_name("ns1.lm.test") + struct.pack("!HHIH", 16, 1, 60, len(text) + 1) + bytes([len(text)]) + text)
+        return header(0, False, 4, 1, 2) + question + answers + authority + additional
+    if scenario == "dnsbig":
+        # A whole reply, then bytes no record holds, past the binary's 4096-byte buffer.
+        return header(0, False, 4, 0) + question + answers + b"\x00" * 6000
     return header(0, False, 4, 0) + question + answers
+
+
+def answer_dns(sock, query, peer, own_address):
+    reply = dns_reply(query, own_address)
+    if reply is not None:
+        sock.sendto(reply, peer)
 
 
 def serve_dns(sock, own_address):
     while True:
         try:
             query, peer = sock.recvfrom(512)
-            reply = dns_reply(query, own_address)
-            if reply is not None:
-                sock.sendto(reply, peer)
+            if scenario_of(read_name(query, 12)[0]) == "budgetlate":
+                # Answered on a thread of its own, so a late answer delays no other.
+                threading.Thread(target=answer_dns, args=(sock, query, peer, own_address), daemon=True).start()
+                continue
+            answer_dns(sock, query, peer, own_address)
         except Exception as error:  # a malformed query must not stop the responder
             print("standin: dns: %r" % error, file=sys.stderr, flush=True)
 
@@ -253,10 +323,10 @@ def header(request, name):
     return None
 
 
-def chunked(body):
+def chunked(body, piece_bytes=100):
     out = b""
-    for start in range(0, len(body), 100):
-        piece = body[start:start + 100]
+    for start in range(0, len(body), piece_bytes):
+        piece = body[start:start + piece_bytes]
         out += b"%x\r\n" % len(piece) + piece + b"\r\n"
     return out + b"0\r\n\r\n"
 
@@ -282,6 +352,59 @@ def object_head(size, checksum, request_id, extra=b""):
             (b"" if b"Transfer-Encoding" in extra else b"Content-Length: %d\r\n" % size) + b"Server: ledgermath-standin\r\n\r\n")
 
 
+FIXED_DATE = b"Wed, 11 Nov 2026 11:53:12 GMT"
+BODY_SLACK = 64 * 1024  # http_get's body buffer is object_bytes plus this
+
+
+def split_response(kind, size):
+    """The bytes of one response of a kind, the same every time, and the length of its header block."""
+    body = fixture(size)
+    checksum = base64.b64encode(hashlib.sha256(body).digest())
+
+    def head(status=b"200 OK", chunked_=False, length=None, extra=b""):
+        h = b"HTTP/1.1 " + status + b"\r\nx-amz-request-id: STANDINSPLIT0001\r\nDate: " + FIXED_DATE + b"\r\n"
+        if status.startswith(b"200"):
+            h += b"x-amz-checksum-sha256: " + checksum + b"\r\n"
+        h += extra + (b"Transfer-Encoding: chunked\r\n" if chunked_ else b"Content-Length: %d\r\n" % (size if length is None else length))
+        return h + b"\r\n"
+
+    whole = chunked(body)
+    big = body + b"b" * (BODY_SLACK + 1000)
+    error = (b'<?xml version="1.0" encoding="UTF-8"?>\n<Error><Code>AccessDenied</Code><Message>Access Denied</Message>'
+             b"<RequestId>STANDINSPLIT0001</RequestId><HostId>c3RhbmQtaW4gaG9zdCBpZA==</HostId></Error>")
+    parts = {
+        "ok": (head(), body),
+        "okchunked": (head(chunked_=True), whole),
+        "oktrailers": (head(chunked_=True, extra=b"Trailer: x-amz-checksum-crc32, x-extra\r\n"),
+                       whole[:-2] + b"x-amz-checksum-crc32: AAAAAA==\r\nx-extra:  two words \r\n\r\n"),
+        "short": (head(), body[:size // 2]),
+        "shortchunked": (head(chunked_=True), whole[:len(whole) // 2]),
+        "badchunk": (head(chunked_=True), chunked(body[:200])[:-5] + b"zz\r\n"),
+        "chunkcrlf": (head(chunked_=True), b"%x\r\n" % min(size, 100) + body[:100] + b"XY"),
+        "chunkbarelf": (head(chunked_=True), b"%x\n" % min(size, 100) + body[:100]),
+        "chunklong": (head(chunked_=True), b"64;" + b"e" * 1100 + b"\r\n"),
+        "trailerfold": (head(chunked_=True), whole[:-2] + b"x-a: 1\r\n folded\r\n\r\n"),
+        "trailercolon": (head(chunked_=True), whole[:-2] + b"no colon here\r\n\r\n"),
+        "bodybig": (head(length=len(big)), big),
+        "bodybigchunked": (head(chunked_=True), chunked(big, 4096)),
+        "errbadchunk": (head(status=b"403 Forbidden", chunked_=True, extra=b"Content-Type: application/xml\r\n"), chunked(error)[:-5] + b"zz\r\n"),
+    }
+    h, rest = parts[kind]
+    return h + rest, len(h)
+
+
+def deliver(conn, data, how, head_len):
+    """one: in one write, so in as few records as possible; two: split inside the header block; bytes: a record per byte."""
+    if how == "one":
+        conn.sendall(data)
+    elif how == "two":
+        conn.sendall(data[:head_len // 2])
+        conn.sendall(data[head_len // 2:])
+    else:
+        for i in range(len(data)):
+            conn.sendall(data[i:i + 1])
+
+
 def reflections(request):
     """What the binary sent that it must never print: its key ID, its session token, its signature."""
     authorization = header(request, "authorization") or ""
@@ -289,6 +412,13 @@ def reflections(request):
     signature = authorization.rsplit("Signature=", 1)[-1]
     token = header(request, "x-amz-security-token") or ""
     return key_id, token, signature
+
+
+def canonical_request(request):
+    """The canonical request as S3 shows it back, for the headers the binary signs."""
+    names = (re.search(r"SignedHeaders=([^,]+)", header(request, "authorization") or "") or [None, ""])[1].split(";")
+    lines = ["%s:%s" % (name, header(request, name) or "") for name in names if name]
+    return "GET\n%s\n\n%s\n\n%s\n%s" % (request["target"], "\n".join(lines), ";".join(names), header(request, "x-amz-content-sha256") or "")
 
 
 def respond(conn, request, log_path):
@@ -301,11 +431,62 @@ def respond(conn, request, log_path):
     body = fixture(size)
     checksum = base64.b64encode(hashlib.sha256(body).digest())
 
+    if what.startswith("split-"):
+        _, kind, how = what.split("-", 2)
+        data, head_len = split_response(kind, size)
+        deliver(conn, data, how, head_len)
+        if kind in ("short", "shortchunked"):
+            time.sleep(0.05)
+            conn.unwrap().close()
+            return False
+        return kind in ("ok", "okchunked", "oktrailers")
+    if what in ("surplus", "surpluslater"):
+        whole = object_head(size, checksum, request_id) + body
+        if what == "surplus":
+            conn.sendall(whole + b"0123456789")
+        else:
+            conn.sendall(whole)
+            time.sleep(0.05)
+            conn.sendall(b"0123456789")
+        return True
+    if what == "padded":
+        conn.sendall(object_head(size, checksum, request_id, b"x-spaced: \talpha  beta\t \r\n") + body)
+        return True
     if what == "nulhead":
         conn.sendall(b"HTTP/1.1 200 OK\r\nx-a: b\x00c\r\nContent-Length: 0\r\n\r\n")
         return False
-    if what in ("guardlf", "guardlfhead", "guardb64", "guardb64head"):
+    if what == "budgetlate":
+        conn.sendall(object_head(size, checksum, request_id, b"Connection: close\r\n") + body)
+        return False
+    if what in ("echohex", "echoheaders", "guardlf", "guardlfhead", "guardb64", "guardb64head"):
         key_id, token, signature = reflections(request)
+        if what == "echohex":
+            # As S3's SignatureDoesNotMatch: the string to sign and the canonical request, also as hex bytes.
+            canonical = canonical_request(request)
+            to_sign = "AWS4-HMAC-SHA256\n%s\n%s\n%s" % (header(request, "x-amz-date"), "20261111/us-east-2/s3/aws4_request",
+                                                        hashlib.sha256(canonical.encode()).hexdigest())
+            spaced = lambda text: " ".join("%02x" % b for b in text.encode())
+            extra = ("<AWSAccessKeyId>%s</AWSAccessKeyId><StringToSign>%s</StringToSign><SignatureProvided>%s</SignatureProvided>"
+                     "<StringToSignBytes>%s</StringToSignBytes><CanonicalRequest>%s</CanonicalRequest><CanonicalRequestBytes>%s"
+                     "</CanonicalRequestBytes>" % (key_id, to_sign, signature, spaced(to_sign), canonical, spaced(canonical)))
+            conn.sendall(error_response(403, "Forbidden", "SignatureDoesNotMatch", "The request signature we calculated does not match "
+                                        "the signature you provided. Check your key and signing method.", request_id, extra))
+            return True
+        if what == "echoheaders":
+            forms = [
+                ("x-echo-hex", token.encode().hex().upper()),
+                ("x-echo-hex-colon", ":".join("%02x" % b for b in key_id.encode())),
+                ("x-echo-b64", base64.b64encode(b"x" + token.encode()).decode()),
+                ("x-echo-b64url", base64.urlsafe_b64encode(b"xy" + signature.encode()).decode()),
+                ("x-echo-pct", "".join(c if c.isalnum() else "%%%02X" % ord(c) for c in token)),
+                ("x-echo-pct-all", "".join("%%%02x" % b for b in key_id.encode())),
+            ]
+            extra = "".join("%s: %s\r\n" % pair for pair in forms).encode()
+            message = "signature %s" % signature.encode().hex()
+            body_ = ('<?xml version="1.0" encoding="UTF-8"?>\n<Error><Code>AccessDenied</Code><Message>%s</Message>'
+                     "<RequestId>%s</RequestId><HostId>c3RhbmQtaW4gaG9zdCBpZA==</HostId></Error>" % (message, request_id)).encode()
+            conn.sendall(b"HTTP/1.1 403 Forbidden\r\n" + extra + b"Content-Length: %d\r\n\r\n" % len(body_) + body_)
+            return True
         # Where the bytes hold no secret but the text written for them would: a LF written as \u000a (or a
         # SUB as \u001a) puts an "a" before the rest of the key ID; base64 of bytes made from the key ID
         # holds the key ID.
@@ -326,6 +507,7 @@ def respond(conn, request, log_path):
         prefix += b"p" * (-len(prefix) % 3)
         conn.sendall(prefix + blob + b"\r\n\r\n")
         return False
+
     if what == "forbidden":
         conn.sendall(error_response(403, "Forbidden", "AccessDenied", "Access Denied", request_id))
         return True
@@ -389,9 +571,54 @@ def respond(conn, request, log_path):
     return what != "close"
 
 
+def sni_of(hello):
+    """The server name in a raw ClientHello record, or ''."""
+    try:
+        at = 5 + 4 + 2 + 32
+        at += 1 + hello[at]
+        at += 2 + int.from_bytes(hello[at:at + 2], "big")
+        at += 1 + hello[at]
+        end = at + 2 + int.from_bytes(hello[at:at + 2], "big")
+        at += 2
+        while at + 4 <= end:
+            kind = int.from_bytes(hello[at:at + 2], "big")
+            size = int.from_bytes(hello[at + 2:at + 4], "big")
+            if kind == 0:
+                n = int.from_bytes(hello[at + 7:at + 9], "big")
+                return hello[at + 9:at + 9 + n].decode("latin-1")
+            at += 4 + size
+    except (IndexError, ValueError):
+        pass
+    return ""
+
+
+# Answers to the ClientHello below TLS: what a server that is not one, or is a broken one, sends.
+RAW_HANDSHAKES = {
+    "plainhttp": b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+    "alert": b"\x15\x03\x03\x00\x02\x02\x28",  # fatal handshake_failure (40)
+    # A TLS 1.1 ServerHello: version 3.2, a random, no session ID, TLS_RSA_WITH_AES_128_CBC_SHA, no compression.
+    "tls11only": b"\x16\x03\x02\x00\x2a\x02\x00\x00\x26\x03\x02" + bytes(range(32)) + b"\x00\x00\x2f\x00",
+    # A ServerHello whose body is two bytes long: its version and nothing else.
+    "badserverhello": b"\x16\x03\x03\x00\x06\x02\x00\x00\x02\x03\x03",
+}
+
+
 def serve_connection(raw, context, log_path):
     try:
-        conn = context.wrap_socket(raw, server_side=True)
+        raw.settimeout(5)
+        hello = raw.recv(16384, socket.MSG_PEEK)
+        raw.settimeout(None)
+        scenario = scenario_of(sni_of(hello))
+        if scenario in RAW_HANDSHAKES:
+            raw.recv(16384)
+            raw.sendall(RAW_HANDSHAKES[scenario])
+            # Wait for the binary to end the connection, so nothing of ours cuts its read short.
+            raw.settimeout(5)
+            while raw.recv(16384):
+                pass
+            raw.close()
+            return
+        conn = CONTEXTS.get(scenario, context).wrap_socket(raw, server_side=True)
     except (ssl.SSLError, OSError):
         raw.close()
         return

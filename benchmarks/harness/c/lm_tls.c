@@ -50,7 +50,9 @@ static unsigned g_loaded, g_rejected;
 
 struct lm_tls_conn {
     SSL *ssl;
+    unsigned sessions;
     unsigned tickets;
+    int alert;
     char detail[256];
 };
 
@@ -58,11 +60,14 @@ const char *lm_tls_library(void) { return "AWS-LC " AWSLC_VERSION_NUMBER_STRING;
 unsigned lm_tls_ca_loaded(void) { return g_loaded; }
 unsigned lm_tls_ca_rejected(void) { return g_rejected; }
 
-/* Counts a session the server offers and keeps none, so nothing is ever offered back. */
+/* Counts a session the server offers, and whether it came as a ticket, and
+ * keeps none, so nothing is ever offered back. */
 static int on_new_session(SSL *ssl, SSL_SESSION *session) {
-    (void)session;
     lm_tls_conn *c = SSL_get_ex_data(ssl, g_index);
-    if (c != NULL) c->tickets++;
+    if (c != NULL) {
+        c->sessions++;
+        if (SSL_SESSION_has_ticket(session)) c->tickets++;
+    }
     return 0;
 }
 
@@ -141,8 +146,12 @@ lm_tls_conn *lm_tls_new(const char *host) {
         ERR_clear_error();
         return NULL;
     }
+    /* The name is matched against the subject alternative names only: a
+     * certificate with none is refused rather than matched by its common name. */
+    SSL_set_hostflags(c->ssl, X509_CHECK_FLAG_NEVER_CHECK_SUBJECT);
     SSL_set_renegotiate_mode(c->ssl, ssl_renegotiate_never);
     SSL_set_ex_data(c->ssl, g_index, c);
+    c->alert = -1;
     return c;
 }
 
@@ -152,8 +161,13 @@ void lm_tls_free(lm_tls_conn *c) {
     free(c);
 }
 
-/* What a failed call means. `ret` is what it returned, `saved` errno just after. */
+/* What a failed call means. `ret` is what it returned, `saved` errno just
+ * after. The library's own error comes first: it says whether the server sent
+ * an alert, whether the certificate check ran and failed, or what else went
+ * wrong. Only with nothing queued is errno consulted. The verification result
+ * alone says nothing: it reads as an error until a chain has been checked. */
 static int classify(lm_tls_conn *c, int ret, int saved) {
+    c->alert = -1;
     int e = SSL_get_error(c->ssl, ret);
     if (e == SSL_ERROR_WANT_READ || e == SSL_ERROR_WANT_WRITE) {
         /* On a blocking socket only its timeout makes a call want to be retried. */
@@ -161,11 +175,36 @@ static int classify(lm_tls_conn *c, int ret, int saved) {
         ERR_clear_error();
         return LM_TLS_TIMEOUT;
     }
-    if (e == SSL_ERROR_SYSCALL) {
-        if (ERR_peek_error() != 0) {
-            last_error(c->detail, sizeof(c->detail));
-            return LM_TLS_PROTOCOL;
+    if (ERR_peek_error() != 0) {
+        /* The queue, oldest first; the decision looks at every entry. */
+        uint32_t codes[16];
+        size_t n = 0;
+        uint32_t code;
+        while ((code = ERR_get_error()) != 0) {
+            if (n < sizeof(codes) / sizeof(codes[0])) codes[n++] = code;
         }
+        for (size_t i = 0; i < n; i++) {
+            if (ERR_GET_LIB(codes[i]) != ERR_LIB_SSL) continue;
+            int reason = ERR_GET_REASON(codes[i]);
+            if (reason >= SSL_AD_REASON_OFFSET && reason < SSL_AD_REASON_OFFSET + 256) {
+                c->alert = reason - SSL_AD_REASON_OFFSET;
+                ERR_error_string_n(codes[i], c->detail, sizeof(c->detail));
+                return LM_TLS_ALERT;
+            }
+            if (reason == SSL_R_CERTIFICATE_VERIFY_FAILED) {
+                long verify = SSL_get_verify_result(c->ssl);
+                snprintf(c->detail, sizeof(c->detail), "%s", X509_verify_cert_error_string(verify));
+                return LM_TLS_VERIFY;
+            }
+        }
+        ERR_error_string_n(codes[n - 1], c->detail, sizeof(c->detail));
+        for (size_t i = 0; i < n; i++) {
+            if (ERR_GET_LIB(codes[i]) == ERR_LIB_SSL && ERR_GET_REASON(codes[i]) == SSL_R_UNEXPECTED_EOF_WHILE_READING) return LM_TLS_EOF;
+        }
+        if (strstr(c->detail, "UNEXPECTED_EOF") != NULL) return LM_TLS_EOF;
+        return LM_TLS_PROTOCOL;
+    }
+    if (e == SSL_ERROR_SYSCALL) {
         if (saved == 0) {
             snprintf(c->detail, sizeof(c->detail), "the peer closed TCP without close_notify");
             return LM_TLS_EOF;
@@ -178,20 +217,7 @@ static int classify(lm_tls_conn *c, int ret, int saved) {
         if (saved == ECONNRESET || saved == EPIPE) return LM_TLS_RESET;
         return LM_TLS_SYSTEM;
     }
-    long verify = SSL_get_verify_result(c->ssl);
-    if (verify != X509_V_OK) {
-        snprintf(c->detail, sizeof(c->detail), "%s", X509_verify_cert_error_string(verify));
-        ERR_clear_error();
-        return LM_TLS_VERIFY;
-    }
-    if (e == SSL_ERROR_SSL) {
-        last_error(c->detail, sizeof(c->detail));
-        /* An unexpected EOF is queued as an error by some versions. */
-        if (strstr(c->detail, "UNEXPECTED_EOF") != NULL) return LM_TLS_EOF;
-        return LM_TLS_PROTOCOL;
-    }
-    snprintf(c->detail, sizeof(c->detail), "SSL_get_error %d", e);
-    ERR_clear_error();
+    snprintf(c->detail, sizeof(c->detail), "SSL_get_error %d, nothing queued", e);
     return LM_TLS_PROTOCOL;
 }
 
@@ -293,24 +319,35 @@ void lm_tls_alpn(lm_tls_conn *c, char *out, size_t cap) {
 
 bool lm_tls_hello_retry(lm_tls_conn *c) { return SSL_used_hello_retry_request(c->ssl) != 0; }
 bool lm_tls_resumed(lm_tls_conn *c) { return SSL_session_reused(c->ssl) != 0; }
+unsigned lm_tls_sessions(lm_tls_conn *c) { return c->sessions; }
 unsigned lm_tls_tickets(lm_tls_conn *c) { return c->tickets; }
+size_t lm_tls_pending(lm_tls_conn *c) { return (size_t)SSL_pending(c->ssl); }
 const char *lm_tls_error_detail(lm_tls_conn *c) { return c->detail; }
+int lm_tls_alert(lm_tls_conn *c) { return c->alert; }
+const char *lm_tls_alert_name(lm_tls_conn *c) { return c->alert >= 0 ? SSL_alert_desc_string_long(c->alert) : ""; }
 
 const char *lm_tls_verify_result(lm_tls_conn *c) {
     long v = SSL_get_verify_result(c->ssl);
     return v == X509_V_OK ? "ok" : X509_verify_cert_error_string(v);
 }
 
-int lm_tls_peer_chain(lm_tls_conn *c, const unsigned char **der, size_t *len, int max) {
-    const STACK_OF(CRYPTO_BUFFER) *chain = SSL_get0_peer_certificates(c->ssl);
-    int n = 0;
-    for (size_t i = 0; chain != NULL && i < sk_CRYPTO_BUFFER_num(chain) && n < max; i++) {
-        const CRYPTO_BUFFER *buffer = sk_CRYPTO_BUFFER_value(chain, i);
-        der[n] = CRYPTO_BUFFER_data(buffer);
-        len[n] = CRYPTO_BUFFER_len(buffer);
-        n++;
-    }
-    return n;
+/* The chain the server sent: the established session's, or during and after
+ * a failed handshake the session being made, once the Certificate message has
+ * been read. */
+static const STACK_OF(CRYPTO_BUFFER) *peer_chain(lm_tls_conn *c) {
+    if (SSL_get_session(c->ssl) == NULL) return NULL;
+    return SSL_get0_peer_certificates(c->ssl);
+}
+
+size_t lm_tls_peer_chain_count(lm_tls_conn *c) {
+    const STACK_OF(CRYPTO_BUFFER) *chain = peer_chain(c);
+    return chain != NULL ? sk_CRYPTO_BUFFER_num(chain) : 0;
+}
+
+void lm_tls_peer_cert(lm_tls_conn *c, size_t i, const unsigned char **der, size_t *len) {
+    const CRYPTO_BUFFER *buffer = sk_CRYPTO_BUFFER_value(peer_chain(c), i);
+    *der = CRYPTO_BUFFER_data(buffer);
+    *len = CRYPTO_BUFFER_len(buffer);
 }
 
 /* ---- the ClientHello, made and read back with no network ---- */

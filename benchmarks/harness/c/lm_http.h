@@ -13,6 +13,11 @@
  * over its limit, and an interim (1xx) response are each an error, with the
  * bytes received kept.
  *
+ * lm_http_feed() stops at the end of the header block, so the caller can
+ * mark that moment before any body byte is handled, and then feeds the rest.
+ * Trailer fields after a chunked body are kept as the header lines are, with
+ * the same rules.
+ *
  * For a body framed by length or by the connection's end, lm_http_direct()
  * says where the next body bytes go, so the caller can read them straight
  * into the body buffer without a copy.
@@ -23,13 +28,14 @@
 #include <stdint.h>
 
 #define LM_HTTP_MAX_HEADERS 128
+#define LM_HTTP_MAX_TRAILERS 32
 
 typedef enum { LM_HTTP_HEAD, LM_HTTP_BODY, LM_HTTP_DONE, LM_HTTP_ERROR } lm_http_state;
 typedef enum { LM_HTTP_NONE, LM_HTTP_LENGTH, LM_HTTP_CHUNKED, LM_HTTP_CLOSE } lm_http_framing;
 
 typedef struct {
-    size_t name, name_len;     /* offsets into head */
-    size_t value, value_len;   /* the field value, without the whitespace around it */
+    size_t name, name_len;     /* offsets into head (or into trailer, for a trailer field) */
+    size_t value, value_len;   /* the field value, without the optional whitespace around it (RFC 9110 5.5) */
 } lm_http_header;
 
 typedef struct {
@@ -62,7 +68,14 @@ typedef struct {
     uint64_t chunk_left;
     unsigned char line[1024];   /* a chunk-size line or a trailer line being read */
     size_t line_len;
-    size_t trailer_bytes;
+    size_t trailer_bytes;       /* bytes of the trailer section, CRLFs included */
+
+    /* The trailer fields, each line as received without its CRLF, one after
+     * another in `trailer`; trailer_field offsets point into it. */
+    unsigned char *trailer;
+    size_t trailer_len;
+    unsigned trailers;
+    lm_http_header trailer_field[LM_HTTP_MAX_TRAILERS];
 } lm_http_response;
 
 /* `body` holds up to `body_cap` body bytes; a longer body is an error.
@@ -71,9 +84,12 @@ typedef struct {
 void lm_http_init(lm_http_response *r, unsigned char *body, size_t body_cap, size_t max_head);
 void lm_http_free(lm_http_response *r);
 
-/* Feeds bytes. Returns how many it consumed: all of them, unless the response
- * ended (LM_HTTP_DONE, and the rest belong to whatever follows) or the parser
- * stopped at an error (LM_HTTP_ERROR). */
+/* Feeds bytes. Returns how many it consumed. In LM_HTTP_HEAD it consumes up
+ * to the end of the header block and stops there, whatever state that leaves
+ * (LM_HTTP_BODY, LM_HTTP_DONE for a response with no body, LM_HTTP_ERROR):
+ * the caller feeds the rest again. In LM_HTTP_BODY it consumes all of them,
+ * unless the response ended (LM_HTTP_DONE, and the rest came after the
+ * response) or the parser stopped at an error (LM_HTTP_ERROR). */
 size_t lm_http_feed(lm_http_response *r, const unsigned char *data, size_t len);
 
 /* In LM_HTTP_BODY with a body framed by length or by the connection's end:

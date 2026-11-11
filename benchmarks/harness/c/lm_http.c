@@ -19,7 +19,9 @@ void lm_http_init(lm_http_response *r, unsigned char *body, size_t body_cap, siz
 
 void lm_http_free(lm_http_response *r) {
     free(r->head);
+    free(r->trailer);
     r->head = NULL;
+    r->trailer = NULL;
 }
 
 static void fail(lm_http_response *r, const char *why) {
@@ -107,6 +109,28 @@ static bool content_length(const lm_http_response *r, bool *present, uint64_t *v
     return true;
 }
 
+/* One field line h[at, end), without its CRLF: name, colon, value. The value
+ * is kept without the optional whitespace around it. Returns why the line is
+ * refused, or NULL. The same rules serve the header lines and the trailers. */
+static const char *field_line(const unsigned char *h, size_t at, size_t end, lm_http_header *out) {
+    if (at < end && (h[at] == ' ' || h[at] == '\t')) return "obsolete line folding (a header line starting with whitespace)";
+    size_t colon = at;
+    while (colon < end && h[colon] != ':') colon++;
+    if (colon == end) return "a header line without a colon";
+    if (colon == at) return "a header line with an empty name";
+    for (size_t i = at; i < colon; i++) {
+        if (!is_tchar(h[i])) return (h[i] == ' ' || h[i] == '\t') ? "whitespace in or after a header's name" : "a character not allowed in a header's name";
+    }
+    size_t v = colon + 1, ve = end;
+    while (v < ve && (h[v] == ' ' || h[v] == '\t')) v++;
+    while (ve > v && (h[ve - 1] == ' ' || h[ve - 1] == '\t')) ve--;
+    for (size_t i = v; i < ve; i++) {
+        if ((h[i] < 0x20 && h[i] != '\t') || h[i] == 0x7f) return "a control character in a header's value";
+    }
+    *out = (lm_http_header){ at, colon - at, v, ve - v };
+    return NULL;
+}
+
 static void parse_head(lm_http_response *r) {
     const unsigned char *h = r->head;
     size_t len = r->head_len; /* ends with CRLF CRLF */
@@ -132,40 +156,17 @@ static void parse_head(lm_http_response *r) {
     while (at + 1 < len && !(h[at] == '\r' && h[at + 1] == '\n')) {
         size_t end = at;
         while (end + 1 < len && !(h[end] == '\r' && h[end + 1] == '\n')) end++;
-        if (h[at] == ' ' || h[at] == '\t') {
-            fail(r, "obsolete line folding (a header line starting with whitespace)");
+        lm_http_header field;
+        const char *why = field_line(h, at, end, &field);
+        if (why != NULL) {
+            fail(r, why);
             return;
-        }
-        size_t colon = at;
-        while (colon < end && h[colon] != ':') colon++;
-        if (colon == end) {
-            fail(r, "a header line without a colon");
-            return;
-        }
-        if (colon == at) {
-            fail(r, "a header line with an empty name");
-            return;
-        }
-        for (size_t i = at; i < colon; i++) {
-            if (!is_tchar(h[i])) {
-                fail(r, (h[i] == ' ' || h[i] == '\t') ? "whitespace in or after a header's name" : "a character not allowed in a header's name");
-                return;
-            }
-        }
-        size_t v = colon + 1, ve = end;
-        while (v < ve && (h[v] == ' ' || h[v] == '\t')) v++;
-        while (ve > v && (h[ve - 1] == ' ' || h[ve - 1] == '\t')) ve--;
-        for (size_t i = v; i < ve; i++) {
-            if ((h[i] < 0x20 && h[i] != '\t') || h[i] == 0x7f) {
-                fail(r, "a control character in a header's value");
-                return;
-            }
         }
         if (r->headers == LM_HTTP_MAX_HEADERS) {
             fail(r, "more header lines than the parser keeps");
             return;
         }
-        r->header[r->headers++] = (lm_http_header){ at, colon - at, v, ve - v };
+        r->header[r->headers++] = field;
         at = end + 2;
     }
 
@@ -245,14 +246,16 @@ static size_t feed_head(lm_http_response *r, const unsigned char *data, size_t l
     return used;
 }
 
-static bool keep_body(lm_http_response *r, const unsigned char *data, size_t n) {
-    if (n > r->body_cap - r->body_len) {
-        fail(r, "a body larger than the buffer for it");
-        return false;
-    }
-    memcpy(r->body + r->body_len, data, n);
-    r->body_len += n;
-    return true;
+/* Keeps body bytes; returns how many. When they do not all fit, the buffer
+ * is filled first and then it is an error, so the body kept is the same
+ * however the bytes were split into reads. */
+static size_t keep_body(lm_http_response *r, const unsigned char *data, size_t n) {
+    size_t room = r->body_cap - r->body_len;
+    size_t kept = n < room ? n : room;
+    memcpy(r->body + r->body_len, data, kept);
+    r->body_len += kept;
+    if (kept < n) fail(r, "a body larger than the buffer for it");
+    return kept;
 }
 
 /* One byte of a chunk-size line, a chunk's CRLF, or a trailer line. Returns
@@ -278,15 +281,43 @@ static bool line_byte(lm_http_response *r, unsigned char c) {
     return false;
 }
 
+/* A trailer line, without its CRLF: checked as a header line is, then kept. */
+static bool keep_trailer(lm_http_response *r, const unsigned char *line, size_t n) {
+    if (line[0] == ' ' || line[0] == '\t') {
+        fail(r, "obsolete line folding in the trailers");
+        return false;
+    }
+    if (r->trailer == NULL) {
+        r->trailer = malloc(r->max_head);
+        if (r->trailer == NULL) lm_die("lm_http: out of memory for trailers of %zu bytes", r->max_head);
+    }
+    if (r->trailers == LM_HTTP_MAX_TRAILERS) {
+        fail(r, "more trailer lines than the parser keeps");
+        return false;
+    }
+    /* trailer_bytes, already within max_head, counts every byte of these lines. */
+    memcpy(r->trailer + r->trailer_len, line, n);
+    lm_http_header field;
+    const char *why = field_line(r->trailer, r->trailer_len, r->trailer_len + n, &field);
+    if (why != NULL) {
+        fail(r, why);
+        return false;
+    }
+    r->trailer_field[r->trailers++] = field;
+    r->trailer_len += n;
+    return true;
+}
+
 static size_t feed_chunked(lm_http_response *r, const unsigned char *data, size_t len) {
     size_t used = 0;
     while (used < len && r->state == LM_HTTP_BODY) {
         if (r->chunk_state == CHUNK_DATA) {
             size_t n = len - used;
             if (n > r->chunk_left) n = (size_t)r->chunk_left;
-            if (!keep_body(r, data + used, n)) return used;
-            used += n;
-            r->chunk_left -= n;
+            size_t kept = keep_body(r, data + used, n);
+            used += kept;
+            r->chunk_left -= kept;
+            if (kept < n) return used;
             if (r->chunk_left == 0) {
                 r->chunk_state = CHUNK_DATA_END;
                 r->line_len = 0;
@@ -294,15 +325,15 @@ static size_t feed_chunked(lm_http_response *r, const unsigned char *data, size_
             continue;
         }
         unsigned char c = data[used++];
+        if (r->chunk_state == CHUNK_TRAILER) {
+            r->trailer_bytes++;
+            if (r->head_len + r->trailer_bytes > r->max_head) {
+                fail(r, "trailers larger than the limit");
+                return used;
+            }
+        }
         if (!line_byte(r, c)) {
             if (r->state == LM_HTTP_ERROR) return used;
-            if (r->chunk_state == CHUNK_TRAILER) {
-                r->trailer_bytes++;
-                if (r->head_len + r->trailer_bytes > r->max_head) {
-                    fail(r, "trailers larger than the limit");
-                    return used;
-                }
-            }
             continue;
         }
         const unsigned char *line = r->line;
@@ -346,8 +377,7 @@ static size_t feed_chunked(lm_http_response *r, const unsigned char *data, size_
         } else { /* CHUNK_TRAILER */
             if (n == 0) {
                 r->state = LM_HTTP_DONE;
-            } else if (line[0] == ' ' || line[0] == '\t') {
-                fail(r, "obsolete line folding in the trailers");
+            } else if (!keep_trailer(r, line, n)) {
                 return used;
             }
         }
@@ -356,25 +386,21 @@ static size_t feed_chunked(lm_http_response *r, const unsigned char *data, size_
 }
 
 size_t lm_http_feed(lm_http_response *r, const unsigned char *data, size_t len) {
+    if (r->state == LM_HTTP_HEAD) return feed_head(r, data, len);
+    if (r->state != LM_HTTP_BODY || len == 0) return 0;
     size_t used = 0;
-    if (r->state == LM_HTTP_HEAD) used += feed_head(r, data, len);
-    if (r->state != LM_HTTP_BODY || used == len) return used;
-    size_t before = used;
     if (r->framing == LM_HTTP_CHUNKED) {
-        used += feed_chunked(r, data + used, len - used);
+        used = feed_chunked(r, data, len);
     } else if (r->framing == LM_HTTP_LENGTH) {
-        size_t n = len - used;
+        size_t n = len;
         uint64_t left = r->content_length - r->body_len;
         if (n > left) n = (size_t)left;
-        if (keep_body(r, data + used, n)) {
-            used += n;
-            if (r->body_len == r->content_length) r->state = LM_HTTP_DONE;
-        }
+        used = keep_body(r, data, n);
+        if (r->state != LM_HTTP_ERROR && r->body_len == r->content_length) r->state = LM_HTTP_DONE;
     } else { /* LM_HTTP_CLOSE */
-        size_t n = len - used;
-        if (keep_body(r, data + used, n)) used += n;
+        used = keep_body(r, data, len);
     }
-    r->wire_bytes += used - before;
+    r->wire_bytes += used;
     return used;
 }
 
