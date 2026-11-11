@@ -47,8 +47,9 @@ const puts = existsSync(putsPath) ? readFileSync(putsPath, "utf8").trim().split(
 const blobPuts = puts.filter((key) => key.startsWith("blobs/"));
 const powerPath = join(out, "calls", "power.log");
 const power = existsSync(powerPath) ? readFileSync(powerPath, "utf8").trim().split("\n") : [];
-const schedule = readJson<{ benchmarks: Array<{ builds: string[]; params: unknown[] }> }>(join(ROOT, "schedule.json"));
+const schedule = readJson<{ benchmarks: Array<{ name: string; builds: string[]; params: unknown[] }> }>(join(ROOT, "schedule.json"));
 const planned = schedule.benchmarks.reduce((sum, b) => sum + b.builds.length * b.params.length, 0);
+const executionKey = (benchmark: unknown, build: unknown, params: unknown): string => JSON.stringify([benchmark, build, params]);
 
 // Every scenario: the timer first, a shutdown last, and the log in the bucket.
 expect(power[0]?.startsWith("shutdown -h +45") === true, "the 45-minute timer was not the first thing set");
@@ -60,6 +61,29 @@ function everyRunChecksOut(): void {
 	for (const problem of result.problems) problems.push(`check-runs: ${problem}`);
 }
 
+// The whole schedule ran: one Run of every benchmark, build and parameter set it
+// names, each exiting 0. check-runs holds the stream of every Run that exited 0
+// to check-events.py, so together they say every execution worked.
+function everyExecutionRanOnceAndExitedZero(): void {
+	const seen = new Map<string, number>();
+	for (const run of runs) {
+		const key = executionKey(run.benchmark, (run.binary as { build?: unknown } | undefined)?.build, run.params);
+		seen.set(key, (seen.get(key) ?? 0) + 1);
+		expect(
+			"code" in run.exit && run.exit.code === 0 && run.exit.runner_signal === undefined,
+			`run ${run.id} (${key}) exited ${JSON.stringify(run.exit)}`,
+		);
+	}
+	for (const benchmark of schedule.benchmarks) {
+		for (const build of benchmark.builds) {
+			for (const params of benchmark.params) {
+				const key = executionKey(benchmark.name, build, params);
+				expect(seen.get(key) === 1, `${seen.get(key) ?? 0} Runs of ${key}, expected 1`);
+			}
+		}
+	}
+}
+
 const interrupted = runs.filter((run) => run.exit.runner_signal !== undefined);
 const boot = boots[0];
 
@@ -67,6 +91,7 @@ switch (scenario) {
 	case "ok": {
 		expect(status === 0, `exit status ${status}, expected 0`);
 		everyRunChecksOut();
+		everyExecutionRanOnceAndExitedZero();
 		expect(runs.length === planned, `${runs.length} Runs, expected ${planned}`);
 		expect(boots.length === 1, `${boots.length} boot summaries, expected 1`);
 		expect(boot?.stopped_by === undefined && boot?.not_run.length === 0, "the boot summary says it was stopped");
@@ -118,6 +143,7 @@ switch (scenario) {
 		expect(log.includes("attempt 1 of 3 failed"), "the log does not show the failed first attempt");
 		expect(new Set(blobPuts).size === blobPuts.length, "the retry uploaded again blobs the first attempt had put in");
 		everyRunChecksOut();
+		everyExecutionRanOnceAndExitedZero();
 		expect(runs.length === planned, `${runs.length} Runs, expected ${planned}`);
 		expect(boots.length === 1, `${boots.length} boot summaries, expected 1`);
 		break;
@@ -125,6 +151,7 @@ switch (scenario) {
 	case "blobs-present": {
 		expect(status === 0, `exit status ${status}, expected 0`);
 		everyRunChecksOut();
+		everyExecutionRanOnceAndExitedZero();
 		expect(runs.length === planned, `${runs.length} Runs, expected ${planned}`);
 		const seeded = readFileSync(join(out, "seeded"), "utf8").trim().split("\n");
 		for (const key of seeded) expect(!puts.includes(key), `${key} was in the bucket already and was uploaded again`);

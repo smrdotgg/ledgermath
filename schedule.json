@@ -11,6 +11,75 @@
         { "size_bytes": 1073741824, "threads": "all", "path": "scalar" },
         { "size_bytes": 1073741824, "threads": "all", "path": "avx2" }
       ]
+    },
+    {
+      "name": "compressed_memory_read",
+      "builds": ["static"],
+      "samples": 10,
+      "timeout_seconds": 120,
+      "params": [
+        { "blocks": 1000000, "bits": 8 }
+      ]
+    },
+    {
+      "name": "memory_read_random",
+      "builds": ["static"],
+      "samples": 10,
+      "timeout_seconds": 180,
+      "params": [
+        { "size_bytes": 1073741824, "threads": 1 }
+      ]
+    },
+    {
+      "name": "memory_write",
+      "builds": ["static"],
+      "samples": 10,
+      "timeout_seconds": 180,
+      "params": [
+        { "size_bytes": 1073741824, "threads": 1, "order": "sequential" },
+        { "size_bytes": 1073741824, "threads": 1, "order": "random" }
+      ]
+    },
+    {
+      "name": "syscall",
+      "builds": ["static"],
+      "samples": 10,
+      "timeout_seconds": 120,
+      "params": [
+        { "call": "getpid" },
+        { "call": "gettimeofday" },
+        { "call": "getrusage" },
+        { "call": "stat", "path": "/tmp" }
+      ]
+    },
+    {
+      "name": "hash",
+      "builds": ["static"],
+      "samples": 10,
+      "timeout_seconds": 120,
+      "params": [
+        { "algorithm": "crc32", "size_bytes": 64 },
+        { "algorithm": "siphash", "size_bytes": 64 },
+        { "algorithm": "sha256", "size_bytes": 64 }
+      ]
+    },
+    {
+      "name": "sort",
+      "builds": ["static"],
+      "samples": 10,
+      "timeout_seconds": 120,
+      "params": [
+        { "size_bytes": 1048576 }
+      ]
+    },
+    {
+      "name": "tcp_echo",
+      "builds": ["static"],
+      "samples": 10,
+      "timeout_seconds": 120,
+      "params": [
+        { "size_bytes": 32768 }
+      ]
     }
   ]
 }

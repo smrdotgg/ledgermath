@@ -10,7 +10,9 @@
 #   OUT          a directory that does not exist yet
 #
 # Scenarios:
-#   ok           the whole schedule runs and every Run checks out (about five minutes)
+#   ok           the whole schedule runs: one Run of every benchmark, build and
+#                parameter set, each exiting 0, and every Run checks out (about
+#                seven minutes)
 #   terminated   run.py is sent TERM while a binary runs, as the time budget does:
 #                that execution still has a Run, the boot summary lists what was
 #                not run, and the boot fails

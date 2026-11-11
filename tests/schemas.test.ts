@@ -54,13 +54,15 @@ describe("the sample Runs", () => {
 		});
 	}
 
-	test("a scheduled boot left one Run per parameter set per build, each exiting 0", () => {
+	test("a scheduled boot left one Run per parameter set per build of memory_read, each exiting 0", () => {
+		// The samples were recorded when memory_read was the whole schedule.
 		const runs = samplesIn("scheduled");
 		const schedule = JSON.parse(readFileSync(join(import.meta.dir, "..", "schedule.json"), "utf8")) as {
-			benchmarks: Array<{ builds: string[]; params: unknown[] }>;
+			benchmarks: Array<{ name: string; builds: string[]; params: unknown[] }>;
 		};
-		const expected = schedule.benchmarks.reduce((sum, b) => sum + b.builds.length * b.params.length, 0);
-		expect(runs.length).toBe(expected);
+		const memoryRead = schedule.benchmarks.find((b) => b.name === "memory_read");
+		expect(runs.length).toBe((memoryRead?.builds.length ?? 0) * (memoryRead?.params.length ?? 0));
+		for (const run of runs) expect(run.benchmark).toBe("memory_read");
 		expect(new Set(runs.map((run) => run.boot)).size).toBe(1);
 		for (const run of runs) expect(run.exit).toEqual({ code: 0 });
 	});

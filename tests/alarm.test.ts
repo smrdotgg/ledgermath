@@ -18,7 +18,23 @@ import {
 } from "../scripts/alarm";
 import { HandMade } from "./hand-made-runs";
 
-const SCHEDULE = JSON.parse(readFileSync(join(import.meta.dir, "..", "schedule.json"), "utf8")) as Schedule;
+/** The schedule the box runs. Only the first test reads it: it changes whenever a benchmark is added. */
+const REAL_SCHEDULE = JSON.parse(readFileSync(join(import.meta.dir, "..", "schedule.json"), "utf8")) as Schedule;
+/** The schedule the alarm's behaviour is tested on: eight Series, four parameter sets under two builds. */
+const SCHEDULE: Schedule = {
+	benchmarks: [
+		{
+			name: "memory_read",
+			builds: ["static", "dynamic"],
+			params: [
+				{ size_bytes: 1073741824, threads: 1, path: "scalar" },
+				{ size_bytes: 1073741824, threads: 1, path: "avx2" },
+				{ size_bytes: 1073741824, threads: "all", path: "scalar" },
+				{ size_bytes: 1073741824, threads: "all", path: "avx2" },
+			],
+		},
+	],
+};
 const HOUR = 3_600_000;
 
 /** Issues in memory, as GitHub keeps them. */
@@ -50,14 +66,14 @@ class FakeIssues implements IssueTracker {
 	}
 }
 
-/** One Run of every watched Series at `startedAt`, on the stage's instance type and zone. */
-function oneBoot(made: HandMade, startedAt: string): void {
+/** One Run of every watched Series at `startedAt`, a minute apart, on the stage's instance type and zone. */
+function oneBoot(made: HandMade, startedAt: string, schedule: Schedule = SCHEDULE): void {
 	let minute = 0;
-	for (const benchmark of SCHEDULE.benchmarks) {
+	for (const benchmark of schedule.benchmarks) {
 		for (const params of benchmark.params) {
 			for (const build of benchmark.builds) {
 				const at = new Date(Date.parse(startedAt) + minute++ * 60_000).toISOString();
-				made.run({ startedAt: at, params, build, instanceType: PLACEMENT.instanceType, zone: PLACEMENT.zone });
+				made.run({ startedAt: at, benchmark: benchmark.name, params, build, instanceType: PLACEMENT.instanceType, zone: PLACEMENT.zone });
 			}
 		}
 	}
@@ -65,12 +81,20 @@ function oneBoot(made: HandMade, startedAt: string): void {
 
 describe("the watched Series", () => {
 	test("are every parameter set and build of schedule.json, on the instance type and zone the stage launches", () => {
-		const watched = watchedSeries(SCHEDULE, PLACEMENTS);
-		expect(watched.length).toBe(8);
+		const watched = watchedSeries(REAL_SCHEDULE, PLACEMENTS);
+		const planned = REAL_SCHEDULE.benchmarks.reduce((sum, b) => sum + b.builds.length * b.params.length, 0);
+		expect(watched.length).toBe(planned * PLACEMENTS.length);
+		expect(new Set(watched.map((series) => series.benchmark))).toEqual(new Set(REAL_SCHEDULE.benchmarks.map((b) => b.name)));
 		for (const series of watched) {
 			expect(series.instanceType).toBe("c6i.8xlarge");
 			expect(series.zone).toBe("us-east-2c");
 		}
+	});
+
+	test("are all kept fresh by one boot of schedule.json", () => {
+		const boot = new HandMade();
+		oneBoot(boot, "2026-11-12T22:10:00Z", REAL_SCHEDULE);
+		expect(staleSeries(watchedSeries(REAL_SCHEDULE, PLACEMENTS), boot.files, new Date("2026-11-13T22:10:00Z"))).toEqual([]);
 	});
 });
 
