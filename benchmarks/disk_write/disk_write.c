@@ -11,10 +11,14 @@
  *                           device has the data
  *   LM_PARAM_FILE_BYTES     the scratch file's size; writes wrap at its end
  *
- * The scratch file, ledgermath-disk_write.scratch in dir, is made before
- * measuring by writing all of it with O_DIRECT and fdatasync, so every block
- * is allocated and written (FIEMAP must find no unwritten extent) and none is
- * in the page cache. It is deleted at the end. It is never a Fixture. One
+ * The scratch file, ledgermath-disk_write.scratch in dir, is created
+ * exclusively (O_CREAT | O_EXCL | O_NOFOLLOW, relative to dir): if that name
+ * exists in any form, a file, a directory or a symbolic link, the binary exits
+ * 1 and touches nothing. It is then written in full through the same
+ * descriptor with O_DIRECT and fdatasync, so every block is allocated and
+ * written (FIEMAP must find no unwritten extent) and none is in the page cache.
+ * At the end it is deleted, only if the name is still the file it created. It
+ * is never a Fixture. One
  * repetition is one pwrite of request_bytes at the next offset, then
  * fdatasync in the fdatasync sets. A sample's time over its repetitions is
  * the time per write. With sync none it is the page cache's number, not the
@@ -39,6 +43,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #define SCRATCH_NAME "ledgermath-disk_write.scratch"
@@ -60,10 +65,30 @@ typedef struct {
     uint64_t sum;      /* the tag of every write */
 } ctx_t;
 
-static char g_scratch[4096];
+static char g_scratch[4096];   /* dir/SCRATCH_NAME, for messages */
+static int g_dirfd = -1;        /* dir, opened once */
+static int g_scratch_fd = -1;   /* the file this binary created, while it may still need removing */
 
+/* Removes the scratch file, only if its name in dir is still the very file
+ * this binary created (same device and inode, a regular file). */
 static void remove_scratch(void) {
-    if (g_scratch[0] != '\0') unlink(g_scratch);
+    if (g_scratch_fd < 0 || g_dirfd < 0) return;
+    struct stat mine, named;
+    if (fstat(g_scratch_fd, &mine) == 0 && fstatat(g_dirfd, SCRATCH_NAME, &named, AT_SYMLINK_NOFOLLOW) == 0 &&
+        S_ISREG(named.st_mode) && named.st_dev == mine.st_dev && named.st_ino == mine.st_ino) {
+        if (unlinkat(g_dirfd, SCRATCH_NAME, 0) != 0) fprintf(stderr, "warning: unlink %s: %s\n", g_scratch, strerror(errno));
+    } else {
+        fprintf(stderr, "warning: %s is no longer the file this binary created; it is left as it is\n", g_scratch);
+    }
+    g_scratch_fd = -1;
+}
+
+/* Sets or clears O_DIRECT on an open descriptor. */
+static void set_direct(int fd, bool on) {
+    int flags = fcntl(fd, F_GETFL);
+    if (flags < 0) lm_die("fcntl(F_GETFL) on %s: %s", g_scratch, strerror(errno));
+    flags = on ? (flags | O_DIRECT) : (flags & ~O_DIRECT);
+    if (fcntl(fd, F_SETFL, flags) != 0) lm_die("fcntl(F_SETFL) %s O_DIRECT on %s: %s", on ? "setting" : "clearing", g_scratch, strerror(errno));
 }
 
 /* What the first word of a block written at `offset` holds; the rest of the
@@ -96,11 +121,11 @@ static uint64_t write_next(void *arg) {
     return c->sum;
 }
 
-/* Writes the whole file with O_DIRECT, then fdatasync: every block allocated
- * and written, none of it in the page cache. */
-static void preallocate(const char *path, uint64_t file_bytes) {
-    int fd = open(path, O_WRONLY | O_DIRECT | O_CLOEXEC);
-    if (fd < 0) lm_die("open %s with O_DIRECT to write it in full: %s", path, strerror(errno));
+/* Writes the whole file through `fd` with O_DIRECT, then fdatasync: every
+ * block allocated and written, none of it in the page cache. The same
+ * descriptor, never the name again, so it is the file that was created. */
+static void preallocate(int fd, const char *path, uint64_t file_bytes) {
+    set_direct(fd, true);
     uint64_t *chunk = lm_alloc(4096, PREALLOCATE_CHUNK);
     for (uint64_t offset = 0; offset < file_bytes; offset += PREALLOCATE_CHUNK) {
         uint64_t len = file_bytes - offset < PREALLOCATE_CHUNK ? file_bytes - offset : PREALLOCATE_CHUNK;
@@ -117,7 +142,7 @@ static void preallocate(const char *path, uint64_t file_bytes) {
     }
     if (fdatasync(fd) != 0) lm_die("fdatasync of %s: %s", path, strerror(errno));
     free(chunk);
-    close(fd);
+    set_direct(fd, false);
 }
 
 int main(int argc, char **argv) {
@@ -137,15 +162,20 @@ int main(int argc, char **argv) {
 
     int n = snprintf(g_scratch, sizeof(g_scratch), "%s/%s", dir, SCRATCH_NAME);
     if (n < 0 || (size_t)n >= sizeof(g_scratch)) lm_usage("parameter dir is too long");
-    atexit(remove_scratch);
-    int fd = open(g_scratch, O_RDWR | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
+    g_dirfd = open(dir, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    if (g_dirfd < 0) lm_die("cannot open the directory %s: %s", dir, strerror(errno));
+    /* Exclusively, and never through a symbolic link: an existing name of any
+     * kind, a leftover scratch file included, is refused and left untouched. */
+    int fd = openat(g_dirfd, SCRATCH_NAME, O_RDWR | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600);
     if (fd < 0) {
         int error = errno;
-        g_scratch[0] = '\0';
-        lm_die("cannot make the scratch file %s/%s: %s", dir, SCRATCH_NAME, strerror(error));
+        if (error == EEXIST) lm_die("%s exists already (as a file, a directory or a symbolic link); this binary creates its scratch file only where nothing is, and has touched nothing", g_scratch);
+        lm_die("cannot create the scratch file %s: %s", g_scratch, strerror(error));
     }
+    g_scratch_fd = fd;
+    atexit(remove_scratch);
     if (ftruncate(fd, (off_t)file_bytes) != 0) lm_die("ftruncate %s: %s", g_scratch, strerror(errno));
-    preallocate(g_scratch, file_bytes);
+    preallocate(fd, g_scratch, file_bytes);
     lm_file_extents x = lm_file_extents_of(fd, file_bytes);
     if (x.ok && (x.unwritten_extents != 0 || x.delalloc_extents != 0 || x.mapped_bytes != file_bytes)) {
         lm_die("after writing %s in full, FIEMAP finds %" PRIu64 " unwritten and %" PRIu64 " unallocated extents, and %" PRIu64 " of %" PRIu64 " bytes mapped",
@@ -202,9 +232,9 @@ int main(int argc, char **argv) {
     }
     if (want != c.sum) lm_die("the writes' tags sum to 0x%016" PRIx64 ", expected 0x%016" PRIx64, c.sum, want);
 
-    close(fd);
     remove_scratch();
-    g_scratch[0] = '\0';
+    close(fd);
+    close(g_dirfd);
     lm_finish();
     return 0;
 }
