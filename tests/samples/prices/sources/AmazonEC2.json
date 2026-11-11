@@ -1,0 +1,1372 @@
+{
+  "formatVersion" : "v1.0",
+  "disclaimer" : "This pricing list is for informational purposes only. All prices are subject to the additional terms included in the pricing pages on http://aws.amazon.com. All Free Tier prices are also subject to the terms included at https://aws.amazon.com/free/",
+  "offerCode" : "AmazonEC2",
+  "version" : "20261110173852",
+  "publicationDate" : "2026-11-10T17:38:52Z",
+  "products" : {
+    "4V7VZYCKFER6GP8C" : {
+      "sku" : "4V7VZYCKFER6GP8C",
+      "productFamily" : "Compute Instance",
+      "attributes" : {
+        "servicecode" : "AmazonEC2",
+        "location" : "US East (Ohio)",
+        "locationType" : "AWS Region",
+        "instanceType" : "m5.large",
+        "currentGeneration" : "Yes",
+        "instanceFamily" : "General purpose",
+        "vcpu" : "2",
+        "physicalProcessor" : "Intel Xeon Platinum 8175",
+        "clockSpeed" : "3.1 GHz",
+        "memory" : "8 GiB",
+        "storage" : "EBS only",
+        "networkPerformance" : "Up to 10 Gigabit",
+        "processorArchitecture" : "64-bit",
+        "tenancy" : "Shared",
+        "operatingSystem" : "RHEL",
+        "licenseModel" : "No License required",
+        "usagetype" : "USE2-BoxUsage:m5.large",
+        "operation" : "RunInstances:0010",
+        "availabilityzone" : "NA",
+        "capacitystatus" : "Used",
+        "classicnetworkingsupport" : "false",
+        "dedicatedEbsThroughput" : "Up to 2120 Mbps",
+        "dedicatedEbsThroughputDescription" : "480 Mbps",
+        "ecu" : "10",
+        "enhancedNetworkingSupported" : "Yes",
+        "gpuMemory" : "NA",
+        "instanceFamilyCategory" : "General Purpose",
+        "intelAvxAvailable" : "Yes",
+        "intelAvx2Available" : "Yes",
+        "intelTurboAvailable" : "Yes",
+        "marketoption" : "OnDemand",
+        "normalizationSizeFactor" : "4",
+        "preInstalledSw" : "NA",
+        "processorFeatures" : "Intel AVX; Intel AVX2; Intel AVX512; Intel Turbo",
+        "regionCode" : "us-east-2",
+        "servicename" : "Amazon Elastic Compute Cloud",
+        "vpcnetworkingsupport" : "true"
+      }
+    },
+    "8ESS9QXCJT48TMPH" : {
+      "sku" : "8ESS9QXCJT48TMPH",
+      "productFamily" : "Compute Instance",
+      "attributes" : {
+        "servicecode" : "AmazonEC2",
+        "location" : "US East (Ohio)",
+        "locationType" : "AWS Region",
+        "instanceType" : "i4i.2xlarge",
+        "currentGeneration" : "Yes",
+        "instanceFamily" : "Storage optimized",
+        "vcpu" : "8",
+        "physicalProcessor" : "Intel Xeon 8375C (Ice Lake)",
+        "clockSpeed" : "3.5 GHz",
+        "memory" : "64 GiB",
+        "storage" : "1 x 1875 NVMe SSD",
+        "networkPerformance" : "Up to 12 Gigabit",
+        "processorArchitecture" : "64-bit",
+        "tenancy" : "Shared",
+        "operatingSystem" : "Linux",
+        "licenseModel" : "No License required",
+        "usagetype" : "USE2-BoxUsage:i4i.2xlarge",
+        "operation" : "RunInstances",
+        "availabilityzone" : "NA",
+        "capacitystatus" : "Used",
+        "classicnetworkingsupport" : "false",
+        "dedicatedEbsThroughput" : "Up to 10000 Mbps",
+        "dedicatedEbsThroughputDescription" : "2500 Mbps",
+        "ecu" : "NA",
+        "enhancedNetworkingSupported" : "Yes",
+        "gpuMemory" : "NA",
+        "instanceFamilyCategory" : "Storage Optimized",
+        "intelAvxAvailable" : "Yes",
+        "intelAvx2Available" : "Yes",
+        "intelTurboAvailable" : "Yes",
+        "marketoption" : "OnDemand",
+        "normalizationSizeFactor" : "16",
+        "preInstalledSw" : "NA",
+        "processorFeatures" : "Intel AVX; Intel AVX2; Intel AVX512; Intel Turbo",
+        "regionCode" : "us-east-2",
+        "servicename" : "Amazon Elastic Compute Cloud",
+        "vpcnetworkingsupport" : "true"
+      }
+    },
+    "3DKMGSR5RK2KKZUK" : {
+      "sku" : "3DKMGSR5RK2KKZUK",
+      "productFamily" : "Compute Instance",
+      "attributes" : {
+        "servicecode" : "AmazonEC2",
+        "location" : "US East (Ohio)",
+        "locationType" : "AWS Region",
+        "instanceType" : "c6i.8xlarge",
+        "currentGeneration" : "Yes",
+        "instanceFamily" : "Compute optimized",
+        "vcpu" : "32",
+        "physicalProcessor" : "Intel Xeon 8375C (Ice Lake)",
+        "clockSpeed" : "3.5 GHz",
+        "memory" : "64 GiB",
+        "storage" : "EBS only",
+        "networkPerformance" : "12500 Megabit",
+        "processorArchitecture" : "64-bit",
+        "tenancy" : "Host",
+        "operatingSystem" : "Linux",
+        "licenseModel" : "No License required",
+        "usagetype" : "USE2-HostBoxUsage:c6i.8xlarge",
+        "operation" : "RunInstances",
+        "availabilityzone" : "NA",
+        "capacitystatus" : "Used",
+        "classicnetworkingsupport" : "false",
+        "dedicatedEbsThroughput" : "10000 Mbps",
+        "dedicatedEbsThroughputDescription" : "10000 Mbps",
+        "ecu" : "NA",
+        "enhancedNetworkingSupported" : "Yes",
+        "gpuMemory" : "NA",
+        "instanceFamilyCategory" : "Compute Optimized",
+        "intelAvxAvailable" : "Yes",
+        "intelAvx2Available" : "Yes",
+        "intelTurboAvailable" : "Yes",
+        "marketoption" : "OnDemand",
+        "normalizationSizeFactor" : "64",
+        "preInstalledSw" : "NA",
+        "processorFeatures" : "Intel AVX; Intel AVX2; Intel AVX512; Intel Turbo",
+        "regionCode" : "us-east-2",
+        "servicename" : "Amazon Elastic Compute Cloud",
+        "vpcnetworkingsupport" : "true"
+      }
+    },
+    "M7SNV383JPWT8MVX" : {
+      "sku" : "M7SNV383JPWT8MVX",
+      "productFamily" : "System Operation",
+      "attributes" : {
+        "servicecode" : "AmazonEC2",
+        "location" : "US East (Ohio)",
+        "locationType" : "AWS Region",
+        "provisioned" : "Yes",
+        "group" : "EBS IOPS",
+        "groupDescription" : "IOPS",
+        "usagetype" : "USE2-EBS:VolumeP-IOPS.gp3",
+        "operation" : "",
+        "regionCode" : "us-east-2",
+        "servicename" : "Amazon Elastic Compute Cloud",
+        "volumeApiName" : "gp3"
+      }
+    },
+    "SCM63QZA8NKUYACF" : {
+      "sku" : "SCM63QZA8NKUYACF",
+      "productFamily" : "Storage",
+      "attributes" : {
+        "servicecode" : "AmazonEC2",
+        "location" : "US East (Ohio)",
+        "locationType" : "AWS Region",
+        "storageMedia" : "SSD-backed",
+        "volumeType" : "General Purpose",
+        "maxVolumeSize" : "16 TiB",
+        "maxIopsvolume" : "16000",
+        "maxIopsBurstPerformance" : "3000 for volumes <= 1 TiB",
+        "maxThroughputvolume" : "250 MiB/s",
+        "usagetype" : "USE2-EBS:VolumeUsage.gp2",
+        "operation" : "",
+        "regionCode" : "us-east-2",
+        "servicename" : "Amazon Elastic Compute Cloud",
+        "volumeApiName" : "gp2"
+      }
+    },
+    "3AGQU3KVKCGPJJ8U" : {
+      "sku" : "3AGQU3KVKCGPJJ8U",
+      "productFamily" : "Compute Instance",
+      "attributes" : {
+        "servicecode" : "AmazonEC2",
+        "location" : "US East (Ohio)",
+        "locationType" : "AWS Region",
+        "instanceType" : "m5.large",
+        "currentGeneration" : "Yes",
+        "instanceFamily" : "General purpose",
+        "vcpu" : "2",
+        "physicalProcessor" : "Intel Xeon Platinum 8175",
+        "clockSpeed" : "3.1 GHz",
+        "memory" : "8 GiB",
+        "storage" : "EBS only",
+        "networkPerformance" : "Up to 10 Gigabit",
+        "processorArchitecture" : "64-bit",
+        "tenancy" : "Shared",
+        "operatingSystem" : "Linux",
+        "licenseModel" : "No License required",
+        "usagetype" : "USE2-UnusedBox:m5.large",
+        "operation" : "RunInstances",
+        "availabilityzone" : "NA",
+        "capacitystatus" : "UnusedCapacityReservation",
+        "classicnetworkingsupport" : "false",
+        "dedicatedEbsThroughput" : "Up to 2120 Mbps",
+        "dedicatedEbsThroughputDescription" : "480 Mbps",
+        "ecu" : "10",
+        "enhancedNetworkingSupported" : "Yes",
+        "gpuMemory" : "NA",
+        "instanceFamilyCategory" : "General Purpose",
+        "instancesku" : "8D49XP354UEYTHGM",
+        "intelAvxAvailable" : "Yes",
+        "intelAvx2Available" : "Yes",
+        "intelTurboAvailable" : "Yes",
+        "marketoption" : "OnDemand",
+        "normalizationSizeFactor" : "4",
+        "preInstalledSw" : "NA",
+        "processorFeatures" : "Intel AVX; Intel AVX2; Intel AVX512; Intel Turbo",
+        "regionCode" : "us-east-2",
+        "servicename" : "Amazon Elastic Compute Cloud",
+        "vpcnetworkingsupport" : "true"
+      }
+    },
+    "BKE6RQRK6C48M64A" : {
+      "sku" : "BKE6RQRK6C48M64A",
+      "productFamily" : "Dedicated Host",
+      "attributes" : {
+        "servicecode" : "AmazonEC2",
+        "location" : "US East (Ohio)",
+        "locationType" : "AWS Region",
+        "instanceType" : "c6i",
+        "currentGeneration" : "Yes",
+        "instanceFamily" : "Compute optimized",
+        "vcpu" : "128",
+        "physicalProcessor" : "Intel Xeon 8375C (Ice Lake)",
+        "clockSpeed" : "3.5 GHz",
+        "memory" : "NA",
+        "storage" : "NA",
+        "networkPerformance" : "NA",
+        "processorArchitecture" : "64-bit",
+        "tenancy" : "Host",
+        "operatingSystem" : "Linux",
+        "licenseModel" : "No License required",
+        "usagetype" : "USE2-HostUsage:c6i",
+        "operation" : "RunInstances",
+        "availabilityzone" : "NA",
+        "capacitystatus" : "AllocatedHost",
+        "classicnetworkingsupport" : "false",
+        "ecu" : "NA",
+        "enhancedNetworkingSupported" : "Yes",
+        "gpuMemory" : "NA",
+        "instanceCapacity-12xlarge" : "2",
+        "instanceCapacity-16xlarge" : "2",
+        "instanceCapacity-24xlarge" : "1",
+        "instanceCapacity-2xlarge" : "16",
+        "instanceCapacity-32xlarge" : "1",
+        "instanceCapacity-4xlarge" : "8",
+        "instanceCapacity-8xlarge" : "4",
+        "instanceCapacity-Large" : "64",
+        "instanceCapacity-Xlarge" : "32",
+        "instanceFamilyCategory" : "Compute Optimized",
+        "intelAvxAvailable" : "Yes",
+        "intelAvx2Available" : "Yes",
+        "intelTurboAvailable" : "Yes",
+        "marketoption" : "OnDemand",
+        "normalizationSizeFactor" : "NA",
+        "physicalCores" : "64",
+        "preInstalledSw" : "NA",
+        "processorFeatures" : "Intel AVX; Intel AVX2; Intel AVX512; Intel Turbo",
+        "regionCode" : "us-east-2",
+        "servicename" : "Amazon Elastic Compute Cloud",
+        "vpcnetworkingsupport" : "true"
+      }
+    },
+    "AWAUVC8BN4PM4V42" : {
+      "sku" : "AWAUVC8BN4PM4V42",
+      "productFamily" : "Compute Instance",
+      "attributes" : {
+        "servicecode" : "AmazonEC2",
+        "location" : "US East (Ohio)",
+        "locationType" : "AWS Region",
+        "instanceType" : "c8i.2xlarge",
+        "currentGeneration" : "Yes",
+        "instanceFamily" : "Compute optimized",
+        "vcpu" : "8",
+        "physicalProcessor" : "Intel Xeon Scalable (Granite Rapids)",
+        "clockSpeed" : "3.9 GHz",
+        "memory" : "16 GiB",
+        "storage" : "EBS only",
+        "networkPerformance" : "Up to 15000 Megabit",
+        "processorArchitecture" : "64-bit",
+        "tenancy" : "Shared",
+        "operatingSystem" : "Linux",
+        "licenseModel" : "No License required",
+        "usagetype" : "USE2-BoxUsage:c8i.2xlarge",
+        "operation" : "RunInstances",
+        "availabilityzone" : "NA",
+        "capacitystatus" : "Used",
+        "classicnetworkingsupport" : "false",
+        "dedicatedEbsThroughput" : "Up to 10000 Mbps",
+        "dedicatedEbsThroughputDescription" : "2500 Mbps",
+        "ecu" : "NA",
+        "enhancedNetworkingSupported" : "Yes",
+        "gpuMemory" : "NA",
+        "instanceFamilyCategory" : "Compute Optimized",
+        "intelAvxAvailable" : "Yes",
+        "intelAvx2Available" : "Yes",
+        "intelTurboAvailable" : "Yes",
+        "marketoption" : "OnDemand",
+        "normalizationSizeFactor" : "16",
+        "preInstalledSw" : "NA",
+        "processorFeatures" : "Intel AVX; Intel AVX2; Intel AVX512; Intel Turbo; Intel AMX",
+        "regionCode" : "us-east-2",
+        "servicename" : "Amazon Elastic Compute Cloud",
+        "vpcnetworkingsupport" : "true"
+      }
+    },
+    "D4NUSS37ZFG8846A" : {
+      "sku" : "D4NUSS37ZFG8846A",
+      "productFamily" : "Compute Instance",
+      "attributes" : {
+        "servicecode" : "AmazonEC2",
+        "location" : "US East (Ohio)",
+        "locationType" : "AWS Region",
+        "instanceType" : "c6i.4xlarge",
+        "currentGeneration" : "Yes",
+        "instanceFamily" : "Compute optimized",
+        "vcpu" : "16",
+        "physicalProcessor" : "Intel Xeon 8375C (Ice Lake)",
+        "clockSpeed" : "3.5 GHz",
+        "memory" : "32 GiB",
+        "storage" : "EBS only",
+        "networkPerformance" : "Up to 12500 Megabit",
+        "processorArchitecture" : "64-bit",
+        "tenancy" : "Shared",
+        "operatingSystem" : "Linux",
+        "licenseModel" : "No License required",
+        "usagetype" : "USE2-BoxUsage:c6i.4xlarge",
+        "operation" : "RunInstances",
+        "availabilityzone" : "NA",
+        "capacitystatus" : "Used",
+        "classicnetworkingsupport" : "false",
+        "dedicatedEbsThroughput" : "Up to 10000 Mbps",
+        "dedicatedEbsThroughputDescription" : "5000 Mbps",
+        "ecu" : "NA",
+        "enhancedNetworkingSupported" : "Yes",
+        "gpuMemory" : "NA",
+        "instanceFamilyCategory" : "Compute Optimized",
+        "intelAvxAvailable" : "Yes",
+        "intelAvx2Available" : "Yes",
+        "intelTurboAvailable" : "Yes",
+        "marketoption" : "OnDemand",
+        "normalizationSizeFactor" : "32",
+        "preInstalledSw" : "NA",
+        "processorFeatures" : "Intel AVX; Intel AVX2; Intel AVX512; Intel Turbo",
+        "regionCode" : "us-east-2",
+        "servicename" : "Amazon Elastic Compute Cloud",
+        "vpcnetworkingsupport" : "true"
+      }
+    },
+    "8D49XP354UEYTHGM" : {
+      "sku" : "8D49XP354UEYTHGM",
+      "productFamily" : "Compute Instance",
+      "attributes" : {
+        "servicecode" : "AmazonEC2",
+        "location" : "US East (Ohio)",
+        "locationType" : "AWS Region",
+        "instanceType" : "m5.large",
+        "currentGeneration" : "Yes",
+        "instanceFamily" : "General purpose",
+        "vcpu" : "2",
+        "physicalProcessor" : "Intel Xeon Platinum 8175",
+        "clockSpeed" : "3.1 GHz",
+        "memory" : "8 GiB",
+        "storage" : "EBS only",
+        "networkPerformance" : "Up to 10 Gigabit",
+        "processorArchitecture" : "64-bit",
+        "tenancy" : "Shared",
+        "operatingSystem" : "Linux",
+        "licenseModel" : "No License required",
+        "usagetype" : "USE2-BoxUsage:m5.large",
+        "operation" : "RunInstances",
+        "availabilityzone" : "NA",
+        "capacitystatus" : "Used",
+        "classicnetworkingsupport" : "false",
+        "dedicatedEbsThroughput" : "Up to 2120 Mbps",
+        "dedicatedEbsThroughputDescription" : "480 Mbps",
+        "ecu" : "10",
+        "enhancedNetworkingSupported" : "Yes",
+        "gpuMemory" : "NA",
+        "instanceFamilyCategory" : "General Purpose",
+        "intelAvxAvailable" : "Yes",
+        "intelAvx2Available" : "Yes",
+        "intelTurboAvailable" : "Yes",
+        "marketoption" : "OnDemand",
+        "normalizationSizeFactor" : "4",
+        "preInstalledSw" : "NA",
+        "processorFeatures" : "Intel AVX; Intel AVX2; Intel AVX512; Intel Turbo",
+        "regionCode" : "us-east-2",
+        "servicename" : "Amazon Elastic Compute Cloud",
+        "vpcnetworkingsupport" : "true"
+      }
+    },
+    "KZJJ34U6VU5DJ9CM" : {
+      "sku" : "KZJJ34U6VU5DJ9CM",
+      "productFamily" : "Provisioned Throughput",
+      "attributes" : {
+        "servicecode" : "AmazonEC2",
+        "location" : "US East (Ohio)",
+        "locationType" : "AWS Region",
+        "provisioned" : "Yes",
+        "group" : "EBS Throughput",
+        "groupDescription" : "Charge per Provisioned mbps",
+        "usagetype" : "USE2-EBS:VolumeP-Throughput.gp3",
+        "operation" : "",
+        "regionCode" : "us-east-2",
+        "servicename" : "Amazon Elastic Compute Cloud",
+        "volumeApiName" : "gp3"
+      }
+    },
+    "RTRGQ58T6YAMVZ5F" : {
+      "sku" : "RTRGQ58T6YAMVZ5F",
+      "productFamily" : "System Operation",
+      "attributes" : {
+        "servicecode" : "AmazonEC2",
+        "location" : "US East (Ohio)",
+        "locationType" : "AWS Region",
+        "provisioned" : "Yes",
+        "group" : "EBS IOPS",
+        "groupDescription" : "IOPS",
+        "usagetype" : "USE2-EBS:VolumeP-IOPS.io2",
+        "operation" : "",
+        "regionCode" : "us-east-2",
+        "servicename" : "Amazon Elastic Compute Cloud",
+        "volumeApiName" : "io2"
+      }
+    },
+    "A6AXYHP3ZRMWXV6Y" : {
+      "sku" : "A6AXYHP3ZRMWXV6Y",
+      "productFamily" : "Compute Instance",
+      "attributes" : {
+        "servicecode" : "AmazonEC2",
+        "location" : "US East (Ohio)",
+        "locationType" : "AWS Region",
+        "instanceType" : "m5.large",
+        "currentGeneration" : "Yes",
+        "instanceFamily" : "General purpose",
+        "vcpu" : "2",
+        "physicalProcessor" : "Intel Xeon Platinum 8175",
+        "clockSpeed" : "3.1 GHz",
+        "memory" : "8 GiB",
+        "storage" : "EBS only",
+        "networkPerformance" : "Up to 10 Gigabit",
+        "processorArchitecture" : "64-bit",
+        "tenancy" : "Shared",
+        "operatingSystem" : "Windows",
+        "licenseModel" : "No License required",
+        "usagetype" : "USE2-BoxUsage:m5.large",
+        "operation" : "RunInstances:0002",
+        "availabilityzone" : "NA",
+        "capacitystatus" : "Used",
+        "classicnetworkingsupport" : "false",
+        "dedicatedEbsThroughput" : "Up to 2120 Mbps",
+        "dedicatedEbsThroughputDescription" : "480 Mbps",
+        "ecu" : "10",
+        "enhancedNetworkingSupported" : "Yes",
+        "gpuMemory" : "NA",
+        "instanceFamilyCategory" : "General Purpose",
+        "intelAvxAvailable" : "Yes",
+        "intelAvx2Available" : "Yes",
+        "intelTurboAvailable" : "Yes",
+        "marketoption" : "OnDemand",
+        "normalizationSizeFactor" : "4",
+        "preInstalledSw" : "NA",
+        "processorFeatures" : "Intel AVX; Intel AVX2; Intel AVX512; Intel Turbo",
+        "regionCode" : "us-east-2",
+        "servicename" : "Amazon Elastic Compute Cloud",
+        "vpcnetworkingsupport" : "true"
+      }
+    },
+    "W2MK87PHAESV3EZK" : {
+      "sku" : "W2MK87PHAESV3EZK",
+      "attributes" : {
+        "servicecode" : "AmazonEC2",
+        "location" : "US East (Ohio)",
+        "locationType" : "AWS Region",
+        "usagetype" : "USE2-EBS:VolumeClone",
+        "operation" : "",
+        "productType" : "VolumeClone",
+        "regionCode" : "us-east-2",
+        "servicename" : "Amazon Elastic Compute Cloud"
+      }
+    },
+    "M6UGCCQ3CDJQAA37" : {
+      "sku" : "M6UGCCQ3CDJQAA37",
+      "productFamily" : "Storage",
+      "attributes" : {
+        "servicecode" : "AmazonEC2",
+        "location" : "US East (Ohio)",
+        "locationType" : "AWS Region",
+        "storageMedia" : "SSD-backed",
+        "volumeType" : "General Purpose",
+        "maxVolumeSize" : "64 TiB",
+        "maxIopsvolume" : "80000",
+        "maxThroughputvolume" : "2000 MiB/s",
+        "usagetype" : "USE2-EBS:VolumeUsage.gp3",
+        "operation" : "",
+        "regionCode" : "us-east-2",
+        "servicename" : "Amazon Elastic Compute Cloud",
+        "volumeApiName" : "gp3"
+      }
+    },
+    "EXQZQ63GWAD5R26D" : {
+      "sku" : "EXQZQ63GWAD5R26D",
+      "productFamily" : "Compute Instance",
+      "attributes" : {
+        "servicecode" : "AmazonEC2",
+        "location" : "US East (Ohio)",
+        "locationType" : "AWS Region",
+        "instanceType" : "m5.large",
+        "currentGeneration" : "Yes",
+        "instanceFamily" : "General purpose",
+        "vcpu" : "2",
+        "physicalProcessor" : "Intel Xeon Platinum 8175",
+        "clockSpeed" : "3.1 GHz",
+        "memory" : "8 GiB",
+        "storage" : "EBS only",
+        "networkPerformance" : "Up to 10 Gigabit",
+        "processorArchitecture" : "64-bit",
+        "tenancy" : "Shared",
+        "operatingSystem" : "Linux",
+        "licenseModel" : "No License required",
+        "usagetype" : "USE2-BoxUsage:m5.large",
+        "operation" : "RunInstances:0200",
+        "availabilityzone" : "NA",
+        "capacitystatus" : "Used",
+        "classicnetworkingsupport" : "false",
+        "dedicatedEbsThroughput" : "Up to 2120 Mbps",
+        "dedicatedEbsThroughputDescription" : "480 Mbps",
+        "ecu" : "10",
+        "enhancedNetworkingSupported" : "Yes",
+        "gpuMemory" : "NA",
+        "instanceFamilyCategory" : "General Purpose",
+        "intelAvxAvailable" : "Yes",
+        "intelAvx2Available" : "Yes",
+        "intelTurboAvailable" : "Yes",
+        "marketoption" : "OnDemand",
+        "normalizationSizeFactor" : "4",
+        "preInstalledSw" : "SQL Web",
+        "processorFeatures" : "Intel AVX; Intel AVX2; Intel AVX512; Intel Turbo",
+        "regionCode" : "us-east-2",
+        "servicename" : "Amazon Elastic Compute Cloud",
+        "vpcnetworkingsupport" : "true"
+      }
+    },
+    "NKB8DU47ZKKBXW65" : {
+      "sku" : "NKB8DU47ZKKBXW65",
+      "productFamily" : "Compute Instance",
+      "attributes" : {
+        "servicecode" : "AmazonEC2",
+        "location" : "US East (Ohio)",
+        "locationType" : "AWS Region",
+        "instanceType" : "c6i.8xlarge",
+        "currentGeneration" : "Yes",
+        "instanceFamily" : "Compute optimized",
+        "vcpu" : "32",
+        "physicalProcessor" : "Intel Xeon 8375C (Ice Lake)",
+        "clockSpeed" : "3.5 GHz",
+        "memory" : "64 GiB",
+        "storage" : "EBS only",
+        "networkPerformance" : "12500 Megabit",
+        "processorArchitecture" : "64-bit",
+        "tenancy" : "Shared",
+        "operatingSystem" : "Linux",
+        "licenseModel" : "No License required",
+        "usagetype" : "USE2-BoxUsage:c6i.8xlarge",
+        "operation" : "RunInstances",
+        "availabilityzone" : "NA",
+        "capacitystatus" : "Used",
+        "classicnetworkingsupport" : "false",
+        "dedicatedEbsThroughput" : "10000 Mbps",
+        "dedicatedEbsThroughputDescription" : "10000 Mbps",
+        "ecu" : "NA",
+        "enhancedNetworkingSupported" : "Yes",
+        "gpuMemory" : "NA",
+        "instanceFamilyCategory" : "Compute Optimized",
+        "intelAvxAvailable" : "Yes",
+        "intelAvx2Available" : "Yes",
+        "intelTurboAvailable" : "Yes",
+        "marketoption" : "OnDemand",
+        "normalizationSizeFactor" : "64",
+        "preInstalledSw" : "NA",
+        "processorFeatures" : "Intel AVX; Intel AVX2; Intel AVX512; Intel Turbo",
+        "regionCode" : "us-east-2",
+        "servicename" : "Amazon Elastic Compute Cloud",
+        "vpcnetworkingsupport" : "true"
+      }
+    },
+    "W8UFMFG6W5VDXXBD" : {
+      "sku" : "W8UFMFG6W5VDXXBD",
+      "productFamily" : "Compute Instance",
+      "attributes" : {
+        "servicecode" : "AmazonEC2",
+        "location" : "US East (Ohio)",
+        "locationType" : "AWS Region",
+        "instanceType" : "m5.large",
+        "currentGeneration" : "Yes",
+        "instanceFamily" : "General purpose",
+        "vcpu" : "2",
+        "physicalProcessor" : "Intel Xeon Platinum 8175",
+        "clockSpeed" : "3.1 GHz",
+        "memory" : "8 GiB",
+        "storage" : "EBS only",
+        "networkPerformance" : "Up to 10 Gigabit",
+        "processorArchitecture" : "64-bit",
+        "tenancy" : "Dedicated",
+        "operatingSystem" : "Linux",
+        "licenseModel" : "No License required",
+        "usagetype" : "USE2-DedicatedUsage:m5.large",
+        "operation" : "RunInstances",
+        "availabilityzone" : "NA",
+        "capacitystatus" : "Used",
+        "classicnetworkingsupport" : "false",
+        "dedicatedEbsThroughput" : "Up to 2120 Mbps",
+        "dedicatedEbsThroughputDescription" : "480 Mbps",
+        "ecu" : "10",
+        "enhancedNetworkingSupported" : "Yes",
+        "gpuMemory" : "NA",
+        "instanceFamilyCategory" : "General Purpose",
+        "intelAvxAvailable" : "Yes",
+        "intelAvx2Available" : "Yes",
+        "intelTurboAvailable" : "Yes",
+        "marketoption" : "OnDemand",
+        "normalizationSizeFactor" : "4",
+        "preInstalledSw" : "NA",
+        "processorFeatures" : "Intel AVX; Intel AVX2; Intel AVX512; Intel Turbo",
+        "regionCode" : "us-east-2",
+        "servicename" : "Amazon Elastic Compute Cloud",
+        "vpcnetworkingsupport" : "true"
+      }
+    }
+  },
+  "terms" : {
+    "OnDemand" : {
+      "4V7VZYCKFER6GP8C" : {
+        "4V7VZYCKFER6GP8C.JRTCKXETXF" : {
+          "offerTermCode" : "JRTCKXETXF",
+          "sku" : "4V7VZYCKFER6GP8C",
+          "effectiveDate" : "2026-11-01T00:00:00Z",
+          "priceDimensions" : {
+            "4V7VZYCKFER6GP8C.JRTCKXETXF.6YS6EN2CT7" : {
+              "rateCode" : "4V7VZYCKFER6GP8C.JRTCKXETXF.6YS6EN2CT7",
+              "description" : "$0.125 per On Demand RHEL m5.large Instance Hour",
+              "beginRange" : "0",
+              "endRange" : "Inf",
+              "unit" : "Hrs",
+              "pricePerUnit" : {
+                "USD" : "0.1250000000"
+              },
+              "appliesTo" : [ ]
+            }
+          },
+          "termAttributes" : { }
+        }
+      },
+      "8ESS9QXCJT48TMPH" : {
+        "8ESS9QXCJT48TMPH.JRTCKXETXF" : {
+          "offerTermCode" : "JRTCKXETXF",
+          "sku" : "8ESS9QXCJT48TMPH",
+          "effectiveDate" : "2026-11-01T00:00:00Z",
+          "priceDimensions" : {
+            "8ESS9QXCJT48TMPH.JRTCKXETXF.6YS6EN2CT7" : {
+              "rateCode" : "8ESS9QXCJT48TMPH.JRTCKXETXF.6YS6EN2CT7",
+              "description" : "$0.686 per On Demand Linux i4i.2xlarge Instance Hour",
+              "beginRange" : "0",
+              "endRange" : "Inf",
+              "unit" : "Hrs",
+              "pricePerUnit" : {
+                "USD" : "0.6860000000"
+              },
+              "appliesTo" : [ ]
+            }
+          },
+          "termAttributes" : { }
+        }
+      },
+      "3DKMGSR5RK2KKZUK" : {
+        "3DKMGSR5RK2KKZUK.JRTCKXETXF" : {
+          "offerTermCode" : "JRTCKXETXF",
+          "sku" : "3DKMGSR5RK2KKZUK",
+          "effectiveDate" : "2026-11-01T00:00:00Z",
+          "priceDimensions" : {
+            "3DKMGSR5RK2KKZUK.JRTCKXETXF.6YS6EN2CT7" : {
+              "rateCode" : "3DKMGSR5RK2KKZUK.JRTCKXETXF.6YS6EN2CT7",
+              "description" : "$0.00 per Linux c6i.8xlarge Dedicated Host Instance hour",
+              "beginRange" : "0",
+              "endRange" : "Inf",
+              "unit" : "Hrs",
+              "pricePerUnit" : {
+                "USD" : "0.0000000000"
+              },
+              "appliesTo" : [ ]
+            }
+          },
+          "termAttributes" : { }
+        }
+      },
+      "M7SNV383JPWT8MVX" : {
+        "M7SNV383JPWT8MVX.JRTCKXETXF" : {
+          "offerTermCode" : "JRTCKXETXF",
+          "sku" : "M7SNV383JPWT8MVX",
+          "effectiveDate" : "2026-11-01T00:00:00Z",
+          "priceDimensions" : {
+            "M7SNV383JPWT8MVX.JRTCKXETXF.6YS6EN2CT7" : {
+              "rateCode" : "M7SNV383JPWT8MVX.JRTCKXETXF.6YS6EN2CT7",
+              "description" : "$0.005 per provisioned IOPS-month of gp3 - US East (Ohio)",
+              "beginRange" : "0",
+              "endRange" : "Inf",
+              "unit" : "IOPS-Mo",
+              "pricePerUnit" : {
+                "USD" : "0.0050000000"
+              },
+              "appliesTo" : [ ]
+            }
+          },
+          "termAttributes" : { }
+        }
+      },
+      "SCM63QZA8NKUYACF" : {
+        "SCM63QZA8NKUYACF.JRTCKXETXF" : {
+          "offerTermCode" : "JRTCKXETXF",
+          "sku" : "SCM63QZA8NKUYACF",
+          "effectiveDate" : "2026-11-01T00:00:00Z",
+          "priceDimensions" : {
+            "SCM63QZA8NKUYACF.JRTCKXETXF.6YS6EN2CT7" : {
+              "rateCode" : "SCM63QZA8NKUYACF.JRTCKXETXF.6YS6EN2CT7",
+              "description" : "$0.10 per GB-month of General Purpose SSD (gp2) provisioned storage - US East (Ohio)",
+              "beginRange" : "0",
+              "endRange" : "Inf",
+              "unit" : "GB-Mo",
+              "pricePerUnit" : {
+                "USD" : "0.1000000000"
+              },
+              "appliesTo" : [ ]
+            }
+          },
+          "termAttributes" : { }
+        }
+      },
+      "3AGQU3KVKCGPJJ8U" : {
+        "3AGQU3KVKCGPJJ8U.JRTCKXETXF" : {
+          "offerTermCode" : "JRTCKXETXF",
+          "sku" : "3AGQU3KVKCGPJJ8U",
+          "effectiveDate" : "2026-11-01T00:00:00Z",
+          "priceDimensions" : {
+            "3AGQU3KVKCGPJJ8U.JRTCKXETXF.6YS6EN2CT7" : {
+              "rateCode" : "3AGQU3KVKCGPJJ8U.JRTCKXETXF.6YS6EN2CT7",
+              "description" : "$0.096 per Unused Reservation Linux m5.large Instance Hour",
+              "beginRange" : "0",
+              "endRange" : "Inf",
+              "unit" : "Hrs",
+              "pricePerUnit" : {
+                "USD" : "0.0960000000"
+              },
+              "appliesTo" : [ ]
+            }
+          },
+          "termAttributes" : { }
+        }
+      },
+      "BKE6RQRK6C48M64A" : {
+        "BKE6RQRK6C48M64A.JRTCKXETXF" : {
+          "offerTermCode" : "JRTCKXETXF",
+          "sku" : "BKE6RQRK6C48M64A",
+          "effectiveDate" : "2026-11-01T00:00:00Z",
+          "priceDimensions" : {
+            "BKE6RQRK6C48M64A.JRTCKXETXF.6YS6EN2CT7" : {
+              "rateCode" : "BKE6RQRK6C48M64A.JRTCKXETXF.6YS6EN2CT7",
+              "description" : "$5.984 per On Demand C6I Dedicated Host Hour",
+              "beginRange" : "0",
+              "endRange" : "Inf",
+              "unit" : "Hrs",
+              "pricePerUnit" : {
+                "USD" : "5.9840000000"
+              },
+              "appliesTo" : [ ]
+            }
+          },
+          "termAttributes" : { }
+        }
+      },
+      "AWAUVC8BN4PM4V42" : {
+        "AWAUVC8BN4PM4V42.JRTCKXETXF" : {
+          "offerTermCode" : "JRTCKXETXF",
+          "sku" : "AWAUVC8BN4PM4V42",
+          "effectiveDate" : "2026-11-01T00:00:00Z",
+          "priceDimensions" : {
+            "AWAUVC8BN4PM4V42.JRTCKXETXF.6YS6EN2CT7" : {
+              "rateCode" : "AWAUVC8BN4PM4V42.JRTCKXETXF.6YS6EN2CT7",
+              "description" : "$0.37484 per On Demand Linux c8i.2xlarge Instance Hour",
+              "beginRange" : "0",
+              "endRange" : "Inf",
+              "unit" : "Hrs",
+              "pricePerUnit" : {
+                "USD" : "0.3748400000"
+              },
+              "appliesTo" : [ ]
+            }
+          },
+          "termAttributes" : { }
+        }
+      },
+      "D4NUSS37ZFG8846A" : {
+        "D4NUSS37ZFG8846A.JRTCKXETXF" : {
+          "offerTermCode" : "JRTCKXETXF",
+          "sku" : "D4NUSS37ZFG8846A",
+          "effectiveDate" : "2026-11-01T00:00:00Z",
+          "priceDimensions" : {
+            "D4NUSS37ZFG8846A.JRTCKXETXF.6YS6EN2CT7" : {
+              "rateCode" : "D4NUSS37ZFG8846A.JRTCKXETXF.6YS6EN2CT7",
+              "description" : "$0.68 per On Demand Linux c6i.4xlarge Instance Hour",
+              "beginRange" : "0",
+              "endRange" : "Inf",
+              "unit" : "Hrs",
+              "pricePerUnit" : {
+                "USD" : "0.6800000000"
+              },
+              "appliesTo" : [ ]
+            }
+          },
+          "termAttributes" : { }
+        }
+      },
+      "8D49XP354UEYTHGM" : {
+        "8D49XP354UEYTHGM.JRTCKXETXF" : {
+          "offerTermCode" : "JRTCKXETXF",
+          "sku" : "8D49XP354UEYTHGM",
+          "effectiveDate" : "2026-11-01T00:00:00Z",
+          "priceDimensions" : {
+            "8D49XP354UEYTHGM.JRTCKXETXF.6YS6EN2CT7" : {
+              "rateCode" : "8D49XP354UEYTHGM.JRTCKXETXF.6YS6EN2CT7",
+              "description" : "$0.096 per On Demand Linux m5.large Instance Hour",
+              "beginRange" : "0",
+              "endRange" : "Inf",
+              "unit" : "Hrs",
+              "pricePerUnit" : {
+                "USD" : "0.0960000000"
+              },
+              "appliesTo" : [ ]
+            }
+          },
+          "termAttributes" : { }
+        }
+      },
+      "KZJJ34U6VU5DJ9CM" : {
+        "KZJJ34U6VU5DJ9CM.JRTCKXETXF" : {
+          "offerTermCode" : "JRTCKXETXF",
+          "sku" : "KZJJ34U6VU5DJ9CM",
+          "effectiveDate" : "2026-11-01T00:00:00Z",
+          "priceDimensions" : {
+            "KZJJ34U6VU5DJ9CM.JRTCKXETXF.6YS6EN2CT7" : {
+              "rateCode" : "KZJJ34U6VU5DJ9CM.JRTCKXETXF.6YS6EN2CT7",
+              "description" : "$0.04 per provisioned MiBps-month of gp3 - US East (Ohio)",
+              "beginRange" : "0",
+              "endRange" : "Inf",
+              "unit" : "GiBps-mo",
+              "pricePerUnit" : {
+                "USD" : "40.9600000000"
+              },
+              "appliesTo" : [ ]
+            }
+          },
+          "termAttributes" : { }
+        }
+      },
+      "RTRGQ58T6YAMVZ5F" : {
+        "RTRGQ58T6YAMVZ5F.JRTCKXETXF" : {
+          "offerTermCode" : "JRTCKXETXF",
+          "sku" : "RTRGQ58T6YAMVZ5F",
+          "effectiveDate" : "2026-11-01T00:00:00Z",
+          "priceDimensions" : {
+            "RTRGQ58T6YAMVZ5F.JRTCKXETXF.6YS6EN2CT7" : {
+              "rateCode" : "RTRGQ58T6YAMVZ5F.JRTCKXETXF.6YS6EN2CT7",
+              "description" : "$0.065 per IOPS-month provisioned (io2) - US East (Ohio)",
+              "beginRange" : "0",
+              "endRange" : "Inf",
+              "unit" : "IOPS-Mo",
+              "pricePerUnit" : {
+                "USD" : "0.0650000000"
+              },
+              "appliesTo" : [ ]
+            }
+          },
+          "termAttributes" : { }
+        }
+      },
+      "A6AXYHP3ZRMWXV6Y" : {
+        "A6AXYHP3ZRMWXV6Y.JRTCKXETXF" : {
+          "offerTermCode" : "JRTCKXETXF",
+          "sku" : "A6AXYHP3ZRMWXV6Y",
+          "effectiveDate" : "2026-11-01T00:00:00Z",
+          "priceDimensions" : {
+            "A6AXYHP3ZRMWXV6Y.JRTCKXETXF.6YS6EN2CT7" : {
+              "rateCode" : "A6AXYHP3ZRMWXV6Y.JRTCKXETXF.6YS6EN2CT7",
+              "description" : "$0.188 per On Demand Windows m5.large Instance Hour",
+              "beginRange" : "0",
+              "endRange" : "Inf",
+              "unit" : "Hrs",
+              "pricePerUnit" : {
+                "USD" : "0.1880000000"
+              },
+              "appliesTo" : [ ]
+            }
+          },
+          "termAttributes" : { }
+        }
+      },
+      "W2MK87PHAESV3EZK" : {
+        "W2MK87PHAESV3EZK.JRTCKXETXF" : {
+          "offerTermCode" : "JRTCKXETXF",
+          "sku" : "W2MK87PHAESV3EZK",
+          "effectiveDate" : "2026-11-01T00:00:00Z",
+          "priceDimensions" : {
+            "W2MK87PHAESV3EZK.JRTCKXETXF.6YS6EN2CT7" : {
+              "rateCode" : "W2MK87PHAESV3EZK.JRTCKXETXF.6YS6EN2CT7",
+              "description" : "$0.0008 per GB of data cloned from the source volume in US East (Ohio)",
+              "beginRange" : "0",
+              "endRange" : "Inf",
+              "unit" : "GB",
+              "pricePerUnit" : {
+                "USD" : "0.0008000000"
+              },
+              "appliesTo" : [ ]
+            }
+          },
+          "termAttributes" : { }
+        }
+      },
+      "M6UGCCQ3CDJQAA37" : {
+        "M6UGCCQ3CDJQAA37.JRTCKXETXF" : {
+          "offerTermCode" : "JRTCKXETXF",
+          "sku" : "M6UGCCQ3CDJQAA37",
+          "effectiveDate" : "2026-11-01T00:00:00Z",
+          "priceDimensions" : {
+            "M6UGCCQ3CDJQAA37.JRTCKXETXF.6YS6EN2CT7" : {
+              "rateCode" : "M6UGCCQ3CDJQAA37.JRTCKXETXF.6YS6EN2CT7",
+              "description" : "$0.08 per GB-month of General Purpose (gp3) provisioned storage - US East (Ohio)",
+              "beginRange" : "0",
+              "endRange" : "Inf",
+              "unit" : "GB-Mo",
+              "pricePerUnit" : {
+                "USD" : "0.0800000000"
+              },
+              "appliesTo" : [ ]
+            }
+          },
+          "termAttributes" : { }
+        }
+      },
+      "EXQZQ63GWAD5R26D" : {
+        "EXQZQ63GWAD5R26D.JRTCKXETXF" : {
+          "offerTermCode" : "JRTCKXETXF",
+          "sku" : "EXQZQ63GWAD5R26D",
+          "effectiveDate" : "2026-11-01T00:00:00Z",
+          "priceDimensions" : {
+            "EXQZQ63GWAD5R26D.JRTCKXETXF.6YS6EN2CT7" : {
+              "rateCode" : "EXQZQ63GWAD5R26D.JRTCKXETXF.6YS6EN2CT7",
+              "description" : "$0.164 per On Demand Linux with SQL Web m5.large Instance Hour",
+              "beginRange" : "0",
+              "endRange" : "Inf",
+              "unit" : "Hrs",
+              "pricePerUnit" : {
+                "USD" : "0.1640000000"
+              },
+              "appliesTo" : [ ]
+            }
+          },
+          "termAttributes" : { }
+        }
+      },
+      "NKB8DU47ZKKBXW65" : {
+        "NKB8DU47ZKKBXW65.JRTCKXETXF" : {
+          "offerTermCode" : "JRTCKXETXF",
+          "sku" : "NKB8DU47ZKKBXW65",
+          "effectiveDate" : "2026-11-01T00:00:00Z",
+          "priceDimensions" : {
+            "NKB8DU47ZKKBXW65.JRTCKXETXF.6YS6EN2CT7" : {
+              "rateCode" : "NKB8DU47ZKKBXW65.JRTCKXETXF.6YS6EN2CT7",
+              "description" : "$1.36 per On Demand Linux c6i.8xlarge Instance Hour",
+              "beginRange" : "0",
+              "endRange" : "Inf",
+              "unit" : "Hrs",
+              "pricePerUnit" : {
+                "USD" : "1.3600000000"
+              },
+              "appliesTo" : [ ]
+            }
+          },
+          "termAttributes" : { }
+        }
+      },
+      "W8UFMFG6W5VDXXBD" : {
+        "W8UFMFG6W5VDXXBD.JRTCKXETXF" : {
+          "offerTermCode" : "JRTCKXETXF",
+          "sku" : "W8UFMFG6W5VDXXBD",
+          "effectiveDate" : "2026-11-01T00:00:00Z",
+          "priceDimensions" : {
+            "W8UFMFG6W5VDXXBD.JRTCKXETXF.6YS6EN2CT7" : {
+              "rateCode" : "W8UFMFG6W5VDXXBD.JRTCKXETXF.6YS6EN2CT7",
+              "description" : "$0.102 per Dedicated Linux m5.large Instance Hour",
+              "beginRange" : "0",
+              "endRange" : "Inf",
+              "unit" : "Hrs",
+              "pricePerUnit" : {
+                "USD" : "0.1020000000"
+              },
+              "appliesTo" : [ ]
+            }
+          },
+          "termAttributes" : { }
+        }
+      }
+    },
+    "Reserved" : {
+      "8D49XP354UEYTHGM" : {
+        "8D49XP354UEYTHGM.NQ3QZPMQV9" : {
+          "offerTermCode" : "NQ3QZPMQV9",
+          "sku" : "8D49XP354UEYTHGM",
+          "effectiveDate" : "2026-11-10T18:02:58Z",
+          "priceDimensions" : {
+            "8D49XP354UEYTHGM.NQ3QZPMQV9.6YS6EN2CT7" : {
+              "rateCode" : "8D49XP354UEYTHGM.NQ3QZPMQV9.6YS6EN2CT7",
+              "description" : "USD 0.0 per Linux/UNIX (Amazon VPC), m5.large reserved instance applied",
+              "beginRange" : "0",
+              "endRange" : "Inf",
+              "unit" : "Hrs",
+              "pricePerUnit" : {
+                "USD" : "0.0000000000"
+              },
+              "appliesTo" : [ ]
+            },
+            "8D49XP354UEYTHGM.NQ3QZPMQV9.2TG2D8R56U" : {
+              "rateCode" : "8D49XP354UEYTHGM.NQ3QZPMQV9.2TG2D8R56U",
+              "description" : "Upfront Fee",
+              "unit" : "Quantity",
+              "pricePerUnit" : {
+                "USD" : "949"
+              },
+              "appliesTo" : [ ]
+            }
+          },
+          "termAttributes" : {
+            "LeaseContractLength" : "3yr",
+            "PurchaseOption" : "All Upfront",
+            "OfferingClass" : "standard"
+          }
+        },
+        "8D49XP354UEYTHGM.BPH4J8HBKS" : {
+          "offerTermCode" : "BPH4J8HBKS",
+          "sku" : "8D49XP354UEYTHGM",
+          "effectiveDate" : "2026-11-10T18:02:58Z",
+          "priceDimensions" : {
+            "8D49XP354UEYTHGM.BPH4J8HBKS.6YS6EN2CT7" : {
+              "rateCode" : "8D49XP354UEYTHGM.BPH4J8HBKS.6YS6EN2CT7",
+              "description" : "Linux/UNIX (Amazon VPC), m5.large reserved instance applied",
+              "beginRange" : "0",
+              "endRange" : "Inf",
+              "unit" : "Hrs",
+              "pricePerUnit" : {
+                "USD" : "0.0410000000"
+              },
+              "appliesTo" : [ ]
+            }
+          },
+          "termAttributes" : {
+            "LeaseContractLength" : "3yr",
+            "PurchaseOption" : "No Upfront",
+            "OfferingClass" : "standard"
+          }
+        },
+        "8D49XP354UEYTHGM.MZU6U2429S" : {
+          "offerTermCode" : "MZU6U2429S",
+          "sku" : "8D49XP354UEYTHGM",
+          "effectiveDate" : "2026-11-10T18:03:00Z",
+          "priceDimensions" : {
+            "8D49XP354UEYTHGM.MZU6U2429S.6YS6EN2CT7" : {
+              "rateCode" : "8D49XP354UEYTHGM.MZU6U2429S.6YS6EN2CT7",
+              "description" : "USD 0.0 per Linux/UNIX (Amazon VPC), m5.large reserved instance applied",
+              "beginRange" : "0",
+              "endRange" : "Inf",
+              "unit" : "Hrs",
+              "pricePerUnit" : {
+                "USD" : "0.0000000000"
+              },
+              "appliesTo" : [ ]
+            },
+            "8D49XP354UEYTHGM.MZU6U2429S.2TG2D8R56U" : {
+              "rateCode" : "8D49XP354UEYTHGM.MZU6U2429S.2TG2D8R56U",
+              "description" : "Upfront Fee",
+              "unit" : "Quantity",
+              "pricePerUnit" : {
+                "USD" : "1161"
+              },
+              "appliesTo" : [ ]
+            }
+          },
+          "termAttributes" : {
+            "LeaseContractLength" : "3yr",
+            "PurchaseOption" : "All Upfront",
+            "OfferingClass" : "convertible"
+          }
+        },
+        "8D49XP354UEYTHGM.Z2E3P23VKM" : {
+          "offerTermCode" : "Z2E3P23VKM",
+          "sku" : "8D49XP354UEYTHGM",
+          "effectiveDate" : "2026-11-10T18:03:02Z",
+          "priceDimensions" : {
+            "8D49XP354UEYTHGM.Z2E3P23VKM.6YS6EN2CT7" : {
+              "rateCode" : "8D49XP354UEYTHGM.Z2E3P23VKM.6YS6EN2CT7",
+              "description" : "Linux/UNIX (Amazon VPC), m5.large reserved instance applied",
+              "beginRange" : "0",
+              "endRange" : "Inf",
+              "unit" : "Hrs",
+              "pricePerUnit" : {
+                "USD" : "0.0490000000"
+              },
+              "appliesTo" : [ ]
+            }
+          },
+          "termAttributes" : {
+            "LeaseContractLength" : "3yr",
+            "PurchaseOption" : "No Upfront",
+            "OfferingClass" : "convertible"
+          }
+        },
+        "8D49XP354UEYTHGM.6QCMYABX3D" : {
+          "offerTermCode" : "6QCMYABX3D",
+          "sku" : "8D49XP354UEYTHGM",
+          "effectiveDate" : "2026-11-10T18:03:02Z",
+          "priceDimensions" : {
+            "8D49XP354UEYTHGM.6QCMYABX3D.6YS6EN2CT7" : {
+              "rateCode" : "8D49XP354UEYTHGM.6QCMYABX3D.6YS6EN2CT7",
+              "description" : "USD 0.0 per Linux/UNIX (Amazon VPC), m5.large reserved instance applied",
+              "beginRange" : "0",
+              "endRange" : "Inf",
+              "unit" : "Hrs",
+              "pricePerUnit" : {
+                "USD" : "0.0000000000"
+              },
+              "appliesTo" : [ ]
+            },
+            "8D49XP354UEYTHGM.6QCMYABX3D.2TG2D8R56U" : {
+              "rateCode" : "8D49XP354UEYTHGM.6QCMYABX3D.2TG2D8R56U",
+              "description" : "Upfront Fee",
+              "unit" : "Quantity",
+              "pricePerUnit" : {
+                "USD" : "494"
+              },
+              "appliesTo" : [ ]
+            }
+          },
+          "termAttributes" : {
+            "LeaseContractLength" : "1yr",
+            "PurchaseOption" : "All Upfront",
+            "OfferingClass" : "standard"
+          }
+        },
+        "8D49XP354UEYTHGM.R5XV2EPZQZ" : {
+          "offerTermCode" : "R5XV2EPZQZ",
+          "sku" : "8D49XP354UEYTHGM",
+          "effectiveDate" : "2026-11-10T18:02:59Z",
+          "priceDimensions" : {
+            "8D49XP354UEYTHGM.R5XV2EPZQZ.6YS6EN2CT7" : {
+              "rateCode" : "8D49XP354UEYTHGM.R5XV2EPZQZ.6YS6EN2CT7",
+              "description" : "Linux/UNIX (Amazon VPC), m5.large reserved instance applied",
+              "beginRange" : "0",
+              "endRange" : "Inf",
+              "unit" : "Hrs",
+              "pricePerUnit" : {
+                "USD" : "0.0230000000"
+              },
+              "appliesTo" : [ ]
+            },
+            "8D49XP354UEYTHGM.R5XV2EPZQZ.2TG2D8R56U" : {
+              "rateCode" : "8D49XP354UEYTHGM.R5XV2EPZQZ.2TG2D8R56U",
+              "description" : "Upfront Fee",
+              "unit" : "Quantity",
+              "pricePerUnit" : {
+                "USD" : "592"
+              },
+              "appliesTo" : [ ]
+            }
+          },
+          "termAttributes" : {
+            "LeaseContractLength" : "3yr",
+            "PurchaseOption" : "Partial Upfront",
+            "OfferingClass" : "convertible"
+          }
+        },
+        "8D49XP354UEYTHGM.38NPMPTW36" : {
+          "offerTermCode" : "38NPMPTW36",
+          "sku" : "8D49XP354UEYTHGM",
+          "effectiveDate" : "2026-11-10T18:03:01Z",
+          "priceDimensions" : {
+            "8D49XP354UEYTHGM.38NPMPTW36.6YS6EN2CT7" : {
+              "rateCode" : "8D49XP354UEYTHGM.38NPMPTW36.6YS6EN2CT7",
+              "description" : "Linux/UNIX (Amazon VPC), m5.large reserved instance applied",
+              "beginRange" : "0",
+              "endRange" : "Inf",
+              "unit" : "Hrs",
+              "pricePerUnit" : {
+                "USD" : "0.0190000000"
+              },
+              "appliesTo" : [ ]
+            },
+            "8D49XP354UEYTHGM.38NPMPTW36.2TG2D8R56U" : {
+              "rateCode" : "8D49XP354UEYTHGM.38NPMPTW36.2TG2D8R56U",
+              "description" : "Upfront Fee",
+              "unit" : "Quantity",
+              "pricePerUnit" : {
+                "USD" : "505"
+              },
+              "appliesTo" : [ ]
+            }
+          },
+          "termAttributes" : {
+            "LeaseContractLength" : "3yr",
+            "PurchaseOption" : "Partial Upfront",
+            "OfferingClass" : "standard"
+          }
+        },
+        "8D49XP354UEYTHGM.7NE97W5U4E" : {
+          "offerTermCode" : "7NE97W5U4E",
+          "sku" : "8D49XP354UEYTHGM",
+          "effectiveDate" : "2026-11-10T18:02:59Z",
+          "priceDimensions" : {
+            "8D49XP354UEYTHGM.7NE97W5U4E.6YS6EN2CT7" : {
+              "rateCode" : "8D49XP354UEYTHGM.7NE97W5U4E.6YS6EN2CT7",
+              "description" : "Linux/UNIX (Amazon VPC), m5.large reserved instance applied",
+              "beginRange" : "0",
+              "endRange" : "Inf",
+              "unit" : "Hrs",
+              "pricePerUnit" : {
+                "USD" : "0.0710000000"
+              },
+              "appliesTo" : [ ]
+            }
+          },
+          "termAttributes" : {
+            "LeaseContractLength" : "1yr",
+            "PurchaseOption" : "No Upfront",
+            "OfferingClass" : "convertible"
+          }
+        },
+        "8D49XP354UEYTHGM.CUZHX8X6JH" : {
+          "offerTermCode" : "CUZHX8X6JH",
+          "sku" : "8D49XP354UEYTHGM",
+          "effectiveDate" : "2026-11-10T18:03:01Z",
+          "priceDimensions" : {
+            "8D49XP354UEYTHGM.CUZHX8X6JH.6YS6EN2CT7" : {
+              "rateCode" : "8D49XP354UEYTHGM.CUZHX8X6JH.6YS6EN2CT7",
+              "description" : "Linux/UNIX (Amazon VPC), m5.large reserved instance applied",
+              "beginRange" : "0",
+              "endRange" : "Inf",
+              "unit" : "Hrs",
+              "pricePerUnit" : {
+                "USD" : "0.0340000000"
+              },
+              "appliesTo" : [ ]
+            },
+            "8D49XP354UEYTHGM.CUZHX8X6JH.2TG2D8R56U" : {
+              "rateCode" : "8D49XP354UEYTHGM.CUZHX8X6JH.2TG2D8R56U",
+              "description" : "Upfront Fee",
+              "unit" : "Quantity",
+              "pricePerUnit" : {
+                "USD" : "294"
+              },
+              "appliesTo" : [ ]
+            }
+          },
+          "termAttributes" : {
+            "LeaseContractLength" : "1yr",
+            "PurchaseOption" : "Partial Upfront",
+            "OfferingClass" : "convertible"
+          }
+        },
+        "8D49XP354UEYTHGM.4NA7Y494T4" : {
+          "offerTermCode" : "4NA7Y494T4",
+          "sku" : "8D49XP354UEYTHGM",
+          "effectiveDate" : "2026-11-10T18:03:01Z",
+          "priceDimensions" : {
+            "8D49XP354UEYTHGM.4NA7Y494T4.6YS6EN2CT7" : {
+              "rateCode" : "8D49XP354UEYTHGM.4NA7Y494T4.6YS6EN2CT7",
+              "description" : "Linux/UNIX (Amazon VPC), m5.large reserved instance applied",
+              "beginRange" : "0",
+              "endRange" : "Inf",
+              "unit" : "Hrs",
+              "pricePerUnit" : {
+                "USD" : "0.0600000000"
+              },
+              "appliesTo" : [ ]
+            }
+          },
+          "termAttributes" : {
+            "LeaseContractLength" : "1yr",
+            "PurchaseOption" : "No Upfront",
+            "OfferingClass" : "standard"
+          }
+        },
+        "8D49XP354UEYTHGM.VJWZNREJX2" : {
+          "offerTermCode" : "VJWZNREJX2",
+          "sku" : "8D49XP354UEYTHGM",
+          "effectiveDate" : "2026-11-10T18:03:00Z",
+          "priceDimensions" : {
+            "8D49XP354UEYTHGM.VJWZNREJX2.6YS6EN2CT7" : {
+              "rateCode" : "8D49XP354UEYTHGM.VJWZNREJX2.6YS6EN2CT7",
+              "description" : "USD 0.0 per Linux/UNIX (Amazon VPC), m5.large reserved instance applied",
+              "beginRange" : "0",
+              "endRange" : "Inf",
+              "unit" : "Hrs",
+              "pricePerUnit" : {
+                "USD" : "0.0000000000"
+              },
+              "appliesTo" : [ ]
+            },
+            "8D49XP354UEYTHGM.VJWZNREJX2.2TG2D8R56U" : {
+              "rateCode" : "8D49XP354UEYTHGM.VJWZNREJX2.2TG2D8R56U",
+              "description" : "Upfront Fee",
+              "unit" : "Quantity",
+              "pricePerUnit" : {
+                "USD" : "577"
+              },
+              "appliesTo" : [ ]
+            }
+          },
+          "termAttributes" : {
+            "LeaseContractLength" : "1yr",
+            "PurchaseOption" : "All Upfront",
+            "OfferingClass" : "convertible"
+          }
+        },
+        "8D49XP354UEYTHGM.HU7G6KETJZ" : {
+          "offerTermCode" : "HU7G6KETJZ",
+          "sku" : "8D49XP354UEYTHGM",
+          "effectiveDate" : "2026-11-10T18:03:04Z",
+          "priceDimensions" : {
+            "8D49XP354UEYTHGM.HU7G6KETJZ.6YS6EN2CT7" : {
+              "rateCode" : "8D49XP354UEYTHGM.HU7G6KETJZ.6YS6EN2CT7",
+              "description" : "Linux/UNIX (Amazon VPC), m5.large reserved instance applied",
+              "beginRange" : "0",
+              "endRange" : "Inf",
+              "unit" : "Hrs",
+              "pricePerUnit" : {
+                "USD" : "0.0290000000"
+              },
+              "appliesTo" : [ ]
+            },
+            "8D49XP354UEYTHGM.HU7G6KETJZ.2TG2D8R56U" : {
+              "rateCode" : "8D49XP354UEYTHGM.HU7G6KETJZ.2TG2D8R56U",
+              "description" : "Upfront Fee",
+              "unit" : "Quantity",
+              "pricePerUnit" : {
+                "USD" : "252"
+              },
+              "appliesTo" : [ ]
+            }
+          },
+          "termAttributes" : {
+            "LeaseContractLength" : "1yr",
+            "PurchaseOption" : "Partial Upfront",
+            "OfferingClass" : "standard"
+          }
+        }
+      }
+    }
+  },
+  "attributesList" : { }
+}

@@ -1,0 +1,365 @@
+{
+  "formatVersion" : "v1.0",
+  "disclaimer" : "This pricing list is for informational purposes only. All prices are subject to the additional terms included in the pricing pages on http://aws.amazon.com. All Free Tier prices are also subject to the terms included at https://aws.amazon.com/free/",
+  "offerCode" : "AmazonS3",
+  "version" : "20261109154310",
+  "publicationDate" : "2026-11-09T15:43:10Z",
+  "products" : {
+    "TTZBKMDSBCKEXHU2" : {
+      "sku" : "TTZBKMDSBCKEXHU2",
+      "attributes" : {
+        "servicecode" : "AmazonS3",
+        "transferType" : "InterRegion Outbound",
+        "fromLocation" : "Asia Pacific (Seoul)",
+        "fromLocationType" : "AWS Region",
+        "toLocation" : "US East (Ohio)",
+        "toLocationType" : "AWS Region",
+        "usagetype" : "APN2-USE2-S3RTC-Out-Bytes",
+        "operation" : "",
+        "fromRegionCode" : "ap-northeast-2",
+        "servicename" : "Amazon Simple Storage Service",
+        "toRegionCode" : "us-east-2"
+      }
+    },
+    "GJKK9PMSTKPNGZS9" : {
+      "sku" : "GJKK9PMSTKPNGZS9",
+      "productFamily" : "API Request",
+      "attributes" : {
+        "servicecode" : "AmazonS3",
+        "location" : "US East (Ohio)",
+        "locationType" : "AWS Region",
+        "group" : "S3-API-Tier1",
+        "groupDescription" : "PUT/COPY/POST or LIST requests",
+        "usagetype" : "USE2-Requests-Tier1",
+        "operation" : "",
+        "regionCode" : "us-east-2",
+        "servicename" : "Amazon Simple Storage Service"
+      }
+    },
+    "8ZFQ57FZ52W4PZV7" : {
+      "sku" : "8ZFQ57FZ52W4PZV7",
+      "productFamily" : "Storage",
+      "attributes" : {
+        "servicecode" : "AmazonS3",
+        "location" : "US East (Ohio)",
+        "locationType" : "AWS Region",
+        "storageClass" : "General Purpose",
+        "volumeType" : "Annotations",
+        "usagetype" : "USE2-Annotation-TimedStorage-ByteHrs",
+        "operation" : "",
+        "regionCode" : "us-east-2",
+        "servicename" : "Amazon Simple Storage Service"
+      }
+    },
+    "DJEKB32FV4HNZJZY" : {
+      "sku" : "DJEKB32FV4HNZJZY",
+      "productFamily" : "API Request",
+      "attributes" : {
+        "servicecode" : "AmazonS3",
+        "location" : "US East (Ohio)",
+        "locationType" : "AWS Region",
+        "group" : "S3-API-Tier2",
+        "groupDescription" : "GET and all other requests",
+        "usagetype" : "USE2-Requests-Tier2",
+        "operation" : "",
+        "regionCode" : "us-east-2",
+        "servicename" : "Amazon Simple Storage Service"
+      }
+    },
+    "EFXDCZB26CN5C7RA" : {
+      "sku" : "EFXDCZB26CN5C7RA",
+      "productFamily" : "API Request",
+      "attributes" : {
+        "servicecode" : "AmazonS3",
+        "location" : "US East (Ohio)",
+        "locationType" : "AWS Region",
+        "group" : "S3-API-Tier1",
+        "groupDescription" : "Tier1 Annotation Requests",
+        "usagetype" : "USE2-Requests-Annotation-Tier1",
+        "operation" : "",
+        "regionCode" : "us-east-2",
+        "servicename" : "Amazon Simple Storage Service"
+      }
+    },
+    "YPGKVRB2EKTVDJDT" : {
+      "sku" : "YPGKVRB2EKTVDJDT",
+      "productFamily" : "Storage",
+      "attributes" : {
+        "servicecode" : "AmazonS3",
+        "location" : "US East (Ohio)",
+        "locationType" : "AWS Region",
+        "availability" : "99.99%",
+        "storageClass" : "General Purpose",
+        "volumeType" : "Standard",
+        "usagetype" : "USE2-TimedStorage-ByteHrs",
+        "operation" : "",
+        "durability" : "99.999999999%",
+        "regionCode" : "us-east-2",
+        "servicename" : "Amazon Simple Storage Service"
+      }
+    },
+    "VHQYNB4HK92W7HCD" : {
+      "sku" : "VHQYNB4HK92W7HCD",
+      "productFamily" : "API Request",
+      "attributes" : {
+        "servicecode" : "AmazonS3",
+        "location" : "US East (Ohio)",
+        "locationType" : "AWS Region",
+        "group" : "S3-API-SIA-Tier1",
+        "groupDescription" : "PUT/COPY/POST or LIST requests to Standard-Infrequent Access",
+        "usagetype" : "USE2-Requests-SIA-Tier1",
+        "operation" : "",
+        "regionCode" : "us-east-2",
+        "servicename" : "Amazon Simple Storage Service"
+      }
+    },
+    "HKJHVMYUM2FST5JF" : {
+      "sku" : "HKJHVMYUM2FST5JF",
+      "productFamily" : "API Request",
+      "attributes" : {
+        "servicecode" : "AmazonS3",
+        "location" : "US East (Ohio)",
+        "locationType" : "AWS Region",
+        "group" : "S3-API-Tier2",
+        "groupDescription" : "Tier2 Annotation Requests",
+        "usagetype" : "USE2-Requests-Annotation-Tier2",
+        "operation" : "",
+        "regionCode" : "us-east-2",
+        "servicename" : "Amazon Simple Storage Service"
+      }
+    },
+    "FNWV6QQJ34ZTYY9U" : {
+      "sku" : "FNWV6QQJ34ZTYY9U",
+      "productFamily" : "Storage",
+      "attributes" : {
+        "servicecode" : "AmazonS3",
+        "location" : "US East (Ohio)",
+        "locationType" : "AWS Region",
+        "availability" : "99.9%",
+        "storageClass" : "Infrequent Access",
+        "volumeType" : "Standard - Infrequent Access",
+        "usagetype" : "USE2-TimedStorage-SIA-ByteHrs",
+        "operation" : "",
+        "durability" : "99.999999999%",
+        "regionCode" : "us-east-2",
+        "servicename" : "Amazon Simple Storage Service"
+      }
+    }
+  },
+  "terms" : {
+    "OnDemand" : {
+      "TTZBKMDSBCKEXHU2" : {
+        "TTZBKMDSBCKEXHU2.JRTCKXETXF" : {
+          "offerTermCode" : "JRTCKXETXF",
+          "sku" : "TTZBKMDSBCKEXHU2",
+          "effectiveDate" : "2026-10-01T00:00:00Z",
+          "priceDimensions" : {
+            "TTZBKMDSBCKEXHU2.JRTCKXETXF.6YS6EN2CT7" : {
+              "rateCode" : "TTZBKMDSBCKEXHU2.JRTCKXETXF.6YS6EN2CT7",
+              "description" : "$0.015 per GB - Asia Pacific (Seoul) Data Transfer for Replication Time Control to US East (Ohio)",
+              "beginRange" : "0",
+              "endRange" : "Inf",
+              "unit" : "GB",
+              "pricePerUnit" : {
+                "USD" : "0.0150000000"
+              },
+              "appliesTo" : [ ]
+            }
+          },
+          "termAttributes" : { }
+        }
+      },
+      "GJKK9PMSTKPNGZS9" : {
+        "GJKK9PMSTKPNGZS9.JRTCKXETXF" : {
+          "offerTermCode" : "JRTCKXETXF",
+          "sku" : "GJKK9PMSTKPNGZS9",
+          "effectiveDate" : "2026-10-01T00:00:00Z",
+          "priceDimensions" : {
+            "GJKK9PMSTKPNGZS9.JRTCKXETXF.6YS6EN2CT7" : {
+              "rateCode" : "GJKK9PMSTKPNGZS9.JRTCKXETXF.6YS6EN2CT7",
+              "description" : "$0.005 per 1,000 PUT, COPY, POST, or LIST requests",
+              "beginRange" : "0",
+              "endRange" : "Inf",
+              "unit" : "Requests",
+              "pricePerUnit" : {
+                "USD" : "0.0000050000"
+              },
+              "appliesTo" : [ ]
+            }
+          },
+          "termAttributes" : { }
+        }
+      },
+      "8ZFQ57FZ52W4PZV7" : {
+        "8ZFQ57FZ52W4PZV7.JRTCKXETXF" : {
+          "offerTermCode" : "JRTCKXETXF",
+          "sku" : "8ZFQ57FZ52W4PZV7",
+          "effectiveDate" : "2026-10-01T00:00:00Z",
+          "priceDimensions" : {
+            "8ZFQ57FZ52W4PZV7.JRTCKXETXF.6YS6EN2CT7" : {
+              "rateCode" : "8ZFQ57FZ52W4PZV7.JRTCKXETXF.6YS6EN2CT7",
+              "description" : "$0.023 per GB-Mo of Storage in Annotations ",
+              "beginRange" : "0",
+              "endRange" : "Inf",
+              "unit" : "GB-Mo",
+              "pricePerUnit" : {
+                "USD" : "0.0230000000"
+              },
+              "appliesTo" : [ ]
+            }
+          },
+          "termAttributes" : { }
+        }
+      },
+      "DJEKB32FV4HNZJZY" : {
+        "DJEKB32FV4HNZJZY.JRTCKXETXF" : {
+          "offerTermCode" : "JRTCKXETXF",
+          "sku" : "DJEKB32FV4HNZJZY",
+          "effectiveDate" : "2026-10-01T00:00:00Z",
+          "priceDimensions" : {
+            "DJEKB32FV4HNZJZY.JRTCKXETXF.6YS6EN2CT7" : {
+              "rateCode" : "DJEKB32FV4HNZJZY.JRTCKXETXF.6YS6EN2CT7",
+              "description" : "$0.004 per 10,000 GET and all other requests",
+              "beginRange" : "0",
+              "endRange" : "Inf",
+              "unit" : "Requests",
+              "pricePerUnit" : {
+                "USD" : "0.0000004000"
+              },
+              "appliesTo" : [ ]
+            }
+          },
+          "termAttributes" : { }
+        }
+      },
+      "EFXDCZB26CN5C7RA" : {
+        "EFXDCZB26CN5C7RA.JRTCKXETXF" : {
+          "offerTermCode" : "JRTCKXETXF",
+          "sku" : "EFXDCZB26CN5C7RA",
+          "effectiveDate" : "2026-10-01T00:00:00Z",
+          "priceDimensions" : {
+            "EFXDCZB26CN5C7RA.JRTCKXETXF.6YS6EN2CT7" : {
+              "rateCode" : "EFXDCZB26CN5C7RA.JRTCKXETXF.6YS6EN2CT7",
+              "description" : "$0.005 per 1,000 Tier1 Annotation Requests",
+              "beginRange" : "0",
+              "endRange" : "Inf",
+              "unit" : "Requests",
+              "pricePerUnit" : {
+                "USD" : "0.0000050000"
+              },
+              "appliesTo" : [ ]
+            }
+          },
+          "termAttributes" : { }
+        }
+      },
+      "YPGKVRB2EKTVDJDT" : {
+        "YPGKVRB2EKTVDJDT.JRTCKXETXF" : {
+          "offerTermCode" : "JRTCKXETXF",
+          "sku" : "YPGKVRB2EKTVDJDT",
+          "effectiveDate" : "2026-10-01T00:00:00Z",
+          "priceDimensions" : {
+            "YPGKVRB2EKTVDJDT.JRTCKXETXF.PGHJ3S3EYE" : {
+              "rateCode" : "YPGKVRB2EKTVDJDT.JRTCKXETXF.PGHJ3S3EYE",
+              "description" : "$0.023 per GB - first 50 TB / month of storage used",
+              "beginRange" : "0",
+              "endRange" : "51200",
+              "unit" : "GB-Mo",
+              "pricePerUnit" : {
+                "USD" : "0.0230000000"
+              },
+              "appliesTo" : [ ]
+            },
+            "YPGKVRB2EKTVDJDT.JRTCKXETXF.D42MF2PVJS" : {
+              "rateCode" : "YPGKVRB2EKTVDJDT.JRTCKXETXF.D42MF2PVJS",
+              "description" : "$0.022 per GB - next 450 TB / month of storage used",
+              "beginRange" : "51200",
+              "endRange" : "512000",
+              "unit" : "GB-Mo",
+              "pricePerUnit" : {
+                "USD" : "0.0220000000"
+              },
+              "appliesTo" : [ ]
+            },
+            "YPGKVRB2EKTVDJDT.JRTCKXETXF.PXJDJ3YRG3" : {
+              "rateCode" : "YPGKVRB2EKTVDJDT.JRTCKXETXF.PXJDJ3YRG3",
+              "description" : "$0.021 per GB - storage used / month over 500 TB",
+              "beginRange" : "512000",
+              "endRange" : "Inf",
+              "unit" : "GB-Mo",
+              "pricePerUnit" : {
+                "USD" : "0.0210000000"
+              },
+              "appliesTo" : [ ]
+            }
+          },
+          "termAttributes" : { }
+        }
+      },
+      "VHQYNB4HK92W7HCD" : {
+        "VHQYNB4HK92W7HCD.JRTCKXETXF" : {
+          "offerTermCode" : "JRTCKXETXF",
+          "sku" : "VHQYNB4HK92W7HCD",
+          "effectiveDate" : "2026-10-01T00:00:00Z",
+          "priceDimensions" : {
+            "VHQYNB4HK92W7HCD.JRTCKXETXF.6YS6EN2CT7" : {
+              "rateCode" : "VHQYNB4HK92W7HCD.JRTCKXETXF.6YS6EN2CT7",
+              "description" : "$0.01 per 1,000 PUT, COPY, POST or LIST requests to Standard-Infrequent Access",
+              "beginRange" : "0",
+              "endRange" : "Inf",
+              "unit" : "Requests",
+              "pricePerUnit" : {
+                "USD" : "0.0000100000"
+              },
+              "appliesTo" : [ ]
+            }
+          },
+          "termAttributes" : { }
+        }
+      },
+      "HKJHVMYUM2FST5JF" : {
+        "HKJHVMYUM2FST5JF.JRTCKXETXF" : {
+          "offerTermCode" : "JRTCKXETXF",
+          "sku" : "HKJHVMYUM2FST5JF",
+          "effectiveDate" : "2026-10-01T00:00:00Z",
+          "priceDimensions" : {
+            "HKJHVMYUM2FST5JF.JRTCKXETXF.6YS6EN2CT7" : {
+              "rateCode" : "HKJHVMYUM2FST5JF.JRTCKXETXF.6YS6EN2CT7",
+              "description" : "$0.0004 per 1,000 Tier2 Annotation Requests",
+              "beginRange" : "0",
+              "endRange" : "Inf",
+              "unit" : "Requests",
+              "pricePerUnit" : {
+                "USD" : "0.0000004000"
+              },
+              "appliesTo" : [ ]
+            }
+          },
+          "termAttributes" : { }
+        }
+      },
+      "FNWV6QQJ34ZTYY9U" : {
+        "FNWV6QQJ34ZTYY9U.JRTCKXETXF" : {
+          "offerTermCode" : "JRTCKXETXF",
+          "sku" : "FNWV6QQJ34ZTYY9U",
+          "effectiveDate" : "2026-10-01T00:00:00Z",
+          "priceDimensions" : {
+            "FNWV6QQJ34ZTYY9U.JRTCKXETXF.6YS6EN2CT7" : {
+              "rateCode" : "FNWV6QQJ34ZTYY9U.JRTCKXETXF.6YS6EN2CT7",
+              "description" : "$0.0125 per GB-Month of storage used in Standard-Infrequent Access",
+              "beginRange" : "0",
+              "endRange" : "Inf",
+              "unit" : "GB-Mo",
+              "pricePerUnit" : {
+                "USD" : "0.0125000000"
+              },
+              "appliesTo" : [ ]
+            }
+          },
+          "termAttributes" : { }
+        }
+      }
+    }
+  },
+  "attributesList" : { }
+}
