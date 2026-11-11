@@ -4,18 +4,26 @@
 //   bun scripts/box-in-container/expect.ts <scenario> <bucket dir> <exit status> <run.sh OUT>
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 
+import { appliesTo, type Schedule } from "../../infra/runs/schedule";
 import { checkBucketDirectory, type RunRecord } from "../check-runs";
 
+interface Execution {
+	benchmark: string;
+	build: string;
+	params: unknown;
+}
+
 interface BootSummary {
+	provider: { instance_type?: string | null };
 	runs: Array<{ id: string }>;
 	not_run: unknown[];
 	build_failures: unknown[];
+	left_out: Array<Execution & { instance_types: string[] }>;
 	stopped_by?: number;
 }
 
-const ROOT = resolve(import.meta.dir, "..", "..");
 const args = process.argv.slice(2);
 if (args.length !== 4) {
 	console.error("usage: expect.ts <scenario> <bucket dir> <exit status> <run.sh OUT>");
@@ -39,7 +47,6 @@ const readJson = <T>(path: string): T => JSON.parse(readFileSync(path, "utf8")) 
 
 const status = Number(statusText);
 const runs = filesUnder("runs", ".json").map((path) => readJson<RunRecord>(path));
-const boots = filesUnder("boots", ".json").map((path) => readJson<BootSummary>(path));
 const logs = filesUnder("logs", ".log");
 const log = logs[0] ? readFileSync(logs[0], "utf8") : "";
 const putsPath = join(out, "calls", "puts.log");
@@ -47,9 +54,21 @@ const puts = existsSync(putsPath) ? readFileSync(putsPath, "utf8").trim().split(
 const blobPuts = puts.filter((key) => key.startsWith("blobs/"));
 const powerPath = join(out, "calls", "power.log");
 const power = existsSync(powerPath) ? readFileSync(powerPath, "utf8").trim().split("\n") : [];
-const schedule = readJson<{ benchmarks: Array<{ name: string; builds: string[]; params: unknown[] }> }>(join(ROOT, "schedule.json"));
-const planned = schedule.benchmarks.reduce((sum, b) => sum + b.builds.length * b.params.length, 0);
+// The schedule.json the box booted with, which run.sh saved.
+const schedule = readJson<Schedule>(join(out, "schedule.json"));
 const executionKey = (benchmark: unknown, build: unknown, params: unknown): string => JSON.stringify([benchmark, build, params]);
+const boots = filesUnder("boots", ".json").map((path) => readJson<BootSummary>(path));
+const boot = boots[0];
+// The executions the schedule names for the type the box said it was, and the
+// ones for other types, which it leaves out.
+const instanceType = boot?.provider.instance_type ?? null;
+const executions = (forThisType: boolean): Execution[] =>
+	schedule.benchmarks
+		.filter((entry) => appliesTo(entry, instanceType) === forThisType)
+		.flatMap((entry) => entry.params.flatMap((params) => entry.builds.map((build) => ({ benchmark: entry.name, build, params }))));
+const scheduled = executions(true);
+const others = executions(false);
+const planned = scheduled.length;
 
 // Every scenario: the timer first, a shutdown last, and the log in the bucket.
 expect(power[0]?.startsWith("shutdown -h +45") === true, "the 45-minute timer was not the first thing set");
@@ -74,24 +93,31 @@ function everyExecutionRanOnceAndExitedZero(): void {
 			`run ${run.id} (${key}) exited ${JSON.stringify(run.exit)}`,
 		);
 	}
-	for (const benchmark of schedule.benchmarks) {
-		for (const build of benchmark.builds) {
-			for (const params of benchmark.params) {
-				const key = executionKey(benchmark.name, build, params);
-				expect(seen.get(key) === 1, `${seen.get(key) ?? 0} Runs of ${key}, expected 1`);
-			}
-		}
+	for (const { benchmark, build, params } of scheduled) {
+		const key = executionKey(benchmark, build, params);
+		expect(seen.get(key) === 1, `${seen.get(key) ?? 0} Runs of ${key}, expected 1`);
 	}
 }
 
+// The boot summary lists every execution of an entry for other types under
+// left_out, in the schedule's order, and nothing else.
+function everyOtherExecutionLeftOut(): void {
+	const listed = (boot?.left_out ?? []).map((execution) => executionKey(execution.benchmark, execution.build, execution.params));
+	const expected = others.map((execution) => executionKey(execution.benchmark, execution.build, execution.params));
+	expect(
+		JSON.stringify(listed) === JSON.stringify(expected),
+		`the boot summary leaves out ${JSON.stringify(listed)}, expected ${JSON.stringify(expected)}`,
+	);
+}
+
 const interrupted = runs.filter((run) => run.exit.runner_signal !== undefined);
-const boot = boots[0];
 
 switch (scenario) {
 	case "ok": {
 		expect(status === 0, `exit status ${status}, expected 0`);
 		everyRunChecksOut();
 		everyExecutionRanOnceAndExitedZero();
+		everyOtherExecutionLeftOut();
 		expect(runs.length === planned, `${runs.length} Runs, expected ${planned}`);
 		expect(boots.length === 1, `${boots.length} boot summaries, expected 1`);
 		expect(boot?.stopped_by === undefined && boot?.not_run.length === 0, "the boot summary says it was stopped");
@@ -115,6 +141,7 @@ switch (scenario) {
 			(boot?.runs.length ?? 0) + (boot?.not_run.length ?? 0) + (boot?.build_failures.length ?? 0) === planned,
 			"the boot summary's runs and not_run do not add up to the schedule",
 		);
+		everyOtherExecutionLeftOut();
 		expect(runs.length === (boot?.runs.length ?? -1), "the bucket's Runs are not the boot summary's");
 		const last = [...runs].sort((a, b) => a.started_at.localeCompare(b.started_at)).at(-1);
 		if (scenario === "budget") {
@@ -158,6 +185,30 @@ switch (scenario) {
 		expect(blobPuts.length > 0, "no blob was uploaded at all");
 		break;
 	}
+	case "instance-types": {
+		expect(status === 0, `exit status ${status}, expected 0`);
+		expect(instanceType === "m5.large", `the boot summary says the box is ${instanceType}, expected the fake IMDS's m5.large`);
+		for (const run of runs) {
+			const type = (run.provider as { instance_type?: unknown }).instance_type;
+			expect(type === "m5.large", `run ${run.id} says it ran on ${String(type)}`);
+		}
+		everyRunChecksOut();
+		everyExecutionRanOnceAndExitedZero();
+		everyOtherExecutionLeftOut();
+		expect(runs.length === planned && planned > 0, `${runs.length} Runs, expected ${planned}`);
+		expect(others.length > 0, "the schedule leaves nothing out on this type, so the scenario shows nothing");
+		expect(boot?.not_run.length === 0 && boot?.build_failures.length === 0, "the boot summary lists executions not run or builds that failed");
+		// Each benchmark that ran was built once per build, however many entries
+		// name it; one only for other types was not built at all.
+		for (const entry of schedule.benchmarks) {
+			for (const build of entry.builds) {
+				const built = log.split("\n").filter((line) => line.includes(`ledgermath-run: built ${entry.name} ${build} `)).length;
+				const wanted = schedule.benchmarks.some((other) => other.name === entry.name && other.builds.includes(build) && appliesTo(other, instanceType)) ? 1 : 0;
+				expect(built === wanted, `${entry.name} ${build} was built ${built} times, expected ${wanted}`);
+			}
+		}
+		break;
+	}
 	default:
 		problems.push(`unknown scenario ${scenario}`);
 }
@@ -166,5 +217,5 @@ for (const problem of problems) console.error(`FAIL ${scenario}: ${problem}`);
 if (problems.length > 0) process.exit(1);
 const stoppedIn = interrupted[0] ? `; stopped in run ${interrupted[0].id}, exit ${JSON.stringify(interrupted[0].exit)}` : "";
 console.log(
-	`ok ${scenario}: exit status ${status}, ${runs.length} Runs, ${boot?.not_run.length ?? 0} not run${stoppedIn}`,
+	`ok ${scenario}: exit status ${status}, ${runs.length} Runs, ${boot?.not_run.length ?? 0} not run, ${boot?.left_out?.length ?? 0} left out for other instance types${stoppedIn}`,
 );

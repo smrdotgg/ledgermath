@@ -1,0 +1,39 @@
+{
+  "targets": [
+    { "instance_type": "c6i.8xlarge", "zone": "us-east-2c", "boots_utc": ["04:10"] },
+    { "instance_type": "m5.large", "zone": "us-east-2c", "boots_utc": ["04:20"] }
+  ],
+  "benchmarks": [
+    {
+      "name": "syscall",
+      "builds": ["static"],
+      "samples": 10,
+      "timeout_seconds": 120,
+      "params": [{ "call": "getpid" }]
+    },
+    {
+      "name": "syscall",
+      "builds": ["static"],
+      "samples": 10,
+      "timeout_seconds": 120,
+      "instance_types": ["m5.large"],
+      "params": [{ "call": "gettimeofday" }]
+    },
+    {
+      "name": "syscall",
+      "builds": ["static"],
+      "samples": 10,
+      "timeout_seconds": 120,
+      "instance_types": ["c6i.8xlarge"],
+      "params": [{ "call": "getrusage" }]
+    },
+    {
+      "name": "memory_read",
+      "builds": ["static", "dynamic"],
+      "samples": 10,
+      "timeout_seconds": 600,
+      "instance_types": ["c6i.8xlarge"],
+      "params": [{ "size_bytes": 1073741824, "threads": 1, "path": "scalar" }]
+    }
+  ]
+}

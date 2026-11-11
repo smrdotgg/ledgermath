@@ -58,6 +58,19 @@ describe("schedule.json", () => {
 	});
 });
 
+describe("the container test's instance-types schedule", () => {
+	const file = JSON.parse(readFileSync(join(ROOT, "scripts", "box-in-container", "instance-types.json"), "utf8")) as Schedule;
+
+	test("is valid, and on an m5.large leaves some entries out and runs others, one benchmark from two entries", () => {
+		expect(scheduleProblems(file)).toEqual([]);
+		const here = file.benchmarks.filter((entry) => appliesTo(entry, "m5.large"));
+		expect(here.length).toBeGreaterThan(0);
+		expect(here.length).toBeLessThan(file.benchmarks.length);
+		expect(here.length).toBeGreaterThan(new Set(here.map((entry) => entry.name)).size);
+		for (const benchmark of file.benchmarks) expect(existsSync(join(ROOT, "benchmarks", benchmark.name, "Makefile"))).toBe(true);
+	});
+});
+
 describe("the schedule's check", () => {
 	test("passes a valid schedule, and parseSchedule returns it", () => {
 		expect(scheduleProblems(valid())).toEqual([]);

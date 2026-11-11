@@ -26,13 +26,21 @@
 #                the rest, and every Run checks out
 #   blobs-present  the bucket already holds a blob the boot makes, from an earlier
 #                boot: it is not uploaded again, and every Run checks out
+#   instance-types  the box boots scripts/box-in-container/instance-types.json as
+#                its schedule.json, and a fake IMDS says it is an m5.large: the
+#                entries for every type and for m5.large run, the others are
+#                listed under left_out in the boot summary, and a benchmark two
+#                entries name is built once (about two minutes)
 #
 # What this shows: box.sh, run.py, the Makefiles and cpuid.c work on the image's
 # own packages (Python 3.9, gcc 11, glibc-static), with the user-data the launch
 # Lambda builds. What it cannot show: the container shares this machine's
 # kernel and CPU, its /proc and /sys are this machine's, and IMDS answers for
 # this machine when the hop limit lets a container reach it. Its Runs describe
-# this machine.
+# this machine. In the instance-types scenario IMDS is
+# scripts/box-in-container/fake-imds.py instead, in a container whose network
+# namespace the box's joins, so the Runs' provider fields are its words while
+# the dumps are still this machine's.
 #
 # Docker must work for the caller; if the docker group is new to this login,
 # run it as: sg docker -c "scripts/box-in-container/run.sh OUT"
@@ -60,8 +68,14 @@ if [ -e "$OUT" ]; then
 fi
 
 ENVIRONMENT=()
+FAKE_IMDS_TYPE=""     # when set, a fake IMDS says the box is of this type
+SCHEDULE_FILE=""      # when set, the booted commit's schedule.json is this file of it
 case "$SCENARIO" in
   ok | terminated | shutdown | blobs-present) ;;
+  instance-types)
+    FAKE_IMDS_TYPE=m5.large
+    SCHEDULE_FILE=scripts/box-in-container/instance-types.json
+    ;;
   budget) ENVIRONMENT+=(-e LEDGERMATH_RUN_SECONDS=120) ;;
   blobs-rejected) ENVIRONMENT+=(-e FAKE_S3_REJECT=blobs/) ;;
   blobs-flaky) ENVIRONMENT+=(-e FAKE_S3_FAIL_ONCE=blobs/) ;;
@@ -85,6 +99,17 @@ if $worktree; then
 else
   COMMIT="$(git rev-parse HEAD)"
 fi
+if [ -n "$SCHEDULE_FILE" ]; then
+  # The same tree with SCHEDULE_FILE, as that tree holds it, as schedule.json.
+  index="$(mktemp)"
+  GIT_INDEX_FILE="$index" git read-tree "$COMMIT"
+  GIT_INDEX_FILE="$index" git update-index --cacheinfo "100644,$(git rev-parse "$COMMIT:$SCHEDULE_FILE"),schedule.json"
+  tree="$(GIT_INDEX_FILE="$index" git write-tree)"
+  rm -f "$index"
+  COMMIT="$(GIT_AUTHOR_NAME=box-in-container GIT_AUTHOR_EMAIL=box-in-container@localhost \
+    GIT_COMMITTER_NAME=box-in-container GIT_COMMITTER_EMAIL=box-in-container@localhost \
+    git commit-tree "$tree" -p "$COMMIT" -m "box-in-container: $SCHEDULE_FILE as schedule.json")"
+fi
 KEY="source/$COMMIT.tar.gz"
 
 mkdir -p "$OUT/s3/$BUCKET/source" "$OUT/calls" "$OUT/stubs"
@@ -102,12 +127,33 @@ if [ "$SCENARIO" = blobs-present ]; then
   echo "blobs/sha256/$hex" >"$OUT/seeded"
 fi
 git show "$COMMIT:runner/box.sh" >"$OUT/box.sh"
+git show "$COMMIT:schedule.json" >"$OUT/schedule.json" # what the box runs, for expect.ts
 bun scripts/box-in-container/user-data.ts "$OUT/box.sh" "$BUCKET" "$STAGE" "$KEY" "$COMMIT" "$REGION" >"$OUT/user-data"
 chmod +x "$OUT/user-data"
 
 NAME="ledgermath-box-test-$$"
+NETWORK=(--hostname "$HOSTNAME_EXAMPLE")
+if [ -n "$FAKE_IMDS_TYPE" ]; then
+  # The box joins this container's network namespace, and with it its host
+  # name; only that namespace has 169.254.169.254 on its loopback.
+  IMDS_NAME="$NAME-imds"
+  cp "$HERE/fake-imds.py" "$OUT/stubs/"
+  docker run -d --name "$IMDS_NAME" --hostname "$HOSTNAME_EXAMPLE" --cap-add NET_ADMIN \
+    -v "$OUT/stubs/fake-imds.py:/fake-imds.py:ro" "$IMAGE" python3 /fake-imds.py "$FAKE_IMDS_TYPE" >/dev/null
+  trap 'docker rm -f "$IMDS_NAME" >/dev/null 2>&1 || true' EXIT
+  until docker logs "$IMDS_NAME" 2>&1 | grep -q answering; do
+    if [ "$(docker inspect -f '{{.State.Running}}' "$IMDS_NAME")" != true ]; then
+      docker logs "$IMDS_NAME" >&2
+      echo "the fake IMDS did not start" >&2
+      exit 1
+    fi
+    sleep 0.5
+  done
+  NETWORK=(--network "container:$IMDS_NAME")
+  echo "a fake IMDS says the box is an $FAKE_IMDS_TYPE"
+fi
 echo "booting $COMMIT in $IMAGE, scenario $SCENARIO"
-docker run -d --name "$NAME" --hostname "$HOSTNAME_EXAMPLE" "${ENVIRONMENT[@]}" \
+docker run -d --name "$NAME" "${NETWORK[@]}" "${ENVIRONMENT[@]}" \
   -v "$OUT/s3:/fake-s3" \
   -v "$OUT/calls:/fake-calls" \
   -v "$OUT/stubs/aws:/usr/local/bin/aws:ro" \
@@ -138,6 +184,10 @@ esac
 status="$(docker wait "$NAME")"
 docker logs "$NAME" >"$OUT/console.log" 2>&1
 docker rm "$NAME" >/dev/null
+if [ -n "$FAKE_IMDS_TYPE" ]; then
+  docker logs "$IMDS_NAME" >"$OUT/fake-imds.log" 2>&1
+  docker rm -f "$IMDS_NAME" >/dev/null
+fi
 # The container wrote as root.
 docker run --rm -v "$OUT:/out" "$IMAGE" chown -R "$(id -u):$(id -g)" /out
 
