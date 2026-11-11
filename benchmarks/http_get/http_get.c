@@ -101,7 +101,7 @@ static struct {
     bool any_error;
     uint64_t verified_body_bytes;
     bool have_verified_body_bytes;
-    unsigned statuses[600];
+    unsigned statuses[1000];
     unsigned failures[16];
     SHA256_CTX digests; /* every response's body digest, in order: the elision guard */
 } R;
@@ -937,7 +937,7 @@ static void exchange_events(connection *c, const request *rq, exchange *x, unsig
     SHA256(g_body, resp->body_len, digest);
     SHA256_Update(&R.digests, digest, sizeof(digest));
     R.responses++;
-    if (resp->status < 600) R.statuses[resp->status]++;
+    R.statuses[resp->status]++; /* three digits, by the parser */
     bool ok_status = resp->status >= 200 && resp->status < 300;
     static const char *const FRAMING[] = { "none", "length", "chunked", "close" };
     lm_lines_begin(&g_out, "response_ended", x->end.t);
@@ -1220,7 +1220,7 @@ int main(int argc, char **argv) {
     else lm_lines_null(&g_out, "body_bytes");
     lm_lines_bool(&g_out, "body_mismatch", R.body_mismatch);
     lm_lines_object(&g_out, "statuses");
-    for (unsigned s = 0; s < 600; s++) {
+    for (unsigned s = 0; s < 1000; s++) {
         if (R.statuses[s] == 0) continue;
         char code[8];
         snprintf(code, sizeof(code), "%u", s);
