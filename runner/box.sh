@@ -3,8 +3,9 @@
 # root, on a fresh instance launched with shutdown behaviour "terminate":
 #
 #   set a 45-minute shutdown timer, whatever happens after
-#   install the compiler, the static C library and the dump's tools
-#   fetch and unpack the source archive, a `git archive` of one commit
+#   install the compilers, the static C library, cmake and the dump's tools
+#   fetch and unpack the source archive, a `git archive` of one commit, and
+#   fetch AWS-LC's source archive for http_get's build
 #   build the cpuid and fixture tools
 #   prepare the disks (runner/provision.py): the instance's own NVMe disk, if
 #   it has one, gets an XFS file system, and the disk Fixtures are made;
@@ -27,6 +28,7 @@
 #   LEDGERMATH_SOURCE_KEY     the key of the source archive in that bucket
 #   LEDGERMATH_SOURCE_COMMIT  the commit the archive was made from
 #   AWS_DEFAULT_REGION        for the aws CLI
+#   LEDGERMATH_FIXTURES_ENDPOINT, _REGION, _ROLE: the s3_fixtures Service (run.py)
 #
 # then the marker line below, then this file without its first line. The box
 # checks that what it is running is runner/box.sh from that commit.
@@ -164,13 +166,15 @@ imds() {
 }
 say "instance=$(imds instance-id) type=$(imds instance-type) image=$(imds ami-id) zone=$(imds placement/availability-zone)"
 
-# The compiler and static C library for the builds; tar and gzip for the
-# source; util-linux for the dump's lscpu, lsblk and findmnt; nvme-cli for
-# the NVMe disks' own records and latency histograms; xfsprogs for the
-# instance store's file system and the dump's xfs_info. Whatever the image
-# already has stays as it is, and the dump lists every package.
-dnf install -y gcc make glibc-static python3 tar gzip util-linux nvme-cli xfsprogs
-say "$(rpm -q system-release gcc glibc-static python3 util-linux nvme-cli xfsprogs | tr '\n' ' ')"
+# The compiler and static C library for the builds; cmake and g++ for
+# AWS-LC, which http_get links; tar and gzip for the source; util-linux for
+# the dump's lscpu, lsblk and findmnt; nvme-cli for the NVMe disks' own
+# records and latency histograms; xfsprogs for the instance store's file
+# system and the dump's xfs_info; ethtool for the network's counters.
+# Whatever the image already has stays as it is, and the dump lists every
+# package.
+dnf install -y gcc gcc-c++ cmake make glibc-static python3 tar gzip util-linux nvme-cli xfsprogs ethtool
+say "$(rpm -q system-release gcc gcc-c++ cmake glibc-static python3 nvme-cli xfsprogs ethtool | tr '\n' ' ')"
 
 rm -rf "$SRC" "$OUT"
 mkdir -p "$SRC"
@@ -194,6 +198,9 @@ if [ "$RUNNING" != "$COMMITTED" ]; then
 fi
 
 cc -O2 -o "$WORK/cpuid" "$SRC/runner/cpuid.c"
+# For http_get's build; without it only http_get fails to build.
+if AWS_LC_ARCHIVE="$(sh "$SRC/runner/aws-lc-archive.sh" "$SRC" "$WORK")"; then export AWS_LC_ARCHIVE; fi
+export AWS_LC_JOBS="$(nproc)"
 
 # The disks, before the schedule: what provision.py does and finds is in its
 # record, which every dump holds as the section `provision`. Its failure is
