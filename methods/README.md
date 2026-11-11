@@ -271,9 +271,9 @@ stream holds requests, its problems, its count of counted samples, the counts of
 and failed requests, each phase's exact statistics and tally, each request fact's values
 with the tallies of the requests that had each (none when one value had them all), and the
 failures counted by phase and kind. Its size grows with the bins a Run's times fall in, at
-most 64 per doubling, never with the number of requests: 5 KB for a Run of 200 requests
-over one connection, 16 KB over new connections. The pooled figures are made from the
-records alone.
+most 64 per doubling, never with the number of requests: 4 to 21 KB for the 35 real
+`http_get` Runs of 2026-11-11, 9.5 KB on average, against 160 to 750 KB of stream; 305 bytes
+for a stream that holds no request. The pooled figures are made from the records alone.
 
 ### What it writes
 

@@ -843,13 +843,17 @@ A migrated benchmark is done only when **all** of these hold:
   requests (time charts of each Run's median, 95th and 99th of the whole request and of the
   first byte, cumulative distributions with the tail given room, breakdowns, failures); the
   lookup tool, citations (`[lm:requests/<id>/<phase>/<stat>@v1,<moment>]`), checker and skill
-  learn the new figures. On the ten real Runs of 2026-11-11 21:33 to 21:38 UTC: 1,680
-  requests, none failed; 4 KiB over a new connection 27.3 and 27.9 ms at the median and 43.9
-  and 37.6 ms at the 99th (m5.large, c8a.2xlarge), each 99th resting on the 2 slowest of 200
-  requests. The brief's first look gave 54 and 47 ms for those: it took the 199th of 200
-  times, where R type 7 puts the 99th between the 198th and 199th, 1% of the way. The
-  front ends at 52.219.0.0/16 connect in 0.28 to 0.39 ms at the median, those at 3.5.0.0/16
-  in 0.46 to 0.91 ms and those at 16.12.0.0/16 in 0.91 to 1.03 ms; the first byte does not
-  differ by block. Records: 3.5 KB (series) and 5 to 16 KB (requests) per `http_get` Run,
-  against 150 to 750 KB of stream.
+  learn the new figures. On the 35 real Runs of 2026-11-11 (the two boots started by hand
+  at 21:23 UTC and the 22:10 round on all five types): 5,880 requests, none failed. 4 KiB
+  over a new connection, pooled per instance type: 27.4 to 28.7 ms at the median, 33.4 to
+  35.4 ms at the 95th, 38.7 to 59.0 ms at the 99th, each 99th resting on the 2 slowest
+  requests of a Run. The brief's first look gave 47 and 54 ms at the 99th for the two Runs
+  by hand, whose 99th by R type 7 is 37.8 and 43.9 ms: it took the 199th of 200 times, where
+  type 7 puts the 99th 1% of the way from the 198th to the 199th. 81% of the new
+  connections went to 3.5.0.0/16, 17% to 52.219.0.0/16 and 3% to 16.12.0.0/16; 52.219.0.0/16
+  connects in 0.20 to 0.46 ms at the median where 3.5.0.0/16 takes 0.48 to 1.15 ms and
+  16.12.0.0/16 0.85 to 1.06 ms, and its TLS handshake is 0.3 to 0.5 ms shorter; the first
+  byte does not differ by block. ChaCha20 was negotiated 4 times, all on c8i.2xlarge.
+  Records: 784 KB for the 503 Runs (9.5 KB per `http_get` Run for this Method, 3 KB for
+  `series`, 0.3 and 0.4 KB for any other), against 19.8 MB of stdout blobs.
 - _(agents: append your entry here, one per merged benchmark)_
