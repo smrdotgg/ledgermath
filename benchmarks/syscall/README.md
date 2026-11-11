@@ -56,11 +56,18 @@ and `stat`.
   measured, and the filesystem behind it is observed. July's was the constant `/tmp`, the
   scheduled value. The measured function now loads the path from memory instead of using
   a constant address: one load beside the system call.
+- **Static linking moves two of the numbers slightly.** Static glibc 2.34 still answers
+  `gettimeofday` through the vDSO, but through a wrapper that loads the vDSO function's
+  address and calls it, where a dynamic binary's `gettimeofday` resolves to the vDSO
+  function itself. And `syscall()` is now called directly, where July's dynamic binary
+  called it through the PLT. On the development machine (Ice Lake, gcc 11.5), July's and
+  this binary run back to back gave `gettimeofday` 21.0 ns against July's 20.5 ns, and
+  `getpid` 106.3 ns against July's 108.4 ns (the fastest sample of several runs each).
+  `getrusage` and `stat` agreed within 0.2%.
 - **What is common to every port:** the output is the event stream
   (`docs/dev-log.md` section 2) instead of July's JSON record, whose `median_ns` is now
   the Method's median of each sample's time over its repetitions. The binary is linked
-  statically; July's was dynamic. Static glibc 2.34 still uses the vDSO for
-  `gettimeofday` and `clock_gettime`. The harness takes samples the way July's did (one
+  statically; July's was dynamic. The harness takes samples the way July's did (one
   repetition, then doubling until a sample lasts a second, then the counted samples at
   that count), but emits the warmup samples July discarded, and takes the count of
   counted samples from `LM_SAMPLES`.
