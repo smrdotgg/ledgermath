@@ -41,6 +41,14 @@ interface Outcome {
 	status: number;
 	environHoldsAKey: boolean;
 	argvHoldsAKey: boolean;
+	result: {
+		runner_dumpable: number;
+		core_limit_unchanged: boolean;
+		core_limit: [number, number];
+		proc_self_readable: Record<string, boolean>;
+	};
+	/** What each execution's binary found of itself, by n: dumpable (from a child), its /proc owner and uid, its core limit line. */
+	process: Record<string, { dumpable: string; owner: string; core: string }>;
 	runs: RunRecord[];
 	boot: { runs: Execution[]; not_run: Execution[]; build_failures: unknown[]; services?: Record<string, Record<string, string>> };
 	log: string;
@@ -72,11 +80,19 @@ function outcome(name: string): Outcome {
 		received[n] = Object.fromEntries(readdirSync(join(sink, n)).map((variable) => [variable, readFileSync(join(sink, n, variable), "utf8").trimEnd()]));
 	}
 	const calls = join(directory, "aws-calls.log");
+	const processDir = join(directory, "process");
+	const process: Outcome["process"] = {};
+	for (const name of existsSync(processDir) ? readdirSync(processDir) : []) {
+		const [n, what] = name.split(".") as [string, "dumpable" | "owner" | "core"];
+		process[n] = { ...(process[n] ?? { dumpable: "", owner: "", core: "" }), [what]: readFileSync(join(processDir, name), "utf8").trim() };
+	}
 	const found: Outcome = {
 		directory,
 		status: result.status,
 		environHoldsAKey: result.environ_holds_a_key,
 		argvHoldsAKey: result.argv_holds_a_key,
+		result,
+		process,
 		runs: jsonUnder<RunRecord>(join(directory, "out", "runs")).sort((a, b) => a.started_at.localeCompare(b.started_at)),
 		boot,
 		log: readFileSync(join(directory, "log"), "utf8"),
@@ -165,6 +181,49 @@ describe("an entry that measures a Service, when the keys are had", () => {
 			// The search is not vacuous: the keys did reach the binary, and the search finds them where they are.
 			expect(Object.values(o.received["2"] ?? {})).toContain(SECRETS.aws_session_token);
 			expect(findSecrets([join(o.directory, "sink")], SECRETS).length).toBeGreaterThan(0);
+		},
+		SLOW,
+	);
+});
+
+describe("the runner, which holds the keys in memory", () => {
+	test(
+		"marks itself not dumpable, leaves every resource limit as it was, and can still read what the dump reads of itself",
+		() => {
+			const { result } = outcome("keys");
+			expect(result.runner_dumpable).toBe(0);
+			expect(result.core_limit_unchanged).toBe(true);
+			expect(result.proc_self_readable).toEqual({ "/proc/self/limits": true, "/proc/self/cgroup": true, "/proc/self/mountinfo": true });
+		},
+		SLOW,
+	);
+
+	test(
+		"starts benchmarks that are as dumpable as before, with its own core-file limit: the flag is not inherited across exec",
+		() => {
+			const { result, process } = outcome("keys");
+			const limit = (value: number): string => (value === -1 ? "unlimited" : String(value));
+			expect(Object.keys(process).sort()).toEqual(["1", "2", "3"]);
+			for (const one of Object.values(process)) {
+				expect(one.dumpable).toBe("1");
+				const [owner, uid] = one.owner.split(" ");
+				expect(owner).toBe(uid as string);
+				expect(one.core.split(/\s{2,}/).slice(1, 3)).toEqual(result.core_limit.map(limit));
+			}
+		},
+		SLOW,
+	);
+
+	test(
+		"asks for no keys when it could not mark itself not dumpable, and says so",
+		() => {
+			const o = outcome("undumpable");
+			expect(o.runs.map(n)).toEqual([1]);
+			expect(o.awsCalls).toEqual([]);
+			for (const execution of o.boot.not_run) {
+				expect(execution.reason).toContain("no keys are asked for: this runner could not mark itself not dumpable");
+			}
+			expect(o.log).toContain("warning: prctl(PR_SET_DUMPABLE, 0) failed: a stand-in failure; no Service's keys will be asked for");
 		},
 		SLOW,
 	);

@@ -31,19 +31,22 @@ s3_fixtures.
     no-values     run.py is given no s3_fixtures values: not run, aws never called
     text          no Service: plain (n=1), and n=6, whose binary prints a line that is
                   not JSON before verified
+    undumpable    the runner cannot mark itself not dumpable: no keys are asked for
 
 The keys are stand-ins, not credentials; each must still reach the measured
 executions' environment and nowhere else.
 """
 
+import ctypes
 import importlib.util
 import json
 import os
+import resource
 import sys
 import tarfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-CASES = ("keys", "refused", "garbled", "unshaped", "no-values", "text")
+CASES = ("keys", "refused", "garbled", "unshaped", "no-values", "text", "undumpable")
 
 KEY_ID = "ASIAQSTANDINTESTKEY7"
 SECRET = "stand+in/Secret/Access/Key/0123456789abcdefghijk"
@@ -66,6 +69,13 @@ METADATA = {
 FAKE = r'''#!/bin/sh
 sink="$(dirname "$0")/../../../../../sink/$LM_PARAM_N"
 mkdir -p "$sink"
+# Whether this process is dumpable, and its core-file limit, beside the sink.
+process="$(dirname "$0")/../../../../../process"
+mkdir -p "$process"
+python3 -I -c 'import ctypes; print(ctypes.CDLL(None).prctl(3, 0, 0, 0, 0))' > "$process/$LM_PARAM_N.dumpable"
+grep "^Max core file size" /proc/self/limits > "$process/$LM_PARAM_N.core"
+# The kernel gives a process's /proc directory to root while it is not dumpable.
+echo "$(stat -c %u /proc/$$) $(id -u)" > "$process/$LM_PARAM_N.owner"
 for name in $(env | sed -n 's/^\(LM_SERVICE_[A-Z_]*\)=.*/\1/p' | sort); do
   printenv "$name" > "$sink/$name"
 done
@@ -143,6 +153,9 @@ def main():
     run.Imds.section = lambda self: {"stub": "IMDS is stubbed in this test"}
     run.dump_sections = lambda cpuid_tool, imds: {"kernel": {"stub": "the dump is stubbed in this test"}}
     run.ec2_sections = lambda imds: {"ec2_instance": {"stub": "the EC2 API is stubbed in this test"}}
+    if case == "undumpable":
+        run.mark_not_dumpable = lambda: "prctl(PR_SET_DUMPABLE, 0) failed: a stand-in failure"
+    core_before = resource.getrlimit(resource.RLIMIT_CORE)
 
     os.environ["PATH"] = os.path.join(directory, "bin") + os.pathsep + os.environ["PATH"]
     for variable in ("ENDPOINT", "REGION", "ROLE"):
@@ -165,9 +178,14 @@ def main():
         os.dup2(saved[0], 1)
         os.dup2(saved[1], 2)
     environ = "\n".join("%s=%s" % item for item in os.environ.items())
+    # What the dump reads of this process, read again now that it is not dumpable.
+    readable = {path: run.read_text(path) is not None for path in ("/proc/self/limits", "/proc/self/cgroup", "/proc/self/mountinfo")}
     with open(os.path.join(directory, "result.json"), "w") as handle:
         json.dump({"status": status, "environ_holds_a_key": any(value in environ for value in SECRETS.values()),
-                   "argv_holds_a_key": any(value in " ".join(sys.argv) for value in SECRETS.values())}, handle)
+                   "argv_holds_a_key": any(value in " ".join(sys.argv) for value in SECRETS.values()),
+                   "runner_dumpable": ctypes.CDLL(None).prctl(3, 0, 0, 0, 0),
+                   "core_limit_unchanged": resource.getrlimit(resource.RLIMIT_CORE) == core_before,
+                   "core_limit": list(core_before), "proc_self_readable": readable, "uid": os.getuid()}, handle)
 
 
 if __name__ == "__main__":

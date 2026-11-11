@@ -167,6 +167,8 @@ def main():
 
     real = load()
     calls()
+    # As run.py takes it: after the runner has marked itself not dumpable.
+    undumpable = real.mark_not_dumpable()
     sections = real.dump_sections(None, FakeImds({}))
     with open("/proc/net/route") as handle:
         interface = real.primary_interface(handle.read())
@@ -174,7 +176,9 @@ def main():
                        "kernel_dirty": sorted(k for k in sections["kernel"] if "/proc/sys/vm/dirty" in k),
                        "block_stat": sorted(sections["block_stat"])[:3],
                        "interface": interface, "network": sorted(sections["network"]), "net_counters": sorted(sections["net_counters"]),
-                       "ethtool_calls": [line for line in calls() if line.startswith("-")]}
+                       "ethtool_calls": [line for line in calls() if line.startswith("-")],
+                       "not_dumpable": undumpable is None,
+                       "process": {key: value is not None for key, value in sections["process"].items()}}
     print(json.dumps(results, indent=1, sort_keys=True))
 
 

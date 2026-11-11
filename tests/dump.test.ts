@@ -33,6 +33,8 @@ interface Results {
 		network: string[];
 		net_counters: string[];
 		ethtool_calls: string[];
+		not_dumpable: boolean;
+		process: Record<string, boolean>;
 	};
 }
 
@@ -169,5 +171,12 @@ describe("the network, around every Run", () => {
 		expect(results.dump.ethtool_calls).toEqual([`-i ${name}`, `-S ${name}`]);
 		expect(results.dump.network).toContain(`$ ethtool -i ${name}`);
 		expect(results.dump.net_counters).toContain(`$ ethtool -S ${name}`);
+	});
+});
+
+describe("the dump of a runner that is not dumpable", () => {
+	test("still reads its own limits and cgroup, as a user other than root", () => {
+		expect(results.dump.not_dumpable).toBe(true);
+		expect(results.dump.process).toEqual({ "/proc/self/limits": true, "/proc/self/cgroup": true, allowed_cpus: true });
 	});
 });

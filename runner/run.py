@@ -37,6 +37,7 @@ Runs on the box's own Python (3.9 on Amazon Linux 2023) with no packages.
 """
 
 import argparse
+import ctypes
 import datetime
 import glob
 import hashlib
@@ -79,6 +80,28 @@ def uuid7(unix_ms):
     value |= random_bits & ((1 << 62) - 1)
     text = "%032x" % value
     return "-".join((text[0:8], text[8:12], text[12:16], text[16:20], text[20:32]))
+
+
+PR_SET_DUMPABLE = 4
+
+
+def mark_not_dumpable():
+    """Marks this process not dumpable, prctl(PR_SET_DUMPABLE, 0): a crash
+    leaves no core file, and no other process of the same user may read its
+    memory, which may hold a Service's keys. Resource limits are left as they
+    are: every benchmark inherits them and the dump records them, and the box
+    is stock. The flag is not inherited across execve, so the benchmarks this
+    process starts are as dumpable as before; its own /proc/self files are
+    then owned by root, and the dump's reads of them (limits, cgroup,
+    mountinfo, all readable by anyone) still work. Returns None, or why it
+    could not."""
+    try:
+        libc = ctypes.CDLL(None, use_errno=True)
+        if libc.prctl(PR_SET_DUMPABLE, 0, 0, 0, 0) != 0:
+            return "prctl(PR_SET_DUMPABLE, 0) failed: %s" % os.strerror(ctypes.get_errno())
+    except (OSError, AttributeError) as error:
+        return "prctl(PR_SET_DUMPABLE, 0) is not available: %s" % error
+    return None
 
 
 def sha256_hex(data):
@@ -702,16 +725,21 @@ class S3Fixtures:
 
 
 class Services:
-    """The Services the stage gave this box, by the name a schedule entry uses."""
+    """The Services the stage gave this box, by the name a schedule entry uses.
+    No keys are asked for by a runner that could not mark itself not dumpable
+    (mark_not_dumpable): `undumpable` is None, or why it could not."""
 
-    def __init__(self, fixtures_endpoint, fixtures_region, fixtures_role, boot):
+    def __init__(self, fixtures_endpoint, fixtures_region, fixtures_role, boot, undumpable=None):
         given = [fixtures_endpoint, fixtures_region, fixtures_role]
         self.fixtures = S3Fixtures(*given) if all(given) else None
         self.session_name = ("ledgermath-" + boot)[:64] if boot else "ledgermath-box"
+        self.undumpable = undumpable
 
     def inputs(self, name):
         if name != S3_FIXTURES:
             raise ServiceUnavailable("this runner knows no Service named %r" % name)
+        if self.undumpable is not None:
+            raise ServiceUnavailable("no keys are asked for: this runner could not mark itself not dumpable (%s)" % self.undumpable)
         if self.fixtures is None:
             raise ServiceUnavailable("the stage gave this box no s3_fixtures values (LEDGERMATH_FIXTURES_ENDPOINT, "
                                      "LEDGERMATH_FIXTURES_REGION and LEDGERMATH_FIXTURES_ROLE)")
@@ -856,6 +884,10 @@ def main():
         parser.add_argument("--fixtures-" + name, default=os.environ.get("LEDGERMATH_FIXTURES_" + variable) or None,
                             help="the s3_fixtures Service's %s (default: $LEDGERMATH_FIXTURES_%s)" % (name, variable))
     args = parser.parse_args()
+    # First, before anything could hold a key.
+    undumpable = mark_not_dumpable()
+    if undumpable is not None:
+        log("warning: %s; no Service's keys will be asked for" % undumpable)
 
     root = os.path.abspath(args.root)
     out = os.path.abspath(args.out)
@@ -876,7 +908,7 @@ def main():
         % (boot, json.dumps(provider), args.source_commit, source, runner))
     once = boot_sections(blobs, imds, args.provision_record)
     log("taken once for this boot: %s" % ", ".join("%s %s" % item for item in sorted(once.items())))
-    services = Services(args.fixtures_endpoint, args.fixtures_region, args.fixtures_role, boot)
+    services = Services(args.fixtures_endpoint, args.fixtures_region, args.fixtures_role, boot, undumpable)
 
     boot_started = time.time_ns()
     summary = {
