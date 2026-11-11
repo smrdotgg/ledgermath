@@ -91,7 +91,7 @@ export type Resolved =
 	  }
 	| { ok: true; kind: "param"; series: SeriesDerivation; key: string; value: ParamValue }
 	| { ok: true; kind: "price"; path: string; date: string; sku: string; rateCode: string; usd: number; awsUnit: string; unit: Unit | null; description: string }
-	| { ok: true; kind: "range"; path: string; date: string; sku: string; rateCode: string; end: "beginRange" | "endRange"; text: string; awsUnit: string; unit: Unit | null }
+	| { ok: true; kind: "range"; path: string; date: string; sku: string; rateCode: string; end: "beginRange" | "endRange"; text: string; awsUnit: string; unit: Unit | null; description: string }
 	| { ok: true; kind: "attribute"; path: string; date: string; sku: string; name: string; text: string }
 	| { ok: true; kind: "benchmark"; name: string }
 	| { ok: false; reason: string };
@@ -164,7 +164,7 @@ async function resolvePrice(path: string, sku: string, rest: { rateCode?: string
 		const usd = isObject(dimension.pricePerUnit) ? dimension.pricePerUnit.USD : undefined;
 		const awsUnit = String(dimension.unit);
 		if (rest.end !== undefined) {
-			return { ok: true, kind: "range", path, date: prices.date, sku, rateCode, end: rest.end, text: String(dimension[rest.end]), awsUnit, unit: parseUnit(awsUnit) };
+			return { ok: true, kind: "range", path, date: prices.date, sku, rateCode, end: rest.end, text: String(dimension[rest.end]), awsUnit, unit: parseUnit(awsUnit), description: String(dimension.description) };
 		}
 		return { ok: true, kind: "price", path, date: prices.date, sku, rateCode, usd: Number(usd), awsUnit, unit: parseUnit(awsUnit), description: String(dimension.description) };
 	}

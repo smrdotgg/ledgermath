@@ -7,7 +7,7 @@ import { checkAnswer, type CheckReport, type NumberStatus } from "../scripts/lib
 import { NUMBERS, seriesMoment, statAt } from "../scripts/lib/citation";
 import { type LedgerData, loadLedger, openLocation } from "../scripts/lib/ledger-data";
 import { findPrices, type PriceMatch } from "../scripts/lib/lookup";
-import { agrees, numberWords, parseUnit, quantities } from "../scripts/lib/quantity";
+import { agrees, parseUnit, quantities, quantityWords } from "../scripts/lib/quantity";
 import { type Fixture, makeFixture } from "./lookup-fixtures";
 
 setDefaultTimeout(60_000);
@@ -75,8 +75,12 @@ describe("reading numbers", () => {
 		expect(agrees(tier as never, 0.085 / 1e9, { USD: 1, B: -1 })).toBe(false);
 	});
 
-	test("number words are found", () => {
-		expect(numberWords("thirty million requests, twice a day, half the bandwidth").map((w) => w.word)).toEqual(["thirty", "million", "twice", "half"]);
+	test("number words state a quantity only with a magnitude word or a unit after them", () => {
+		const phrases = (text: string): string[] => quantityWords(text).map((w) => w.phrase);
+		expect(phrases("thirty million requests per second")).toEqual(["thirty million"]);
+		expect(phrases("two GB per player, five seconds, ten percent, a thousand machines")).toEqual(["two", "five", "ten", "thousand"]);
+		expect(phrases("one hundred and twenty players, thirty-two GiB")).toEqual(["one hundred and twenty", "thirty-two"]);
+		expect(phrases("Two limits apply to two machines and two c6i.8xlarge instances; thousands of players, two us-east-2 boxes")).toEqual([]);
 	});
 });
 
@@ -331,6 +335,86 @@ describe("a tier's range", () => {
 	});
 });
 
+/**
+ * What careful writers wrote in the trial of 2026-11-11 that the checker
+ * rejected: each harmless form passes, and its nearest harmful neighbour
+ * still fails.
+ */
+describe("what a careful writer writes", () => {
+	const fails = async (answer: string, question = ""): Promise<string[]> => (await checkAnswer(answer, data, question)).problems.map((p) => p.message);
+
+	test("number words: prose and the question's own words pass; a quantity in words fails", async () => {
+		expect(await fails("Two limits apply: we need two machines.")).toEqual([]);
+		expect(await fails("The two c6i.8xlarge instances share a zone.", "What is the latency between two c6i.8xlarge instances?")).toEqual([]);
+		expect(await fails("The server handles thirty million requests per second.")).toEqual(['"thirty million" states a quantity in words; write it in digits, so it can be checked']);
+		expect(await fails("Each player downloads two GB.")).toEqual(['"two" states a quantity in words; write it in digits, so it can be checked']);
+		expect(await fails("Each player downloads five GB.", "What do two c6i.8xlarge instances cost?")).toHaveLength(1);
+	});
+
+	test("dates with a month's name and a price file's path pass; a number beside them still counts", async () => {
+		expect(await fails("Prices of November 11, 2026 (11 November 2026, Nov. 11 2026, November 2026), from prices/2026/11/11/aws.json and kit/data/prices/2026/11/11/aws.json.")).toEqual([]);
+		expect(await fails("In November 2026 we need 11 machines.")).toEqual(['"11" is not accounted for: no citation or assumption after it; not in the question; not the result of arithmetic; not a repeat of a number accounted for']);
+		expect(await fails("November 30 instances are needed.")).toHaveLength(1);
+		expect(await fails("prices/2026/11/11/aws.json lists 777 GB.")).toHaveLength(1);
+	});
+
+	test("a Run linked by a relative path passes; one under a host does not", async () => {
+		const c = context();
+		const path = c.tcp.runs[0]?.path as string;
+		const base = `${c.time} ns ${c.timeCitation}\n`;
+		for (const link of [`../../kit/data/${path}`, `kit/data/${path}`, `[the Run](../data/${path})`]) expect(await fails(base + link), link).toEqual([]);
+		for (const link of [`example.com/${path}`, `//example.com/${path}`, `/srv/data/${path}`, `https://example.com/${path}`]) {
+			expect((await fails(base + link)).some((m) => m.startsWith(`Run link: ${link} is neither`)), link).toBe(true);
+		}
+	});
+
+	test("a range writes its unit once; an end with a unit of its own keeps it", async () => {
+		const c = context();
+		const inputs = `p5 ${memoryRate(c, "p5").toFixed(2)} GB/s ${memoryCitation(c, "p5")}\np95 ${memoryRate(c, "p95").toFixed(2)} GB/s ${memoryCitation(c, "p95")}\n${c.memory.runs[0]?.path}\n`;
+		expect(await fails(`${inputs}Range: ${memoryRate(c, "p5").toFixed(2)} to ${memoryRate(c, "p95").toFixed(2)} GB/s.`)).toEqual([]);
+		expect(await fails(`${inputs}Range: ${memoryRate(c, "p5").toFixed(2)} GB to ${memoryRate(c, "p95").toFixed(2)} GB/s.`)).toHaveLength(1);
+		const prices = `m5.large: $0.096 per hour ${c.price.citation}\nc6i.8xlarge: $1.36 per hour [lm:prices/2026/11/11/aws.json#NKB8DU47ZKKBXW65/NKB8DU47ZKKBXW65.JRTCKXETXF.6YS6EN2CT7]\n`;
+		expect(await fails(`${prices}From $0.096 to $1.36 per hour.`)).toEqual([]);
+		expect(await fails(`${prices}From $0.096 per month to $1.36 per hour.`)).toHaveLength(1);
+	});
+
+	test("AWS's words quoted verbatim beside their citation pass; an altered quote, or one away from it, does not", async () => {
+		const c = context();
+		expect(await fails(`GET costs $0.0000004 per request ${c.get.citation}, in AWS's words "${c.get.description}".`)).toEqual([]);
+		expect(await fails(`GET costs $0.0000004 per request ${c.get.citation}, in AWS's words \u201c${c.get.description}\u201d.`)).toEqual([]);
+		expect(await fails(`GET costs $0.0000004 per request ${c.get.citation}, in AWS's words "$0.004 per 1,000 GET and all other requests".`)).not.toEqual([]);
+		expect(await fails(`GET costs $0.0000004 per request ${c.get.citation}.\nIn AWS's words: "${c.get.description}".`)).not.toEqual([]);
+	});
+
+	test("a whole number right after a label word is a label; a quantity there is not", async () => {
+		const c = context();
+		expect(await fails(`Tier 1 price: $0.096 per hour ${c.price.citation}\nStep 2, Scenario 3, Option 4, Case 5, Phase 6, Line 7, Table 8, Figure 9 and Section 10 hold nothing.`)).toEqual([]);
+		expect(await fails("Case 777 GB/s is the worst.")).toHaveLength(1);
+		expect(await fails("Tier 1 needs 777 machines.")).toHaveLength(1);
+	});
+
+	test("a marker wrapped onto the next line is read to its bracket; one never closed is a problem", async () => {
+		expect(await fails("Update size: 20 GB [assumption: my guess for a\n  large game's patch].")).toEqual([]);
+		const wrapped = "Price: $1.36 per hour [lm:prices/2026/11/11/aws.json#NKB8DU47ZKKBXW65/\nNKB8DU47ZKKBXW65.JRTCKXETXF.6YS6EN2CT7].";
+		expect(await fails(wrapped)).toEqual([]);
+		const open = await fails("Update size: 20 GB [assumption: my guess\n\nNext paragraph.");
+		expect(open.some((m) => m.endsWith("it has no closing ]"))).toBe(true);
+	});
+
+	test("key=value of a cited Series is its parameter text; any other is a number", async () => {
+		const c = context();
+		const cited = `tcp_echo, \`size_bytes=32768\`: ${c.time / 1000} µs ${c.timeCitation}\n${c.links}`;
+		expect(await fails(cited)).toEqual([]);
+		expect(await fails(cited.replace("size_bytes=32768", "size_bytes=65536"))).toHaveLength(1);
+		expect(await fails("tcp_echo was run with `size_bytes=32768`.")).toHaveLength(1);
+	});
+
+	test("two numbers without dimensions repeat each other only in the same unit", async () => {
+		expect(await fails("Conversion: 1000 GB per TB [assumption: decimal prefixes].\nWe need 1 machine.")).toHaveLength(1);
+		expect(await fails("Share kept: 50% [assumption: a guess].\nThat is 50% of the bandwidth.")).toEqual([]);
+	});
+});
+
 describe("links, markers and what is not a number", () => {
 	test("a Run link is the bare path or its address in the Runs repository; the bytes must be the Derivation's", async () => {
 		const c = context();
@@ -339,9 +423,11 @@ describe("links, markers and what is not a number", () => {
 		for (const link of [path, `https://github.com/smrdotgg/ledgermath-runs/blob/main/${path}`, `https://raw.githubusercontent.com/smrdotgg/ledgermath-runs/main/${path}`, `[the Run](${path})`]) {
 			expect((await checkAnswer(base + link, data)).pass, link).toBe(true);
 		}
-		for (const link of [`https://example.com/${path}`, `./${path}`, `https://github.com/someone/else/blob/main/${path}`]) {
+		for (const link of [`https://example.com/${path}`, `https://github.com/someone/else/blob/main/${path}`]) {
 			const report = await checkAnswer(base + link, data);
-			expect(report.problems.map((p) => p.message), link).toContain(`Run link: ${link} is neither the bare path ${path} nor its address in the Runs repository (https://github.com/smrdotgg/ledgermath-runs/blob/main/${path})`);
+			expect(report.problems.map((p) => p.message), link).toContain(
+				`Run link: ${link} is neither the bare path ${path}, a relative path ending with it, nor its address in the Runs repository (https://github.com/smrdotgg/ledgermath-runs/blob/main/${path})`,
+			);
 		}
 		const full = join(fixture.directory, path);
 		const original = readFileSync(full, "utf8");

@@ -301,12 +301,63 @@ export function quantities(text: string): Quantity[] {
 	return found;
 }
 
-/** Number words a quantity is written in, which the checker reports: the skill asks for digits. */
-const NUMBER_WORD =
-	/\b(zero|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundreds?|thousands?|millions?|billions?|trillions?|dozens?|twice|half)\b/gi;
+const SMALL_WORDS = new Set(
+	"zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty thirty forty fifty sixty seventy eighty ninety dozen".split(" "),
+);
+const MAGNITUDE_WORDS = new Set(["hundred", "thousand", "million", "billion", "trillion"]);
+const PLURAL_MAGNITUDES = new Set(["hundreds", "thousands", "millions", "billions", "trillions", "dozens"]);
 
-export function numberWords(text: string): Array<{ word: string; start: number }> {
-	return [...text.matchAll(NUMBER_WORD)].map((m) => ({ word: m[0], start: m.index }));
+/**
+ * Number words that state a quantity, which the checker reports, since the
+ * skill asks for digits: a run of number words ("thirty", "thirty-two",
+ * "one hundred and twenty") that holds a magnitude word (hundred, thousand,
+ * million, billion, trillion), or that is followed by a unit the checker
+ * knows ("two GB", "five seconds", "ten percent"). Other
+ * number words in prose ("two machines", "two limits apply") are words, and
+ * so are vague plurals ("thousands of players").
+ */
+export function quantityWords(text: string): Array<{ phrase: string; words: string[]; start: number }> {
+	const found: Array<{ phrase: string; words: string[]; start: number }> = [];
+	const words = [...text.matchAll(/[A-Za-z]+/g)];
+	let k = 0;
+	while (k < words.length) {
+		const first = words[k] as RegExpMatchArray;
+		if (!SMALL_WORDS.has(first[0].toLowerCase()) && !MAGNITUDE_WORDS.has(first[0].toLowerCase())) {
+			k++;
+			continue;
+		}
+		const group = [first];
+		let j = k + 1;
+		for (; j < words.length; j++) {
+			const w = words[j] as RegExpMatchArray;
+			const lower = w[0].toLowerCase();
+			const prev = group[group.length - 1] as RegExpMatchArray;
+			const between = text.slice((prev.index as number) + prev[0].length, w.index);
+			if (lower === "and" && /^\s+$/.test(between)) {
+				const after = words[j + 1];
+				if (after !== undefined && (SMALL_WORDS.has(after[0].toLowerCase()) || MAGNITUDE_WORDS.has(after[0].toLowerCase()))) continue;
+				break;
+			}
+			if (!/^[\s-]+$/.test(between) && !(between.trim() === "and")) break;
+			if (!SMALL_WORDS.has(lower) && !MAGNITUDE_WORDS.has(lower)) break;
+			group.push(w);
+		}
+		const last = group[group.length - 1] as RegExpMatchArray;
+		const end = (last.index as number) + last[0].length;
+		// The next word, whole: not the start of us-east-2 or c6i.8xlarge, though a full stop may end it.
+		const next = /^[\s-]+([A-Za-zµμ%]+)(?![A-Za-z0-9]|[.-][A-Za-z0-9])/.exec(text.slice(end))?.[1];
+		const magnitude = group.some((w) => MAGNITUDE_WORDS.has(w[0].toLowerCase()));
+		const unit =
+			next !== undefined &&
+			!PLURAL_MAGNITUDES.has(next.toLowerCase()) &&
+			(unitAtom(next) !== null || /^percent$/i.test(next));
+		if (magnitude || unit) {
+			const start = first.index as number;
+			found.push({ phrase: text.slice(start, end), words: group.map((w) => w[0].toLowerCase()), start });
+		}
+		k = j;
+	}
+	return found;
 }
 
 export function sameUnit(a: Pick<Unit, "dims" | "factor">, b: Pick<Unit, "dims" | "factor">): boolean {

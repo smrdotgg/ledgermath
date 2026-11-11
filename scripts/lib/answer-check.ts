@@ -19,27 +19,36 @@
  *
  * Inside a line of arithmetic, a pure unit-conversion constant (CONSTANTS)
  * may be an operand. Anything else is a problem, and so are: a citation or
- * assumption marker that does not parse, a number written in words, a Run
- * link that is neither the bare path nor the Runs repository's address of it
- * (or one that names no Run of the data, or a file whose bytes differ from
- * the Derivation's), and a cited Series none of whose Runs the answer links.
+ * assumption marker that does not parse (a marker is read to its closing
+ * bracket, across a line break, but not past a blank line or the next
+ * marker), a quantity written in words (quantityWords: with a magnitude word,
+ * or before a unit, unless every word is in the question), a Run link that is
+ * neither the bare path, a relative path ending with it, nor the Runs
+ * repository's address of it (or one that names no Run of the data, or a file
+ * whose bytes differ from the Derivation's), and a cited Series none of whose
+ * Runs the answer links.
  *
- * Not numbers: what is inside a citation or marker, Run links and other web
- * addresses, dates and times of day (2026-11-11, 04:10), ids and hashes,
- * the numbers of list items, headings and footnotes, and digits inside a
- * name (c6i.8xlarge, p50, gp3, 8375C).
+ * Not numbers: what is inside a citation or marker; a quotation that is
+ * verbatim text of a price record (its description, or the catalog words)
+ * cited on the same line; Run links, price files' paths and web addresses;
+ * dates (2026-11-11, November 11, 2026, 11 November 2026) and times of day;
+ * ids and hashes; the numbers of list items, headings and footnotes; a whole
+ * number right after a label word ("Tier 1", "Step 2"); key=value text that is
+ * a parameter, with its value, of a Series the answer cites; and digits
+ * inside a name (c6i.8xlarge, p50, gp3, 8375C).
  *
  * A written number stands for every value that rounds to it at its last
  * written digit: $0.10 for $0.096, 112 MB/s for 112.269 MB/s, 130 for 129.5 to
- * 130.5. A number with no unit before a range word and a number with one
- * ("13.2 to 14.0 GB/s") takes that unit.
+ * 130.5. A range writes its unit once: an end with no unit, or with only $,
+ * takes the other end's ("13.2 to 14.0 GB/s", "$92.48 to $104.72 per hour").
+ * Two numbers without dimensions repeat each other only in the same unit.
  */
 
 import { createHash } from "node:crypto";
 
 import { citationMismatch, NUMBER_UNIT, type Resolved, resolveCitation, RUN_PATH, seriesMoment } from "./citation";
 import type { LedgerData } from "./ledger-data";
-import { agrees, type Dims, dimsText, multiply, numberWords, type Quantity, quantities, sameDims } from "./quantity";
+import { agrees, type Dims, dimsText, multiply, type Quantity, quantities, quantityWords, sameDims } from "./quantity";
 import { RUNS_REPOSITORY } from "./runs-repository";
 
 export type NumberStatus = "question" | "cited" | "assumption" | "derived" | "repeat" | "constant" | "unaccounted";
@@ -87,9 +96,17 @@ const RUNS_REPOSITORY_PREFIXES: readonly RegExp[] = [
 	new RegExp(`^https://raw\\.githubusercontent\\.com/${RUNS_REPOSITORY}/(?:main|[0-9a-f]{40})/$`),
 ];
 
+const MONTH = "(?:January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sept|Sep|Oct|Nov|Dec)";
+
 /** Spans that hold no number of the answer's. */
 const MASKS: readonly RegExp[] = [
 	/https?:\/\/[^\s)\]>]+/g,
+	// A price file's path, in prose or under Sources.
+	/(?:[\w.-]+\/)*prices\/[0-9]{4}\/[0-9]{2}\/[0-9]{2}\/aws\.json/g,
+	// Dates with a month's name and a year: November 11, 2026; 11 November 2026; Nov. 11 2026; November 2026.
+	new RegExp(`\\b${MONTH}\\.?[ \\t]+[0-9]{1,2}(?:st|nd|rd|th)?,?[ \\t]+(?:19|20)[0-9]{2}\\b`, "g"),
+	new RegExp(`\\b[0-9]{1,2}(?:st|nd|rd|th)?[ \\t]+${MONTH}\\.?,?[ \\t]+(?:19|20)[0-9]{2}\\b`, "g"),
+	new RegExp(`\\b${MONTH}\\.?,?[ \\t]+(?:19|20)[0-9]{2}\\b`, "g"),
 	/\b[0-9]{4}-[0-9]{2}-[0-9]{2}(?:[T ][0-9]{2}:[0-9]{2}(?::[0-9]{2}(?:\.[0-9]+)?)?Z?)?/g,
 	/\b[0-9]{1,2}:[0-9]{2}(?::[0-9]{2})?\b/g,
 	/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi,
@@ -102,6 +119,21 @@ const SEPARATOR = /(?<![<>=!~])(?:=(?!=)|≈|→)/g;
 /** Where one clause of a line ends: a semicolon, or a comma, colon or full stop followed by a space. */
 const CLAUSE = /;|[,:.](?=\s)/g;
 const RANGE_WORD = /^\s*(?:to|–|—|-)\s*$/;
+/** A label word right before a number: "Tier 1", "Step 2", "Scenario 3". */
+const LABEL = /\b(?:Tier|Step|Scenario|Option|Case|Phase|Line|Table|Figure|Section)[ \u00a0]$/i;
+/** key=value, as the tool prints a Series' parameters. */
+const PARAMETER = /(?<![\w.\/-])([A-Za-z_][A-Za-z0-9_]*)=([^\s,;)\]}"'`]+)/g;
+
+/**
+ * Whether what comes before a Run's path in a link is nothing, or a relative
+ * path into a directory: no scheme, no leading slash, no host name first.
+ */
+function isRelativePrefix(prefix: string): boolean {
+	if (prefix === "") return true;
+	if (!prefix.endsWith("/") || prefix.includes("://") || prefix.startsWith("/")) return false;
+	const first = prefix.split("/")[0] as string;
+	return !/^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/.test(first);
+}
 
 interface Marker {
 	start: number;
@@ -144,24 +176,42 @@ function blank(text: string, start: number, end: number): string {
 	return text.slice(0, start) + " ".repeat(Math.max(0, end - start)) + text.slice(end);
 }
 
+/**
+ * Every citation and assumption marker in the whole answer, each read to its
+ * closing bracket, across a line break if need be; a marker with no closing
+ * bracket before a blank line or the next marker is unclosed. A line break
+ * inside a citation, which holds no spaces, is dropped; inside an assumption's
+ * source it reads as a space.
+ */
 function findMarkers(text: string): Marker[] {
+	const openings = [
+		...[...text.matchAll(/\[lm:/g)].map((m) => ({ at: m.index, kind: "citation" as const })),
+		...[...text.matchAll(/\[assumption\b/gi)].map((m) => ({ at: m.index, kind: "assumption" as const })),
+	].sort((a, b) => a.at - b.at);
 	const markers: Marker[] = [];
-	for (const m of text.matchAll(/\[lm:/g)) {
-		const close = text.indexOf("]", m.index);
-		const end = close < 0 ? m.index + (/^\S*/.exec(text.slice(m.index))?.[0].length ?? 4) : close + 1;
-		const inside = close < 0 ? text.slice(m.index + 4, end) : text.slice(m.index + 4, close);
-		const malformed = close < 0 ? "it has no closing ]" : /\s/.test(inside) ? "it holds a space" : null;
-		markers.push({ start: m.index, end, kind: "citation", text: text.slice(m.index, end), inside, malformed });
-	}
-	for (const m of text.matchAll(/\[assumption\b/gi)) {
-		const close = text.indexOf("]", m.index);
-		const end = close < 0 ? text.length : close + 1;
-		const body = /^\[assumption:\s*([^\]]*)\]$/i.exec(text.slice(m.index, end));
+	for (const [k, opening] of openings.entries()) {
+		const start = opening.at;
+		const nextOpening = openings[k + 1]?.at ?? text.length;
+		const blankLine = text.indexOf("\n\n", start);
+		const limit = Math.min(nextOpening, blankLine < 0 ? text.length : blankLine);
+		const close = text.indexOf("]", start);
+		const closed = close >= 0 && close < limit;
+		if (opening.kind === "citation") {
+			const end = closed ? close + 1 : start + (/^\S*/.exec(text.slice(start))?.[0].length ?? 4);
+			const inside = text.slice(start + 4, closed ? close : end).replace(/[ \t]*\n[ \t]*/g, "");
+			const malformed = !closed ? "it has no closing ]" : /\s/.test(inside) ? "it holds a space" : null;
+			markers.push({ start, end, kind: "citation", text: closed ? `[lm:${inside}]` : text.slice(start, end), inside, malformed });
+			continue;
+		}
+		const lineEnd = text.indexOf("\n", start);
+		const end = closed ? close + 1 : lineEnd < 0 ? text.length : lineEnd;
+		const joined = text.slice(start, end).replace(/\s*\n\s*/g, " ");
+		const body = /^\[assumption:\s*([^\]]*)\]$/i.exec(joined);
 		const source = body?.[1]?.trim() ?? "";
-		const malformed = close < 0 ? "it has no closing ]" : body === null ? "it is not [assumption: <source>]" : !/\p{L}{2,}/u.test(source) ? "its source has no words" : null;
-		markers.push({ start: m.index, end, kind: "assumption", text: text.slice(m.index, end), inside: source, malformed });
+		const malformed = !closed ? "it has no closing ]" : body === null ? "it is not [assumption: <source>]" : !/\p{L}{2,}/u.test(source) ? "its source has no words" : null;
+		markers.push({ start, end, kind: "assumption", text: joined, inside: source, malformed });
 	}
-	return markers.sort((a, b) => a.start - b.start);
+	return markers;
 }
 
 /** The whole token a Run path is written in: from the last space, (, <, quote or backtick before it. */
@@ -189,6 +239,16 @@ function questionQuantities(question: string): Quantity[] {
 
 const isAccounted = (n: Num): boolean =>
 	n.status === "question" || n.status === "cited" || n.status === "assumption" || n.status === "derived" || n.status === "repeat";
+
+/**
+ * Whether two numbers may repeat each other: any with the same dimensions, but
+ * two without dimensions only in the same unit, so that a ratio such as
+ * "1000 GB per TB", which is 1, is not repeated by every bare 1.
+ */
+function sameKind(a: Quantity, b: Quantity): boolean {
+	if (Object.keys(a.unit.dims).length > 0 || Object.keys(b.unit.dims).length > 0) return true;
+	return Math.abs(a.unit.factor - b.unit.factor) <= 1e-12 * Math.max(a.unit.factor, b.unit.factor);
+}
 
 function isConstant(n: Num): boolean {
 	return Object.keys(n.q.unit.dims).length === 0 && n.q.unit.factor === 1 && n.q.written > 0 && CONSTANTS.has(n.q.written);
@@ -391,40 +451,99 @@ export async function checkAnswer(answer: string, data: LedgerData, question = "
 	const citedSeries = new Map<string, number>();
 	const given = questionQuantities(question);
 
-	for (const [index, text] of answer.split(/\r?\n/).entries()) {
+	const text = answer.replace(/\r\n?/g, "\n");
+	const lines = text.split("\n");
+	const lineStarts: number[] = [];
+	for (let i = 0, at = 0; i < lines.length; at += (lines[i] as string).length + 1, i++) lineStarts.push(at);
+	const lineOf = (offset: number): number => {
+		let i = 0;
+		while (i + 1 < lineStarts.length && (lineStarts[i + 1] as number) <= offset) i++;
+		return i;
+	};
+
+	// Markers, read to their closing brackets, blanked wherever they run, and resolved once.
+	const maskedLines = [...lines];
+	const markersByLine = new Map<number, Marker[]>();
+	const resolvedOf = new Map<Marker, Resolved>();
+	for (const marker of findMarkers(text)) {
+		const first = lineOf(marker.start);
+		const last = lineOf(Math.max(marker.start, marker.end - 1));
+		for (let i = first; i <= last; i++) {
+			const from = i === first ? marker.start - (lineStarts[i] as number) : 0;
+			const to = i === last ? marker.end - (lineStarts[i] as number) : (lines[i] as string).length;
+			maskedLines[i] = blank(maskedLines[i] as string, from, to);
+		}
+		const onLine = { ...marker, start: marker.start - (lineStarts[first] as number), end: first === last ? marker.end - (lineStarts[first] as number) : (lines[first] as string).length };
+		markersByLine.set(first, [...(markersByLine.get(first) ?? []), onLine]);
+		if (marker.kind === "citation" && marker.malformed === null) resolvedOf.set(onLine, await resolveCitation(marker.inside, data));
+	}
+	// The parameters of every Series the answer cites: "size_bytes=32768" quoted from the tool is their text.
+	const citedParams = new Map<string, Set<string>>();
+	for (const resolved of resolvedOf.values()) {
+		if (!resolved.ok || (resolved.kind !== "measured" && resolved.kind !== "param")) continue;
+		for (const [key, value] of Object.entries(resolved.series.series.params)) citedParams.set(key, new Set([...(citedParams.get(key) ?? []), String(value)]));
+	}
+	const questionWords = new Set((question.toLowerCase().match(/[a-z]+/g) ?? []) as string[]);
+
+	for (const index of lines.keys()) {
 		const line = index + 1;
-		let masked = text;
-		const markers = findMarkers(text);
-		for (const marker of markers) masked = blank(masked, marker.start, marker.end);
+		let masked = maskedLines[index] as string;
+		const markers = markersByLine.get(index) ?? [];
+
+		// A quotation verbatim from a price record cited on this line is AWS's words, not numbers of the answer.
+		const recordTexts = markers.flatMap((marker) => {
+			const resolved = resolvedOf.get(marker);
+			if (resolved === undefined || !resolved.ok) return [];
+			if (resolved.kind === "price" || resolved.kind === "range") return [resolved.description];
+			if (resolved.kind === "attribute") return [resolved.text];
+			return [];
+		});
+		for (const m of masked.matchAll(/"([^"]+)"|“([^”]+)”/g)) {
+			const quoted = (m[1] ?? m[2] ?? "").trim();
+			if (/[\p{L}\p{N}]/u.test(quoted) && recordTexts.some((record) => record.includes(quoted))) masked = blank(masked, m.index, m.index + m[0].length);
+		}
 		for (const m of masked.matchAll(RUN_PATH)) {
 			const token = linkToken(masked, m.index, m.index + m[0].length);
 			const prefix = token.slice(0, token.length - m[0].length);
-			const ok = prefix === "" || RUNS_REPOSITORY_PREFIXES.some((p) => p.test(prefix)) || (data.location.isUrl && token === data.location.link(m[0]));
-			runLinks.push({ line, link: token, path: m[0], problem: ok ? null : `${token} is neither the bare path ${m[0]} nor its address in the Runs repository (https://github.com/${RUNS_REPOSITORY}/blob/main/${m[0]})` });
+			const ok = isRelativePrefix(prefix) || RUNS_REPOSITORY_PREFIXES.some((p) => p.test(prefix)) || (data.location.isUrl && token === data.location.link(m[0]));
+			runLinks.push({
+				line,
+				link: token,
+				path: m[0],
+				problem: ok ? null : `${token} is neither the bare path ${m[0]}, a relative path ending with it, nor its address in the Runs repository (https://github.com/${RUNS_REPOSITORY}/blob/main/${m[0]})`,
+			});
 			masked = blank(masked, m.index - prefix.length, m.index + m[0].length);
+		}
+		for (const m of masked.matchAll(PARAMETER)) {
+			if (citedParams.get(m[1] as string)?.has(m[2] as string)) masked = blank(masked, m.index, m.index + m[0].length);
 		}
 		for (const pattern of MASKS) for (const m of masked.matchAll(pattern)) masked = blank(masked, m.index, m.index + m[0].length);
 
-		const nums: Num[] = quantities(masked).map((q) => ({
-			line,
-			q,
-			status: null,
-			detail: "",
-			exact: null,
-			problem: null,
-			countsRuns: /^\s*(?:counted\s+)?(?:Runs?|boots?)\b/i.test(masked.slice(q.end)),
-			countCited: false,
-		}));
-		for (const word of numberWords(masked)) {
-			if (nums.some((n) => word.start >= n.q.start && word.start < n.q.end)) continue;
-			problems.push({ line, message: `"${word.word}" is a number written in words; write it in digits, so it can be checked` });
+		const nums: Num[] = quantities(masked)
+			// A plain whole number right after a label word ("Tier 1", "Step 2") is the label's.
+			.filter((q) => !(q.unit.text === "" && q.written > 0 && Number.isInteger(q.written) && !q.text.includes(".") && LABEL.test(masked.slice(0, q.start))))
+			.map((q) => ({
+				line,
+				q,
+				status: null,
+				detail: "",
+				exact: null,
+				problem: null,
+				countsRuns: /^\s*(?:counted\s+)?(?:Runs?|boots?)\b/i.test(masked.slice(q.end)),
+				countCited: false,
+			}));
+		for (const phrase of quantityWords(masked)) {
+			if (nums.some((n) => phrase.start >= n.q.start && phrase.start < n.q.end)) continue;
+			if (phrase.words.every((w) => questionWords.has(w))) continue;
+			problems.push({ line, message: `"${phrase.phrase}" states a quantity in words; write it in digits, so it can be checked` });
 		}
-		// A number with no unit before a range word and a number with one takes that unit.
+		// A range writes its unit once: "13.2 to 14.0 GB/s", "68–77 instances", "$92.48 to $104.72 per hour".
 		for (const [k, n] of nums.entries()) {
 			const next = nums[k + 1];
-			if (next === undefined || n.q.unit.text !== "" || next.q.unit.text === "") continue;
-			const between = masked.slice(n.q.end, next.q.start);
-			if (!RANGE_WORD.test(between)) continue;
+			if (next === undefined || next.q.unit.text === "") continue;
+			const bareDollar = n.q.unit.text === "$" && next.q.unit.dims.USD === 1;
+			if (n.q.unit.text !== "" && !bareDollar) continue;
+			if (!RANGE_WORD.test(masked.slice(n.q.end, next.q.start))) continue;
 			const unit = next.q.unit;
 			n.q = { ...n.q, unit, value: n.q.written * unit.factor };
 		}
@@ -458,7 +577,7 @@ export async function checkAnswer(answer: string, data: LedgerData, question = "
 				}
 				continue;
 			}
-			const resolved = await resolveCitation(marker.inside, data);
+			const resolved = resolvedOf.get(marker) as Resolved;
 			const checked: CheckedCitation = { line, citation: marker.text, resolved: resolved.ok ? describe(resolved) : null, problem: null };
 			citations.push(checked);
 			if (!resolved.ok) {
@@ -474,7 +593,9 @@ export async function checkAnswer(answer: string, data: LedgerData, question = "
 				}
 			}
 			if (target === undefined) {
-				if (!(resolved.ok && resolved.kind === "benchmark")) notes.push({ line, message: `${marker.text} follows no number on its line` });
+				// Words cite no number: a benchmark's description, or AWS's catalog words that hold none.
+				const words = resolved.ok && (resolved.kind === "benchmark" || (resolved.kind === "attribute" && quantities(resolved.text).length === 0));
+				if (!words) notes.push({ line, message: `${marker.text} follows no number on its line` });
 				continue;
 			}
 			if (!resolved.ok) {
@@ -558,7 +679,7 @@ export async function checkAnswer(answer: string, data: LedgerData, question = "
 		}
 		for (const n of all) {
 			if (n.status !== null) continue;
-			const known = all.find((k) => k !== n && isAccounted(k) && (!n.countsRuns || k.countCited) && (agrees(n.q, k.exact ?? k.q.value, k.q.unit.dims) || agrees(n.q, k.q.value, k.q.unit.dims)));
+			const known = all.find((k) => k !== n && isAccounted(k) && (!n.countsRuns || k.countCited) && sameKind(n.q, k.q) && (agrees(n.q, k.exact ?? k.q.value, k.q.unit.dims) || agrees(n.q, k.q.value, k.q.unit.dims)));
 			if (known !== undefined) {
 				n.status = "repeat";
 				n.detail = `the same as "${known.q.text.trim()}" (line ${known.line}, ${known.status})`;
