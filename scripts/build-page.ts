@@ -1,18 +1,22 @@
 /**
  * Builds the page: one static HTML file from a file of Derivations.
  *
- *     bun scripts/build-page.ts DERIVATIONS OUT.html [--run-url-base URL]
+ *     bun scripts/build-page.ts DERIVATIONS OUT.html [--requests REQUESTS_DERIVATIONS] [--run-url-base URL]
  *
  * One chart per Series, every point a link to its Run file in the Runs
- * repository (or under --run-url-base). It opens from disk with no network:
- * no script, no stylesheet, font or image from anywhere; the charts are SVG
- * drawn here. The same Derivations give the same bytes.
+ * repository (or under --run-url-base). With --requests, Method requests v1's
+ * Derivations add a part after every Series (scripts/lib/request-page.ts),
+ * and a link to it after the list of Series; version 1's part is the same
+ * bytes with or without it. It opens from disk with no network: no script, no
+ * stylesheet, font or image from anywhere; the charts are SVG drawn here. The
+ * same Derivations give the same bytes.
  */
 
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { parseArgs } from "node:util";
 
+import type { DerivationsFile as RequestsDerivationsFile } from "../methods/requests/v1/output";
 import type { DerivationsFile, Group, Point, SectionEffect, SeriesDerivation, Stat } from "../methods/v1/output";
 import {
 	bytesPerSecondUnit,
@@ -25,11 +29,14 @@ import {
 	type Unit,
 	withUnit,
 } from "./lib/chart";
+import { renderRequestsPart } from "./lib/request-page";
 import { RUNS_REPOSITORY_BLOB_URL } from "./lib/runs-repository";
 
 export interface PageOptions {
 	/** Prefixed to a Run's path to link to it. */
 	runUrlBase: string;
+	/** Method requests v1's Derivations, for the part after every Series. */
+	requests?: RequestsDerivationsFile;
 }
 
 interface Metric {
@@ -310,6 +317,12 @@ nav ol { columns: 2; font-size: 0.92em; }
 .meta { color: #333; }
 `;
 
+/** The one line version 1's part gains with requests: a link to their part. */
+function requestsLink(requests: RequestsDerivationsFile): string {
+	const n = requests.derivations.length;
+	return `<p class="meta"><a href="#requests">Per request: ${n} Series of requests (Method ${esc(requests.method.name)} v${requests.method.version})</a>, after every Series below: percentiles of each phase across requests, and their distributions.</p>`;
+}
+
 export function renderPage(file: DerivationsFile, options: PageOptions): string {
 	if (file.schema !== "ledgermath.derivations/1" || file.method.name !== "series" || file.method.version !== 1) {
 		throw new Error(`this page knows Method series version 1, not ${JSON.stringify(file.method)}`);
@@ -345,6 +358,7 @@ export function renderPage(file: DerivationsFile, options: PageOptions): string 
 		"<h1>LedgerMath: every Series</h1>",
 		`<p class="meta">Derived by <b>Method ${esc(file.method.name)}, version ${file.method.version}</b>, from ${file.runs_read} Run file${file.runs_read === 1 ? "" : "s"}: ${counted} counted, ${runs.length - counted} failed, ${file.unreadable.length} that do not validate. Newest Run started ${newest === null ? "never" : esc(time(Date.parse(newest)))}. Every point, and every time below, links to its Run file.</p>`,
 		`<nav><h2>${file.derivations.length} Series</h2><ol>${toc.join("")}</ol></nav>`,
+		...(options.requests === undefined ? [] : [requestsLink(options.requests)]),
 		`<details><summary>How the numbers are made (Method ${esc(file.method.name)} v${file.method.version})</summary><dl>${definitions}</dl>`,
 		`<h3>Split on</h3><ul>${facts(file.split_on)}</ul>`,
 		`<h3>Left out of the split</h3><ul>${file.left_out
@@ -354,6 +368,7 @@ export function renderPage(file: DerivationsFile, options: PageOptions): string 
 		`<h3>How often each dump section changed, over every Run</h3>${evidenceTable(file)}</details>`,
 		unreadable,
 		...file.derivations.map((derivation) => seriesSection(derivation, file, options)),
+		...(options.requests === undefined ? [] : [renderRequestsPart(options.requests, { runUrlBase: options.runUrlBase, label: seriesLabel })]),
 		"</body>",
 		"</html>",
 		"",
@@ -361,15 +376,16 @@ export function renderPage(file: DerivationsFile, options: PageOptions): string 
 }
 
 if (import.meta.main) {
-	const { values, positionals } = parseArgs({ options: { "run-url-base": { type: "string" } }, allowPositionals: true });
+	const { values, positionals } = parseArgs({ options: { "run-url-base": { type: "string" }, requests: { type: "string" } }, allowPositionals: true });
 	const [input, output] = positionals;
 	if (!input || !output || positionals.length !== 2) {
-		console.error("usage: bun scripts/build-page.ts DERIVATIONS OUT.html [--run-url-base URL]");
+		console.error("usage: bun scripts/build-page.ts DERIVATIONS OUT.html [--requests REQUESTS_DERIVATIONS] [--run-url-base URL]");
 		process.exit(2);
 	}
 	const file = JSON.parse(readFileSync(input, "utf8")) as DerivationsFile;
-	const html = renderPage(file, { runUrlBase: values["run-url-base"] ?? RUNS_REPOSITORY_BLOB_URL });
+	const requests = values.requests === undefined ? undefined : (JSON.parse(readFileSync(values.requests, "utf8")) as RequestsDerivationsFile);
+	const html = renderPage(file, { runUrlBase: values["run-url-base"] ?? RUNS_REPOSITORY_BLOB_URL, ...(requests === undefined ? {} : { requests }) });
 	mkdirSync(dirname(output), { recursive: true });
 	writeFileSync(output, html);
-	console.log(`${file.derivations.length} Series -> ${output} (${Buffer.byteLength(html)} bytes)`);
+	console.log(`${file.derivations.length} Series${requests === undefined ? "" : `, ${requests.derivations.length} of requests`} -> ${output} (${Buffer.byteLength(html)} bytes)`);
 }
