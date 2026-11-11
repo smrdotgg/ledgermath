@@ -79,9 +79,11 @@ export const DEFINITIONS: Record<string, string> = {
 		"x[⌊h⌋] + (h − ⌊h⌋) × (x[⌊h⌋+1] − x[⌊h⌋]). Each number's percentiles are taken over that number's values, " +
 		"so the bytes-per-second percentiles are not the time percentiles inverted.",
 	counted:
-		"A Run counts when its binary exited 0 and its stream is whole: every line an event that matches the events " +
-		"schema, started first (not a --quick stream), finished last, and exactly as many counted samples as it asked " +
-		"for. Any other Run is failed: shown, and in no percentile.",
+		"A Run counts when its binary exited 0, every stdout line is an event that matches the events schema, and the " +
+		"stream obeys every order rule scripts/check-events.py checks: started first and once (not a --quick stream), " +
+		"finished last and once, samples numbered from 0, each closed by its own sample_ended before the next starts " +
+		"and never ending before it starts, observed keys once, exactly one verified, and as many counted samples as " +
+		"the Run asked for. Any other Run is failed: shown, with the reasons, and in no percentile.",
 	groups:
 		"Within a Series, the Runs whose split facts are all equal make one group. Groups are lettered in the order " +
 		"each first appears, and may interleave in time.",

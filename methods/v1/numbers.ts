@@ -46,40 +46,31 @@ export function percentile(values: readonly number[], p: number): number {
 	return lower + fraction * (upper - lower);
 }
 
-export interface Measured {
-	samples: SampleTime[];
-	/** Why the counted samples cannot be read, if they cannot. */
-	problems: string[];
-}
-
 /**
- * The counted samples of a stream: every sample_started with warmup false,
- * paired with the sample_ended of the same number. Warmup samples are left out.
+ * The counted samples of a stream that obeys the contract's order
+ * (stream.ts): each sample_started with warmup false, paired with the
+ * sample_ended that follows it. Warmup samples are left out. Walks the stream
+ * in order and pairs nothing it cannot: on any other stream it throws.
  */
-export function countedSamples(events: readonly RunEvent[]): Measured {
-	const ends = new Map<number, number>();
-	for (const event of events) {
-		if (event.event === "sample_ended" && typeof event.sample === "number") ends.set(event.sample, event.t);
-	}
+export function countedSamples(events: readonly RunEvent[]): SampleTime[] {
 	const samples: SampleTime[] = [];
-	const problems: string[] = [];
+	let open: RunEvent | null = null;
 	for (const event of events) {
-		if (event.event !== "sample_started" || event.warmup !== false) continue;
-		const sample = event.sample as number;
-		const repetitions = event.repetitions as number;
-		const end = ends.get(sample);
-		if (end === undefined) {
-			problems.push(`counted sample ${sample} has no sample_ended`);
-			continue;
+		if (event.event === "sample_started") {
+			if (open !== null) throw new Error(`sample ${String(event.sample)} started inside sample ${String(open.sample)}`);
+			open = event;
+		} else if (event.event === "sample_ended") {
+			if (open === null || event.sample !== open.sample) throw new Error(`sample_ended ${String(event.sample)} closes no open sample`);
+			if (open.warmup === false) {
+				const ns = event.t - open.t;
+				const repetitions = open.repetitions as number;
+				samples.push({ sample: open.sample as number, ns, repetitions, ns_per_repetition: ns / repetitions });
+			}
+			open = null;
 		}
-		const ns = end - event.t;
-		if (!(ns > 0)) {
-			problems.push(`counted sample ${sample} ends before it starts`);
-			continue;
-		}
-		samples.push({ sample, ns, repetitions, ns_per_repetition: ns / repetitions });
 	}
-	return { samples, problems };
+	if (open !== null) throw new Error(`sample ${String(open.sample)} never ended`);
+	return samples;
 }
 
 /** What the benchmark observed as bytes_per_repetition, if it did, as a positive number. */

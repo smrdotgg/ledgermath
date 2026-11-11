@@ -139,6 +139,8 @@ def check(lines, expect_samples=None, expect_quick=False):
                 open_sample = None
 
         elif name == "verified":
+            if seen["verified"] > 1:
+                bad(number, '"verified" appears more than once')
             if not isinstance(event.get("checksum"), str) or not CHECKSUM.match(event["checksum"]):
                 bad(number, '"checksum" must be 0x and sixteen lowercase hex digits')
 

@@ -7,6 +7,7 @@ import { createHash } from "node:crypto";
 
 import { canonicalJson, type ParamValue, type Run, type RunExit, schemaValidators } from "../run";
 import { countedSamples, type SampleTime } from "./numbers";
+import { streamProblems } from "./stream";
 
 /** The Runs that share these make one Series. */
 export interface SeriesKey {
@@ -160,10 +161,11 @@ export interface Outcome {
 }
 
 /**
- * Whether a Run counts. It counts when the binary exited 0 and its stream is
- * whole: every line an event that matches the events schema, `started` first
- * and not a --quick stream, `finished` last, and exactly `samples` counted
- * samples, each closed by its sample_ended.
+ * Whether a Run counts. It counts when the binary exited 0, every stdout line
+ * parsed as an event, every event matches schemas/events.schema.json, and the
+ * stream obeys every order rule of scripts/check-events.py (stream.ts) with
+ * the Run's own `samples` as the number of counted samples to expect and no
+ * --quick stream allowed. Any other Run is failed, with the reasons.
  *
  * A stop signal the runner received (exit.runner_signal) does not by itself
  * keep a Run out: beside exit code 0 it means the binary had already finished.
@@ -179,18 +181,9 @@ export function outcome(run: Run): Outcome {
 		failures.push(`stdout line ${run.events_error.line} is not an event: ${run.events_error.message}`);
 	}
 	const validate = schemaValidators().event;
-	const invalid = run.events.findIndex((event) => !validate(event));
-	if (invalid >= 0) failures.push(`event ${invalid + 1} does not match schemas/events.schema.json`);
-
-	const first = run.events[0];
-	if (first?.event !== "started") failures.push("the stream does not open with started");
-	else if (first.quick === true) failures.push("a --quick stream");
-	if (run.events.at(-1)?.event !== "finished") failures.push("no finished event");
-
-	const measured = invalid >= 0 ? { samples: [], problems: [] } : countedSamples(run.events);
-	failures.push(...measured.problems);
-	if (measured.samples.length !== run.samples) {
-		failures.push(`${measured.samples.length} counted samples of the ${run.samples} asked for`);
-	}
-	return { failures, samples: failures.length === 0 ? measured.samples : [] };
+	run.events.forEach((event, index) => {
+		if (!validate(event)) failures.push(`event ${index + 1} does not match schemas/events.schema.json`);
+	});
+	failures.push(...streamProblems(run.events, run.samples));
+	return { failures, samples: failures.length === 0 ? countedSamples(run.events) : [] };
 }

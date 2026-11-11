@@ -7,6 +7,7 @@ import { derive, gather } from "../methods/v1";
 import type { DerivationsFile } from "../methods/v1/output";
 import { renderPage, seriesLabel } from "../scripts/build-page";
 import { blobsFromDirectories } from "../scripts/lib/blobs";
+import { esc } from "../scripts/lib/chart";
 import { readRunFiles } from "../scripts/lib/run-files";
 import { RUNS_REPOSITORY_BLOB_URL } from "../scripts/lib/runs-repository";
 import { HandMade } from "./hand-made-runs";
@@ -82,7 +83,7 @@ describe("the page", () => {
 		const failed = file.derivations.flatMap((d) => d.points).filter((point) => !point.counted);
 		expect(failed.length).toBe(3);
 		for (const point of failed) {
-			expect(html).toContain(`FAILED: ${point.failure}`.replaceAll("'", "&#39;"));
+			expect(html).toContain(esc(`FAILED: ${point.failure}`));
 			expect(html).toContain(`<li><a href="${BASE}${point.path}">`);
 		}
 		expect((html.match(/stroke="#B00020"/g) ?? []).length).toBe(3);

@@ -191,7 +191,7 @@ describe("Method version 1 on hand-made Runs", () => {
 		expect(series.points.map((point) => point.counted)).toEqual([true, false, false, true]);
 		expect(series.points[1]?.failure).toContain("exit code 2");
 		expect(series.points[2]?.failure).toContain("killed by signal 11");
-		expect(series.points[2]?.failure).toContain("no finished event");
+		expect(series.points[2]?.failure).toContain('the last event must be "finished"');
 		expect(series.points[1]?.time_per_repetition_ns).toBeNull();
 		expect(series.groups[0]?.runs.length).toBe(4);
 		const time = series.percentiles.time_per_repetition_ns;
@@ -217,8 +217,8 @@ describe("Method version 1 on hand-made Runs", () => {
 		made.run({ startedAt: "2026-11-14T22:15:00Z", bytesPerRepetition: null });
 		const series = onlySeries(await deriveHandMade(made));
 		expect(series.points.map((point) => point.counted)).toEqual([true, false, false, true]);
-		expect(series.points[1]?.failure).toBe("a --quick stream");
-		expect(series.points[2]?.failure).toBe("10 counted samples of the 11 asked for");
+		expect(series.points[1]?.failure).toBe("line 1: this is a --quick stream; pass --quick if that is intended");
+		expect(series.points[2]?.failure).toBe("expected 11 counted samples, found 10");
 		expect(series.points[3]?.bytes_per_second).toBeNull();
 		expect(series.percentiles.bytes_per_second?.count).toBe(1);
 		expect(series.percentiles.time_per_repetition_ns?.count).toBe(2);

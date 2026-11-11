@@ -15,6 +15,7 @@ be recomputed and compared with `cmp`, whoever computes it, wherever.
 | `v1/index.ts` | Version 1: `gather()` fetches the blobs it reads, `derive()` is the Method, `serialize()` the file |
 | `v1/facts.ts` | Series key, the facts version 1 splits on and why, which Runs count |
 | `v1/numbers.ts` | The number a Run gives, the median, percentiles |
+| `v1/stream.ts` | Whether a stream obeys the contract's order: a port of `scripts/check-events.py` |
 | `v1/output.ts` | The shape of version 1's Derivations file |
 
 `scripts/derive.ts` runs a Method; `scripts/build-page.ts` turns its file into the page.
@@ -39,7 +40,11 @@ never touches a stored Run; only the Run record is forever.
 - **Groups**: the Runs whose split facts are all equal. They may interleave in time.
 - **What differed**: for each pair of consecutive Runs, every split fact and every
   before-dump section whose value changed, split on or not.
-- **Failed Runs**: shown, in their group, in no percentile.
+- **Which Runs count**: exit code 0, every stdout line an event matching the events
+  schema, and every order rule of `scripts/check-events.py` (`v1/stream.ts` is a port of it,
+  and `tests/stream.test.ts` checks the two agree), with the Run's own `samples` as the
+  count of counted samples to expect.
+- **Failed Runs**: shown, with the reasons, in their group, in no percentile.
 
 ### What version 1 splits on, and why
 
