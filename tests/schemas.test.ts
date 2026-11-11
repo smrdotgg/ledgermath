@@ -209,9 +209,17 @@ describe("the two shapes of a Run", () => {
 		expect(validators.run({ ...newer(), stdout_lines: -1 })).toBe(false);
 	});
 
-	test("a Run of neither shape, without events and without the stdout facts, is still a Run: its stdout is its events", () => {
+	test("a Run of neither shape, without events and without the stdout facts, is refused", () => {
 		const { stdout_bytes: _bytes, stdout_lines: _lines, ...bare } = newer();
-		expect(validators.run(bare)).toBe(true);
+		expect(validators.run(bare)).toBe(false);
+		const older = structuredClone(samplesIn("scheduled")[0]) as Record<string, unknown>;
+		delete older.events;
+		expect(validators.run(older)).toBe(false);
+	});
+
+	test("a Run of both shapes is refused: events beside the stdout facts", () => {
+		const older = structuredClone(samplesIn("scheduled")[0]) as Record<string, unknown>;
+		expect(validators.run({ ...older, stdout_bytes: 1, stdout_lines: 1 })).toBe(false);
 	});
 });
 

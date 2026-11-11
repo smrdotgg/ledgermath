@@ -10,16 +10,18 @@
     "source_commit", "source", "binary", "provider", "environment", "runner", "exit",
     "stdout", "stderr"
   ],
-  "dependentRequired": {
-    "stdout_bytes": ["stdout_lines"],
-    "stdout_lines": ["stdout_bytes"]
-  },
-  "dependentSchemas": {
-    "stdout_bytes": {
-      "description": "A Run written since stdout became the one source of its events copies none of them.",
-      "properties": { "events": false, "events_error": false }
+  "oneOf": [
+    {
+      "description": "The older shape: written before the runner stopped copying stdout into the Run, it carries the events.",
+      "required": ["events"],
+      "properties": { "events": true, "stdout_bytes": false, "stdout_lines": false }
+    },
+    {
+      "description": "The shape written since: the stdout blob's size and lines, and no copy of its events.",
+      "required": ["stdout_bytes", "stdout_lines"],
+      "properties": { "stdout_bytes": true, "stdout_lines": true, "events": false, "events_error": false }
     }
-  },
+  ],
   "properties": {
     "schema": { "const": "ledgermath.run/1" },
     "id": {
