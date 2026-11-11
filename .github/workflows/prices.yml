@@ -1,0 +1,78 @@
+# Step 6 of the plan (#36, brief #45). Makes the day's price file,
+# prices/<yyyy>/<mm>/<dd>/aws.json, from AWS's public Price List files
+# (scripts/fetch-prices.ts) and pushes it to smrdotgg/ledgermath-runs. If the
+# day's file is already there, it adds nothing. The alarm, in runs.yml, says
+# when the newest price file is more than 48 hours old.
+#
+# It needs, in this repository's settings (README, "Prices"):
+#   secret   RUNS_REPO_DEPLOY_KEY  the private half of a deploy key of
+#                                  smrdotgg/ledgermath-runs with write access,
+#                                  the one runs.yml uses
+# No AWS credentials: the price lists are public.
+name: prices
+
+on:
+  schedule:
+    # Hours away from runs.yml's times (22:40 and every six hours from 00:00).
+    - cron: "17 3 * * *"
+    # A second chance the same day, should GitHub drop or delay the first; it
+    # adds nothing when the first worked.
+    - cron: "17 15 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# The same group as runs.yml. Both push to the Runs repository's main, so
+# they run one at a time, and neither's push can be refused because the other
+# pushed after its checkout.
+concurrency:
+  group: runs
+  cancel-in-progress: false
+
+jobs:
+  prices:
+    name: fetch the day's prices and add them to the Runs repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.4
+
+      - run: bun install --frozen-lockfile
+
+      - name: Check out the Runs repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: smrdotgg/ledgermath-runs
+          ref: main
+          ssh-key: ${{ secrets.RUNS_REPO_DEPLOY_KEY }}
+          path: ledgermath-runs
+
+      # Downloads the offer files (the EC2 one is over 400 MB) under the
+      # runner's temporary directory, cuts them, adds the day's file, and
+      # removes the downloads. Does nothing if the day's file exists.
+      - name: Make the day's price file
+        run: bun scripts/fetch-prices.ts --work "$RUNNER_TEMP/prices" ledgermath-runs
+
+      - name: Commit and push it to the Runs repository
+        working-directory: ledgermath-runs
+        run: |
+          if [ -d prices ]; then git add -- prices; fi
+          if git diff --cached --quiet; then
+            echo "nothing new: the day's price file was already there"
+            exit 0
+          fi
+          changed=$(git diff --cached --name-only --diff-filter=a)
+          if [ -n "$changed" ]; then
+            echo "refusing to commit anything but new files: $changed"
+            exit 1
+          fi
+          added=$(git diff --cached --name-only | tr '\n' ' ')
+          git -c user.name="github-actions[bot]" \
+              -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+              commit -q -m "Add ${added% }"
+          git push origin HEAD:main
