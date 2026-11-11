@@ -199,16 +199,26 @@ cc -O2 -o "$WORK/cpuid" "$SRC/runner/cpuid.c"
 # record, which every dump holds as the section `provision`. Its failure is
 # never the boot's: every other benchmark still runs, and a disk Run that
 # finds no Fixture fails by itself and says why.
+#
+# --supervise-seconds 900 is provisioning's outer limit: provision.py runs the
+# work as a child in a session of its own, sends it TERM at 900 seconds (it
+# stops itself at 840) and KILL 30 seconds later, then kills whatever is left
+# in that session and completes the record. So nothing of provisioning is
+# running when the schedule starts. timeout(1) is only a backstop, should the
+# supervisor itself hang: its TERM makes the supervisor do the same at once.
 PROVISION_RECORD="$WORK/provision.json"
 if ! cc -O2 -I "$SRC/benchmarks/harness/c" -o "$WORK/fixture" "$SRC/runner/fixture.c"; then
   say "the fixture tool did not build; the disk Fixtures cannot be made"
 fi
 say "preparing the disks"
-if timeout --kill-after=30 900 python3 "$SRC/runner/provision.py" --record "$PROVISION_RECORD" \
-  --fixture-tool "$WORK/fixture" --instance-type "$(imds instance-type)" --region "$(imds placement/region)"; then
+PROVISION_STATUS=0
+timeout --kill-after=30 1000 python3 "$SRC/runner/provision.py" --supervise-seconds 900 \
+  --record "$PROVISION_RECORD" --fixture-tool "$WORK/fixture" \
+  --instance-type "$(imds instance-type)" --region "$(imds placement/region)" || PROVISION_STATUS=$?
+if [ "$PROVISION_STATUS" -eq 0 ]; then
   say "the disks are ready"
 else
-  say "preparing the disks failed, or refused a disk, with status $?; $PROVISION_RECORD says what happened. The schedule runs all the same."
+  say "preparing the disks failed, refused a disk, or was stopped, with status $PROVISION_STATUS; $PROVISION_RECORD says what happened. The schedule runs all the same."
 fi
 
 BUDGET=$((BOX_STARTED + ${LEDGERMATH_RUN_SECONDS:-2100} - $(date +%s)))

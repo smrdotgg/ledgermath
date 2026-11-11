@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Prepares the disks the disk benchmarks read, at boot, before run.py.
 
-    python3 provision.py --record FILE --fixture-tool PATH
+    python3 provision.py --supervise-seconds 900 --record FILE --fixture-tool PATH
                          [--instance-type T] [--region R]
 
 runner/box.sh runs it once, after the packages are installed and before
@@ -13,23 +13,54 @@ every dump as the section `provision`:
    controller in /sys/class/nvme whose model is exactly "Amazon EC2 NVMe
    Instance Storage" is an instance-store disk; nothing is assumed of the
    numbering. The count found must equal the catalog's (EC2's
-   describe-instance-types, InstanceStorageInfo.Disks[].Count). Exactly one
-   disk is prepared, and only when it is empty: no partition, no holder, not
-   mounted, a device node that is that device, and no signature that
-   `blkid -p` can find. It is recorded before it is touched (lsblk, blkid,
-   nvme id-ctrl, nvme id-ns, nvme amzn stats), then given a default XFS file
-   system (`mkfs.xfs`, never forced), mounted at /mnt/lm/instance-store, and
-   recorded again (xfs_info, findmnt). A type with no instance store has no
-   such step. Anything else is refused and recorded, so its Runs fail
-   truthfully for want of a Fixture.
+   describe-instance-types, InstanceStorageInfo.Disks[].Count), and exactly
+   one disk is prepared, only when it is empty. From then on the disk is its
+   device number, major:minor: provision.py makes a block device node of its
+   own for that number (mknod, in a directory only root can write), so the
+   node can never come to mean another device, and every command runs on that
+   node. The disk is recorded before it is touched (lsblk, blkid, nvme id-ctrl,
+   nvme id-ns, nvme amzn stats). Immediately before mkfs.xfs everything is
+   checked again: the number still names the same disk (name, model, serial,
+   size), the node is still that number, the disk has no partition, no holder
+   and no mount, `blkid -p` finds no signature (exit 2 and nothing printed:
+   blkid also exits 2 when it cannot open the device), and provision.py can
+   read its first MiB. Then a default XFS file system (`mkfs.xfs`, never
+   forced), the mount point made, `mount -t xfs`, and the mounted file system's
+   device number, by stat and by /proc/self/mountinfo, must be the number that
+   was checked. If the mount fails or the number differs, the file system is
+   unmounted and the mount point removed, so no instance-store set can run on
+   anything else. A type with no instance store has no such step; anything
+   else is refused and recorded, and its Runs fail truthfully.
 
 2. The Fixtures, made by runner/fixture.c with O_DIRECT writes and
    fdatasync: 32 GiB on the instance store when it was prepared, and 1 GiB
-   under /var/tmp/ledgermath/disk on the root volume on every type.
+   under /var/tmp/ledgermath/disk on the root volume on every type. A Fixture
+   not made whole is removed, and the root volume's directory exists only when
+   its Fixture was made.
 
-Nothing here stops the boot: a failure is recorded, the record is written,
-and the exit status is 1; box.sh logs it and goes on to run.py. Every other
-benchmark still runs, and a disk Run that cannot work fails on its own.
+The record is written beside FILE and renamed over it when provisioning
+starts, when each step starts (so a step in progress is in it) and when each
+step ends, so whatever happens it says truthfully what was done. Every command
+runs in a process group of its own: a step that runs past its time, or is told
+to stop, has its whole group sent TERM, then KILL after a short grace, and
+anything a step leaves running after it exits is killed too and recorded.
+Provisioning has a deadline of its own; on SIGTERM, SIGINT or SIGHUP, or at
+that deadline, it stops the step in progress, records what stopped it with the
+output captured so far, undoes what is half done (a partial Fixture, a mount
+it could not verify), and exits.
+
+With --supervise-seconds N it runs all of that as a child in a session of its
+own and is its outer limit: at N seconds, or when it is told to stop, the child
+is sent TERM, and KILL after --supervise-grace-seconds; then every process left
+in the session is killed, any step the child had not recorded the end of is
+recorded from its output files, and the record says how provisioning ended. So
+nothing of provisioning is running when box.sh starts the schedule.
+
+Nothing here stops the boot: a failure is recorded, and the exit status is
+not 0 (1 for a failure or a refusal, 124 when a deadline or the outer limit
+ended it, 128 + the signal when it was told to stop); box.sh logs it and goes on
+to run.py. Every other benchmark still runs, and a disk Run that cannot work
+fails on its own.
 
 Runs on the box's own Python (3.9 on Amazon Linux 2023) with no packages.
 """
@@ -39,19 +70,30 @@ import datetime
 import json
 import os
 import re
+import signal
 import stat
 import subprocess
 import sys
 import time
 
-RECORD_SCHEMA = "ledgermath.provision/1"
+RECORD_SCHEMA = "ledgermath.provision/2"
 INSTANCE_STORE_MODEL = "Amazon EC2 NVMe Instance Storage"
 INSTANCE_STORE_MOUNT = "/mnt/lm/instance-store"
 ROOT_VOLUME_DIR = "/var/tmp/ledgermath/disk"
+NODE_DIR = "/run/ledgermath"
 FIXTURE_NAME = "ledgermath-fixture-v1"
 INSTANCE_STORE_FIXTURE_BYTES = 32 << 30
 ROOT_VOLUME_FIXTURE_BYTES = 1 << 30
 NAMESPACE = re.compile(r"^nvme[0-9]+n[0-9]+$")
+NUMBER = re.compile(r"^[0-9]+:[0-9]+$")
+STOP_SIGNALS = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)
+PROBE_BYTES = 1 << 20
+
+DEADLINE_SECONDS = 840          # its own deadline, when not given one
+KILL_GRACE_SECONDS = 5          # from TERM to KILL, for a step's process group
+CLEANUP_SECONDS = 20            # the most a step undoing something may take
+SUPERVISE_GRACE_SECONDS = 30    # from TERM to KILL, for provisioning itself
+POLL_SECONDS = 0.05
 
 
 def log(message):
@@ -73,7 +115,37 @@ def read_text(path):
         return None
 
 
-# ---- what is there: the sysfs tree, the mounts, the device nodes ----
+def read_bytes(path):
+    try:
+        with open(path, "rb") as handle:
+            return handle.read().decode("utf-8", "replace")
+    except OSError:
+        return None
+
+
+def signal_name(signum):
+    try:
+        return signal.Signals(signum).name
+    except ValueError:
+        return "signal %d" % signum
+
+
+# ---- what is there: the sysfs tree, the mounts ----
+
+def partitions_and_holders(block):
+    """The partitions (children with a `partition` file) and holders of the
+    disk whose sysfs directory is `block`."""
+    try:
+        children = sorted(os.listdir(block))
+    except OSError:
+        children = []
+    partitions = [child for child in children if os.path.exists(os.path.join(block, child, "partition"))]
+    try:
+        holders = sorted(os.listdir(os.path.join(block, "holders")))
+    except OSError:
+        holders = []
+    return partitions, holders
+
 
 def instance_store_disks(sys_root="/sys"):
     """Every namespace of every NVMe controller whose model is the instance
@@ -104,16 +176,7 @@ def instance_store_disks(sys_root="/sys"):
                 continue
             block = os.path.join(sys_root, "class", "block", name)
             size = read_text(os.path.join(block, "size"))
-            try:
-                children = sorted(os.listdir(block))
-            except OSError:
-                children = []
-            partitions = [child for child in children
-                          if os.path.exists(os.path.join(block, child, "partition"))]
-            try:
-                holders = sorted(os.listdir(os.path.join(block, "holders")))
-            except OSError:
-                holders = []
+            partitions, holders = partitions_and_holders(block)
             found.append({
                 "controller": controller,
                 "model": model,
@@ -127,6 +190,42 @@ def instance_store_disks(sys_root="/sys"):
     return found
 
 
+def device_identity(sys_root, number):
+    """What the kernel's device number `number` ("major:minor") names now, read
+    afresh from /sys/dev/block/<number>: the same keys as instance_store_disks()
+    gives, without the controller; None when it names no block device."""
+    if not number or not NUMBER.match(number):
+        return None
+    real = os.path.realpath(os.path.join(sys_root, "dev", "block", number))
+    if not os.path.isdir(real):
+        return None
+    size = read_text(os.path.join(real, "size"))
+    partitions, holders = partitions_and_holders(real)
+    return {
+        "name": os.path.basename(real),
+        "model": read_text(os.path.join(real, "device", "model")),
+        "serial": read_text(os.path.join(real, "device", "serial")),
+        "dev": read_text(os.path.join(real, "dev")),
+        "size_bytes": int(size) * 512 if size and size.isdigit() else None,
+        "partitions": partitions,
+        "holders": holders,
+    }
+
+
+def identity_problem(disk, identity):
+    """Why the device number of `disk` no longer names that same empty disk, or None."""
+    if identity is None:
+        return "device number %s names no block device now" % disk["dev"]
+    for key in ("name", "model", "serial", "size_bytes", "dev"):
+        if identity.get(key) != disk.get(key):
+            return "device number %s now has %s %r, not %r" % (disk["dev"], key, identity.get(key), disk.get(key))
+    if identity["partitions"]:
+        return "%s now has partitions (%s)" % (disk["name"], ", ".join(identity["partitions"]))
+    if identity["holders"]:
+        return "%s is now held by %s" % (disk["name"], ", ".join(identity["holders"]))
+    return None
+
+
 def mounted_devices(mountinfo_text):
     """The major:minor of every mounted file system's device."""
     devices = set()
@@ -137,20 +236,15 @@ def mounted_devices(mountinfo_text):
     return devices
 
 
-def device_node(dev_root, name, expected_dev):
-    """None when dev_root/name is a block device node with the number sysfs
-    gives; otherwise why not."""
-    path = os.path.join(dev_root, name)
-    try:
-        st = os.stat(path)
-    except OSError as error:
-        return "the device node %s cannot be used: %s" % (path, error.strerror)
-    if not stat.S_ISBLK(st.st_mode):
-        return "%s is not a block device node" % path
-    number = "%d:%d" % (os.major(st.st_rdev), os.minor(st.st_rdev))
-    if number != expected_dev:
-        return "%s is device %s, but sysfs says %s is %s" % (path, number, name, expected_dev)
-    return None
+def mountinfo_device(mountinfo_text, mount_point):
+    """The major:minor of what is mounted at mount_point (the last mount
+    there, which is the one seen), or None."""
+    found = None
+    for line in mountinfo_text.splitlines():
+        fields = line.split()
+        if len(fields) > 4 and fields[4].replace("\\040", " ") == mount_point:
+            found = fields[2]
+    return found
 
 
 def catalog_disk_count(catalog_stdout):
@@ -167,19 +261,79 @@ def catalog_disk_count(catalog_stdout):
     return sum(int(disk.get("Count", 0)) for disk in info.get("Disks", []))
 
 
-# ---- the decision ----
+# ---- the device node, and the mounted file system: by number ----
 
-def decide(disks, catalog_count, mounted, node_problem):
-    """Whether to prepare an instance-store disk, and which, before any
-    signature is probed.
+def node_path(node_dir, number):
+    """The device node provision.py makes for a device number."""
+    return os.path.join(node_dir, "instance-store-%s" % number.replace(":", "-"))
+
+
+def make_node(path, number):
+    """A block device node for `number` at `path`, in a directory only root
+    may write. An existing node is kept only if it is that very device."""
+    directory = os.path.dirname(path)
+    os.makedirs(directory, mode=0o700, exist_ok=True)
+    os.chmod(directory, 0o700)
+    if os.path.lexists(path):
+        if node_number(path) != number:
+            raise OSError("%s exists and is not a block device node for %s" % (path, number))
+        return
+    major, minor = (int(part) for part in number.split(":"))
+    os.mknod(path, stat.S_IFBLK | 0o600, os.makedev(major, minor))
+
+
+def node_number(path):
+    """The device number of the block device node at `path`, never following a
+    symbolic link; None when it is not a block device node."""
+    try:
+        st = os.lstat(path)
+    except OSError:
+        return None
+    if not stat.S_ISBLK(st.st_mode):
+        return None
+    return "%d:%d" % (os.major(st.st_rdev), os.minor(st.st_rdev))
+
+
+def read_start(path):
+    """The first MiB of the device, read through the node, or OSError."""
+    fd = os.open(path, os.O_RDONLY | os.O_CLOEXEC)
+    try:
+        data = b""
+        while len(data) < PROBE_BYTES:
+            chunk = os.read(fd, PROBE_BYTES - len(data))
+            if not chunk:
+                break
+            data += chunk
+        return data
+    finally:
+        os.close(fd)
+
+
+def mounted_number(mount_point, proc_root):
+    """The device number of what is mounted at mount_point, two ways: stat of
+    the mount point, and its line in /proc/self/mountinfo."""
+    try:
+        st = os.stat(mount_point)
+        by_stat = "%d:%d" % (os.major(st.st_dev), os.minor(st.st_dev))
+    except OSError:
+        by_stat = None
+    by_mountinfo = mountinfo_device(read_text(os.path.join(proc_root, "self", "mountinfo")) or "", mount_point)
+    return {"stat": by_stat, "mountinfo": by_mountinfo}
+
+
+# ---- the decisions ----
+
+def decide(disks, catalog_count, mounted):
+    """Whether to prepare an instance-store disk, and which, before anything is
+    run on it.
 
     disks          what instance_store_disks() found
     catalog_count  catalog_disk_count(), or None when the catalog could not be read
     mounted        mounted_devices()
-    node_problem   a function of a disk giving device_node()'s answer for it
 
     Returns {"action": "none" | "refuse" | "probe", "reason": ..., "disk": ...}.
-    "probe" means: this one disk may be prepared if blkid -p finds nothing on it.
+    "probe" means: this one disk may be prepared if the checks on its device
+    number that follow all pass.
     """
     if not disks:
         if catalog_count is None:
@@ -201,136 +355,659 @@ def decide(disks, catalog_count, mounted, node_problem):
         return {"action": "refuse", "reason": "%s has partitions (%s): it is not empty" % (disk["name"], ", ".join(disk["partitions"])), "disk": disk}
     if disk["holders"]:
         return {"action": "refuse", "reason": "%s is held by %s: it is in use" % (disk["name"], ", ".join(disk["holders"])), "disk": disk}
-    if not disk["dev"]:
+    if not disk["dev"] or not NUMBER.match(disk["dev"]):
         return {"action": "refuse", "reason": "sysfs gives no device number for %s" % disk["name"], "disk": disk}
     if disk["dev"] in mounted:
         return {"action": "refuse", "reason": "%s (%s) is mounted already" % (disk["name"], disk["dev"]), "disk": disk}
     if not disk["size_bytes"]:
         return {"action": "refuse", "reason": "sysfs gives %s no size" % disk["name"], "disk": disk}
-    problem = node_problem(disk)
-    if problem is not None:
-        return {"action": "refuse", "reason": problem, "disk": disk}
-    return {"action": "probe", "reason": "%s is the one instance-store disk the catalog lists, with no partition, holder or mount" % disk["name"], "disk": disk}
+    return {"action": "probe", "reason": "%s (%s) is the one instance-store disk the catalog lists, with no partition, holder or mount" % (disk["name"], disk["dev"]), "disk": disk}
 
 
-def after_probe(blkid_exit):
-    """blkid -p exits 2 when it finds no signature, 0 when it finds one."""
-    if blkid_exit == 2:
+def after_probe(entry):
+    """None when `blkid -p` found no signature: exit 2 and nothing printed.
+    blkid exits 2 also when it cannot open the device, printing why, so the
+    exit status alone is not enough."""
+    code = entry.get("exit")
+    said = ((entry.get("stdout") or "") + (entry.get("stderr") or "")).strip()
+    if code == 2 and not said:
         return None
-    if blkid_exit == 0:
+    if code == 0:
         return "blkid -p found a signature on it: it is not empty"
-    return "blkid -p exited %r: whether it is empty cannot be told" % (blkid_exit,)
+    if code == 2:
+        return "blkid -p exited 2 but said %r: it may not have read the device, so whether it is empty cannot be told" % said[:200]
+    return "blkid -p exited %r: whether it is empty cannot be told" % (code,)
+
+
+# ---- processes ----
+
+def proc_stat(pid, proc_root="/proc"):
+    """(state, ppid, pgrp, session, comm) of a process, or None."""
+    text = read_bytes(os.path.join(proc_root, str(pid), "stat"))
+    if not text or ")" not in text:
+        return None
+    comm = text[text.index("(") + 1:text.rindex(")")]
+    fields = text[text.rindex(")") + 2:].split()
+    try:
+        return fields[0], int(fields[1]), int(fields[2]), int(fields[3]), comm
+    except (IndexError, ValueError):
+        return None
+
+
+def processes(match, proc_root="/proc"):
+    """[{pid, comm, state}] of every process whose (pgrp, session) match(...) accepts."""
+    found = []
+    try:
+        names = os.listdir(proc_root)
+    except OSError:
+        return found
+    for name in names:
+        if not name.isdigit():
+            continue
+        info = proc_stat(int(name), proc_root)
+        if info is not None and match(info[2], info[3]):
+            found.append({"pid": int(name), "comm": info[4], "state": info[0]})
+    return sorted(found, key=lambda process: process["pid"])
+
+
+def group_members(pgid):
+    return processes(lambda pgrp, session: pgrp == pgid)
+
+
+def group_alive(pgid):
+    """Whether any process of the group is left that is not a zombie."""
+    return any(process["state"] != "Z" for process in group_members(pgid))
+
+
+def kill_group(pgid, child, grace, log_signals=None):
+    """Ends every process of the group: TERM, then KILL after `grace` seconds
+    if any is left, then KILL again until none is (at most 10 seconds), reaping
+    the step's own process. Returns what it sent and what was left."""
+    sent = []
+
+    def send(signum):
+        try:
+            os.killpg(pgid, signum)
+            sent.append(signal_name(signum))
+        except ProcessLookupError:
+            pass
+
+    send(signal.SIGTERM)
+    end = time.monotonic() + grace
+    while time.monotonic() < end:
+        child.poll()
+        if not group_alive(pgid):
+            break
+        time.sleep(POLL_SECONDS)
+    if group_alive(pgid):
+        send(signal.SIGKILL)
+    child.wait()
+    # Until every member is gone; a zombie is waited for, not signalled.
+    end = time.monotonic() + 10
+    while group_members(pgid) and time.monotonic() < end:
+        if group_alive(pgid):
+            send(signal.SIGKILL)
+        time.sleep(POLL_SECONDS)
+    survivors = [process for process in group_members(pgid) if process["state"] != "Z"]
+    return {"signals": sent, "survivors": survivors}
+
+
+def kill_session(sid, proc_root="/proc"):
+    """Kills every process left in session `sid` and waits until none is (at
+    most 10 seconds). Returns what was found and what was left."""
+    found = [process for process in processes(lambda pgrp, session: session == sid, proc_root) if process["state"] != "Z"]
+    end = time.monotonic() + 10
+    while time.monotonic() < end:
+        alive = [process for process in processes(lambda pgrp, session: session == sid, proc_root) if process["state"] != "Z"]
+        if not alive:
+            break
+        for process in alive:
+            try:
+                os.kill(process["pid"], signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        time.sleep(POLL_SECONDS)
+    left = [process for process in processes(lambda pgrp, session: session == sid, proc_root) if process["state"] != "Z"]
+    return {"killed": found, "survivors": left}
 
 
 # ---- doing it, and recording it ----
 
+class Stopped(Exception):
+    """Provisioning was told to stop, or reached its deadline."""
+
+    def __init__(self, why, status):
+        Exception.__init__(self, why)
+        self.why = why
+        self.status = status
+
+
+def write_json_atomically(path, value):
+    directory = os.path.dirname(path) or "."
+    os.makedirs(directory, exist_ok=True)
+    temporary = path + ".tmp"
+    with open(temporary, "w", encoding="utf-8") as handle:
+        json.dump(value, handle, indent=1, sort_keys=True, ensure_ascii=False)
+        handle.write("\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(temporary, path)
+
+
 class Recorder:
-    """Runs commands and keeps all of each: arguments, times, exit, output."""
+    """Runs commands and keeps all of each: arguments, times, exit, output, and
+    how it ended. The record is rewritten as each step starts and as it ends."""
 
-    def __init__(self):
+    def __init__(self, path, steps_dir, deadline_seconds, kill_grace):
+        self.path = path
+        self.steps_dir = steps_dir
+        self.kill_grace = kill_grace
         self.started = time.time_ns()
-        self.record = {"schema": RECORD_SCHEMA, "started_at": rfc3339(self.started), "steps": [], "decisions": [], "fixtures": []}
+        self.deadline = time.monotonic() + deadline_seconds
+        self.stop_signal = None
+        self.record = {"schema": RECORD_SCHEMA, "started_at": rfc3339(self.started), "state": "running",
+                       "pid": os.getpid(), "session": os.getsid(0), "deadline_seconds": deadline_seconds,
+                       "steps": [], "decisions": [], "fixtures": []}
 
-    def run(self, step, arguments, timeout=120, environment=None):
-        started = time.time_ns()
-        entry = {"step": step, "command": arguments, "started_at": rfc3339(started)}
+    def on_stop(self, signum, _frame):
+        if self.stop_signal is None:
+            self.stop_signal = signum
+
+    def install(self):
+        for signum in STOP_SIGNALS:
+            signal.signal(signum, self.on_stop)
+
+    def check(self, cleanup=False):
+        """Raises Stopped if provisioning must stop before starting a step."""
+        if cleanup:
+            return
+        if self.stop_signal is not None:
+            raise Stopped("told to stop by %s" % signal_name(self.stop_signal), 128 + self.stop_signal)
+        if time.monotonic() >= self.deadline:
+            raise Stopped("its own deadline of %s seconds" % self.record["deadline_seconds"], 124)
+
+    def write(self):
+        ended = time.time_ns()
+        self.record["written_at"] = rfc3339(ended)
+        self.record["seconds"] = round((ended - self.started) / 1e9, 3)
+        blocked = signal.pthread_sigmask(signal.SIG_BLOCK, STOP_SIGNALS)
         try:
-            done = subprocess.run(arguments, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                  timeout=timeout, env=environment)
-            entry["exit"] = done.returncode
-            entry["stdout"] = done.stdout.decode("utf-8", "replace")
-            entry["stderr"] = done.stderr.decode("utf-8", "replace")
-        except (OSError, subprocess.TimeoutExpired) as error:
-            entry["exit"] = None
-            entry["error"] = str(error)
+            write_json_atomically(self.path, self.record)
+        finally:
+            signal.pthread_sigmask(signal.SIG_SETMASK, blocked)
+
+    def _begin(self, step, command, by=None):
+        entry = {"step": step, "command": command, "started_at": rfc3339(time.time_ns()), "state": "running"}
+        if by:
+            entry["by"] = by
+        self.record["steps"].append(entry)
+        return entry
+
+    def _end(self, entry, started_ns):
         ended = time.time_ns()
         entry["ended_at"] = rfc3339(ended)
-        entry["seconds"] = round((ended - started) / 1e9, 3)
-        self.record["steps"].append(entry)
-        log("%s: %s exit=%s %.1fs" % (step, " ".join(arguments), entry.get("exit"), entry["seconds"]))
+        entry["seconds"] = round((ended - started_ns) / 1e9, 3)
+        self.write()
+
+    def run(self, step, arguments, timeout=120, environment=None, cleanup=False):
+        """Runs a command in a process group of its own and records it. A
+        cleanup step runs even when provisioning is stopping, for at most
+        CLEANUP_SECONDS."""
+        self.check(cleanup)
+        started = time.time_ns()
+        entry = self._begin(step, arguments)
+        if cleanup:
+            limit, by_deadline = min(timeout, CLEANUP_SECONDS), False
+        else:
+            remaining = max(0.0, self.deadline - time.monotonic())
+            limit, by_deadline = min(timeout, remaining), remaining < timeout
+        entry["limit_seconds"] = round(limit, 3)
+        if by_deadline:
+            entry["limited_by"] = "provisioning's deadline"
+        os.makedirs(self.steps_dir, exist_ok=True)
+        number = len(self.record["steps"])
+        out_path = os.path.join(self.steps_dir, "%02d.stdout" % number)
+        err_path = os.path.join(self.steps_dir, "%02d.stderr" % number)
+        entry["stdout_file"], entry["stderr_file"] = out_path, err_path
+        self.write()
+        try:
+            with open(out_path, "wb") as out, open(err_path, "wb") as err:
+                child = subprocess.Popen(arguments, stdin=subprocess.DEVNULL, stdout=out, stderr=err, env=environment,
+                                         close_fds=True, preexec_fn=os.setpgrp)
+        except OSError as error:
+            entry.update(state="could not start", exit=None, error=str(error))
+            self._end(entry, started)
+            log("%s: %s could not start: %s" % (step, " ".join(arguments), error))
+            return entry
+        entry["pgid"] = child.pid
+        self.write()
+
+        end = time.monotonic() + limit
+        how = None
+        while how is None:
+            if child.poll() is not None:
+                how = "ended"
+            elif self.stop_signal is not None and not cleanup:
+                how = "stopped"
+            elif time.monotonic() >= end:
+                how = "timed out"
+            else:
+                time.sleep(POLL_SECONDS)
+        if how == "ended":
+            entry["state"] = "ended"
+            if group_alive(child.pid):
+                entry["leftovers"] = kill_group(child.pid, child, self.kill_grace)
+        else:
+            entry["state"] = how
+            if how == "stopped":
+                entry["stopped_by"] = signal_name(self.stop_signal)
+            elif by_deadline:
+                entry["timed_out_by"] = "provisioning's deadline"
+            entry["killed"] = kill_group(child.pid, child, self.kill_grace)
+        entry["exit"] = child.returncode if child.returncode >= 0 else None
+        if child.returncode < 0:
+            entry["signal"] = signal_name(-child.returncode)
+        entry["stdout"] = read_bytes(out_path)
+        entry["stderr"] = read_bytes(err_path)
+        self._end(entry, started)
+        log("%s: %s %s exit=%s %.1fs" % (step, " ".join(arguments), entry["state"], entry.get("exit"), entry["seconds"]))
+        if how == "stopped":
+            raise Stopped("told to stop by %s" % entry["stopped_by"], 128 + self.stop_signal)
+        if how == "timed out" and by_deadline:
+            raise Stopped("its own deadline of %s seconds" % self.record["deadline_seconds"], 124)
         return entry
+
+    def action(self, step, command, function, cleanup=False):
+        """Does something in this process (mkdir, rmdir, mknod, unlink, a read)
+        and records it as a step. Returns (ok, value)."""
+        self.check(cleanup)
+        started = time.time_ns()
+        entry = self._begin(step, command, by="provision.py")
+        self.write()
+        try:
+            value = function()
+            entry.update(state="ended", exit=0)
+            ok = True
+        except OSError as error:
+            value = None
+            entry.update(state="ended", exit=1, error=str(error))
+            ok = False
+        if isinstance(value, dict):
+            entry["result"] = value
+        self._end(entry, started)
+        log("%s: %s %s" % (step, " ".join(command), "ok" if ok else "FAILED: " + entry["error"]))
+        return ok, value
 
     def decided(self, what, decision):
         self.record["decisions"].append(dict(decision, what=what))
+        self.write()
         log("%s: %s (%s)" % (what, decision.get("action"), decision.get("reason")))
 
-    def write(self, path):
-        ended = time.time_ns()
-        self.record["ended_at"] = rfc3339(ended)
-        self.record["seconds"] = round((ended - self.started) / 1e9, 3)
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        temporary = path + ".tmp"
-        with open(temporary, "w", encoding="utf-8") as handle:
-            json.dump(self.record, handle, indent=1, sort_keys=True, ensure_ascii=False)
-            handle.write("\n")
-        os.replace(temporary, path)
 
-
-def make_fixture(recorder, tool, disk_name, directory, size):
+def make_fixture(rec, args, disk_name, directory, size):
+    """Step 2 for one disk. A Fixture not made whole is removed."""
     path = os.path.join(directory, FIXTURE_NAME)
-    entry = recorder.run("fixture " + disk_name, [tool, path, str(size)], timeout=1200)
-    fixture = {"disk": disk_name, "path": path, "bytes": size, "made": entry.get("exit") == 0}
-    if entry.get("exit") == 0:
-        try:
-            fixture["tool"] = json.loads(entry["stdout"])
-        except ValueError:
-            pass
-    recorder.record["fixtures"].append(fixture)
-    return fixture["made"]
+    existed = os.path.lexists(path)
+    fixture = {"disk": disk_name, "path": path, "bytes": size, "made": False, "existed_before": existed}
+    rec.record["fixtures"].append(fixture)
+    try:
+        entry = rec.run("fixture " + disk_name, [args.fixture_tool, path, str(size)], timeout=args.fixture_timeout_seconds)
+        fixture["made"] = entry.get("exit") == 0
+        if fixture["made"]:
+            try:
+                fixture["tool"] = json.loads(entry["stdout"])
+            except (TypeError, ValueError):
+                pass
+        return fixture["made"]
+    finally:
+        if not fixture["made"] and not existed and os.path.lexists(path):
+            rec.action("remove the partial Fixture " + disk_name, ["rm", path], lambda: os.unlink(path), cleanup=True)
+        rec.write()
 
 
-def prepare_instance_store(recorder, args):
-    """Step 1. Returns True when the instance store is mounted and ready for its Fixture."""
+def prepare_instance_store(rec, args):
+    """Step 1. Returns "ready", "none" (no instance store here), "refused" or
+    "failed"; a stop is recorded as "stopped" and raised again."""
+    try:
+        return _prepare_instance_store(rec, args)
+    except Stopped:
+        rec.record["instance_store"]["state"] = "stopped"
+        raise
+
+
+def _prepare_instance_store(rec, args):
+    mp = args.instance_store_mount
+    state = {"state": "none", "mount_point": mp}
+    rec.record["instance_store"] = state
+
+    def finish(how, decision=None):
+        state["state"] = how
+        if decision is not None:
+            rec.decided("instance_store", decision)
+        rec.write()
+        return how
+
+    # A directory at the mount point that is not this boot's mount would let
+    # the instance-store sets run on the root volume.
+    if os.path.ismount(mp):
+        return finish("refused", {"action": "refuse", "reason": "something is mounted at %s already; it is left as it is" % mp})
+    if os.path.lexists(mp):
+        ok, _ = rec.action("remove what is at the mount point", ["rmdir", mp], lambda: os.rmdir(mp))
+        if not ok:
+            # Not empty, or not a directory: moved aside, never deleted.
+            aside = "%s.found-at-boot-%d" % (mp, time.time_ns())
+            ok, _ = rec.action("move what is at the mount point aside", ["mv", mp, aside], lambda: os.rename(mp, aside))
+            if not ok:
+                return finish("refused", {"action": "refuse", "reason": "%s exists, is not a mount, and can be neither removed nor moved aside" % mp})
+
     catalog_count = None
     if args.instance_type and args.region:
         environment = dict(os.environ, AWS_PAGER="")
-        entry = recorder.run("catalog", ["aws", "ec2", "describe-instance-types", "--region", args.region,
-                                         "--instance-types", args.instance_type, "--output", "json"],
-                             timeout=60, environment=environment)
+        entry = rec.run("catalog", ["aws", "ec2", "describe-instance-types", "--region", args.region,
+                                    "--instance-types", args.instance_type, "--output", "json"],
+                        timeout=60, environment=environment)
         if entry.get("exit") == 0:
             try:
                 catalog_count = catalog_disk_count(entry["stdout"])
             except (ValueError, TypeError, AttributeError) as error:
-                recorder.decided("catalog", {"action": "unreadable", "reason": str(error)})
+                rec.decided("catalog", {"action": "unreadable", "reason": str(error)})
     else:
-        recorder.decided("catalog", {"action": "not asked", "reason": "no instance type or region was given (IMDS did not answer)"})
-    recorder.record["catalog_instance_store_disks"] = catalog_count
+        rec.decided("catalog", {"action": "not asked", "reason": "no instance type or region was given (IMDS did not answer)"})
+    rec.record["catalog_instance_store_disks"] = catalog_count
 
     disks = instance_store_disks(args.sys)
-    recorder.record["instance_store_disks_found"] = disks
+    rec.record["instance_store_disks_found"] = disks
     mountinfo = read_text(os.path.join(args.proc, "self", "mountinfo")) or ""
-    decision = decide(disks, catalog_count, mounted_devices(mountinfo),
-                      lambda disk: device_node(args.dev, disk["name"], disk["dev"]))
+    decision = decide(disks, catalog_count, mounted_devices(mountinfo))
     if decision["action"] != "probe":
-        recorder.decided("instance_store", decision)
-        return False
-
+        return finish("none" if decision["action"] == "none" else "refused", decision)
     disk = decision["disk"]
-    device = os.path.join(args.dev, disk["name"])
-    controller = os.path.join(args.dev, disk["controller"])
+    number = disk["dev"]
+    state.update(disk=disk["name"], serial=disk["serial"], device=number)
+
+    # From here on the disk is its device number.
+    problem = identity_problem(disk, device_identity(args.sys, number))
+    if problem:
+        return finish("refused", {"action": "refuse", "reason": problem, "disk": disk})
+    node = node_path(args.node_dir, number)
+    state["node"] = node
+    major, minor = number.split(":")
+    ok, _ = rec.action("make a device node for %s" % number, ["mknod", node, "b", major, minor], lambda: make_node(node, number))
+    if not ok:
+        return finish("refused", {"action": "refuse", "reason": "a device node for %s could not be made at %s" % (number, node), "disk": disk})
+    if node_number(node) != number:
+        return finish("refused", {"action": "refuse", "reason": "%s is device %s, not %s" % (node, node_number(node), number), "disk": disk})
+
     # Recorded before anything touches it.
-    recorder.run("before lsblk", ["lsblk", "-J", "-b", "-O", device])
-    probe = recorder.run("before blkid", ["blkid", "-p", device])
-    recorder.run("before nvme id-ctrl", ["nvme", "id-ctrl", controller, "-o", "json"])
-    recorder.run("before nvme id-ns", ["nvme", "id-ns", device, "-H"])
-    recorder.run("before nvme amzn stats", ["nvme", "amzn", "stats", device, "-o", "json"])
-    problem = after_probe(probe.get("exit"))
-    if problem is not None:
-        recorder.decided("instance_store", {"action": "refuse", "reason": "%s: %s" % (disk["name"], problem), "disk": disk})
-        return False
-    recorder.decided("instance_store", {"action": "prepare", "reason": decision["reason"] + ", and no signature", "disk": disk})
+    rec.run("before lsblk", ["lsblk", "-J", "-b", "-O", node])
+    probe = rec.run("before blkid", ["blkid", "-p", node])
+    rec.run("before nvme id-ctrl", ["nvme", "id-ctrl", node, "-o", "json"])
+    rec.run("before nvme id-ns", ["nvme", "id-ns", node, "-H"])
+    rec.run("before nvme amzn stats", ["nvme", "amzn", "stats", node, "-o", "json"])
+    problem = after_probe(probe)
+    if problem:
+        return finish("refused", {"action": "refuse", "reason": "%s: %s" % (disk["name"], problem), "disk": disk})
+
+    # Immediately before formatting: everything again, by number.
+    probe = rec.run("recheck blkid", ["blkid", "-p", node])
+    problem = after_probe(probe)
+    if problem is None:
+        ok, data = rec.action("read the first MiB", ["read", node, str(PROBE_BYTES)],
+                              lambda: {"bytes": len(read_start(node))})
+        if not ok or data is None or data.get("bytes") != PROBE_BYTES:
+            problem = "provision.py could not read the first MiB of %s" % node
+    if problem is None:
+        problem = identity_problem(disk, device_identity(args.sys, number))
+    if problem is None and node_number(node) != number:
+        problem = "%s is now device %s, not %s" % (node, node_number(node), number)
+    if problem is None and number in mounted_devices(read_text(os.path.join(args.proc, "self", "mountinfo")) or ""):
+        problem = "%s (%s) is now mounted" % (disk["name"], number)
+    if problem:
+        return finish("refused", {"action": "refuse", "reason": "just before formatting, %s" % problem, "disk": disk})
+    rec.decided("instance_store", {"action": "prepare", "reason": decision["reason"] + "; checked again by its device number just before formatting, with no signature", "disk": disk})
 
     # mkfs.xfs with its defaults, never -f: it refuses a device that holds a file system.
-    if recorder.run("mkfs.xfs", ["mkfs.xfs", device], timeout=900).get("exit") != 0:
-        return False
-    if recorder.run("mkdir", ["mkdir", "-p", INSTANCE_STORE_MOUNT]).get("exit") != 0:
-        return False
-    if recorder.run("mount", ["mount", device, INSTANCE_STORE_MOUNT]).get("exit") != 0:
-        return False
-    recorder.run("after xfs_info", ["xfs_info", INSTANCE_STORE_MOUNT])
-    recorder.run("after findmnt", ["findmnt", "-J", INSTANCE_STORE_MOUNT])
-    recorder.run("after lsblk", ["lsblk", "-J", "-b", "-O", device])
-    return True
+    if rec.run("mkfs.xfs", ["mkfs.xfs", node], timeout=900).get("exit") != 0:
+        return finish("failed")
+    ready = mounted = False
+    try:
+        state["made_mount_point"] = True  # recorded before, so a supervisor undoing a killed run knows
+        rec.write()
+        ok, _ = rec.action("make the mount point", ["mkdir", "-p", mp], lambda: os.makedirs(mp))
+        if not ok:
+            return finish("failed")
+        if rec.run("mount", ["mount", "-t", "xfs", node, mp]).get("exit") != 0:
+            return finish("failed")
+        mounted = True
+        seen = mounted_number(mp, args.proc)
+        state["mounted_device"] = seen
+        if seen["stat"] != number or seen["mountinfo"] != number:
+            rec.decided("instance_store mount", {"action": "refuse", "reason": "%s is mounted from device %s by stat and %s by mountinfo, not the checked %s"
+                                                 % (mp, seen["stat"], seen["mountinfo"], number), "disk": disk})
+            return finish("failed")
+        rec.run("after xfs_info", ["xfs_info", mp])
+        rec.run("after findmnt", ["findmnt", "-J", mp])
+        rec.run("after lsblk", ["lsblk", "-J", "-b", "-O", node])
+        ready = True
+        return finish("ready")
+    finally:
+        if not ready:
+            state["state"] = "stopped" if sys.exc_info()[0] is Stopped else "failed"
+            if mounted or os.path.ismount(mp):
+                if rec.run("umount", ["umount", mp], cleanup=True).get("exit") != 0:
+                    rec.run("umount lazily", ["umount", "-l", mp], cleanup=True)
+            if os.path.lexists(mp):
+                rec.action("remove the mount point", ["rmdir", mp], lambda: os.rmdir(mp), cleanup=True)
+            state["made_mount_point"] = os.path.lexists(mp)
+            rec.write()
+
+
+def prepare_root_volume(rec, args):
+    """The root volume's directory and Fixture; the directory exists only when the Fixture was made."""
+    directory = args.root_volume_dir
+    state = {"state": "failed", "directory": directory}
+    rec.record["root_volume"] = state
+    ready = False
+    try:
+        if not os.path.isdir(directory):
+            state["made_directory"] = True
+            rec.write()
+            ok, _ = rec.action("make the root volume's directory", ["mkdir", "-p", directory], lambda: os.makedirs(directory))
+            if not ok:
+                return False
+        if not make_fixture(rec, args, "root_volume", directory, ROOT_VOLUME_FIXTURE_BYTES):
+            return False
+        rec.run("after findmnt root_volume", ["findmnt", "-J", "-T", directory])
+        ready = True
+        state["state"] = "ready"
+        return True
+    finally:
+        if not ready:
+            if sys.exc_info()[0] is Stopped:
+                state["state"] = "stopped"
+            if os.path.isdir(directory):
+                rec.action("remove the root volume's directory", ["rmdir", directory], lambda: os.rmdir(directory), cleanup=True)
+        rec.write()
+
+
+def provision(args):
+    rec = Recorder(args.record, args.steps_dir or os.path.join(os.path.dirname(os.path.abspath(args.record)), "provision-steps"),
+                   args.deadline_seconds, args.kill_grace_seconds)
+    rec.install()
+    rec.record["instance_type"] = args.instance_type or None
+    rec.write()
+    status = 0
+    try:
+        store = prepare_instance_store(rec, args)
+        if store == "ready":
+            if not make_fixture(rec, args, "instance_store", args.instance_store_mount, INSTANCE_STORE_FIXTURE_BYTES):
+                status = 1
+        elif store in ("refused", "failed"):
+            status = 1
+        if not prepare_root_volume(rec, args):
+            status = 1
+        mounts = [path for path in (args.instance_store_mount,) if os.path.ismount(path)]
+        rec.run("free space", ["df", "-B1", "--output=source,fstype,size,used,avail,target", "/", args.root_volume_dir, *mounts]
+                if os.path.isdir(args.root_volume_dir) else ["df", "-B1", "--output=source,fstype,size,used,avail,target", "/", *mounts])
+        rec.record["state"] = "done" if status == 0 else "failed"
+    except Stopped as stop:
+        rec.record.update(state="stopped", stopped_by=stop.why)
+        log("STOPPED: %s" % stop.why)
+        status = stop.status
+    except Exception as error:  # recorded, never fatal to the boot
+        rec.record.update(state="failed", error=repr(error))
+        log("FAILED: %r" % error)
+        status = 1
+    finally:
+        rec.record["exit"] = status
+        rec.write()
+    return status
+
+
+# ---- the outer limit ----
+
+def load_record(path):
+    try:
+        with open(path, encoding="utf-8") as handle:
+            value = json.load(handle)
+        return value if isinstance(value, dict) else None
+    except (OSError, ValueError):
+        return None
+
+
+def finalize(path, report):
+    """Completes the record after provisioning ended, however it ended: a step
+    still marked running gets the output its files hold, and the record says
+    how provisioning ended and what was left of it."""
+    record = load_record(path)
+    if record is None:
+        record = {"schema": RECORD_SCHEMA, "state": "no record",
+                  "steps": [], "decisions": [], "fixtures": [],
+                  "note": "provision.py wrote no readable record before it ended"}
+    for entry in record.get("steps", []):
+        if entry.get("state") == "running":
+            entry["state"] = "unfinished"
+            entry["note"] = "provision.py ended before recording the end of this step; its output is what its files held"
+            for key in ("stdout", "stderr"):
+                name = entry.get(key + "_file")
+                if name:
+                    entry[key] = read_bytes(name)
+    if record.get("state") == "running":
+        record["state"] = "ended without recording its end"
+    record["supervisor"] = report
+    write_json_atomically(path, record)
+    return record
+
+
+def run_quietly(arguments, timeout):
+    """A command the supervisor runs to undo something: its own process group,
+    killed with the group after `timeout`. Returns what happened."""
+    started = time.time_ns()
+    try:
+        child = subprocess.Popen(arguments, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                 close_fds=True, preexec_fn=os.setpgrp)
+    except OSError as error:
+        return {"command": arguments, "exit": None, "error": str(error)}
+    try:
+        output = child.communicate(timeout=timeout)[0]
+    except subprocess.TimeoutExpired:
+        kill_group(child.pid, child, 1)
+        output = b""
+    return {"command": arguments, "exit": child.returncode, "output": output.decode("utf-8", "replace"),
+            "seconds": round((time.time_ns() - started) / 1e9, 3)}
+
+
+def undo(args, record):
+    """What a provisioning that was killed outright left half done, undone as
+    it would have undone it itself: a mount point it made whose mount it did
+    not verify is unmounted and removed; a Fixture it did not make whole is
+    removed (never one that was there before it); the root volume's directory,
+    when not ready, is removed. Returns what was done."""
+    done = []
+
+    def attempt(what, command, function):
+        try:
+            function()
+            done.append({"what": what, "command": command, "exit": 0})
+        except OSError as error:
+            done.append({"what": what, "command": command, "exit": 1, "error": str(error)})
+
+    store = record.get("instance_store") or {}
+    mp = args.instance_store_mount
+    if store.get("state") != "ready" and store.get("made_mount_point"):
+        if os.path.ismount(mp):
+            result = run_quietly(["umount", mp], CLEANUP_SECONDS)
+            done.append(dict(result, what="unmount the unverified instance store"))
+            if result.get("exit") != 0:
+                done.append(dict(run_quietly(["umount", "-l", mp], CLEANUP_SECONDS), what="unmount it lazily"))
+        if os.path.lexists(mp):
+            attempt("remove the mount point", ["rmdir", mp], lambda: os.rmdir(mp))
+    for fixture in record.get("fixtures", []):
+        path = fixture.get("path")
+        if path and not fixture.get("made") and not fixture.get("existed_before", True) and os.path.lexists(path):
+            attempt("remove the partial Fixture %s" % fixture.get("disk"), ["rm", path], lambda path=path: os.unlink(path))
+    root = record.get("root_volume") or {}
+    directory = args.root_volume_dir
+    if root and root.get("state") != "ready" and os.path.isdir(directory):
+        attempt("remove the root volume's directory", ["rmdir", directory], lambda: os.rmdir(directory))
+    return done
+
+
+def child_arguments(args):
+    arguments = ["--record", args.record, "--fixture-tool", args.fixture_tool,
+                 "--instance-type", args.instance_type, "--region", args.region,
+                 "--sys", args.sys, "--proc", args.proc, "--node-dir", args.node_dir,
+                 "--instance-store-mount", args.instance_store_mount, "--root-volume-dir", args.root_volume_dir,
+                 "--kill-grace-seconds", str(args.kill_grace_seconds),
+                 "--fixture-timeout-seconds", str(args.fixture_timeout_seconds)]
+    if args.steps_dir:
+        arguments += ["--steps-dir", args.steps_dir]
+    deadline = args.deadline_given if args.deadline_given is not None else max(1.0, args.supervise_seconds - min(60.0, args.supervise_seconds / 10))
+    return arguments + ["--deadline-seconds", str(deadline)]
+
+
+def supervise(args):
+    stop = []
+    for signum in STOP_SIGNALS:
+        signal.signal(signum, lambda signum, _frame: stop.append(signum))
+    started = time.time_ns()
+    child = subprocess.Popen([sys.executable, os.path.abspath(__file__)] + child_arguments(args),
+                             stdin=subprocess.DEVNULL, start_new_session=True, close_fds=True)
+    sid = child.pid
+    end = time.monotonic() + args.supervise_seconds
+    outer = None
+    term_at = None
+    while child.poll() is None:
+        now = time.monotonic()
+        if term_at is None and (stop or now >= end):
+            outer = ("told to stop by %s" % signal_name(stop[0])) if stop else ("the outer limit of %s seconds" % args.supervise_seconds)
+            log("%s: sending TERM to provisioning" % outer)
+            child.send_signal(signal.SIGTERM)
+            term_at = now
+        elif term_at is not None and now - term_at >= args.supervise_grace_seconds:
+            log("provisioning did not stop within %s seconds of TERM: KILL" % args.supervise_grace_seconds)
+            child.kill()
+            term_at = float("inf")
+        time.sleep(POLL_SECONDS)
+    code = child.returncode
+    status = code if code >= 0 else 128 - code
+    session = kill_session(sid)
+    if session["killed"]:
+        log("killed %d processes left in provisioning's session: %s" % (len(session["killed"]), ", ".join(
+            "%d %s" % (process["pid"], process["comm"]) for process in session["killed"])))
+    undone = undo(args, load_record(args.record) or {})
+    for action in undone:
+        log("undone after provisioning ended: %s, exit %s" % (action["what"], action.get("exit")))
+    ended = time.time_ns()
+    report = {"limit_seconds": args.supervise_seconds, "grace_seconds": args.supervise_grace_seconds,
+              "started_at": rfc3339(started), "ended_at": rfc3339(ended), "session": sid,
+              "child_exit": code if code >= 0 else None, "child_signal": signal_name(-code) if code < 0 else None,
+              "stopped_by": outer, "session_left": session["killed"], "session_survivors": session["survivors"],
+              "undone": undone}
+    finalize(args.record, report)
+    if outer is not None:
+        return 124 if not stop else 128 + stop[0]
+    return status
 
 
 def main(argv=None):
@@ -339,35 +1016,23 @@ def main(argv=None):
     parser.add_argument("--fixture-tool", required=True, help="the built runner/fixture.c")
     parser.add_argument("--instance-type", default="", help="this box's instance type, from IMDS")
     parser.add_argument("--region", default="", help="this box's region, from IMDS")
+    parser.add_argument("--supervise-seconds", type=float, help="run as a child in a session of its own, for at most this long")
+    parser.add_argument("--supervise-grace-seconds", type=float, default=SUPERVISE_GRACE_SECONDS, help=argparse.SUPPRESS)
+    parser.add_argument("--deadline-seconds", type=float, dest="deadline_given", help=argparse.SUPPRESS)
+    parser.add_argument("--kill-grace-seconds", type=float, default=KILL_GRACE_SECONDS, help=argparse.SUPPRESS)
+    parser.add_argument("--fixture-timeout-seconds", type=float, default=1200, help=argparse.SUPPRESS)
     parser.add_argument("--sys", default="/sys", help=argparse.SUPPRESS)
-    parser.add_argument("--dev", default="/dev", help=argparse.SUPPRESS)
     parser.add_argument("--proc", default="/proc", help=argparse.SUPPRESS)
+    parser.add_argument("--node-dir", default=NODE_DIR, help=argparse.SUPPRESS)
+    parser.add_argument("--instance-store-mount", default=INSTANCE_STORE_MOUNT, help=argparse.SUPPRESS)
+    parser.add_argument("--root-volume-dir", default=ROOT_VOLUME_DIR, help=argparse.SUPPRESS)
+    parser.add_argument("--steps-dir", help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
-
-    recorder = Recorder()
-    recorder.record["instance_type"] = args.instance_type or None
-    status = 0
-    try:
-        if prepare_instance_store(recorder, args):
-            if not make_fixture(recorder, args.fixture_tool, "instance_store", INSTANCE_STORE_MOUNT, INSTANCE_STORE_FIXTURE_BYTES):
-                status = 1
-        elif any(d.get("action") in ("refuse", "prepare") for d in recorder.record["decisions"] if d["what"] == "instance_store"):
-            status = 1
-
-        if recorder.run("mkdir", ["mkdir", "-p", ROOT_VOLUME_DIR]).get("exit") != 0:
-            status = 1
-        elif not make_fixture(recorder, args.fixture_tool, "root_volume", ROOT_VOLUME_DIR, ROOT_VOLUME_FIXTURE_BYTES):
-            status = 1
-        recorder.run("after findmnt root_volume", ["findmnt", "-J", "-T", ROOT_VOLUME_DIR])
-        recorder.run("free space", ["df", "-B1", "--output=source,fstype,size,used,avail,target", "/", "/var/tmp",
-                                    *([INSTANCE_STORE_MOUNT] if os.path.ismount(INSTANCE_STORE_MOUNT) else [])])
-    except Exception as error:  # recorded, never fatal to the boot
-        recorder.record["error"] = repr(error)
-        log("FAILED: %r" % error)
-        status = 1
-    finally:
-        recorder.write(args.record)
-    return status
+    args.record = os.path.abspath(args.record)
+    if args.supervise_seconds is not None:
+        return supervise(args)
+    args.deadline_seconds = args.deadline_given if args.deadline_given is not None else DEADLINE_SECONDS
+    return provision(args)
 
 
 if __name__ == "__main__":
