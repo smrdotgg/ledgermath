@@ -80,3 +80,30 @@ describe("the runs workflow", () => {
 		expect(alarm?.env?.COPY).toBe("${{ steps.copy.outcome == 'success' && steps.push.outcome == 'success' && 'succeeded' || 'failed' }}");
 	});
 });
+
+describe("every action in the workflows", () => {
+	const files = ["runs.yml", "check.yml"].map((name) => ({ name, text: readFileSync(join(ROOT, ".github", "workflows", name), "utf8") }));
+
+	test("is pinned to a full commit SHA, with its version in a trailing comment", () => {
+		const pins = new Map<string, string>();
+		for (const { name, text } of files) {
+			const uses = text.split("\n").filter((line) => /^\s*(-\s+)?uses:/.test(line));
+			expect(uses.length).toBeGreaterThan(0);
+			for (const line of uses) {
+				const match = /^\s*(?:-\s+)?uses: ([\w.-]+\/[\w.-]+)@([0-9a-f]{40}) # (v\d+\.\d+\.\d+)$/.exec(line);
+				if (match === null) throw new Error(`${name}: not pinned to a commit with its version: ${line.trim()}`);
+				const [, action, sha, version] = match as unknown as [string, string, string, string];
+				// One action, one pin, across both files.
+				expect(pins.get(action) ?? `${sha} ${version}`).toBe(`${sha} ${version}`);
+				pins.set(action, `${sha} ${version}`);
+			}
+		}
+		expect([...pins.keys()].sort()).toEqual([
+			"actions/cache",
+			"actions/checkout",
+			"actions/upload-artifact",
+			"aws-actions/configure-aws-credentials",
+			"oven-sh/setup-bun",
+		]);
+	});
+});
