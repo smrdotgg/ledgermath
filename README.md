@@ -5,7 +5,8 @@ binary that prints a stream of events to stdout, one JSON object per line, and
 diagnostics to stderr. A box on EC2 builds it, runs it as an ordinary process, dumps
 its own environment around every execution, and writes one Run per execution: a
 self-describing record kept forever. The plan is GitHub issue #36; step 2, one Run end
-to end, is #37; step 3, the first Method and a page, is #39; step 6, prices, is #45.
+to end, is #37; step 3, the first Method and a page, is #39; step 6, prices, is #45; step 7,
+the agent skill and opening the repository, is #47.
 `docs/dev-log.md` section 2 is the event contract.
 
 Two pipelines live here side by side. The new one, described first, writes Runs.
@@ -36,6 +37,10 @@ until step 4 of the plan replaces it.
 | `scripts/lib/price-rules.ts` | The selection rules, versioned: which of AWS's price records a price file keeps |
 | `scripts/lib/offer-file.ts`, `scripts/lib/prices.ts`, `scripts/lib/price-file-check.ts` | Reading AWS's offer files without holding them in memory; the cut, the download and the price file; whether a price file holds together |
 | `.github/workflows/prices.yml` | The price fetch, twice a day, adding at most one file a day to the Runs repository |
+| `skills/ledgermath/SKILL.md` | The agent skill: napkin math from LedgerMath's numbers, every number cited or marked as an assumption |
+| `scripts/lookup.ts` | The lookup tool the skill uses: the Series, one Series' percentiles and Runs, prices by word, each number beside its citation (`scripts/lib/lookup.ts`, `scripts/lib/citation.ts`, `scripts/lib/ledger-data.ts`; what each benchmark measures, `scripts/lib/benchmark-notes.ts`) |
+| `scripts/check-answer.ts` | Checks an answer written with the skill: every number accounted for, every citation resolving in the data (`scripts/lib/answer-check.ts`, `scripts/lib/quantity.ts`) |
+| `CONTRIBUTING.md` | How to add a benchmark in any language, a target, a Method version, and what a pull request says |
 | `tests/` | `bun test`: the schemas against sample Runs, the Run checker, the schedule's check, the runner's timeout and stop races and its instance-type filtering, the dump's sections, the disk provisioning's decisions, the disk Fixture and the binaries' checks of it, the launch schedules, launch and reap logic, the box's and the workflow's roles, the Method, the copy job, the page, the alarm and the workflows, and the price fetch, cut, schema and recompute check on excerpts of AWS's files (`tests/samples/prices/`) |
 
 ## A benchmark, locally
@@ -718,6 +723,36 @@ It needs only the secret `RUNS_REPO_DEPLOY_KEY`, which `runs.yml` already uses (
 deploy key of `smrdotgg/ledgermath-runs` with write access. No AWS credentials and no
 variables. GitHub runs scheduled workflows from the default branch only, so it starts
 once it is on `main`.
+
+## The agent skill
+
+Step 7 (#47). [`skills/ledgermath/SKILL.md`](skills/ledgermath/SKILL.md) teaches an agent
+to answer a question such as "what would it cost to distribute a new update of a large
+game to 30 million players?" as napkin math: a model of a few factors, each taken from
+LedgerMath with its citation or marked as an assumption, the arithmetic shown, and a range
+from the 5th and 95th percentiles.
+
+`scripts/lookup.ts` is what it reads LedgerMath with. Its input is a location holding
+`derivations.json` (the Method's output), `runs/` and `prices/`: a clone of the Runs
+repository with a derivations file beside `runs/`, or a base web address serving the same
+paths (a web address cannot be listed, so the newest price file there is found by trying
+each of the last 14 days). It derives no number of its own and reads no clock.
+
+```bash
+bun scripts/lookup.ts --data DIR about                  # what the data hold
+bun scripts/lookup.ts --data DIR series memory_read     # the Series matching every word
+bun scripts/lookup.ts --data DIR show cdd7309941eb      # one Series: p5, p50, p95, groups, Runs
+bun scripts/lookup.ts --data DIR prices c6i.8xlarge     # prices matching every word, in AWS's words
+bun scripts/check-answer.ts --data DIR --question q.txt answer.md
+```
+
+Every number the tool prints has its citation beside it, in a syntax the checker resolves
+(`scripts/lib/citation.ts`): `[lm:series/<id>/<number>/<p5|p50|p95>]` for a Series'
+percentile, with the Run files behind it linked as `runs/<yyyy>/<mm>/<dd>/<id>.json`;
+`[lm:prices/<yyyy>/<mm>/<dd>/aws.json#<sku>/<rate code>]` for a price, the file, SKU and
+rate code of "Citing a price" above; `[assumption: <where it comes from>]` for anything
+else. The checker reports every number that is neither cited, marked, from the question,
+nor the result of arithmetic shown, and every citation or Run link that does not resolve.
 
 ## July's pipeline (`benchmarks/c/`, stage `smr`)
 
