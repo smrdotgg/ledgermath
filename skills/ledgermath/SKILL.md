@@ -39,15 +39,18 @@ lists what is.
 
 1. **Write the model** as a product of a few factors with units, at most six: for the game
    update, `cost = players × update size × price per GB delivered`.
-2. **Fill each factor.** Look in LedgerMath first (`series`, `show`, `prices`). A factor it
-   holds takes its number with the citation the tool prints beside it. Every other factor
-   is an assumption: give its value and `[assumption: <where it comes from>]`.
+2. **Fill each factor, one input per line**: the number in digits with its unit, then right
+   after it the citation the tool printed beside it, copied whole. A factor LedgerMath does
+   not hold is an assumption: its value, then `[assumption: <where it comes from>]`. A count
+   of Runs takes the Series' `count` citation.
 3. **Check the fit.** Read the tool's `measures:`, `this set:` and `Note:` lines, and say so
    whenever a number is used outside what it measured: another instance type, a loopback
    number (`tcp_echo`) for a network, the root EBS volume for an instance's own disk, one
    thread for many, AWS's catalog words (`networkPerformance`) for a measurement.
-4. **Multiply, showing the arithmetic**, one step per line: `a × b = c`. Show rounding with
-   an arrow: `71.3 → 72`.
+4. **Multiply, one operation per line**: `label: a × b = c`, with a label that holds no
+   number. Every operand is a number accounted for above, written with the same unit
+   (`$1.36 per hour`, never `$1.36` for it); round with an arrow, `71.3 → 72`. Changing a
+   price's unit (per request to per 1000000 requests, per hour to per month) is such a line.
 5. **Give a low and a high figure** from the p5 and p95 where the spread matters (for a
    time, the slow end is the p95; for a rate, the p5). Name the factor that dominates the
    uncertainty; it is usually an assumption.
@@ -56,20 +59,24 @@ lists what is.
    `bun scripts/check-answer.ts --data <location> --question <question file> <answer file>`.
    Fix every problem it reports.
 
-Done when every number in the answer is cited, marked as an assumption, taken from the
-question, or the result of a line of arithmetic shown in the answer.
+Done when every number in the answer, tables and code included, is from the question,
+cited, an assumption, the result of a line of arithmetic, or a repeat of one of these with
+the same unit.
 
 ## Citations
 
-Write the citation right after the number, on the same line, as the tool prints it.
-
-| Number | Citation |
+| Number | Citation, right after it on its line |
 |---|---|
-| A Series' percentile | `[lm:series/<id>/<number>/<p5\|p50\|p95>]`, and somewhere in the answer at least one of its Runs: `runs/<yyyy>/<mm>/<dd>/<id>.json` |
-| One group's, when a Series is split | `[lm:series/<id>/group/<G>/<number>/<stat>]` |
-| A price | `[lm:prices/<yyyy>/<mm>/<dd>/aws.json#<sku>/<rate code>]`, with the price file's date in words |
+| A Series' percentile | `[lm:series/<id>/<number>/<p5\|p50\|p95>@v1,<moment>]`, and at least one of its Runs in the answer: `runs/<yyyy>/<mm>/<dd>/<id>.json` |
+| How many Runs it is over | `[lm:series/<id>/<number>/count@v1,<moment>]` |
+| One group's, when a Series is split | `[lm:series/<id>/group/<G>/<number>/<stat>@v1,<moment>]` |
+| A price, in AWS's unit | `[lm:prices/<yyyy>/<mm>/<dd>/aws.json#<sku>/<rate code>]`, with the price file's date in words |
+| Where a price's tier begins or ends | `[lm:prices/<yyyy>/<mm>/<dd>/aws.json#<sku>/<rate code>/endRange]` (or `/beginRange`) |
 | AWS's catalog words for a product (vCPUs, memory) | `[lm:prices/<yyyy>/<mm>/<dd>/aws.json#<sku>/attributes/<name>]` |
 | Anything else | `[assumption: <where it comes from>]` |
+
+`<moment>` is when the Series' newest Run started: the citation is of the Series as it
+stood then, so it can be checked after more Runs arrive.
 
 ## Rules
 
@@ -91,16 +98,21 @@ Numbers from the data of 2026-11-11; yours will be newer.
 
 **Model**: time = data ÷ one-thread read bandwidth; cost = time × price per hour.
 
-**Inputs**
-- Data: 48 GiB, from the question; it fits in the box's 64 GiB [lm:prices/2026/11/11/aws.json#NKB8DU47ZKKBXW65/attributes/memory].
-- One-thread read bandwidth of a c6i.8xlarge (`memory_read`, `threads=1 path=avx2`, static build): p5 13.1709 GB/s [lm:series/c96b6f40c007/bytes_per_second/p5], p50 13.5922 GB/s [lm:series/c96b6f40c007/bytes_per_second/p50], p95 14.0136 GB/s [lm:series/c96b6f40c007/bytes_per_second/p95], from 2 Runs. It sums 64-bit words; a program that does more per byte is slower.
+**Inputs** (`memory_read` on one thread with AVX2, static build; it only sums what it reads, and a program that does more per byte is slower)
+- Data: 48 GiB, from the question.
+- Memory of one c6i.8xlarge: 64 GiB [lm:prices/2026/11/11/aws.json#NKB8DU47ZKKBXW65/attributes/memory], so the data fit.
+- Read bandwidth, p5: 13.1709 GB/s [lm:series/c96b6f40c007/bytes_per_second/p5@v1,2026-11-11T00:24:16Z]
+- Read bandwidth, p50: 13.5922 GB/s [lm:series/c96b6f40c007/bytes_per_second/p50@v1,2026-11-11T00:24:16Z]
+- Read bandwidth, p95: 14.0136 GB/s [lm:series/c96b6f40c007/bytes_per_second/p95@v1,2026-11-11T00:24:16Z]
+- Runs behind them: 2 [lm:series/c96b6f40c007/bytes_per_second/count@v1,2026-11-11T00:24:16Z]
 - Price: $1.36 per hour [lm:prices/2026/11/11/aws.json#NKB8DU47ZKKBXW65/NKB8DU47ZKKBXW65.JRTCKXETXF.6YS6EN2CT7], price file of 2026-11-11.
 
 **Arithmetic**
 - 48 GiB = 51.54 GB
 - Central: 51.54 GB ÷ 13.5922 GB/s = 3.79 s
-- Low: 51.54 GB ÷ 14.0136 GB/s = 3.68 s; high: 51.54 GB ÷ 13.1709 GB/s = 3.91 s
-- Cost: 3.79 s ÷ 3600 × $1.36 = $0.00143
+- Low: 51.54 GB ÷ 14.0136 GB/s = 3.68 s
+- High: 51.54 GB ÷ 13.1709 GB/s = 3.91 s
+- Cost: 3.79 s × $1.36 per hour = $0.00143
 
 **Answer**: about 3.79 s (3.68 to 3.91 s across the Runs), $0.00143 of instance time. The
 spread is that of 2 boxes. What the program does per byte dominates the uncertainty, not

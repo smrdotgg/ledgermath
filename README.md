@@ -39,7 +39,7 @@ until step 4 of the plan replaces it.
 | `.github/workflows/prices.yml` | The price fetch, twice a day, adding at most one file a day to the Runs repository |
 | `skills/ledgermath/SKILL.md` | The agent skill: napkin math from LedgerMath's numbers, every number cited or marked as an assumption |
 | `scripts/lookup.ts` | The lookup tool the skill uses: the Series, one Series' percentiles and Runs, prices by word, each number beside its citation (`scripts/lib/lookup.ts`, `scripts/lib/citation.ts`, `scripts/lib/ledger-data.ts`; what each benchmark measures, `scripts/lib/benchmark-notes.ts`) |
-| `scripts/check-answer.ts` | Checks an answer written with the skill: every number accounted for, every citation resolving in the data (`scripts/lib/answer-check.ts`, `scripts/lib/quantity.ts`) |
+| `scripts/check-answer.ts` | Checks an answer written with the skill: every number from the question, cited, an assumption, recomputed arithmetic, or a repeat; every citation resolving in the data (`scripts/lib/answer-check.ts`, `scripts/lib/quantity.ts`) |
 | `CONTRIBUTING.md` | How to add a benchmark in any language, a target, a Method version, and what a pull request says |
 | `tests/` | `bun test`: the schemas against sample Runs, the Run checker, the schedule's check, the runner's timeout and stop races and its instance-type filtering, the dump's sections, the disk provisioning's decisions, the disk Fixture and the binaries' checks of it, the launch schedules, launch and reap logic, the box's and the workflow's roles, the Method, the copy job, the page, the alarm and the workflows, and the price fetch, cut, schema and recompute check on excerpts of AWS's files (`tests/samples/prices/`) |
 
@@ -747,12 +747,27 @@ bun scripts/check-answer.ts --data DIR --question q.txt answer.md
 ```
 
 Every number the tool prints has its citation beside it, in a syntax the checker resolves
-(`scripts/lib/citation.ts`): `[lm:series/<id>/<number>/<p5|p50|p95>]` for a Series'
-percentile, with the Run files behind it linked as `runs/<yyyy>/<mm>/<dd>/<id>.json`;
-`[lm:prices/<yyyy>/<mm>/<dd>/aws.json#<sku>/<rate code>]` for a price, the file, SKU and
-rate code of "Citing a price" above; `[assumption: <where it comes from>]` for anything
-else. The checker reports every number that is neither cited, marked, from the question,
-nor the result of arithmetic shown, and every citation or Run link that does not resolve.
+(`scripts/lib/citation.ts`): `[lm:series/<id>/<number>/<p5|p50|p95|count>@v1,<moment>]` for
+a Series' percentile or its number of counted Runs, with the Run files behind it linked as
+`runs/<yyyy>/<mm>/<dd>/<id>.json`; `[lm:prices/<yyyy>/<mm>/<dd>/aws.json#<sku>/<rate code>]`
+for a price, the file, SKU and rate code of "Citing a price" above (`/beginRange` or
+`/endRange` after it for its tier's bounds); `[assumption: <where it comes from>]` for
+anything else.
+
+`<moment>` is the start of the Series' newest Run, to the second: a citation is of the
+Series as it stood then, under Method series version 1. When more Runs have arrived, the
+checker recomputes the cited statistic from the Runs that had started by that moment (each
+Run's number depends on that Run alone, so the population then is the Derivation's points
+up to it, through Method version 1's own `percentile`). It is the Series' own newest Run,
+not the file's, because boots of one instance type never overlap and upload all their Runs
+at once, while another type's boot still running when the Derivations were made can add
+Runs that started earlier.
+
+The checker holds every number in an answer, tables and code included, to one rule: it is
+from the question, cited (in the cited unit; a price in AWS's own unit), an assumption with
+a source in words, the result of a line of arithmetic it recomputes from accounted operands,
+or a repeat of one of these with the same value and unit. `scripts/lib/answer-check.ts`
+says exactly how, and what it does not read.
 
 ## July's pipeline (`benchmarks/c/`, stage `smr`)
 
