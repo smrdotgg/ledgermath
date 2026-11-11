@@ -20,7 +20,9 @@ import {
 	type NumberName,
 	paramCitation,
 	priceCitation,
+	rangeCitation,
 	seriesCitation,
+	seriesMoment,
 } from "./citation";
 import type { LedgerData, LoadedPrices } from "./ledger-data";
 import type { PriceSource } from "./prices";
@@ -121,6 +123,8 @@ export interface SeriesSummary {
 	boots: number;
 	first_run_at: string | null;
 	newest_run_at: string | null;
+	/** The start of the newest Run, to the second: the moment the Series' citations are of. */
+	data_through: string;
 	groups: number;
 }
 
@@ -149,6 +153,7 @@ function summary(series: SeriesDerivation): SeriesSummary {
 		boots: new Set(series.points.map((point) => point.boot)).size,
 		first_run_at: times[0] ?? null,
 		newest_run_at: times[times.length - 1] ?? null,
+		data_through: seriesMoment(series),
 		groups: series.groups.length,
 	};
 }
@@ -173,20 +178,21 @@ function matchingSeries(all: SeriesSummary[], words: string[]): SeriesSummary[] 
 	return all.filter((s) => tests.every((matches) => matches(s)));
 }
 
-function numberStats(id: string, name: NumberName, stat: Stat | null, group?: string): NumberStats | null {
+/** A number's percentiles, each with a citation of the Series as of `moment` under Method version `version`. */
+function numberStats(id: string, name: NumberName, stat: Stat | null, version: number, moment: string, group?: string): NumberStats | null {
 	if (stat === null) return null;
 	const { unit } = NUMBER_UNIT[name];
 	const cited = (which: "p5" | "p50" | "p95"): CitedValue => ({
 		value: stat[which],
 		unit,
 		text: numberText(name, stat[which]),
-		citation: seriesCitation(id, name, which, group),
+		citation: seriesCitation(id, name, which, version, moment, group),
 	});
 	return {
 		number: name,
 		unit,
 		count: stat.count,
-		count_citation: seriesCitation(id, name, "count", group),
+		count_citation: seriesCitation(id, name, "count", version, moment, group),
 		p5: cited("p5"),
 		p50: cited("p50"),
 		p95: cited("p95"),
@@ -301,6 +307,7 @@ function runLink(data: LedgerData, point: Point): RunLink {
 function detail(data: LedgerData, series: SeriesDerivation, runs: number | "all"): SeriesDetail {
 	const base = summary(series);
 	const id = series.series.id;
+	const version = data.derivations.method.version;
 	const whatOf = new Map(data.derivations.split_on.map((fact) => [fact.fact, fact.what]));
 	const first = series.groups[0];
 	const groupDetails: GroupDetail[] =
@@ -323,7 +330,7 @@ function detail(data: LedgerData, series: SeriesDerivation, runs: number | "all"
 						first_run_at: times[0] ?? null,
 						newest_run_at: times[times.length - 1] ?? null,
 						differs_from_first: differs,
-						numbers: NUMBERS.flatMap((name) => numberStats(id, name, group.percentiles[name], group.id) ?? []),
+						numbers: NUMBERS.flatMap((name) => numberStats(id, name, group.percentiles[name], version, base.data_through, group.id) ?? []),
 					};
 				});
 	const newestFirst = [...series.points].sort((a, b) => compareText(b.started_at, a.started_at) || compareText(a.path, b.path));
@@ -345,7 +352,7 @@ function detail(data: LedgerData, series: SeriesDerivation, runs: number | "all"
 		...base,
 		method: `${data.derivations.method.name} version ${data.derivations.method.version}`,
 		derivations: data.derivationsFrom,
-		numbers: NUMBERS.flatMap((name) => numberStats(id, name, series.percentiles[name]) ?? []),
+		numbers: NUMBERS.flatMap((name) => numberStats(id, name, series.percentiles[name], version, base.data_through) ?? []),
 		group_details: groupDetails,
 		runs_list: shown.map((point) => runLink(data, point)),
 		runs_shown: shown.length,
@@ -378,6 +385,9 @@ export interface PriceMatch {
 	description: string;
 	begin_range: string;
 	end_range: string;
+	/** Where the tier begins and ends, in AWS's unit; null for "Inf", which cites nothing. */
+	begin_range_citation: string | null;
+	end_range_citation: string | null;
 	effective_date: string;
 	citation: string;
 	file: string;
@@ -453,6 +463,8 @@ export function allPrices(prices: LoadedPrices): PriceMatch[] {
 						description: String(dimension.description),
 						begin_range: String(dimension.beginRange),
 						end_range: String(dimension.endRange),
+						begin_range_citation: Number.isFinite(Number(dimension.beginRange)) ? rangeCitation(prices.path, sku, String(dimension.rateCode), "beginRange") : null,
+						end_range_citation: Number.isFinite(Number(dimension.endRange)) ? rangeCitation(prices.path, sku, String(dimension.rateCode), "endRange") : null,
 						effective_date: String(term.effectiveDate),
 						citation: priceCitation(prices.path, sku, String(dimension.rateCode)),
 						file: prices.path,
@@ -673,6 +685,7 @@ export function showText(data: LedgerData, result: ShowResult): string {
 		if (s.bytes !== null) lines.push(`  bytes per second counts: ${s.bytes}`);
 		lines.push(
 			`  Runs: ${s.runs} (${s.counted} counted, ${s.failed} failed) from ${s.boots} boots, ${s.first_run_at === null ? "-" : atSecond(s.first_run_at)} to ${s.newest_run_at === null ? "-" : atSecond(s.newest_run_at)}`,
+			`  data through ${s.data_through}, the newest Run's start: each citation below is of the Series as it stood then, under Method ${s.method}`,
 			"",
 		);
 		if (s.numbers.length === 0) lines.push("No counted Run: this Series has no number.", "");
@@ -711,7 +724,8 @@ export function pricesText(data: LedgerData, result: PriceResult): string {
 			lines.push(
 				`${match.price_per_unit} ${match.currency} per ${match.unit}   ${match.citation}`,
 				`  AWS's description: "${match.description}"`,
-				`  range ${match.begin_range} to ${match.end_range} ${match.unit}; effective ${match.effective_date}; price file of ${match.file_date}`,
+				`  tier from ${match.begin_range} ${match.unit}${match.begin_range_citation === null ? "" : ` ${match.begin_range_citation}`} to ${match.end_range}${match.end_range_citation === null ? "" : ` ${match.unit} ${match.end_range_citation}`}`,
+				`  effective ${match.effective_date}; price file of ${match.file_date}`,
 				`  ${match.product_family}, SKU ${match.sku}, rate code ${match.rate_code}, selected by rule ${match.rule}; ${match.offer} offer file version ${match.offer_version}, published ${match.offer_published}`,
 			);
 			const shown = SHOWN_ATTRIBUTES.flatMap((name) => match.attributes.filter((a) => a.name === name));

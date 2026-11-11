@@ -126,15 +126,19 @@ describe("show", () => {
 		expect(time?.count).toBe(3);
 		expect(time?.p50.value).toBe(bytes?.p50 as number);
 		expect(time?.p50.text).toBe("8 ms");
-		expect(time?.p5.citation).toBe(`[lm:series/${s.id}/time_per_repetition_ns/p5]`);
-		expect(s.numbers.find((n) => n.number === "bytes_per_second")?.p95.citation).toBe(`[lm:series/${s.id}/bytes_per_second/p95]`);
+		// The Series as of its newest Run's start, the failed Run of 2026-11-15.
+		expect(s.data_through).toBe("2026-11-15T04:12:00Z");
+		expect(time?.p5.citation).toBe(`[lm:series/${s.id}/time_per_repetition_ns/p5@v1,2026-11-15T04:12:00Z]`);
+		expect(s.numbers.find((n) => n.number === "bytes_per_second")?.p95.citation).toBe(`[lm:series/${s.id}/bytes_per_second/p95@v1,2026-11-15T04:12:00Z]`);
+		expect(time?.count_citation).toBe(`[lm:series/${s.id}/time_per_repetition_ns/count@v1,2026-11-15T04:12:00Z]`);
 		expect(s.runs).toBe(4);
 		expect(s.failed).toBe(1);
 		expect(s.runs_list.map((run) => run.started_at.slice(0, 10))).toEqual(["2026-11-15", "2026-11-14", "2026-11-13", "2026-11-12"]);
 		expect(s.runs_list[0]?.counted).toBe(false);
 		expect(s.notes[0]).toContain("3 counted Runs");
 		const text = showText(data, result);
-		expect(text).toContain(`  p50  8 ms                         [lm:series/${s.id}/time_per_repetition_ns/p50]`);
+		expect(text).toContain(`  p50  8 ms                         [lm:series/${s.id}/time_per_repetition_ns/p50@v1,2026-11-15T04:12:00Z]`);
+		expect(text).toContain("  data through 2026-11-15T04:12:00Z, the newest Run's start: each citation below is of the Series as it stood then, under Method series version 1");
 		expect(text).toContain(`params: path=avx2 [lm:series/${s.id}/params/path]`);
 		expect(text).toContain(`  ${fixture.c6i.runs[0]?.path}  2026-11-12T04:12:00Z  group A  counted`);
 		expect(text).toMatch(/failed: .*no "verified" event/);
@@ -159,7 +163,7 @@ describe("show", () => {
 			["B", 2],
 		]);
 		expect(groups[1]?.differs_from_first.map((d) => d.fact)).toEqual(["cpuid", "lscpu", "sys_cpu"]);
-		expect(groups[1]?.numbers[0]?.p50.citation).toBe(`[lm:series/${fixture.m5.series.id}/group/B/time_per_repetition_ns/p50]`);
+		expect(groups[1]?.numbers[0]?.p50.citation).toBe(`[lm:series/${fixture.m5.series.id}/group/B/time_per_repetition_ns/p50@v1,2026-11-16T04:22:00Z]`);
 		expect(result.series.notes.some((note) => note.startsWith("Split into 2 groups"))).toBe(true);
 		expect(showText(data, result)).toContain("differs from group A in: cpuid (dump section cpuid");
 	});
@@ -246,22 +250,37 @@ describe("citations", () => {
 				const value = await resolveCitation(attribute.citation.slice(4, -1), data);
 				expect(value.ok && value.kind === "attribute" && value.text).toBe(attribute.value);
 			}
+			for (const [citation, text] of [
+				[match.begin_range_citation, match.begin_range],
+				[match.end_range_citation, match.end_range],
+			] as const) {
+				if (citation === null) {
+					expect(text).toBe("Inf");
+					continue;
+				}
+				const range = await resolveCitation(citation.slice(4, -1), data);
+				expect(range.ok && range.kind === "range" && range.text).toBe(text);
+			}
 		}
 	});
 
 	test("one that names nothing says what it does not find", async () => {
 		const cases: Array<[string, string]> = [
-			["series/000000000000/bytes_per_second/p50", "no Series 000000000000"],
-			[`series/${fixture.c6i.series.id}/bytes_per_second/p99`, "not a Series citation"],
-			[`series/${fixture.c6i.series.id}/group/B/bytes_per_second/p50`, "has no group B"],
-			[`series/${fixture.syscall.series.id}/bytes_per_second/p50`, "has no bytes_per_second"],
+			["series/000000000000/bytes_per_second/p50@v1,2026-11-15T04:12:00Z", "no Series 000000000000"],
+			[`series/${fixture.c6i.series.id}/bytes_per_second/p50`, "must say which data it was read from"],
+			[`series/${fixture.c6i.series.id}/bytes_per_second/p99@v1,2026-11-15T04:12:00Z`, "not a LedgerMath citation"],
+			[`series/${fixture.c6i.series.id}/group/B/bytes_per_second/p50@v1,2026-11-15T04:12:00Z`, "has no group B"],
+			[`series/${fixture.syscall.series.id}/bytes_per_second/p50@v1,2026-11-12T04:13:00Z`, "has no bytes_per_second from a counted Run"],
+			[`series/${fixture.c6i.series.id}/bytes_per_second/p50@v2,2026-11-15T04:12:00Z`, "Method series version 2"],
+			[`series/${fixture.c6i.series.id}/bytes_per_second/p50@v1,2026-11-16T00:00:00Z`, "data the checker does not have"],
+			[`series/${fixture.c6i.series.id}/bytes_per_second/p50@v1,2026-11-11T00:00:00Z`, "no bytes_per_second from a counted Run that started by"],
 			[`series/${fixture.c6i.series.id}/params/blocks`, "has no parameter blocks"],
 			["prices/2026/11/12/aws.json#NKB8DU47ZKKBXW65/NKB8DU47ZKKBXW65.JRTCKXETXF.6YS6EN2CT7", "no price file prices/2026/11/12/aws.json"],
 			[`${SAMPLE_PATH}#AAAAAAAAAAAAAAAA/AAAAAAAAAAAAAAAA.JRTCKXETXF.6YS6EN2CT7`, "holds no SKU AAAAAAAAAAAAAAAA"],
 			[`${SAMPLE_PATH}#NKB8DU47ZKKBXW65/NKB8DU47ZKKBXW65.JRTCKXETXF.XXXXXXXXXX`, "has no rate code"],
 			[`${SAMPLE_PATH}#NKB8DU47ZKKBXW65/attributes/colour`, "has no attribute colour"],
 			["benchmark/fortnite", "no benchmark fortnite"],
-			["the internet", "not a citation LedgerMath knows"],
+			["the internet", "not a LedgerMath citation"],
 		];
 		for (const [inside, reason] of cases) {
 			const resolved = await resolveCitation(inside, data);

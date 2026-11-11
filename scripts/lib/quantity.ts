@@ -1,48 +1,82 @@
 /**
- * Numbers as people write them in an estimate, with their units: "30 million",
- * "1.5e9 GB", "$0.09", "140.28 GB/s", "12500 Megabit", "7.69 ms". Used by the
- * answer checker (scripts/check-answer.ts) to find the numbers in an answer
- * and to compare a number with the value its citation resolves to.
+ * Numbers as an answer writes them, with their units, for the answer checker
+ * (scripts/check-answer.ts): "30,000,000", "30 million players", "1.5e9 GB",
+ * "-$0.096 per hour", ".57 µs", "112.269 MB/s", "$0.08 per GB-month",
+ * "12500 Megabit", "77%".
  *
- * A quantity is reduced to a dimension and a value in that dimension's base
- * unit: bytes (bits count as an eighth of a byte), seconds or US dollars. A
- * rate ("GB/s", "per hour") keeps only its numerator's dimension: the checker
- * compares magnitudes, not units of rates.
+ * A quantity keeps its sign, the number as written, the precision its written
+ * digits imply (half the place of its last digit), and its whole unit: the
+ * dimensions and the factor to base units (bytes, seconds, US dollars,
+ * requests, I/O operations), denominator included, so 112.27 MB/s, 112.27
+ * MB/h and 112.27 MB are three different things. Bits are an eighth of a
+ * byte; decimal and binary prefixes keep their own factors; a month is 730
+ * hours and a year 8760, as AWS bills them. A noun that is none of these
+ * units ("players", "machines") is a label and adds no dimension.
  */
 
-export type Dimension = "bytes" | "seconds" | "usd" | "percent" | "none";
+export type Dimension = "B" | "s" | "USD" | "req" | "io";
+export type Dims = Partial<Record<Dimension, number>>;
 
-export interface Quantity {
-	/** The text it was read from. */
+export interface Unit {
+	dims: Dims;
+	/** Base units in one of this unit. */
+	factor: number;
+	/** As written, empty for none. */
 	text: string;
-	/** Where the text starts and ends in what was scanned. */
-	start: number;
-	end: number;
-	/** The number as written, with scale words ("million") and exponents applied, before the unit. */
-	written: number;
-	/** Significant digits as written; trailing zeros of a whole number do not count. */
-	digits: number;
-	dimension: Dimension;
-	/** In the dimension's base unit. */
-	value: number;
 }
 
-const BYTE_PREFIX: Readonly<Record<string, number>> = { "": 1, k: 1e3, K: 1e3, M: 1e6, G: 1e9, T: 1e12, P: 1e15, E: 1e18 };
-const BINARY_PREFIX: Readonly<Record<string, number>> = { K: 2 ** 10, k: 2 ** 10, M: 2 ** 20, G: 2 ** 30, T: 2 ** 40, P: 2 ** 50, E: 2 ** 60 };
+export interface Quantity {
+	/** The text read, sign and unit included. */
+	text: string;
+	start: number;
+	end: number;
+	/** The number as written, signed, with scale words and exponents applied, in its written unit. */
+	written: number;
+	/** Half the place of the last written digit, in the same terms as written: 0.0005 for 112.269, 0.5 for 30,000,000. */
+	half: number;
+	unit: Unit;
+	/** written × unit.factor: in base units. */
+	value: number;
+	/** Whether it is a bare power (10^9, 2^30), which is exact. */
+	power: boolean;
+}
+
+const DIMENSIONS: readonly Dimension[] = ["B", "s", "USD", "req", "io"];
+const HOUR = 3600;
+const MONTH = 730 * HOUR;
+const YEAR = 8760 * HOUR;
+
+export function multiply(a: Dims, b: Dims, power = 1): Dims {
+	const out: Dims = {};
+	for (const d of DIMENSIONS) {
+		const e = (a[d] ?? 0) + power * (b[d] ?? 0);
+		if (e !== 0) out[d] = e;
+	}
+	return out;
+}
+
+export function sameDims(a: Dims, b: Dims): boolean {
+	return DIMENSIONS.every((d) => (a[d] ?? 0) === (b[d] ?? 0));
+}
+
+/** "B/s", "USD/s", "USD/(B s)", "" for none. */
+export function dimsText(dims: Dims): string {
+	const up = DIMENSIONS.filter((d) => (dims[d] ?? 0) > 0).map((d) => ((dims[d] as number) === 1 ? d : `${d}^${dims[d]}`));
+	const down = DIMENSIONS.filter((d) => (dims[d] ?? 0) < 0).map((d) => ((dims[d] as number) === -1 ? d : `${d}^${-(dims[d] as number)}`));
+	if (down.length === 0) return up.join(" ") || "no unit";
+	return `${up.join(" ") || "1"}/${down.length === 1 ? down[0] : `(${down.join(" ")})`}`;
+}
+
+const DECIMAL: Readonly<Record<string, number>> = { "": 1, k: 1e3, K: 1e3, M: 1e6, G: 1e9, T: 1e12, P: 1e15, E: 1e18 };
+const BINARY: Readonly<Record<string, number>> = { K: 2 ** 10, k: 2 ** 10, M: 2 ** 20, G: 2 ** 30, T: 2 ** 40, P: 2 ** 50, E: 2 ** 60 };
 const WORD_PREFIX: Readonly<Record<string, number>> = { "": 1, kilo: 1e3, mega: 1e6, giga: 1e9, tera: 1e12, peta: 1e15, exa: 1e18 };
 
-const SECONDS: Readonly<Record<string, number>> = {
+const TIME: Readonly<Record<string, number>> = {
 	ns: 1e-9,
-	nanosecond: 1e-9,
-	nanoseconds: 1e-9,
 	"µs": 1e-6,
 	"μs": 1e-6,
 	us: 1e-6,
-	microsecond: 1e-6,
-	microseconds: 1e-6,
 	ms: 1e-3,
-	millisecond: 1e-3,
-	milliseconds: 1e-3,
 	s: 1,
 	sec: 1,
 	secs: 1,
@@ -52,184 +86,249 @@ const SECONDS: Readonly<Record<string, number>> = {
 	mins: 60,
 	minute: 60,
 	minutes: 60,
-	h: 3600,
-	hr: 3600,
-	hrs: 3600,
-	hour: 3600,
-	hours: 3600,
+	h: HOUR,
+	hr: HOUR,
+	hrs: HOUR,
+	hour: HOUR,
+	hours: HOUR,
 	day: 86400,
 	days: 86400,
+	week: 7 * 86400,
+	weeks: 7 * 86400,
+	mo: MONTH,
+	month: MONTH,
+	months: MONTH,
+	year: YEAR,
+	years: YEAR,
 };
 
-const SCALE_WORDS: Readonly<Record<string, number>> = {
-	thousand: 1e3,
-	k: 1e3,
-	K: 1e3,
-	million: 1e6,
-	millions: 1e6,
-	mn: 1e6,
-	M: 1e6,
-	billion: 1e9,
-	billions: 1e9,
-	bn: 1e9,
-	trillion: 1e12,
-};
-
-const SUPERSCRIPT: Readonly<Record<string, string>> = {
-	"⁰": "0",
-	"¹": "1",
-	"²": "2",
-	"³": "3",
-	"⁴": "4",
-	"⁵": "5",
-	"⁶": "6",
-	"⁷": "7",
-	"⁸": "8",
-	"⁹": "9",
-	"⁻": "-",
-};
-
-/** A unit word: its dimension and how many base units one of it is. */
-export function unitOf(word: string): { dimension: Dimension; factor: number } | null {
-	if (word === "%") return { dimension: "percent", factor: 1 };
-	if (word === "USD" || word === "dollars" || word === "dollar") return { dimension: "usd", factor: 1 };
-	const time = SECONDS[word];
-	if (time !== undefined) return { dimension: "seconds", factor: time };
-	let match = /^([kKMGTPE]?)B$/.exec(word);
-	if (match) return { dimension: "bytes", factor: BYTE_PREFIX[match[1] as string] as number };
-	match = /^([kKMGTPE])iB$/.exec(word);
-	if (match) return { dimension: "bytes", factor: BINARY_PREFIX[match[1] as string] as number };
-	match = /^([kKMGTPE]?)(?:b|bit|bits|bps)$/.exec(word);
-	if (match) return { dimension: "bytes", factor: (BYTE_PREFIX[match[1] as string] as number) / 8 };
-	match = /^(kilo|mega|giga|tera|peta|exa|)(byte|bytes)$/i.exec(word);
-	if (match) return { dimension: "bytes", factor: WORD_PREFIX[(match[1] as string).toLowerCase()] as number };
-	match = /^(kilo|mega|giga|tera|peta|exa)(bit|bits)$/i.exec(word);
-	if (match) return { dimension: "bytes", factor: (WORD_PREFIX[(match[1] as string).toLowerCase()] as number) / 8 };
+/** One unit word, with no denominator: its dimensions and factor, or null when it is not a unit. */
+export function unitAtom(word: string): { dims: Dims; factor: number } | null {
+	let m = /^([kKMGTPE]?)B$/.exec(word);
+	if (m) return { dims: { B: 1 }, factor: DECIMAL[m[1] as string] as number };
+	m = /^([kKMGTPE])iB$/.exec(word);
+	if (m) return { dims: { B: 1 }, factor: BINARY[m[1] as string] as number };
+	m = /^([kKMGTPE]?)(i?)Bps$/.exec(word);
+	if (m) return { dims: { B: 1, s: -1 }, factor: (m[2] === "i" && m[1] !== "" ? BINARY : DECIMAL)[m[1] as string] as number };
+	m = /^([kKMGTP]?)bps$/.exec(word);
+	if (m) return { dims: { B: 1, s: -1 }, factor: (DECIMAL[m[1] as string] as number) / 8 };
+	m = /^([kKMGTP])(?:b|bit|bits)$/.exec(word);
+	if (m) return { dims: { B: 1 }, factor: (DECIMAL[m[1] as string] as number) / 8 };
+	const lower = word.toLowerCase();
+	if (lower === "bit" || lower === "bits") return { dims: { B: 1 }, factor: 1 / 8 };
+	m = /^(kilo|mega|giga|tera|peta|exa|)(bytes?)$/.exec(lower);
+	if (m) return { dims: { B: 1 }, factor: WORD_PREFIX[m[1] as string] as number };
+	m = /^(kilo|mega|giga|tera|peta)(bits?)$/.exec(lower);
+	if (m) return { dims: { B: 1 }, factor: (WORD_PREFIX[m[1] as string] as number) / 8 };
+	if (word === "USD" || lower === "dollar" || lower === "dollars") return { dims: { USD: 1 }, factor: 1 };
+	if (lower === "request" || lower === "requests" || lower === "req") return { dims: { req: 1 }, factor: 1 };
+	if (word === "IOPS") return { dims: { io: 1, s: -1 }, factor: 1 };
+	// Case matters for the short time units (ms, not MS), not for the words (Hours, Hrs, Mo).
+	const time = TIME[word] ?? (word.length > 2 ? TIME[lower] : undefined) ?? (word === "Mo" ? MONTH : undefined);
+	if (time !== undefined) return { dims: { s: 1 }, factor: time };
 	return null;
 }
 
-/**
- * One number: an optional $, digits (with thousands commas), a fraction, an
- * exponent (e9, × 10^9, ×10⁹), then an optional scale word and unit.
- * It is not part of a word: not preceded by a letter, digit, _, /, #, : or ^,
- * nor by a letter or digit followed by . or - (c6i.8xlarge, use2-az3), nor
- * by a name and = (threads=1, a parameter).
- */
-const NUMBER = new RegExp(
-	String.raw`(?<![\p{L}\p{N}_/#:\\^])(?<![\p{L}\p{N}][.\-])(?<![\p{L}_]=)` +
-		String.raw`(?<dollar>\$\s?)?(?<int>\d{1,3}(?:,\d{3})+|\d+)(?<frac>\.\d+)?` +
-		String.raw`(?:[eE](?<e>[+\-]?\d+)|\s?[×x*·]\s?10(?:\^(?<pow>[+\-]?\d+)|(?<sup>[⁰¹²³⁴⁵⁶⁷⁸⁹⁻]+)))?`,
-	"gu",
-);
+/** A unit word, optionally with a -month suffix (GB-Mo, IOPS-month, GiBps-mo). */
+const ATOM = /^(?:[A-Za-zµμ]+)(?:-(?:months|month|Mo|mo)(?![A-Za-z]))?/;
 
-/** After a number: an optional space, then a scale word, then an optional space and a unit. */
-const AFTER = new RegExp(
-	String.raw`^(?:\s?(?<scale>thousand|millions?|billions?|trillion|mn|bn|[kKM](?![a-zA-Z])))?` +
-		String.raw`(?:\s?(?<unit>%|USD|dollars?|[kKMGTPE]iB|[kKMGTPE]?B|[kKMGTPE]?(?:bits?|bps|b)|(?:kilo|mega|giga|tera|peta|exa)?(?:bytes?|bits?)|nanoseconds?|microseconds?|milliseconds?|seconds?|minutes?|hours?|days?|ns|µs|μs|us|ms|secs?|mins?|hrs?|h|s|day)(?![\p{L}\p{N}])(?:\/(?:s|sec|h|hr|day|mo|month)(?![\p{L}\p{N}]))?)?`,
-	"iu",
-);
-
-function significantDigits(int: string, frac: string | undefined): number {
-	const digits = int.replace(/,/g, "");
-	if (frac !== undefined) return Math.max(1, `${digits}${frac.slice(1)}`.replace(/^0+/, "").length);
-	return Math.max(1, digits.replace(/^0+/, "").replace(/0+$/, "").length);
+function readAtom(text: string): { dims: Dims; factor: number; length: number } | null {
+	const m = ATOM.exec(text);
+	if (m === null) return null;
+	const [word, suffix] = m[0].split("-") as [string, string | undefined];
+	const atom = unitAtom(word);
+	if (atom === null) return null;
+	if (suffix === undefined) return { ...atom, length: word.length };
+	return { dims: multiply(atom.dims, { s: 1 }), factor: atom.factor * MONTH, length: m[0].length };
 }
 
-/** Every number in text, with its unit, in order. */
+const SCALE: Readonly<Record<string, number>> = {
+	thousand: 1e3,
+	million: 1e6,
+	millions: 1e6,
+	billion: 1e9,
+	billions: 1e9,
+	trillion: 1e12,
+	trillions: 1e12,
+	bn: 1e9,
+	mn: 1e6,
+	k: 1e3,
+	K: 1e3,
+	M: 1e6,
+};
+
+/** The scale word and the unit after a number: "million", "GB/s", " per hour", "-byte", "USD per Hrs", "per 1,000 requests". */
+function readUnit(text: string, dollar: boolean): { scale: number; unit: Unit; length: number } {
+	let i = 0;
+	let scale = 1;
+	const scaleMatch = /^ ?(thousand|millions?|billions?|trillions?|bn|mn|[kKM])(?![A-Za-z0-9])/.exec(text);
+	if (scaleMatch !== null) {
+		scale = SCALE[scaleMatch[1] as string] as number;
+		i = scaleMatch[0].length;
+	}
+	let dims: Dims = dollar ? { USD: 1 } : {};
+	let factor = 1;
+	let unitStart = -1;
+	// The numerator: " GB", "GB", "-byte", " USD".
+	const numerator = /^(?: |-)?/.exec(text.slice(i))?.[0] ?? "";
+	const atom = readAtom(text.slice(i + numerator.length));
+	if (atom !== null && !(numerator === "-" && atom.dims.USD !== undefined)) {
+		const after = text.charAt(i + numerator.length + atom.length);
+		if (!/[A-Za-z0-9_]/.test(after) && !(dollar && atom.dims.USD !== undefined)) {
+			unitStart = i + numerator.length;
+			dims = multiply(dims, atom.dims);
+			factor *= atom.factor;
+			i += numerator.length + atom.length;
+		}
+	}
+	// Denominators: "/s", " per hour", " per GB-month", " per 1,000 requests".
+	for (;;) {
+		const sep = /^(?:\/| per )/.exec(text.slice(i));
+		if (sep === null) break;
+		let j = i + sep[0].length;
+		let count = 1;
+		const n = /^(\d{1,3}(?:,\d{3})+|\d+) /.exec(text.slice(j));
+		if (n !== null && sep[0] !== "/") {
+			count = Number((n[1] as string).replace(/,/g, ""));
+			j += n[0].length;
+		}
+		const den = readAtom(text.slice(j));
+		if (den === null || /[A-Za-z0-9_]/.test(text.charAt(j + den.length))) break;
+		if (unitStart < 0) unitStart = i;
+		dims = multiply(dims, den.dims, -1);
+		factor /= den.factor * count;
+		i = j + den.length;
+	}
+	const unitText = unitStart < 0 ? (dollar ? "$" : "") : `${dollar ? "$" : ""}${text.slice(unitStart, i).replace(/^[ -]/, "")}`;
+	return { scale, unit: { dims, factor, text: unitText }, length: i };
+}
+
+/** A unit written alone, such as AWS's "Hrs", "GB-Mo", "GiBps-mo" or "Requests". */
+export function parseUnit(text: string): Unit | null {
+	const atom = readAtom(text);
+	if (atom === null || atom.length !== text.length) return null;
+	return { dims: atom.dims, factor: atom.factor, text };
+}
+
+const SUPERSCRIPT: Readonly<Record<string, string>> = { "⁰": "0", "¹": "1", "²": "2", "³": "3", "⁴": "4", "⁵": "5", "⁶": "6", "⁷": "7", "⁸": "8", "⁹": "9", "⁻": "-" };
+
+/** The digits of a number: thousands-grouped, plain, or a leading decimal point. */
+const CORE = /(\d{1,3}(?:,\d{3})+(?!\d)|\d+)(\.\d+)?|\.\d+/g;
+const LETTER = /[\p{L}]/u;
+const ALNUM = /[\p{L}\p{N}]/u;
+
+/** Half the place of the last digit of a written number: 0.0005 for "112.269", 0.5 for "30,000,000". */
+function halfOfLastDigit(digits: string): number {
+	const dot = digits.indexOf(".");
+	return dot < 0 ? 0.5 : 0.5 * 10 ** -(digits.length - dot - 1);
+}
+
+/**
+ * Every number in text, in order, with its sign and unit. A number is not
+ * read inside a word: after a letter, digit or underscore (gp3, x86_64, p50),
+ * after a letter or digit and a dot (c6i.8xlarge), after a letter and a hyphen
+ * (us-east-2, AVX-512), after a word and a slash (HTTP/2), or followed by
+ * letters that are no unit or by digits (8375C, 8D49XP354UEYTHGM). A hyphen
+ * or minus right before a number, not after a letter or digit, is its sign.
+ */
 export function quantities(text: string): Quantity[] {
 	const found: Quantity[] = [];
-	for (const match of text.matchAll(NUMBER)) {
-		const groups = match.groups as Record<string, string | undefined>;
-		const start = match.index;
-		let end = start + match[0].length;
-		// An identifier that starts with digits (a hash, a SKU, an id) is not a number.
-		const rest = /^[\p{L}\p{N}_]*/u.exec(text.slice(end))?.[0] ?? "";
-		if (/[\p{N}_]/u.test(rest)) continue;
-		const int = groups.int as string;
-		let written = Number(`${int.replace(/,/g, "")}${groups.frac ?? ""}`);
-		if (groups.e !== undefined) written *= 10 ** Number(groups.e);
-		if (groups.pow !== undefined) written *= 10 ** Number(groups.pow);
-		if (groups.sup !== undefined) written *= 10 ** Number([...groups.sup].map((c) => SUPERSCRIPT[c] ?? "").join(""));
-		// A bare power, 10^9 or 2^30, is the number it raises to.
-		const power = groups.frac === undefined && groups.e === undefined && groups.pow === undefined ? /^\^([+\-]?\d+)/.exec(text.slice(end)) : null;
-		if (power !== null) {
-			written **= Number(power[1]);
-			end += power[0].length;
+	let read = 0;
+	for (const match of text.matchAll(CORE)) {
+		// Digits inside the quantity just read ("per 1,000 requests") are part of its unit.
+		if (match.index < read) continue;
+		let start = match.index;
+		const digits = match[0];
+		const before = text.charAt(start - 1);
+		const before2 = text.charAt(start - 2);
+		if (/[\p{L}\p{N}_#\\^@]/u.test(before)) continue;
+		if (before === "." && ALNUM.test(before2)) continue;
+		if (before === "/" && /[\p{L}_.]/u.test(before2)) continue;
+		let end = start + digits.length;
+		const exponent = /^(?:[eE]([+-]?\d+)(?![\p{L}\p{N}])|\s?[×x*·]\s?10(?:\^([+-]?\d+)|([⁰¹²³⁴⁵⁶⁷⁸⁹⁻]+)))/u.exec(text.slice(end));
+		const restWord = /^[\p{L}\p{N}_]*/u.exec(text.slice(end + (exponent?.[0].length ?? 0)))?.[0] ?? "";
+		if (/[\p{N}_]/u.test(restWord)) continue;
+
+		let dollar = false;
+		let sign = 1;
+		let signAt = start;
+		if (text.charAt(start - 1) === "$") {
+			dollar = true;
+			signAt = start - 1;
 		}
-		const after = AFTER.exec(text.slice(end));
-		let dimension: Dimension = groups.dollar !== undefined ? "usd" : "none";
-		let factor = 1;
-		if (after !== null) {
-			const scale = after.groups?.scale;
-			const unitWord = after.groups?.unit;
-			// A lone "M" or "k" right before a unit is that unit's prefix, which the unit pattern reads.
-			if (scale !== undefined) written *= SCALE_WORDS[scale] ?? SCALE_WORDS[scale.toLowerCase()] ?? 1;
-			if (unitWord !== undefined) {
-				const unit = unitOf(unitWord) ?? unitOf(unitWord.toLowerCase());
-				if (unit !== null && dimension === "none") {
-					dimension = unit.dimension;
-					factor = unit.factor;
-				}
+		const s = text.charAt(signAt - 1);
+		const s2 = text.charAt(signAt - 2);
+		if (s === "-" || s === "−") {
+			if (LETTER.test(s2)) continue;
+			if (!/[\p{N})]/u.test(s2)) {
+				sign = -1;
+				signAt -= 1;
 			}
-			end += after[0].length;
 		}
-		found.push({
-			text: text.slice(start, end),
-			start,
-			end,
-			written,
-			digits: significantDigits(int, groups.frac),
-			dimension,
-			value: written * factor,
-		});
+		start = signAt;
+
+		let written = Number(digits.replace(/,/g, ""));
+		let half = halfOfLastDigit(digits);
+		let power = false;
+		const bare = /^\^([+-]?\d+)/.exec(text.slice(end));
+		if (exponent !== null) {
+			const e = Number(exponent[1] ?? exponent[2] ?? [...(exponent[3] ?? "")].map((c) => SUPERSCRIPT[c] ?? "").join(""));
+			written *= 10 ** e;
+			half *= 10 ** e;
+			end += exponent[0].length;
+		} else if (bare !== null && !digits.includes(".")) {
+			written **= Number(bare[1]);
+			half = 0;
+			power = true;
+			end += bare[0].length;
+		}
+
+		if (text.charAt(end) === "%") {
+			found.push({ text: text.slice(start, end + 1), start, end: end + 1, written: sign * written, half, unit: { dims: {}, factor: 0.01, text: "%" }, value: sign * written * 0.01, power });
+			read = end + 1;
+			continue;
+		}
+		const unit = readUnit(text.slice(end), dollar);
+		// Letters stuck to the number that are no unit make it part of a name (8375C), except "x" (3x).
+		const stuck = /^[\p{L}]+/u.exec(text.slice(end))?.[0];
+		if (stuck !== undefined && unit.length === 0 && stuck !== "x") continue;
+		written *= unit.scale;
+		half *= unit.scale;
+		end += unit.length;
+		found.push({ text: text.slice(start, end), start, end, written: sign * written, half, unit: unit.unit, value: sign * written * unit.unit.factor, power });
+		read = end;
 	}
 	return found;
 }
 
-/** The first quantity in text, or null. */
-export function firstQuantity(text: string): Quantity | null {
-	return quantities(text)[0] ?? null;
+/** Number words a quantity is written in, which the checker reports: the skill asks for digits. */
+const NUMBER_WORD =
+	/\b(zero|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundreds?|thousands?|millions?|billions?|trillions?|dozens?|twice|half)\b/gi;
+
+export function numberWords(text: string): Array<{ word: string; start: number }> {
+	return [...text.matchAll(NUMBER_WORD)].map((m) => ({ word: m[0], start: m.index }));
+}
+
+export function sameUnit(a: Pick<Unit, "dims" | "factor">, b: Pick<Unit, "dims" | "factor">): boolean {
+	return sameDims(a.dims, b.dims) && Math.abs(a.factor - b.factor) <= 1e-12 * Math.max(Math.abs(a.factor), Math.abs(b.factor));
 }
 
 /**
- * How far a written number may be from a value and still be that value
- * rounded: half its last digit, but never less than 0.5% nor more than 5%, so
- * "1" is not 1.36 and "4 s" is not 3.79 s.
+ * Whether a value is within a written number's rounding: strictly less than
+ * half its last digit away (a value exactly halfway rounds either way, so the
+ * digits do not imply it), or equal but for floating-point noise.
  */
-export function tolerance(quantity: Pick<Quantity, "written" | "digits">): number {
-	const magnitude = Math.floor(Math.log10(Math.abs(quantity.written) || 1));
-	const lastDigit = 10 ** (magnitude - quantity.digits + 1);
-	return Math.min(0.05, Math.max(0.005, lastDigit / 2 / Math.abs(quantity.written || 1)));
+export function withinRounding(written: number, half: number, value: number): boolean {
+	const diff = Math.abs(value - written);
+	return diff < half * (1 - 1e-9) || diff <= 1e-12 * Math.max(Math.abs(value), Math.abs(written));
 }
-
-function near(a: number, b: number, relative: number): boolean {
-	if (a === b) return true;
-	if (a === 0 || b === 0) return false;
-	return Math.abs(a - b) <= relative * Math.abs(b) * (1 + 1e-9);
-}
-
-/** Scales a number without a unit may differ by from a value in base units: 10^3k and 2^10k. */
-const UNITLESS_SCALES: readonly number[] = [0, 1, 2, 3, 4, -1, -2, -3, -4].flatMap((k) => (k === 0 ? [1] : [10 ** (3 * k), 2 ** (10 * k)]));
 
 /**
- * Whether a written quantity is the value of another quantity, as people
- * write it: equal in base units when both have a dimension, and otherwise
- * equal as written, or up to a unit prefix (10^3k, 2^10k).
+ * Whether a written quantity is a value with these dimensions, as its digits
+ * round it: the value, in the written unit, rounds to the written number at
+ * its last digit.
  */
-export function sameQuantity(written: Quantity, other: Pick<Quantity, "written" | "dimension" | "value">): boolean {
-	const relative = tolerance(written);
-	if (written.dimension !== "none" && other.dimension !== "none") {
-		return written.dimension === other.dimension && near(written.value, other.value, relative);
-	}
-	if (near(written.written, other.written, relative)) return true;
-	return UNITLESS_SCALES.some((scale) => near(written.written, other.value * scale, relative));
+export function agrees(q: Quantity, value: number, dims: Dims): boolean {
+	return sameDims(q.unit.dims, dims) && withinRounding(q.written, q.half, value / q.unit.factor);
 }
 
-/** Whether a written quantity is a value up to a power of ten, and of 1024: how a price per unit is quoted per 1,000, per million, per GiB. */
-export function samePriceUpToScale(written: Quantity, price: number): boolean {
-	const relative = tolerance(written);
-	for (let k = -12; k <= 12; k++) {
-		for (const binary of [1, 1024, 1 / 1024]) if (near(written.written, price * 10 ** k * binary, relative)) return true;
-	}
-	return false;
-}
