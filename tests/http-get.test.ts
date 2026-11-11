@@ -755,8 +755,8 @@ describe.skipIf(!AVAILABLE)("event lines (benchmarks/harness/c/lm_lines.c)", () 
 		expect(driverJson(["found", secret], "lmTestSecret/abcdefghijklmnopqrstuvwxyz 0123").found).toBe(false);
 	});
 
-	test("a secret that could be read inside the stream's own sample or verified lines is refused", () => {
-		for (const refused of ["1234567890123456", "0,\"sample\":12345", "0123456789abcdef"]) expect(driverJson(["secret", refused]).accepted).toBe(false);
+	test("a secret that could be read inside the stream's own sample, verified or finished lines is refused", () => {
+		for (const refused of ["1234567890123456", "0,\"sample\":12345", "0123456789abcdef", 'ished","t":123456']) expect(driverJson(["secret", refused]).accepted).toBe(false);
 		for (const accepted of [KEY_ID, SECRET, TOKEN, "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"]) {
 			expect(driverJson(["secret", accepted]).accepted).toBe(true);
 		}

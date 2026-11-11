@@ -112,8 +112,10 @@ static void text_put(text *t, const void *data, size_t n) {
 /* The lines the stream's order depends on, as templates: '#' stands for a
  * decimal number (1 to 20 digits) and '$' for sixteen hexadecimal digits. A
  * secret none of whose forms can occur inside one of these is never found in
- * such a line, so the guard never has to withhold one. */
+ * such a line, so the guard never has to withhold one. `finished` is among
+ * them because lm.c writes it, past the guard. */
 static const char *const STRUCTURAL[] = {
+    "{\"event\":\"finished\",\"t\":#}\n",
     "{\"event\":\"sample_started\",\"t\":#,\"sample\":#,\"warmup\":true,\"repetitions\":#}\n",
     "{\"event\":\"sample_started\",\"t\":#,\"sample\":#,\"warmup\":false,\"repetitions\":#}\n",
     "{\"event\":\"sample_ended\",\"t\":#,\"sample\":#}\n",

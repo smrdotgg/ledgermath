@@ -209,8 +209,8 @@ static void read_service(void) {
         if (*p <= ' ' || *p > '~') lm_usage("LM_SERVICE_AWS_SESSION_TOKEN holds a character no session token holds");
     }
     /* Registered with their encodings (lm_lines.h). A credential that could
-     * be read inside the stream's own sample or verified lines (one of
-     * digits alone, say) is refused: no real one is like that. */
+     * be read inside the stream's own sample, verified or finished lines (one
+     * of digits alone, say) is refused: no real one is like that. */
     if (!lm_secret_add(SECRET_KEY_ID, S.key_id, id_len)) lm_usage("LM_SERVICE_AWS_ACCESS_KEY_ID could be mistaken for the stream's own text");
     if (!lm_secret_add(SECRET_KEY, S.secret, strlen(S.secret))) lm_usage("LM_SERVICE_AWS_SECRET_ACCESS_KEY could be mistaken for the stream's own text");
     if (S.token != NULL && !lm_secret_add(SECRET_TOKEN, S.token, strlen(S.token))) lm_usage("LM_SERVICE_AWS_SESSION_TOKEN could be mistaken for the stream's own text");

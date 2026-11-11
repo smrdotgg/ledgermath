@@ -39,9 +39,10 @@
  * fields, or a mistake in a caller) is not written; in its place goes
  *     {"event":"line_withheld","t":<its t>,"withheld_event":<its name>,"withheld_bytes":<its length>}
  * and the stream goes on. lm_secret_add() refuses a secret any of whose forms
- * could appear inside a sample_started, sample_ended, verified or
- * line_withheld line, so those lines, which the stream's order depends on,
- * are never the ones withheld.
+ * could appear inside a sample_started, sample_ended, verified, line_withheld
+ * or finished line, so those lines, which the stream's order depends on, are
+ * never the ones withheld (and `finished`, which lm.c writes past the guard,
+ * never holds one).
  *
  * Single-threaded: call from the thread that owns stdout, never inside a
  * measured interval (these allocate and write).
@@ -122,8 +123,9 @@ uint64_t lm_lines_withheld_lines(void);
  * `slot` names it, so registering again under the same slot replaces it (a
  * request's signature replaces the previous one). An empty secret clears the
  * slot. Returns false, registering nothing, when a form of the secret could
- * appear inside a sample_started, sample_ended, verified or line_withheld
- * line (a secret made only of digits, say). Slots 0 to LM_SECRET_SLOTS - 1. */
+ * appear inside a sample_started, sample_ended, verified, line_withheld or
+ * finished line (a secret made only of digits, say). Slots 0 to
+ * LM_SECRET_SLOTS - 1. */
 #define LM_SECRET_SLOTS 8
 bool lm_secret_add(int slot, const void *secret, size_t len);
 /* Whether `data` holds any registered secret, in any registered form,
