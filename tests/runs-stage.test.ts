@@ -12,6 +12,7 @@ import {
 	readPolicy,
 	trustPolicy,
 } from "../infra/runs/github-role";
+import { BOX_EC2_READS, BOX_WRITES, boxPolicy } from "../infra/runs/box-role";
 import { boxTags, launch } from "../infra/runs/launch-box";
 import {
 	clientToken,
@@ -320,6 +321,53 @@ function allows(policy: PolicyDocument, action: string, resource: string): boole
 			(statement.Resource ?? []).some((allowed) => matches(allowed, resource)),
 	);
 }
+
+describe("the box's role", () => {
+	const bucketArn = "arn:aws:s3:::ledgermath-smr-runs-runsbucketbucket-abcdefgh";
+	const sourceKey = `source/${COMMIT}.tar.gz`;
+	const policy = boxPolicy(bucketArn, sourceKey);
+
+	test("reads its source archive, lists blobs/, and writes runs/, blobs/, boots/ and logs/, and nothing else of the bucket", () => {
+		expect(allows(policy, "s3:GetObject", `${bucketArn}/${sourceKey}`)).toBe(true);
+		expect(allows(policy, "s3:GetObject", `${bucketArn}/source/another.tar.gz`)).toBe(false);
+		expect(allows(policy, "s3:GetObject", `${bucketArn}/runs/2026/11/10/a.json`)).toBe(false);
+		expect(allows(policy, "s3:ListBucket", bucketArn)).toBe(true);
+		const listing = policy.Statement.find((statement) => statement.Action.includes("s3:ListBucket"));
+		expect(listing?.Condition).toEqual({ StringLike: { "s3:prefix": ["blobs/", "blobs/*"] } });
+		for (const prefix of BOX_WRITES) expect(allows(policy, "s3:PutObject", `${bucketArn}/${prefix}x`)).toBe(true);
+		for (const key of ["source/x.tar.gz", "other", "runsx/a"]) expect(allows(policy, "s3:PutObject", `${bucketArn}/${key}`)).toBe(false);
+		for (const action of ["s3:DeleteObject", "s3:GetObjectVersion", "s3:PutBucketPolicy", "iam:PassRole"]) {
+			expect(allows(policy, action, `${bucketArn}/runs/a.json`)).toBe(false);
+		}
+	});
+
+	test("calls exactly four read-only EC2 actions: the catalog record, the volumes and their status, and the instance", () => {
+		const ec2 = policy.Statement.filter((statement) => statement.Action.some((action) => action.startsWith("ec2:")));
+		expect(ec2).toEqual([
+			{
+				Effect: "Allow",
+				Action: ["ec2:DescribeInstanceTypes", "ec2:DescribeVolumes", "ec2:DescribeVolumeStatus", "ec2:DescribeInstances"],
+				Resource: ["*"],
+			},
+		]);
+		for (const action of BOX_EC2_READS) expect(allows(policy, action, "*")).toBe(true);
+		for (const action of ["ec2:RunInstances", "ec2:TerminateInstances", "ec2:CreateTags", "ec2:DescribeSnapshots", "ec2:ModifyVolume", "ec2:*"]) {
+			expect(allows(policy, action, "*")).toBe(false);
+		}
+		expect(policy.Statement.flatMap((statement) => statement.Action).sort()).toEqual(
+			[...BOX_EC2_READS, "s3:GetObject", "s3:ListBucket", "s3:PutObject"].sort(),
+		);
+	});
+
+	test("is the stack's, and the container's aws stand-in allows the same EC2 actions", () => {
+		expect(STACK).toContain("policy: bucket.arn.apply((arn) => JSON.stringify(boxPolicy(arn, archive.key))),");
+		const stub = readFileSync(join(import.meta.dir, "..", "scripts", "box-in-container", "aws"), "utf8");
+		const listed = /^EC2_ACTIONS = \(([^)]*)\)$/m.exec(stub)?.[1] ?? "";
+		const stubActions = [...listed.matchAll(/"([a-z-]+)"/g)].map((match) => match[1]);
+		const camel = (action: string): string => `ec2:${action.split("-").map((word) => word[0]?.toUpperCase() + word.slice(1)).join("")}`;
+		expect(stubActions.map((action) => camel(action as string)).sort()).toEqual([...BOX_EC2_READS].sort());
+	});
+});
 
 describe("the role the runs workflow assumes", () => {
 	const providerArn = "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com";

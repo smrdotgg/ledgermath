@@ -30,6 +30,7 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 
+import { boxPolicy } from "./box-role";
 import { GITHUB_OIDC_AUDIENCE, GITHUB_OIDC_URL, readPolicy, trustPolicy } from "./github-role";
 import { LAUNCH_SCHEDULES, TARGETS, ZONE } from "./placement";
 
@@ -40,8 +41,6 @@ import { LAUNCH_SCHEDULES, TARGETS, ZONE } from "./placement";
  */
 const IMAGE_ID = "ami-03499a87bbb39a09a";
 const REAP_SCHEDULE = "rate(5 minutes)";
-/** What a box may write. scripts/box-in-container/aws allows the same. */
-const BOX_WRITES = ["runs/", "blobs/", "boots/", "logs/"];
 
 /** SST commands that change nothing in AWS, which may run from a tree that differs from HEAD. */
 const NON_DEPLOYING = new Set(["diff", "remove", "refresh"]);
@@ -111,29 +110,15 @@ export function runsStack() {
 	});
 
 	// The box reads its source, lists blobs/ (so it uploads only the blobs the
-	// bucket does not hold yet), and writes its prefixes, nothing else.
+	// bucket does not hold yet), writes its prefixes, and reads what EC2 says
+	// about its instance type, volumes and instance; nothing else
+	// (infra/runs/box-role.ts).
 	const boxRole = new aws.iam.Role("BoxRole", {
 		assumeRolePolicy: aws.iam.assumeRolePolicyForPrincipal({ Service: "ec2.amazonaws.com" }),
 	});
 	new aws.iam.RolePolicy("BoxPolicy", {
 		role: boxRole.id,
-		policy: $jsonStringify({
-			Version: "2012-10-17",
-			Statement: [
-				{ Effect: "Allow", Action: ["s3:GetObject"], Resource: [$interpolate`${bucket.arn}/${archive.key}`] },
-				{
-					Effect: "Allow",
-					Action: ["s3:ListBucket"],
-					Resource: [bucket.arn],
-					Condition: { StringLike: { "s3:prefix": ["blobs/", "blobs/*"] } },
-				},
-				{
-					Effect: "Allow",
-					Action: ["s3:PutObject"],
-					Resource: BOX_WRITES.map((prefix) => $interpolate`${bucket.arn}/${prefix}*`),
-				},
-			],
-		}),
+		policy: bucket.arn.apply((arn) => JSON.stringify(boxPolicy(arn, archive.key))),
 	});
 	const boxProfile = new aws.iam.InstanceProfile("BoxProfile", { role: boxRole.name });
 
