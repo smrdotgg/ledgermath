@@ -47,14 +47,16 @@ lists what is.
    whenever a number is used outside what it measured: another instance type, a loopback
    number (`tcp_echo`) for a network, the root EBS volume for an instance's own disk, one
    thread for many, AWS's catalog words (`networkPerformance`) for a measurement.
-4. **Multiply, one operation per line**: `label: a × b = c`, with a label that holds no
-   number. Every operand is a number accounted for above, written with the same unit
+4. **Multiply, one operation per line**: `label: a × b = c`, with no number in the label
+   but a tier's or step's (`Tier 1`). Every operand is a number accounted for above, written with the same unit
    (`$1.36 per hour`, never `$1.36` for it); round with an arrow, `71.3 → 72`. Changing a
    price's unit (per request to per 1000000 requests, per hour to per month) is such a line.
 5. **Give a low and a high figure** from the p5 and p95 where the spread matters (for a
    time, the slow end is the p95; for a rate, the p5). Name the factor that dominates the
    uncertainty; it is usually an assumption.
-6. **List the sources**: for every Series cited, link its Runs as `show` prints them.
+6. **List the sources**: for every Series cited, link its Runs as `show` prints them; for
+   prices, name the price file by its path. An answer from prices alone says that no Series
+   was used.
 7. **Check the answer**, if you have the checker:
    `bun scripts/check-answer.ts --data <location> --question <question file> <answer file>`.
    Fix every problem it reports.
@@ -78,17 +80,42 @@ the same unit.
 `<moment>` is when the Series' newest Run started: the citation is of the Series as it
 stood then, so it can be checked after more Runs arrive.
 
+- A marker goes directly after its number, on the same line: it belongs to the nearest
+  number before it and to no other.
+- Write a date as 2026-11-11 or November 11, 2026, and name a price file by its path,
+  `prices/2026/11/11/aws.json`. A price is quoted with its file's date because AWS changes
+  prices: the date says which day's price the answer used.
+- `[lm:benchmark/<name>]` cites what a benchmark measures, in a sentence describing a
+  number; it accounts for no number itself.
+- AWS's catalog words are AWS's text, not always a quantity with a unit: network
+  performance is "12500 Megabit", with no unit of time; memory is "64 GiB". Quote them with
+  their citation. To compute with one, write your reading of it as an assumption:
+  `12500 Mbit/s [assumption: AWS's "12500 Megabit" read as per second]`.
+- A Run's dump records more than the tool shows, cache sizes for one. The tool does not show
+  them, so a number about them is an assumption.
+
 ## Rules
 
 - A number from LedgerMath always carries its citation; a price also its date.
 - An assumption is never presented as a measurement, and AWS's catalog words are never
   presented as LedgerMath's measurements.
-- When the question needs something LedgerMath does not hold, say so plainly, then stop
-  or carry on with a marked assumption.
 - A Series split into groups: say which group you use, or use the Series-wide spread.
   Few Runs: say the spread is that of a few boxes.
-- Prices with tiers (data transfer, S3 storage) are charged per tier per month; use the
-  tiers AWS's descriptions give.
+- Prices with tiers (data transfer, S3 storage) are charged per tier per month: cite each
+  tier's price and its bounds (`…/beginRange`, `…/endRange`). AWS's free allowance for
+  transfer out (the first 100 GB a month, across all Regions) is a record of its own, while
+  the Region's first tier starts at 0: combining the two is your own arithmetic, so show it.
+
+## When LedgerMath does not hold it
+
+Say so first, plainly. Stopping there is the better answer when every factor that decides
+the result would be an assumption (a latency between machines, a 99th percentile): say what
+would have to be measured. Otherwise carry on, marking each missing factor as an assumption
+and keeping it apart from what is measured, for example:
+
+> LedgerMath holds no CDN price, so the CDN's part below is assumed; the rest is cited.
+> - Transfer out of us-east-2, first tier: $0.09 per GB [lm:prices/2026/11/11/aws.json#36H7S3NU9B7S3UT5/36H7S3NU9B7S3UT5.JRTCKXETXF.Q3Z75P77EN], price file of 2026-11-11
+> - Share of downloads a CDN serves from its cache: 90% [assumption: a typical hit ratio, not measured by LedgerMath]
 
 ## Worked example
 
