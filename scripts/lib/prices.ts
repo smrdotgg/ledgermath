@@ -24,7 +24,7 @@
  */
 
 import { createHash } from "node:crypto";
-import { closeSync, openSync, writeSync } from "node:fs";
+import { closeSync, fstatSync, openSync, writeSync } from "node:fs";
 
 import { scanOfferFile, parseVerbatim, type Span } from "./offer-file";
 import { type Measured, type OfferCode, offersOf, type Product, type RuleSet } from "./price-rules";
@@ -304,9 +304,15 @@ export async function download(fetcher: Fetch, url: string, path: string): Promi
 			const { done, value } = await reader.read();
 			if (done) break;
 			let at = 0;
-			while (at < value.length) at += writeSync(descriptor, value, at);
+			while (at < value.length) {
+				const count = writeSync(descriptor, value, at, value.length - at);
+				if (count <= 0) throw new Error(`GET ${url}: a write to ${path} wrote nothing`);
+				at += count;
+			}
 			size += value.length;
 		}
+		const held = fstatSync(descriptor).size;
+		if (held !== size) throw new Error(`GET ${url}: received ${size} bytes, and ${path} holds ${held}`);
 	} finally {
 		closeSync(descriptor);
 	}

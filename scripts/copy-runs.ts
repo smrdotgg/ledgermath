@@ -18,8 +18,10 @@
  *     symbolic link: one stops the job.
  *   Each of these is checked for every key before anything is written.
  *   - Each new file is written under an unpredictable temporary name, created
- *     exclusively, then linked to its name, which fails rather than replace a
- *     file that appeared there meanwhile; that stops the job too.
+ *     exclusively, written whole, flushed and read back (a write that comes
+ *     up short stops the job and adds no part of the file), then linked to its
+ *     name, which fails rather than replace a file that appeared there
+ *     meanwhile; that stops the job too (addFile, scripts/lib/runs-repository.ts).
  *
  * Run twice, the second run adds nothing. It does not commit: the workflow does.
  * Credentials for --bucket come from the environment (scripts/lib/bucket.ts).

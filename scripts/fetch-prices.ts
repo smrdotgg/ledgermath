@@ -17,7 +17,8 @@
  *      SHA-256 of every byte it read. A rule that selects nothing, or an
  *      implausible number of products, stops it, and it writes nothing.
  *   4. The file must validate against schemas/prices.schema.json and hold
- *      together (checkPriceFile); then it is added, exclusively.
+ *      together (checkPriceFile); then it is added, exclusively, and only
+ *      once it is written whole and read back the same (addFile).
  *   5. The downloaded files are removed, unless --keep-sources.
  *
  * It does not commit: the workflow does (.github/workflows/prices.yml). It

@@ -466,7 +466,8 @@ git -C /tmp/ledgermath-runs remote set-url --push origin no-push   # a scratch c
 # ETag that is not the file's MD5 is settled by downloading and comparing the bytes), if a
 # key is not shaped like a Run file or boot summary, or if any path passes through a
 # symbolic link. Each file is created exclusively, so one that appears meanwhile stops it
-# rather than being overwritten.
+# rather than being overwritten, and gets its name only once it is written whole and read
+# back the same; a write that comes up short stops the job and adds no part of the file.
 bun scripts/copy-runs.ts --bucket "$BUCKET" /tmp/ledgermath-runs
 
 # The Method, with blobs fetched by hash and kept in a cache.
