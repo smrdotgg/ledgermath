@@ -21,6 +21,7 @@ interface Case {
 	instance_store: { state: string; device?: string; node?: string; mounted_device?: unknown } | null;
 	root_volume: { state: string } | null;
 	state: string;
+	held: string[];
 	found: string[];
 	catalog_instance_store_disks: number | null;
 	schema: string;
@@ -28,7 +29,7 @@ interface Case {
 
 const scratch = mkdtempSync(join(tmpdir(), "provision-cases-"));
 afterAll(() => rmSync(scratch, { recursive: true, force: true }));
-const done = spawnSync("python3", [join(import.meta.dir, "provision-cases.py"), join(scratch, "out")], { encoding: "utf8" });
+const done = spawnSync("python3", [join(import.meta.dir, "provision-cases.py"), join(scratch, "out")], { encoding: "utf8", timeout: 600_000 });
 if (done.status !== 0) throw new Error(`provision-cases.py failed:\n${done.stdout}${done.stderr}`);
 const cases = JSON.parse(done.stdout) as Record<string, Case>;
 
@@ -41,7 +42,7 @@ const instanceStore = (name: string) => get(name).decisions.filter((decision) =>
 const formats = (name: string): string[] => get(name).commands.filter((command) => command.startsWith("mkfs"));
 const mounts = (name: string): string[] => get(name).commands.filter((command) => command.startsWith("mount "));
 const fixtures = (name: string): string[] => get(name).commands.filter((command) => command.startsWith("/opt/fixture"));
-const NODE = "$CASE/run/ledgermath/instance-store-259-1";
+const NODE = "$CASE/dev/ledgermath/instance-store-259-1";
 const MOUNT = "$CASE/mnt/lm/instance-store";
 const ROOT_FIXTURE = "/opt/fixture $CASE/var/tmp/ledgermath/disk/ledgermath-fixture-v1 1073741824";
 const STORE_FIXTURE = `/opt/fixture ${MOUNT}/ledgermath-fixture-v1 34359738368`;
@@ -56,7 +57,7 @@ describe("on an i4i.2xlarge", () => {
 		expect(c.catalog_instance_store_disks).toBe(1);
 		expect(instanceStore("i4i")).toMatchObject({ action: "prepare", disk: "nvme1n1" });
 		expect(c.instance_store).toMatchObject({ state: "ready", device: "259:1", disk: "nvme1n1", serial: "AWS0123456789ABCDEF0", mounted_device: { stat: "259:1", mountinfo: "259:1" } });
-		expect(c.instance_store?.node?.endsWith("/run/ledgermath/instance-store-259-1")).toBe(true);
+		expect(c.instance_store?.node?.endsWith("/dev/ledgermath/instance-store-259-1")).toBe(true);
 		expect(c.commands).toEqual([
 			"aws ec2 describe-instance-types --region us-east-2 --instance-types i4i.2xlarge --output json",
 			`lsblk -J -b -O ${NODE}`,
@@ -75,9 +76,17 @@ describe("on an i4i.2xlarge", () => {
 			"findmnt -J -T $CASE/var/tmp/ledgermath/disk",
 			"df -B1 --output=source,fstype,size,used,avail,target / $CASE/var/tmp/ledgermath/disk",
 		]);
-		expect(c.actions).toEqual([`mknod ${NODE} b 259 1`, `read ${NODE} 1048576`, `mkdir -p ${MOUNT}`, "mkdir -p $CASE/var/tmp/ledgermath/disk"]);
-		// Nothing runs on a /dev name, so nothing can be redirected by renaming one.
-		expect(c.commands.some((command) => command.includes("/dev/"))).toBe(false);
+		expect(c.actions).toEqual([
+			`mknod ${NODE} b 259 1`,
+			`open ${NODE} O_RDONLY`,
+			`pread ${NODE} 1048576`,
+			`fstat BLKGETSIZE64 ${NODE}`,
+			`mkdir -p ${MOUNT}`,
+			"mkdir -p $CASE/var/tmp/ledgermath/disk",
+		]);
+		// Nothing runs on the kernel's name for the disk, so nothing can be redirected by renaming one.
+		expect(c.commands.some((command) => /\/dev\/nvme/.test(command))).toBe(false);
+		expect(c.commands.filter((command) => command.includes(NODE)).length).toBe(9);
 		expect(c.exists).toEqual({ mount_point: true, root_volume_dir: true, instance_store_fixture: true, root_volume_fixture: true });
 	});
 
@@ -119,15 +128,26 @@ describe("refuses to format, records why, makes no mount point, and still makes 
 		["partitioned", /nvme1n1 has partitions \(nvme1n1p1\): it is not empty/],
 		["held", /nvme1n1 is held by dm-0: it is in use/],
 		["mounted", /nvme1n1 \(259:1\) is mounted already/],
-		["node-cannot-be-made", /a device node for 259:1 could not be made/],
+		["node-cannot-be-made", /a device node for 259:1 could not be made at .* \(.*Operation not permitted/],
 		["node-is-another-device", /instance-store-259-1 is device 259:9, not 259:1/],
+		["node-dir-nodev", /\/dev\/ledgermath is on .*\/dev \(tmpfs\), mounted nodev \(rw,nosuid,nodev\): a device node there cannot be opened/],
+		["node-dir-on-no-known-mount", /no mount in \/proc\/self\/mountinfo holds .*\/dev\/ledgermath, so whether it allows device nodes cannot be told/],
+		["device-cannot-be-opened", /instance-store-259-1 cannot be opened \(.*Permission denied/],
+		// Missing or unreadable information is a refusal, never a pass.
+		["empty-serial", /^sysfs gives nvme1n1 no serial$/],
+		["holders-unreadable", /^nvme1n1: the holders of nvme1n1 cannot be listed/],
+		["partitions-unreadable", /^nvme1n1: the partitions of nvme1n1 cannot be listed \(Permission denied\)/],
+		["mountinfo-unreadable", /^\/proc\/self\/mountinfo cannot be read, so what is mounted cannot be told$/],
 		["signature", /blkid -p found a signature on it: it is not empty/],
 		["blkid-fails", /blkid -p exited 4: whether it is empty cannot be told/],
 		["blkid-cannot-open", /blkid -p exited 2 but said 'error: \/run\/x: Permission denied': it may not have read the device/],
 		// Checked again, by the device number, just before formatting.
 		["signature-at-recheck", /^just before formatting, blkid -p found a signature/],
-		["unreadable", /^just before formatting, provision.py could not read the first MiB/],
-		["node-changes-before-format", /^just before formatting, .*instance-store-259-1 is now device 259:7, not 259:1/],
+		["unreadable", /^just before formatting, the first MiB of .*instance-store-259-1 could not be read/],
+		// With the device held open, the held descriptor says what it is.
+		["node-changes-before-format", /^just before formatting, the held descriptor is device 259:7, not 259:1/],
+		["held-is-another-device", /^just before formatting, the held descriptor is device 259:9, not 259:1/],
+		["held-size-differs", /^just before formatting, the held device holds 1024 bytes, but sysfs gave 1875000000000/],
 		["number-names-another-disk", /^just before formatting, device number 259:1 now has name 'nvme0n1', not 'nvme1n1'/],
 		["partitioned-before-format", /^just before formatting, nvme1n1 now has partitions \(nvme1n1p1\)/],
 		["mounted-before-format", /^just before formatting, nvme1n1 \(259:1\) is now mounted/],
@@ -156,6 +176,36 @@ describe("refuses to format, records why, makes no mount point, and still makes 
 			`nvme id-ns ${NODE} -H`,
 			`nvme amzn stats ${NODE} -o json`,
 		]);
+	});
+});
+
+describe("the device is held open from before the last checks until the mount is confirmed", () => {
+	test("opened after the records and before the recheck, closed only after the mount is confirmed and recorded", () => {
+		const held = get("i4i").held;
+		const at = (what: string): number => held.findIndex((event) => event.startsWith(what));
+		expect(at("open")).toBeGreaterThan(held.indexOf(`blkid -p ${NODE}`));
+		expect(at("open")).toBeLessThan(held.lastIndexOf(`blkid -p ${NODE}`));
+		expect(at("mkfs.xfs")).toBeGreaterThan(at("open"));
+		expect(at("mount ")).toBeGreaterThan(at("mkfs.xfs"));
+		expect(at("close")).toBeGreaterThan(held.lastIndexOf(`lsblk -J -b -O ${NODE}`));
+		expect(held.filter((event) => event === "open").length).toBe(1);
+		expect(held.filter((event) => event === "close").length).toBe(1);
+	});
+
+	test("closed too when it refuses, or when the mount is wrong", () => {
+		for (const name of ["held-size-differs", "mounted-serial-differs", "signature-at-recheck"]) {
+			expect(get(name).held.filter((event) => event === "open" || event === "close")).toEqual(["open", "close"]);
+		}
+	});
+
+	test("after the mount, a model or serial that is no longer the checked one: unmounted, the mount point removed", () => {
+		const c = get("mounted-serial-differs");
+		expect(c.status).toBe(1);
+		expect(c.instance_store?.state).toBe("failed");
+		const refused = c.decisions.find((decision) => decision.what === "instance_store mount");
+		expect(refused?.reason).toMatch(/^device 259:1, mounted, has model 'Amazon EC2 NVMe Instance Storage' and serial 'AWS9999999999999999', not the checked/);
+		expect(c.commands).toContain(`umount ${MOUNT}`);
+		expect(c.exists.mount_point).toBe(false);
 	});
 });
 

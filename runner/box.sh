@@ -200,21 +200,29 @@ cc -O2 -o "$WORK/cpuid" "$SRC/runner/cpuid.c"
 # never the boot's: every other benchmark still runs, and a disk Run that
 # finds no Fixture fails by itself and says why.
 #
-# --supervise-seconds 900 is provisioning's outer limit: provision.py runs the
-# work as a child in a session of its own, sends it TERM at 900 seconds (it
-# stops itself at 840) and KILL 30 seconds later, then kills whatever is left
-# in that session and completes the record. So nothing of provisioning is
-# running when the schedule starts. timeout(1) is only a backstop, should the
-# supervisor itself hang: its TERM makes the supervisor do the same at once.
+# --supervise-seconds 330 is provisioning's outer limit: provision.py runs the
+# work as a child in a session of its own (it writes that session's id to
+# $PROVISION_SESSION at once), sends it TERM at 330 seconds (it stops itself at
+# 300) and KILL 15 seconds later, then kills whatever is left in that session
+# and completes the record. timeout(1) at 360 seconds is box.sh's own limit,
+# for a supervisor that is itself stuck; after it, runner/provision-leftovers.py
+# ends whatever is left of provisioning's session, removes what a half-done
+# preparation left where a benchmark could find it, and says so in the record.
+# On a real i4i.2xlarge provisioning took 44 seconds.
 PROVISION_RECORD="$WORK/provision.json"
+PROVISION_SESSION="$WORK/provision.session"
+
+
 if ! cc -O2 -I "$SRC/benchmarks/harness/c" -o "$WORK/fixture" "$SRC/runner/fixture.c"; then
   say "the fixture tool did not build; the disk Fixtures cannot be made"
 fi
 say "preparing the disks"
 PROVISION_STATUS=0
-timeout --kill-after=30 1000 python3 "$SRC/runner/provision.py" --supervise-seconds 900 \
-  --record "$PROVISION_RECORD" --fixture-tool "$WORK/fixture" \
+timeout --kill-after=10 360 python3 "$SRC/runner/provision.py" --supervise-seconds 330 \
+  --session-file "$PROVISION_SESSION" --record "$PROVISION_RECORD" --fixture-tool "$WORK/fixture" \
   --instance-type "$(imds instance-type)" --region "$(imds placement/region)" || PROVISION_STATUS=$?
+python3 "$SRC/runner/provision-leftovers.py" "$PROVISION_RECORD" "$PROVISION_SESSION" /mnt/lm/instance-store \
+  "$WORK/disk" "$PROVISION_STATUS" || say "provision-leftovers.py failed with status $?"
 if [ "$PROVISION_STATUS" -eq 0 ]; then
   say "the disks are ready"
 else

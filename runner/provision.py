@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Prepares the disks the disk benchmarks read, at boot, before run.py.
 
-    python3 provision.py --supervise-seconds 900 --record FILE --fixture-tool PATH
-                         [--instance-type T] [--region R]
+    python3 provision.py --supervise-seconds 330 --session-file FILE --record FILE
+                         --fixture-tool PATH [--instance-type T] [--region R]
 
 runner/box.sh runs it once, after the packages are installed and before
 run.py. It does two things and writes everything it ran, every exit code,
@@ -14,23 +14,30 @@ every dump as the section `provision`:
    Instance Storage" is an instance-store disk; nothing is assumed of the
    numbering. The count found must equal the catalog's (EC2's
    describe-instance-types, InstanceStorageInfo.Disks[].Count), and exactly
-   one disk is prepared, only when it is empty. From then on the disk is its
-   device number, major:minor: provision.py makes a block device node of its
-   own for that number (mknod, in a directory only root can write), so the
-   node can never come to mean another device, and every command runs on that
-   node. The disk is recorded before it is touched (lsblk, blkid, nvme id-ctrl,
-   nvme id-ns, nvme amzn stats). Immediately before mkfs.xfs everything is
-   checked again: the number still names the same disk (name, model, serial,
-   size), the node is still that number, the disk has no partition, no holder
-   and no mount, `blkid -p` finds no signature (exit 2 and nothing printed:
-   blkid also exits 2 when it cannot open the device), and provision.py can
-   read its first MiB. Then a default XFS file system (`mkfs.xfs`, never
-   forced), the mount point made, `mount -t xfs`, and the mounted file system's
-   device number, by stat and by /proc/self/mountinfo, must be the number that
-   was checked. If the mount fails or the number differs, the file system is
-   unmounted and the mount point removed, so no instance-store set can run on
-   anything else. A type with no instance store has no such step; anything
-   else is refused and recorded, and its Runs fail truthfully.
+   one disk is prepared, only when it is empty. Information that is missing,
+   empty or unreadable (a model, a serial, a size, a holders directory, the
+   mount table) is a refusal that says which, never a pass. From then on the
+   disk is its device number, major:minor: provision.py makes a block device
+   node of its own for that number (mknod, in /dev/ledgermath, a directory only
+   root can write, after checking in mountinfo that its file system is not
+   mounted nodev: /run is, on the image, and a node there cannot be opened), so
+   the node can never come to mean another device, and every command runs on
+   that node. The disk is recorded before it is touched (lsblk, blkid, nvme
+   id-ctrl, nvme id-ns, nvme amzn stats). Then it is opened read-only, and that
+   descriptor is held until the mounted file system is confirmed, so the kernel
+   cannot release the number for another disk in between. With it held,
+   everything is checked again, immediately before mkfs.xfs: through the
+   descriptor, the device number, the size and the first MiB; by the number,
+   the same disk in sysfs (name, model, serial, size), no partition, no holder
+   and no mount; and `blkid -p` finds no signature (exit 2 and nothing printed:
+   blkid also exits 2 when it cannot open the device). Then a default XFS file
+   system (`mkfs.xfs`, never forced), the mount point made, `mount -t xfs`, and
+   the mounted file system's device number, by stat and by
+   /proc/self/mountinfo, must be the number that was checked, with its model and
+   serial still the ones checked. If the mount fails or anything differs, the
+   file system is unmounted and the mount point removed, so no instance-store
+   set can run on anything else. A type with no instance store has no such
+   step; anything else is refused and recorded, and its Runs fail truthfully.
 
 2. The Fixtures, made by runner/fixture.c with O_DIRECT writes and
    fdatasync: 32 GiB on the instance store when it was prepared, and 1 GiB
@@ -50,11 +57,18 @@ output captured so far, undoes what is half done (a partial Fixture, a mount
 it could not verify), and exits.
 
 With --supervise-seconds N it runs all of that as a child in a session of its
-own and is its outer limit: at N seconds, or when it is told to stop, the child
-is sent TERM, and KILL after --supervise-grace-seconds; then every process left
-in the session is killed, any step the child had not recorded the end of is
-recorded from its output files, and the record says how provisioning ended. So
-nothing of provisioning is running when box.sh starts the schedule.
+own and is its outer limit, and writes that session's id to --session-file at
+once: at N seconds, or when it is told to stop, the child is sent TERM, and
+KILL after --supervise-grace-seconds; then every process left in the session
+is killed, any step the child had not recorded the end of is recorded from its
+output files, and the record says how provisioning ended. If the supervisor
+itself is stopped or killed, box.sh, past its own outer limit, ends that
+session from the session file and removes what a half-done preparation left.
+So nothing of provisioning is running when box.sh starts the schedule.
+
+The limits: provisioning stops itself at 300 seconds, the supervisor at 330
+(KILL 15 seconds after its TERM), box.sh at 360 (KILL 10 seconds after). On a
+real i4i.2xlarge provisioning took 44 seconds.
 
 Nothing here stops the boot: a failure is recorded, and the exit status is
 not 0 (1 for a failure or a refusal, 124 when a deadline or the outer limit
@@ -67,20 +81,23 @@ Runs on the box's own Python (3.9 on Amazon Linux 2023) with no packages.
 
 import argparse
 import datetime
+import fcntl
 import json
 import os
 import re
 import signal
 import stat
+import struct
 import subprocess
 import sys
+import tempfile
 import time
 
 RECORD_SCHEMA = "ledgermath.provision/2"
 INSTANCE_STORE_MODEL = "Amazon EC2 NVMe Instance Storage"
 INSTANCE_STORE_MOUNT = "/mnt/lm/instance-store"
 ROOT_VOLUME_DIR = "/var/tmp/ledgermath/disk"
-NODE_DIR = "/run/ledgermath"
+NODE_DIR = "/dev/ledgermath"    # /run is mounted nodev on the image: a node there cannot be opened
 FIXTURE_NAME = "ledgermath-fixture-v1"
 INSTANCE_STORE_FIXTURE_BYTES = 32 << 30
 ROOT_VOLUME_FIXTURE_BYTES = 1 << 30
@@ -89,10 +106,11 @@ NUMBER = re.compile(r"^[0-9]+:[0-9]+$")
 STOP_SIGNALS = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)
 PROBE_BYTES = 1 << 20
 
-DEADLINE_SECONDS = 840          # its own deadline, when not given one
+DEADLINE_SECONDS = 300          # its own deadline, when not given one
 KILL_GRACE_SECONDS = 5          # from TERM to KILL, for a step's process group
-CLEANUP_SECONDS = 20            # the most a step undoing something may take
-SUPERVISE_GRACE_SECONDS = 30    # from TERM to KILL, for provisioning itself
+CLEANUP_SECONDS = 10            # the most a step undoing something may take
+SUPERVISE_GRACE_SECONDS = 15    # from TERM to KILL, for provisioning itself
+BLKGETSIZE64 = 0x80081272       # _IOR(0x12, 114, size_t): a block device's size in bytes
 POLL_SECONDS = 0.05
 
 
@@ -134,17 +152,22 @@ def signal_name(signum):
 
 def partitions_and_holders(block):
     """The partitions (children with a `partition` file) and holders of the
-    disk whose sysfs directory is `block`."""
+    disk whose sysfs directory is `block`, and what could not be read: a
+    directory that cannot be listed is never taken to mean "none"."""
+    unreadable = []
+    name = os.path.basename(block)
     try:
         children = sorted(os.listdir(block))
-    except OSError:
+    except OSError as error:
         children = []
+        unreadable.append("the partitions of %s cannot be listed (%s)" % (name, error.strerror))
     partitions = [child for child in children if os.path.exists(os.path.join(block, child, "partition"))]
     try:
         holders = sorted(os.listdir(os.path.join(block, "holders")))
-    except OSError:
+    except OSError as error:
         holders = []
-    return partitions, holders
+        unreadable.append("the holders of %s cannot be listed (%s)" % (name, error.strerror))
+    return partitions, holders, unreadable
 
 
 def instance_store_disks(sys_root="/sys"):
@@ -176,7 +199,7 @@ def instance_store_disks(sys_root="/sys"):
                 continue
             block = os.path.join(sys_root, "class", "block", name)
             size = read_text(os.path.join(block, "size"))
-            partitions, holders = partitions_and_holders(block)
+            partitions, holders, unreadable = partitions_and_holders(block)
             found.append({
                 "controller": controller,
                 "model": model,
@@ -186,6 +209,7 @@ def instance_store_disks(sys_root="/sys"):
                 "size_bytes": int(size) * 512 if size and size.isdigit() else None,
                 "partitions": partitions,
                 "holders": holders,
+                "unreadable": unreadable,
             })
     return found
 
@@ -200,7 +224,7 @@ def device_identity(sys_root, number):
     if not os.path.isdir(real):
         return None
     size = read_text(os.path.join(real, "size"))
-    partitions, holders = partitions_and_holders(real)
+    partitions, holders, unreadable = partitions_and_holders(real)
     return {
         "name": os.path.basename(real),
         "model": read_text(os.path.join(real, "device", "model")),
@@ -209,16 +233,32 @@ def device_identity(sys_root, number):
         "size_bytes": int(size) * 512 if size and size.isdigit() else None,
         "partitions": partitions,
         "holders": holders,
+        "unreadable": unreadable,
     }
 
 
+IDENTITY_KEYS = (("name", "name"), ("model", "model"), ("serial", "serial"), ("size_bytes", "size"), ("dev", "device number"))
+
+
+def missing_identity(found):
+    """What of a disk's identity sysfs did not give (empty counts as not given)."""
+    return [label for key, label in IDENTITY_KEYS if not found.get(key)]
+
+
 def identity_problem(disk, identity):
-    """Why the device number of `disk` no longer names that same empty disk, or None."""
+    """Why the device number of `disk` no longer names that same empty disk, or
+    None. Missing or unreadable information is a reason, never a match: two
+    empty serials are not the same serial."""
     if identity is None:
         return "device number %s names no block device now" % disk["dev"]
-    for key in ("name", "model", "serial", "size_bytes", "dev"):
+    missing = missing_identity(identity)
+    if missing:
+        return "sysfs now gives device number %s no %s" % (disk["dev"], ", ".join(missing))
+    if identity.get("unreadable"):
+        return "; ".join(identity["unreadable"])
+    for key, label in IDENTITY_KEYS:
         if identity.get(key) != disk.get(key):
-            return "device number %s now has %s %r, not %r" % (disk["dev"], key, identity.get(key), disk.get(key))
+            return "device number %s now has %s %r, not %r" % (disk["dev"], label, identity.get(key), disk.get(key))
     if identity["partitions"]:
         return "%s now has partitions (%s)" % (disk["name"], ", ".join(identity["partitions"]))
     if identity["holders"]:
@@ -245,6 +285,36 @@ def mountinfo_device(mountinfo_text, mount_point):
         if len(fields) > 4 and fields[4].replace("\\040", " ") == mount_point:
             found = fields[2]
     return found
+
+
+def mount_holding(path, mountinfo_text):
+    """(mount point, per-mount options, file system type) of the mount that
+    holds `path` (or, if it does not exist yet, the place it would be made),
+    by /proc/self/mountinfo; None when no mount does."""
+    path = os.path.realpath(path)
+    best = None
+    for line in mountinfo_text.splitlines():
+        fields = line.split()
+        if len(fields) < 6 or " - " not in line:
+            continue
+        point = fields[4].replace("\\040", " ")
+        inside = path == point or point == "/" or path.startswith(point.rstrip("/") + "/")
+        # The longest mount point wins; at one point, the last mount is the one seen.
+        if inside and (best is None or len(point) >= len(best[0])):
+            best = (point, fields[5], line.split(" - ", 1)[1].split()[0])
+    return best
+
+
+def devices_problem(directory, mountinfo_text):
+    """Why a device node made in `directory` could not be opened (its file
+    system is mounted nodev, or no mount is known to hold it), or None."""
+    holding = mount_holding(directory, mountinfo_text)
+    if holding is None:
+        return "no mount in /proc/self/mountinfo holds %s, so whether it allows device nodes cannot be told" % directory
+    point, options, fstype = holding
+    if "nodev" in options.split(","):
+        return "%s is on %s (%s), mounted nodev (%s): a device node there cannot be opened" % (directory, point, fstype, options)
+    return None
 
 
 def catalog_disk_count(catalog_stdout):
@@ -294,19 +364,45 @@ def node_number(path):
     return "%d:%d" % (os.major(st.st_rdev), os.minor(st.st_rdev))
 
 
-def read_start(path):
-    """The first MiB of the device, read through the node, or OSError."""
-    fd = os.open(path, os.O_RDONLY | os.O_CLOEXEC)
-    try:
+class HeldDevice:
+    """A read-only descriptor of the device, held open from just before the
+    last checks until the mounted file system is confirmed: while it is open
+    the kernel cannot release the device number for another disk. The last
+    checks are made through it. Never O_EXCL: mkfs.xfs and mount claim the
+    device exclusively, and a plain open does not stand in their way."""
+
+    def __init__(self, path):
+        self.path = path
+        self.fd = os.open(path, os.O_RDONLY | os.O_CLOEXEC)
+
+    def number(self):
+        st = os.fstat(self.fd)
+        if not stat.S_ISBLK(st.st_mode):
+            return None
+        return "%d:%d" % (os.major(st.st_rdev), os.minor(st.st_rdev))
+
+    def size(self):
+        return struct.unpack("Q", fcntl.ioctl(self.fd, BLKGETSIZE64, b"\0" * 8))[0]
+
+    def read_start(self):
+        """The first MiB of the device."""
         data = b""
         while len(data) < PROBE_BYTES:
-            chunk = os.read(fd, PROBE_BYTES - len(data))
+            chunk = os.pread(self.fd, PROBE_BYTES - len(data), len(data))
             if not chunk:
                 break
             data += chunk
         return data
-    finally:
-        os.close(fd)
+
+    def close(self):
+        if self.fd is not None:
+            os.close(self.fd)
+            self.fd = None
+
+
+def hold_device(path):
+    """Opens the device node read-only and holds it: OSError when it cannot."""
+    return HeldDevice(path)
 
 
 def mounted_number(mount_point, proc_root):
@@ -351,16 +447,19 @@ def decide(disks, catalog_count, mounted):
     if len(disks) != 1:
         return {"action": "refuse", "reason": "found %d instance-store disks (%s); this script prepares one, and which to use for the Series is a decision not yet made" % (len(disks), names)}
     disk = disks[0]
+    if disk.get("unreadable"):
+        return {"action": "refuse", "reason": "%s: %s" % (disk["name"], "; ".join(disk["unreadable"])), "disk": disk}
+    missing = missing_identity(disk)
+    if missing:
+        return {"action": "refuse", "reason": "sysfs gives %s no %s" % (disk["name"], ", ".join(missing)), "disk": disk}
     if disk["partitions"]:
         return {"action": "refuse", "reason": "%s has partitions (%s): it is not empty" % (disk["name"], ", ".join(disk["partitions"])), "disk": disk}
     if disk["holders"]:
         return {"action": "refuse", "reason": "%s is held by %s: it is in use" % (disk["name"], ", ".join(disk["holders"])), "disk": disk}
-    if not disk["dev"] or not NUMBER.match(disk["dev"]):
-        return {"action": "refuse", "reason": "sysfs gives no device number for %s" % disk["name"], "disk": disk}
+    if not NUMBER.match(disk["dev"]):
+        return {"action": "refuse", "reason": "sysfs gives %s the device number %r, which is not major:minor" % (disk["name"], disk["dev"]), "disk": disk}
     if disk["dev"] in mounted:
         return {"action": "refuse", "reason": "%s (%s) is mounted already" % (disk["name"], disk["dev"]), "disk": disk}
-    if not disk["size_bytes"]:
-        return {"action": "refuse", "reason": "sysfs gives %s no size" % disk["name"], "disk": disk}
     return {"action": "probe", "reason": "%s (%s) is the one instance-store disk the catalog lists, with no partition, holder or mount" % (disk["name"], disk["dev"]), "disk": disk}
 
 
@@ -638,6 +737,11 @@ class Recorder:
         log("%s: %s %s" % (step, " ".join(command), "ok" if ok else "FAILED: " + entry["error"]))
         return ok, value
 
+    def last_error(self):
+        """The error of the last step recorded, if it had one."""
+        steps = self.record["steps"]
+        return steps[-1].get("error") if steps else None
+
     def decided(self, what, decision):
         self.record["decisions"].append(dict(decision, what=what))
         self.write()
@@ -717,7 +821,9 @@ def _prepare_instance_store(rec, args):
 
     disks = instance_store_disks(args.sys)
     rec.record["instance_store_disks_found"] = disks
-    mountinfo = read_text(os.path.join(args.proc, "self", "mountinfo")) or ""
+    mountinfo = read_text(os.path.join(args.proc, "self", "mountinfo"))
+    if mountinfo is None:
+        return finish("refused", {"action": "refuse", "reason": "/proc/self/mountinfo cannot be read, so what is mounted cannot be told"})
     decision = decide(disks, catalog_count, mounted_devices(mountinfo))
     if decision["action"] != "probe":
         return finish("none" if decision["action"] == "none" else "refused", decision)
@@ -731,10 +837,15 @@ def _prepare_instance_store(rec, args):
         return finish("refused", {"action": "refuse", "reason": problem, "disk": disk})
     node = node_path(args.node_dir, number)
     state["node"] = node
+    # The node's directory must be on a file system that allows device nodes:
+    # on the image, /run is mounted nodev, and a node there cannot be opened.
+    problem = devices_problem(os.path.dirname(node), mountinfo)
+    if problem:
+        return finish("refused", {"action": "refuse", "reason": problem, "disk": disk})
     major, minor = number.split(":")
     ok, _ = rec.action("make a device node for %s" % number, ["mknod", node, "b", major, minor], lambda: make_node(node, number))
     if not ok:
-        return finish("refused", {"action": "refuse", "reason": "a device node for %s could not be made at %s" % (number, node), "disk": disk})
+        return finish("refused", {"action": "refuse", "reason": "a device node for %s could not be made at %s (%s)" % (number, node, rec.last_error()), "disk": disk})
     if node_number(node) != number:
         return finish("refused", {"action": "refuse", "reason": "%s is device %s, not %s" % (node, node_number(node), number), "disk": disk})
 
@@ -748,30 +859,60 @@ def _prepare_instance_store(rec, args):
     if problem:
         return finish("refused", {"action": "refuse", "reason": "%s: %s" % (disk["name"], problem), "disk": disk})
 
-    # Immediately before formatting: everything again, by number.
+    # The device is opened and held from here until its mounted file system is
+    # confirmed, so its number cannot come to mean another disk in between.
+    ok, held = rec.action("open the device and hold it open", ["open", node, "O_RDONLY"], lambda: hold_device(node))
+    if not ok:
+        return finish("refused", {"action": "refuse", "reason": "%s cannot be opened (%s)" % (node, rec.last_error()), "disk": disk})
+    state["held_open"] = True
+    try:
+        return _format_and_mount(rec, args, state, finish, decision, disk, node, held)
+    finally:
+        held.close()
+        state["held_open"] = False
+        rec.write()
+
+
+def _format_and_mount(rec, args, state, finish, decision, disk, node, held):
+    number = disk["dev"]
+    mp = args.instance_store_mount
+    # Immediately before formatting: everything again, by number, with the device held.
     probe = rec.run("recheck blkid", ["blkid", "-p", node])
     problem = after_probe(probe)
     if problem is None:
-        ok, data = rec.action("read the first MiB", ["read", node, str(PROBE_BYTES)],
-                              lambda: {"bytes": len(read_start(node))})
+        ok, data = rec.action("read the first MiB through the held descriptor", ["pread", node, str(PROBE_BYTES)],
+                              lambda: {"bytes": len(held.read_start())})
         if not ok or data is None or data.get("bytes") != PROBE_BYTES:
-            problem = "provision.py could not read the first MiB of %s" % node
+            problem = "the first MiB of %s could not be read (%s)" % (node, rec.last_error() or "%s bytes" % (data or {}).get("bytes"))
+    if problem is None:
+        ok, seen = rec.action("ask the held descriptor what it is", ["fstat", "BLKGETSIZE64", node],
+                              lambda: {"device": held.number(), "size_bytes": held.size()})
+        if not ok or seen is None:
+            problem = "the held descriptor of %s cannot say what it is (%s)" % (node, rec.last_error())
+        elif seen["device"] != number:
+            problem = "the held descriptor is device %s, not %s" % (seen["device"], number)
+        elif seen["size_bytes"] != disk["size_bytes"]:
+            problem = "the held device holds %s bytes, but sysfs gave %s" % (seen["size_bytes"], disk["size_bytes"])
     if problem is None:
         problem = identity_problem(disk, device_identity(args.sys, number))
     if problem is None and node_number(node) != number:
         problem = "%s is now device %s, not %s" % (node, node_number(node), number)
-    if problem is None and number in mounted_devices(read_text(os.path.join(args.proc, "self", "mountinfo")) or ""):
-        problem = "%s (%s) is now mounted" % (disk["name"], number)
+    if problem is None:
+        mountinfo = read_text(os.path.join(args.proc, "self", "mountinfo"))
+        if mountinfo is None:
+            problem = "/proc/self/mountinfo cannot be read, so whether %s is mounted cannot be told" % disk["name"]
+        elif number in mounted_devices(mountinfo):
+            problem = "%s (%s) is now mounted" % (disk["name"], number)
     if problem:
         return finish("refused", {"action": "refuse", "reason": "just before formatting, %s" % problem, "disk": disk})
-    rec.decided("instance_store", {"action": "prepare", "reason": decision["reason"] + "; checked again by its device number just before formatting, with no signature", "disk": disk})
+    rec.decided("instance_store", {"action": "prepare", "reason": decision["reason"] + "; checked again by its device number just before formatting, with the device held open and no signature", "disk": disk})
 
     # mkfs.xfs with its defaults, never -f: it refuses a device that holds a file system.
     if rec.run("mkfs.xfs", ["mkfs.xfs", node], timeout=900).get("exit") != 0:
         return finish("failed")
     ready = mounted = False
     try:
-        state["made_mount_point"] = True  # recorded before, so a supervisor undoing a killed run knows
+        state["made_mount_point"] = True  # recorded before, so whoever undoes a killed run knows
         rec.write()
         ok, _ = rec.action("make the mount point", ["mkdir", "-p", mp], lambda: os.makedirs(mp))
         if not ok:
@@ -784,6 +925,12 @@ def _prepare_instance_store(rec, args):
         if seen["stat"] != number or seen["mountinfo"] != number:
             rec.decided("instance_store mount", {"action": "refuse", "reason": "%s is mounted from device %s by stat and %s by mountinfo, not the checked %s"
                                                  % (mp, seen["stat"], seen["mountinfo"], number), "disk": disk})
+            return finish("failed")
+        identity = device_identity(args.sys, number) or {}
+        state["mounted_identity"] = {"model": identity.get("model"), "serial": identity.get("serial")}
+        if not identity.get("model") or not identity.get("serial") or identity.get("model") != disk["model"] or identity.get("serial") != disk["serial"]:
+            rec.decided("instance_store mount", {"action": "refuse", "reason": "device %s, mounted, has model %r and serial %r, not the checked %r and %r"
+                                                 % (number, identity.get("model"), identity.get("serial"), disk["model"], disk["serial"]), "disk": disk})
             return finish("failed")
         rec.run("after xfs_info", ["xfs_info", mp])
         rec.run("after findmnt", ["findmnt", "-J", mp])
@@ -903,18 +1050,25 @@ def run_quietly(arguments, timeout):
     """A command the supervisor runs to undo something: its own process group,
     killed with the group after `timeout`. Returns what happened."""
     started = time.time_ns()
-    try:
-        child = subprocess.Popen(arguments, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                 close_fds=True, preexec_fn=os.setpgrp)
-    except OSError as error:
-        return {"command": arguments, "exit": None, "error": str(error)}
-    try:
-        output = child.communicate(timeout=timeout)[0]
-    except subprocess.TimeoutExpired:
-        kill_group(child.pid, child, 1)
-        output = b""
-    return {"command": arguments, "exit": child.returncode, "output": output.decode("utf-8", "replace"),
-            "seconds": round((time.time_ns() - started) / 1e9, 3)}
+    timed_out = False
+    # Into a file, not a pipe, so what it printed is kept however it ends.
+    with tempfile.TemporaryFile() as output:
+        try:
+            child = subprocess.Popen(arguments, stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT,
+                                     close_fds=True, preexec_fn=os.setpgrp)
+        except OSError as error:
+            return {"command": arguments, "exit": None, "error": str(error)}
+        try:
+            child.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            kill_group(child.pid, child, 1)
+        output.seek(0)
+        text = output.read().decode("utf-8", "replace")
+    result = {"command": arguments, "exit": child.returncode, "output": text, "seconds": round((time.time_ns() - started) / 1e9, 3)}
+    if timed_out:
+        result["timed_out_after_seconds"] = timeout
+    return result
 
 
 def undo(args, record):
@@ -962,7 +1116,8 @@ def child_arguments(args):
                  "--fixture-timeout-seconds", str(args.fixture_timeout_seconds)]
     if args.steps_dir:
         arguments += ["--steps-dir", args.steps_dir]
-    deadline = args.deadline_given if args.deadline_given is not None else max(1.0, args.supervise_seconds - min(60.0, args.supervise_seconds / 10))
+    # 300 seconds of a 330-second limit, so it stops itself before it is stopped.
+    deadline = args.deadline_given if args.deadline_given is not None else max(1.0, args.supervise_seconds - min(30.0, args.supervise_seconds / 10))
     return arguments + ["--deadline-seconds", str(deadline)]
 
 
@@ -974,6 +1129,12 @@ def supervise(args):
     child = subprocess.Popen([sys.executable, os.path.abspath(__file__)] + child_arguments(args),
                              stdin=subprocess.DEVNULL, start_new_session=True, close_fds=True)
     sid = child.pid
+    # At once, so that if this supervisor is itself stopped or killed, box.sh
+    # can still end everything in the worker's session (runner/box.sh).
+    session_file = args.session_file or os.path.join(os.path.dirname(args.record), "provision.session")
+    with open(session_file + ".tmp", "w") as handle:
+        handle.write("%d\n" % sid)
+    os.replace(session_file + ".tmp", session_file)
     end = time.monotonic() + args.supervise_seconds
     outer = None
     term_at = None
@@ -984,8 +1145,11 @@ def supervise(args):
             log("%s: sending TERM to provisioning" % outer)
             child.send_signal(signal.SIGTERM)
             term_at = now
-        elif term_at is not None and now - term_at >= args.supervise_grace_seconds:
-            log("provisioning did not stop within %s seconds of TERM: KILL" % args.supervise_grace_seconds)
+        # Told to stop by a signal (box.sh's own limit, a shutdown), it must be
+        # done before whoever sent it gives up: box.sh's KILL comes 10 seconds
+        # after its TERM. So 5 seconds of grace then, the full grace otherwise.
+        elif term_at is not None and now - term_at >= (min(args.supervise_grace_seconds, 5) if stop else args.supervise_grace_seconds):
+            log("provisioning did not stop within the grace after TERM: KILL")
             child.kill()
             term_at = float("inf")
         time.sleep(POLL_SECONDS)
@@ -1018,6 +1182,7 @@ def main(argv=None):
     parser.add_argument("--region", default="", help="this box's region, from IMDS")
     parser.add_argument("--supervise-seconds", type=float, help="run as a child in a session of its own, for at most this long")
     parser.add_argument("--supervise-grace-seconds", type=float, default=SUPERVISE_GRACE_SECONDS, help=argparse.SUPPRESS)
+    parser.add_argument("--session-file", help="where the supervisor writes the worker's session id (default: provision.session beside the record)")
     parser.add_argument("--deadline-seconds", type=float, dest="deadline_given", help=argparse.SUPPRESS)
     parser.add_argument("--kill-grace-seconds", type=float, default=KILL_GRACE_SECONDS, help=argparse.SUPPRESS)
     parser.add_argument("--fixture-timeout-seconds", type=float, default=1200, help=argparse.SUPPRESS)
