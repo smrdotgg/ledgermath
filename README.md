@@ -230,7 +230,11 @@ git clone git@github.com:smrdotgg/ledgermath-runs.git /tmp/ledgermath-runs
 git -C /tmp/ledgermath-runs remote set-url --push origin no-push   # a scratch clone pushes nowhere
 
 # The copy job: adds what the bucket has and the clone does not; a second run adds nothing.
-# It stops, writing nothing, if a file already in the clone differs from the bucket's.
+# It stops, writing nothing, if a file already in the clone differs from the bucket's (an
+# ETag that is not the file's MD5 is settled by downloading and comparing the bytes), if a
+# key is not shaped like a Run file or boot summary, or if any path passes through a
+# symbolic link. Each file is created exclusively, so one that appears meanwhile stops it
+# rather than being overwritten.
 bun scripts/copy-runs.ts --bucket "$BUCKET" /tmp/ledgermath-runs
 
 # The Method, with blobs fetched by hash and kept in a cache.

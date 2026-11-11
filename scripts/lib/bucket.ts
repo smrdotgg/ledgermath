@@ -17,8 +17,13 @@ import { join, relative, sep } from "node:path";
 export interface BucketObject {
 	key: string;
 	size: number;
-	/** The MD5 of the bytes, in hex, when the ETag is one (a single-part upload, SSE-S3 or none). */
-	md5: string | null;
+	/**
+	 * The ETag's 32 hex digits, when it has that shape. For a single-part upload
+	 * with SSE-S3 or no encryption it is the MD5 of the bytes; under SSE-KMS or
+	 * SSE-C it has the same shape and is not. So a match with the MD5 of some
+	 * bytes shows they are the object's, and a mismatch shows nothing.
+	 */
+	etag: string | null;
 }
 
 export interface Bucket {
@@ -30,15 +35,15 @@ export interface Bucket {
 	readonly name: string;
 }
 
-const PLAIN_MD5 = /^"?([0-9a-f]{32})"?$/;
+const ETAG_HEX = /^"?([0-9a-f]{32})"?$/;
 
 export function md5Of(bytes: Uint8Array): string {
 	return createHash("md5").update(bytes).digest("hex");
 }
 
-/** The MD5 an ETag carries, or null when it is not a plain MD5 (a multipart upload, SSE-KMS). */
-export function etagMd5(etag: string | undefined): string | null {
-	return PLAIN_MD5.exec(etag ?? "")?.[1] ?? null;
+/** An ETag's 32 hex digits, or null when it does not have that shape (a multipart upload's has a -<parts> suffix). */
+export function etagHex(etag: string | undefined): string | null {
+	return ETAG_HEX.exec(etag ?? "")?.[1] ?? null;
 }
 
 export class S3Bucket implements Bucket {
@@ -57,7 +62,7 @@ export class S3Bucket implements Bucket {
 			const page = await this.client.list({ prefix, continuationToken });
 			for (const object of page.contents ?? []) {
 				if (object.size === undefined) throw new Error(`${this.name}: listing gave no size for ${object.key}`);
-				objects.push({ key: object.key, size: object.size, md5: etagMd5(object.eTag) });
+				objects.push({ key: object.key, size: object.size, etag: etagHex(object.eTag) });
 			}
 			continuationToken = page.isTruncated ? page.nextContinuationToken : undefined;
 		} while (continuationToken !== undefined);
@@ -91,7 +96,7 @@ export class DirectoryBucket implements Bucket {
 			.sort()
 			.map((key) => {
 				const path = join(this.root, key);
-				return { key, size: statSync(path).size, md5: md5Of(readFileSync(path)) };
+				return { key, size: statSync(path).size, etag: md5Of(readFileSync(path)) };
 			});
 	}
 

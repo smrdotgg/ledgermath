@@ -1,11 +1,12 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative, sep } from "node:path";
 
 import { copyRuns, CopyRefused } from "../scripts/copy-runs";
-import { type Bucket, type BucketObject, DirectoryBucket, etagMd5 } from "../scripts/lib/bucket";
+import { type Bucket, type BucketObject, DirectoryBucket, etagHex } from "../scripts/lib/bucket";
 
 const SAMPLE = join(import.meta.dir, "samples", "scheduled");
 const scratch = mkdtempSync(join(tmpdir(), "copy-runs-test-"));
@@ -105,25 +106,129 @@ describe("the copy job", () => {
 		expect(filesUnder(repository, "runs")).toEqual([]);
 	});
 
-	test("compares the bytes themselves when the bucket's ETag is not an MD5", async () => {
+	test("compares the bytes themselves when the bucket's ETag has no MD5's shape", async () => {
 		const { bucketDirectory, repository } = setUp();
 		const directory = new DirectoryBucket(bucketDirectory);
-		const noMd5: Bucket = {
-			name: "no-md5",
-			list: async (prefix: string): Promise<BucketObject[]> => (await directory.list(prefix)).map((o) => ({ ...o, md5: null })),
+		const noEtag: Bucket = {
+			name: "no-etag",
+			list: async (prefix: string): Promise<BucketObject[]> => (await directory.list(prefix)).map((o) => ({ ...o, etag: null })),
 			get: (key: string) => directory.get(key),
 		};
-		await copyRuns(noMd5, repository);
-		expect((await copyRuns(noMd5, repository)).same).toBe(9);
+		await copyRuns(noEtag, repository);
+		expect((await copyRuns(noEtag, repository)).same).toBe(9);
 		const [changed] = filesUnder(repository, "runs");
 		const text = readFileSync(join(repository, changed as string), "utf8");
 		writeFileSync(join(repository, changed as string), text.replace("memory_read", "memory_reaD"));
-		expect(copyRuns(noMd5, repository)).rejects.toThrow("differs from the bucket's");
+		expect(copyRuns(noEtag, repository)).rejects.toThrow("differs from the bucket's");
 	});
 
-	test("reads an ETag as an MD5 only when it is one", () => {
-		expect(etagMd5('"e02223596ada0ea79059ff000233649c"')).toBe("e02223596ada0ea79059ff000233649c");
-		expect(etagMd5('"e02223596ada0ea79059ff000233649c-2"')).toBeNull(); // multipart
-		expect(etagMd5(undefined)).toBeNull();
+	test("an ETag shaped like an MD5 that is not one (SSE-KMS) does not make identical bytes differ", async () => {
+		const { bucketDirectory, repository } = setUp();
+		const directory = new DirectoryBucket(bucketDirectory);
+		let downloads = 0;
+		const kms: Bucket = {
+			name: "sse-kms",
+			list: async (prefix: string): Promise<BucketObject[]> =>
+				(await directory.list(prefix)).map((o) => ({ ...o, etag: createHash("md5").update(`not the bytes of ${o.key}`).digest("hex") })),
+			get: async (key: string) => {
+				downloads++;
+				return directory.get(key);
+			},
+		};
+		expect((await copyRuns(kms, repository)).added.length).toBe(9);
+		downloads = 0;
+		const again = await copyRuns(kms, repository);
+		expect(again).toEqual({ added: [], same: 9 });
+		expect(downloads).toBe(9); // each mismatch was settled by comparing the bytes
+		const [changed] = filesUnder(repository, "boots");
+		const text = readFileSync(join(repository, changed as string), "utf8");
+		writeFileSync(join(repository, changed as string), text.replace('"runs"', '"rUns"'));
+		expect(copyRuns(kms, repository)).rejects.toThrow(`${changed}: the repository's file differs from the bucket's`);
+	});
+
+	test("an ETag that matches the file's MD5 is enough: nothing is downloaded to compare", async () => {
+		const { bucketDirectory, repository } = setUp();
+		const directory = new DirectoryBucket(bucketDirectory);
+		let downloads = 0;
+		const counting: Bucket = { name: "counting", list: (prefix) => directory.list(prefix), get: async (key) => (downloads++, directory.get(key)) };
+		await copyRuns(counting, repository);
+		downloads = 0;
+		expect((await copyRuns(counting, repository)).same).toBe(9);
+		expect(downloads).toBe(0);
+	});
+
+	test("reads an ETag's hex only when it has an MD5's shape", () => {
+		expect(etagHex('"e02223596ada0ea79059ff000233649c"')).toBe("e02223596ada0ea79059ff000233649c");
+		expect(etagHex('"e02223596ada0ea79059ff000233649c-2"')).toBeNull(); // multipart
+		expect(etagHex(undefined)).toBeNull();
+	});
+});
+
+describe("the copy job on the filesystem", () => {
+	test("refuses a symlinked directory in the repository, loudly, before writing anything anywhere", async () => {
+		const { bucketDirectory, repository } = setUp();
+		const outside = join(scratch, `outside-${made}`);
+		mkdirSync(outside);
+		symlinkSync(outside, join(repository, "runs"));
+		const refused = await copyRuns(new DirectoryBucket(bucketDirectory), repository).catch((error: unknown) => error);
+		expect(refused).toBeInstanceOf(CopyRefused);
+		expect((refused as CopyRefused).problems.length).toBe(8);
+		expect((refused as CopyRefused).problems[0]).toContain("runs is a symbolic link");
+		expect((refused as Error).message).toContain("wrote nothing");
+		expect(readdirSync(outside)).toEqual([]);
+		expect(existsSync(join(repository, "boots"))).toBe(false);
+	});
+
+	test("refuses a Run file that is a symbolic link, without reading through it", async () => {
+		const { bucketDirectory, repository } = setUp();
+		const [key] = filesUnder(bucketDirectory, "runs");
+		const victim = join(scratch, `victim-read-${made}`);
+		writeFileSync(victim, readFileSync(join(bucketDirectory, key as string)));
+		mkdirSync(join(repository, "runs/2026/11/10"), { recursive: true });
+		symlinkSync(victim, join(repository, key as string));
+		expect(copyRuns(new DirectoryBucket(bucketDirectory), repository)).rejects.toThrow(`${key} is a symbolic link`);
+		expect(existsSync(join(repository, "boots"))).toBe(false);
+	});
+
+	test("never writes through a predictable temporary name: a <destination>.tmp link is left alone", async () => {
+		const { bucketDirectory, repository } = setUp();
+		const keys = filesUnder(bucketDirectory, "runs");
+		const victim = join(scratch, `victim-tmp-${made}`);
+		writeFileSync(victim, "an unrelated file\n");
+		mkdirSync(join(repository, "runs/2026/11/10"), { recursive: true });
+		for (const key of keys) symlinkSync(victim, join(repository, `${key}.tmp`));
+		const result = await copyRuns(new DirectoryBucket(bucketDirectory), repository);
+		expect(result.added.length).toBe(9);
+		expect(readFileSync(victim, "utf8")).toBe("an unrelated file\n");
+		for (const key of keys) {
+			expect(readFileSync(join(repository, key)).equals(readFileSync(join(bucketDirectory, key)))).toBe(true);
+			expect(lstatSync(join(repository, key)).isSymbolicLink()).toBe(false);
+		}
+		// Nothing of its own left behind.
+		expect(readdirSync(join(repository, "runs/2026/11/10")).filter((name) => name.endsWith(".partial"))).toEqual([]);
+	});
+
+	test("fails, and does not overwrite, when a destination appears while the copy downloads", async () => {
+		const { bucketDirectory, repository } = setUp();
+		const directory = new DirectoryBucket(bucketDirectory);
+		const [first, second] = filesUnder(bucketDirectory, "runs");
+		const racing: Bucket = {
+			name: "racing",
+			list: (prefix) => directory.list(prefix),
+			get: async (key) => {
+				if (key === second) {
+					mkdirSync(join(repository, "runs/2026/11/10"), { recursive: true });
+					writeFileSync(join(repository, key), "written by someone else\n");
+				}
+				return directory.get(key);
+			},
+		};
+		const refused = await copyRuns(racing, repository).catch((error: unknown) => error);
+		expect(refused).toBeInstanceOf(CopyRefused);
+		expect((refused as CopyRefused).problems).toEqual([`${second}: a file of that name appeared in the repository while the copy ran; it was left as it is`]);
+		expect(readFileSync(join(repository, second as string), "utf8")).toBe("written by someone else\n");
+		// Files before it in key order were added, and the message says which.
+		expect((refused as CopyRefused).added).toContain(first as string);
+		expect((refused as Error).message).toContain("overwrote nothing");
 	});
 });
