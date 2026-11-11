@@ -102,6 +102,8 @@ def main():
     metadata = M5_LARGE if case == "instance-types" else {}
     run.Imds.get = lambda self, path: metadata.get(path)
     run.dump_sections = lambda cpuid_tool, imds: {"kernel": {"stub": "the dump is stubbed in this test"}}
+    # No EC2 API call from a test, whatever credentials this machine has.
+    run.ec2_sections = lambda imds: {"ec2_instance": {"stub": "the EC2 API is stubbed in this test"}}
 
     real_wait = subprocess.Popen.wait
     reaped = []
