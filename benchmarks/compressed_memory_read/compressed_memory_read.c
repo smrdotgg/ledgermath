@@ -1,5 +1,5 @@
 /* compressed_memory_read: unpack one block of 256 integers packed at 8 bits
- * each into 256 u32s, cycling through a pool of blocks larger than any cache.
+ * each into 256 u32s, cycling through a pool of blocks (244 MiB by default).
  *
  * Parameters:
  *   LM_PARAM_BLOCKS  compressed blocks in the pool the repetitions cycle through
@@ -34,8 +34,8 @@ typedef struct {
     uint64_t index;
 } compressed_ctx_t;
 
-/* One repetition: unpack the next block of the pool. Cycling through the pool
- * keeps the compressed input out of cache. */
+/* One repetition: unpack the next block of the pool. Whether the pool exceeds
+ * the cache, and so is read from memory, depends on the machine (see README). */
 __attribute__((noinline))
 static uint64_t decompress_one_block(compressed_ctx_t *ctx) {
     uint8_t *in = ctx->compressed + ctx->index * COMPRESSED_BYTES_PER_BLOCK;

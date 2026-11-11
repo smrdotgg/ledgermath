@@ -1,11 +1,13 @@
 # compressed_memory_read
 
-How fast one core unpacks integers stored at 8 bits each into 32-bit integers, reading
-the packed input from memory rather than cache. One repetition unpacks one block: 256
-bytes in, 256 `u32`s (1024 bytes) out. Successive repetitions take successive blocks of
-a pool, by default 1,000,000 blocks (256 MB), so the input comes from memory. It stands
-for the decode step of a compressed column or posting list, as napkin-math's
-`compressed_memory_read / bitpacker` (BitPacker8x at 8 bits) did.
+How fast one core unpacks integers stored at 8 bits each into 32-bit integers. One
+repetition unpacks one block: 256 bytes in, 256 `u32`s (1024 bytes) out. Successive
+repetitions take successive blocks of a pool, by default 1,000,000 blocks (256,000,000
+bytes, 244 MiB), so that the packed input comes from memory rather than cache. Whether
+the pool exceeds the cache depends on the machine: some have an L3 of hundreds of MiB.
+The Run's dump records the machine's cache sizes (`lscpu` and `cache/index*/size` in
+`/sys`). It stands for the decode step of a compressed column or posting list, as
+napkin-math's `compressed_memory_read / bitpacker` (BitPacker8x at 8 bits) did.
 
 ```bash
 make -C benchmarks/compressed_memory_read          # build/static/compressed_memory_read
