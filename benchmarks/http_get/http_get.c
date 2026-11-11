@@ -556,7 +556,9 @@ static void failure_none(failure_record *f) {
     f->alert_name = "";
 }
 
+/* After the clock has been read: what the failed TLS call was. */
 static void failure_from_tls(failure_record *f, lm_tls_conn *tls, int e, const char *phase) {
+    if (e == LM_TLS_FAILED) e = lm_tls_failure(tls);
     f->failure = failure_of_tls(e);
     f->phase = phase;
     snprintf(f->detail, sizeof(f->detail), "%s", lm_tls_error_detail(tls));
@@ -868,12 +870,18 @@ typedef struct {
 
 static unsigned char g_scratch[16384 + 512];
 
-static outcome exchange_failed(exchange *x, int failure, const char *phase, const char *detail) {
-    x->end = now_mark();
+/* A failure found by this program (the parser, the bytes after a response,
+ * an early close_notify): the clock is read first, then the words formatted. */
+static outcome exchange_failed_at(exchange *x, mark at, int failure, const char *phase, const char *detail) {
+    x->end = at;
     x->f.failure = failure;
     x->f.phase = phase;
     snprintf(x->f.detail, sizeof(x->f.detail), "%s", detail);
     return DONE_FAILED;
+}
+
+static outcome exchange_failed(exchange *x, int failure, const char *phase, const char *detail) {
+    return exchange_failed_at(x, now_mark(), failure, phase, detail);
 }
 
 static const char *phase_now(const exchange *x) { return !x->got_first ? "first_byte" : !x->got_head ? "headers" : "body"; }
@@ -885,9 +893,10 @@ static const char *phase_now(const exchange *x) { return !x->got_first ? "first_
 static bool surplus_found(connection *c, exchange *x, size_t unread_in_buffer) {
     x->surplus = unread_in_buffer + lm_tls_pending(c->tls);
     if (x->surplus == 0) return false;
+    mark at = now_mark();
     char detail[96];
     snprintf(detail, sizeof(detail), "%" PRIu64 " bytes after the end of the response", x->surplus);
-    exchange_failed(x, F_PROTOCOL, "body", detail);
+    exchange_failed_at(x, at, F_PROTOCOL, "body", detail);
     return true;
 }
 
@@ -944,13 +953,14 @@ static outcome do_exchange(connection *c, const request *rq, exchange *x) {
         }
         if (n == 0) {
             lm_http_eof(resp);
+            mark at = now_mark();
             if (resp->state == LM_HTTP_DONE) {
-                x->end = now_mark();
+                x->end = at;
                 return DONE_RESPONSE;
             }
             char detail[256];
             snprintf(detail, sizeof(detail), "close_notify: %s", resp->error);
-            return exchange_failed(x, F_EOF, phase_now(x), detail);
+            return exchange_failed_at(x, at, F_EOF, phase_now(x), detail);
         }
         x->end = now_mark();
         failure_from_tls(&x->f, c->tls, (int)-n, phase_now(x));

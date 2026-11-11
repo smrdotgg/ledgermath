@@ -34,6 +34,7 @@ enum {
     LM_TLS_VERIFY = 5,      /* the certificate check ran on the server's chain and failed */
     LM_TLS_SYSTEM = 6,      /* another errno */
     LM_TLS_ALERT = 7,       /* the server sent a fatal alert (lm_tls_alert says which) */
+    LM_TLS_FAILED = 8,      /* a measured call failed; lm_tls_failure() says which of the above */
 };
 
 typedef struct lm_tls_conn lm_tls_conn;
@@ -62,11 +63,19 @@ bool lm_tls_describe_offer(lm_lines *b, const char *host, char *err, size_t errl
 lm_tls_conn *lm_tls_new(const char *host);
 void lm_tls_free(lm_tls_conn *c);
 
-/* The measured calls. Each returns LM_TLS_OK or an error above. */
+/* The measured calls. Each returns LM_TLS_OK, or LM_TLS_FAILED having kept
+ * only what the library returned and errno, so the caller can read its clock
+ * the moment the call returns; lm_tls_failure() then classifies the failure
+ * and formats the library's words (rarely LM_TLS_SYSTEM directly, for an
+ * argument the library refused before any I/O). */
 int lm_tls_handshake(lm_tls_conn *c, int fd);
 int lm_tls_write(lm_tls_conn *c, const void *buf, size_t len);
-/* > 0: bytes read; 0: the peer sent close_notify; < 0: minus an error above. */
+/* > 0: bytes read; 0: the peer sent close_notify; < 0: minus LM_TLS_FAILED. */
 long lm_tls_read(lm_tls_conn *c, void *buf, size_t len);
+/* After LM_TLS_FAILED: which error above it was (never LM_TLS_FAILED), with
+ * lm_tls_error_detail() and lm_tls_alert() filled in. Call it before any other
+ * call on the connection. */
+int lm_tls_failure(lm_tls_conn *c);
 
 /* Between requests on an idle connection: whether the server has closed it
  * or sent anything. Reads, without blocking, whatever is waiting: post-

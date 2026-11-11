@@ -53,6 +53,8 @@ struct lm_tls_conn {
     unsigned sessions;
     unsigned tickets;
     int alert;
+    int failed_ret;   /* what the failed call returned, and errno just after, for lm_tls_failure() */
+    int failed_errno;
     char detail[256];
 };
 
@@ -221,6 +223,16 @@ static int classify(lm_tls_conn *c, int ret, int saved) {
     return LM_TLS_PROTOCOL;
 }
 
+/* A measured call failed: keep what it returned and errno, and nothing more,
+ * so the caller can read its clock before lm_tls_failure() looks into it. */
+static int deferred(lm_tls_conn *c, int ret, int saved) {
+    c->failed_ret = ret;
+    c->failed_errno = saved;
+    return LM_TLS_FAILED;
+}
+
+int lm_tls_failure(lm_tls_conn *c) { return classify(c, c->failed_ret, c->failed_errno); }
+
 int lm_tls_handshake(lm_tls_conn *c, int fd) {
     if (SSL_set_fd(c->ssl, fd) != 1) {
         last_error(c->detail, sizeof(c->detail));
@@ -229,7 +241,7 @@ int lm_tls_handshake(lm_tls_conn *c, int fd) {
     errno = 0;
     int r = SSL_connect(c->ssl);
     if (r == 1) return LM_TLS_OK;
-    return classify(c, r, errno);
+    return deferred(c, r, errno);
 }
 
 int lm_tls_write(lm_tls_conn *c, const void *buf, size_t len) {
@@ -237,7 +249,7 @@ int lm_tls_write(lm_tls_conn *c, const void *buf, size_t len) {
     errno = 0;
     int r = SSL_write(c->ssl, buf, (int)len);
     if (r == (int)len) return LM_TLS_OK;
-    return classify(c, r, errno);
+    return deferred(c, r, errno);
 }
 
 long lm_tls_read(lm_tls_conn *c, void *buf, size_t len) {
@@ -247,7 +259,7 @@ long lm_tls_read(lm_tls_conn *c, void *buf, size_t len) {
     if (r > 0) return r;
     int saved = errno;
     if (SSL_get_error(c->ssl, r) == SSL_ERROR_ZERO_RETURN) return 0;
-    return -classify(c, r, saved);
+    return -deferred(c, r, saved);
 }
 
 lm_tls_idle lm_tls_check_idle(lm_tls_conn *c, int fd) {
