@@ -280,7 +280,10 @@ describe("where and when the stage launches", () => {
 
 	test("is made by the stack from placement.ts alone: one launch function, a CronV2 per schedule, nothing hard-coded", () => {
 		expect(STACK).toContain('import { LAUNCH_SCHEDULES, TARGETS, ZONE } from "./placement";');
-		expect(STACK).toContain('new sst.aws.Function("BoxLaunch", {');
+		expect(STACK).toContain('new sst.aws.Function("BoxLaunchHandler", {');
+		// The function of step 2's CronV2 BoxLaunch, kept rather than replaced.
+		expect(STACK).toContain("const launchAliases = [{ parent: `urn:pulumi:${$app.stage}::${$app.name}::sst:aws:CronV2::BoxLaunch` }];");
+		expect(STACK).toContain("}, { aliases: launchAliases });");
 		expect(STACK).toContain("for (const schedule of LAUNCH_SCHEDULES) {");
 		expect(STACK).toContain("new sst.aws.CronV2(schedule.name, {");
 		expect(STACK).toContain("schedule: schedule.expression,");
@@ -289,7 +292,7 @@ describe("where and when the stage launches", () => {
 		expect(STACK).toContain('LEDGERMATH_TARGET_INSTANCE_TYPES: TARGETS.map((target) => target.instance_type).join(","),');
 		expect(STACK).toContain('{ name: "availability-zone", values: [ZONE] }');
 		// Never retried; an event older than a minute is dropped.
-		expect(STACK).toMatch(/new sst\.aws\.Function\("BoxLaunch", \{[^]*?retries: 0,\n\t\ttransform: \{ eventInvokeConfig: \{ maximumEventAgeInSeconds: 60 \} \},/);
+		expect(STACK).toMatch(/new sst\.aws\.Function\("BoxLaunchHandler", \{[^]*?retries: 0,\n\t\ttransform: \{ eventInvokeConfig: \{ maximumEventAgeInSeconds: 60 \} \},/);
 		expect(STACK).toContain('\t\t\ttimezone: "UTC",\n\t\t\tretries: 0,\n\t\t\tevent: schedule.event,');
 		// No instance type, zone, launch time or launch cron of its own.
 		expect(STACK).not.toMatch(/"[a-z][a-z0-9-]*\.[0-9]*(nano|micro|small|medium|large|xlarge|metal)"|"us-east-2[a-z]"|cron\(|LEDGERMATH_INSTANCE_TYPE:/);

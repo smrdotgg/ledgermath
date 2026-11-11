@@ -144,7 +144,14 @@ export function runsStack() {
 	// Lambda will still run to a minute, the least it allows (six hours by
 	// default). The handler refuses a scheduled launch more than ten minutes
 	// after its time, or of a type that is not a target.
-	const launch = new sst.aws.Function("BoxLaunch", {
+	//
+	// Until step 4 this function was the child of a CronV2 named BoxLaunch.
+	// The alias says it is the same function, so a deploy updates it in place,
+	// keeping its name and its log group (where #38's dated checks read the
+	// launches), instead of deleting it and making a new one. Once every
+	// -runs stage has been deployed with it, the alias does nothing.
+	const launchAliases = [{ parent: `urn:pulumi:${$app.stage}::${$app.name}::sst:aws:CronV2::BoxLaunch` }];
+	const launch = new sst.aws.Function("BoxLaunchHandler", {
 		handler: "infra/runs/launch-box.handler",
 		timeout: "60 seconds",
 		retries: 0,
@@ -171,7 +178,7 @@ export function runsStack() {
 			{ actions: ["iam:PassRole"], resources: [boxRole.arn] },
 		],
 		nodejs: { install: ["@aws-sdk/client-ec2"] },
-	});
+	}, { aliases: launchAliases });
 
 	// One schedule per target (per minute past the hour its boots fall at; one
 	// per target today), each with its own role allowed to invoke the launch
