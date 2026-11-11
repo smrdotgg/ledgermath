@@ -1,4 +1,5 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
+import { createHash } from "node:crypto";
 
 import { memoryRecords } from "../methods/records";
 import * as requests from "../methods/requests/v1";
@@ -23,7 +24,7 @@ import { addressBlock, readRequests } from "../methods/requests/v1/requests";
 import { readStream, type RunFile } from "../methods/run";
 import * as series from "../methods/v1";
 import { percentile } from "../methods/v1/numbers";
-import { SERIES_RECORD_KEY } from "../methods/v1/record";
+import { SERIES_RECORD, SERIES_RECORD_KEY } from "../methods/v1/record";
 import { DEFAULT_PHASES, HandMade, rampRequests, requestRun, requestStream } from "./hand-made-requests";
 
 // Each test derives a few hundred hand-made requests; a loaded machine can take longer than bun's five-second default.
@@ -452,6 +453,15 @@ describe("the reduced record of a Run, kept between runs", () => {
 		const gathered = await requests.gather(m.files, m.fetch, { records: store });
 		expect(gathered.counts.fetched).toBe(2);
 		expect(requests.serialize(requests.derive(m.files, gathered))).toBe(expected);
+	});
+
+	test("what a record holds is pinned: a change to it must raise the reducer's revision, so records kept by other code are never read", () => {
+		const stream = bytes(requestStream({ connection: "new", requests: [...rampRequests(30), { status: 503 }, { address: "52.219.1.2", cipher: "TLS_CHACHA20_POLY1305_SHA256" }] }));
+		const digest = (reducer: { toJson(record: never): unknown; reduce(stdout: Uint8Array): unknown }): string =>
+			createHash("sha256").update(JSON.stringify(reducer.toJson(reducer.reduce(stream) as never))).digest("hex");
+		// If one of these changes, the record changed: raise the revision in its key (requests-v1-r2, series-v1-r2) and pin the new digest.
+		expect([REQUESTS_RECORD_KEY, digest(REQUESTS_RECORD)]).toEqual(["requests-v1-r1", "581498417d62b9ba8637caceb956b88eea7326a2f82fee9e9624aeb776614fa3"]);
+		expect([SERIES_RECORD_KEY, digest(SERIES_RECORD)]).toEqual(["series-v1-r1", "3fc8586524ba7b5401646998dfcdf81a1a4ed2a22741169d3ba26755be0a2851"]);
 	});
 
 	test("a record holds no time of any single request: its size grows with the bins, not the requests", () => {
