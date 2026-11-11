@@ -63,7 +63,7 @@ cannot, the order of the stream.
 | `benchmarks/<name>/` | One benchmark: its source, a `README.md` (what it measures, its parameters, its observed values, its elision guard, and every difference from July's version), and a `Makefile` offering `make BUILD=static` or `BUILD=dynamic` (one file at `build/<build>/<name>`), `make -s compiler` and `make -s resolved`. All thirteen are on the stream: `memory_read`, `compressed_memory_read`, `memory_read_random`, `memory_write`, `syscall`, `hash`, `sort`, `tcp_echo`, `mutex`, `disk_read_random`, `disk_read_io_uring`, `disk_read_sequential` and `disk_write`. July's copies stay in `benchmarks/c/` until July's pipeline is retired. |
 | `schemas/events.schema.json` | One line of the stream. |
 | `scripts/check-events.py` | The order of a stream: `./build/static/memory_read --quick \| python3 scripts/check-events.py --quick`. Needs only Python 3. |
-| `scripts/check-scratch.py` | Runs every static build of `schedule.json` as the only file in a `FROM scratch` container, once per parameter set, and checks each stream. A set asking for CPUs this machine's topology cannot provide (`mutex`'s `distinct_cores` or `smt_siblings`), or for `io_uring` a kernel refuses (`kernel.io_uring_disabled`), is reported as skipped, with the reason, and must exit 2. The disk sets get a 64 MiB Fixture made by `runner/fixture.c`, mounted at their `dir`. Needs Docker. |
+| `scripts/check-scratch.py` | Runs every static build of `schedule.json` as the only file in a `FROM scratch` container, once per parameter set, and checks each stream. A set asking for CPUs this machine's topology cannot provide (`mutex`'s `distinct_cores` or `smt_siblings`), or for `io_uring` a kernel refuses (`kernel.io_uring_disabled`), is reported as skipped, with the reason, only when the binary refuses it in its own words: exit 2, `started` alone on stdout, and its refusal line for that set on stderr; anything else fails (`tests/check-scratch.test.ts`). The disk sets get a 64 MiB Fixture made by `runner/fixture.c`, mounted at their `dir`. Needs Docker. |
 | `schedule.json` | What a box runs: benchmarks, builds, samples, timeout, parameter sets. Not part of the runner. |
 | `runner/` | The box side. `box.sh` is the user-data; `provision.py` prepares the disks at boot (the instance's own NVMe disk, where there is one, and the Fixtures, which `fixture.c` writes) and records all it did; `run.py` builds, launches each binary, dumps the environment around it and writes one Run per execution; `cpuid.c` is the raw cpuid dump. |
 | `scripts/check-disk-runs.ts` | Checks that every disk Run says which disk it measured and that its dump proves it: the device's model and serial in `/sys`, its counters between the dumps', the device's own `nvme amzn stats`, the EBS volume in the EC2 API, the instance-store disk in the provision record. |
@@ -83,7 +83,7 @@ The benchmarks on the stream, each with one parameter set per execution. The val
 | `hash` | `algorithm` `crc32`, `siphash` or `sha256`, `size_bytes` 64 | `bytes_per_repetition`, `algorithm_run`, `path_taken` | `crc32`, `siphash`, `sha256` |
 | `sort` | `size_bytes` 1 MiB | `bytes_per_repetition` | `u64` |
 | `tcp_echo` | `size_bytes` 32 KiB | `bytes_per_repetition` | `32 KiB` |
-| `mutex` | `threads` `1` with `placement` `one_cpu`, or `2` with `distinct_cores` or `smt_siblings`; `critical_section_lines` `1`, or `8` with `distinct_cores`; `lock` `pthread_mutex_default` | `threads_used`, `cpus`, `core_ids`, `package_ids`, `lock_type`, `libc`, `critical_sections_per_repetition`, `protected_lines`; its own events `cpu_pair` and `mutex_threads` | none: July's `contended` Series ends, and this is a new measurement |
+| `mutex` | `threads` `1` with `placement` `one_cpu` and `idle_threads` `0` or `1`, or `2` with `distinct_cores` or `smt_siblings` and `idle_threads` `0`; `critical_section_lines` `1`, or `8` with `distinct_cores`; `lock` `pthread_mutex_default` | `threads_used`, `cpus`, `core_ids`, `package_ids`, `lock_type`, `libc`, `critical_sections_per_repetition`, `protected_lines`, then just before measuring `libc_single_threaded`, `process_threads`, `idle_threads_sleeping`; its own events `cpu_pair` and `mutex_threads` | none: July's `contended` Series ends, and this is a new measurement |
 | `disk_read_random` | `disk` `root_volume` or `instance_store` (the Series' name, never read by the binary), `dir` (where the Fixture is), `request_bytes` 8192, `span_bytes` 1 GiB or 32 GiB | the file and its device (every disk benchmark: `file_path`, `disk_device`, `disk_model`, `disk_serial`, `fs_type`, `mount_point`, `o_direct`, the queue settings, extents, resident pages; its README lists them), `request_bytes`, `queue_depth`, `span_bytes`, `span_blocks`, `bytes_per_repetition`; its own events `device_counters` and `work` | `8 KiB`, which measured the root EBS volume |
 | `disk_read_io_uring` | `disk`, `dir`, `access` `sequential` with `request_bytes` 32768 or `random` with 4096, `queue_depth` 64, `span_bytes` | the file and its device, `access`, `request_bytes`, `queue_depth`, `span_bytes`, `span_blocks`, `bytes_per_repetition`, `ring_sq_entries`, `ring_cq_entries`, `ring_features`; `device_counters`, `work` | `32 KiB × 64 in flight`, whose queue drained to zero each batch |
 | `disk_read_sequential` | `disk`, `dir`, `request_bytes` 8192, `bytes_per_sample` 128 MiB or 2 GiB, `span_bytes` | the file and its device, `request_bytes`, `bytes_per_sample`, `span_bytes`, `regions`, `bytes_per_repetition`; `device_counters`, `work` with each sample's resident pages | `8 KiB`, which read with `O_DIRECT`: now a cold buffered read |
@@ -561,4 +561,45 @@ A migrated benchmark is done only when **all** of these hold:
   for the schedule's Fixture and scratch file), and its box runs without Docker's seccomp
   filter, which refuses `io_uring`. All other binaries keep their bytes; `memory_read`
   still hashes to `a3674893…`. None of this was checked with `sst diff`.
+- **2026-11-11** — Step 4 (#42), what an independent review of `mutex` asked for, not yet
+  deployed. **The one-thread number was a special case.** With one working thread and no
+  other, glibc 2.34 locks and unlocks a default mutex with plain stores: both functions
+  test a per-thread word (`%fs:0x18`, `header.multiple_threads`) that the first
+  `pthread_create` sets, together with `__libc_single_threaded`, and only then use
+  `lock cmpxchg` and `xchg`. A new parameter, `idle_threads`, on every `mutex` set: with
+  1, the binary starts one more thread before the first critical section that blocks for
+  the life of the process in `pause()` with every signal blocked, and waits until the
+  kernel shows it sleeping. The one-thread entry now has two sets, `idle_threads` 0 and 1;
+  the two-thread sets carry 0. A second `observed`, just before measuring, reports
+  `libc_single_threaded`, `process_threads` (`/proc/self/status`) and
+  `idle_threads_sleeping`. This machine has no hardware counters (no PMU in the guest,
+  `perf_event_paranoid` 4), so the proof is a count: a small ptrace tool put breakpoints
+  on the four instructions of the Amazon Linux build's glibc (lock's plain `movl $0x1` and
+  its `lock cmpxchg`, unlock's plain `movl $0x0` and its `xchg`) and counted the first
+  100,000 hits of a full run of each set, by mutex address. With `idle_threads` 0 the
+  benchmark's mutex took the plain stores 49,999 and 49,998 times and the atomic
+  instructions never; with 1, the atomic ones 49,998 times each and the plain stores
+  never (the other few hits were glibc's own `object_mutex`, `_dl_load_write_lock` and
+  `_dl_load_tls_lock`, at startup, before the second thread existed). With the machine
+  quiet: 4.36 ns a critical section with `idle_threads` 0 and 18.57 ns with 1 (eight runs
+  each, 4.35 to 4.39 and 18.56 to 18.59 ns); distinct cores 67.8 and 78.4 ns, eight lines
+  282 and 308 ns, siblings 71.0 and 71.5 ns (two runs each). **`check-scratch.py`** now
+  reports a skip only when the binary refuses the set in its own words (exit 2, `started`
+  alone on stdout, and its refusal line for that set on stderr), for `mutex`'s placements
+  and for `io_uring` alike; a stub `mutex` that exits 2 for another reason now fails the
+  check where it passed as three skips, a real `io_uring` refusal (Docker's default
+  seccomp filter) is accepted, and `tests/check-scratch.test.ts` runs stubs for both and
+  the cases around them. **`lm_event.h`** says that it does not serialize writers: events
+  come from the thread that owns stdout, between samples, and a line longer than
+  `PIPE_BUF` or written while another thread writes can interleave; comments only, and no
+  binary that links it changed. **Method version 1** does not fetch `block_stat` or
+  `nvme_stats`, which change on every read; `provision`, `ec2_instance_type`,
+  `ec2_volumes` and `ec2_instance` were already not split on and listed under what
+  differed, and `NOT_SPLIT_ON` now says why for all six; `methods/README.md` says version
+  1 may still change until the data is first published. Built in the Amazon Linux 2023
+  container, every binary but `mutex` is byte-identical to its build at `b197dd8`, and
+  `memory_read` is still `a3674893…`. All eight container scenarios pass (`ok`: 29 Runs,
+  8 left out, 574 s while the machine's load was 10 to 15). `tests/fixture.test.ts`
+  failed once under that load: its `beforeAll` builds `disk_read_random` within bun's
+  default five seconds; alone, with a longer timeout, it passes.
 - _(agents: append your entry here, one per merged benchmark)_

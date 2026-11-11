@@ -62,13 +62,14 @@ python3 scripts/check-scratch.py    # needs Docker
 every benchmark that `schedule.json` builds static, and runs each binary as the only file
 in a `FROM scratch` container, once per parameter set with `--quick`, checking every
 stream. A parameter set that asks for CPUs this machine does not have, such as `mutex` on
-two distinct cores on a machine with one, is reported as skipped with the reason, decided
-from the machine's topology; it is still run once, and must exit 2. Every other set must
-pass. The disk benchmarks get a 64 MiB Fixture, made by `runner/fixture.c` in a new
+two distinct cores on a machine with one, is decided from the machine's topology and still
+run once; it is reported as skipped, with the reason, only when the binary refuses it in
+its own words (exit 2, `started` alone on stdout, and its refusal line for that set on
+stderr), and anything else fails. Every other set must pass. The disk benchmarks get a 64 MiB Fixture, made by `runner/fixture.c` in a new
 directory under `/tmp` (or `$LM_SCRATCH_DISK_DIR`) and mounted at each set's `dir`; under
 `--quick` they read at most 64 MiB of a span. `disk_read_io_uring` runs without Docker's
 seccomp filter, whose default refuses `io_uring`, and is skipped where the kernel refuses
-it (`kernel.io_uring_disabled`). It then shows that the same container refuses
+it (`kernel.io_uring_disabled`), held to the same rule. It then shows that the same container refuses
 `memory_read`'s dynamic build. No measured Run goes through Docker.
 
 To boot the box script the way a box does, in `amazonlinux:2023.12.20260710.0` (the
@@ -226,10 +227,10 @@ parameter sets on different types:
 
 ```json
 { "name": "mutex", "builds": ["static"], "samples": 10, "timeout_seconds": 180,
-  "params": [{ "threads": 1, "placement": "one_cpu", "critical_section_lines": 1, "lock": "pthread_mutex_default" }] },
+  "params": [{ "threads": 1, "placement": "one_cpu", "critical_section_lines": 1, "lock": "pthread_mutex_default", "idle_threads": 1 }] },
 { "name": "mutex", "builds": ["static"], "samples": 10, "timeout_seconds": 180,
   "instance_types": ["m5.large", "c6i.8xlarge", "c8i.2xlarge", "i4i.2xlarge"],
-  "params": [{ "threads": 2, "placement": "smt_siblings", "critical_section_lines": 1, "lock": "pthread_mutex_default" }] }
+  "params": [{ "threads": 2, "placement": "smt_siblings", "critical_section_lines": 1, "lock": "pthread_mutex_default", "idle_threads": 0 }] }
 ```
 
 (`schedule.json` does this for `mutex`: `c8a.2xlarge` has one hardware thread per core,

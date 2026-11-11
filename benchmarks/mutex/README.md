@@ -35,6 +35,10 @@ On the development machine, the Amazon Linux build's glibc 2.34 took the plain p
 every one of the first 100,000 locks and unlocks of the benchmark's mutex with
 `idle_threads` 0, and the atomic path for every one with `idle_threads` 1 (counted with
 breakpoints on the four instructions; see the step-4 log entry in `docs/dev-log.md`).
+With the machine otherwise quiet, that build gave 4.36 ns a critical section with
+`idle_threads` 0 and 18.57 ns with `idle_threads` 1 (eight runs of each, within 4.35 to
+4.39 ns and 18.56 to 18.59 ns): the two atomic instructions add about 14 ns to an
+uncontended lock and unlock on that Ice Lake Xeon.
 
 All five use `lock` `pthread_mutex_default`. `m5.large` has one core with two
 hardware threads, so it runs no distinct-cores set; `c8a.2xlarge` has one hardware thread
@@ -48,9 +52,10 @@ LM_PARAM_THREADS=2 LM_PARAM_PLACEMENT=distinct_cores LM_PARAM_CRITICAL_SECTION_L
 ```
 
 A sample lasts one to two seconds (the harness doubles the repetitions until one lasts at
-least a second), so an execution takes about 15 to 25 seconds, and the sets a box runs
-together about a minute to a minute and a half. On the shared development machine,
-under load, they took 15 to 47 seconds each.
+least a second), so an execution takes about 15 to 25 seconds (17 to 18 seconds each on
+the development machine when it was quiet), and the three to five sets a box runs
+together one to two minutes. On the shared development machine under load they took up
+to 47 seconds each.
 
 ## Parameters
 
