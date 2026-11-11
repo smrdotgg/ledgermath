@@ -9,14 +9,14 @@
  * by phase and kind. Pooled figures are made from these records alone.
  */
 
-import type { StreamReducer } from "../../records";
+import { reducerKey, type StreamReducer } from "../../records";
 import { readStream } from "../../run";
 import { summarizeStream } from "../../v1/facts";
-import { exactStats, type Stats, type Tally, tallyOf } from "./numbers";
+import { atOrAbove, binLower, binOf, binWidth, exactStats, PERCENTILES, type Stats, supports, type Tally, tallyOf } from "./numbers";
 import { type Failure, holdsRequests, PHASES, type Phase, REQUEST_FACTS, type RequestFact, readRequests } from "./requests";
 
-/** Revision 1: the first form. */
-export const REQUESTS_RECORD_KEY = "requests-v1-r1";
+/** requests-v1-<digest of this module's code and what it imports> (methods/records.ts). */
+export const REQUESTS_RECORD_KEY = reducerKey("requests", 1, import.meta.path);
 
 export interface FailureCount extends Failure {
 	count: number;
@@ -143,6 +143,90 @@ const isFailureCount = (value: unknown): value is FailureCount => isObject(value
 const phasesOf = <T>(value: unknown, item: (v: unknown) => v is T): value is Partial<Record<Phase, T>> =>
 	isObject(value) && Object.entries(value).every(([phase, v]) => (PHASES as readonly string[]).includes(phase) && item(v));
 
+/** Whether a tally holds together: whole positive counts in strictly rising bins that sum to its count, its least time in its first bin and its greatest in its last. */
+function tallyHolds(tally: Tally): boolean {
+	const { count, min, max, bins } = tally;
+	if (!Number.isInteger(count) || count < 1 || !Number.isInteger(min) || !Number.isInteger(max) || min < 0 || min > max || bins.length === 0) return false;
+	let total = 0;
+	for (const [i, [bin, n]] of bins.entries()) {
+		if (!Number.isInteger(bin) || bin < 0 || !Number.isInteger(n) || n < 1) return false;
+		if (i > 0 && bin <= (bins[i - 1] as [number, number])[0]) return false;
+		total += n;
+	}
+	return total === count && binOf(min) === (bins[0] as [number, number])[0] && binOf(max) === (bins[bins.length - 1] as [number, number])[0];
+}
+
+/**
+ * Whether a Run's statistics of one phase agree with its tally: the same
+ * count, least and greatest; every percentile the support rule asks for there
+ * with its at_or_above, and none it does not; least ≤ each percentile ≤
+ * greatest, in order; and each percentile between the bins of the two ranked
+ * times it lies between.
+ */
+function statsHold(stats: Stats, tally: Tally): boolean {
+	if (stats.count !== tally.count || stats.min !== tally.min || stats.max !== tally.max) return false;
+	const ends: number[] = [];
+	let total = 0;
+	for (const [, n] of tally.bins) ends.push((total += n));
+	const binAt = (rank: number): number => (tally.bins[ends.findIndex((end) => end > rank)] as [number, number])[0];
+	let previous = stats.min;
+	for (const { name, perMille } of PERCENTILES) {
+		const value = stats[name];
+		const tail = stats.at_or_above[name];
+		if (!supports(stats.count, perMille)) {
+			if (value !== null || tail !== undefined) return false;
+			continue;
+		}
+		if (typeof value !== "number" || !Number.isFinite(value) || tail !== atOrAbove(stats.count, perMille)) return false;
+		if (value < previous || value > stats.max) return false;
+		const scaled = (stats.count - 1) * perMille;
+		const low = Math.floor(scaled / 1000);
+		const high = scaled % 1000 === 0 ? low : low + 1;
+		const from = binLower(binAt(low));
+		const to = binLower(binAt(high)) + binWidth(binAt(high));
+		if (value < from || value > to) return false;
+		previous = value;
+	}
+	const known = new Set<string>(PERCENTILES.map(({ name }) => name));
+	return Object.keys(stats.at_or_above).every((name) => known.has(name));
+}
+
+/** Whether a record that has the form also holds together, as only a record made by reduceRequests can. */
+function holds(record: RequestsRecord): boolean {
+	const { counted, succeeded, failed, phases, by, failures, setups_failed } = record;
+	if (!Number.isInteger(succeeded) || !Number.isInteger(failed) || succeeded < 0 || failed < 0) return false;
+	if (counted !== null && (!Number.isInteger(counted) || counted < 0)) return false;
+	if (![...failures, ...setups_failed].every((f) => Number.isInteger(f.count) && f.count >= 1)) return false;
+	if (failures.reduce((sum, f) => sum + f.count, 0) !== failed) return false;
+	const entries = Object.entries(phases) as Array<[Phase, RunPhase]>;
+	if (record.problems.length > 0 || !record.holds_requests) {
+		// Nothing of the requests is kept for a stream with a problem, or one without requests.
+		return succeeded === 0 && failed === 0 && entries.length === 0 && Object.keys(by).length === 0 && setups_failed.length === 0 && record.warmup_failure === null;
+	}
+	if (counted !== succeeded + failed) return false;
+	// Every succeeded request has each phase its connection gives it, and is in every phase's tally.
+	if (succeeded === 0 ? entries.length !== 0 : phases.total === undefined) return false;
+	for (const [, phase] of entries) {
+		if (phase.tally.count !== succeeded || !tallyHolds(phase.tally) || !statsHold(phase.stats, phase.tally)) return false;
+	}
+	if (succeeded === 0) return Object.keys(by).length === 0;
+	for (const fact of REQUEST_FACTS) {
+		const values = by[fact];
+		if (values === undefined || values.length === 0) return false;
+		if (values.reduce((sum, v) => sum + v.requests, 0) !== succeeded) return false;
+		for (const [i, item] of values.entries()) {
+			if (!Number.isInteger(item.requests) || item.requests < 1) return false;
+			if (i > 0 && !(item.value > (values[i - 1] as ByValue).value)) return false;
+			if ((item.phases === null) !== (values.length === 1)) return false;
+			if (item.phases === null) continue;
+			const own = Object.keys(item.phases).sort();
+			if (own.join() !== entries.map(([phase]) => phase).sort().join()) return false;
+			for (const tally of Object.values(item.phases) as Tally[]) if (tally.count !== item.requests || !tallyHolds(tally)) return false;
+		}
+	}
+	return Object.keys(by).length === REQUEST_FACTS.length;
+}
+
 function fromJson(value: unknown): RequestsRecord | null {
 	if (!isObject(value)) return null;
 	const v = value;
@@ -162,7 +246,8 @@ function fromJson(value: unknown): RequestsRecord | null {
 	if (!Array.isArray(v.failures) || !v.failures.every(isFailureCount)) return null;
 	if (v.warmup_failure !== null && !isFailure(v.warmup_failure)) return null;
 	if (!Array.isArray(v.setups_failed) || !v.setups_failed.every(isFailureCount)) return null;
-	return value as unknown as RequestsRecord;
+	const record = value as unknown as RequestsRecord;
+	return holds(record) ? record : null;
 }
 
 export const REQUESTS_RECORD: StreamReducer<RequestsRecord> = {

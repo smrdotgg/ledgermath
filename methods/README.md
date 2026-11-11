@@ -54,15 +54,32 @@ A Method reads a Run's events from its stdout blob, 4 KB for most benchmarks and
 750 KB for `http_get`. Each Method reduces a stream once to a small record of exactly what
 its Derivations need of it (`StreamReducer` in `records.ts`), and a store keeps the records
 between runs (`scripts/derive.ts --records DIR`, as
-`DIR/<method>-v<version>-r<revision>/<stdout hex>.json`). A stream is fetched only when a
+`DIR/<method>-v<version>-<code>/<stdout hex>.json`). A stream is fetched only when a
 Method asked for has no record of it, and then once for all of them.
 
-- **The key** is the stdout blob's hash and the reducer's key, `series-v1-r1` or
-  `requests-v1-r1`: the Method, its version, and the revision of the record's form, which
-  goes up whenever the code that makes the record or the form it is kept in changes, so a
-  record made by other code is never read as this code's.
-- **A record that does not parse, names another reducer or blob, or lacks the reducer's
-  form** is ignored, and the stream read again.
+- **The key** is the stdout blob's hash and the reducer's key, such as
+  `requests-v1-963924a6f20aacf2`: the Method, its version, and the first 16 hex digits of
+  the digest of the code that makes the record (`codeDigest`): the source text of the
+  reducer's module, of every module it imports by a relative path, transitively, and of the
+  schemas `run.ts` compiles. Nobody has to remember to change it: any change to that code
+  (for `requests` v1: `records.ts`, `run.ts`, `v1/facts.ts`, `v1/numbers.ts`,
+  `v1/stream.ts`, `requests/v1/numbers.ts`, `requests.ts`, `record.ts`, and the two
+  schemas) gives a new key, under which no record exists yet, so a record made by other
+  code is never read. **The cost**, accepted: after such a change every stream is fetched
+  and reduced once more (about 20 MB on 2026-11-11, growing by about 44 MB a day of
+  `http_get` streams), on the next run of the workflow. A change elsewhere (the derive
+  step, the output's shape, the page) costs nothing. Packages imported by name (ajv) are
+  not in the digest; the lockfile pins them.
+- **A record is kept with the sha256 of its content** (canonical JSON), and used only when
+  it parses, names its reducer and its blob, has that digest, and **holds together** by the
+  reducer's own checks: for `requests` v1, every count is the sum of its histogram's bins,
+  the least and greatest times lie in the histogram's first and last bins, every percentile
+  the support rule asks for is there with its `at_or_above` and none it does not, least ≤
+  each percentile ≤ greatest in order, each per-Run percentile lies between the bins of the
+  two ranked times it falls between, every succeeded request is in every phase and in one
+  value of each fact, and the failures add up; for `series` v1, the samples are whole,
+  in order, and as many as the stream counted. Any other record is ignored, and the stream
+  read again: a damaged record costs a fetch, never a figure.
 - **The same bytes, kept or not.** A record is always used as it reads back from its kept
   form, on the run that makes it as on every later one, so the Derivations are the same
   bytes with or without kept records (`tests/requests-method.test.ts`,

@@ -1,7 +1,9 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { createHash } from "node:crypto";
+import { appendFileSync, cpSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 
-import { memoryRecords } from "../methods/records";
+import { codeDigest, memoryRecords, recordDigest, SCHEMA_FILES } from "../methods/records";
 import * as requests from "../methods/requests/v1";
 import {
 	atOrAbove,
@@ -19,17 +21,18 @@ import {
 	tallyStats,
 } from "../methods/requests/v1/numbers";
 import type { DerivationsFile, SeriesDerivation } from "../methods/requests/v1/output";
-import { REQUESTS_RECORD, REQUESTS_RECORD_KEY, reduceRequests } from "../methods/requests/v1/record";
+import { REQUESTS_RECORD, REQUESTS_RECORD_KEY, type RequestsRecord, type RunPhase, reduceRequests } from "../methods/requests/v1/record";
 import { addressBlock, readRequests } from "../methods/requests/v1/requests";
 import { readStream, type RunFile } from "../methods/run";
 import * as series from "../methods/v1";
 import { percentile } from "../methods/v1/numbers";
-import { SERIES_RECORD, SERIES_RECORD_KEY } from "../methods/v1/record";
+import { SERIES_RECORD_KEY } from "../methods/v1/record";
 import { DEFAULT_PHASES, HandMade, rampRequests, requestRun, requestStream } from "./hand-made-requests";
 
 // Each test derives a few hundred hand-made requests; a loaded machine can take longer than bun's five-second default.
 setDefaultTimeout(120_000);
 
+const ROOT = resolve(import.meta.dir, "..");
 const bytes = (text: string): Uint8Array => new TextEncoder().encode(text);
 const events = (text: string) => readStream(bytes(text)).events;
 
@@ -432,14 +435,78 @@ describe("the reduced record of a Run, kept between runs", () => {
 		expect(kept).toEqual(without);
 	});
 
-	test("a record is keyed by the stdout blob's hash and its reducer, Method name, version and revision", async () => {
+	test("a record is keyed by the stdout blob's hash, its Method and version, and the digest of the code that made it", async () => {
 		const m = await made();
 		const store = memoryRecords();
 		await requests.gather(m.files, m.fetch, { records: store });
 		await series.gather(m.files, m.fetch, { records: store });
-		expect(REQUESTS_RECORD_KEY).toBe("requests-v1-r1");
-		expect(SERIES_RECORD_KEY).toBe("series-v1-r1");
-		for (const key of store.texts.keys()) expect(key).toMatch(/^(requests-v1-r1|series-v1-r1)\/sha256:[0-9a-f]{64}$/);
+		expect(REQUESTS_RECORD_KEY).toMatch(/^requests-v1-[0-9a-f]{16}$/);
+		expect(SERIES_RECORD_KEY).toMatch(/^series-v1-[0-9a-f]{16}$/);
+		expect(REQUESTS_RECORD_KEY.slice(-16)).toBe(codeDigest([join(ROOT, "methods/requests/v1/record.ts")], SCHEMA_FILES).digest.slice(0, 16));
+		for (const key of store.texts.keys()) expect(key.startsWith(`${REQUESTS_RECORD_KEY}/sha256:`) || key.startsWith(`${SERIES_RECORD_KEY}/sha256:`)).toBe(true);
+	});
+
+	test("the code digest covers every file the reduction runs, and changes with any one of them", () => {
+		expect(codeDigest([join(ROOT, "methods/requests/v1/record.ts")], SCHEMA_FILES).files).toEqual([
+			"methods/records.ts",
+			"methods/requests/v1/numbers.ts",
+			"methods/requests/v1/record.ts",
+			"methods/requests/v1/requests.ts",
+			"methods/run.ts",
+			"methods/v1/facts.ts",
+			"methods/v1/numbers.ts",
+			"methods/v1/stream.ts",
+			"schemas/events.schema.json",
+			"schemas/run.schema.json",
+		]);
+		expect(codeDigest([join(ROOT, "methods/v1/record.ts")], SCHEMA_FILES).files).toEqual([
+			"methods/records.ts",
+			"methods/run.ts",
+			"methods/v1/facts.ts",
+			"methods/v1/numbers.ts",
+			"methods/v1/record.ts",
+			"methods/v1/stream.ts",
+			"schemas/events.schema.json",
+			"schemas/run.schema.json",
+		]);
+		// A copy of the tree, changed one file at a time.
+		const copy = mkdtempSync(join(tmpdir(), "code-digest-"));
+		try {
+			cpSync(join(ROOT, "methods"), join(copy, "methods"), { recursive: true });
+			cpSync(join(ROOT, "schemas"), join(copy, "schemas"), { recursive: true });
+			const digest = (): string => codeDigest([join(copy, "methods/requests/v1/record.ts")], SCHEMA_FILES, copy).digest;
+			const before = digest();
+			expect(before).toBe(codeDigest([join(ROOT, "methods/requests/v1/record.ts")], SCHEMA_FILES).digest);
+			const touch = (path: string): void => appendFileSync(join(copy, path), "\n");
+			let last = before;
+			for (const path of ["methods/run.ts", "methods/v1/stream.ts", "methods/requests/v1/requests.ts", "methods/records.ts", "schemas/events.schema.json"]) {
+				touch(path);
+				const now = digest();
+				expect(now).not.toBe(last);
+				last = now;
+			}
+			// What the reduction does not run leaves it as it was: the Derivations' shape, the derive step.
+			for (const path of ["methods/requests/v1/output.ts", "methods/requests/v1/index.ts", "methods/v1/index.ts"]) {
+				touch(path);
+				expect(digest()).toBe(last);
+			}
+		} finally {
+			rmSync(copy, { recursive: true, force: true });
+		}
+	});
+
+	test("a record made by other code is never read: its key is another, and the stream is read again", async () => {
+		const m = new HandMade();
+		requestRun(m, { startedAt: "2026-11-11T21:35:00Z", stream: { connection: "new", requests: rampRequests(20) } });
+		const store = memoryRecords();
+		const stdout = (m.files[0]?.record as { stdout: string }).stdout;
+		// As older code would have kept it: one request failed where this code reads none.
+		const fresh = REQUESTS_RECORD.toJson(reduceRequests((await m.fetch(stdout)) as Uint8Array)) as RequestsRecord;
+		const older = { ...fresh, succeeded: 19, failed: 1, failures: [{ phase: "record", kind: "line_withheld", count: 1 }] };
+		await store.put("requests-v1-0123456789abcdef", stdout, older);
+		const gathered = await requests.gather(m.files, m.fetch, { records: store });
+		expect(gathered.counts).toEqual({ fetched: 1, kept: 0 });
+		expect(requests.derive(m.files, gathered).derivations[0]?.points[0]?.succeeded).toBe(20);
 	});
 
 	test("a damaged record, or one of another blob or reducer, is ignored and the stream read again", async () => {
@@ -455,13 +522,65 @@ describe("the reduced record of a Run, kept between runs", () => {
 		expect(requests.serialize(requests.derive(m.files, gathered))).toBe(expected);
 	});
 
-	test("what a record holds is pinned: a change to it must raise the reducer's revision, so records kept by other code are never read", () => {
-		const stream = bytes(requestStream({ connection: "new", requests: [...rampRequests(30), { status: 503 }, { address: "52.219.1.2", cipher: "TLS_CHACHA20_POLY1305_SHA256" }] }));
-		const digest = (reducer: { toJson(record: never): unknown; reduce(stdout: Uint8Array): unknown }): string =>
-			createHash("sha256").update(JSON.stringify(reducer.toJson(reducer.reduce(stream) as never))).digest("hex");
-		// If one of these changes, the record changed: raise the revision in its key (requests-v1-r2, series-v1-r2) and pin the new digest.
-		expect([REQUESTS_RECORD_KEY, digest(REQUESTS_RECORD)]).toEqual(["requests-v1-r1", "581498417d62b9ba8637caceb956b88eea7326a2f82fee9e9624aeb776614fa3"]);
-		expect([SERIES_RECORD_KEY, digest(SERIES_RECORD)]).toEqual(["series-v1-r1", "3fc8586524ba7b5401646998dfcdf81a1a4ed2a22741169d3ba26755be0a2851"]);
+	test("a kept record edited to another figure is never used, by its digest, and by its own checks when the digest is made again", async () => {
+		const m = new HandMade();
+		requestRun(m, { startedAt: "2026-11-11T21:35:00Z", stream: { connection: "new", requests: rampRequests(200, 20_000_000, 77_777) } });
+		const expected = requests.serialize(requests.derive(m.files, await requests.gather(m.files, m.fetch)));
+		const edits: Record<string, (record: RequestsRecord) => void> = {
+			"a 99th percentile of 1 ns": (record) => {
+				(record.phases.total as RunPhase).stats.p99 = 1;
+			},
+			"a histogram replaced": (record) => {
+				const total = record.phases.total as RunPhase;
+				total.tally = { count: record.succeeded, min: 1, max: 1, bins: [[1, record.succeeded]] };
+			},
+			"a percentile the support rule asks for deleted": (record) => {
+				delete (record.phases.total as { stats: Partial<RunPhase["stats"]> }).stats.p99;
+			},
+			"a count that is not the histogram's": (record) => {
+				(record.phases.first_byte as RunPhase).tally.count += 1;
+			},
+			"a percentile outside the bins it lies between": (record) => {
+				const stats = (record.phases.total as RunPhase).stats;
+				stats.p90 = (stats.p90 as number) + 2_000_000;
+			},
+		};
+		for (const [what, edit] of Object.entries(edits)) {
+			for (const resealed of [false, true]) {
+				const store = memoryRecords();
+				await requests.gather(m.files, m.fetch, { records: store });
+				const key = [...store.texts.keys()].find((k) => k.startsWith("requests-")) as string;
+				const envelope = JSON.parse(store.texts.get(key) as string) as { digest: string; record: RequestsRecord };
+				edit(envelope.record);
+				if (resealed) envelope.digest = recordDigest(envelope.record);
+				store.texts.set(key, JSON.stringify(envelope));
+				const gathered = await requests.gather(m.files, m.fetch, { records: store });
+				if (gathered.counts.fetched !== 1) throw new Error(`${what}${resealed ? ", digest made again" : ""}: the edited record was used`);
+				expect(requests.serialize(requests.derive(m.files, gathered))).toBe(expected);
+			}
+		}
+		// An unedited record whose digest was made again is used as it is.
+		const store = memoryRecords();
+		await requests.gather(m.files, m.fetch, { records: store });
+		expect((await requests.gather(m.files, m.fetch, { records: store })).counts).toEqual({ fetched: 0, kept: 1 });
+	});
+
+	test("a kept series v1 record that does not hold together is never used", async () => {
+		const m = new HandMade();
+		m.run({ startedAt: "2026-11-11T21:30:00Z", samplesNs: [5, 6, 7, 8] });
+		const expected = series.serialize(series.derive(m.files, await series.gather(m.files, m.fetch)));
+		for (const edit of [(r: { samples: number[][] }) => r.samples.pop(), (r: { samples: number[][] }) => ((r.samples[0] as number[])[1] = -5)]) {
+			const store = memoryRecords();
+			await series.gather(m.files, m.fetch, { records: store });
+			const key = [...store.texts.keys()][0] as string;
+			const envelope = JSON.parse(store.texts.get(key) as string) as { digest: string; record: { samples: number[][] } };
+			edit(envelope.record);
+			envelope.digest = recordDigest(envelope.record);
+			store.texts.set(key, JSON.stringify(envelope));
+			const gathered = await series.gather(m.files, m.fetch, { records: store });
+			expect(gathered.counts.fetched).toBe(1);
+			expect(series.serialize(series.derive(m.files, gathered))).toBe(expected);
+		}
 	});
 
 	test("a record holds no time of any single request: its size grows with the bins, not the requests", () => {
