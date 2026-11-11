@@ -1067,6 +1067,8 @@ static void exchange_events(connection *c, const request *rq, exchange *x, unsig
                 lm_lines_hex(&g_out, "body_sha256_received", partial, 32);
             }
         }
+        /* Trailer lines already taken (each one checked) before the failure. */
+        if (resp->trailers > 0) field_pairs(&g_out, "trailers", resp->trailer, resp->trailer_field, resp->trailers);
         tcp_info_fields(&g_out, c->fd);
         lm_lines_end(&g_out);
         return;

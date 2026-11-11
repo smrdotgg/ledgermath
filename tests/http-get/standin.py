@@ -52,6 +52,8 @@ More, for the reviews of step 5:
 - cap-<framing>-<minus|exact|plus>: a 200 whose body is one byte less than,
   exactly, or one byte more than http_get's body buffer (object_bytes plus
   64 KiB), framed by length, by the connection's end, or chunked.
+- trailersurplus, trailerbad: a chunked body, a valid trailer line, then bytes
+  after the response's end, or a trailer line without a colon.
 - TLS failures, answered below TLS: plainhttp (an HTTP reply to the
   ClientHello), alert (a fatal handshake_failure alert), tls11only (a TLS 1.1
   ServerHello), badserverhello (a ServerHello cut short); and nosharedcipher
@@ -458,6 +460,10 @@ def respond(conn, request, log_path):
         conn.sendall(head + b"Connection: close\r\n\r\n" + data)
         conn.unwrap().close()
         return False
+    if what in ("trailersurplus", "trailerbad"):
+        wire = chunked(body)[:-2] + b"x-extra: TAIL-MUST-SURVIVE\r\n" + (b"\r\nSURPLUS" if what == "trailersurplus" else b"not-a-field\r\n\r\n")
+        conn.sendall(object_head(size, checksum, request_id, b"Transfer-Encoding: chunked\r\n") + wire)
+        return True
     if what in ("surplus", "surpluslater"):
         whole = object_head(size, checksum, request_id) + body
         if what == "surplus":

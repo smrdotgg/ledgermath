@@ -1113,7 +1113,7 @@ function responseRecord(r: Run): unknown[] {
 		first_byte: ["request"],
 		response_headers: ["request", "status_line", "status", "headers"],
 		response_ended: ["request", "bytes", "wire_bytes", "framing", "trailers", "body_sha256", "fixture", "s3_checksum", "error_fields", "error_elements"],
-		request_failed: ["request", "phase", "error", "detail", "bytes_received", "surplus_bytes", "head_received", "content_length", "body_bytes_received", "body_sha256_received"],
+		request_failed: ["request", "phase", "error", "detail", "bytes_received", "surplus_bytes", "head_received", "content_length", "body_bytes_received", "body_sha256_received", "trailers"],
 		sample_ended: ["sample"],
 	};
 	return r.events
@@ -1226,6 +1226,19 @@ describe.skipIf(!AVAILABLE)("everything the resolver and the server sent is reco
 						expect([label, failed]).toEqual([label, [expected, expected]]);
 					}
 				}
+			}
+		}
+	});
+
+	test("trailer lines read before a response fails are kept in the failure: bytes after it, or a bad trailer line", () => {
+		for (const connection of ["new", "reused"] as const) {
+			for (const [scenario, detail] of [["trailersurplus", "7 bytes after the end of the response"], ["trailerbad", "a header line without a colon"]] as const) {
+				const r = run(scenario, { samples: 1, connection });
+				expectExit(r, 4);
+				checkStream(r, 1);
+				const failed = of(r, "request_failed");
+				expect([connection, scenario, failed.length]).toEqual([connection, scenario, 2]);
+				for (const event of failed) expect(event).toMatchObject({ phase: "body", error: "protocol", detail, trailers: [["x-extra", "TAIL-MUST-SURVIVE"]] });
 			}
 		}
 	});
