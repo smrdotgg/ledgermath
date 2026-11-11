@@ -101,12 +101,36 @@ const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
 const TIME_STEPS = [HOUR, 2 * HOUR, 3 * HOUR, 6 * HOUR, 12 * HOUR, DAY, 2 * DAY, 7 * DAY, 14 * DAY, 28 * DAY, 91 * DAY, 182 * DAY, 364 * DAY];
 
-/** Tick times at a round step, aligned to UTC midnight, at most about seven across. */
-export function timeTicks(min: number, max: number): { ticks: number[]; step: number } {
-	const step = TIME_STEPS.find((candidate) => (max - min) / candidate <= 7) ?? (TIME_STEPS.at(-1) as number);
-	const ticks: number[] = [];
-	for (let t = Math.ceil(min / step) * step; t <= max; t += step) ticks.push(t);
-	return { ticks, step };
+/** The font every label is set in, in pixels. */
+export const FONT_SIZE = 11;
+/**
+ * A width no character of a label exceeds at FONT_SIZE, in pixels: digits are
+ * about 6.1 in common sans-serif faces, and G, the widest letter used, about
+ * 8.6. Labels are laid out with this, so they fit whatever face is used.
+ */
+export const CHAR_WIDTH = 7;
+export const labelWidth = (text: string): number => [...text].length * CHAR_WIDTH;
+
+/** How a tick time is labelled: with the time of day when ticks are less than a day apart. */
+const timeLabel = (ms: number, step: number): string => utc(ms, step < DAY);
+
+/**
+ * Tick times at a round step, aligned to UTC midnight, with no more ticks
+ * than labels of that step's width fit across `width` pixels.
+ */
+export function timeTicks(min: number, max: number, width: number): { ticks: number[]; step: number } {
+	const ticksAt = (step: number): number[] => {
+		const ticks: number[] = [];
+		for (let t = Math.ceil(min / step) * step; t <= max; t += step) ticks.push(t);
+		return ticks;
+	};
+	for (const step of TIME_STEPS) {
+		const room = Math.floor(width / (labelWidth(timeLabel(min, step)) + 12));
+		const ticks = ticksAt(step);
+		if (ticks.length <= Math.max(1, room)) return { ticks, step };
+	}
+	const step = TIME_STEPS.at(-1) as number;
+	return { ticks: ticksAt(step), step };
 }
 
 export function utc(ms: number, withTime: boolean): string {
@@ -122,13 +146,17 @@ export interface ChartInput {
 	label: string;
 }
 
-const W = 760;
+export const CHART_WIDTH = 760;
+const W = CHART_WIDTH;
 const H = 300;
-const LEFT = 84;
+/** The least room left of the plot, for the y labels and "failed". */
+const MIN_LEFT = 84;
 const RIGHT = 16;
 const TOP = 12;
 const LANE = 22;
 const BOTTOM = 30;
+/** The least gap between a label and the SVG's edge. */
+const EDGE = 2;
 
 export function renderChart({ points, medians, unit, label }: ChartInput): string {
 	const plotBottom = H - BOTTOM - LANE;
@@ -156,28 +184,39 @@ export function renderChart({ points, medians, unit, label }: ChartInput): strin
 		y0 -= pad;
 		y1 += pad;
 	}
+	const yTicks = niceTicks(y0, y1);
+	const decimals = Math.max(0, -Math.floor(Math.log10(yTicks.step)));
+	const yLabels = yTicks.ticks.map((tick) => ({ tick, text: `${tick.toFixed(Math.min(decimals, 12))} ${unit.name}` }));
+	// Room for the widest y label, right-aligned 6 px left of the plot.
+	const LEFT = Math.max(MIN_LEFT, Math.ceil(Math.max(labelWidth("failed"), ...yLabels.map(({ text }) => labelWidth(text))) + 6 + EDGE + 4));
 	const sx = (x: number): number => LEFT + ((x - x0) / (x1 - x0)) * (W - LEFT - RIGHT);
 	const sy = (y: number): number => plotBottom - ((y / unit.scale - y0) / (y1 - y0)) * (plotBottom - TOP);
 	const f = (n: number): string => n.toFixed(1);
+	const text = (x: number, y: number, anchor: "start" | "middle" | "end", content: string): string =>
+		`<text x="${f(x)}" y="${f(y)}" text-anchor="${anchor}" class="axis" fill="#333">${esc(content)}</text>`;
 
 	const parts: string[] = [];
-	parts.push(`<svg class="chart" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="${esc(label)}">`);
+	parts.push(
+		`<svg class="chart" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" font-size="${FONT_SIZE}" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif" role="img" aria-label="${esc(label)}">`,
+	);
 	parts.push(`<rect x="${LEFT}" y="${TOP}" width="${W - LEFT - RIGHT}" height="${plotBottom - TOP}" fill="#fff" stroke="#888"/>`);
 	parts.push(`<rect x="${LEFT}" y="${plotBottom + 3}" width="${W - LEFT - RIGHT}" height="${LANE - 6}" fill="#f2f2f2"/>`);
-	parts.push(`<text x="${LEFT - 6}" y="${plotBottom + LANE / 2 + 4}" text-anchor="end" class="axis">failed</text>`);
+	parts.push(text(LEFT - 6, plotBottom + LANE / 2 + 4, "end", "failed"));
 
-	const yTicks = niceTicks(y0, y1);
-	const decimals = Math.max(0, -Math.floor(Math.log10(yTicks.step)));
-	for (const tick of yTicks.ticks) {
+	for (const { tick, text: content } of yLabels) {
 		const y = plotBottom - ((tick - y0) / (y1 - y0)) * (plotBottom - TOP);
 		parts.push(`<line x1="${LEFT}" x2="${W - RIGHT}" y1="${f(y)}" y2="${f(y)}" stroke="#e4e4e4"/>`);
-		parts.push(`<text x="${LEFT - 6}" y="${f(y + 4)}" text-anchor="end" class="axis">${esc(`${tick.toFixed(Math.min(decimals, 12))} ${unit.name}`)}</text>`);
+		parts.push(text(LEFT - 6, y + 4, "end", content));
 	}
-	const xTicks = timeTicks(x0, x1);
+	const xTicks = timeTicks(x0, x1, W - LEFT - RIGHT);
 	for (const tick of xTicks.ticks) {
 		const x = sx(tick);
+		const content = timeLabel(tick, xTicks.step);
+		// Centred under its tick, moved inward as far as it must be to stay inside the SVG.
+		const half = labelWidth(content) / 2;
+		const centre = Math.min(Math.max(x, half + EDGE), W - half - EDGE);
 		parts.push(`<line x1="${f(x)}" x2="${f(x)}" y1="${TOP}" y2="${plotBottom + LANE - 3}" stroke="#e4e4e4"/>`);
-		parts.push(`<text x="${f(x)}" y="${H - 10}" text-anchor="middle" class="axis">${esc(utc(tick, xTicks.step < DAY))}</text>`);
+		parts.push(text(centre, H - 10, "middle", content));
 	}
 
 	for (const median of medians) {
