@@ -153,7 +153,7 @@ scheduled time, so one slot of one target can start at most one box. Its user-da
    The budget is not always enough. The disk benchmarks run last, and each disk set may
    run until its timeout of 180 seconds: on an `i4i.2xlarge` the eleven disk sets'
    timeouts alone add up to 33 minutes (the six root-volume sets on the other types, 18
-   minutes), and provisioning, before `run.py`, may use up to 15 of the same 35 minutes.
+   minutes), and provisioning, before `run.py`, may use up to 6 of the same 35 minutes.
    So if a disk misbehaves and its sets run to their timeouts, the budget ends the boot:
    the execution in flight still gets its Run, the rest are listed under `not_run`, and
    what exists is uploaded. On the real boxes the whole boot took 13 and 10.5 minutes;
@@ -198,20 +198,30 @@ On a `-runs` box, before `run.py`, `runner/provision.py`:
 - finds the instance's own NVMe disk by its model, `Amazon EC2 NVMe Instance Storage`,
   never by its kernel name, and prepares it only when it is the one disk the catalog
   (`describe-instance-types`) lists and is empty: no partition, no holder, not mounted.
+  Information that is missing, empty or unreadable (a model, a serial, a size, a holders
+  directory, the mount table) is a refusal that says which, never a pass.
   From then on the disk is its device number: provisioning makes a block device node of
-  its own for that `major:minor` (`mknod`, under `/run/ledgermath`, which only root can
+  its own for that `major:minor` (`mknod`, under `/dev/ledgermath`, which only root can
   write), so the node it works through can never come to mean another device, and nothing
-  runs on a `/dev` name. It records the disk (`lsblk`, `blkid`, `nvme id-ctrl`, `nvme
-  id-ns`, `nvme amzn stats`), then, immediately before formatting, checks everything again:
-  the number still names the same disk (name, model, serial, size, by
-  `/sys/dev/block/<major:minor>`), the node is still that number, no partition, holder or
-  mount, `blkid -p` exits 2 and prints nothing (it also exits 2 when it cannot open the
-  device), and provisioning can read the first MiB. Then a default XFS file system
-  (`mkfs.xfs`, never forced), the mount point made, `mount -t xfs` at
-  `/mnt/lm/instance-store`, and the mounted file system's device number, by `stat` and by
-  `/proc/self/mountinfo`, must be the number checked. If the mount fails or the number
-  differs, the file system is unmounted and the mount point removed, so an instance-store
-  set finds no directory and fails, saying why, instead of running on the root volume.
+  runs on the kernel's name for the disk. The node must be on a file system that allows
+  device nodes, which provisioning checks in `/proc/self/mountinfo` first: on the image
+  `/run` is mounted `nodev`, and a node there can be made but not opened, even by root;
+  `/dev` (devtmpfs) is not. It records the disk (`lsblk`, `blkid`, `nvme id-ctrl`, `nvme
+  id-ns`, `nvme amzn stats`), then opens it read-only and holds that descriptor until the
+  mounted file system is confirmed, so the kernel cannot release the number for another
+  disk in between. With it held, immediately before formatting, it checks everything
+  again: through the descriptor, the device number, the size and the first MiB; by the
+  number, the same disk in `/sys/dev/block/<major:minor>` (name, model, serial, size), no
+  partition, holder or mount; and `blkid -p` exits 2 and prints nothing (it also exits 2
+  when it cannot open the device). Then a default XFS file system (`mkfs.xfs`, never
+  forced), the mount point made, `mount -t xfs` at `/mnt/lm/instance-store`, and the
+  mounted file system's device number, by `stat` and by `/proc/self/mountinfo`, must be the
+  number checked, with the disk's model and serial still the ones checked. If the mount
+  fails or anything differs, the file system is unmounted and the mount point removed, so
+  an instance-store set finds no directory and fails, saying why, instead of running on
+  the root volume. Because the mount is made through that node, `findmnt` and a Run's
+  `mount_source` read `/dev/ledgermath/instance-store-259-1` (for device 259:1), not
+  `/dev/nvme1n1`.
   Anything else is refused and recorded. Of the targets only `i4i.2xlarge` has such a disk
   (one of 1,875 GB); the other types have no such step;
 - makes the Fixtures with `runner/fixture.c` (`O_DIRECT` writes of 1 MiB, then
@@ -227,14 +237,24 @@ On a `-runs` box, before `run.py`, `runner/provision.py`:
 Every command it runs is in a process group of its own. A step that runs past its time,
 or is told to stop, has its whole group sent TERM, then KILL five seconds later; anything
 a step leaves running after it exits is killed too, and the record says so. Provisioning
-stops itself at 840 seconds, and on SIGTERM, SIGINT or SIGHUP: it records what stopped it
+stops itself at 300 seconds, and on SIGTERM, SIGINT or SIGHUP: it records what stopped it
 and the output captured so far, undoes what is half done, and exits. `box.sh` runs it with
-`--supervise-seconds 900`, its outer limit: the work runs as a child in a session of its
-own, is sent TERM at 900 seconds and KILL 30 seconds later, and then every process left in
-that session is killed, any step whose end was not recorded is recorded from its output
-files, and what a killed provisioning left half done (a mount it did not verify, a partial
-Fixture, a root-volume directory without one) is undone. So nothing of provisioning is
-running when the schedule starts, and the record is complete however provisioning ended.
+`--supervise-seconds 330`, its outer limit: the work runs as a child in a session of its
+own, whose id the supervisor writes at once to `/var/tmp/ledgermath/provision.session`; it
+is sent TERM at 330 seconds and KILL 15 seconds later (5, when the supervisor is itself
+told to stop), and then every process left in that session is killed, any step whose end
+was not recorded is recorded from its output files, and what a killed provisioning left
+half done (a mount it did not verify, a partial Fixture, a root-volume directory without
+one) is undone. `box.sh`'s own limit, `timeout --kill-after=10 360`, is for a supervisor
+that is itself stuck. Whatever happened, once provisioning has returned, `box.sh`'s
+`provision_leftovers` kills every process left in that session, unmounts the instance
+store if the record does not say it was readied, removes an empty mount point with
+nothing mounted on it and any Fixture the record does not say was made whole (and the
+root volume's directory, if it is then empty), and writes what it did into the record
+under `box_sh`; when there is nothing to do, it writes nothing. So nothing of
+provisioning is running when the schedule starts, and the record is complete however
+provisioning ended. Provisioning took 44 seconds on a real `i4i.2xlarge`, so these
+limits, at most six minutes, are far from it.
 
 On a real `i4i.2xlarge` this took 43 seconds: `mkfs.xfs` 6 s (it discards the whole disk
 first), the 32 GiB Fixture 30 s, the root volume's 7 s. The root volume is the image's

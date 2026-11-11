@@ -169,7 +169,7 @@ and the boot summary records `stopped_by` and lists every execution that never s
 under `not_run`; those have no Run. The box sends this TERM itself 35 minutes after it
 started, so the 45-minute shutdown is only a backstop. The budget can run out: the disk
 sets run last, and on an `i4i.2xlarge` their timeouts alone add up to 33 minutes (18 on
-the other types), with provisioning allowed up to 15 minutes before them, so a
+the other types), with provisioning allowed up to 6 minutes before them, so a
 misbehaving disk ends the boot this way, with what exists uploaded. `tests/samples/interrupted/` holds
 such a boot. Not covered: a SIGKILL of the runner (three minutes after that TERM, or the
 kernel's OOM killer) or the box losing power loses the execution in flight, and possibly
@@ -643,4 +643,45 @@ A migrated benchmark is done only when **all** of these hold:
   provisioning there cannot make a node for this machine's own instance-store disk, and
   accepts its tmpfs disk Runs explicitly. The tightened checker passes all 17 disk Runs of
   the two real boots. Only `disk_write`'s binary changed.
+- **2026-11-11** — Step 4 of the build plan (#36, brief #42), the disk build, after a
+  second review, not yet deployed. (1) The blocker: the private device node lived in
+  `/run/ledgermath`, and on the image `/run` is `tmpfs` mounted `nodev` (both real boots'
+  own `findmnt`), where a node can be made but not opened, even by root; every
+  instance-store Run would have failed. The node now lives in `/dev/ledgermath`
+  (devtmpfs, not `nodev`), and provisioning first checks in mountinfo that the
+  directory's file system allows device nodes, refusing with the reason otherwise; in a
+  root container a node in the `nodev` `/dev/shm` failed to open with `EACCES` exactly
+  where the check said it would, and one in `/dev` opened. Runs' `mount_source` will
+  read `/dev/ledgermath/instance-store-<major>-<minor>`. (2) The disk is opened
+  read-only before the last checks and held until the mounted file system is confirmed;
+  the last checks go through that descriptor (device number, `BLKGETSIZE64`, the first
+  MiB), and after the mount the model and serial must still be the checked ones. (3) An
+  empty or missing model, serial or size, an unlistable holders or partitions directory,
+  or an unreadable mount table is a refusal that says which (before, two empty serials
+  matched, and the old version prepared and formatted in both reviewer cases). (4)
+  Limits of 300, 330 and 360 seconds (they were 840, 900 and 1,000; provisioning takes 44
+  on a real `i4i.2xlarge`); the supervisor writes its worker's session id to a file at
+  once, and after provisioning returns `box.sh` runs `runner/provision-leftovers.py`,
+  which kills what is left in that session, unmounts an instance store the record does
+  not say was readied, removes an empty mount point, partial Fixtures and an empty
+  root-volume directory, and writes what it did into the record. With the old
+  supervisor suspended and then killed, the worker, its tool and its grandchild kept
+  running and the record stayed `running`; now nothing is left. GNU `timeout` sends
+  SIGCONT with its TERM, so a merely suspended supervisor resumes and stops provisioning
+  itself; the supervisor's grace, when it is told to stop, is 5 seconds, inside
+  `box.sh`'s 10. (5) A cleanup command that times out keeps its output. (6)
+  `check-disk-runs.ts` now refuses a file whose device is not the disk or below it, a
+  declared value its observed counterpart contradicts, `work` that disagrees with the
+  repetitions or the request size, an NVMe-model disk without its controller or its
+  statistics, a counter that is not a safe whole number, and an NVMe counter that goes
+  down; the checker at `b1c756c` reported none of the eight cases. It still passes all
+  17 disk Runs of the two real boots. (8) The tests no longer depend on timing: the
+  stop tests wait for conditions with generous bounds and run side by side with limits
+  of 6 to 10 seconds; `runner-races.py` waits for the runner to have launched the binary
+  instead of a two-second timer, and its alarm case no longer needs a stand-in to exit
+  within a second; tests that run processes have explicit timeouts (`schemas.test.ts`
+  had timed out once at 5.2 seconds). Ten runs of `bun test` under `nice -n 10`, with the
+  load average at 3.7 to 5.9 on 4 CPUs: 10 passed, 322 tests each. All binaries keep
+  their bytes. The `/dev/ledgermath` path has not yet run on a real box: AWS access was
+  expired for this round.
 - _(agents: append your entry here, one per merged benchmark)_
