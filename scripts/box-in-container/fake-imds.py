@@ -24,6 +24,7 @@ import sys
 
 ADDRESS = "169.254.169.254"
 TOKEN = "fake-imds-token"
+MAC = "00:00:5e:00:53:01"  # RFC 7042's documentation address
 SIOCSIFADDR = 0x8916
 SIOCSIFNETMASK = 0x891C
 
@@ -55,6 +56,10 @@ def metadata(instance_type):
         "/latest/meta-data/placement/region": "us-east-2",
         "/latest/meta-data/placement/availability-zone": "us-east-2c",
         "/latest/meta-data/placement/availability-zone-id": "use2-az3",
+        # The interface, for run.py's route tables and VPC endpoints.
+        "/latest/meta-data/mac": MAC,
+        "/latest/meta-data/network/interfaces/macs/%s/subnet-id" % MAC: "subnet-0123456789abcdef0",
+        "/latest/meta-data/network/interfaces/macs/%s/vpc-id" % MAC: "vpc-0123456789abcdef0",
     }
 
 

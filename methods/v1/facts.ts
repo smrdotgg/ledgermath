@@ -40,12 +40,12 @@ export function seriesId(key: SeriesKey): string {
 /**
  * Dump sections whose contents version 1 does not read. Each changes on every
  * read (cpuinfo's "cpu MHz"; meminfo, loadavg, uptime; every block device's
- * I/O counters; every Amazon NVMe disk's counters and latency histograms), so
- * only their hashes are compared, and "what differed" says they changed
- * without naming keys; reading cpuinfo and memory alone would cost about 50 KB
- * of fetches per Run.
+ * I/O counters; every Amazon NVMe disk's counters and latency histograms; the
+ * network card's and the kernel's traffic counters), so only their hashes are
+ * compared, and "what differed" says they changed without naming keys;
+ * reading cpuinfo and memory alone would cost about 50 KB of fetches per Run.
  */
-export const UNREAD_SECTIONS: ReadonlySet<string> = new Set(["cpuinfo", "memory", "block_stat", "nvme_stats"]);
+export const UNREAD_SECTIONS: ReadonlySet<string> = new Set(["cpuinfo", "memory", "block_stat", "nvme_stats", "net_counters"]);
 
 /** The key in the kernel section that holds the box's host name. */
 export const KERNEL_HOST_KEY = "$ uname -a";
@@ -87,6 +87,18 @@ export const NOT_SPLIT_ON: readonly SplitFact[] = [
 	{ fact: "memory", what: "changes on every read (meminfo, loadavg, uptime, pressure)" },
 	{ fact: "block_stat", what: "changes on every read (each block device's I/O counters, /sys/block/*/stat)" },
 	{ fact: "nvme_stats", what: "changes on every read (each Amazon NVMe disk's I/O counters and latency histograms, nvme amzn stats)" },
+	{
+		fact: "net_counters",
+		what:
+			"changes on every read (the default route's interface's own statistics, ethtool -S, with ENA's allowance-exceeded " +
+			"counters; /proc/net/dev, /proc/net/snmp, /proc/net/netstat)",
+	},
+	{
+		fact: "network",
+		what:
+			"the routes, MTUs, TCP and socket settings, resolver files and network driver; added for the Service benchmarks " +
+			"after version 1's facts were chosen, and left to the Method that reads their requests",
+	},
 	{ fact: "devices", what: "holds the root volume's serial, which is new on every launch" },
 	{
 		fact: "provider",
@@ -108,6 +120,12 @@ export const NOT_SPLIT_ON: readonly SplitFact[] = [
 	},
 	{ fact: "ec2_volumes", what: "names the instance's volumes and holds their creation times and status, new on every launch" },
 	{ fact: "ec2_instance", what: "names the instance and holds its addresses and launch time, new on every launch" },
+	{
+		fact: "ec2_route_tables, ec2_vpc_endpoints",
+		what:
+			"the EC2 API's record of the path out of the box's subnet, taken once per boot: the route tables and the " +
+			"VPC's endpoints, shared by every box of the stage; a failed call records its error instead",
+	},
 ];
 
 /** A value left out of a section before it is compared for the split. */

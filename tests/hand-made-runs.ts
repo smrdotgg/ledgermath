@@ -55,6 +55,12 @@ export interface HandMadeRun {
 	 * catalog revision on every boot.
 	 */
 	diskSections?: { catalog?: string };
+	/**
+	 * Adds the sections the dump gained for the Service benchmarks, shaped like
+	 * runner/run.py's: net_counters differs on every dump; network, and the EC2
+	 * API's route tables and VPC endpoints, are the same on every boot.
+	 */
+	networkSections?: boolean;
 }
 
 export const DEFAULT_PARAMS = { size_bytes: 1073741824, threads: 1, path: "scalar" };
@@ -91,6 +97,7 @@ export class HandMade {
 			startedAt: string;
 			n: number;
 			diskSections: HandMadeRun["diskSections"];
+			networkSections?: boolean;
 		},
 	): string {
 		// Shaped like runner/cpuid.c's output and lscpu -J's, for four CPUs.
@@ -136,6 +143,7 @@ export class HandMade {
 			packages: this.section({ "$ rpm -qa (sorted)": { exit: 0, stderr: "", stdout: "gcc-11.5.0\nglibc-2.34\n" } }),
 			provider: this.section({ "http://169.254.169.254/latest/meta-data/instance-id": `i-${o.boot}` }),
 			...(o.diskSections === undefined ? {} : this.diskSections(moment, o.boot, o.n, o.diskSections.catalog ?? "revision 1")),
+			...(o.networkSections ? this.networkSections(moment, o.n) : {}),
 		};
 		return this.put(`${JSON.stringify({ schema: "ledgermath.dump/1", taken_at: o.startedAt, sections }, null, 2)}\n`);
 	}
@@ -152,6 +160,20 @@ export class HandMade {
 			ec2_instance_type: this.section({ "$ aws ec2 describe-instance-types --instance-types c6i.8xlarge": command(`{"InstanceTypes": ["${catalog}"]}\n`) }),
 			ec2_volumes: this.section({ "$ aws ec2 describe-volumes": command(`{"Volumes": [{"VolumeId": "vol-${boot}"}]}\n`) }),
 			ec2_instance: this.section({ "$ aws ec2 describe-instances --instance-ids i-x": command(`{"InstanceId": "i-${boot}"}\n`) }),
+		};
+	}
+
+	private networkSections(moment: "before" | "after", n: number): Record<string, string> {
+		const packets = 1000 * n + (moment === "before" ? 1 : 2);
+		const command = (stdout: string) => ({ exit: 0, stderr: "", stdout });
+		return {
+			network: this.section({ "/sys/class/net/ens5/mtu": "9001\n", "$ ethtool -i ens5": command("driver: ena\n") }),
+			net_counters: this.section({
+				"/proc/net/dev": `ens5: ${packets * 1500} ${packets}\n`,
+				"$ ethtool -S ens5": command(`NIC statistics:\n     bw_in_allowance_exceeded: 0\n     rx_packets: ${packets}\n`),
+			}),
+			ec2_route_tables: this.section({ "$ aws ec2 describe-route-tables": command('{"RouteTables": []}\n') }),
+			ec2_vpc_endpoints: this.section({ "$ aws ec2 describe-vpc-endpoints": command('{"VpcEndpoints": []}\n') }),
 		};
 	}
 
@@ -222,8 +244,8 @@ export class HandMade {
 				instance_id: `i-${boot}`,
 			},
 			environment: {
-				before: this.dump("before", { processor, kernel, ...calibrated, boot, startedAt, n, diskSections: options.diskSections }),
-				after: this.dump("after", { processor, kernel, ...calibrated, boot, startedAt, n, diskSections: options.diskSections }),
+				before: this.dump("before", { processor, kernel, ...calibrated, boot, startedAt, n, diskSections: options.diskSections, networkSections: options.networkSections }),
+				after: this.dump("after", { processor, kernel, ...calibrated, boot, startedAt, n, diskSections: options.diskSections, networkSections: options.networkSections }),
 			},
 			runner: this.put("a runner manifest"),
 			exit: options.exit ?? { code: 0 },

@@ -238,6 +238,55 @@ def nvme_stats(sys_root="/sys"):
     return stats
 
 
+def primary_interface(route_table):
+    """The interface of the default IPv4 route with the lowest metric, from
+    /proc/net/route's text, or None."""
+    found = None
+    for line in route_table.splitlines()[1:]:
+        fields = line.split()
+        if len(fields) >= 8 and fields[1] == "00000000" and fields[7] == "00000000":
+            metric = int(fields[6]) if fields[6].isdigit() else 0
+            if found is None or metric < found[0]:
+                found = (metric, fields[0])
+    return found[1] if found else None
+
+
+# The kernel's TCP and socket settings that shape a connection to a Service.
+NET_SETTINGS = ["/proc/sys/net/ipv4/" + name for name in (
+    "tcp_congestion_control", "tcp_available_congestion_control", "tcp_slow_start_after_idle", "tcp_rmem",
+    "tcp_wmem", "tcp_mem", "tcp_timestamps", "tcp_sack", "tcp_window_scaling", "tcp_mtu_probing", "tcp_ecn",
+    "tcp_no_metrics_save", "tcp_fin_timeout", "tcp_keepalive_time", "tcp_syn_retries", "tcp_tw_reuse",
+    "ip_local_port_range")] + ["/proc/sys/net/core/" + name for name in (
+        "rmem_default", "rmem_max", "wmem_default", "wmem_max", "default_qdisc", "netdev_max_backlog", "somaxconn")]
+
+
+def network_sections():
+    """The network, in two sections. `network` holds what is set: the routes,
+    each interface's MTU, the TCP and socket settings, the resolver's files (a
+    Service benchmark asks the resolver /etc/resolv.conf names), and the
+    driver of the interface the default route uses (ethtool -i). It holds no
+    address of the box's own. `net_counters` holds what counts traffic, and so
+    changes on every read: that interface's own statistics (ethtool -S; on
+    ENA, the *_allowance_exceeded counters are the instance's limits on
+    bandwidth, packets per second, connections and traffic to link-local
+    services such as the VPC resolver), and the kernel's per-interface and
+    per-protocol counters. Taken before and after every Run, so the change
+    over a Run is the card's and the kernel's own account of it."""
+    route_table = read_text("/proc/net/route") or ""
+    interface = primary_interface(route_table)
+    network = read_files(["/proc/net/route", "/sys/class/net/*/mtu"] + NET_SETTINGS + [
+        "/etc/resolv.conf", "/etc/nsswitch.conf", "/etc/systemd/resolved.conf", "/etc/systemd/resolved.conf.d/*",
+        "/usr/lib/systemd/resolved.conf.d/*", "/run/systemd/resolve/resolv.conf"])
+    counters = read_files(["/proc/net/dev", "/proc/net/snmp", "/proc/net/netstat"])
+    for option, section in (("-i", network), ("-S", counters)):
+        if interface is None:
+            section[command_key(["ethtool", option])] = {"not taken": "/proc/net/route has no default route"}
+        else:
+            arguments = ["ethtool", option, interface]
+            section[command_key(arguments)] = run_command(arguments, timeout=10)
+    return network, counters
+
+
 def dump_sections(cpuid_tool, imds):
     """Everything the box reports about itself, raw and unmasked.
 
@@ -367,6 +416,8 @@ def dump_sections(cpuid_tool, imds):
     # own counters and latency histograms.
     sections["block_stat"] = read_files(["/sys/block/*/stat", "/sys/block/*/*/stat"])
     sections["nvme_stats"] = nvme_stats()
+    # The same for the network: its settings once per boot, its counters apart.
+    sections["network"], sections["net_counters"] = network_sections()
 
     process = read_files(["/proc/self/limits", "/proc/self/cgroup"])
     process["allowed_cpus"] = sorted(os.sched_getaffinity(0))
@@ -404,15 +455,17 @@ def take_dump(blobs, cpuid_tool, imds, boot_sections=None):
 # ---- what is taken once per boot ----
 
 def ec2_sections(imds):
-    """What the EC2 API says about this box, once per boot, in three sections
+    """What the EC2 API says about this box, once per boot, in five sections
     of their own: the instance type's catalog record, the volumes attached and
-    their status, and the instance's own record. The calls are read-only
-    (infra/runs/stack.ts gives the box's role exactly these four actions), and
-    one that fails is recorded with what it printed, never fatal."""
+    their status, the instance's own record, and the path to S3 (the route
+    tables that decide the subnet's routes, and the VPC's endpoints). The calls
+    are read-only (infra/runs/box-role.ts gives the box's role exactly these
+    six actions), and one that fails is recorded with what it printed, never
+    fatal."""
     instance_id = imds.get("meta-data/instance-id")
     instance_type = imds.get("meta-data/instance-type")
     region = imds.get("meta-data/placement/region")
-    names = ("ec2_instance_type", "ec2_volumes", "ec2_instance")
+    names = ("ec2_instance_type", "ec2_volumes", "ec2_instance", "ec2_route_tables", "ec2_vpc_endpoints")
     if not (instance_id and instance_type and region):
         return {name: {"not taken": "IMDS gave no instance id, instance type or region"} for name in names}
     environment = dict(os.environ, AWS_PAGER="")
@@ -437,6 +490,25 @@ def ec2_sections(imds):
         sections["ec2_volumes"]["$ aws ec2 describe-volume-status"] = {"not taken": "describe-volumes gave no volume ids"}
     key, result = call("describe-instances", "--instance-ids", instance_id)
     sections["ec2_instance"] = {key: result}
+
+    # The path out of the subnet: a route table associated with the subnet
+    # decides its routes; when none is, the VPC's main table does. A gateway
+    # endpoint to S3 would add a route to S3's prefix list in the tables it
+    # serves, and is listed among the VPC's endpoints.
+    mac = (imds.get("meta-data/mac") or "").strip()
+    interface = "meta-data/network/interfaces/macs/%s/" % mac
+    subnet = imds.get(interface + "subnet-id") if mac else None
+    vpc = imds.get(interface + "vpc-id") if mac else None
+    if subnet and vpc:
+        key, result = call("describe-route-tables", "--filters", "Name=association.subnet-id,Values=" + subnet.strip())
+        sections["ec2_route_tables"] = {key: result}
+        key, result = call("describe-route-tables", "--filters", "Name=vpc-id,Values=" + vpc.strip(), "Name=association.main,Values=true")
+        sections["ec2_route_tables"][key] = result
+        key, result = call("describe-vpc-endpoints", "--filters", "Name=vpc-id,Values=" + vpc.strip())
+        sections["ec2_vpc_endpoints"] = {key: result}
+    else:
+        for name in ("ec2_route_tables", "ec2_vpc_endpoints"):
+            sections[name] = {"not taken": "IMDS gave no subnet id or VPC id for the instance's interface"}
     return sections
 
 
