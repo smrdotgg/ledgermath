@@ -71,4 +71,12 @@ describe("the runs workflow", () => {
 		expect(alarm?.env?.GITHUB_TOKEN).toBe("${{ github.token }}");
 		expect(alarm?.if).toContain("steps.runs-repository.outcome == 'success'");
 	});
+
+	test("tells the alarm whether this pass's copy and push succeeded", () => {
+		expect(steps.find((step) => step.run?.includes("scripts/copy-runs.ts"))?.id).toBe("copy");
+		expect(steps.find((step) => step.run?.includes("git push"))?.id).toBe("push");
+		const alarm = steps.find((step) => step.run?.includes("scripts/alarm.ts"));
+		expect(alarm?.run).toContain('--copy "$COPY"');
+		expect(alarm?.env?.COPY).toBe("${{ steps.copy.outcome == 'success' && steps.push.outcome == 'success' && 'succeeded' || 'failed' }}");
+	});
 });

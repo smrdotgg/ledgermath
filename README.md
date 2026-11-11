@@ -244,8 +244,8 @@ bun scripts/derive.ts --runs /tmp/ledgermath-runs --bucket "$BUCKET" --cache /tm
 # The page.
 bun scripts/build-page.ts /tmp/page/derivations.json /tmp/page/index.html
 
-# The alarm, posting nothing; --now sets the clock.
-bun scripts/alarm.ts --runs /tmp/ledgermath-runs --dry-run --now 2026-11-13T00:00:00Z
+# The alarm, posting nothing; --now sets the clock, --copy says whether the copy job worked.
+bun scripts/alarm.ts --runs /tmp/ledgermath-runs --copy succeeded --dry-run --now 2026-11-13T00:00:00Z
 ```
 
 Without AWS, the samples are a directory of Runs with their blobs:
@@ -266,7 +266,8 @@ repository, takes AWS credentials through OIDC, checks out `smrdotgg/ledgermath-
 with the deploy key, runs the copy job, commits and pushes what it added, runs the
 Method, builds the page, uploads the page and the Derivations as the artifact `page`,
 and runs the alarm with the workflow's own token. The alarm runs even when an earlier
-step failed, as long as the Runs repository was checked out.
+step failed, as long as the Runs repository was checked out, and is told whether the copy
+and its push succeeded on this pass.
 
 It needs:
 
@@ -297,8 +298,15 @@ uses too. A one-off launch on another instance type is not watched; a Series tak
 the schedule is not watched any more. When the newest Run of any watched Series started
 more than 48 hours ago, or a watched Series has no Run at all, the alarm opens one issue
 listing them all, or comments on the alarm issue already open (found by a marker in its
-body; no label). Any Run counts, failed or not. Closing the issue lets the next incident
-open a new one.
+body; no label). Any Run counts, failed or not.
+
+It writes only when something changed since its last post: the set of stale Series, or
+whether the copy job is failing. Each post ends with that state in a hidden marker, which
+the next pass compares with; otherwise it stays silent. When the copy or its push failed on
+a pass, the Runs repository may be behind the bucket, and anything it writes says so at
+the top, before the list. When every watched Series has a Run again it says so once on the
+open issue, so a later incident is not mistaken for the old one. Closing the issue lets
+the next incident open a new one.
 
 ## July's pipeline (`benchmarks/c/`, stage `smr`)
 

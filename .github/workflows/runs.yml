@@ -59,9 +59,11 @@ jobs:
           path: ledgermath-runs
 
       - name: Copy new Run files and boot summaries from the bucket
+        id: copy
         run: bun scripts/copy-runs.ts --bucket "$RUNS_BUCKET" ledgermath-runs
 
       - name: Commit and push them to the Runs repository
+        id: push
         working-directory: ledgermath-runs
         run: |
           for part in runs boots; do
@@ -97,10 +99,12 @@ jobs:
           path: page/
           if-no-files-found: error
 
-      # Even when the copy, the Method or the page failed: the Runs repository
-      # as checked out still says which Series stopped getting Runs.
+      # Even when the copy, the Method or the page failed. When the copy or
+      # its push failed, the Runs repository may be behind the bucket, and the
+      # alarm says so at the top of anything it writes.
       - name: Check for watched Series with no Run for 48 hours
         if: ${{ !cancelled() && steps.runs-repository.outcome == 'success' }}
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: bun scripts/alarm.ts --runs ledgermath-runs
+          COPY: ${{ steps.copy.outcome == 'success' && steps.push.outcome == 'success' && 'succeeded' || 'failed' }}
+        run: bun scripts/alarm.ts --runs ledgermath-runs --copy "$COPY"

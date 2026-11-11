@@ -3,7 +3,7 @@
  * hours before "now", and opens one GitHub issue listing them, or comments on
  * the alarm issue already open instead of opening a second.
  *
- *     bun scripts/alarm.ts --runs DIR [--now 2026-11-12T22:40:00Z] [--dry-run]
+ *     bun scripts/alarm.ts --runs DIR --copy succeeded|failed [--now 2026-11-12T22:40:00Z] [--dry-run]
  *
  * A watched Series is one schedule.json lists (benchmark, params, build) at a
  * placement the stage launches (infra/runs/placement.ts: instance type and
@@ -11,6 +11,13 @@
  * taken out of the schedule is not watched any more. Any Run counts as the
  * Series getting a Run, failed or not. A watched Series with no Run at all is
  * listed too.
+ *
+ * --copy says whether this pass's copy job succeeded. When it failed, the Runs
+ * repository may be behind the bucket, and every issue or comment says so at
+ * the top. The alarm writes only when something changed since its last post:
+ * the set of stale Series, or whether the copy is failing. Each post carries
+ * that state in a hidden marker, which the next pass compares with. When every
+ * Series has a Run again, it says so once on the open issue.
  *
  * GitHub is reached through IssueTracker, so tests use a fake. The real one
  * reads GITHUB_REPOSITORY and GITHUB_TOKEN, as a workflow sets them.
@@ -29,6 +36,8 @@ import { RUNS_REPOSITORY_BLOB_URL } from "./lib/runs-repository";
 export const MAX_AGE_MS = 48 * 3_600_000;
 /** Marks the alarm issue's body, so a later pass finds it without a label. */
 export const ALARM_MARKER = "<!-- ledgermath-alarm: stale-series -->";
+/** Begins the hidden marker each alarm post ends with: the state it reported. */
+export const STATE_MARKER = "<!-- ledgermath-alarm-state: ";
 export const ALARM_TITLE = "Stale Series: no Run for 48 hours";
 
 export interface Schedule {
@@ -131,8 +140,37 @@ export function describeSeries(series: WatchedSeries): string {
 	return `${series.benchmark} · ${params} · ${series.build} · ${series.instanceType} · ${series.zone}`;
 }
 
-/** The text posted: the stale Series, each with its newest Run and how old it is. */
-export function alarmText(stale: readonly StaleSeries[], now: Date, runUrlBase = RUNS_REPOSITORY_BLOB_URL): string {
+/** What an alarm post reported: compared with the next pass's to decide whether to write. */
+export interface AlarmState {
+	/** describeSeries() of each stale Series, sorted. */
+	stale: string[];
+	copy_failed: boolean;
+}
+
+export function alarmState(stale: readonly StaleSeries[], copyFailed: boolean): AlarmState {
+	return { stale: stale.map(describeSeries).sort(compareText), copy_failed: copyFailed };
+}
+
+/** The state the newest alarm post carries, or null when it carries none. */
+export function stateOf(post: string): AlarmState | null {
+	const at = post.lastIndexOf(STATE_MARKER);
+	if (at < 0) return null;
+	const end = post.indexOf(" -->", at);
+	try {
+		const state = JSON.parse(post.slice(at + STATE_MARKER.length, end)) as Partial<AlarmState>;
+		if (!Array.isArray(state.stale) || typeof state.copy_failed !== "boolean") return null;
+		return { stale: state.stale.map(String), copy_failed: state.copy_failed };
+	} catch {
+		return null;
+	}
+}
+
+const COPY_FAILED =
+	"**The copy job failed on this pass.** The Runs repository may be behind the bucket, so what follows may be out of " +
+	"date, and a Series listed may in fact be getting Runs. Look at the copy job first.";
+
+/** The text posted: the stale Series, each with its newest Run and how old it is, and the state marker. */
+export function alarmText(stale: readonly StaleSeries[], now: Date, copyFailed: boolean, runUrlBase = RUNS_REPOSITORY_BLOB_URL): string {
 	const hours = (startedAt: string): string => ((now.getTime() - Date.parse(startedAt)) / 3_600_000).toFixed(1);
 	const lines = stale
 		.slice()
@@ -142,18 +180,29 @@ export function alarmText(stale: readonly StaleSeries[], now: Date, runUrlBase =
 				? `- \`${describeSeries(series)}\`: no Run at all`
 				: `- \`${describeSeries(series)}\`: newest Run [${series.newest.id}](${runUrlBase}${series.newest.path}) started ${series.newest.startedAt}, ${hours(series.newest.startedAt)} hours ago`,
 		);
+	const summary =
+		stale.length === 0
+			? `Checked at ${now.toISOString()}: every watched Series has had a Run in the last 48 hours again.`
+			: `Checked at ${now.toISOString()}: ${stale.length} watched Series ${stale.length === 1 ? "has" : "have"} had no Run for more than 48 hours.`;
 	return [
-		`Checked at ${now.toISOString()}: ${stale.length} watched Series ${stale.length === 1 ? "has" : "have"} had no Run for more than 48 hours.`,
+		...(copyFailed ? [COPY_FAILED, ""] : []),
+		summary,
+		...(lines.length ? ["", ...lines] : []),
 		"",
-		...lines,
-		"",
-		"A watched Series is one `schedule.json` lists, at the instance type and zone the stage launches (`infra/runs/placement.ts`). Written by `scripts/alarm.ts`.",
+		"A watched Series is one `schedule.json` lists, at the instance type and zone the stage launches (`infra/runs/placement.ts`). Written by `scripts/alarm.ts`, which writes again only when the stale Series, or whether the copy job is failing, change.",
+		`${STATE_MARKER}${JSON.stringify(alarmState(stale, copyFailed))} -->`,
 	].join("\n");
 }
 
+/** The open alarm issue, and its newest alarm post: the body, or the newest comment carrying a state marker. */
+export interface OpenAlarm {
+	number: number;
+	lastPost: string;
+}
+
 export interface IssueTracker {
-	/** The number of an open issue whose body holds marker, or null. */
-	findOpen(marker: string): Promise<number | null>;
+	/** The open issue whose body holds marker, or null. */
+	findOpen(marker: string): Promise<OpenAlarm | null>;
 	/** Opens an issue and returns its number. */
 	open(title: string, body: string): Promise<number>;
 	comment(issue: number, body: string): Promise<void>;
@@ -162,7 +211,11 @@ export interface IssueTracker {
 export type AlarmOutcome =
 	| { action: "none"; stale: StaleSeries[] }
 	| { action: "opened"; issue: number; stale: StaleSeries[] }
-	| { action: "commented"; issue: number; stale: StaleSeries[] };
+	| { action: "commented"; issue: number; stale: StaleSeries[] }
+	| { action: "unchanged"; issue: number; stale: StaleSeries[] };
+
+const sameState = (a: AlarmState, b: AlarmState): boolean =>
+	a.copy_failed === b.copy_failed && a.stale.length === b.stale.length && a.stale.every((series, i) => series === b.stale[i]);
 
 /** One pass of the alarm. */
 export async function runAlarm(options: {
@@ -170,19 +223,25 @@ export async function runAlarm(options: {
 	placements: readonly Placement[];
 	runs: readonly RunFile[];
 	now: Date;
+	/** Whether this pass's copy job failed, so the Runs repository may be behind the bucket. */
+	copyFailed: boolean;
 	tracker: IssueTracker;
 	runUrlBase?: string;
 }): Promise<AlarmOutcome> {
 	const stale = staleSeries(watchedSeries(options.schedule, options.placements), options.runs, options.now);
-	if (stale.length === 0) return { action: "none", stale };
-	const text = alarmText(stale, options.now, options.runUrlBase);
 	const open = await options.tracker.findOpen(ALARM_MARKER);
-	if (open !== null) {
-		await options.tracker.comment(open, text);
-		return { action: "commented", issue: open, stale };
+	const text = alarmText(stale, options.now, options.copyFailed, options.runUrlBase);
+	if (open === null) {
+		if (stale.length === 0) return { action: "none", stale };
+		const issue = await options.tracker.open(ALARM_TITLE, `${ALARM_MARKER}\n${text}`);
+		return { action: "opened", issue, stale };
 	}
-	const issue = await options.tracker.open(ALARM_TITLE, `${ALARM_MARKER}\n${text}`);
-	return { action: "opened", issue, stale };
+	const last = stateOf(open.lastPost);
+	if (last !== null && sameState(last, alarmState(stale, options.copyFailed))) return { action: "unchanged", issue: open.number, stale };
+	// Nothing to say on an issue whose last word was already that all is well, if only the copy changed.
+	if (last === null && stale.length === 0) return { action: "unchanged", issue: open.number, stale };
+	await options.tracker.comment(open.number, text);
+	return { action: "commented", issue: open.number, stale };
 }
 
 type Fetch = (url: string, init: RequestInit) => Promise<Response>;
@@ -211,7 +270,7 @@ export class GitHubIssues implements IssueTracker {
 		return response.json();
 	}
 
-	async findOpen(marker: string): Promise<number | null> {
+	async findOpen(marker: string): Promise<OpenAlarm | null> {
 		for (let page = 1; ; page++) {
 			const issues = (await this.call("GET", `/issues?state=open&per_page=100&page=${page}`)) as Array<{
 				number: number;
@@ -219,8 +278,18 @@ export class GitHubIssues implements IssueTracker {
 				pull_request?: unknown;
 			}>;
 			const found = issues.find((issue) => issue.pull_request === undefined && (issue.body ?? "").includes(marker));
-			if (found !== undefined) return found.number;
+			if (found !== undefined) return { number: found.number, lastPost: await this.lastPost(found.number, found.body ?? "") };
 			if (issues.length < 100) return null;
+		}
+	}
+
+	/** The newest comment carrying a state marker, or the issue's body when none does. */
+	private async lastPost(issue: number, body: string): Promise<string> {
+		let last = body;
+		for (let page = 1; ; page++) {
+			const comments = (await this.call("GET", `/issues/${issue}/comments?per_page=100&page=${page}`)) as Array<{ body?: string | null }>;
+			for (const comment of comments) if ((comment.body ?? "").includes(STATE_MARKER)) last = comment.body ?? "";
+			if (comments.length < 100) return last;
 		}
 	}
 
@@ -236,7 +305,7 @@ export class GitHubIssues implements IssueTracker {
 
 /** Posts nothing; prints what would be posted. */
 class DryRun implements IssueTracker {
-	async findOpen(): Promise<number | null> {
+	async findOpen(): Promise<OpenAlarm | null> {
 		return null;
 	}
 	async open(title: string, body: string): Promise<number> {
@@ -252,11 +321,12 @@ async function main(): Promise<void> {
 			runs: { type: "string" },
 			now: { type: "string" },
 			schedule: { type: "string" },
+			copy: { type: "string" },
 			"dry-run": { type: "boolean" },
 		},
 	});
-	if (!values.runs) {
-		console.error("usage: bun scripts/alarm.ts --runs DIR [--now ISO-8601] [--schedule FILE] [--dry-run]");
+	if (!values.runs || (values.copy !== "succeeded" && values.copy !== "failed")) {
+		console.error("usage: bun scripts/alarm.ts --runs DIR --copy succeeded|failed [--now ISO-8601] [--schedule FILE] [--dry-run]");
 		process.exit(2);
 	}
 	const now = values.now === undefined ? new Date() : new Date(values.now);
@@ -273,12 +343,14 @@ async function main(): Promise<void> {
 		tracker = new GitHubIssues(repository, token);
 	}
 	const runs = readRunFiles(values.runs);
-	const outcome = await runAlarm({ schedule, placements: PLACEMENTS, runs, now, tracker });
+	const copyFailed = values.copy === "failed";
+	const outcome = await runAlarm({ schedule, placements: PLACEMENTS, runs, now, copyFailed, tracker });
 	const watched = watchedSeries(schedule, PLACEMENTS).length;
-	if (outcome.action === "none") console.log(`${now.toISOString()}: all ${watched} watched Series have a Run in the last 48 hours`);
-	else {
-		for (const series of outcome.stale) console.log(`stale: ${describeSeries(series)} (newest ${series.newest?.startedAt ?? "none"})`);
-		if (!values["dry-run"]) console.log(`${outcome.action} issue #${outcome.issue}: ${outcome.stale.length} of ${watched} watched Series stale`);
+	if (copyFailed) console.log("the copy job failed on this pass: the Runs repository may be behind the bucket");
+	for (const series of outcome.stale) console.log(`stale: ${describeSeries(series)} (newest ${series.newest?.startedAt ?? "none"})`);
+	console.log(`${now.toISOString()}: ${outcome.stale.length} of ${watched} watched Series stale`);
+	if (outcome.action !== "none" && !values["dry-run"]) {
+		console.log(outcome.action === "unchanged" ? `nothing changed since the last post on issue #${outcome.issue}` : `${outcome.action} issue #${outcome.issue}`);
 	}
 }
 
