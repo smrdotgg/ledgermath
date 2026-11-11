@@ -118,6 +118,85 @@
       "params": [
         { "threads": 2, "placement": "smt_siblings", "critical_section_lines": 1, "lock": "pthread_mutex_default" }
       ]
+    },
+    {
+      "name": "disk_read_random",
+      "builds": ["static"],
+      "samples": 10,
+      "timeout_seconds": 180,
+      "params": [
+        { "disk": "root_volume", "dir": "/var/tmp/ledgermath/disk", "request_bytes": 8192, "span_bytes": 1073741824 }
+      ]
+    },
+    {
+      "name": "disk_read_random",
+      "builds": ["static"],
+      "samples": 10,
+      "timeout_seconds": 180,
+      "instance_types": ["i4i.2xlarge"],
+      "params": [
+        { "disk": "instance_store", "dir": "/mnt/lm/instance-store", "request_bytes": 8192, "span_bytes": 34359738368 }
+      ]
+    },
+    {
+      "name": "disk_read_io_uring",
+      "builds": ["static"],
+      "samples": 10,
+      "timeout_seconds": 180,
+      "params": [
+        { "disk": "root_volume", "dir": "/var/tmp/ledgermath/disk", "access": "sequential", "request_bytes": 32768, "queue_depth": 64, "span_bytes": 1073741824 },
+        { "disk": "root_volume", "dir": "/var/tmp/ledgermath/disk", "access": "random", "request_bytes": 4096, "queue_depth": 64, "span_bytes": 1073741824 }
+      ]
+    },
+    {
+      "name": "disk_read_io_uring",
+      "builds": ["static"],
+      "samples": 10,
+      "timeout_seconds": 180,
+      "instance_types": ["i4i.2xlarge"],
+      "params": [
+        { "disk": "instance_store", "dir": "/mnt/lm/instance-store", "access": "sequential", "request_bytes": 32768, "queue_depth": 64, "span_bytes": 34359738368 },
+        { "disk": "instance_store", "dir": "/mnt/lm/instance-store", "access": "random", "request_bytes": 4096, "queue_depth": 64, "span_bytes": 34359738368 }
+      ]
+    },
+    {
+      "name": "disk_read_sequential",
+      "builds": ["static"],
+      "samples": 10,
+      "timeout_seconds": 180,
+      "params": [
+        { "disk": "root_volume", "dir": "/var/tmp/ledgermath/disk", "request_bytes": 8192, "bytes_per_sample": 134217728, "span_bytes": 1073741824 }
+      ]
+    },
+    {
+      "name": "disk_read_sequential",
+      "builds": ["static"],
+      "samples": 10,
+      "timeout_seconds": 180,
+      "instance_types": ["i4i.2xlarge"],
+      "params": [
+        { "disk": "instance_store", "dir": "/mnt/lm/instance-store", "request_bytes": 8192, "bytes_per_sample": 2147483648, "span_bytes": 34359738368 }
+      ]
+    },
+    {
+      "name": "disk_write",
+      "builds": ["static"],
+      "samples": 10,
+      "timeout_seconds": 180,
+      "params": [
+        { "disk": "root_volume", "dir": "/var/tmp/ledgermath/disk", "request_bytes": 8192, "sync": "none", "file_bytes": 268435456 },
+        { "disk": "root_volume", "dir": "/var/tmp/ledgermath/disk", "request_bytes": 8192, "sync": "fdatasync", "file_bytes": 1073741824 }
+      ]
+    },
+    {
+      "name": "disk_write",
+      "builds": ["static"],
+      "samples": 10,
+      "timeout_seconds": 180,
+      "instance_types": ["i4i.2xlarge"],
+      "params": [
+        { "disk": "instance_store", "dir": "/mnt/lm/instance-store", "request_bytes": 8192, "sync": "fdatasync", "file_bytes": 1073741824 }
+      ]
     }
   ]
 }

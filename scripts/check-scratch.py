@@ -26,6 +26,18 @@ The container's only addition is an empty tmpfs at /tmp, which `syscall`'s
 `stat` set is given as its path; the box's /tmp is a tmpfs too. No measured Run
 goes through Docker: this only shows that the binary needs no other file.
 
+The disk benchmarks read a Fixture the box makes at boot, and write a scratch
+file of their own, in the directory their `dir` names. Here runner/fixture.c
+(built with this machine's compiler) makes a 64 MiB Fixture in a new directory
+under /tmp (or $LM_SCRATCH_DISK_DIR), which must be on a file system that
+does direct I/O, and that directory is mounted at each set's `dir`. Under
+--quick the binaries read at most 64 MiB of a span and write at most 16 MiB,
+so the schedule's sets run against it as they are. The directory is removed
+at the end. disk_read_io_uring runs without Docker's seccomp filter, whose
+default refuses io_uring (the box has no such filter); when this machine's
+kernel refuses io_uring itself (kernel.io_uring_disabled), its sets are
+skipped, and the binary must agree by exiting 2.
+
 Needs make, a C compiler with the static C library, Docker, and Python 3.
 Exit status 0 when every execution ran and every stream is valid, 1 when not.
 """
@@ -33,8 +45,10 @@ Exit status 0 when every execution ran and every stream is valid, 1 when not.
 import collections
 import json
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 DOCKERFILE = "FROM scratch\nCOPY {name} /bench\nENTRYPOINT [\"/bench\"]\n"
@@ -79,8 +93,48 @@ class Topology:
             cpu_list(self.cpus), cores, "" if cores == 1 else "s", max(self.per_core.values()))
 
 
+FIXTURE_BYTES = 64 << 20  # the most a --quick disk binary reads of a span
+
+
+def io_uring_refused():
+    """Why this machine's kernel refuses io_uring to a container's root, or None.
+    kernel.io_uring_disabled (Linux 6.6 and later): 0 allows it, 1 allows it to
+    CAP_SYS_ADMIN or io_uring_group only (a container has neither), 2 to no one."""
+    try:
+        with open("/proc/sys/kernel/io_uring_disabled", encoding="ascii") as handle:
+            value = handle.read().strip()
+    except OSError:
+        return None
+    if value in ("1", "2"):
+        return "this machine's kernel.io_uring_disabled is %s" % value
+    return None
+
+
+def make_fixture_directory():
+    """A new directory holding a --quick Fixture, made as the box makes one."""
+    base = os.environ.get("LM_SCRATCH_DISK_DIR", "/tmp")
+    directory = tempfile.mkdtemp(prefix="lm-scratch-disk-", dir=base)
+    tool = os.path.join(directory, "fixture")
+    harness = os.path.join(ROOT, "benchmarks", "harness", "c")
+    built = subprocess.run(["cc", "-O2", "-I", harness, "-o", tool, os.path.join(ROOT, "runner", "fixture.c")])
+    if built.returncode != 0:
+        shutil.rmtree(directory, ignore_errors=True)
+        sys.exit("runner/fixture.c did not build")
+    done = subprocess.run([tool, os.path.join(directory, "ledgermath-fixture-v1"), str(FIXTURE_BYTES)],
+                          stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    os.remove(tool)
+    if done.returncode != 0:
+        shutil.rmtree(directory, ignore_errors=True)
+        sys.exit("cannot make a Fixture under %s, which must be on a file system that does direct I/O "
+                 "(set LM_SCRATCH_DISK_DIR to one): %s" % (base, done.stderr.decode("utf-8", "replace")))
+    print("a %d MiB Fixture in %s, mounted at each disk set's dir: %s" % (FIXTURE_BYTES >> 20, directory, done.stdout.decode().strip()))
+    return directory
+
+
 def unmet(name, params, topology):
     """Why this machine cannot provide what the parameter set asks for, or None."""
+    if name == "disk_read_io_uring":
+        return io_uring_refused()
     if name != "mutex":
         return None
     threads = int(params.get("threads", 1))
@@ -114,7 +168,15 @@ def main():
     topology = Topology()
     print("the CPUs this check may use, and gives the container: %s" % topology.describe())
     cpuset = ["--cpuset-cpus", cpu_list(topology.cpus)]
+    disk = make_fixture_directory() if any(name.startswith("disk_") for name in benchmarks) else None
+    try:
+        return check_all(benchmarks, topology, cpuset, disk)
+    finally:
+        if disk is not None:
+            shutil.rmtree(disk, ignore_errors=True)
 
+
+def check_all(benchmarks, topology, cpuset, disk):
     failures = []
     for name, sets in benchmarks.items():
         directory = os.path.join(ROOT, "benchmarks", name)
@@ -130,7 +192,12 @@ def main():
                 environment += ["-e", "LM_PARAM_%s=%s" % (key.upper(), param_text(value))]
             label = "%s %s" % (name, json.dumps(params))
             reason = unmet(name, params, topology)
-            done = subprocess.run(["docker", "run", "--rm", "--tmpfs", "/tmp"] + cpuset + environment + [image, "--quick"],
+            extra = []
+            if "dir" in params and disk is not None:
+                extra += ["-v", "%s:%s" % (disk, params["dir"])]
+            if name == "disk_read_io_uring":
+                extra += ["--security-opt", "seccomp=unconfined"]
+            done = subprocess.run(["docker", "run", "--rm", "--tmpfs", "/tmp"] + cpuset + extra + environment + [image, "--quick"],
                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             stderr = done.stderr.decode("utf-8", "replace")
             if reason is not None:

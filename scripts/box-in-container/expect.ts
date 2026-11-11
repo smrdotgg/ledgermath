@@ -7,6 +7,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { appliesTo, type Schedule } from "../../infra/runs/schedule";
+import { checkDiskRuns } from "../check-disk-runs";
 import { checkBucketDirectory, type RunRecord } from "../check-runs";
 
 interface Execution {
@@ -140,6 +141,35 @@ function mutexRunsSayWhereTheyRan(): void {
 	}
 }
 
+// Every disk Run says which disk it measured, and its dump proves it
+// (scripts/check-disk-runs.ts); here the disk directory is a tmpfs.
+function diskRunsTieToTheirDumps(): void {
+	const { problems: diskProblems } = checkDiskRuns(bucket);
+	for (const problem of diskProblems) problems.push(`check-disk-runs: ${problem}`);
+	expect(runs.some((run) => String(run.benchmark).startsWith("disk_")), "no disk Run, though the schedule names disk benchmarks");
+}
+
+// The container has no device node of this machine's disks, so provision.py
+// must have prepared none, whatever it found in /sys, and said why; and the
+// root volume's Fixture was made.
+function provisionPreparedNothing(): void {
+	const run = runs[0];
+	if (!run) return;
+	const index = readJson<{ sections: Record<string, string> }>(join(bucket, "blobs", "sha256", run.environment.before.replace("sha256:", "")));
+	const hash = index.sections.provision;
+	expect(hash !== undefined, "the dump has no provision section");
+	if (hash === undefined) return;
+	const section = readJson<Record<string, string | null>>(join(bucket, "blobs", "sha256", hash.replace("sha256:", "")));
+	const text = Object.values(section)[0];
+	expect(typeof text === "string", "the provision section holds no record");
+	if (typeof text !== "string") return;
+	const record = JSON.parse(text) as { decisions: Array<{ what: string; action: string }>; steps: Array<{ command: string[] }>; fixtures: Array<{ disk: string; made: boolean }> };
+	const store = record.decisions.find((decision) => decision.what === "instance_store");
+	expect(store !== undefined && store.action !== "prepare", `provision.py's instance-store decision is ${JSON.stringify(store)}, expected none or refuse`);
+	expect(!record.steps.some((step) => step.command[0] === "mkfs.xfs" || step.command[0] === "mount"), "provision.py ran mkfs.xfs or mount in the container");
+	expect(record.fixtures.some((fixture) => fixture.disk === "root_volume" && fixture.made), "the root volume's Fixture was not made");
+}
+
 const interrupted = runs.filter((run) => run.exit.runner_signal !== undefined);
 
 switch (scenario) {
@@ -149,6 +179,8 @@ switch (scenario) {
 		everyExecutionRanOnceAndExitedZero();
 		everyOtherExecutionLeftOut();
 		mutexRunsSayWhereTheyRan();
+		diskRunsTieToTheirDumps();
+		provisionPreparedNothing();
 		expect(runs.length === planned, `${runs.length} Runs, expected ${planned}`);
 		expect(boots.length === 1, `${boots.length} boot summaries, expected 1`);
 		expect(boot?.stopped_by === undefined && boot?.not_run.length === 0, "the boot summary says it was stopped");
@@ -227,6 +259,7 @@ switch (scenario) {
 		everyExecutionRanOnceAndExitedZero();
 		everyOtherExecutionLeftOut();
 		mutexRunsSayWhereTheyRan();
+		provisionPreparedNothing();
 		expect(
 			runs.some((run) => run.benchmark === "mutex" && (run.params as { threads?: unknown }).threads === 2),
 			"no two-thread mutex Run, which the scenario's schedule names for an m5.large",

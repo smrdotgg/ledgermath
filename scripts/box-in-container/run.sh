@@ -13,9 +13,11 @@
 #   ok           the whole schedule runs for this machine's type, as IMDS gives
 #                it: one Run of every benchmark, build and parameter set of every
 #                entry for it, each exiting 0, every other entry's executions
-#                listed under left_out, and every Run checks out (about eight
-#                minutes; this machine is not a target, so the entries that name
-#                instance types, such as mutex's two-thread sets, are left out)
+#                listed under left_out, every Run checks out, every disk Run ties
+#                to its dump (scripts/check-disk-runs.ts), and provision.py
+#                prepared no disk (about nine minutes; this machine is not a
+#                target, so the entries that name instance types, such as mutex's
+#                two-thread sets and the instance-store sets, are left out)
 #   terminated   run.py is sent TERM while a binary runs, as the time budget does:
 #                that execution still has a Run, the boot summary lists what was
 #                not run, and the boot fails
@@ -33,18 +35,30 @@
 #                its schedule.json, and a fake IMDS says it is an m5.large: the
 #                entries for every type and for m5.large run (among them mutex's
 #                one-thread and siblings sets, which this machine can provide),
-#                the others are listed under left_out in the boot summary, and a
-#                benchmark two entries name is built once (about two minutes)
+#                the others are listed under left_out in the boot summary, a
+#                benchmark two entries name is built once, and provision.py,
+#                told the box is an m5.large, prepares no disk (about two minutes)
 #
-# What this shows: box.sh, run.py, the Makefiles and cpuid.c work on the image's
-# own packages (Python 3.9, gcc 11, glibc-static), with the user-data the launch
-# Lambda builds. What it cannot show: the container shares this machine's
-# kernel and CPU, its /proc and /sys are this machine's, and IMDS answers for
-# this machine when the hop limit lets a container reach it. Its Runs describe
-# this machine. In the instance-types scenario IMDS is
+# What this shows: box.sh, provision.py, run.py, the Makefiles, cpuid.c and
+# fixture.c work on the image's own packages (Python 3.9, gcc 11,
+# glibc-static, nvme-cli, xfsprogs), with the user-data the launch Lambda
+# builds. What it cannot show: the container shares this machine's kernel and
+# CPU, its /proc and /sys are this machine's, and IMDS answers for this
+# machine when the hop limit lets a container reach it. Its Runs describe this
+# machine. In the instance-types scenario IMDS is
 # scripts/box-in-container/fake-imds.py instead, in a container whose network
 # namespace the box's joins, so the Runs' provider fields are its words while
 # the dumps are still this machine's.
+#
+# The disks: the container is not privileged and has no device node of this
+# machine's disks, so provision.py, which sees this machine's NVMe controllers
+# in /sys, can format nothing; it refuses (the scenarios check that it did not
+# prepare anything). The root volume's directory, /var/tmp/ledgermath/disk, is
+# a tmpfs of the container's own: the disk Runs read and write memory there,
+# and say so (their device_found is false). The schedule's root volume
+# Fixture (1 GiB) and the scratch file of disk_write (up to 1 GiB) do not fit
+# on this machine's disk beside everything else. The container runs without a
+# seccomp filter, as the box does: Docker's default one refuses io_uring.
 #
 # Docker must work for the caller; if the docker group is new to this login,
 # run it as: sg docker -c "scripts/box-in-container/run.sh OUT"
@@ -120,6 +134,7 @@ mkdir -p "$OUT/s3/$BUCKET/source" "$OUT/calls" "$OUT/stubs"
 OUT="$(cd "$OUT" && pwd)"
 # Mounted from OUT, so the box's dump (findmnt) shows no path of this checkout.
 cp "$HERE/aws" "$HERE/power" "$OUT/stubs/"
+cp -R "$HERE/ec2" "$OUT/stubs/ec2"
 git archive --format=tar.gz -o "$OUT/s3/$BUCKET/$KEY" "$COMMIT"
 if [ "$SCENARIO" = blobs-present ]; then
   # The source archive is a blob of every Run; put it there as an earlier boot
@@ -158,9 +173,12 @@ if [ -n "$FAKE_IMDS_TYPE" ]; then
 fi
 echo "booting $COMMIT in $IMAGE, scenario $SCENARIO"
 docker run -d --name "$NAME" "${NETWORK[@]}" "${ENVIRONMENT[@]}" \
+  --security-opt seccomp=unconfined \
+  --tmpfs /var/tmp/ledgermath/disk:rw,size=2560m \
   -v "$OUT/s3:/fake-s3" \
   -v "$OUT/calls:/fake-calls" \
   -v "$OUT/stubs/aws:/usr/local/bin/aws:ro" \
+  -v "$OUT/stubs/ec2:/fake-ec2:ro" \
   -v "$OUT/stubs/power:/usr/local/bin/shutdown:ro" \
   -v "$OUT/stubs/power:/usr/local/bin/poweroff:ro" \
   -v "$OUT/user-data:/var/lib/cloud/instance/scripts/part-001:ro" \
