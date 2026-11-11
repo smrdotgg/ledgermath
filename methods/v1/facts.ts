@@ -38,11 +38,14 @@ export function seriesId(key: SeriesKey): string {
 }
 
 /**
- * Dump sections whose contents version 1 does not read. Both change on every
- * read (cpuinfo's "cpu MHz", meminfo, loadavg, uptime), so only their hashes
- * are compared; reading them would cost about 50 KB of fetches per Run.
+ * Dump sections whose contents version 1 does not read. Each changes on every
+ * read (cpuinfo's "cpu MHz"; meminfo, loadavg, uptime; every block device's
+ * I/O counters; every Amazon NVMe disk's counters and latency histograms), so
+ * only their hashes are compared, and "what differed" says they changed
+ * without naming keys; reading cpuinfo and memory alone would cost about 50 KB
+ * of fetches per Run.
  */
-export const UNREAD_SECTIONS: ReadonlySet<string> = new Set(["cpuinfo", "memory"]);
+export const UNREAD_SECTIONS: ReadonlySet<string> = new Set(["cpuinfo", "memory", "block_stat", "nvme_stats"]);
 
 /** The key in the kernel section that holds the box's host name. */
 export const KERNEL_HOST_KEY = "$ uname -a";
@@ -82,6 +85,8 @@ export const NOT_SPLIT_ON: readonly SplitFact[] = [
 	{ fact: "source_commit, source", what: "they change with every commit, whether or not the benchmark did" },
 	{ fact: "cpuinfo", what: "changes on every read (each CPU's current MHz)" },
 	{ fact: "memory", what: "changes on every read (meminfo, loadavg, uptime, pressure)" },
+	{ fact: "block_stat", what: "changes on every read (each block device's I/O counters, /sys/block/*/stat)" },
+	{ fact: "nvme_stats", what: "changes on every read (each Amazon NVMe disk's I/O counters and latency histograms, nvme amzn stats)" },
 	{ fact: "devices", what: "holds the root volume's serial, which is new on every launch" },
 	{
 		fact: "provider",
@@ -89,6 +94,20 @@ export const NOT_SPLIT_ON: readonly SplitFact[] = [
 			"holds the instance ID, private address and launch time, new on every launch; its instance type " +
 			"and zone ID make the Series, and its image is split on",
 	},
+	{
+		fact: "provision",
+		what:
+			"the box script's record of preparing the disks at boot: every command with its start and end times, new on " +
+			"every boot, and what it printed, which names the disks by serial",
+	},
+	{
+		fact: "ec2_instance_type",
+		what:
+			"the EC2 API's catalog record of the instance type, taken once per boot: the instance type already makes the " +
+			"Series, AWS may revise the record without the machine changing, and a failed call records its error instead",
+	},
+	{ fact: "ec2_volumes", what: "names the instance's volumes and holds their creation times and status, new on every launch" },
+	{ fact: "ec2_instance", what: "names the instance and holds its addresses and launch time, new on every launch" },
 ];
 
 /** A value left out of a section before it is compared for the split. */

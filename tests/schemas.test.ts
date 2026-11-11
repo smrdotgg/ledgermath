@@ -42,6 +42,9 @@ function eventOf(run: RunRecord, name: string): RunEvent {
 	return structuredClone(event);
 }
 
+/** Checking a sample directory runs check-events.py once per Run, and reads every blob: seconds, more on a loaded machine. */
+const SAMPLE_TIMEOUT_MS = 120_000;
+
 describe("the sample Runs", () => {
 	for (const directory of SAMPLE_DIRECTORIES) {
 		test(`${directory}: every Run and event validates, and every hash resolves`, () => {
@@ -51,16 +54,18 @@ describe("the sample Runs", () => {
 			});
 			expect(result.problems).toEqual([]);
 			expect(result.runs).toBeGreaterThan(0);
-		});
+		}, SAMPLE_TIMEOUT_MS);
 	}
 
-	test("a scheduled boot left one Run per parameter set per build, each exiting 0", () => {
+	test("a scheduled boot left one Run per parameter set per build of memory_read, each exiting 0", () => {
+		// The samples were recorded when memory_read was the whole schedule.
 		const runs = samplesIn("scheduled");
 		const schedule = JSON.parse(readFileSync(join(import.meta.dir, "..", "schedule.json"), "utf8")) as {
-			benchmarks: Array<{ builds: string[]; params: unknown[] }>;
+			benchmarks: Array<{ name: string; builds: string[]; params: unknown[] }>;
 		};
-		const expected = schedule.benchmarks.reduce((sum, b) => sum + b.builds.length * b.params.length, 0);
-		expect(runs.length).toBe(expected);
+		const memoryRead = schedule.benchmarks.find((b) => b.name === "memory_read");
+		expect(runs.length).toBe((memoryRead?.builds.length ?? 0) * (memoryRead?.params.length ?? 0));
+		for (const run of runs) expect(run.benchmark).toBe("memory_read");
 		expect(new Set(runs.map((run) => run.boot)).size).toBe(1);
 		for (const run of runs) expect(run.exit).toEqual({ code: 0 });
 	});
@@ -95,7 +100,7 @@ describe("the sample Runs", () => {
 			]) {
 				expect(names).toContain(name);
 			}
-		});
+		}, SAMPLE_TIMEOUT_MS);
 	}
 });
 

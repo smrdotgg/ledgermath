@@ -1,0 +1,66 @@
+{
+  "vcpu_quota": { "limit": 64, "reserved_outside_schedule": 4 },
+  "targets": [
+    { "instance_type": "c6i.8xlarge", "vcpus": 32, "zone": "us-east-2c", "boots_utc": ["04:10"] },
+    { "instance_type": "m5.large", "vcpus": 2, "zone": "us-east-2c", "boots_utc": ["04:20"] }
+  ],
+  "benchmarks": [
+    {
+      "name": "syscall",
+      "builds": ["static"],
+      "samples": 10,
+      "timeout_seconds": 120,
+      "params": [{ "call": "getpid" }]
+    },
+    {
+      "name": "syscall",
+      "builds": ["static"],
+      "samples": 10,
+      "timeout_seconds": 120,
+      "instance_types": ["m5.large"],
+      "params": [{ "call": "gettimeofday" }]
+    },
+    {
+      "name": "syscall",
+      "builds": ["static"],
+      "samples": 10,
+      "timeout_seconds": 120,
+      "instance_types": ["c6i.8xlarge"],
+      "params": [{ "call": "getrusage" }]
+    },
+    {
+      "name": "mutex",
+      "builds": ["static"],
+      "samples": 10,
+      "timeout_seconds": 180,
+      "params": [
+        { "threads": 1, "placement": "one_cpu", "critical_section_lines": 1, "lock": "pthread_mutex_default", "idle_threads": 0 },
+        { "threads": 1, "placement": "one_cpu", "critical_section_lines": 1, "lock": "pthread_mutex_default", "idle_threads": 1 }
+      ]
+    },
+    {
+      "name": "mutex",
+      "builds": ["static"],
+      "samples": 10,
+      "timeout_seconds": 180,
+      "instance_types": ["c6i.8xlarge"],
+      "params": [{ "threads": 2, "placement": "distinct_cores", "critical_section_lines": 1, "lock": "pthread_mutex_default", "idle_threads": 0 }]
+    },
+    {
+      "name": "mutex",
+      "builds": ["static"],
+      "samples": 10,
+      "timeout_seconds": 180,
+      "instance_types": ["m5.large", "c6i.8xlarge"],
+      "params": [{ "threads": 2, "placement": "smt_siblings", "critical_section_lines": 1, "lock": "pthread_mutex_default", "idle_threads": 0 }]
+    },
+    {
+      "name": "memory_read",
+      "builds": ["static", "dynamic"],
+      "samples": 10,
+      "timeout_seconds": 600,
+      "instance_types": ["c6i.8xlarge"],
+      "params": [{ "size_bytes": 1073741824, "threads": 1, "path": "scalar" }]
+    }
+  ]
+}

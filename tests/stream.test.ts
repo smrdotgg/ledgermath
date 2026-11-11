@@ -7,6 +7,9 @@ import { derive, gather } from "../methods/v1";
 import { streamProblems } from "../methods/v1/stream";
 import { HandMade } from "./hand-made-runs";
 
+/** Each stream is also given to check-events.py, a process of its own: quick, but never held to bun's five seconds. */
+const SUBPROCESS_TIMEOUT_MS = 60_000;
+
 const CHECK_EVENTS = join(import.meta.dir, "..", "scripts", "check-events.py");
 const SAMPLES = 3;
 
@@ -182,7 +185,7 @@ describe("a Run counts only when its stream obeys scripts/check-events.py", () =
 			// The port alone, where every line parsed, agrees too.
 			const parsed = parseLikeTheRunner(stream.text);
 			if (parsed.error === undefined) expect(streamProblems(parsed.events, SAMPLES).length === 0).toBe(python);
-		});
+		}, SUBPROCESS_TIMEOUT_MS);
 	}
 });
 
@@ -193,7 +196,7 @@ describe("the verifier's streams", () => {
 		const result = await methodCounts(find("a second sample_ended for a counted sample"));
 		expect(result).toMatchObject({ counted: false, time: null });
 		expect(result.failure).toContain("sample_ended with no sample open");
-	});
+	}, SUBPROCESS_TIMEOUT_MS);
 
 	test("an unclosed warmup, a duplicated start, a reversed start and end, and no verified are each failed, saying why", async () => {
 		const cases: Array<[string, string]> = [
@@ -209,5 +212,5 @@ describe("the verifier's streams", () => {
 			expect(result.counted).toBe(false);
 			expect(result.failure).toContain(reason);
 		}
-	});
+	}, SUBPROCESS_TIMEOUT_MS);
 });

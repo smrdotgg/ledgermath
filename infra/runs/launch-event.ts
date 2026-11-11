@@ -1,27 +1,38 @@
 import { createHash } from "node:crypto";
 
-/**
- * What the launch Lambda is invoked with, and what it makes of it. No AWS SDK
- * here: infra/runs/stack.ts imports SCHEDULED_EVENT.
- */
+import { INSTANCE_TYPE } from "./schedule";
 
 /**
- * The payload the schedule invokes the launch Lambda with. EventBridge
- * Scheduler replaces the placeholder with the time the invocation was
- * scheduled for, such as 2026-11-12T22:10:00Z.
+ * What the launch Lambda is invoked with, and what it makes of it. No AWS SDK
+ * here: infra/runs/placement.ts and the tests import it.
+ *
+ * A scheduled launch's payload is {"scheduledTime": ..., "instanceType": ...}
+ * (scheduledEvent). A launch by hand has no scheduledTime and names any
+ * instance type: {"instanceType": "c6i.large"}.
  */
-export const SCHEDULED_EVENT = { scheduledTime: "<aws.scheduler.scheduled-time>" };
+
+/** EventBridge Scheduler replaces this with the time an invocation was scheduled for, such as 2026-11-12T22:10:00Z. */
+export const SCHEDULED_TIME_PLACEHOLDER = "<aws.scheduler.scheduled-time>";
+
+export interface ScheduledEvent {
+	scheduledTime: string;
+	instanceType: string;
+}
+
+/** The payload one target's schedule invokes the launch Lambda with. */
+export function scheduledEvent(instanceType: string): ScheduledEvent {
+	return { scheduledTime: SCHEDULED_TIME_PLACEHOLDER, instanceType };
+}
 
 const SCHEDULED_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/;
 
 /**
  * A scheduled launch this late is not started. Lambda can hold an asynchronous
  * event for a while after throttling or an error of its own, and a box started
- * long after 22:10 could still hold 32 vCPUs when July's pipeline launches at
- * 23:10, which the account's 64-vCPU quota cannot fit.
+ * long after its slot could overlap the next boots, or July's 23:10 box, in
+ * ways the schedule's times were chosen to avoid (infra/runs/schedule.ts).
  */
 export const LATEST_START_MS = 10 * 60 * 1000;
-const INSTANCE_TYPE = /^[a-z][a-z0-9-]*\.[a-z0-9]+$/;
 
 function field(event: unknown, name: string): unknown {
 	if (typeof event !== "object" || event === null) return undefined;
@@ -41,6 +52,20 @@ function scheduledTimeOf(event: unknown): string | undefined {
 }
 
 /**
+ * The instance type the payload asks for. Every launch names one: there is no
+ * default, so a launch by hand never starts a 32-vCPU box by omission.
+ */
+export function requestedInstanceType(event: unknown): string {
+	const requested = field(event, "instanceType");
+	if (typeof requested !== "string" || !INSTANCE_TYPE.test(requested)) {
+		throw new Error(
+			`the payload must name an EC2 instance type, such as {"instanceType": "c6i.large"}; got ${JSON.stringify(requested ?? null)}`,
+		);
+	}
+	return requested;
+}
+
+/**
  * Why a scheduled launch is too late to start at `now`, or undefined when it is
  * not. A launch by hand is never too late.
  */
@@ -53,27 +78,29 @@ export function lateness(event: unknown, now: Date): string | undefined {
 }
 
 /**
- * The RunInstances ClientToken. A scheduled launch's token comes from the stage
- * and the scheduled time, so however often one slot's invocation is repeated,
- * EC2 starts at most one box for it. A launch by hand has no scheduled time;
- * then this is undefined and the SDK makes a fresh token.
+ * Why a scheduled launch names an instance type the stage does not schedule,
+ * or undefined when it does not. `targets` are the instance types of
+ * schedule.json's targets, as deployed. A launch by hand may name any type.
+ */
+export function unscheduledType(event: unknown, targets: readonly string[]): string | undefined {
+	const scheduledTime = scheduledTimeOf(event);
+	if (scheduledTime === undefined) return undefined;
+	const instanceType = requestedInstanceType(event);
+	if (targets.includes(instanceType)) return undefined;
+	return `a launch scheduled for ${scheduledTime} names ${instanceType}, which is not a target of the deployed schedule (${targets.join(", ")}); only a launch by hand, without scheduledTime, may name another type`;
+}
+
+/**
+ * The RunInstances ClientToken. A scheduled launch's token comes from the
+ * stage, the instance type and the scheduled time, so however often one
+ * slot's invocation is repeated, EC2 starts at most one box for it, and two
+ * targets booting at the same minute are two slots. A launch by hand has no
+ * scheduled time; then this is undefined and the SDK makes a fresh token.
  */
 export function clientToken(stage: string, event: unknown): string | undefined {
 	const scheduledTime = scheduledTimeOf(event);
 	if (scheduledTime === undefined) return undefined;
+	const instanceType = requestedInstanceType(event);
 	// 64 hex characters, EC2's limit for a client token.
-	return createHash("sha256").update(`ledgermath-box ${stage} ${scheduledTime}`).digest("hex");
-}
-
-/**
- * The instance type the payload asks for, such as {"instanceType": "c6i.large"}
- * for a smoke test, or the configured one.
- */
-export function chooseInstanceType(event: unknown, configured: string): string {
-	const requested = field(event, "instanceType");
-	if (requested === undefined) return configured;
-	if (typeof requested !== "string" || !INSTANCE_TYPE.test(requested)) {
-		throw new Error(`instanceType must be an EC2 instance type such as "c6i.large", got ${JSON.stringify(requested)}`);
-	}
-	return requested;
+	return createHash("sha256").update(`ledgermath-box ${stage} ${instanceType} ${scheduledTime}`).digest("hex");
 }

@@ -5,8 +5,12 @@
 #   set a 45-minute shutdown timer, whatever happens after
 #   install the compiler, the static C library and the dump's tools
 #   fetch and unpack the source archive, a `git archive` of one commit
-#   build the cpuid tool, then let runner/run.py build, run and record, until
-#   35 minutes after the box started
+#   build the cpuid and fixture tools
+#   prepare the disks (runner/provision.py): the instance's own NVMe disk, if
+#   it has one, gets an XFS file system, and the disk Fixtures are made;
+#   whatever that does or fails to do is recorded and never stops the boot
+#   let runner/run.py build, run and record, until 35 minutes after the box
+#   started
 #   upload blobs/, runs/, boots/ and this script's log to the stage's bucket
 #   shut down, which terminates the instance
 #
@@ -161,10 +165,12 @@ imds() {
 say "instance=$(imds instance-id) type=$(imds instance-type) image=$(imds ami-id) zone=$(imds placement/availability-zone)"
 
 # The compiler and static C library for the builds; tar and gzip for the
-# source; util-linux for the dump's lscpu, lsblk and findmnt. Whatever the
-# image already has stays as it is, and the dump lists every package.
-dnf install -y gcc make glibc-static python3 tar gzip util-linux
-say "$(rpm -q system-release gcc glibc-static python3 util-linux | tr '\n' ' ')"
+# source; util-linux for the dump's lscpu, lsblk and findmnt; nvme-cli for
+# the NVMe disks' own records and latency histograms; xfsprogs for the
+# instance store's file system and the dump's xfs_info. Whatever the image
+# already has stays as it is, and the dump lists every package.
+dnf install -y gcc make glibc-static python3 tar gzip util-linux nvme-cli xfsprogs
+say "$(rpm -q system-release gcc glibc-static python3 util-linux nvme-cli xfsprogs | tr '\n' ' ')"
 
 rm -rf "$SRC" "$OUT"
 mkdir -p "$SRC"
@@ -189,6 +195,40 @@ fi
 
 cc -O2 -o "$WORK/cpuid" "$SRC/runner/cpuid.c"
 
+# The disks, before the schedule: what provision.py does and finds is in its
+# record, which every dump holds as the section `provision`. Its failure is
+# never the boot's: every other benchmark still runs, and a disk Run that
+# finds no Fixture fails by itself and says why.
+#
+# --supervise-seconds 330 is provisioning's outer limit: provision.py runs the
+# work as a child in a session of its own (it writes that session's id to
+# $PROVISION_SESSION at once), sends it TERM at 330 seconds (it stops itself at
+# 300) and KILL 15 seconds later, then kills whatever is left in that session
+# and completes the record. timeout(1) at 360 seconds is box.sh's own limit,
+# for a supervisor that is itself stuck; after it, runner/provision-leftovers.py
+# ends whatever is left of provisioning's session, removes what a half-done
+# preparation left where a benchmark could find it, and says so in the record.
+# On a real i4i.2xlarge provisioning took 44 seconds.
+PROVISION_RECORD="$WORK/provision.json"
+PROVISION_SESSION="$WORK/provision.session"
+
+
+if ! cc -O2 -I "$SRC/benchmarks/harness/c" -o "$WORK/fixture" "$SRC/runner/fixture.c"; then
+  say "the fixture tool did not build; the disk Fixtures cannot be made"
+fi
+say "preparing the disks"
+PROVISION_STATUS=0
+timeout --kill-after=10 360 python3 "$SRC/runner/provision.py" --supervise-seconds 330 \
+  --session-file "$PROVISION_SESSION" --record "$PROVISION_RECORD" --fixture-tool "$WORK/fixture" \
+  --instance-type "$(imds instance-type)" --region "$(imds placement/region)" || PROVISION_STATUS=$?
+python3 "$SRC/runner/provision-leftovers.py" "$PROVISION_RECORD" "$PROVISION_SESSION" /mnt/lm/instance-store \
+  "$WORK/disk" "$PROVISION_STATUS" || say "provision-leftovers.py failed with status $?"
+if [ "$PROVISION_STATUS" -eq 0 ]; then
+  say "the disks are ready"
+else
+  say "preparing the disks failed, refused a disk, or was stopped, with status $PROVISION_STATUS; $PROVISION_RECORD says what happened. The schedule runs all the same."
+fi
+
 BUDGET=$((BOX_STARTED + ${LEDGERMATH_RUN_SECONDS:-2100} - $(date +%s)))
 if [ "$BUDGET" -lt 10 ]; then
   say "only ${BUDGET}s of the time budget is left; not starting the schedule"
@@ -201,7 +241,7 @@ say "running the schedule at $COMMIT, for at most ${BUDGET}s"
 RUN_STATUS=0
 timeout --foreground --signal=TERM --kill-after=180 "$BUDGET" \
   python3 "$SRC/runner/run.py" --root "$SRC" --out "$OUT" --source-commit "$COMMIT" \
-  --source-archive "$ARCHIVE" --cpuid "$WORK/cpuid" || RUN_STATUS=$?
+  --source-archive "$ARCHIVE" --cpuid "$WORK/cpuid" --provision-record "$PROVISION_RECORD" || RUN_STATUS=$?
 case "$RUN_STATUS" in
   0) say "done" ;;
   124)

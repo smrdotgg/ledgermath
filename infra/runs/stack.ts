@@ -4,9 +4,13 @@
  * The stack of a -runs stage. sst.config.ts sends every stage whose name ends
  * in -runs here; every other stage gets July's stack, unchanged.
  *
- * Once a day a Lambda launches one box. The box boots the pinned image with
- * runner/box.sh as its user-data, fetches the source archive of the deployed
- * commit, runs the schedule, uploads to this stage's bucket and terminates:
+ * schedule.json names the targets: instance types, their zone, and the times
+ * of day each boots (infra/runs/placement.ts). Each target gets an EventBridge
+ * schedule, and every schedule invokes the one launch Lambda, which launches
+ * one box of that type. The box boots the pinned image with runner/box.sh as
+ * its user-data, fetches the source archive of the deployed commit, runs the
+ * schedule's entries for its type, uploads to this stage's bucket and
+ * terminates:
  *
  *     runs/<yyyy>/<mm>/<dd>/<id>.json      one Run
  *     blobs/sha256/<hex>                   every blob a Run cites
@@ -26,9 +30,9 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 
+import { boxPolicy } from "./box-role";
 import { GITHUB_OIDC_AUDIENCE, GITHUB_OIDC_URL, readPolicy, trustPolicy } from "./github-role";
-import { SCHEDULED_EVENT } from "./launch-event";
-import { PLACEMENT } from "./placement";
+import { LAUNCH_SCHEDULES, TARGETS, ZONE } from "./placement";
 
 /**
  * Amazon Linux 2023 2023.12.20260710.0, kernel 6.1: the image July's pipeline
@@ -36,17 +40,7 @@ import { PLACEMENT } from "./placement";
  * compiler, changes only when this line does.
  */
 const IMAGE_ID = "ami-03499a87bbb39a09a";
-/** Shared with the alarm, which watches the Series of schedule.json here. */
-const ZONE = PLACEMENT.zone;
-const INSTANCE_TYPE = PLACEMENT.instanceType;
-/**
- * An hour before July's 23:10. Two 32-vCPU runners and the dev machine's 4
- * vCPUs exceed the account's 64-vCPU quota, so the two must never overlap.
- */
-const LAUNCH_SCHEDULE = "cron(10 22 * * ? *)";
 const REAP_SCHEDULE = "rate(5 minutes)";
-/** What a box may write. scripts/box-in-container/aws allows the same. */
-const BOX_WRITES = ["runs/", "blobs/", "boots/", "logs/"];
 
 /** SST commands that change nothing in AWS, which may run from a tree that differs from HEAD. */
 const NON_DEPLOYING = new Set(["diff", "remove", "refresh"]);
@@ -116,75 +110,75 @@ export function runsStack() {
 	});
 
 	// The box reads its source, lists blobs/ (so it uploads only the blobs the
-	// bucket does not hold yet), and writes its prefixes, nothing else.
+	// bucket does not hold yet), writes its prefixes, and reads what EC2 says
+	// about its instance type, volumes and instance; nothing else
+	// (infra/runs/box-role.ts).
 	const boxRole = new aws.iam.Role("BoxRole", {
 		assumeRolePolicy: aws.iam.assumeRolePolicyForPrincipal({ Service: "ec2.amazonaws.com" }),
 	});
 	new aws.iam.RolePolicy("BoxPolicy", {
 		role: boxRole.id,
-		policy: $jsonStringify({
-			Version: "2012-10-17",
-			Statement: [
-				{ Effect: "Allow", Action: ["s3:GetObject"], Resource: [$interpolate`${bucket.arn}/${archive.key}`] },
-				{
-					Effect: "Allow",
-					Action: ["s3:ListBucket"],
-					Resource: [bucket.arn],
-					Condition: { StringLike: { "s3:prefix": ["blobs/", "blobs/*"] } },
-				},
-				{
-					Effect: "Allow",
-					Action: ["s3:PutObject"],
-					Resource: BOX_WRITES.map((prefix) => $interpolate`${bucket.arn}/${prefix}*`),
-				},
-			],
-		}),
+		policy: bucket.arn.apply((arn) => JSON.stringify(boxPolicy(arn, archive.key))),
 	});
 	const boxProfile = new aws.iam.InstanceProfile("BoxProfile", { role: boxRole.name });
 
 	// A retried launch could start a second box, or a late one that overlaps
-	// July's 23:10 launch. Scheduler's own delivery retries are SST's default
-	// of 0; `function.retries: 0` makes the Lambda event-invoke config that
-	// stops Lambda retrying an asynchronous invocation, twice by default, and
-	// its transform sets the oldest event Lambda will still run to a minute,
-	// the least it allows (six hours by default). The payload carries the
-	// scheduled time: the launch's client token comes from it, so one slot can
-	// only ever start one box, and the handler refuses a launch more than ten
-	// minutes after it.
-	const launch = new sst.aws.CronV2("BoxLaunch", {
-		schedule: LAUNCH_SCHEDULE,
-		timezone: "UTC",
+	// the boots the schedule keeps apart. `retries: 0` makes the Lambda
+	// event-invoke config that stops Lambda retrying an asynchronous
+	// invocation, twice by default, and its transform sets the oldest event
+	// Lambda will still run to a minute, the least it allows (six hours by
+	// default). The handler refuses a scheduled launch more than ten minutes
+	// after its time, or of a type that is not a target.
+	//
+	// Until step 4 this function was the child of a CronV2 named BoxLaunch.
+	// The alias says it is the same function, so a deploy updates it in place,
+	// keeping its name and its log group (where #38's dated checks read the
+	// launches), instead of deleting it and making a new one. Once every
+	// -runs stage has been deployed with it, the alias does nothing.
+	const launchAliases = [{ parent: `urn:pulumi:${$app.stage}::${$app.name}::sst:aws:CronV2::BoxLaunch` }];
+	const launch = new sst.aws.Function("BoxLaunchHandler", {
+		handler: "infra/runs/launch-box.handler",
+		timeout: "60 seconds",
 		retries: 0,
-		event: SCHEDULED_EVENT,
-		function: {
-			handler: "infra/runs/launch-box.handler",
-			timeout: "60 seconds",
-			retries: 0,
-			transform: { eventInvokeConfig: { maximumEventAgeInSeconds: 60 } },
-			copyFiles: [{ from: "runner/box.sh", to: "box.sh" }],
-			environment: {
-				LEDGERMATH_STAGE: $app.stage,
-				LEDGERMATH_BUCKET: bucket.name,
-				LEDGERMATH_SOURCE_KEY: source.key,
-				LEDGERMATH_SOURCE_COMMIT: archive.commit,
-				LEDGERMATH_IMAGE_ID: IMAGE_ID,
-				LEDGERMATH_INSTANCE_TYPE: INSTANCE_TYPE,
-				LEDGERMATH_SUBNET_ID: subnet.id,
-				LEDGERMATH_SECURITY_GROUP_ID: securityGroup.id,
-				LEDGERMATH_INSTANCE_PROFILE: boxProfile.name,
-			},
-			permissions: [
-				{ actions: ["ec2:RunInstances"], resources: ["*"] },
-				{
-					actions: ["ec2:CreateTags"],
-					resources: ["*"],
-					conditions: [{ test: "StringEquals", variable: "ec2:CreateAction", values: ["RunInstances"] }],
-				},
-				{ actions: ["iam:PassRole"], resources: [boxRole.arn] },
-			],
-			nodejs: { install: ["@aws-sdk/client-ec2"] },
+		transform: { eventInvokeConfig: { maximumEventAgeInSeconds: 60 } },
+		copyFiles: [{ from: "runner/box.sh", to: "box.sh" }],
+		environment: {
+			LEDGERMATH_STAGE: $app.stage,
+			LEDGERMATH_BUCKET: bucket.name,
+			LEDGERMATH_SOURCE_KEY: source.key,
+			LEDGERMATH_SOURCE_COMMIT: archive.commit,
+			LEDGERMATH_IMAGE_ID: IMAGE_ID,
+			LEDGERMATH_TARGET_INSTANCE_TYPES: TARGETS.map((target) => target.instance_type).join(","),
+			LEDGERMATH_SUBNET_ID: subnet.id,
+			LEDGERMATH_SECURITY_GROUP_ID: securityGroup.id,
+			LEDGERMATH_INSTANCE_PROFILE: boxProfile.name,
 		},
-	});
+		permissions: [
+			{ actions: ["ec2:RunInstances"], resources: ["*"] },
+			{
+				actions: ["ec2:CreateTags"],
+				resources: ["*"],
+				conditions: [{ test: "StringEquals", variable: "ec2:CreateAction", values: ["RunInstances"] }],
+			},
+			{ actions: ["iam:PassRole"], resources: [boxRole.arn] },
+		],
+		nodejs: { install: ["@aws-sdk/client-ec2"] },
+	}, { aliases: launchAliases });
+
+	// One schedule per target (per minute past the hour its boots fall at; one
+	// per target today), each with its own role allowed to invoke the launch
+	// Lambda. Scheduler's own delivery retries are 0. The payload carries the
+	// scheduled time and the instance type: the launch's client token comes
+	// from both, so one slot of one target can only ever start one box.
+	for (const schedule of LAUNCH_SCHEDULES) {
+		new sst.aws.CronV2(schedule.name, {
+			schedule: schedule.expression,
+			timezone: "UTC",
+			retries: 0,
+			event: schedule.event,
+			function: launch,
+		});
+	}
 
 	const reaper = new sst.aws.CronV2("BoxReaper", {
 		schedule: REAP_SCHEDULE,
@@ -229,10 +223,19 @@ export function runsStack() {
 	return {
 		bucket: bucket.name,
 		runsReaderRole: readerRole.arn,
-		launchFunction: launch.nodes.function.name,
+		launchFunction: launch.name,
 		reaperFunction: reaper.nodes.function.name,
-		launchSchedule: `${LAUNCH_SCHEDULE} UTC`,
-		instanceType: INSTANCE_TYPE,
+		/** Every target, with its boot times and the schedules that launch it. */
+		targets: TARGETS.map((target) => ({
+			instanceType: target.instance_type,
+			zone: target.zone,
+			bootsUtc: target.boots_utc,
+			schedules: LAUNCH_SCHEDULES.filter((schedule) => schedule.instanceType === target.instance_type).map((schedule) => ({
+				name: schedule.name,
+				expression: `${schedule.expression} UTC`,
+				payload: schedule.event,
+			})),
+		})),
 		imageId: IMAGE_ID,
 		zone: ZONE,
 		subnet: subnet.id,

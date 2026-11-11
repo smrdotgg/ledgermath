@@ -1,4 +1,12 @@
 {
+  "vcpu_quota": { "limit": 64, "reserved_outside_schedule": 4 },
+  "targets": [
+    { "instance_type": "c6i.8xlarge", "vcpus": 32, "zone": "us-east-2c", "boots_utc": ["04:10", "10:10", "16:10", "22:10"] },
+    { "instance_type": "m5.large", "vcpus": 2, "zone": "us-east-2c", "boots_utc": ["04:20", "10:20", "16:20", "22:20"] },
+    { "instance_type": "c8i.2xlarge", "vcpus": 8, "zone": "us-east-2c", "boots_utc": ["04:30", "10:30", "16:30", "22:30"] },
+    { "instance_type": "c8a.2xlarge", "vcpus": 8, "zone": "us-east-2c", "boots_utc": ["04:40", "10:40", "16:40", "22:40"] },
+    { "instance_type": "i4i.2xlarge", "vcpus": 8, "zone": "us-east-2c", "boots_utc": ["04:50", "10:50", "16:50", "22:50"] }
+  ],
   "benchmarks": [
     {
       "name": "memory_read",
@@ -10,6 +18,185 @@
         { "size_bytes": 1073741824, "threads": 1, "path": "avx2" },
         { "size_bytes": 1073741824, "threads": "all", "path": "scalar" },
         { "size_bytes": 1073741824, "threads": "all", "path": "avx2" }
+      ]
+    },
+    {
+      "name": "compressed_memory_read",
+      "builds": ["static"],
+      "samples": 10,
+      "timeout_seconds": 120,
+      "params": [
+        { "blocks": 1000000, "bits": 8 }
+      ]
+    },
+    {
+      "name": "memory_read_random",
+      "builds": ["static"],
+      "samples": 10,
+      "timeout_seconds": 180,
+      "params": [
+        { "size_bytes": 1073741824, "threads": 1 }
+      ]
+    },
+    {
+      "name": "memory_write",
+      "builds": ["static"],
+      "samples": 10,
+      "timeout_seconds": 180,
+      "params": [
+        { "size_bytes": 1073741824, "threads": 1, "order": "sequential" },
+        { "size_bytes": 1073741824, "threads": 1, "order": "random" }
+      ]
+    },
+    {
+      "name": "syscall",
+      "builds": ["static"],
+      "samples": 10,
+      "timeout_seconds": 120,
+      "params": [
+        { "call": "getpid" },
+        { "call": "gettimeofday" },
+        { "call": "getrusage" },
+        { "call": "stat", "path": "/tmp" }
+      ]
+    },
+    {
+      "name": "hash",
+      "builds": ["static"],
+      "samples": 10,
+      "timeout_seconds": 120,
+      "params": [
+        { "algorithm": "crc32", "size_bytes": 64 },
+        { "algorithm": "siphash", "size_bytes": 64 },
+        { "algorithm": "sha256", "size_bytes": 64 }
+      ]
+    },
+    {
+      "name": "sort",
+      "builds": ["static"],
+      "samples": 10,
+      "timeout_seconds": 120,
+      "params": [
+        { "size_bytes": 1048576 }
+      ]
+    },
+    {
+      "name": "tcp_echo",
+      "builds": ["static"],
+      "samples": 10,
+      "timeout_seconds": 120,
+      "params": [
+        { "size_bytes": 32768 }
+      ]
+    },
+    {
+      "name": "mutex",
+      "builds": ["static"],
+      "samples": 10,
+      "timeout_seconds": 180,
+      "params": [
+        { "threads": 1, "placement": "one_cpu", "critical_section_lines": 1, "lock": "pthread_mutex_default", "idle_threads": 0 },
+        { "threads": 1, "placement": "one_cpu", "critical_section_lines": 1, "lock": "pthread_mutex_default", "idle_threads": 1 }
+      ]
+    },
+    {
+      "name": "mutex",
+      "builds": ["static"],
+      "samples": 10,
+      "timeout_seconds": 180,
+      "instance_types": ["c6i.8xlarge", "c8i.2xlarge", "c8a.2xlarge", "i4i.2xlarge"],
+      "params": [
+        { "threads": 2, "placement": "distinct_cores", "critical_section_lines": 1, "lock": "pthread_mutex_default", "idle_threads": 0 },
+        { "threads": 2, "placement": "distinct_cores", "critical_section_lines": 8, "lock": "pthread_mutex_default", "idle_threads": 0 }
+      ]
+    },
+    {
+      "name": "mutex",
+      "builds": ["static"],
+      "samples": 10,
+      "timeout_seconds": 180,
+      "instance_types": ["m5.large", "c6i.8xlarge", "c8i.2xlarge", "i4i.2xlarge"],
+      "params": [
+        { "threads": 2, "placement": "smt_siblings", "critical_section_lines": 1, "lock": "pthread_mutex_default", "idle_threads": 0 }
+      ]
+    },
+    {
+      "name": "disk_read_random",
+      "builds": ["static"],
+      "samples": 10,
+      "timeout_seconds": 180,
+      "params": [
+        { "disk": "root_volume", "dir": "/var/tmp/ledgermath/disk", "request_bytes": 8192, "span_bytes": 1073741824 }
+      ]
+    },
+    {
+      "name": "disk_read_random",
+      "builds": ["static"],
+      "samples": 10,
+      "timeout_seconds": 180,
+      "instance_types": ["i4i.2xlarge"],
+      "params": [
+        { "disk": "instance_store", "dir": "/mnt/lm/instance-store", "request_bytes": 8192, "span_bytes": 34359738368 }
+      ]
+    },
+    {
+      "name": "disk_read_io_uring",
+      "builds": ["static"],
+      "samples": 10,
+      "timeout_seconds": 180,
+      "params": [
+        { "disk": "root_volume", "dir": "/var/tmp/ledgermath/disk", "access": "sequential", "request_bytes": 32768, "queue_depth": 64, "span_bytes": 1073741824 },
+        { "disk": "root_volume", "dir": "/var/tmp/ledgermath/disk", "access": "random", "request_bytes": 4096, "queue_depth": 64, "span_bytes": 1073741824 }
+      ]
+    },
+    {
+      "name": "disk_read_io_uring",
+      "builds": ["static"],
+      "samples": 10,
+      "timeout_seconds": 180,
+      "instance_types": ["i4i.2xlarge"],
+      "params": [
+        { "disk": "instance_store", "dir": "/mnt/lm/instance-store", "access": "sequential", "request_bytes": 32768, "queue_depth": 64, "span_bytes": 34359738368 },
+        { "disk": "instance_store", "dir": "/mnt/lm/instance-store", "access": "random", "request_bytes": 4096, "queue_depth": 64, "span_bytes": 34359738368 }
+      ]
+    },
+    {
+      "name": "disk_read_sequential",
+      "builds": ["static"],
+      "samples": 10,
+      "timeout_seconds": 180,
+      "params": [
+        { "disk": "root_volume", "dir": "/var/tmp/ledgermath/disk", "request_bytes": 8192, "bytes_per_sample": 134217728, "span_bytes": 1073741824 }
+      ]
+    },
+    {
+      "name": "disk_read_sequential",
+      "builds": ["static"],
+      "samples": 10,
+      "timeout_seconds": 180,
+      "instance_types": ["i4i.2xlarge"],
+      "params": [
+        { "disk": "instance_store", "dir": "/mnt/lm/instance-store", "request_bytes": 8192, "bytes_per_sample": 2147483648, "span_bytes": 34359738368 }
+      ]
+    },
+    {
+      "name": "disk_write",
+      "builds": ["static"],
+      "samples": 10,
+      "timeout_seconds": 180,
+      "params": [
+        { "disk": "root_volume", "dir": "/var/tmp/ledgermath/disk", "request_bytes": 8192, "sync": "none", "file_bytes": 268435456 },
+        { "disk": "root_volume", "dir": "/var/tmp/ledgermath/disk", "request_bytes": 8192, "sync": "fdatasync", "file_bytes": 1073741824 }
+      ]
+    },
+    {
+      "name": "disk_write",
+      "builds": ["static"],
+      "samples": 10,
+      "timeout_seconds": 180,
+      "instance_types": ["i4i.2xlarge"],
+      "params": [
+        { "disk": "instance_store", "dir": "/mnt/lm/instance-store", "request_bytes": 8192, "sync": "fdatasync", "file_bytes": 1073741824 }
       ]
     }
   ]

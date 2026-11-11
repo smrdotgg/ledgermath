@@ -11,6 +11,24 @@ writes elsewhere fails here too:
     list   blobs/
     write  runs/, blobs/, boots/, logs/
 
+and the four read-only EC2 calls runner/provision.py and runner/run.py make,
+which the role allows and nothing else of EC2:
+
+    describe-instance-types   the catalog record AWS gave for the type, saved
+                              in /fake-ec2/describe-instance-types-<type>.json
+                              (scripts/box-in-container/ec2/); another type is
+                              refused as AWS refuses an unknown one
+    describe-volumes          one 8 GiB gp3 root volume attached to the
+    describe-volume-status    instance asked about, and its status, with the
+    describe-instances        documentation's example ids; the instance's own
+                              record, as small
+
+An answer saved as /fake-ec2/<action>.json is given instead, whatever was
+asked: a boot on a real instance without credentials replays what the API
+said about that instance.
+
+Every EC2 call is appended to /fake-calls/ec2.log.
+
 `sync` uploads a file the bucket lacks, or holds at another size; without
 --size-only, also one whose local copy is newer, as the real CLI does. Every
 object written is appended to /fake-calls/puts.log.
@@ -23,6 +41,7 @@ Two variables make it fail on purpose:
 """
 
 import fnmatch
+import json
 import os
 import shutil
 import sys
@@ -67,9 +86,72 @@ def needs_upload(local, remote, size_only):
     return not size_only and os.path.getmtime(local) > os.path.getmtime(remote)
 
 
+EC2_ACTIONS = ("describe-instance-types", "describe-volumes", "describe-volume-status", "describe-instances")
+ACCOUNT = "123456789012"  # the documentation's example account
+VOLUME = "vol-0123456789abcdef0"
+
+
+def ec2(args):
+    with open("/fake-calls/ec2.log", "a") as handle:
+        handle.write(" ".join(args) + "\n")
+    action = args[0] if args else ""
+    if action not in EC2_ACTIONS:
+        fail("An error occurred (UnauthorizedOperation) when calling ec2 %s: the box's role allows only %s" % (action, ", ".join(EC2_ACTIONS)))
+    # An option takes every word up to the next option.
+    options, current = {}, None
+    for arg in args[1:]:
+        if arg.startswith("--"):
+            current = options.setdefault(arg, [])
+        elif current is not None:
+            current.append(arg)
+    if options.get("--output") != ["json"] or not options.get("--region"):
+        fail("expected --region and --output json, got %r" % options)
+    saved = "/fake-ec2/%s.json" % action
+    if os.path.isfile(saved):
+        with open(saved) as handle:
+            sys.stdout.write(handle.read())
+        return
+    if action == "describe-instance-types":
+        (instance_type,) = options["--instance-types"]
+        path = "/fake-ec2/describe-instance-types-%s.json" % instance_type
+        if not os.path.isfile(path):
+            fail("An error occurred (InvalidInstanceType) when calling the DescribeInstanceTypes operation: The following supplied instance types do not exist: [%s]" % instance_type)
+        with open(path) as handle:
+            sys.stdout.write(handle.read())
+        return
+    if action == "describe-volumes":
+        (filter_text,) = options["--filters"]
+        instance = filter_text.split("Values=", 1)[1]
+        answer = {"Volumes": [{
+            "Attachments": [{"DeleteOnTermination": True, "VolumeId": VOLUME, "InstanceId": instance, "Device": "/dev/xvda",
+                             "State": "attached", "AttachTime": "2026-11-11T00:00:00+00:00"}],
+            "AvailabilityZone": "us-east-2c", "AvailabilityZoneId": "use2-az3", "CreateTime": "2026-11-11T00:00:00+00:00",
+            "Encrypted": False, "Size": 8, "SnapshotId": "snap-0123456789abcdef0", "State": "in-use", "VolumeId": VOLUME,
+            "Iops": 3000, "VolumeType": "gp3", "MultiAttachEnabled": False, "Throughput": 125, "OwnerId": ACCOUNT}]}
+    elif action == "describe-volume-status":
+        answer = {"VolumeStatuses": [{
+            "Actions": [], "AvailabilityZone": "us-east-2c", "AvailabilityZoneId": "use2-az3", "Events": [], "VolumeId": volume,
+            "VolumeStatus": {"Details": [{"Name": "io-enabled", "Status": "passed"}, {"Name": "io-performance", "Status": "normal"},
+                                         {"Name": "initialization-state", "Status": "initializing"}], "Status": "ok"},
+            "InitializationStatusDetails": {"InitializationType": "default", "Progress": 42}} for volume in options["--volume-ids"]]}
+    else:
+        (instance,) = options["--instance-ids"]
+        answer = {"Reservations": [{"Groups": [], "OwnerId": ACCOUNT, "ReservationId": "r-0123456789abcdef0", "Instances": [{
+            "InstanceId": instance, "ImageId": "ami-0123456789abcdef0", "State": {"Code": 16, "Name": "running"},
+            "Placement": {"AvailabilityZone": "us-east-2c", "AvailabilityZoneId": "use2-az3", "Tenancy": "default"},
+            "RootDeviceName": "/dev/xvda", "RootDeviceType": "ebs",
+            "BlockDeviceMappings": [{"DeviceName": "/dev/xvda", "Ebs": {"VolumeId": VOLUME, "Status": "attached",
+                                                                       "DeleteOnTermination": True, "AttachTime": "2026-11-11T00:00:00+00:00"}}]}]}]}
+    json.dump(answer, sys.stdout, indent=4)
+    sys.stdout.write("\n")
+
+
 def main(args):
+    if args[:1] == ["ec2"]:
+        ec2(args[1:])
+        return
     if args[:2] not in (["s3", "cp"], ["s3", "sync"]):
-        fail("only `aws s3 cp` and `aws s3 sync` are stubbed, got: aws " + " ".join(args))
+        fail("only `aws s3 cp` and `aws s3 sync`, and four EC2 calls, are stubbed, got: aws " + " ".join(args))
     syncing = args[1] == "sync"
     size_only = False
     recursive = syncing

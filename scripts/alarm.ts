@@ -3,14 +3,22 @@
  * hours before "now", and opens one GitHub issue listing them, or comments on
  * the alarm issue already open instead of opening a second.
  *
- *     bun scripts/alarm.ts --runs DIR --copy succeeded|failed [--now 2026-11-12T22:40:00Z] [--dry-run]
+ *     bun scripts/alarm.ts --runs DIR --copy succeeded|failed --schedule-changed-at ISO-8601
+ *         [--now 2026-11-12T22:40:00Z] [--schedule FILE] [--dry-run]
  *
- * A watched Series is one schedule.json lists (benchmark, params, build) at a
- * placement the stage launches (infra/runs/placement.ts: instance type and
- * zone). A Series from a one-off launch elsewhere is not watched, and one
- * taken out of the schedule is not watched any more. Any Run counts as the
- * Series getting a Run, failed or not. A watched Series with no Run at all is
- * listed too.
+ * A watched Series is one schedule.json runs (benchmark, params, build) on one
+ * of its targets (instance type and zone), where the entry's instance_types,
+ * if it has any, include the target's. The stage launches exactly those
+ * targets (infra/runs/placement.ts reads them from the same file). A Series
+ * from a one-off launch elsewhere is not watched, and one taken out of the
+ * schedule is not watched any more. Any Run counts as the Series getting a
+ * Run, failed or not.
+ *
+ * A watched Series that has never had a Run is stale only once the schedule
+ * has been unchanged for 48 hours, so a Series is not reported the moment it
+ * is added. --schedule-changed-at is when schedule.json last changed, which
+ * the workflow takes from git: the commit time of the last commit on main's
+ * first-parent line that changed it.
  *
  * --copy says whether this pass's copy job succeeded. When it failed, the Runs
  * repository may be behind the bucket, and every issue or comment says so at
@@ -28,7 +36,7 @@ import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 
-import { PLACEMENTS, type Placement } from "../infra/runs/placement";
+import { appliesTo, parseSchedule, type Schedule } from "../infra/runs/schedule";
 import { canonicalJson, compareText, type ParamValue, type RunFile } from "../methods/run";
 import { readRunFiles } from "./lib/run-files";
 import { RUNS_REPOSITORY_BLOB_URL } from "./lib/runs-repository";
@@ -39,10 +47,6 @@ export const ALARM_MARKER = "<!-- ledgermath-alarm: stale-series -->";
 /** Begins the hidden marker each alarm post ends with: the state it reported. */
 export const STATE_MARKER = "<!-- ledgermath-alarm-state: ";
 export const ALARM_TITLE = "Stale Series: no Run for 48 hours";
-
-export interface Schedule {
-	benchmarks: Array<{ name: string; builds: string[]; params: Array<Record<string, ParamValue>> }>;
-}
 
 export interface WatchedSeries {
 	benchmark: string;
@@ -63,14 +67,15 @@ export interface StaleSeries extends WatchedSeries {
 	newest: NewestRun | null;
 }
 
-/** Every Series the schedule lists, at every placement. */
-export function watchedSeries(schedule: Schedule, placements: readonly Placement[]): WatchedSeries[] {
+/** Every Series the schedule runs: each entry's parameter sets and builds, on every target the entry is for. */
+export function watchedSeries(schedule: Schedule): WatchedSeries[] {
 	const watched: WatchedSeries[] = [];
-	for (const placement of placements) {
+	for (const target of schedule.targets) {
 		for (const benchmark of schedule.benchmarks) {
+			if (!appliesTo(benchmark, target.instance_type)) continue;
 			for (const params of benchmark.params) {
 				for (const build of benchmark.builds) {
-					watched.push({ benchmark: benchmark.name, params, build, instanceType: placement.instanceType, zone: placement.zone });
+					watched.push({ benchmark: benchmark.name, params, build, instanceType: target.instance_type, zone: target.zone });
 				}
 			}
 		}
@@ -115,8 +120,18 @@ function runFacts(file: RunFile): RunFacts | null {
 	};
 }
 
-/** The watched Series whose newest Run started more than maxAgeMs before now, or that have no Run. */
-export function staleSeries(watched: readonly WatchedSeries[], files: readonly RunFile[], now: Date, maxAgeMs = MAX_AGE_MS): StaleSeries[] {
+/**
+ * The watched Series whose newest Run started more than maxAgeMs before now,
+ * and those that have never had a Run once the schedule has been unchanged
+ * for more than maxAgeMs.
+ */
+export function staleSeries(
+	watched: readonly WatchedSeries[],
+	files: readonly RunFile[],
+	now: Date,
+	scheduleChangedAt: Date,
+	maxAgeMs = MAX_AGE_MS,
+): StaleSeries[] {
 	const newest = new Map<string, RunFacts>();
 	for (const file of files) {
 		const facts = runFacts(file);
@@ -128,6 +143,7 @@ export function staleSeries(watched: readonly WatchedSeries[], files: readonly R
 	for (const series of watched) {
 		const found = newest.get(watchKey(series.benchmark, series.params, series.build, series.instanceType, series.zone));
 		if (found !== undefined && now.getTime() - Date.parse(found.startedAt) <= maxAgeMs) continue;
+		if (found === undefined && now.getTime() - scheduleChangedAt.getTime() <= maxAgeMs) continue;
 		stale.push({ ...series, newest: found === undefined ? null : { id: found.id, path: found.path, startedAt: found.startedAt } });
 	}
 	return stale;
@@ -189,7 +205,7 @@ export function alarmText(stale: readonly StaleSeries[], now: Date, copyFailed: 
 		summary,
 		...(lines.length ? ["", ...lines] : []),
 		"",
-		"A watched Series is one `schedule.json` lists, at the instance type and zone the stage launches (`infra/runs/placement.ts`). Written by `scripts/alarm.ts`, which writes again only when the stale Series, or whether the copy job is failing, change.",
+		"A watched Series is one `schedule.json` runs on one of its targets, the instance types and zone the stage launches. Written by `scripts/alarm.ts`, which writes again only when the stale Series, or whether the copy job is failing, change.",
 		`${STATE_MARKER}${JSON.stringify(alarmState(stale, copyFailed))} -->`,
 	].join("\n");
 }
@@ -220,15 +236,16 @@ const sameState = (a: AlarmState, b: AlarmState): boolean =>
 /** One pass of the alarm. */
 export async function runAlarm(options: {
 	schedule: Schedule;
-	placements: readonly Placement[];
 	runs: readonly RunFile[];
 	now: Date;
+	/** When the schedule last changed: a Series that has never had a Run is not stale until 48 hours after. */
+	scheduleChangedAt: Date;
 	/** Whether this pass's copy job failed, so the Runs repository may be behind the bucket. */
 	copyFailed: boolean;
 	tracker: IssueTracker;
 	runUrlBase?: string;
 }): Promise<AlarmOutcome> {
-	const stale = staleSeries(watchedSeries(options.schedule, options.placements), options.runs, options.now);
+	const stale = staleSeries(watchedSeries(options.schedule), options.runs, options.now, options.scheduleChangedAt);
 	const open = await options.tracker.findOpen(ALARM_MARKER);
 	const text = alarmText(stale, options.now, options.copyFailed, options.runUrlBase);
 	if (open === null) {
@@ -321,18 +338,26 @@ async function main(): Promise<void> {
 			runs: { type: "string" },
 			now: { type: "string" },
 			schedule: { type: "string" },
+			"schedule-changed-at": { type: "string" },
 			copy: { type: "string" },
 			"dry-run": { type: "boolean" },
 		},
 	});
-	if (!values.runs || (values.copy !== "succeeded" && values.copy !== "failed")) {
-		console.error("usage: bun scripts/alarm.ts --runs DIR --copy succeeded|failed [--now ISO-8601] [--schedule FILE] [--dry-run]");
+	if (!values.runs || (values.copy !== "succeeded" && values.copy !== "failed") || values["schedule-changed-at"] === undefined) {
+		console.error(
+			"usage: bun scripts/alarm.ts --runs DIR --copy succeeded|failed --schedule-changed-at ISO-8601 [--now ISO-8601] [--schedule FILE] [--dry-run]\n" +
+				'  --schedule-changed-at: when the schedule last changed, such as "$(git log -1 --first-parent --format=%cI -- schedule.json)"',
+		);
 		process.exit(2);
 	}
 	const now = values.now === undefined ? new Date() : new Date(values.now);
 	if (Number.isNaN(now.getTime())) throw new Error(`--now ${values.now} is not a time`);
+	const scheduleChangedAt = new Date(values["schedule-changed-at"]);
+	if (values["schedule-changed-at"] === "" || Number.isNaN(scheduleChangedAt.getTime())) {
+		throw new Error(`--schedule-changed-at ${JSON.stringify(values["schedule-changed-at"])} is not a time`);
+	}
 	const schedulePath = values.schedule ?? join(resolve(import.meta.dir, ".."), "schedule.json");
-	const schedule = JSON.parse(readFileSync(schedulePath, "utf8")) as Schedule;
+	const schedule = parseSchedule(JSON.parse(readFileSync(schedulePath, "utf8")), schedulePath);
 
 	let tracker: IssueTracker;
 	if (values["dry-run"]) tracker = new DryRun();
@@ -344,11 +369,18 @@ async function main(): Promise<void> {
 	}
 	const runs = readRunFiles(values.runs);
 	const copyFailed = values.copy === "failed";
-	const outcome = await runAlarm({ schedule, placements: PLACEMENTS, runs, now, copyFailed, tracker });
-	const watched = watchedSeries(schedule, PLACEMENTS).length;
+	const outcome = await runAlarm({ schedule, runs, now, scheduleChangedAt, copyFailed, tracker });
+	const watched = watchedSeries(schedule);
+	// Those with no Run at all, whatever the schedule's age.
+	const neverRun = staleSeries(watched, runs, now, new Date(0)).filter((series) => series.newest === null).length;
 	if (copyFailed) console.log("the copy job failed on this pass: the Runs repository may be behind the bucket");
 	for (const series of outcome.stale) console.log(`stale: ${describeSeries(series)} (newest ${series.newest?.startedAt ?? "none"})`);
-	console.log(`${now.toISOString()}: ${outcome.stale.length} of ${watched} watched Series stale`);
+	if (neverRun > 0 && now.getTime() - scheduleChangedAt.getTime() <= MAX_AGE_MS) {
+		console.log(
+			`${neverRun} watched Series have never had a Run; schedule.json changed at ${scheduleChangedAt.toISOString()}, so they are stale only after ${new Date(scheduleChangedAt.getTime() + MAX_AGE_MS).toISOString()}`,
+		);
+	}
+	console.log(`${now.toISOString()}: ${outcome.stale.length} of ${watched.length} watched Series stale`);
 	if (outcome.action !== "none" && !values["dry-run"]) {
 		console.log(outcome.action === "unchanged" ? `nothing changed since the last post on issue #${outcome.issue}` : `${outcome.action} issue #${outcome.issue}`);
 	}

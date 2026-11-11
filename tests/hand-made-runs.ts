@@ -48,6 +48,13 @@ export interface HandMadeRun {
 	/** The stream stops after this many counted samples: no verified, no finished. */
 	crashAfter?: number;
 	quick?: boolean;
+	/**
+	 * Adds the sections the dump gained for the disk benchmarks, shaped like
+	 * runner/run.py's: block_stat and nvme_stats differ on every dump; provision,
+	 * ec2_volumes and ec2_instance on every boot; ec2_instance_type holds this
+	 * catalog revision on every boot.
+	 */
+	diskSections?: { catalog?: string };
 }
 
 export const DEFAULT_PARAMS = { size_bytes: 1073741824, threads: 1, path: "scalar" };
@@ -79,7 +86,12 @@ export class HandMade {
 
 	private dump(
 		moment: "before" | "after",
-		o: Required<Pick<HandMadeRun, "processor" | "kernel" | "tscKhz" | "bogomips" | "cpuidLine" | "lscpuFlags">> & { boot: string; startedAt: string; n: number },
+		o: Required<Pick<HandMadeRun, "processor" | "kernel" | "tscKhz" | "bogomips" | "cpuidLine" | "lscpuFlags">> & {
+			boot: string;
+			startedAt: string;
+			n: number;
+			diskSections: HandMadeRun["diskSections"];
+		},
 	): string {
 		// Shaped like runner/cpuid.c's output and lscpu -J's, for four CPUs.
 		const hex = (value: number): string => `0x${value.toString(16).padStart(8, "0")}`;
@@ -123,8 +135,24 @@ export class HandMade {
 			process: this.section({ allowed_cpus: [0, 1, 2, 3] }),
 			packages: this.section({ "$ rpm -qa (sorted)": { exit: 0, stderr: "", stdout: "gcc-11.5.0\nglibc-2.34\n" } }),
 			provider: this.section({ "http://169.254.169.254/latest/meta-data/instance-id": `i-${o.boot}` }),
+			...(o.diskSections === undefined ? {} : this.diskSections(moment, o.boot, o.n, o.diskSections.catalog ?? "revision 1")),
 		};
 		return this.put(`${JSON.stringify({ schema: "ledgermath.dump/1", taken_at: o.startedAt, sections }, null, 2)}\n`);
+	}
+
+	private diskSections(moment: "before" | "after", boot: string, n: number, catalog: string): Record<string, string> {
+		const reads = 1000 * n + (moment === "before" ? 1 : 2);
+		const command = (stdout: string) => ({ exit: 0, stderr: "", stdout });
+		return {
+			block_stat: this.section({ "/sys/block/nvme0n1/stat": `${reads} 0 ${reads * 8} 10 0 0 0 0 0 20 30\n` }),
+			nvme_stats: this.section({ "$ nvme amzn stats /dev/nvme0n1 -o json": command(`{"total_read_ops": ${reads}}\n`) }),
+			provision: this.section({
+				"/var/tmp/ledgermath/provision.json": `{"schema": "ledgermath.provision/1", "started_at": "${boot} 00:01", "steps": []}\n`,
+			}),
+			ec2_instance_type: this.section({ "$ aws ec2 describe-instance-types --instance-types c6i.8xlarge": command(`{"InstanceTypes": ["${catalog}"]}\n`) }),
+			ec2_volumes: this.section({ "$ aws ec2 describe-volumes": command(`{"Volumes": [{"VolumeId": "vol-${boot}"}]}\n`) }),
+			ec2_instance: this.section({ "$ aws ec2 describe-instances --instance-ids i-x": command(`{"InstanceId": "i-${boot}"}\n`) }),
+		};
 	}
 
 	/** Makes a Run, keeps it in files and its blobs in blobs, and returns it. */
@@ -194,8 +222,8 @@ export class HandMade {
 				instance_id: `i-${boot}`,
 			},
 			environment: {
-				before: this.dump("before", { processor, kernel, ...calibrated, boot, startedAt, n }),
-				after: this.dump("after", { processor, kernel, ...calibrated, boot, startedAt, n }),
+				before: this.dump("before", { processor, kernel, ...calibrated, boot, startedAt, n, diskSections: options.diskSections }),
+				after: this.dump("after", { processor, kernel, ...calibrated, boot, startedAt, n, diskSections: options.diskSections }),
 			},
 			runner: this.put("a runner manifest"),
 			exit: options.exit ?? { code: 0 },

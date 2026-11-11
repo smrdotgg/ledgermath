@@ -5,10 +5,13 @@ The schedule is schedule.json at the root of the source tree. It is not part of
 the runner: a Run carries its own parameters, so editing the schedule changes
 no recorded fact of any Run it does not touch.
 
-For each benchmark in the schedule it builds every named build, then runs each
+For each benchmark entry in the schedule that is for this box's instance type
+(an entry without instance_types is for every type), it builds every named
+build, once per benchmark however many entries name it, then runs each
 parameter set under each build. Around every execution it dumps the box's
 environment, and it records what happened without judging it: a crash, a
-timeout, and a clean exit all produce a Run.
+timeout, and a clean exit all produce a Run. The executions of entries for
+other instance types are listed in the boot summary under left_out.
 
 Everything is written under --out, ready to be copied to the bucket as it is:
 
@@ -121,11 +124,11 @@ def read_files(patterns):
     return found
 
 
-def run_command(arguments, timeout=60):
+def run_command(arguments, timeout=60, environment=None):
     """Runs a command for the dump and returns what it printed, verbatim."""
     try:
         done = subprocess.run(arguments, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                              stderr=subprocess.PIPE, timeout=timeout)
+                              stderr=subprocess.PIPE, timeout=timeout, env=environment)
     except (OSError, subprocess.TimeoutExpired) as error:
         return {"error": str(error)}
     return {
@@ -197,6 +200,42 @@ def provider_fields(imds):
 
 CPU = "/sys/devices/system/cpu"
 NODE = "/sys/devices/system/node"
+LSBLK_COLUMNS = ("NAME,TYPE,SIZE,MODEL,SERIAL,ROTA,FSTYPE,MOUNTPOINT,MAJ:MIN,PKNAME,LOG-SEC,PHY-SEC,MIN-IO,OPT-IO,"
+                 "DISC-GRAN,DISC-MAX,RA,RQ-SIZE,SCHED,MOUNTPOINTS")
+
+
+def xfs_mounts(mountinfo):
+    """The mount points of XFS file systems, once per device, from /proc/self/mountinfo."""
+    found, devices = [], set()
+    for line in mountinfo.splitlines():
+        fields = line.split()
+        if " - " not in line or len(fields) < 5:
+            continue
+        after = line.split(" - ", 1)[1].split()
+        if after and after[0] == "xfs" and fields[2] not in devices:
+            devices.add(fields[2])
+            found.append(fields[4].replace("\\040", " "))
+    return found
+
+
+def nvme_stats(sys_root="/sys"):
+    """`nvme amzn stats` of every namespace of every Amazon NVMe controller (EBS
+    and instance store): the device's own I/O counters, read and write latency
+    histograms (28 power-of-two bins in microseconds), and the time it spent
+    over its IOPS and throughput limits. Taken before and after every Run, so
+    the change over a Run is the device's own account of it. nvme-cli 2.13
+    names every counter as EBS's; on an instance-store disk the limits it
+    exceeded are counted in the fields named ec2_instance_ebs_performance_exceeded_*."""
+    stats = {}
+    for controller in sorted(glob.glob(os.path.join(sys_root, "class", "nvme", "nvme[0-9]*"))):
+        model = (read_text(os.path.join(controller, "model")) or "").strip()
+        if not model.startswith("Amazon"):
+            continue
+        for namespace in sorted(glob.glob(os.path.join(controller, "nvme[0-9]*n[0-9]*"))):
+            name = os.path.basename(namespace)
+            arguments = ["nvme", "amzn", "stats", "/dev/" + name, "-o", "json"]
+            stats[command_key(arguments)] = run_command(arguments, timeout=10)
+    return stats
 
 
 def dump_sections(cpuid_tool, imds):
@@ -204,7 +243,9 @@ def dump_sections(cpuid_tool, imds):
 
     Each section maps a source, a path or a command line, to exactly what it
     returned. Sections are stored as separate blobs so the ones that do not
-    change (the processor, the kernel's settings) are stored once.
+    change (the processor, the kernel's settings) are stored once. What does
+    not change within a boot and costs a request to take (the EC2 API, the
+    provision record) is taken once, by boot_sections().
     """
     sections = {}
 
@@ -258,6 +299,8 @@ def dump_sections(cpuid_tool, imds):
         "/proc/sys/kernel/nmi_watchdog",
         "/proc/sys/kernel/sched_autogroup_enabled",
         "/proc/sys/vm/swappiness",
+        "/proc/sys/vm/dirty_*",
+        "/proc/sys/vm/dirtytime_expire_seconds",
         "/proc/sys/vm/overcommit_memory",
         "/proc/sys/vm/zone_reclaim_mode",
         "/proc/sys/vm/nr_hugepages",
@@ -294,6 +337,14 @@ def dump_sections(cpuid_tool, imds):
         "/sys/block/*/queue/physical_block_size",
         "/sys/block/*/queue/nr_requests",
         "/sys/block/*/queue/read_ahead_kb",
+        "/sys/block/*/queue/write_cache",
+        "/sys/block/*/queue/fua",
+        "/sys/block/*/queue/max_sectors_kb",
+        "/sys/block/*/queue/max_hw_sectors_kb",
+        "/sys/block/*/queue/discard_*",
+        "/sys/block/*/queue/nomerges",
+        "/sys/block/*/queue/io_poll",
+        "/sys/block/*/queue/wbt_lat_usec",
         "/sys/class/dmi/id/sys_vendor",
         "/sys/class/dmi/id/product_name",
         "/sys/class/dmi/id/product_version",
@@ -304,10 +355,18 @@ def dump_sections(cpuid_tool, imds):
         "/sys/class/dmi/id/board_name",
         "/sys/class/dmi/id/chassis_type",
     ])
-    for arguments in (["lsblk", "-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,SERIAL,ROTA,FSTYPE,MOUNTPOINT"],
-                      ["findmnt", "-J"]):
+    for arguments in (["lsblk", "-J", "-b", "-o", LSBLK_COLUMNS], ["findmnt", "-J"]):
+        devices[command_key(arguments)] = run_command(arguments)
+    for mount_point in xfs_mounts(read_text("/proc/self/mountinfo") or ""):
+        arguments = ["xfs_info", mount_point]
         devices[command_key(arguments)] = run_command(arguments)
     sections["devices"] = devices
+
+    # What changes on every read is kept apart, so `devices` is stored once
+    # per boot: each block device's I/O counters, and the Amazon NVMe disks'
+    # own counters and latency histograms.
+    sections["block_stat"] = read_files(["/sys/block/*/stat", "/sys/block/*/*/stat"])
+    sections["nvme_stats"] = nvme_stats()
 
     process = read_files(["/proc/self/limits", "/proc/self/cgroup"])
     process["allowed_cpus"] = sorted(os.sched_getaffinity(0))
@@ -326,14 +385,68 @@ def dump_sections(cpuid_tool, imds):
     return sections
 
 
-def take_dump(blobs, cpuid_tool, imds):
-    """Dumps the environment and returns the hash of the dump's index."""
+def section_bytes(section):
+    return (json.dumps(section, sort_keys=True, indent=1, ensure_ascii=False) + "\n").encode("utf-8")
+
+
+def take_dump(blobs, cpuid_tool, imds, boot_sections=None):
+    """Dumps the environment and returns the hash of the dump's index.
+    boot_sections maps the names of the sections taken once per boot to their
+    hashes; every index lists them too."""
     taken_at = time.time_ns()
     index = {"schema": DUMP_SCHEMA, "taken_at": rfc3339(taken_at), "sections": {}}
     for name, section in dump_sections(cpuid_tool, imds).items():
-        data = (json.dumps(section, sort_keys=True, indent=1, ensure_ascii=False) + "\n").encode("utf-8")
-        index["sections"][name] = blobs.put(data)
+        index["sections"][name] = blobs.put(section_bytes(section))
+    index["sections"].update(boot_sections or {})
     return blobs.put(as_json(index))
+
+
+# ---- what is taken once per boot ----
+
+def ec2_sections(imds):
+    """What the EC2 API says about this box, once per boot, in three sections
+    of their own: the instance type's catalog record, the volumes attached and
+    their status, and the instance's own record. The calls are read-only
+    (infra/runs/stack.ts gives the box's role exactly these four actions), and
+    one that fails is recorded with what it printed, never fatal."""
+    instance_id = imds.get("meta-data/instance-id")
+    instance_type = imds.get("meta-data/instance-type")
+    region = imds.get("meta-data/placement/region")
+    names = ("ec2_instance_type", "ec2_volumes", "ec2_instance")
+    if not (instance_id and instance_type and region):
+        return {name: {"not taken": "IMDS gave no instance id, instance type or region"} for name in names}
+    environment = dict(os.environ, AWS_PAGER="")
+
+    def call(*arguments):
+        arguments = ["aws", "ec2"] + list(arguments) + ["--region", region, "--output", "json"]
+        return command_key(arguments), run_command(arguments, timeout=90, environment=environment)
+
+    sections = {}
+    key, result = call("describe-instance-types", "--instance-types", instance_type)
+    sections["ec2_instance_type"] = {key: result}
+    key, volumes = call("describe-volumes", "--filters", "Name=attachment.instance-id,Values=" + instance_id)
+    sections["ec2_volumes"] = {key: volumes}
+    try:
+        ids = sorted(volume["VolumeId"] for volume in json.loads(volumes["stdout"])["Volumes"])
+    except (KeyError, TypeError, ValueError):
+        ids = []
+    if ids:
+        key, status = call("describe-volume-status", "--volume-ids", *ids)
+        sections["ec2_volumes"][key] = status
+    else:
+        sections["ec2_volumes"]["$ aws ec2 describe-volume-status"] = {"not taken": "describe-volumes gave no volume ids"}
+    key, result = call("describe-instances", "--instance-ids", instance_id)
+    sections["ec2_instance"] = {key: result}
+    return sections
+
+
+def boot_sections(blobs, imds, provision_record):
+    """The sections taken once per boot, stored once: their names and hashes."""
+    sections = ec2_sections(imds)
+    if provision_record:
+        # runner/provision.py's record, verbatim: what box.sh did to the disks.
+        sections["provision"] = {provision_record: read_text(provision_record)}
+    return {name: blobs.put(section_bytes(section)) for name, section in sections.items()}
 
 
 # ---- building ----
@@ -525,6 +638,24 @@ def put_tree(blobs, directory, skip=("build", "__pycache__")):
 
 # ---- the schedule ----
 
+def check_instance_types(schedule):
+    """The one check of the schedule made here (infra/runs/schedule.ts makes the
+    rest before a deploy): instance_types, when given, is a list of names, so
+    `in` below never matches part of a string."""
+    for benchmark in schedule["benchmarks"]:
+        types = benchmark.get("instance_types")
+        if types is not None and not (isinstance(types, list) and all(isinstance(t, str) for t in types)):
+            raise ValueError("%s: instance_types must be a list of instance types, got %r" % (benchmark["name"], types))
+
+
+def applies(benchmark, instance_type):
+    """Whether a schedule entry is for a box of this instance type. An entry
+    without instance_types is for every type; one with them is never for a box
+    whose type IMDS did not give."""
+    types = benchmark.get("instance_types")
+    return types is None or (instance_type is not None and instance_type in types)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Run the schedule on this box and write one Run per execution.")
     parser.add_argument("--root", required=True, help="the source tree (holds benchmarks/ and runner/)")
@@ -533,6 +664,7 @@ def main():
     parser.add_argument("--source-commit", required=True, help="the git commit the source tree was archived from")
     parser.add_argument("--source-archive", required=True, help="the archive the source tree was unpacked from")
     parser.add_argument("--cpuid", help="the built runner/cpuid.c; without it the dump has no cpuid section")
+    parser.add_argument("--provision-record", help="runner/provision.py's record, dumped as the section provision")
     parser.add_argument("--quick", action="store_true", help="developer mode: pass --quick to every binary")
     args = parser.parse_args()
 
@@ -553,6 +685,8 @@ def main():
     cpuid_tool = os.path.abspath(args.cpuid) if args.cpuid else None
     log("boot=%s provider=%s source_commit=%s source=%s runner=%s"
         % (boot, json.dumps(provider), args.source_commit, source, runner))
+    once = boot_sections(blobs, imds, args.provision_record)
+    log("taken once for this boot: %s" % ", ".join("%s %s" % item for item in sorted(once.items())))
 
     boot_started = time.time_ns()
     summary = {
@@ -566,25 +700,47 @@ def main():
         "runs": [],
         "build_failures": [],
         "not_run": [],
+        "left_out": [],
     }
     day = datetime.datetime.fromtimestamp(boot_started // 10 ** 9, datetime.timezone.utc)
 
     def not_run(name, build_name, params):
         summary["not_run"].append({"benchmark": name, "build": build_name, "params": params})
 
+    instance_type = provider.get("instance_type")
+    # (benchmark, build) -> what build() returned, or None when it failed. Two
+    # entries of one benchmark share its binaries.
+    builds = {}
+
     try:
+        check_instance_types(schedule)
         for benchmark in schedule["benchmarks"]:
             name = benchmark["name"]
+            if not applies(benchmark, instance_type):
+                for params in benchmark["params"]:
+                    for build_name in benchmark["builds"]:
+                        summary["left_out"].append({"benchmark": name, "build": build_name, "params": params,
+                                                    "instance_types": benchmark["instance_types"]})
+                log("left out %s %s: for %s only, and this box is %s"
+                    % (name, json.dumps(benchmark["params"]), ", ".join(benchmark["instance_types"]),
+                       instance_type or "of a type IMDS did not give"))
+                continue
             built = []
             unbuilt = []  # told to stop before these were built
             for build_name in benchmark["builds"]:
+                if (name, build_name) in builds:
+                    if builds[(name, build_name)] is not None:
+                        built.append(builds[(name, build_name)])
+                    continue
                 if stopping():
                     unbuilt.append(build_name)
                     continue
                 try:
-                    built.append(build(root, name, build_name, blobs))
+                    builds[(name, build_name)] = build(root, name, build_name, blobs)
+                    built.append(builds[(name, build_name)])
                     log("built %s %s %s" % (name, build_name, built[-1]["record"]["blob"]))
                 except BuildFailed as error:
+                    builds[(name, build_name)] = None
                     log("BUILD FAILED: %s" % error)
                     summary["build_failures"].append({"benchmark": name, "build": build_name, "message": str(error)})
 
@@ -602,7 +758,7 @@ def main():
                     environment = {"LM_PARAM_" + key.upper(): param_text(value) for key, value in params.items()}
                     environment["LM_SAMPLES"] = str(benchmark["samples"])
 
-                    before = take_dump(blobs, cpuid_tool, imds)
+                    before = take_dump(blobs, cpuid_tool, imds, once)
                     if stopping():
                         not_run(name, build_name, params)
                         continue
@@ -614,7 +770,7 @@ def main():
                         summary["build_failures"].append(
                             {"benchmark": name, "build": build_name, "message": "could not start: %s" % error})
                         continue
-                    after = take_dump(blobs, cpuid_tool, imds)
+                    after = take_dump(blobs, cpuid_tool, imds, once)
 
                     events, events_error = parse_events(stdout)
                     run = {
@@ -664,8 +820,8 @@ def main():
         summary["ended_at"] = rfc3339(time.time_ns())
         boot_path = os.path.join(out, "boots", day.strftime("%Y/%m/%d"), (boot or "unknown") + ".json")
         write_atomically(boot_path, as_json(summary))
-        log("wrote %d runs; %d failures; %d not run" % (
-            len(summary["runs"]), len(summary["build_failures"]), len(summary["not_run"])))
+        log("wrote %d runs; %d failures; %d not run; %d left out for other instance types" % (
+            len(summary["runs"]), len(summary["build_failures"]), len(summary["not_run"]), len(summary["left_out"])))
 
     if Stop.signal is not None:
         return 128 + Stop.signal

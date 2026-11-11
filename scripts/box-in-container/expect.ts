@@ -4,18 +4,27 @@
 //   bun scripts/box-in-container/expect.ts <scenario> <bucket dir> <exit status> <run.sh OUT>
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 
+import { appliesTo, type Schedule } from "../../infra/runs/schedule";
+import { checkDiskRuns } from "../check-disk-runs";
 import { checkBucketDirectory, type RunRecord } from "../check-runs";
 
+interface Execution {
+	benchmark: string;
+	build: string;
+	params: unknown;
+}
+
 interface BootSummary {
+	provider: { instance_type?: string | null };
 	runs: Array<{ id: string }>;
 	not_run: unknown[];
 	build_failures: unknown[];
+	left_out: Array<Execution & { instance_types: string[] }>;
 	stopped_by?: number;
 }
 
-const ROOT = resolve(import.meta.dir, "..", "..");
 const args = process.argv.slice(2);
 if (args.length !== 4) {
 	console.error("usage: expect.ts <scenario> <bucket dir> <exit status> <run.sh OUT>");
@@ -39,7 +48,6 @@ const readJson = <T>(path: string): T => JSON.parse(readFileSync(path, "utf8")) 
 
 const status = Number(statusText);
 const runs = filesUnder("runs", ".json").map((path) => readJson<RunRecord>(path));
-const boots = filesUnder("boots", ".json").map((path) => readJson<BootSummary>(path));
 const logs = filesUnder("logs", ".log");
 const log = logs[0] ? readFileSync(logs[0], "utf8") : "";
 const putsPath = join(out, "calls", "puts.log");
@@ -47,8 +55,21 @@ const puts = existsSync(putsPath) ? readFileSync(putsPath, "utf8").trim().split(
 const blobPuts = puts.filter((key) => key.startsWith("blobs/"));
 const powerPath = join(out, "calls", "power.log");
 const power = existsSync(powerPath) ? readFileSync(powerPath, "utf8").trim().split("\n") : [];
-const schedule = readJson<{ benchmarks: Array<{ builds: string[]; params: unknown[] }> }>(join(ROOT, "schedule.json"));
-const planned = schedule.benchmarks.reduce((sum, b) => sum + b.builds.length * b.params.length, 0);
+// The schedule.json the box booted with, which run.sh saved.
+const schedule = readJson<Schedule>(join(out, "schedule.json"));
+const executionKey = (benchmark: unknown, build: unknown, params: unknown): string => JSON.stringify([benchmark, build, params]);
+const boots = filesUnder("boots", ".json").map((path) => readJson<BootSummary>(path));
+const boot = boots[0];
+// The executions the schedule names for the type the box said it was, and the
+// ones for other types, which it leaves out.
+const instanceType = boot?.provider.instance_type ?? null;
+const executions = (forThisType: boolean): Execution[] =>
+	schedule.benchmarks
+		.filter((entry) => appliesTo(entry, instanceType) === forThisType)
+		.flatMap((entry) => entry.params.flatMap((params) => entry.builds.map((build) => ({ benchmark: entry.name, build, params }))));
+const scheduled = executions(true);
+const others = executions(false);
+const planned = scheduled.length;
 
 // Every scenario: the timer first, a shutdown last, and the log in the bucket.
 expect(power[0]?.startsWith("shutdown -h +45") === true, "the 45-minute timer was not the first thing set");
@@ -60,13 +81,114 @@ function everyRunChecksOut(): void {
 	for (const problem of result.problems) problems.push(`check-runs: ${problem}`);
 }
 
+// The whole schedule ran: one Run of every benchmark, build and parameter set it
+// names, each exiting 0. check-runs holds the stream of every Run that exited 0
+// to check-events.py, so together they say every execution worked.
+function everyExecutionRanOnceAndExitedZero(): void {
+	const seen = new Map<string, number>();
+	for (const run of runs) {
+		const key = executionKey(run.benchmark, (run.binary as { build?: unknown } | undefined)?.build, run.params);
+		seen.set(key, (seen.get(key) ?? 0) + 1);
+		expect(
+			"code" in run.exit && run.exit.code === 0 && run.exit.runner_signal === undefined,
+			`run ${run.id} (${key}) exited ${JSON.stringify(run.exit)}`,
+		);
+	}
+	for (const { benchmark, build, params } of scheduled) {
+		const key = executionKey(benchmark, build, params);
+		expect(seen.get(key) === 1, `${seen.get(key) ?? 0} Runs of ${key}, expected 1`);
+	}
+}
+
+// The boot summary lists every execution of an entry for other types under
+// left_out, in the schedule's order, and nothing else.
+function everyOtherExecutionLeftOut(): void {
+	const listed = (boot?.left_out ?? []).map((execution) => executionKey(execution.benchmark, execution.build, execution.params));
+	const expected = others.map((execution) => executionKey(execution.benchmark, execution.build, execution.params));
+	expect(
+		JSON.stringify(listed) === JSON.stringify(expected),
+		`the boot summary leaves out ${JSON.stringify(listed)}, expected ${JSON.stringify(expected)}`,
+	);
+}
+
+// Every mutex Run that exited 0 says where its threads ran: one CPU each, on
+// distinct cores or on one core as its placement asks; one cpu_pair event per
+// thread after the first; and every thread in mutex_threads.
+function mutexRunsSayWhereTheyRan(): void {
+	for (const run of runs) {
+		if (run.benchmark !== "mutex" || !("code" in run.exit) || run.exit.code !== 0) continue;
+		const params = run.params as { threads: number; placement: string };
+		const label = `mutex run ${run.id} ${JSON.stringify(params)}`;
+		const observed: Record<string, unknown> = Object.assign(
+			{},
+			...run.events.filter((event) => event.event === "observed").map((event) => event.values as Record<string, unknown>),
+		);
+		const cpus = String(observed.cpus).split(",");
+		const packages = String(observed.package_ids).split(",");
+		const cores = String(observed.core_ids)
+			.split(",")
+			.map((core, index) => `${packages[index]}/${core}`);
+		expect(
+			observed.threads_used === params.threads && new Set(cpus).size === params.threads && cores.length === params.threads,
+			`${label}: observed ${JSON.stringify(observed)}`,
+		);
+		if (params.placement === "distinct_cores") expect(new Set(cores).size === params.threads, `${label}: its threads share a core (${cores})`);
+		if (params.placement === "smt_siblings") expect(new Set(cores).size === 1, `${label}: its threads are on more than one core (${cores})`);
+		const pairs = run.events.filter((event) => event.event === "cpu_pair").length;
+		expect(pairs === params.threads - 1, `${label}: ${pairs} cpu_pair events, expected ${params.threads - 1}`);
+		const threads = run.events.find((event) => event.event === "mutex_threads")?.threads;
+		expect(Array.isArray(threads) && threads.length === params.threads, `${label}: mutex_threads does not list its ${params.threads} threads`);
+	}
+}
+
+// Every disk Run says which disk it measured, and its dump proves it
+// (scripts/check-disk-runs.ts). Here the root volume's disk directory is a
+// tmpfs of the container's own, so its Runs find no block device: accepted
+// here, and only here (acceptNoDevice); everything else is checked as on a box.
+function diskRunsTieToTheirDumps(): void {
+	const { problems: diskProblems } = checkDiskRuns(bucket, { acceptNoDevice: true });
+	for (const problem of diskProblems) problems.push(`check-disk-runs: ${problem}`);
+	expect(runs.some((run) => String(run.benchmark).startsWith("disk_")), "no disk Run, though the schedule names disk benchmarks");
+}
+
+// The container has no device node of this machine's disks, so provision.py
+// must have prepared none, whatever it found in /sys, and said why; and the
+// root volume's Fixture was made.
+function provisionPreparedNothing(): void {
+	const run = runs[0];
+	if (!run) return;
+	const index = readJson<{ sections: Record<string, string> }>(join(bucket, "blobs", "sha256", run.environment.before.replace("sha256:", "")));
+	const hash = index.sections.provision;
+	expect(hash !== undefined, "the dump has no provision section");
+	if (hash === undefined) return;
+	const section = readJson<Record<string, string | null>>(join(bucket, "blobs", "sha256", hash.replace("sha256:", "")));
+	const text = Object.values(section)[0];
+	expect(typeof text === "string", "the provision section holds no record");
+	if (typeof text !== "string") return;
+	const record = JSON.parse(text) as {
+		state?: string;
+		decisions: Array<{ what: string; action: string }>;
+		steps: Array<{ command: string[] }>;
+		fixtures: Array<{ disk: string; made: boolean }>;
+	};
+	const store = record.decisions.find((decision) => decision.what === "instance_store");
+	expect(store !== undefined && store.action !== "prepare", `provision.py's instance-store decision is ${JSON.stringify(store)}, expected none or refuse`);
+	expect(!record.steps.some((step) => step.command[0] === "mkfs.xfs" || step.command[0] === "mount"), "provision.py ran mkfs.xfs or mount in the container");
+	expect(record.state === "done" || record.state === "failed", `the provision record's state is ${String(record.state)}, expected done, or failed for the refusal`);
+	expect(record.fixtures.some((fixture) => fixture.disk === "root_volume" && fixture.made), "the root volume's Fixture was not made");
+}
+
 const interrupted = runs.filter((run) => run.exit.runner_signal !== undefined);
-const boot = boots[0];
 
 switch (scenario) {
 	case "ok": {
 		expect(status === 0, `exit status ${status}, expected 0`);
 		everyRunChecksOut();
+		everyExecutionRanOnceAndExitedZero();
+		everyOtherExecutionLeftOut();
+		mutexRunsSayWhereTheyRan();
+		diskRunsTieToTheirDumps();
+		provisionPreparedNothing();
 		expect(runs.length === planned, `${runs.length} Runs, expected ${planned}`);
 		expect(boots.length === 1, `${boots.length} boot summaries, expected 1`);
 		expect(boot?.stopped_by === undefined && boot?.not_run.length === 0, "the boot summary says it was stopped");
@@ -90,6 +212,7 @@ switch (scenario) {
 			(boot?.runs.length ?? 0) + (boot?.not_run.length ?? 0) + (boot?.build_failures.length ?? 0) === planned,
 			"the boot summary's runs and not_run do not add up to the schedule",
 		);
+		everyOtherExecutionLeftOut();
 		expect(runs.length === (boot?.runs.length ?? -1), "the bucket's Runs are not the boot summary's");
 		const last = [...runs].sort((a, b) => a.started_at.localeCompare(b.started_at)).at(-1);
 		if (scenario === "budget") {
@@ -118,6 +241,7 @@ switch (scenario) {
 		expect(log.includes("attempt 1 of 3 failed"), "the log does not show the failed first attempt");
 		expect(new Set(blobPuts).size === blobPuts.length, "the retry uploaded again blobs the first attempt had put in");
 		everyRunChecksOut();
+		everyExecutionRanOnceAndExitedZero();
 		expect(runs.length === planned, `${runs.length} Runs, expected ${planned}`);
 		expect(boots.length === 1, `${boots.length} boot summaries, expected 1`);
 		break;
@@ -125,10 +249,41 @@ switch (scenario) {
 	case "blobs-present": {
 		expect(status === 0, `exit status ${status}, expected 0`);
 		everyRunChecksOut();
+		everyExecutionRanOnceAndExitedZero();
 		expect(runs.length === planned, `${runs.length} Runs, expected ${planned}`);
 		const seeded = readFileSync(join(out, "seeded"), "utf8").trim().split("\n");
 		for (const key of seeded) expect(!puts.includes(key), `${key} was in the bucket already and was uploaded again`);
 		expect(blobPuts.length > 0, "no blob was uploaded at all");
+		break;
+	}
+	case "instance-types": {
+		expect(status === 0, `exit status ${status}, expected 0`);
+		expect(instanceType === "m5.large", `the boot summary says the box is ${instanceType}, expected the fake IMDS's m5.large`);
+		for (const run of runs) {
+			const type = (run.provider as { instance_type?: unknown }).instance_type;
+			expect(type === "m5.large", `run ${run.id} says it ran on ${String(type)}`);
+		}
+		everyRunChecksOut();
+		everyExecutionRanOnceAndExitedZero();
+		everyOtherExecutionLeftOut();
+		mutexRunsSayWhereTheyRan();
+		provisionPreparedNothing();
+		expect(
+			runs.some((run) => run.benchmark === "mutex" && (run.params as { threads?: unknown }).threads === 2),
+			"no two-thread mutex Run, which the scenario's schedule names for an m5.large",
+		);
+		expect(runs.length === planned && planned > 0, `${runs.length} Runs, expected ${planned}`);
+		expect(others.length > 0, "the schedule leaves nothing out on this type, so the scenario shows nothing");
+		expect(boot?.not_run.length === 0 && boot?.build_failures.length === 0, "the boot summary lists executions not run or builds that failed");
+		// Each benchmark that ran was built once per build, however many entries
+		// name it; one only for other types was not built at all.
+		for (const entry of schedule.benchmarks) {
+			for (const build of entry.builds) {
+				const built = log.split("\n").filter((line) => line.includes(`ledgermath-run: built ${entry.name} ${build} `)).length;
+				const wanted = schedule.benchmarks.some((other) => other.name === entry.name && other.builds.includes(build) && appliesTo(other, instanceType)) ? 1 : 0;
+				expect(built === wanted, `${entry.name} ${build} was built ${built} times, expected ${wanted}`);
+			}
+		}
 		break;
 	}
 	default:
@@ -139,5 +294,5 @@ for (const problem of problems) console.error(`FAIL ${scenario}: ${problem}`);
 if (problems.length > 0) process.exit(1);
 const stoppedIn = interrupted[0] ? `; stopped in run ${interrupted[0].id}, exit ${JSON.stringify(interrupted[0].exit)}` : "";
 console.log(
-	`ok ${scenario}: exit status ${status}, ${runs.length} Runs, ${boot?.not_run.length ?? 0} not run${stoppedIn}`,
+	`ok ${scenario}: exit status ${status}, ${runs.length} Runs, ${boot?.not_run.length ?? 0} not run, ${boot?.left_out?.length ?? 0} left out for other instance types${stoppedIn}`,
 );

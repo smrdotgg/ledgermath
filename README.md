@@ -16,21 +16,23 @@ until step 4 of the plan replaces it.
 
 | Path | What it is |
 |------|------------|
-| `benchmarks/harness/c/` | The C harness that prints the event stream |
-| `benchmarks/memory_read/` | The first benchmark on the stream, with a `Makefile` (`make BUILD=static`, `BUILD=dynamic`, `make -s compiler`, `make -s resolved`) |
-| `schedule.json` | What a box runs: benchmarks, builds, samples, timeout, parameter sets |
-| `runner/` | The box side: `box.sh` (user-data), `run.py` (builds, runs, dumps, writes Runs), `cpuid.c` |
+| `benchmarks/harness/c/` | The C harness that prints the event stream (`lm.h`, `lm.c`); `lm_event.h` and `lm_event.c`, which emit a benchmark's own events and further `observed` events; `lm_fixed.h` and `lm_fixed.c`, samples of fixed work; `lm_disk.h` and `lm_disk.c`, what a disk benchmark observes about its file and device; `lm_fixture.h`, the disk Fixture's pattern |
+| `benchmarks/<name>/` | One benchmark on the stream: its source, a `README.md` (what it measures, its parameters and observed values, how it differs from July's), and a `Makefile` (`make BUILD=static`, `BUILD=dynamic`, `make -s compiler`, `make -s resolved`). All thirteen: `memory_read`, `compressed_memory_read`, `memory_read_random`, `memory_write`, `syscall`, `hash`, `sort`, `tcp_echo`, `mutex`, `disk_read_random`, `disk_read_io_uring`, `disk_read_sequential`, `disk_write` |
+| `schedule.json` | The targets (instance types, their zone, the times of day each boots) and what a box runs: benchmarks, builds, samples, timeout, parameter sets, and the instance types an entry is for. Checked by `infra/runs/schedule.ts` |
+| `runner/` | The box side: `box.sh` (user-data), `provision.py` (prepares the disks at boot and records it), `fixture.c` (writes a disk Fixture), `run.py` (builds, runs, dumps, writes Runs), `cpuid.c` |
 | `schemas/` | `run.schema.json` (the Run) and `events.schema.json` (one line of the stream) |
 | `scripts/check-events.py` | Checks a stream's order; needs only Python 3 |
 | `scripts/check-runs.ts` | Checks a directory laid out like the bucket: schemas, every hash, events against stdout, runner manifests |
+| `scripts/check-disk-runs.ts` | Checks that every disk Run in such a directory found the disk it declares, that its evidence adds up, and that its dump bears it out |
+| `scripts/check-targets.ts` | Checks `schedule.json`'s targets' `vcpus`, their zone offerings and `vcpu_quota.limit` against AWS, read-only; needs AWS access, so not part of `bun test` |
 | `scripts/box-in-container/` | Boots `runner/box.sh` in Amazon Linux 2023 with S3 and shutdown stubbed, in several scenarios |
-| `infra/runs/` | The `-runs` SST stage: stack, launch Lambda, reaper, user-data, the placement it launches at, the workflow's AWS role |
+| `infra/runs/` | The `-runs` SST stage: stack, launch Lambda, reaper, user-data, the schedule's check (`schedule.ts`), the targets and their launch schedules (`placement.ts`), the workflow's AWS role |
 | `methods/` | Methods, versioned: `v1/` turns Runs into Derivations (`methods/README.md`) |
 | `scripts/copy-runs.ts` | The copy job: the bucket's Run files and boot summaries into the Runs repository |
 | `scripts/derive.ts`, `scripts/build-page.ts` | Run a Method over the Runs; turn its Derivations into the page |
 | `scripts/alarm.ts` | Opens, or comments on, one issue when a watched Series has had no Run for 48 hours |
 | `.github/workflows/runs.yml` | All four on a schedule: copy, push, derive, page, alarm |
-| `tests/` | `bun test`: the schemas against sample Runs, the Run checker, the runner's timeout and stop races, the launch and reap logic, the role, the Method, the copy job, the page, the alarm and the workflow |
+| `tests/` | `bun test`: the schemas against sample Runs, the Run checker, the schedule's check, the runner's timeout and stop races and its instance-type filtering, the dump's sections, the disk provisioning's decisions, the disk Fixture and the binaries' checks of it, the launch schedules, launch and reap logic, the box's and the workflow's roles, the Method, the copy job, the page, the alarm and the workflow |
 
 ## A benchmark, locally
 
@@ -45,17 +47,30 @@ LM_PARAM_SIZE_BYTES=1073741824 LM_PARAM_THREADS=all LM_PARAM_PATH=avx2 LM_SAMPLE
 ```
 
 `--quick` is a developer mode (small buffer, three samples); its stream is never recorded.
+Every benchmark directory works the same way; its `README.md` lists its `LM_PARAM_*`
+variables, and `schedule.json` the values a box gives them.
 
 ## Tests
 
 ```bash
 bun install
 bun test
+python3 scripts/check-scratch.py    # needs Docker
 ```
 
-`.github/workflows/check.yml` runs the tests and builds `memory_read`, then runs the static
-build with `--quick` as the only file in a `FROM scratch` container and checks its stream.
-No measured Run goes through Docker.
+`.github/workflows/check.yml` runs the tests, then `scripts/check-scratch.py`: it builds
+every benchmark that `schedule.json` builds static, and runs each binary as the only file
+in a `FROM scratch` container, once per parameter set with `--quick`, checking every
+stream. A parameter set that asks for CPUs this machine does not have, such as `mutex` on
+two distinct cores on a machine with one, is decided from the machine's topology and still
+run once; it is reported as skipped, with the reason, only when the binary refuses it in
+its own words (exit 2, `started` alone on stdout, and its refusal line for that set on
+stderr), and anything else fails. Every other set must pass. The disk benchmarks get a 64 MiB Fixture, made by `runner/fixture.c` in a new
+directory under `/tmp` (or `$LM_SCRATCH_DISK_DIR`) and mounted at each set's `dir`; under
+`--quick` they read at most 64 MiB of a span. `disk_read_io_uring` runs without Docker's
+seccomp filter, whose default refuses `io_uring`, and is skipped where the kernel refuses
+it (`kernel.io_uring_disabled`), held to the same rule. It then shows that the same container refuses
+`memory_read`'s dynamic build. No measured Run goes through Docker.
 
 To boot the box script the way a box does, in `amazonlinux:2023.12.20260710.0` (the
 release the pinned image is locked to), with the bucket as a local directory:
@@ -67,39 +82,82 @@ scripts/box-in-container/run.sh --scenario terminated /tmp/box-test     # see be
 ```
 
 Each scenario boots the box and checks what it should have left
-(`scripts/box-in-container/expect.ts`): `ok` (the whole schedule, about five minutes),
+(`scripts/box-in-container/expect.ts`): `ok` (the whole schedule for this machine's type
+as IMDS gives it, about nine minutes; this machine is not a target, so the entries naming
+instance types, `mutex`'s two-thread sets and the instance-store sets, are left out; every
+disk Run must tie to its dump, `scripts/check-disk-runs.ts`),
 `terminated` (run.py told to stop mid-execution), `shutdown` (every process told to stop,
 as a shutdown does), `budget` (the time budget runs out), `blobs-rejected` (the bucket
-refuses every blob), `blobs-flaky` (the first upload of blobs drops halfway) and
-`blobs-present` (the bucket already holds a blob the boot makes). The
-Runs describe this machine, seen from a container.
+refuses every blob), `blobs-flaky` (the first upload of blobs drops halfway),
+`blobs-present` (the bucket already holds a blob the boot makes) and `instance-types`
+(a fake IMDS says the box is an `m5.large`, and the box boots
+`scripts/box-in-container/instance-types.json` as its schedule: the entries for other
+types are left out and listed in the boot summary, and `mutex`'s one-thread and siblings
+sets run from one build, about two minutes). The Runs describe this machine, seen from a
+container; in `instance-types` their provider fields are the fake IMDS's. The stand-in
+`aws` answers the four EC2 calls the box makes (the catalog records saved in
+`scripts/box-in-container/ec2/`). The container has no device node of this machine's
+disks, so `provision.py` prepares none, whatever it finds in `/sys`, and the scenarios
+check that it did not; the root volume's disk directory is a tmpfs of the container's
+own (the schedule's 1 GiB Fixture and 1 GiB scratch file do not fit beside everything
+else on a development machine's disk), so the disk Runs there read and write memory and
+say so (`device_found` false). The container runs without a seccomp filter, as the box
+does.
 
 ## The daily box: a `-runs` stage
 
 Any SST stage whose name ends in `-runs` deploys `infra/runs/stack.ts`. Every other stage
 deploys July's stack, below, unchanged.
 
-Once a day at **22:10 UTC**, an hour before July's run, a Lambda launches one
-`c6i.8xlarge` from `ami-03499a87bbb39a09a` (Amazon Linux 2023.12.20260710.0, the image
-July has used since 2026-07-18) in `us-east-2c`. The Lambda is never retried, Lambda
-drops the invocation if it waited in Lambda's queue for more than a minute, and the
-handler refuses a scheduled launch more than ten minutes after its scheduled time, so a
-late box cannot overlap July's. A scheduled launch's EC2 client token comes from the
-stage and the scheduled time, so one slot can start at most one box. Its user-data is
+`schedule.json` names the targets: an instance type, its zone, and the times of day,
+UTC, it boots. Today there are five, all in `us-east-2c`, four boots a day each:
+
+| Type | vCPUs | Boots (UTC) |
+|------|-------|-------------|
+| `c6i.8xlarge` | 32 | 04:10, 10:10, 16:10, 22:10 |
+| `m5.large` | 2 | 04:20, 10:20, 16:20, 22:20 |
+| `c8i.2xlarge` | 8 | 04:30, 10:30, 16:30, 22:30 |
+| `c8a.2xlarge` | 8 | 04:40, 10:40, 16:40, 22:40 |
+| `i4i.2xlarge` | 8 | 04:50, 10:50, 16:50, 22:50 |
+
+The stage makes one EventBridge schedule per target, a cron listing its boot times (for
+`c6i.8xlarge`, `cron(10 4,10,16,22 * * ? *)`), and every schedule invokes the one launch
+Lambda with the scheduled time and the instance type. The Lambda launches one box of that
+type from `ami-03499a87bbb39a09a` (Amazon Linux 2023.12.20260710.0, the image July has
+used since 2026-07-18). The Lambda is never retried, Lambda drops the invocation if it
+waited in Lambda's queue for more than a minute, and the handler refuses a scheduled
+launch more than ten minutes after its scheduled time, so a late box cannot overlap boots
+the schedule keeps apart, and refuses a scheduled launch of a type that is not a target.
+A scheduled launch's EC2 client token comes from the stage, the instance type and the
+scheduled time, so one slot of one target can start at most one box. Its user-data is
 `runner/box.sh`, which:
 
 1. sets a shutdown timer that ends the box 45 minutes after it started, whatever happens;
-2. installs `gcc`, `make`, `glibc-static`, `tar`, `gzip` and `util-linux` from the image's
-   own release;
+2. installs `gcc`, `make`, `glibc-static`, `tar`, `gzip`, `util-linux`, `nvme-cli` and
+   `xfsprogs` from the image's own release;
 3. fetches `source/<commit>.tar.gz`, a `git archive` of the deployed commit, and refuses to
    go on if the archive's commit or its own text is not that commit's;
-4. builds `runner/cpuid.c` and runs `runner/run.py` until 35 minutes after the box
-   started. `run.py` builds every benchmark in `schedule.json` both static and dynamic and
-   writes one Run per execution. At 35 minutes it is sent TERM: it kills the binary it is
-   running, still writes that execution's Run, starts nothing more, writes the boot
-   summary, which lists what was not run, and exits. If it has not exited three minutes
-   later, it is killed outright;
-5. uploads the blobs the bucket does not hold yet, then the Runs and the boot summary, then
+4. builds `runner/cpuid.c` and `runner/fixture.c`, and prepares the disks with
+   `runner/provision.py` (below, "The disks"), which records everything it runs; nothing
+   it does or fails to do stops the boot;
+5. runs `runner/run.py` until 35 minutes after the box
+   started. `run.py` reads the box's instance type from IMDS and runs the entries of
+   `schedule.json` for it: every entry without `instance_types`, and every entry whose
+   `instance_types` names it. It builds each of their benchmarks once, in each build the
+   schedule names (`memory_read` static and dynamic, the others static), and writes one
+   Run per execution. At 35 minutes it is sent TERM: it kills the binary it is running, still
+   writes that execution's Run, starts nothing more, writes the boot summary, which lists
+   what was not run, and exits. If it has not exited three minutes later, it is killed
+   outright.
+
+   The budget is not always enough. The disk benchmarks run last, and each disk set may
+   run until its timeout of 180 seconds: on an `i4i.2xlarge` the eleven disk sets'
+   timeouts alone add up to 33 minutes (the six root-volume sets on the other types, 18
+   minutes), and provisioning, before `run.py`, may use up to 6 of the same 35 minutes.
+   So if a disk misbehaves and its sets run to their timeouts, the budget ends the boot:
+   the execution in flight still gets its Run, the rest are listed under `not_run`, and
+   what exists is uploaded. On the real boxes the whole boot took 13 and 10.5 minutes;
+6. uploads the blobs the bucket does not hold yet, then the Runs and the boot summary, then
    its log, and shuts down, which terminates the instance.
 
 The stage's bucket is versioned, so a second write to a key keeps the first. It ends up
@@ -115,6 +173,165 @@ source/<commit>.tar.gz               the deployed source
 
 A reaper runs every five minutes and terminates any box of the stage older than 50
 minutes. It touches nothing else; July's reaper cannot touch these boxes either.
+
+The box's role reads its source, lists `blobs/`, writes `runs/`, `blobs/`, `boots/` and
+`logs/`, and calls four read-only EC2 actions: `ec2:DescribeInstanceTypes`,
+`ec2:DescribeVolumes`, `ec2:DescribeVolumeStatus` and `ec2:DescribeInstances`
+(`infra/runs/box-role.ts`).
+
+### The disks
+
+The four disk benchmarks each name the disk a parameter set means, `"disk":
+"root_volume"` or `"instance_store"`, which makes the Series, and the directory the
+binary works in, `"dir"`. The binary never reads `disk`; it reports the file and device it
+found (`observed`) and the change in the device's counters over its measuring
+(`device_counters`). That change covers the whole measuring call, warmup samples and the
+gaps between samples included, and every request to the device in that time, whoever
+made it. So it shows that the device, not the page cache, served at least the bytes the
+measured reads asked for, and it gives upper bounds of the writes and flushes a durable
+write cost; it cannot tell the benchmark's requests from anyone else's. The `nvme amzn
+stats` histograms in the dump, taken before and after each Run, cover the whole process
+(a `disk_write` preparing its scratch file included) and everything else on the device.
+
+On a `-runs` box, before `run.py`, `runner/provision.py`:
+
+- finds the instance's own NVMe disk by its model, `Amazon EC2 NVMe Instance Storage`,
+  never by its kernel name, and prepares it only when it is the one disk the catalog
+  (`describe-instance-types`) lists and is empty: no partition, no holder, not mounted.
+  Information that is missing, empty or unreadable (a model, a serial, a size, a holders
+  directory, the mount table) is a refusal that says which, never a pass.
+  From then on the disk is its device number: provisioning makes a block device node of
+  its own for that `major:minor` (`mknod`, under `/dev/ledgermath`, which only root can
+  write), so the node it works through can never come to mean another device, and nothing
+  runs on the kernel's name for the disk. The node must be on a file system that allows
+  device nodes, which provisioning checks in `/proc/self/mountinfo` first: on the image
+  `/run` is mounted `nodev`, and a node there can be made but not opened, even by root;
+  `/dev` (devtmpfs) is not. It records the disk (`lsblk`, `blkid`, `nvme id-ctrl`, `nvme
+  id-ns`, `nvme amzn stats`), then opens it read-only and holds that descriptor until the
+  mounted file system is confirmed, so the kernel cannot release the number for another
+  disk in between. With it held, immediately before formatting, it checks everything
+  again: through the descriptor, the device number, the size and the first MiB; by the
+  number, the same disk in `/sys/dev/block/<major:minor>` (name, model, serial, size), no
+  partition, holder or mount; and `blkid -p` exits 2 and prints nothing (it also exits 2
+  when it cannot open the device). Then a default XFS file system (`mkfs.xfs`, never
+  forced), the mount point made, `mount -t xfs` at `/mnt/lm/instance-store`, and the
+  mounted file system's device number, by `stat` and by `/proc/self/mountinfo`, must be the
+  number checked, with the disk's model and serial still the ones checked. If the mount
+  fails or anything differs, the file system is unmounted and the mount point removed, so
+  an instance-store set finds no directory and fails, saying why, instead of running on
+  the root volume. Because the mount is made through that node, `findmnt` and a Run's
+  `mount_source` read `/dev/ledgermath/instance-store-259-1` (for device 259:1), not
+  `/dev/nvme1n1`.
+  Anything else is refused and recorded. Of the targets only `i4i.2xlarge` has such a disk
+  (one of 1,875 GB); the other types have no such step;
+- makes the Fixtures with `runner/fixture.c` (`O_DIRECT` writes of 1 MiB, then
+  `fdatasync`): 32 GiB on the instance store, and 1 GiB under `/var/tmp/ledgermath/disk` on
+  the root volume on every type. A Fixture not made whole is removed, and the root
+  volume's directory exists only when its Fixture was made;
+- writes every command, exit code, output and timing to
+  `/var/tmp/ledgermath/provision.json`, which every dump holds as the section `provision`.
+  The record is rewritten whole (written beside it, then renamed) as provisioning starts,
+  as each step starts and as it ends, so it always says what every step that started did,
+  the one in progress included.
+
+Every command it runs is in a process group of its own. A step that runs past its time,
+or is told to stop, has its whole group sent TERM, then KILL five seconds later; anything
+a step leaves running after it exits is killed too, and the record says so. Provisioning
+stops itself at 300 seconds, and on SIGTERM, SIGINT or SIGHUP: it records what stopped it
+and the output captured so far, undoes what is half done, and exits. `box.sh` runs it with
+`--supervise-seconds 330`, its outer limit: the work runs as a child in a session of its
+own, whose id the supervisor writes at once to `/var/tmp/ledgermath/provision.session`; it
+is sent TERM at 330 seconds and KILL 15 seconds later (5, when the supervisor is itself
+told to stop), and then every process left in that session is killed, any step whose end
+was not recorded is recorded from its output files, and what a killed provisioning left
+half done (a mount it did not verify, a partial Fixture, a root-volume directory without
+one) is undone. `box.sh`'s own limit, `timeout --kill-after=10 360`, is for a supervisor
+that is itself stuck. Whatever happened, once provisioning has returned, `box.sh`'s
+`provision_leftovers` kills every process left in that session, unmounts the instance
+store if the record does not say it was readied, removes an empty mount point with
+nothing mounted on it and any Fixture the record does not say was made whole (and the
+root volume's directory, if it is then empty), and writes what it did into the record
+under `box_sh`; when there is nothing to do, it writes nothing. So nothing of
+provisioning is running when the schedule starts, and the record is complete however
+provisioning ended. Provisioning took 44 seconds on a real `i4i.2xlarge`, so these
+limits, at most six minutes, are far from it.
+
+On a real `i4i.2xlarge` this took 43 seconds: `mkfs.xfs` 6 s (it discards the whole disk
+first), the 32 GiB Fixture 30 s, the root volume's 7 s. The root volume is the image's
+default, 8 GiB of gp3 (3000 IOPS, 125 MiB/s); with everything installed, the Fixture made
+and `disk_write`'s 1 GiB scratch file present, it still had 4.3 GB free.
+
+The dump gains, around every Run, `block_stat` (every `/sys/block/*/stat`) and
+`nvme_stats` (`nvme amzn stats` of every Amazon NVMe disk: its own counters, its read and
+write latency histograms, and the time it spent over its limits), kept apart from
+`devices`, which gains lsblk's sizes, queue and mount columns, the queue settings and
+`xfs_info` of every XFS file system; `kernel` gains `/proc/sys/vm/dirty_*`. Once per boot,
+stored once: `provision`, and what the EC2 API says, in three sections: `ec2_instance_type`
+(the catalog record), `ec2_volumes` (the volumes attached and their status, with their
+initialization state) and `ec2_instance` (the instance's own record). An API call that
+fails is recorded with what it printed. `ec2_volumes` and `ec2_instance` name the account,
+as the IMDS identity document in `provider` already does.
+
+`bun scripts/check-disk-runs.ts DIR` checks, for every disk Run in a directory laid out
+like the bucket, that the disk it found is the disk it declares (`instance_store`: an
+`Amazon EC2 NVMe Instance Storage` device mounted at exactly its `dir`; `root_volume`: an
+`Amazon Elastic Block Store` device holding the root file system; the binary never reads
+`disk`, the checker holds what each name means), that the device it names is in its dump
+(model and serial in `/sys` and `lsblk`, and `file_device` is lsblk's number for it), that
+its counters add up (`change` is `after` minus `before`) and lie between the dump's, that
+the device itself counted the reads and writes (`nvme amzn stats`), that an EBS serial
+`vol…` is a volume the EC2 API lists, with its type, size and limits, and that an
+instance-store disk is the one the provision record readied, by device number. Every
+number it compares must be present and finite.
+
+### Targets, boot times, and which types an entry runs on
+
+To add a boot time, add it to the target's `boots_utc`. To add a target, add
+`{ "instance_type": ..., "vcpus": ..., "zone": "us-east-2c", "boots_utc": [...] }` to
+`targets`. To run a
+benchmark entry on some types only, give it `"instance_types": [...]`; without it, it runs
+on every target. Two entries may have the same `name`, so one benchmark can run different
+parameter sets on different types:
+
+```json
+{ "name": "mutex", "builds": ["static"], "samples": 10, "timeout_seconds": 180,
+  "params": [{ "threads": 1, "placement": "one_cpu", "critical_section_lines": 1, "lock": "pthread_mutex_default", "idle_threads": 1 }] },
+{ "name": "mutex", "builds": ["static"], "samples": 10, "timeout_seconds": 180,
+  "instance_types": ["m5.large", "c6i.8xlarge", "c8i.2xlarge", "i4i.2xlarge"],
+  "params": [{ "threads": 2, "placement": "smt_siblings", "critical_section_lines": 1, "lock": "pthread_mutex_default", "idle_threads": 0 }] }
+```
+
+(`schedule.json` does this for `mutex`: `c8a.2xlarge` has one hardware thread per core,
+so it runs no siblings set, and `m5.large` has one core, so it runs no distinct-cores
+set.)
+
+Then `bun test`, commit, and deploy: the stage's schedules change only with a deploy, and
+a deploy stops if `schedule.json` fails its check (`infra/runs/schedule.ts`). The check
+refuses: a malformed target or time; a time listed twice for one target; a type listed as
+two targets; targets in more than one zone (the stage launches into one subnet); an
+`instance_types` value that is not a target's type; a key it does not know (so a
+misspelt `instance_types` cannot silently mean every type); the same parameter set twice
+for one benchmark, build and type; and, while July's pipeline runs, a `c6i.8xlarge` boot
+from 22:20 to 23:40 UTC, so it never overlaps July's 23:10 box (that rule goes when July's
+pipeline is retired). A target's boots usually share one minute past the hour and so make
+one schedule; boots at other minutes get a schedule each, named by the minute
+(`BoxLaunchC6i8xlargeAt10`).
+
+The check also keeps every box inside the account's vCPU quota, whatever the times.
+`"vcpu_quota": { "limit": 64, "reserved_outside_schedule": 4 }` declares the quota and
+the dev machine's share. Every target's `vcpus` added together, plus what is reserved,
+must fit the limit (58 + 4 = 62 of 64 today), and two boots of one target must be at least
+60 minutes apart, across midnight too, because a box lives at most 55 minutes. A new
+target's `vcpus` is AWS's `DefaultVCpus` for the type. Check every declared number against
+AWS, read-only, with `AWS_PROFILE=tabot-dev bun scripts/check-targets.ts`. While July's
+pipeline runs, its 23:10 box is the one thing these rules do not cover, hence the July
+rule.
+
+A boot's summary (`boots/<yyyy>/<mm>/<dd>/<boot>.json`) accounts for every execution the
+schedule names: `runs`; `not_run`, told to stop before starting it; `build_failures`, a
+build that failed, whose executions did not run; and `left_out`, each execution of an
+entry for other instance types, with the `instance_types` it is for. A box whose type
+IMDS did not give runs only the entries for every type.
 
 ### What a boot guarantees, and what it does not
 
@@ -156,9 +373,9 @@ Not guaranteed:
 - A Run is written only if its after-dump and blob writes succeed. If they fail, a full disk
   for example, `run.py` stops with an error, which the boot summary records as `error` if
   that write succeeds.
-- There is no boot at all when the launch is refused (late, or a duplicate of its slot),
-  waits in Lambda's queue for more than a minute, or fails. The launch function's log says
-  which.
+- There is no boot at all when the launch is refused (late, of a type that is not a
+  target, or a duplicate of its slot), waits in Lambda's queue for more than a minute, or
+  fails. The launch function's log says which.
 
 ### Deploy
 
@@ -166,20 +383,31 @@ Not guaranteed:
 aws sso login --profile tabot-dev
 bun install
 git status                        # must be clean (sst-env.d.ts aside): a deploy refuses a tree that differs from HEAD
+bunx sst diff --stage smr-runs    # what the deploy would add, change and delete; changes nothing
 bunx sst deploy --stage smr-runs  # the stage uses profile tabot-dev in us-east-2
 git checkout -- sst-env.d.ts      # SST rewrites it for the stage; the committed one is July's
 ```
 
-The stage's outputs (bucket, launch function, commit) are printed and written to
-`.sst/outputs.json`. Deploying a new commit is the only way the box's source changes.
+The stage's outputs (bucket, launch function, every target with its boot times and its
+schedules' cron expressions and payloads, commit) are printed and written to
+`.sst/outputs.json`. Deploying a new commit is the only way the box's source, or the
+schedules, change. Avoid deploying within ten minutes of a boot time: a schedule the
+deploy creates, changes or removes could miss its slot, and while an old schedule and its
+replacement both exist, one slot could launch twice.
 
 ### Trigger a boot by hand, and watch it
 
-Two 32-vCPU runners and the dev machine exceed the 64-vCPU quota. A box that fails to end
-itself lives until the reaper finds it, up to 55 minutes, so do not launch a `c6i.8xlarge`
-by hand between 21:15 and 23:30 UTC, when it could overlap the scheduled box or July's. A
-smoke test can name a smaller type, which fits beside either; its Runs are real Runs of
-that type. A launch by hand gets a fresh client token each time.
+A launch by hand names its instance type, any type, target or not; there is no default.
+It has no scheduled time, so it is never refused as late or as not a target, and it gets
+a fresh client token each time. Its Runs are real Runs of that type, and its box runs
+the entries of `schedule.json` for that type: every entry without `instance_types`, and
+those whose `instance_types` name it.
+
+Mind the quota. A box that fails to end itself lives until the reaper finds it, up to 55
+minutes. A 2-vCPU type such as `c6i.large` fits at any time (the worst moment holds 62 of
+64 vCPUs). Anything larger can meet the quota from HH:10 to HH+1:45 for HH = 04, 10, 16
+and 22, when the scheduled boxes may be up; a 32-vCPU type also from 23:10 until July's
+box has ended, while July's pipeline runs.
 
 ```bash
 export AWS_PROFILE=tabot-dev AWS_REGION=us-east-2
@@ -188,7 +416,7 @@ BUCKET=$(jq -r .bucket .sst/outputs.json)
 
 aws lambda invoke --function-name "$FN" --cli-binary-format raw-in-base64-out \
   --payload '{"instanceType": "c6i.large"}' /tmp/launch.json && cat /tmp/launch.json
-# or --payload '{}' for the configured c6i.8xlarge
+# any type: '{"instanceType": "i4i.2xlarge"}'; a payload without instanceType is an error
 
 aws ec2 describe-instances --filters Name=tag:ledgermath-stage,Values=smr-runs \
   --query 'Reservations[].Instances[].[InstanceId,InstanceType,State.Name,LaunchTime]' --output table
@@ -244,8 +472,10 @@ bun scripts/derive.ts --runs /tmp/ledgermath-runs --bucket "$BUCKET" --cache /tm
 # The page.
 bun scripts/build-page.ts /tmp/page/derivations.json /tmp/page/index.html
 
-# The alarm, posting nothing; --now sets the clock, --copy says whether the copy job worked.
-bun scripts/alarm.ts --runs /tmp/ledgermath-runs --copy succeeded --dry-run --now 2026-11-13T00:00:00Z
+# The alarm, posting nothing; --now sets the clock, --copy says whether the copy job worked,
+# --schedule-changed-at says when main last changed schedule.json.
+bun scripts/alarm.ts --runs /tmp/ledgermath-runs --copy succeeded --dry-run --now 2026-11-13T00:00:00Z \
+  --schedule-changed-at "$(git log -1 --first-parent --format=%cI origin/main -- schedule.json)"
 ```
 
 Without AWS, the samples are a directory of Runs with their blobs:
@@ -260,12 +490,13 @@ from, so a Derivation is checked by computing it again and comparing with `cmp`.
 
 ### The workflow
 
-`.github/workflows/runs.yml` runs at 22:40 UTC (half an hour after the boot), every six
-hours, and by hand (`workflow_dispatch`), one run at a time. It checks out this
-repository, takes AWS credentials through OIDC, checks out `smrdotgg/ledgermath-runs`
-with the deploy key, runs the copy job, commits and pushes what it added, runs the
-Method, builds the page, uploads the page and the Derivations as the artifact `page`,
-and runs the alarm with the workflow's own token. The alarm runs even when an earlier
+`.github/workflows/runs.yml` runs at 22:40 UTC (half an hour after the 22:10 boot), every
+six hours, and by hand (`workflow_dispatch`), one run at a time. It checks out this
+repository with its whole history (for the alarm's `--schedule-changed-at`), takes AWS
+credentials through OIDC, checks out `smrdotgg/ledgermath-runs` with the deploy key,
+runs the copy job, commits and pushes what it added, runs the Method, builds the page,
+uploads the page and the Derivations as the artifact `page`, and runs the alarm with the
+workflow's own token. The alarm runs even when an earlier
 step failed, as long as the Runs repository was checked out, and is told whether the copy
 and its push succeeded on this pass.
 
@@ -292,13 +523,22 @@ it.
 
 ### The alarm
 
-A watched Series is one `schedule.json` lists (benchmark, params, build) at the instance
-type and zone the stage launches, taken from `infra/runs/placement.ts`, which the stack
-uses too. A one-off launch on another instance type is not watched; a Series taken out of
-the schedule is not watched any more. When the newest Run of any watched Series started
-more than 48 hours ago, or a watched Series has no Run at all, the alarm opens one issue
-listing them all, or comments on the alarm issue already open (found by a marker in its
-body; no label). Any Run counts, failed or not.
+A watched Series is one `schedule.json` runs (benchmark, params, build) on one of its
+targets (instance type and zone), the same targets the stack launches: every entry on
+every target, except that an entry with `instance_types` is watched only on those. A
+one-off launch on another instance type is not watched; a Series taken out of the
+schedule is not watched any more. When the newest Run of any watched Series started more
+than 48 hours ago, the alarm opens one issue listing them all, or comments on the alarm
+issue already open (found by a marker in its body; no label). Any Run counts, failed or
+not.
+
+A watched Series that has never had a Run is listed only once `schedule.json` has been
+unchanged for more than 48 hours, so a Series is not reported the moment it is added.
+The workflow fetches the whole history and passes the alarm
+`--schedule-changed-at "$(git log -1 --first-parent --format=%cI -- schedule.json)"`: the
+commit time of the last commit on main's first-parent line that changed the file, which
+for a merge commit is the merge, not the branch commit it brought in. A fast-forward
+merge keeps the branch commit's time, which may be earlier than main got it.
 
 It writes only when something changed since its last post: the set of stale Series, or
 whether the copy job is failing. Each post ends with that state in a hidden marker, which
