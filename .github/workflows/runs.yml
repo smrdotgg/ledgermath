@@ -1,0 +1,106 @@
+# Step 3 of the plan (#36, brief #39). Copies new Run files and boot summaries
+# from the -runs stage's bucket into smrdotgg/ledgermath-runs and pushes them,
+# derives every Series with Method version 1, builds the page, keeps the page
+# and the Derivations as an artifact, and opens (or comments on) one issue when
+# a watched Series has had no Run for 48 hours.
+#
+# It needs, in this repository's settings (README, "The Runs repository, the
+# Method and the page"):
+#   variable RUNS_AWS_ROLE_ARN     the stage's runsReaderRole output
+#   variable RUNS_BUCKET           the stage's bucket output
+#   secret   RUNS_REPO_DEPLOY_KEY  the private half of a deploy key of
+#                                  smrdotgg/ledgermath-runs with write access
+name: runs
+
+on:
+  schedule:
+    - cron: "40 22 * * *" # half an hour after the 22:10 boot
+    - cron: "0 */6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write # the OIDC token AWS exchanges for the role
+  issues: write # the alarm
+
+concurrency:
+  group: runs
+  cancel-in-progress: false
+
+jobs:
+  runs:
+    name: copy the Runs, derive, build the page, check for stale Series
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      RUNS_BUCKET: ${{ vars.RUNS_BUCKET }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+
+      - run: bun install --frozen-lockfile
+
+      - name: AWS credentials for the bucket, through OIDC
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.RUNS_AWS_ROLE_ARN }}
+          aws-region: us-east-2
+
+      - name: Check out the Runs repository
+        id: runs-repository
+        uses: actions/checkout@v7
+        with:
+          repository: smrdotgg/ledgermath-runs
+          ref: main
+          ssh-key: ${{ secrets.RUNS_REPO_DEPLOY_KEY }}
+          path: ledgermath-runs
+
+      - name: Copy new Run files and boot summaries from the bucket
+        run: bun scripts/copy-runs.ts --bucket "$RUNS_BUCKET" ledgermath-runs
+
+      - name: Commit and push them to the Runs repository
+        working-directory: ledgermath-runs
+        run: |
+          for part in runs boots; do
+            if [ -d "$part" ]; then git add -- "$part"; fi
+          done
+          if git diff --cached --quiet; then
+            echo "nothing new in the bucket"
+            exit 0
+          fi
+          added=$(git diff --cached --name-only | wc -l)
+          git -c user.name="github-actions[bot]" \
+              -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+              commit -q -m "Add $added files from the bucket"
+          git push origin HEAD:main
+
+      - name: Keep the blobs fetched so far
+        uses: actions/cache@v6
+        with:
+          path: .cache/blobs
+          key: blobs-${{ github.run_id }}
+          restore-keys: blobs-
+
+      - name: Derive every Series (Method version 1)
+        run: bun scripts/derive.ts --runs ledgermath-runs --bucket "$RUNS_BUCKET" --cache .cache/blobs --out page/derivations.json
+
+      - name: Build the page
+        run: bun scripts/build-page.ts page/derivations.json page/index.html
+
+      - name: Keep the page and the Derivations
+        uses: actions/upload-artifact@v7
+        with:
+          name: page
+          path: page/
+          if-no-files-found: error
+
+      # Even when the copy, the Method or the page failed: the Runs repository
+      # as checked out still says which Series stopped getting Runs.
+      - name: Check for watched Series with no Run for 48 hours
+        if: ${{ !cancelled() && steps.runs-repository.outcome == 'success' }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: bun scripts/alarm.ts --runs ledgermath-runs
