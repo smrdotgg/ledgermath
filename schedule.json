@@ -1,4 +1,11 @@
 {
+  "targets": [
+    { "instance_type": "c6i.8xlarge", "zone": "us-east-2c", "boots_utc": ["04:10", "10:10", "16:10", "22:10"] },
+    { "instance_type": "m5.large", "zone": "us-east-2c", "boots_utc": ["04:20", "10:20", "16:20", "22:20"] },
+    { "instance_type": "c8i.2xlarge", "zone": "us-east-2c", "boots_utc": ["04:30", "10:30", "16:30", "22:30"] },
+    { "instance_type": "c8a.2xlarge", "zone": "us-east-2c", "boots_utc": ["04:40", "10:40", "16:40", "22:40"] },
+    { "instance_type": "i4i.2xlarge", "zone": "us-east-2c", "boots_utc": ["04:50", "10:50", "16:50", "22:50"] }
+  ],
   "benchmarks": [
     {
       "name": "memory_read",
