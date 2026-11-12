@@ -37,6 +37,7 @@ import {
 	seriesMoment,
 } from "./citation";
 import type { LedgerData, LoadedPrices } from "./ledger-data";
+import { agrees, type Dims, quantities } from "./quantity";
 import type { PriceSource } from "./prices";
 
 // ---------------------------------------------------------------- words
@@ -55,24 +56,41 @@ const paramsText = (params: Record<string, ParamValue>): string =>
 
 // ---------------------------------------------------------------- numbers as text
 
-/** A number to six significant digits, without an exponent or trailing zeros. */
-export function sig(value: number): string {
+/** A number to six significant digits (or `digits`), without an exponent or trailing zeros. */
+export function sig(value: number, digits = 6): string {
 	if (value === 0) return "0";
 	const magnitude = Math.floor(Math.log10(Math.abs(value)));
-	const decimals = Math.min(15, Math.max(0, 5 - magnitude));
+	const decimals = Math.min(15, Math.max(0, digits - 1 - magnitude));
 	const text = value.toFixed(decimals);
 	return text.includes(".") ? text.replace(/0+$/, "").replace(/\.$/, "") : text;
 }
 
-/** A time in nanoseconds, in the unit that reads best. */
-export function timeText(ns: number): string {
-	if (ns >= 1e9) return `${sig(ns / 1e9)} s`;
-	if (ns >= 1e6) return `${sig(ns / 1e6)} ms`;
-	if (ns >= 1e3) return `${sig(ns / 1e3)} µs`;
-	return `${sig(ns)} ns`;
+/**
+ * A value written as the answer checker reads it back: six significant
+ * digits, or as many more as it takes for the checker (agrees, the rule every
+ * cited number is held to) to find the written number standing for the value.
+ * It refuses a value exactly halfway between two numbers at the last written
+ * digit (1,014,475 ns is no more 1.01448 ms than 1.01447 ms), and the value it
+ * compares is the stored one in base units, divided by the written unit's
+ * factor, with the rounding of that arithmetic; so a value on, or a hair off,
+ * such a boundary is written with a digit more (1.014475 ms).
+ */
+function checkedText(base: number, dims: Dims, scaled: number, unit: string): string {
+	for (let digits = 6; digits <= 15; digits++) {
+		const text = `${sig(scaled, digits)} ${unit}`;
+		const q = quantities(text)[0];
+		if (q !== undefined && agrees(q, base, dims)) return text;
+	}
+	return `${sig(scaled, 15)} ${unit}`;
 }
 
-/** Bytes per second, decimal, with the binary unit beside it. */
+/** A time in nanoseconds, in the unit that reads best, as the checker reads it back. */
+export function timeText(ns: number): string {
+	const [scale, unit] = ns >= 1e9 ? [1e9, "s"] : ns >= 1e6 ? [1e6, "ms"] : ns >= 1e3 ? [1e3, "µs"] : [1, "ns"];
+	return checkedText(ns * 1e-9, { s: 1 }, ns / scale, unit);
+}
+
+/** Bytes per second, decimal, with the binary unit beside it, each as the checker reads it back. */
 export function rateText(bytesPerSecond: number): string {
 	const decimal: Array<[number, string]> = [
 		[1e12, "TB/s"],
@@ -88,7 +106,8 @@ export function rateText(bytesPerSecond: number): string {
 	];
 	const [ds, du] = decimal.find(([scale]) => bytesPerSecond >= scale) ?? [1, "B/s"];
 	const [bs, bu] = binary.find(([scale]) => bytesPerSecond >= scale) ?? [1, "B/s"];
-	return `${sig(bytesPerSecond / ds)} ${du} (${sig(bytesPerSecond / bs)} ${bu})`;
+	const dims: Dims = { B: 1, s: -1 };
+	return `${checkedText(bytesPerSecond, dims, bytesPerSecond / ds, du)} (${checkedText(bytesPerSecond, dims, bytesPerSecond / bs, bu)})`;
 }
 
 const numberText = (name: NumberName, value: number): string => (name === "time_per_repetition_ns" ? timeText(value) : rateText(value));

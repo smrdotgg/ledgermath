@@ -28,6 +28,8 @@ export interface RequestFixture {
 	big: RequestsSeries;
 	/** The memory_read Series' id: no requests. */
 	memory: string;
+	/** 4 KiB on m5.large: times on six-digit rounding boundaries. */
+	boundary: RequestsSeries;
 }
 
 export async function makeRequestFixture(options: { withoutRequests?: boolean } = {}): Promise<RequestFixture> {
@@ -46,6 +48,17 @@ export async function makeRequestFixture(options: { withoutRequests?: boolean } 
 		stream: { connection: "new", requests: [...Array.from({ length: 199 }, (_, i) => (i % 5 === 0 ? near(i + 3) : far(i + 7))), { fail: { phase: "first_byte", error: "timeout" } }] },
 	});
 	requestRun(made, { startedAt: "2026-11-12T22:22:00Z", instanceType: "c6i.8xlarge", objectBytes: 16777216, stream: { connection: "new", requests: rampRequests(40, 170_000_000, 300_000) } });
+	// m5.large: times on the real data's rounding boundaries at six significant digits (1,014,475 ns is 1.01447|5 ms).
+	requestRun(made, {
+		startedAt: "2026-11-12T22:30:00Z",
+		instanceType: "m5.large",
+		stream: {
+			connection: "new",
+			requests: Array.from({ length: 120 }, (_, k) => ({
+				phases: { connect: [1_014_475, 1_437_655, 1_745_605][k % 3] as number, tls: 1_480_865, send: 5_031_355, first_byte: 20_000_005 + k * 1_000_010, headers: 1_351_735, body: 1_210_485 },
+			})),
+		},
+	});
 	made.run({ startedAt: "2026-11-12T22:10:00Z" });
 
 	const derivations = series.derive(made.files, await series.gather(made.files, made.fetch));
@@ -61,10 +74,11 @@ export async function makeRequestFixture(options: { withoutRequests?: boolean } 
 	mkdirSync(join(directory, dirname(SAMPLE_PATH)), { recursive: true });
 	copyFileSync(SAMPLE_FILE, join(directory, SAMPLE_PATH));
 	const find = (bytes: number): RequestsSeries => {
-		const found = requestsFile.derivations.find((d) => d.series.params.object_bytes === bytes);
+		const found = requestsFile.derivations.find((d) => d.series.params.object_bytes === bytes && d.series.instance_type === "c6i.8xlarge");
 		if (found === undefined) throw new Error(`no Series of requests of ${bytes} bytes`);
 		return found;
 	};
 	const memory = derivations.derivations.find((d) => d.series.benchmark === "memory_read")?.series.id as string;
-	return { directory, derivations, requests: requestsFile, small: find(4096), big: find(16777216), memory };
+	const boundary = requestsFile.derivations.find((d) => d.series.instance_type === "m5.large") as RequestsSeries;
+	return { directory, derivations, requests: requestsFile, small: find(4096), big: find(16777216), memory, boundary };
 }

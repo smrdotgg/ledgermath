@@ -4,7 +4,8 @@ import { rmSync } from "node:fs";
 import { checkAnswer } from "../scripts/lib/answer-check";
 import { requestFailedCitation, requestRunsCitation, requestStatCitation, requestTailCitation, resolveCitation, seriesMoment } from "../scripts/lib/citation";
 import { type LedgerData, loadLedger, openLocation } from "../scripts/lib/ledger-data";
-import { about, aboutText, listSeries, seriesListText, showSeries, showText } from "../scripts/lib/lookup";
+import { about, aboutText, listSeries, seriesListText, showSeries, showText, timeText } from "../scripts/lib/lookup";
+import { agrees, quantities } from "../scripts/lib/quantity";
 import * as requests from "../methods/requests/v1";
 import * as series from "../methods/v1";
 import { HandMade, rampRequests, requestRun } from "./hand-made-requests";
@@ -32,12 +33,14 @@ const inside = (citation: string): string => citation.slice("[lm:".length, -1);
 /** Four significant digits of a time in ms, as an answer would write it. */
 const ms = (ns: number): string => `${Number((ns / 1e6).toPrecision(4))} ms`;
 
-/** Every { value, citation } the answer holds, at any depth. */
-function cited(value: unknown, found: Array<{ value: number; citation: string }> = []): Array<{ value: number; citation: string }> {
+/** Every { value, citation } the answer holds, at any depth, with the text printed for it when there is one. */
+function cited(value: unknown, found: Array<{ value: number; citation: string; text?: string }> = []): Array<{ value: number; citation: string; text?: string }> {
 	if (Array.isArray(value)) for (const item of value) cited(item, found);
 	else if (typeof value === "object" && value !== null) {
 		const record = value as Record<string, unknown>;
-		if (typeof record.citation === "string" && typeof record.value === "number") found.push({ value: record.value, citation: record.citation });
+		if (typeof record.citation === "string" && typeof record.value === "number") {
+			found.push({ value: record.value, citation: record.citation, ...(typeof record.text === "string" ? { text: record.text } : {}) });
+		}
 		for (const item of Object.values(record)) cited(item, found);
 	}
 	return found;
@@ -47,14 +50,14 @@ describe("the lookup tool and Series of requests", () => {
 	test("about says what percentiles it holds: across Runs to the 95th, across requests to the 99th and 99.9th", () => {
 		const text = aboutText(data, about(data));
 		expect(text).toContain("Percentiles across Runs: the 5th, 50th and 95th of every Series (Method series); no 99th percentile across Runs.");
-		expect(text).toContain("Percentiles across requests (Method requests): 2 Series of requests");
+		expect(text).toContain("Percentiles across requests (Method requests): 3 Series of requests");
 		const without = aboutText(bareData, about(bareData));
 		expect(without).toContain("Percentiles across requests: none in this data (no requests-derivations.json), so no 99th percentile at all.");
 	});
 
 	test("series marks the Series that have percentiles across requests", () => {
 		const text = seriesListText(data, listSeries(data, ["http_get"]));
-		expect(text.match(/percentiles across requests: show it/g)?.length).toBe(2);
+		expect(text.match(/percentiles across requests: show it/g)?.length).toBe(3);
 		expect(seriesListText(data, listSeries(data, ["memory_read"]))).not.toContain("percentiles across requests");
 	});
 
@@ -103,6 +106,38 @@ describe("the lookup tool and Series of requests", () => {
 		if (answer.found !== "one") throw new Error("expected one Series");
 		expect(answer.series.request_figures).toBeNull();
 		expect(showText(data, answer)).toContain("LedgerMath holds no 99th percentile of this Series: its percentiles are across Runs (5th, 50th, 95th).");
+	});
+});
+
+describe("every value the tool prints, cited back with its own citation, passes the checker", () => {
+	test("times on a rounding boundary at six digits are written with as many digits as the checker needs", () => {
+		const next = (() => {
+			let state = 12345;
+			return () => (state = (Math.imul(state, 1664525) + 1013904223) >>> 0) / 2 ** 32;
+		})();
+		const values = [1_014_475, 1_437_655, 5_031_355, 1_745_605, 1_480_865, 1_351_735, 1_210_485, 1_077_095, 1_440_715, 37_586_206.72, 999_999.5];
+		for (let i = 0; i < 20_000; i++) values.push(Math.floor(10 ** (2 + 8 * next())) + (i % 2 === 0 ? 0.5 : 0), Math.round(10 ** (3 + 6 * next())) * 5);
+		for (const ns of values) {
+			const q = quantities(timeText(ns))[0];
+			if (q === undefined || !agrees(q, ns * 1e-9, { s: 1 })) throw new Error(`${ns} ns printed as ${timeText(ns)}, which the checker does not read as it`);
+		}
+		expect(timeText(1_014_475)).toBe("1.014475 ms");
+		expect(timeText(27_394_000)).toBe("27.394 ms");
+	});
+
+	test("for every Series of the fixture, Method series' and Method requests' figures alike", async () => {
+		const lines: string[] = [];
+		for (const derivation of fixture.derivations.derivations) {
+			const shown = showSeries(data, [derivation.series.id], "all");
+			if (shown.found !== "one") throw new Error("expected one Series");
+			for (const { value, citation, text } of [...cited(shown.series.numbers), ...cited(shown.series.request_figures)]) lines.push(`${text ?? String(value)} ${citation}`);
+			lines.push(shown.series.runs_list[0]?.path as string);
+		}
+		expect(lines.filter((line) => line.includes("[lm:requests/")).length).toBeGreaterThan(300);
+		expect(lines).toContain(`1.014475 ms ${requestStatCitation(fixture.boundary.series.id, "connect", "min", 1, seriesMoment(fixture.boundary))}`);
+		const report = await checkAnswer(lines.join("\n"), data);
+		expect(report.problems).toEqual([]);
+		expect(report.pass).toBe(true);
 	});
 });
 
