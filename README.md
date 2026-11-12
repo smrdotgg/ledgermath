@@ -931,8 +931,13 @@ Runs that started earlier.
 The checker holds every number in an answer, tables and code included, to one rule: it is
 from the question, cited (in the cited unit; a price in AWS's own unit), an assumption with
 a source in words, the result of a line of arithmetic it recomputes from accounted operands,
-or a repeat of one of these with the same value and unit. `scripts/lib/answer-check.ts`
-says exactly how, and what it does not read. It reads numbers, not meaning: a number that is
+or a repeat of one of these with the same value and unit. A line of arithmetic passes when
+its result follows from its operands either with units carried or as plain numbers exactly
+as written; a count of things per unit of time ("10000000 GETs per day", "writes/s") carries
+as a rate, and a time per thing ("30.06 µs per write") as a time. A mistake is reported once,
+with how many other numbers depend on it, and every problem says what was expected, what
+was found and what would fix it. `scripts/lib/answer-check.ts` says exactly how, and what it
+does not read. It reads numbers, not meaning: a number that is
 the cited figure, in its unit, passes whatever the words around it call it, so a pooled
 99th percentile across requests described as "the first Run's", or a figure of one address
 block described as the Series', passes as long as the value and the citation agree. Every

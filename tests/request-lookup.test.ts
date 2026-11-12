@@ -240,11 +240,11 @@ describe("the answer checker and figures of requests", () => {
 		const p95 = requestStatCitation(s.series.id, "total", "p95", 1, seriesMoment(s));
 		const link = s.points[0]?.path as string;
 		const cases: Array<[string, string]> = [
-			[`${ms((total.p99 as number) * 1.05)} ${p99}\n${link}`, "is not what its citation"],
-			[`${Number(((total.p99 as number) / 1e6).toPrecision(4))} µs ${p99}\n${link}`, "is not what its citation"],
-			[`${Number(((total.p99 as number) / 1e6).toPrecision(4))} ${p99}\n${link}`, "it has no unit; the citation is in ns"],
-			[`${ms(total.p99 as number)} ${p95}\n${link}`, "is not what its citation"],
-			[`${ms(total.p95 as number)} ${p99}\n${link}`, "is not what its citation"],
+			[`${ms((total.p99 as number) * 1.05)} ${p99}\n${link}`, "does not match its citation"],
+			[`${Number(((total.p99 as number) / 1e6).toPrecision(4))} µs ${p99}\n${link}`, "does not match its citation"],
+			[`${Number(((total.p99 as number) / 1e6).toPrecision(4))} ${p99}\n${link}`, "with no unit"],
+			[`${ms(total.p99 as number)} ${p95}\n${link}`, "does not match its citation"],
+			[`${ms(total.p95 as number)} ${p99}\n${link}`, "does not match its citation"],
 			[`from 399 Runs ${requestStatCitation(s.series.id, "total", "count", 1, seriesMoment(s))}\n${link}`, "a count of Runs or boots is cited with the Series' count citation"],
 			[`${ms(total.p99 as number)} ${p99}`, "the answer links none of its Runs"],
 			[`${ms(1e6)} ${requestStatCitation(fixture.big.series.id, "total", "p99", 1, seriesMoment(fixture.big))}\n${fixture.big.points[0]?.path}`, "is not reported"],
