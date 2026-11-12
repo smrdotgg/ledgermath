@@ -6,7 +6,8 @@ import * as series from "../methods/v1";
 import type { DerivationsFile } from "../methods/v1/output";
 import { renderPage, seriesLabel } from "../scripts/build-page";
 import { CHAR_WIDTH } from "../scripts/lib/chart";
-import { curvePoints, logTicks, renderDistributionChart, renderTimeChart } from "../scripts/lib/request-charts";
+import { binLower, binOf, binWidth } from "../methods/requests/v1/numbers";
+import { curvePoints, logTicks, renderDistributionChart, renderTimeChart, shortTime } from "../scripts/lib/request-charts";
 import { RUNS_REPOSITORY_BLOB_URL } from "../scripts/lib/runs-repository";
 import { HandMade, rampRequests, requestRun } from "./hand-made-requests";
 
@@ -105,6 +106,26 @@ describe("the page's part for Series of requests", () => {
 		expect(smallSection).toContain("Of the 397 whole requests, 4 requests are ranked at or above the 99th percentile");
 	});
 
+	test("shows how many requests stand at or above every 99th percentile it shows: the pooled table, every Run, the groups, the breakdown", async () => {
+		const made = new HandMade();
+		["Xeon 8259CL", "Xeon 8375C"].forEach((processor, i) =>
+			requestRun(made, {
+				startedAt: `2026-11-1${i + 1}T21:35:00Z`,
+				processor,
+				stream: { connection: "new", requests: Array.from({ length: 200 }, (_, k) => ({ address: k % 2 === 0 ? "3.5.1.2" : "52.219.1.2", phases: { first_byte: 20_000_000 + k * 10_000 } })) },
+			}),
+		);
+		const { v1, requests: file } = await both(made);
+		const section = sections(renderPage(v1, { runUrlBase: BASE, requests: file })).get(file.derivations[0]?.series.id as string) as string;
+		const p99 = (stats: { p99: number | null; at_or_above: { p99?: number } } | undefined): string => `${shortTime(stats?.p99 as number)} (${stats?.at_or_above.p99})`;
+		const d = file.derivations[0] as NonNullable<(typeof file.derivations)[number]>;
+		expect(section).toContain(`>${p99(d.pool.phases.total)}</td>`);
+		for (const point of d.points) expect(section).toContain(`>${p99(point.phases.total)}</td>`);
+		for (const group of d.groups) expect(section).toContain(`>${p99(group.pool.phases.total)}</td>`);
+		for (const value of d.pool.by[0]?.values ?? []) expect(section).toContain(`>${p99(value.phases.total)}</td>`);
+		expect(section).toContain("Beside each 99th and 99.9th percentile, in brackets: how many requests are ranked at or above it");
+	});
+
 	test("shows failed requests as counts, a counted Run that exited 4 as counted, and a Run cut short as failed, with why", async () => {
 		const { v1, requests: file } = await both(sample());
 		const html = renderPage(v1, { runUrlBase: BASE, requests: file });
@@ -176,15 +197,49 @@ describe("the request charts stay legible", () => {
 		expect(svg).toContain(">1 s</text>");
 	});
 
-	test("a distribution reaches each phase's slowest request and never a share of 1", () => {
-		const curve = { name: "whole request", colour: "#0072B2", count: 200, min: 20_000_000, max: 60_000_000, bins: [[1000, 100], [1010, 98], [1100, 2]] as Array<[number, number]> };
+	test("a distribution is the true cumulative share: at each bin's upper edge the share at or below it, 100% at the slowest request", () => {
+		// 200 requests of exactly 1,000 ns: from 0% to 100% at 1,000 ns, nowhere else.
+		const constant = { name: "same time", colour: "#000", count: 200, min: 1000, max: 1000, bins: [[binOf(1000), 200]] as Array<[number, number]> };
+		expect(curvePoints(constant)).toEqual([
+			{ ns: 1000, share: 0 },
+			{ ns: 1000, share: 1 },
+		]);
+		// Three bins: the share through each bin at its upper edge, exact; the last point is the greatest time, at 100%.
+		const bins: Array<[number, number]> = [
+			[binOf(20_000_000), 100],
+			[binOf(20_000_000) + 1, 98],
+			[binOf(50_000_000), 2],
+		];
+		const curve = { name: "whole request", colour: "#0072B2", count: 200, min: 20_000_100, max: 50_100_000, bins };
 		const points = curvePoints(curve);
-		expect(points[0]?.ns).toBe(20_000_000);
-		expect(points.at(-1)?.ns).toBe(60_000_000);
-		expect(points.at(-1)?.height).toBeCloseTo(-Math.log10(1 - 199 / 200), 10);
-		const svg = renderDistributionChart({ curves: [curve, { ...curve, name: "send", min: 3_000, max: 9_000, bins: [[400, 200]] }], label: "two" });
+		expect(points.map((point) => point.share)).toEqual([0, 0.5, 0.99, 1]);
+		expect(points[0]?.ns).toBe(20_000_100);
+		expect(points[1]?.ns).toBe(binLower(bins[0]?.[0] as number) + binWidth(bins[0]?.[0] as number) - 1);
+		expect(points.at(-1)?.ns).toBe(50_100_000);
+		const svg = renderDistributionChart({ curves: [curve, { ...constant, name: "send", min: 3_000, max: 9_000, bins: [[binOf(3_000), 150], [binOf(9_000), 50]] }], label: "two" });
 		checkLabelsFit(svg);
 		expect(svg).toContain(">99%</text>");
+		expect(svg).toContain(">100%</text>");
+		expect(svg).not.toMatch(/NaN|Infinity/);
 		expect(logTicks(3_000, 60_000_000, 10).length).toBeLessThanOrEqual(10);
+	});
+
+	test("a phase of 0 ns is drawn on the bottom edge, marked as 0, and no SVG the page builds holds Infinity or NaN", async () => {
+		const zero = { dns: 0, connect: 0, tls: 0, send: 0, first_byte: 0, headers: 0, body: 0 };
+		const made = new HandMade();
+		requestRun(made, { startedAt: "2026-11-11T21:35:00Z", stream: { connection: "new", requests: Array.from({ length: 30 }, () => ({ phases: zero })) } });
+		requestRun(made, { startedAt: "2026-11-12T21:35:00Z", stream: { connection: "new", requests: [...rampRequests(20), ...Array.from({ length: 10 }, () => ({ phases: { headers: 0, body: 0 } }))] } });
+		const { v1, requests: file } = await both(made);
+		const html = renderPage(v1, { runUrlBase: BASE, requests: file });
+		const charts = svgs(html.slice(html.indexOf('id="requests"')));
+		expect(charts.length).toBe(3);
+		for (const chart of charts) {
+			expect(chart).not.toMatch(/NaN|Infinity/);
+			checkLabelsFit(chart);
+		}
+		expect(charts[0]).toContain(">0 ns ▽</text>");
+		expect(html).not.toMatch(/NaN|Infinity/);
+		const alone = renderTimeChart({ runs: [{ x: 1, values: [0, 0, 0], failed: false, failedRequests: 0, href: "#", title: "zero" }], stats: ["p50", "p95", "p99"], label: "zero" });
+		expect(alone).not.toMatch(/NaN|Infinity/);
 	});
 });

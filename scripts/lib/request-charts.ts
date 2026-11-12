@@ -6,15 +6,20 @@
  *   Run, one link to its Run file holding a marker per statistic (its median,
  *   95th and 99th percentile, say), joined by a thin line per statistic;
  *   failed Runs as crosses in a lane under the plot, and each Run's failed
- *   requests as a count in a second lane.
+ *   requests as a count in a second lane. A value of 0, which a logarithmic
+ *   axis cannot place, is a hollow triangle on the plot's bottom edge, which
+ *   is labelled "0 ns ▽" then.
  * - renderDistributionChart: the pooled distribution of each phase, from its
- *   histogram, as a cumulative curve: time across on a logarithmic axis, and
- *   up the share of requests at or below it, on an axis that gives 50%, 90%,
- *   99% and 99.9% equal room (−log10(1 − share)), so the tail is as legible as
- *   the middle. Each curve ends at its slowest request.
+ *   histogram, as its cumulative share: time across on a logarithmic axis;
+ *   at each bin's upper edge, up, the share of requests that took at most
+ *   that long, 0% at the fastest request and 100% at the slowest. Below 100%
+ *   the height is −log10 of the share still above (1 − share), so 90%, 99%
+ *   and 99.9% are evenly spaced and the tail is as legible as the middle;
+ *   that scale cannot reach 100%, so it stops a little below the top edge,
+ *   which is 100%.
  */
 
-import { binValue } from "../../methods/requests/v1/numbers";
+import { binLower, binWidth } from "../../methods/requests/v1/numbers";
 import { COLOURS, esc, FONT_SIZE, labelWidth, timeTicks, utc } from "./chart";
 
 const FONT = "system-ui, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif";
@@ -111,13 +116,16 @@ export function renderTimeChart({ runs, stats, label }: TimeChartInput): string 
 	const LEFT = Math.max(96, Math.ceil(Math.max(labelWidth("failed Run"), labelWidth("failed req."), ...labels.map(({ content }) => labelWidth(content))) + 6 + EDGE + 4));
 	const RIGHT = 16;
 	const sx = (x: number): number => LEFT + ((x - x0) / (x1 - x0)) * (W - LEFT - RIGHT);
-	const sy = (ns: number): number => plotBottom - ((Math.log(ns) - Math.log(lo)) / (Math.log(hi) - Math.log(lo))) * (plotBottom - TOP);
+	// A value of 0 (or less, which no phase is) has no place on a logarithmic axis: it is drawn on the bottom edge.
+	const sy = (ns: number): number => (ns > 0 ? plotBottom - ((Math.log(ns) - Math.log(lo)) / (Math.log(hi) - Math.log(lo))) * (plotBottom - TOP) : plotBottom);
+	const anyZero = runs.some((run) => !run.failed && run.values.some((value) => value !== null && value <= 0));
 	const parts: string[] = [];
 	parts.push(`<svg class="chart" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" font-size="${FONT_SIZE}" font-family="${FONT}" role="img" aria-label="${esc(label)}">`);
 	parts.push(`<rect x="${LEFT}" y="${TOP}" width="${W - LEFT - RIGHT}" height="${plotBottom - TOP}" fill="#fff" stroke="#888"/>`);
 	parts.push(`<rect x="${LEFT}" y="${plotBottom + 3}" width="${W - LEFT - RIGHT}" height="${LANE - 5}" fill="#f2f2f2"/>`);
 	parts.push(`<rect x="${LEFT}" y="${plotBottom + LANE + 3}" width="${W - LEFT - RIGHT}" height="${LANE - 5}" fill="#f7f0f0"/>`);
 	parts.push(text(LEFT - 6, plotBottom + LANE / 2 + 4, "end", "failed Run"));
+	if (anyZero) parts.push(text(LEFT - 6, plotBottom - 2, "end", "0 ns ▽"));
 	parts.push(text(LEFT - 6, plotBottom + LANE + LANE / 2 + 4, "end", "failed req."));
 	for (const { tick, content } of labels) {
 		const y = sy(tick);
@@ -151,6 +159,11 @@ export function renderTimeChart({ runs, stats, label }: TimeChartInput): string 
 		} else {
 			run.values.forEach((value, index) => {
 				if (value === null) return;
+				if (value <= 0) {
+					const y = plotBottom;
+					shapes.push(`<path d="M${f(x - r)} ${f(y - r * 1.6)}L${f(x + r)} ${f(y - r * 1.6)}L${f(x)} ${f(y)}Z" fill="none" stroke="${statColour(index)}" stroke-width="1.2"/>`);
+					return;
+				}
 				shapes.push(`<circle cx="${f(x)}" cy="${f(sy(value))}" r="${f(r)}" fill="${statColour(index)}" stroke="#fff" stroke-width="0.6"/>`);
 			});
 		}
@@ -197,7 +210,7 @@ export interface Curve {
 	bins: ReadonlyArray<readonly [number, number]>;
 }
 
-/** The share axis's marks: their share, and their height −log10(1 − share). */
+/** The share axis's marks below 100%: their share, and their height −log10(1 − share). */
 const SHARES = [
 	{ label: "0%", y: 0 },
 	{ label: "50%", y: Math.log10(2) },
@@ -209,49 +222,56 @@ const SHARES = [
 ];
 
 /**
- * The points of a cumulative curve: for each bin, the bin's time (held
- * within the least and greatest) and the share of requests up to the middle
- * of the bin's ranks, (count before it + half its count) / count, so the
- * curve never reaches a share of 1; the least and greatest times are exact.
+ * The points of a cumulative curve: the least time with a share of 0, then
+ * for each bin the greatest whole nanosecond in it (its upper edge less one,
+ * held within the least and greatest time) with the share of requests at or
+ * below it, (count up to and through the bin) / count. Every time is a whole
+ * number of nanoseconds, so that share is exact; the last point is the
+ * greatest time, with a share of 1.
  */
-export function curvePoints(curve: Curve): Array<{ ns: number; height: number }> {
-	const points: Array<{ ns: number; height: number }> = [];
-	let before = 0;
+export function curvePoints(curve: Curve): Array<{ ns: number; share: number }> {
+	const points: Array<{ ns: number; share: number }> = [{ ns: curve.min, share: 0 }];
+	let through = 0;
 	for (const [bin, n] of curve.bins) {
-		const share = (before + n / 2) / curve.count;
-		const ns = Math.min(curve.max, Math.max(curve.min, binValue(bin)));
-		points.push({ ns, height: -Math.log10(1 - share) });
-		before += n;
+		through += n;
+		const upper = binLower(bin) + binWidth(bin) - 1;
+		points.push({ ns: Math.min(curve.max, Math.max(curve.min, upper)), share: through / curve.count });
 	}
-	if (points.length > 0) {
-		(points[0] as { ns: number }).ns = curve.min;
-		(points[points.length - 1] as { ns: number }).ns = curve.max;
-	}
+	const last = points[points.length - 1] as { ns: number; share: number };
+	last.ns = curve.max;
+	last.share = 1;
 	return points;
 }
 
 export function renderDistributionChart({ curves, label }: { curves: readonly Curve[]; label: string }): string {
 	const H = 300;
-	const TOP = 12;
+	const TOP = 14;
+	/** The room between the top of the −log10 scale and the top edge, which is 100%. */
+	const BREAK = 22;
 	const BOTTOM = 30;
 	const RIGHT = 16;
 	const plotBottom = H - BOTTOM;
 	const all = curves.map((curve) => ({ curve, points: curvePoints(curve) }));
 	const lo = Math.max(1, Math.min(...curves.map((curve) => curve.min))) / 1.15;
-	const hi = Math.max(...curves.map((curve) => curve.max)) * 1.15;
-	const top = Math.max(1, Math.ceil(Math.max(...all.flatMap(({ points }) => points.map((point) => point.height))) + 0.05));
-	const marks = SHARES.filter((mark) => mark.y <= top);
-	const LEFT = Math.max(60, Math.ceil(Math.max(...marks.map((mark) => labelWidth(mark.label))) + 6 + EDGE + 4));
+	const hi = Math.max(lo * 1.5, Math.max(...curves.map((curve) => curve.max)) * 1.15);
+	const height = (share: number): number => -Math.log10(1 - share);
+	const highest = Math.max(1, ...all.flatMap(({ points }) => points.filter((point) => point.share < 1).map((point) => height(point.share))));
+	const marks = SHARES.filter((mark) => mark.y <= highest + 1e-9);
+	const LEFT = Math.max(60, Math.ceil(Math.max(labelWidth("100%"), ...marks.map((mark) => labelWidth(mark.label))) + 6 + EDGE + 4));
 	const sx = (ns: number): number => LEFT + ((Math.log(Math.max(ns, lo)) - Math.log(lo)) / (Math.log(hi) - Math.log(lo))) * (W - LEFT - RIGHT);
-	const sy = (height: number): number => plotBottom - (height / top) * (plotBottom - TOP);
+	const scaleTop = TOP + BREAK;
+	const sy = (share: number): number => (share >= 1 ? TOP : plotBottom - (height(share) / highest) * (plotBottom - scaleTop));
 	const parts: string[] = [];
 	parts.push(`<svg class="chart" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" font-size="${FONT_SIZE}" font-family="${FONT}" role="img" aria-label="${esc(label)}">`);
 	parts.push(`<rect x="${LEFT}" y="${TOP}" width="${W - LEFT - RIGHT}" height="${plotBottom - TOP}" fill="#fff" stroke="#888"/>`);
 	for (const mark of marks) {
-		const y = sy(mark.y);
+		const y = sy(1 - 10 ** -mark.y);
 		parts.push(`<line x1="${LEFT}" x2="${W - RIGHT}" y1="${f(y)}" y2="${f(y)}" stroke="#e4e4e4"/>`);
 		parts.push(text(LEFT - 6, y + 4, "end", mark.label));
 	}
+	// The −log10 scale stops at its highest point; above it, the top edge is 100%.
+	parts.push(`<line x1="${LEFT}" x2="${W - RIGHT}" y1="${f(scaleTop - BREAK / 2)}" y2="${f(scaleTop - BREAK / 2)}" stroke="#bbb" stroke-dasharray="2 3"/>`);
+	parts.push(text(LEFT - 6, TOP + 4, "end", "100%"));
 	const ticks = logTicks(lo, hi, 10);
 	let lastEnd = Number.NEGATIVE_INFINITY;
 	for (const tick of ticks) {
@@ -266,12 +286,12 @@ export function renderDistributionChart({ curves, label }: { curves: readonly Cu
 		}
 	}
 	for (const { curve, points } of all) {
-		const path = points.map((point) => `${f(sx(point.ns))},${f(sy(point.height))}`).join(" ");
-		const last = points[points.length - 1];
+		const path = points.map((point) => `${f(sx(point.ns))},${f(sy(point.share))}`).join(" ");
+		const last = points[points.length - 1] as { ns: number; share: number };
 		parts.push(
 			`<g><title>${esc(`${curve.name}: ${curve.count} requests, ${shortTime(curve.min)} to ${shortTime(curve.max)}`)}</title>` +
-				(points.length > 1 ? `<polyline points="${path}" fill="none" stroke="${curve.colour}" stroke-width="${curve.bold ? 3 : 1.6}"/>` : "") +
-				(last === undefined ? "" : `<circle cx="${f(sx(last.ns))}" cy="${f(sy(last.height))}" r="3" fill="${curve.colour}"/>`) +
+				`<polyline points="${path}" fill="none" stroke="${curve.colour}" stroke-width="${curve.bold ? 3 : 1.6}"/>` +
+				`<circle cx="${f(sx(last.ns))}" cy="${f(sy(last.share))}" r="3" fill="${curve.colour}"/>` +
 				"</g>",
 		);
 	}

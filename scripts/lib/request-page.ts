@@ -23,6 +23,7 @@ export interface RequestPageOptions {
 const time = (iso: string): string => `${iso.slice(0, 19).replace("T", " ")} UTC`;
 const plural = (n: number, one: string, many = `${one}s`): string => `${n} ${n === 1 ? one : many}`;
 const PCTS = ["p50", "p90", "p95", "p99", "p99.9"] as const;
+
 const PCT_WORDS: Record<(typeof PCTS)[number], string> = { p50: "50th", p90: "90th", p95: "95th", p99: "99th", "p99.9": "99.9th" };
 
 function phaseName(file: DerivationsFile, phase: Phase): string {
@@ -33,28 +34,43 @@ function phaseName(file: DerivationsFile, phase: Phase): string {
 const timeCell = (ns: number | null | undefined, title = ""): string =>
 	ns === null || ns === undefined ? '<td class="none">—</td>' : `<td class="v" title="${esc(`${ns} ns${title}`)}">${esc(shortTime(ns))}</td>`;
 
+/**
+ * A cell holding a percentile: for the 99th and the 99.9th, with how many
+ * requests are ranked at or above it beside it, "43.9 ms (2)"; "—" when the
+ * count does not support it.
+ */
+function pctCell(stats: Stats | undefined, name: (typeof PCTS)[number]): string {
+	const value = stats?.[name] ?? null;
+	if (stats === undefined || value === null) return '<td class="none">—</td>';
+	const tail = stats.at_or_above[name] as number;
+	const shown = name === "p99" || name === "p99.9" ? `${shortTime(value)} (${tail})` : shortTime(value);
+	return `<td class="v" title="${esc(`${value} ns; ${tail} request${tail === 1 ? "" : "s"} ranked at or above it`)}">${esc(shown)}</td>`;
+}
+
+/** What "(n)" beside a 99th or 99.9th percentile is. */
+const TAIL_NOTE = '<p class="meta">Beside each 99th and 99.9th percentile, in brackets: how many requests are ranked at or above it, the requests it rests on.</p>';
+
 function poolTable(file: DerivationsFile, pool: Pool): string {
 	const rows = PHASES.flatMap((phase) => {
 		const stats = pool.phases[phase];
 		if (stats === undefined) return [];
 		const pctCells = PCTS.map((name) => {
-			const value = stats[name];
-			if (value === null) {
+			if (stats[name] === null) {
 				const least = file.percentiles.find((p) => p.name === name)?.least_requests ?? 0;
 				return `<td class="none" title="${esc(`not reported: ${stats.count} requests; a ${PCT_WORDS[name]} percentile needs at least ${least}`)}">—</td>`;
 			}
-			return timeCell(value, `; ${stats.at_or_above[name]} requests ranked at or above it`);
+			return pctCell(stats, name);
 		});
-		const tail = (["p99", "p99.9"] as const).map((name) => (stats[name] === null ? "—" : String(stats.at_or_above[name]))).join(" / ");
 		return [
-			`<tr><th scope="row" title="${esc(file.phases.find((p) => p.phase === phase)?.interval ?? "")}">${esc(phaseName(file, phase))}</th><td class="n">${stats.count}</td>${timeCell(stats.min)}${pctCells.join("")}${timeCell(stats.max)}<td class="n">${tail}</td></tr>`,
+			`<tr><th scope="row" title="${esc(file.phases.find((p) => p.phase === phase)?.interval ?? "")}">${esc(phaseName(file, phase))}</th><td class="n">${stats.count}</td>${timeCell(stats.min)}${pctCells.join("")}${timeCell(stats.max)}</tr>`,
 		];
 	});
 	return [
 		'<table class="stats">',
-		"<thead><tr><th>phase</th><th>requests</th><th>least</th><th>50th</th><th>90th</th><th>95th</th><th>99th</th><th>99.9th</th><th>greatest</th><th>requests at or above the 99th / 99.9th</th></tr></thead>",
+		"<thead><tr><th>phase</th><th>requests</th><th>least</th><th>50th</th><th>90th</th><th>95th</th><th>99th (at or above)</th><th>99.9th (at or above)</th><th>greatest</th></tr></thead>",
 		`<tbody>${rows.join("")}</tbody>`,
 		"</table>",
+		TAIL_NOTE,
 	].join("\n");
 }
 
@@ -121,7 +137,7 @@ function distribution(file: DerivationsFile, derivation: SeriesDerivation, optio
 		"<h3>Distribution of every phase, pooled across the counted Runs</h3>",
 		renderDistributionChart({ curves, label: `cumulative distribution of each phase, ${options.label(derivation.series)}` }),
 		`<ul class="legend">${legend}</ul>`,
-		`<p class="meta">Each curve is a phase's requests from its fastest to its slowest (the dot); up is the share of them at or below a time, spaced so that each step from 50% to 90%, 99% and 99.9% gets the same room. Read from the pooled histogram (64 bins per doubling of time).</p>`,
+		`<p class="meta">Each curve is one phase's requests: across, a time; up, the share of them that took at most that time, from 0% at the fastest to 100% at the slowest (the dot). The points are the upper edges of the pooled histogram's bins (64 per doubling of time), where that share is exact, joined by straight lines. Below 100% the height is −log10 of the share still above, so 90%, 99% and 99.9% are evenly spaced, each with a tenth as many requests above it as the one before, and 50% is under a third of the way from 0% to 90%. That scale never reaches 100%: it stops at the dotted line, and the top edge is 100%.</p>`,
 		tail,
 	].join("\n");
 }
@@ -135,14 +151,12 @@ function breakdownTables(file: DerivationsFile, pool: Pool): string {
 			const phases = shown.filter((phase) => breakdown.values.some((value) => value.phases[phase] !== undefined));
 			const head = phases.map((phase) => `<th colspan="3">${esc(phaseName(file, phase))}: 50th, 95th, 99th</th>`).join("");
 			const rows = breakdown.values.map((value) => {
-				const cells = phases.map((phase) => {
-					const stats: Stats | undefined = value.phases[phase];
-					return (["p50", "p95", "p99"] as const).map((name) => timeCell(stats?.[name] ?? null, stats?.[name] == null ? "" : `; ${stats.at_or_above[name]} requests ranked at or above it`)).join("");
-				});
+				const cells = phases.map((phase) => (["p50", "p95", "p99"] as const).map((name) => pctCell(value.phases[phase], name)).join(""));
 				return `<tr><th scope="row">${esc(value.value)}</th><td class="n">${value.runs}</td><td class="n">${value.requests}</td>${cells.join("")}</tr>`;
 			});
 			return `<h4 title="${esc(what)}">By ${esc(breakdown.fact.replaceAll("_", " "))}</h4><table class="stats"><thead><tr><th>${esc(breakdown.fact)}</th><th>Runs</th><th>requests</th>${head}</tr></thead><tbody>${rows.join("")}</tbody></table>`;
 		})
+		.concat([TAIL_NOTE])
 		.join("\n");
 }
 
@@ -169,9 +183,9 @@ function groupsTable(file: DerivationsFile, derivation: SeriesDerivation): strin
 		const total = group.pool.phases.total;
 		const first = group.pool.phases.first_byte;
 		const changed = file.split_on.filter(({ fact }) => (group.facts[fact] ?? null) !== ((derivation.groups[0] as (typeof derivation.groups)[number]).facts[fact] ?? null)).map(({ fact }) => fact);
-		return `<tr><th scope="row">${esc(group.id)}</th><td class="n">${group.runs.length}</td><td class="n">${group.pool.runs}</td><td class="n">${group.pool.requests}</td>${timeCell(total?.p50)}${timeCell(total?.p95)}${timeCell(total?.p99)}${timeCell(first?.p50)}${timeCell(first?.p99)}<td>${changed.length === 0 ? "" : `differs from A in ${esc(changed.join(", "))}`}</td></tr>`;
+		return `<tr><th scope="row">${esc(group.id)}</th><td class="n">${group.runs.length}</td><td class="n">${group.pool.runs}</td><td class="n">${group.pool.requests}</td>${pctCell(total, "p50")}${pctCell(total, "p95")}${pctCell(total, "p99")}${pctCell(first, "p50")}${pctCell(first, "p99")}<td>${changed.length === 0 ? "" : `differs from A in ${esc(changed.join(", "))}`}</td></tr>`;
 	});
-	return `<h3>Groups (series v1's split facts)</h3><table class="stats"><thead><tr><th>group</th><th>Runs</th><th>counted</th><th>requests</th><th>whole request 50th</th><th>95th</th><th>99th</th><th>first byte 50th</th><th>99th</th><th></th></tr></thead><tbody>${rows.join("")}</tbody></table>`;
+	return `<h3>Groups (series v1's split facts)</h3><table class="stats"><thead><tr><th>group</th><th>Runs</th><th>counted</th><th>requests</th><th>whole request 50th</th><th>95th</th><th>99th (at or above)</th><th>first byte 50th</th><th>99th (at or above)</th><th></th></tr></thead><tbody>${rows.join("")}</tbody></table>${TAIL_NOTE}`;
 }
 
 function runsTable(derivation: SeriesDerivation, options: RequestPageOptions): string {
@@ -184,15 +198,15 @@ function runsTable(derivation: SeriesDerivation, options: RequestPageOptions): s
 			`<td>${esc(point.group)}</td>`,
 			`<td>${point.counted ? `counted${point.exit_code === 4 ? " (exit 4)" : ""}` : `failed: ${esc(point.failure ?? "")}`}</td>`,
 			`<td class="n">${point.succeeded}</td><td class="n">${point.failed}</td>`,
-			timeCell(total?.p50),
-			timeCell(total?.p95),
-			timeCell(total?.p99),
-			timeCell(first?.p50),
-			timeCell(first?.p99),
+			pctCell(total, "p50"),
+			pctCell(total, "p95"),
+			pctCell(total, "p99"),
+			pctCell(first, "p50"),
+			pctCell(first, "p99"),
 			"</tr>",
 		].join("");
 	});
-	return `<details><summary>Every Run (${derivation.points.length})</summary><table class="runs"><thead><tr><th>started</th><th>group</th><th></th><th>succeeded</th><th>failed</th><th>whole request 50th</th><th>95th</th><th>99th</th><th>first byte 50th</th><th>99th</th></tr></thead><tbody>${rows.join("")}</tbody></table></details>`;
+	return `<details><summary>Every Run (${derivation.points.length})</summary><table class="runs"><thead><tr><th>started</th><th>group</th><th></th><th>succeeded</th><th>failed</th><th>whole request 50th</th><th>95th</th><th>99th (at or above)</th><th>first byte 50th</th><th>99th (at or above)</th></tr></thead><tbody>${rows.join("")}</tbody></table>${TAIL_NOTE}</details>`;
 }
 
 function seriesSection(file: DerivationsFile, derivation: SeriesDerivation, options: RequestPageOptions): string {
