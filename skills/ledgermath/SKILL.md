@@ -60,15 +60,27 @@ every counted Run, not of one; a figure `by/address_block/…` is of those reque
 2. **Fill each factor, one input per line**: the number in digits with its unit, then right
    after it the citation the tool printed beside it, copied whole. A factor LedgerMath does
    not hold is an assumption: its value, then `[assumption: <where it comes from>]`. A count
-   of Runs takes the Series' `count` citation.
+   of Runs takes the Series' `count` citation. A quantity from the question is written once
+   the same way, in digits with its unit (`Reads: 10000000 per day, from the question.`); it
+   is then accounted for. A unit follows its number directly: `33269.9 writes per second`,
+   not `33269.9 durable 8 KiB writes per second`. When the question names no instance type,
+   say which Series you used and why, or give the range across the types.
 3. **Check the fit.** Read the tool's `measures:`, `this set:` and `Note:` lines, and say so
    whenever a number is used outside what it measured: another instance type, a loopback
    number (`tcp_echo`) for a network, the root EBS volume for an instance's own disk, one
-   thread for many, AWS's catalog words (`networkPerformance`) for a measurement.
+   thread for many, AWS's catalog words (`networkPerformance`) for a measurement. The
+   `http_get` requests were made one at a time, spaced apart (`gap_mean_ms`): a figure is
+   for a lightly loaded client. When the question's load is heavier, say so, and check it:
+   requests per second × seconds per request is how many must be in flight at once, more
+   than one connection can carry if it is above 1.
 4. **Multiply, one operation per line**: `label: a × b = c`, with no number in the label
-   but a tier's or step's (`Tier 1`). Every operand is a number accounted for above, written with the same unit
-   (`$1.36 per hour`, never `$1.36` for it); round with an arrow, `71.3 → 72`. Changing a
-   price's unit (per request to per 1000000 requests, per hour to per month) is such a line.
+   but a tier's or step's (`Tier 1`). Every operand is a number accounted for above, written
+   with the same unit (`$1.36 per hour`, never `$1.36` for it). A line passes when its result
+   follows from its operands either as plain numbers or with their units. A rate from a
+   time: things per second = 1 ÷ seconds per thing (`1 ÷ 30.0572 µs per write = 33269.9 writes
+   per second`). Round with an arrow (`33269.9 → 33300`); a figure repeated in prose may be
+   written to fewer digits. Changing a price's unit (per request to per 1000000 requests,
+   per hour to per month) is such a line.
 5. **Give a low and a high figure** from the p5 and p95 where the spread matters (for a
    time, the slow end is the p95; for a rate, the p5). For a request's time, the tail is its
    p99 across requests, with the requests behind it. Name the factor that dominates the
@@ -127,9 +139,13 @@ stood then, so it can be checked after more Runs arrive.
 - A Series split into groups: say which group you use, or use the Series-wide spread.
   Few Runs: say the spread is that of a few boxes.
 - Prices with tiers (data transfer, S3 storage) are charged per tier per month: cite each
-  tier's price and its bounds (`…/beginRange`, `…/endRange`). AWS's free allowance for
-  transfer out (the first 100 GB a month, across all Regions) is a record of its own, while
-  the Region's first tier starts at 0: combining the two is your own arithmetic, so show it.
+  tier's price and its bounds (`…/beginRange`, `…/endRange`, the last tier's end AWS's word
+  `Inf`). AWS's free allowance for transfer out (the first 100 GB a month, across all
+  Regions) is a record of its own, while the Region's first tier starts at 0: combining the
+  two is your own arithmetic, so show it. The order in which AWS applies the allowance and
+  the tiers is not something LedgerMath holds: the order you use is an assumption, marked.
+- Traffic between S3 and EC2 in the same Region has no price in the price file: what you
+  use for it (AWS publishes it as free) is an assumption, marked.
 
 ## When LedgerMath does not hold it
 
