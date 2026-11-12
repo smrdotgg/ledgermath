@@ -43,6 +43,10 @@
  * 130.5. A range writes its unit once: an end with no unit, or with only $,
  * takes the other end's ("13.2 to 14.0 GB/s", "$92.48 to $104.72 per hour").
  * Two numbers without dimensions repeat each other only in the same unit.
+ *
+ * It reads numbers, not meaning: a number that is its citation's value, in its
+ * unit, is cited, whatever the words around it say the figure is (a pooled
+ * 99th percentile across requests called "the first Run's" passes).
  */
 
 import { createHash } from "node:crypto";

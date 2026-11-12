@@ -57,8 +57,8 @@ between runs (`scripts/derive.ts --records DIR`, as
 `DIR/<method>-v<version>-<code>/<stdout hex>.json`). A stream is fetched only when a
 Method asked for has no record of it, and then once for all of them.
 
-- **The key** is the stdout blob's hash and the reducer's key, such as
-  `requests-v1-963924a6f20aacf2`: the Method, its version, and the first 16 hex digits of
+- **The key** is the stdout blob's hash and the reducer's key, `requests-v1-<16 hex digits>`
+  or `series-v1-<16 hex digits>`: the Method, its version, and the first 16 hex digits of
   the digest of the code that makes the record (`codeDigest`): the source text of the
   reducer's module, of every module it imports by a relative path, transitively, and of the
   schemas `run.ts` compiles. Nobody has to remember to change it: any change to that code
@@ -294,8 +294,17 @@ group: what a citation of the Series as of that Run's start is checked against.
 
 **What the requests showed differed.** The pooled figures again for the requests that had
 each value of a fact each request records (`address_block`, `cipher`, `tls_version`,
-`tls_group`, `method`, `target`, `signing`), for every fact that took more than one value among the pool's requests, with
-how many Runs and requests each value had. Only the newest moment's breakdown is kept.
+`tls_group`, `method`, `target`, `signing`), for every fact that took more than one value
+among the pool's requests, with how many Runs and requests each value had. Only the newest
+moment's breakdown is kept. Each pool also lists every value each fact took, one value
+included (`facts`): what the requests recorded.
+
+**What the Runs record beside their requests** (`recorded`, per Series): the box's Region as
+each Run's provider names it, and the Service each Run names with its inputs that are not
+secret, as delivered. Words for a reader, not figures; nothing about the path between box
+and server, which each Run's dumps record (`network`, `ec2_route_tables`,
+`ec2_vpc_endpoints`). The lookup tool describes a Series of requests from these, its params
+and what its requests' events show, and from nothing else.
 
 ### Memory and the record
 
@@ -313,9 +322,9 @@ for a stream that holds no request. The pooled figures are made from the records
 One file of Derivations (`ledgermath.derivations/1`, method `{"name": "requests",
 "version": 1}`): the definitions above in words, the phases, the percentiles with the fewest
 requests each needs, the histogram's definition and precision, the request facts, `series`
-v1's split facts, and per Series its Runs cited by id, path and sha256, each Run's exact
-figures, failures and the figures through it, the pooled figures with histograms and
-breakdowns, and each group's. JSON, two-space indented, except that a value whose members
+v1's split facts, and per Series its Runs cited by id, path and sha256, what they record
+beside their requests, each Run's exact figures, failures and the figures through it, the
+pooled figures with histograms, breakdowns and the facts' values, and each group's. JSON, two-space indented, except that a value whose members
 are all primitives or arrays of them (one phase's statistics, a histogram) is written on one
 line. The same Runs give the same bytes, records kept or not, whatever order the files come
 in.

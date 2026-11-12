@@ -856,4 +856,31 @@ A migrated benchmark is done only when **all** of these hold:
   byte does not differ by block. ChaCha20 was negotiated 4 times, all on c8i.2xlarge.
   Records: 784 KB for the 503 Runs (9.5 KB per `http_get` Run for this Method, 3 KB for
   `series`, 0.3 and 0.4 KB for any other), against 19.8 MB of stdout blobs.
+- **2026-11-12** — Step 5, item 8, after the review of `request-percentiles` (#36, #43): what
+  happens off the happy path. **Kept records**: a record's key is now
+  `<method>-v<version>-<16 hex digits of the digest of the code that made it>` (the
+  reducer's module, every module it imports, transitively, and the schemas), so a change
+  to that code can no longer be forgotten: a record made at `a92d510` was read at `549380c`
+  and excluded a whole successful Run. The cost, every stream fetched once more after such a
+  change, is accepted. A record is sealed with the sha256 of its content and checked on load
+  (counts that are their histograms' sums, every percentile the support rule asks for and no
+  other, in order, each between the bins of the times it lies between); an edited 99th
+  percentile of 1 ns, a replaced histogram or a deleted percentile is ignored and the stream
+  read again. **derive.ts** asks only valid Run files for streams, and runs each Method on its
+  own: when one fails, the other's Derivations and the page are still made, the page says
+  which part is missing and why, and the workflow run still fails. **Which Runs count**: a
+  failed request is held to the binary's order up to where its phase says it got
+  (`http_get.c`, `setup_events`, `setup_failure`, `exchange_events`), every event naming a
+  request names its sample's, a request on a closed connection breaks the contract, an exit
+  0 with a failed warmup or setup contradicts its Run, and a timestamp past 2^53 − 1 keeps
+  the Run out (this Method only). **What is said**: the lookup tool describes a Series of
+  requests from what its Runs record (params, the Service's inputs, the box's Region, the
+  requests' own method, target, signing and TLS) and points to the dumps for the path; the
+  distribution is now the true cumulative share, 100% at the slowest request, with a caption
+  that says how the axis is drawn; a phase of 0 ns is drawn on the time chart's bottom edge;
+  every 99th and 99.9th percentile on the page has its count of requests at or above it; and
+  every value the tool prints reads back under the checker's rule (15 real values at
+  six-digit rounding boundaries did not). The checker reads numbers, not meaning, and the
+  README and the skill now say so for these figures. On the 35 real Runs every figure is as
+  before.
 - _(agents: append your entry here, one per merged benchmark)_

@@ -932,7 +932,12 @@ The checker holds every number in an answer, tables and code included, to one ru
 from the question, cited (in the cited unit; a price in AWS's own unit), an assumption with
 a source in words, the result of a line of arithmetic it recomputes from accounted operands,
 or a repeat of one of these with the same value and unit. `scripts/lib/answer-check.ts`
-says exactly how, and what it does not read.
+says exactly how, and what it does not read. It reads numbers, not meaning: a number that is
+the cited figure, in its unit, passes whatever the words around it call it, so a pooled
+99th percentile across requests described as "the first Run's", or a figure of one address
+block described as the Series', passes as long as the value and the citation agree. Every
+value the lookup tool prints reads back, under the checker's rule, as the value its
+citation names (a value exactly halfway at six digits is printed with a digit more).
 
 ## July's pipeline (`benchmarks/c/`, stage `smr`)
 

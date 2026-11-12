@@ -39,14 +39,19 @@ lists what is.
 ## Series of requests
 
 The `http_get` Series are HTTPS GETs of an object (4 KiB, 128 KiB, 16 MiB) from an EC2
-instance to an S3 bucket **in the same Region (us-east-2)**, through the internet gateway,
-over a new connection per request or one kept connection. Their percentiles (Method
+instance, over a new connection per request or one kept connection. What each Series
+measured is what its Runs record, and `show` says it: the endpoint its Service names, the box's
+Region, how the requests were signed, the TLS they negotiated, the servers' address blocks.
+Say no more than that: the path between box and server (an internet gateway, an endpoint)
+is not in what `show` says, and is not to be assumed. Their percentiles (Method
 requests) are **across requests**, each request one sample, pooled across the Runs: p50 to
 p99.9 of each phase (`dns`, `connect`, `tls`, `send`, `first_byte`, `headers`, `body`,
 `total`). A tail figure rests on few requests: `show` prints how many are ranked at or above
 each one; say it, citing it, beside the figure ("47 ms, 2 requests at or above it"). A
 percentile the requests cannot support (a 99th below 100 requests) is not given: do not make
 one up. The figures may differ by the server's address block, and `show` breaks them down.
+Say which figure a number is in your words as the citation names it: a pooled figure is of
+every counted Run, not of one; a figure `by/address_block/…` is of those requests only.
 
 ## Building an estimate
 
@@ -73,7 +78,10 @@ one up. The figures may differ by the server's address block, and `show` breaks 
    was used.
 7. **Check the answer**, if you have the checker:
    `bun scripts/check-answer.ts --data <location> --question <question file> <answer file>`.
-   Fix every problem it reports.
+   Fix every problem it reports. It checks numbers, not meaning: a figure written with the
+   right citation passes even if your words call it something else (the pooled 99th
+   percentile called "the first Run's", a figure of one address block called the Series'),
+   so the words around each number are yours to get right.
 
 Done when every number in the answer, tables and code included, is from the question,
 cited, an assumption, the result of a line of arithmetic, or a repeat of one of these with
