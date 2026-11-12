@@ -1,3 +1,5 @@
 # The Capture covers the whole box, and the CPU profile hashes its processor section only
 
+_Changed by ADR-0029: the dump covers the whole box before and after every Run, but nothing is frozen per target and there is no CPU profile; which sections split a Series is a Method's choice._
+
 The Capture is widened from the processor to everything the box and the provider's API report: memory, NUMA layout, devices, each control with its available values and as-booted value, the kernel release and command line, and the instance type's catalog record. One Capture per Target is frozen as booted by the resolve job, sits inside the setup hash, and is retaken at the start of every Visit and on every Run for the comparison Method to judge. The CPU profile's hash covers only the Capture's processor section plus the compiler lines, so a change in memory, devices, or kernel state is a Capture difference, not a new CPU profile, which would mean "the silicon changed" and force a rebind with an Annotation. Two separate dumps were rejected as untidy; one hash over everything was rejected because it would turn every device or image change into a profile change.

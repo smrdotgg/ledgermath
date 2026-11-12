@@ -28,7 +28,7 @@ be sure to read "local/AGENTS.md" to get context that will not make it to GitHub
 
 ## Current direction
 
-Build plan: GitHub issue #36, "Build plan: record every Run, judge afterwards". Read it before designing, specifying, or building anything. It pauses the wayfinder map (#12); where the plan disagrees with the map's tickets or `docs/adr/`, follow the plan.
+Build plan: GitHub issue #36, "Build plan: record every Run, judge afterwards". Read it before designing, specifying, or building anything. It pauses the wayfinder map (#12); where the plan disagrees with the map's tickets or `docs/adr/`, follow the plan. ADR-0029 (`docs/adr/0029-record-every-run-and-judge-afterwards.md`) records which ADRs stand as built, which have changed and which are superseded, and which terms of `CONTEXT.md` are in force.
 
 Dated checks: GitHub issue #38, "Dated checks: what to verify, and when". Some of the plan's finish lines can only be checked after a date has passed, so the build assumes they pass and lists them there. At the start of a session, read it. If a check's date has passed, make the check with the AWS CLI and record the result on that issue.
 
