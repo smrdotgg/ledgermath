@@ -823,4 +823,64 @@ A migrated benchmark is done only when **all** of these hold:
   those Runs, 4.5 KB each on average). Run files: 5.5 to 12.8 KB before for the small
   benchmarks, 1.7 to 2.0 KB now; `http_get`'s, from 208 to 985 KB with events inside to
   3.8 KB.
+- **2026-11-11** — Step 5, item 8 of the brief (#43): the Method for Series whose samples
+  are requests, on branch `request-percentiles`. It is Method `requests` version 1
+  (`methods/requests/v1/`), not version 2 of `series`: `series` v1 goes on charting every
+  Series, `http_get`'s included, one number per Run, byte for byte as on `main` for the real
+  Runs repository (316 Runs, compared with `cmp`, records kept or not). A Series is the new
+  Method's when any of its Runs' streams holds a `response_ended` or `request_failed` with a
+  `request`. Per request, the eight phases from the timestamps the binary's README names;
+  per Run, each phase's count, least, greatest and percentiles exactly, a percentile only
+  when n × (1000 − q) ≥ 1000, with how many requests are ranked at or above it; pooled
+  across the Series and series v1's groups through fixed histograms (64 bins per doubling,
+  so within 0.78%), with the figures as they stood through each Run kept for citations of
+  an earlier moment; broken down by address block, cipher, TLS version and group where more
+  than one occurs; failed requests counted by phase and kind, never timed. A Run that exited
+  4 counts; one cut short, killed, exiting 1, or breaking the request contract is shown with
+  why. Each Method now reduces a stream once to a record kept under
+  `<method>-v<version>-r<revision>/<stdout hex>` (`methods/records.ts`), and the workflow
+  caches those and the dump blobs, not the stdout blobs. The page gains a part per Series of
+  requests (time charts of each Run's median, 95th and 99th of the whole request and of the
+  first byte, cumulative distributions with the tail given room, breakdowns, failures); the
+  lookup tool, citations (`[lm:requests/<id>/<phase>/<stat>@v1,<moment>]`), checker and skill
+  learn the new figures. On the 35 real Runs of 2026-11-11 (the two boots started by hand
+  at 21:23 UTC and the 22:10 round on all five types): 5,880 requests, none failed. 4 KiB
+  over a new connection, pooled per instance type: 27.4 to 28.7 ms at the median, 33.4 to
+  35.4 ms at the 95th, 38.7 to 59.0 ms at the 99th, each 99th resting on the 2 slowest
+  requests of a Run. The brief's first look gave 47 and 54 ms at the 99th for the two Runs
+  by hand, whose 99th by R type 7 is 37.8 and 43.9 ms: it took the 199th of 200 times, where
+  type 7 puts the 99th 1% of the way from the 198th to the 199th. 81% of the new
+  connections went to 3.5.0.0/16, 17% to 52.219.0.0/16 and 3% to 16.12.0.0/16; 52.219.0.0/16
+  connects in 0.20 to 0.46 ms at the median where 3.5.0.0/16 takes 0.48 to 1.15 ms and
+  16.12.0.0/16 0.85 to 1.06 ms, and its TLS handshake is 0.3 to 0.5 ms shorter; the first
+  byte does not differ by block. ChaCha20 was negotiated 4 times, all on c8i.2xlarge.
+  Records: 784 KB for the 503 Runs (9.5 KB per `http_get` Run for this Method, 3 KB for
+  `series`, 0.3 and 0.4 KB for any other), against 19.8 MB of stdout blobs.
+- **2026-11-12** — Step 5, item 8, after the review of `request-percentiles` (#36, #43): what
+  happens off the happy path. **Kept records**: a record's key is now
+  `<method>-v<version>-<16 hex digits of the digest of the code that made it>` (the
+  reducer's module, every module it imports, transitively, and the schemas), so a change
+  to that code can no longer be forgotten: a record made at `a92d510` was read at `549380c`
+  and excluded a whole successful Run. The cost, every stream fetched once more after such a
+  change, is accepted. A record is sealed with the sha256 of its content and checked on load
+  (counts that are their histograms' sums, every percentile the support rule asks for and no
+  other, in order, each between the bins of the times it lies between); an edited 99th
+  percentile of 1 ns, a replaced histogram or a deleted percentile is ignored and the stream
+  read again. **derive.ts** asks only valid Run files for streams, and runs each Method on its
+  own: when one fails, the other's Derivations and the page are still made, the page says
+  which part is missing and why, and the workflow run still fails. **Which Runs count**: a
+  failed request is held to the binary's order up to where its phase says it got
+  (`http_get.c`, `setup_events`, `setup_failure`, `exchange_events`), every event naming a
+  request names its sample's, a request on a closed connection breaks the contract, an exit
+  0 with a failed warmup or setup contradicts its Run, and a timestamp past 2^53 − 1 keeps
+  the Run out (this Method only). **What is said**: the lookup tool describes a Series of
+  requests from what its Runs record (params, the Service's inputs, the box's Region, the
+  requests' own method, target, signing and TLS) and points to the dumps for the path; the
+  distribution is now the true cumulative share, 100% at the slowest request, with a caption
+  that says how the axis is drawn; a phase of 0 ns is drawn on the time chart's bottom edge;
+  every 99th and 99.9th percentile on the page has its count of requests at or above it; and
+  every value the tool prints reads back under the checker's rule (15 real values at
+  six-digit rounding boundaries did not). The checker reads numbers, not meaning, and the
+  README and the skill now say so for these figures. On the 35 real Runs every figure is as
+  before.
 - _(agents: append your entry here, one per merged benchmark)_

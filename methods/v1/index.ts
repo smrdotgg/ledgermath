@@ -21,7 +21,10 @@
  * Memory: gather() keeps the dump blobs, which are small and mostly shared,
  * but no stdout. Each Run's stdout is read as it arrives, reduced to what the
  * Derivations need of it (summarizeStream, facts.ts), and let go, so nothing
- * proportional to the total size of the streams stays in memory.
+ * proportional to the total size of the streams stays in memory. That
+ * summary is the stream's reduced record (record.ts): given a store of
+ * records (methods/records.ts), a stream already summarised is not fetched
+ * again, and the Derivations are the same bytes either way.
  *
  * Once Derivations of this version are published, a change to what it
  * outputs is version 2, in methods/v2/, beside this one.
@@ -29,17 +32,8 @@
 
 import { basename } from "node:path";
 
-import {
-	canonicalJson,
-	compareText,
-	type FetchBlob,
-	parseDumpIndex,
-	type Run,
-	type RunFile,
-	readStream,
-	schemaErrors,
-	schemaValidators,
-} from "../run";
+import { type RecordStore, type ReduceCounts, reduceStreams, type StreamReducer } from "../records";
+import { canonicalJson, compareText, type FetchBlob, parseDumpIndex, type Run, type RunFile, schemaErrors, schemaValidators } from "../run";
 import {
 	type BlobMap,
 	changedKeys,
@@ -53,10 +47,10 @@ import {
 	seriesKey,
 	seriesKeyText,
 	splitFacts,
-	summarizeStream,
 	UNREAD_SECTIONS,
 } from "./facts";
 import { median, percentile } from "./numbers";
+import { SERIES_RECORD } from "./record";
 import type {
 	CitedRun,
 	DerivationsFile,
@@ -134,16 +128,28 @@ export function readRuns(files: readonly RunFile[]): { runs: ReadRun[]; unreadab
 export interface Gathered {
 	blobs: BlobMap;
 	streams: ReadonlyMap<string, StreamSummary>;
+	/** How many streams were fetched, and how many summaries were read back from kept records. */
+	counts: ReduceCounts;
+}
+
+export interface GatherOptions {
+	/** Where each stream's summary is kept between runs (methods/records.ts), keyed by SERIES_RECORD_KEY. */
+	records?: RecordStore | null;
+	/** Fetches stdout blobs, when they come from elsewhere than the dumps (a source that keeps nothing). */
+	fetchStream?: FetchBlob;
+	concurrency?: number;
 }
 
 /**
  * Fetches every blob version 1 reads: each Run's before and after dump
  * indexes and the sections of each before-dump except UNREAD_SECTIONS, which
  * it keeps, and each Run's stdout (its events), which it reads, summarises
- * and lets go: at most `concurrency` streams are in memory at once. Throws if
- * a Run names a blob that cannot be fetched.
+ * and lets go: at most `concurrency` streams are in memory at once. A stream
+ * whose summary is kept in `records` is not fetched; one that is fetched has
+ * its summary kept there. Throws if a Run names a blob that cannot be fetched.
  */
-export async function gather(files: readonly RunFile[], fetchBlob: FetchBlob, concurrency = 16): Promise<Gathered> {
+export async function gather(files: readonly RunFile[], fetchBlob: FetchBlob, options: GatherOptions = {}): Promise<Gathered> {
+	const concurrency = options.concurrency ?? 16;
 	const { runs } = readRuns(files);
 	const blobs = new Map<string, Uint8Array>();
 	const streams = new Map<string, StreamSummary>();
@@ -171,8 +177,16 @@ export async function gather(files: readonly RunFile[], fetchBlob: FetchBlob, co
 		for (const [name, hash] of Object.entries(index.sections)) if (!UNREAD_SECTIONS.has(name)) sections.push(hash);
 	}
 	await fetchAll(sections, keepBlob, blobs);
-	await fetchAll(runs.map(({ run }) => run.stdout), (hash, bytes) => streams.set(hash, summarizeStream(readStream(bytes))), streams);
-	return { blobs, streams };
+	const counts: ReduceCounts = { fetched: 0, kept: 0 };
+	const [summaries] = await reduceStreams(
+		runs.map(({ run }) => run.stdout),
+		[SERIES_RECORD as StreamReducer<unknown>],
+		options.fetchStream ?? fetchBlob,
+		options.records ?? null,
+		concurrency,
+		counts,
+	);
+	return { blobs, streams: summaries as Map<string, StreamSummary>, counts };
 }
 
 function dumpSections(hash: string, blobs: BlobMap): Record<string, string> {

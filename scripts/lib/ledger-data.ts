@@ -1,8 +1,9 @@
 /**
  * Where the lookup tool and the answer checker read LedgerMath's data from:
- * a location holding derivations.json (Method output), runs/ (the Run files)
- * and prices/ (the price files), laid out as the Runs repository lays them
- * out. A location is a directory (a clone of the Runs repository with a
+ * a location holding derivations.json (Method series v1's output),
+ * requests-derivations.json (Method requests v1's, when there is one), runs/
+ * (the Run files) and prices/ (the price files), laid out as the Runs
+ * repository lays them out. A location is a directory (a clone of the Runs repository with a
  * derivations file beside runs/) or a base web address serving the same
  * paths.
  *
@@ -14,6 +15,7 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, relative, resolve, sep } from "node:path";
 
+import type { DerivationsFile as RequestsDerivationsFile } from "../../methods/requests/v1/output";
 import type { DerivationsFile } from "../../methods/v1/output";
 import { checkPriceFile } from "./price-file-check";
 import { PRICE_FILE_PATH, type PriceFile } from "./prices";
@@ -103,11 +105,20 @@ export interface LoadedPrices {
 	file: PriceFile;
 }
 
+/** Method requests v1's Derivations as the tool reads them. */
+export type RequestsDerivations = RequestsDerivationsFile & { synthetic?: string };
+
+/** Where Method requests v1's Derivations sit in a location, beside derivations.json. */
+export const REQUESTS_DERIVATIONS = "requests-derivations.json";
+
 export interface LedgerData {
 	location: DataLocation;
 	/** What derivations were read from: a path in the location, or a file given apart. */
 	derivationsFrom: string;
 	derivations: Derivations;
+	/** Method requests v1's Derivations, or null when the location holds none. */
+	requests: RequestsDerivations | null;
+	requestsFrom: string | null;
 	/** Every price file found, oldest first. */
 	priceFiles: string[];
 	/** The price file in use: the newest, or the one asked for. */
@@ -135,6 +146,21 @@ function parseDerivations(text: string, from: string): Derivations {
 	return file as Derivations;
 }
 
+function parseRequestsDerivations(text: string, from: string): RequestsDerivations {
+	let value: unknown;
+	try {
+		value = JSON.parse(text);
+	} catch {
+		throw new Error(`${from} is not JSON`);
+	}
+	const file = value as Partial<RequestsDerivations> | null;
+	if (file === null || typeof file !== "object" || file.schema !== "ledgermath.derivations/1") throw new Error(`${from} is not a ledgermath.derivations/1 file`);
+	if (file.method?.name !== "requests" || file.method.version !== 1 || !Array.isArray(file.derivations)) {
+		throw new Error(`${from} is not the output of Method requests version 1, the only version of it this tool reads`);
+	}
+	return file as RequestsDerivations;
+}
+
 export function datePart(path: string): string {
 	const match = PRICE_FILE_PATH.exec(path);
 	return match === null ? "" : `${match[1]}-${match[2]}-${match[3]}`;
@@ -142,10 +168,13 @@ export function datePart(path: string): string {
 
 /**
  * Reads the derivations and the price file in use. `derivations` reads them
- * from a local file instead of the location's derivations.json; `pricesDate`
- * (yyyy-mm-dd) picks a price file other than the newest.
+ * from a local file instead of the location's derivations.json, and
+ * `requestsDerivations` Method requests v1's instead of the location's
+ * requests-derivations.json (which may be absent: then no figure of requests
+ * is held); `pricesDate` (yyyy-mm-dd) picks a price file other than the
+ * newest.
  */
-export async function loadLedger(location: DataLocation, options: { derivations?: string; pricesDate?: string } = {}): Promise<LedgerData> {
+export async function loadLedger(location: DataLocation, options: { derivations?: string; requestsDerivations?: string; pricesDate?: string } = {}): Promise<LedgerData> {
 	let derivationsFrom: string;
 	let text: string;
 	if (options.derivations !== undefined) {
@@ -159,6 +188,20 @@ export async function loadLedger(location: DataLocation, options: { derivations?
 		text = decode(bytes);
 	}
 	const derivations = parseDerivations(text, derivationsFrom);
+
+	let requests: RequestsDerivations | null = null;
+	let requestsFrom: string | null = null;
+	if (options.requestsDerivations !== undefined) {
+		if (!existsSync(options.requestsDerivations)) throw new Error(`no requests derivations file at ${options.requestsDerivations}`);
+		requestsFrom = options.requestsDerivations;
+		requests = parseRequestsDerivations(readFileSync(options.requestsDerivations, "utf8"), requestsFrom);
+	} else {
+		const bytes = await location.read(REQUESTS_DERIVATIONS);
+		if (bytes !== null) {
+			requestsFrom = location.link(REQUESTS_DERIVATIONS);
+			requests = parseRequestsDerivations(decode(bytes), requestsFrom);
+		}
+	}
 
 	const cache = new Map<string, LoadedPrices | null>();
 	const readPrices = async (path: string): Promise<LoadedPrices | null> => {
@@ -193,5 +236,5 @@ export async function loadLedger(location: DataLocation, options: { derivations?
 	} else if (priceFiles.length > 0) {
 		prices = await readPrices(priceFiles[priceFiles.length - 1] as string);
 	}
-	return { location, derivationsFrom, derivations, priceFiles, prices, readPrices };
+	return { location, derivationsFrom, derivations, requests, requestsFrom, priceFiles, prices, readPrices };
 }

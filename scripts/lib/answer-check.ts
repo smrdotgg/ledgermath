@@ -32,7 +32,8 @@
  * verbatim text of a price record (its description, or the catalog words)
  * cited on the same line; Run links, price files' paths and web addresses;
  * dates (2026-11-11, November 11, 2026, 11 November 2026) and times of day;
- * ids and hashes; the numbers of list items, headings and footnotes; a whole
+ * ids and hashes; IPv4 addresses and address blocks (52.219.0.0/16), as the
+ * breakdown of a Series of requests names them; the numbers of list items, headings and footnotes; a whole
  * number right after a label word ("Tier 1", "Step 2"); key=value text that is
  * a parameter, with its value, of a Series the answer cites; and digits
  * inside a name (c6i.8xlarge, p50, gp3, 8375C).
@@ -42,6 +43,10 @@
  * 130.5. A range writes its unit once: an end with no unit, or with only $,
  * takes the other end's ("13.2 to 14.0 GB/s", "$92.48 to $104.72 per hour").
  * Two numbers without dimensions repeat each other only in the same unit.
+ *
+ * It reads numbers, not meaning: a number that is its citation's value, in its
+ * unit, is cited, whatever the words around it say the figure is (a pooled
+ * 99th percentile across requests called "the first Run's" passes).
  */
 
 import { createHash } from "node:crypto";
@@ -109,6 +114,8 @@ const MASKS: readonly RegExp[] = [
 	new RegExp(`\\b${MONTH}\\.?,?[ \\t]+(?:19|20)[0-9]{2}\\b`, "g"),
 	/\b[0-9]{4}-[0-9]{2}-[0-9]{2}(?:[T ][0-9]{2}:[0-9]{2}(?::[0-9]{2}(?:\.[0-9]+)?)?Z?)?/g,
 	/\b[0-9]{1,2}:[0-9]{2}(?::[0-9]{2})?\b/g,
+	// An IPv4 address or address block: 52.219.176.66, 3.5.0.0/16.
+	/(?<![\w.])[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}(?:\/[0-9]{1,2})?(?![\w.])/g,
 	/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi,
 	/\b(?=[0-9a-f]*[0-9])(?=[0-9a-f]*[a-f])[0-9a-f]{8,}\b/gi,
 	/^\s*(?:#+\s*)?(?:[-*+]\s+)?[0-9]+[.)](?=\s)/g,
@@ -428,6 +435,12 @@ function describe(resolved: Resolved): string {
 	switch (resolved.kind) {
 		case "measured":
 			return `${resolved.stat} of ${resolved.number}${resolved.group === null ? "" : ` (group ${resolved.group})`} of Series ${resolved.series.series.id} (${resolved.series.series.benchmark} on ${resolved.series.series.instance_type}) as of ${resolved.moment}: ${resolved.value}${resolved.stat === "count" ? " counted Runs" : ` ${NUMBER_UNIT[resolved.number].unit}`}`;
+		case "requests": {
+			const scope = resolved.group !== null ? ` (group ${resolved.group})` : resolved.by !== null ? ` (requests with ${resolved.by.fact} ${resolved.by.value})` : "";
+			const what = resolved.phase === null ? resolved.stat : `${resolved.stat} of ${resolved.phase}`;
+			const unit = resolved.unit === "ns" ? " ns" : resolved.stat === "runs" ? " counted Runs" : " requests";
+			return `${what}${scope} of the requests of Series ${resolved.series.series.id} (${resolved.series.series.benchmark} on ${resolved.series.series.instance_type}) as of ${resolved.moment}, Method requests v1: ${resolved.value}${unit}`;
+		}
 		case "param":
 			return `parameter ${resolved.key} of Series ${resolved.series.series.id}: ${String(resolved.value)}`;
 		case "price":
@@ -480,7 +493,7 @@ export async function checkAnswer(answer: string, data: LedgerData, question = "
 	// The parameters of every Series the answer cites: "size_bytes=32768" quoted from the tool is their text.
 	const citedParams = new Map<string, Set<string>>();
 	for (const resolved of resolvedOf.values()) {
-		if (!resolved.ok || (resolved.kind !== "measured" && resolved.kind !== "param")) continue;
+		if (!resolved.ok || (resolved.kind !== "measured" && resolved.kind !== "param" && resolved.kind !== "requests")) continue;
 		for (const [key, value] of Object.entries(resolved.series.series.params)) citedParams.set(key, new Set([...(citedParams.get(key) ?? []), String(value)]));
 	}
 	const questionWords = new Set((question.toLowerCase().match(/[a-z]+/g) ?? []) as string[]);
@@ -583,9 +596,9 @@ export async function checkAnswer(answer: string, data: LedgerData, question = "
 			if (!resolved.ok) {
 				checked.problem = resolved.reason;
 				problems.push({ line, message: `${marker.text} does not resolve: ${resolved.reason}` });
-			} else if (resolved.kind === "measured" || resolved.kind === "param") {
+			} else if (resolved.kind === "measured" || resolved.kind === "param" || resolved.kind === "requests") {
 				if (!citedSeries.has(resolved.series.series.id)) citedSeries.set(resolved.series.series.id, line);
-				if (resolved.kind === "measured" && resolved.asOf === "earlier") {
+				if ((resolved.kind === "measured" || resolved.kind === "requests") && resolved.asOf === "earlier") {
 					notes.push({
 						line,
 						message: `${marker.text} is of Series ${resolved.series.series.id} as of ${resolved.moment}; the data loaded go to ${seriesMoment(resolved.series)}, so it was checked against the ${resolved.runs} counted Runs that started by ${resolved.moment}`,
@@ -603,10 +616,9 @@ export async function checkAnswer(answer: string, data: LedgerData, question = "
 				target.detail = `its citation ${marker.text} does not resolve`;
 				continue;
 			}
+			const runsCount = (resolved.kind === "measured" && resolved.stat === "count") || (resolved.kind === "requests" && resolved.countsRuns);
 			const mismatch =
-				target.countsRuns && !(resolved.kind === "measured" && resolved.stat === "count")
-					? "a count of Runs or boots is cited with the Series' count citation"
-					: citationMismatch(resolved, target.q);
+				target.countsRuns && !runsCount ? "a count of Runs or boots is cited with the Series' count citation" : citationMismatch(resolved, target.q);
 			if (mismatch !== null) {
 				target.status = "unaccounted";
 				target.detail = `${marker.text}: ${mismatch}`;
@@ -617,7 +629,8 @@ export async function checkAnswer(answer: string, data: LedgerData, question = "
 			target.status = "cited";
 			target.detail = `${marker.text} = ${describe(resolved)}`;
 			if (resolved.kind === "measured") target.exact = resolved.stat === "count" ? resolved.value : resolved.value * NUMBER_UNIT[resolved.number].toBase;
-			target.countCited = resolved.kind === "measured" && resolved.stat === "count";
+			if (resolved.kind === "requests") target.exact = resolved.unit === "ns" ? resolved.value * 1e-9 : resolved.value;
+			target.countCited = runsCount;
 		}
 
 		for (const n of nums) {
@@ -718,13 +731,14 @@ export async function checkAnswer(answer: string, data: LedgerData, question = "
 	// Run links: each a Run of the data, with the bytes the Derivation cites.
 	const runsByPath = new Map<string, { series: string; sha256: string }>();
 	for (const derivation of data.derivations.derivations) for (const run of derivation.runs) runsByPath.set(run.path, { series: derivation.series.id, sha256: run.sha256 });
+	for (const derivation of data.requests?.derivations ?? []) for (const run of derivation.runs) runsByPath.set(run.path, { series: derivation.series.id, sha256: run.sha256 });
 	const linkedSeries = new Set<string>();
 	for (const link of runLinks) {
 		if (link.problem === null) {
 			const cited = runsByPath.get(link.path);
 			const bytes = await data.location.read(link.path);
 			if (bytes === null) link.problem = `no Run file ${link.path} at ${data.location.base}`;
-			else if (cited === undefined) link.problem = `${link.path} is in no Series of ${data.derivationsFrom}`;
+			else if (cited === undefined) link.problem = `${link.path} is in no Series of ${data.derivationsFrom}${data.requestsFrom === null ? "" : ` or ${data.requestsFrom}`}`;
 			else if (createHash("sha256").update(bytes).digest("hex") !== cited.sha256) link.problem = `${link.path} is not the file the Derivation cites (sha256 differs)`;
 			else linkedSeries.add(cited.series);
 		}

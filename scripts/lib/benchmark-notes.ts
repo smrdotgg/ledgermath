@@ -162,13 +162,13 @@ export const BENCHMARK_NOTES: Readonly<Record<string, BenchmarkNote>> = {
 	},
 	http_get: {
 		measures:
-			"How long an HTTPS GET of an object in S3 takes, signed with SigV4, from the box to the stage's private bucket in us-east-2, through the internet gateway: every phase of every request (name resolved, connected, secured, request sent, first byte, headers, body) is an event, and every 2xx body is checked against the Fixture. Over a new connection per request (connection new) or one kept connection (connection reused); object_bytes is the object's size.",
+			"How long an HTTPS GET of an object takes, from the box to the endpoint its Service names: every phase of every request (name resolved, connected, secured, request sent, first byte, headers, body) is an event, and every 2xx body is checked against the Fixture. Over a new connection per request (connection new) or one kept connection (connection reused); object_bytes is the object's size; with auth sigv4 the binary signs each request, with auth none it does not. Where a Series' requests went, how they were signed and what they negotiated is what its Runs record, shown with its percentiles across requests; the path between box and server is in each Run's dumps.",
 		repetition: "one GET, from just before its DNS query (new) or its request write (reused) to its whole body: one request per sample",
 		caveat:
-			"Method version 1 gives one number per Run, the median of the requests' total times; the phases (time to first byte, the TLS handshake) and the tail come with a Method that reads requests one by one. A Run with any failed request or non-2xx status exits 4 and is not counted.",
+			"Method series v1 gives one number per Run, the median of the requests' total times, and counts only a Run that exited 0. Method requests v1 gives each phase's percentiles across the requests (show <id>), to the 99th and 99.9th where the requests support them; a Run that exited 4 (a failed request or a status that is not 2xx) counts there, its failed requests counted and never timed.",
 		variants: [
 			{ match: { connection: "new" }, note: "each request resolves the name, connects and does a TLS handshake inside its sample: what a fresh client pays" },
-			{ match: { connection: "reused" }, note: "the request on a kept connection: send, first byte and body only" },
+			{ match: { connection: "reused" }, note: "the request on a kept connection: send, first byte, headers and body only" },
 		],
 		source: "benchmarks/http_get/README.md",
 	},

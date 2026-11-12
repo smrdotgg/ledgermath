@@ -6,9 +6,13 @@
  *
  * It reports what the data hold, and when asked for something they do not
  * hold, it says so and lists what they do hold. It derives no new numbers:
- * the percentiles are Method series version 1's, the prices AWS's, verbatim.
+ * the percentiles across Runs are Method series version 1's, those across
+ * requests Method requests version 1's, the prices AWS's, verbatim.
  */
 
+import type { Stats } from "../../methods/requests/v1/numbers";
+import type { Pool, PoolSummary, SeriesDerivation as RequestsSeries } from "../../methods/requests/v1/output";
+import { PHASES, type Phase } from "../../methods/requests/v1/requests";
 import { compareText, type ParamValue } from "../../methods/run";
 import type { Point, SeriesDerivation, Stat } from "../../methods/v1/output";
 import { BENCHMARK_NOTES, variantNotes } from "./benchmark-notes";
@@ -18,13 +22,22 @@ import {
 	NUMBER_UNIT,
 	NUMBERS,
 	type NumberName,
+	leastRequests,
 	paramCitation,
 	priceCitation,
+	REQUEST_PERCENTILES,
+	type RequestPercentile,
+	type RequestScope,
 	rangeCitation,
+	requestFailedCitation,
+	requestRunsCitation,
+	requestStatCitation,
+	requestTailCitation,
 	seriesCitation,
 	seriesMoment,
 } from "./citation";
 import type { LedgerData, LoadedPrices } from "./ledger-data";
+import { agrees, type Dims, quantities } from "./quantity";
 import type { PriceSource } from "./prices";
 
 // ---------------------------------------------------------------- words
@@ -43,24 +56,41 @@ const paramsText = (params: Record<string, ParamValue>): string =>
 
 // ---------------------------------------------------------------- numbers as text
 
-/** A number to six significant digits, without an exponent or trailing zeros. */
-export function sig(value: number): string {
+/** A number to six significant digits (or `digits`), without an exponent or trailing zeros. */
+export function sig(value: number, digits = 6): string {
 	if (value === 0) return "0";
 	const magnitude = Math.floor(Math.log10(Math.abs(value)));
-	const decimals = Math.min(15, Math.max(0, 5 - magnitude));
+	const decimals = Math.min(15, Math.max(0, digits - 1 - magnitude));
 	const text = value.toFixed(decimals);
 	return text.includes(".") ? text.replace(/0+$/, "").replace(/\.$/, "") : text;
 }
 
-/** A time in nanoseconds, in the unit that reads best. */
-export function timeText(ns: number): string {
-	if (ns >= 1e9) return `${sig(ns / 1e9)} s`;
-	if (ns >= 1e6) return `${sig(ns / 1e6)} ms`;
-	if (ns >= 1e3) return `${sig(ns / 1e3)} µs`;
-	return `${sig(ns)} ns`;
+/**
+ * A value written as the answer checker reads it back: six significant
+ * digits, or as many more as it takes for the checker (agrees, the rule every
+ * cited number is held to) to find the written number standing for the value.
+ * It refuses a value exactly halfway between two numbers at the last written
+ * digit (1,014,475 ns is no more 1.01448 ms than 1.01447 ms), and the value it
+ * compares is the stored one in base units, divided by the written unit's
+ * factor, with the rounding of that arithmetic; so a value on, or a hair off,
+ * such a boundary is written with a digit more (1.014475 ms).
+ */
+function checkedText(base: number, dims: Dims, scaled: number, unit: string): string {
+	for (let digits = 6; digits <= 15; digits++) {
+		const text = `${sig(scaled, digits)} ${unit}`;
+		const q = quantities(text)[0];
+		if (q !== undefined && agrees(q, base, dims)) return text;
+	}
+	return `${sig(scaled, 15)} ${unit}`;
 }
 
-/** Bytes per second, decimal, with the binary unit beside it. */
+/** A time in nanoseconds, in the unit that reads best, as the checker reads it back. */
+export function timeText(ns: number): string {
+	const [scale, unit] = ns >= 1e9 ? [1e9, "s"] : ns >= 1e6 ? [1e6, "ms"] : ns >= 1e3 ? [1e3, "µs"] : [1, "ns"];
+	return checkedText(ns * 1e-9, { s: 1 }, ns / scale, unit);
+}
+
+/** Bytes per second, decimal, with the binary unit beside it, each as the checker reads it back. */
 export function rateText(bytesPerSecond: number): string {
 	const decimal: Array<[number, string]> = [
 		[1e12, "TB/s"],
@@ -76,7 +106,8 @@ export function rateText(bytesPerSecond: number): string {
 	];
 	const [ds, du] = decimal.find(([scale]) => bytesPerSecond >= scale) ?? [1, "B/s"];
 	const [bs, bu] = binary.find(([scale]) => bytesPerSecond >= scale) ?? [1, "B/s"];
-	return `${sig(bytesPerSecond / ds)} ${du} (${sig(bytesPerSecond / bs)} ${bu})`;
+	const dims: Dims = { B: 1, s: -1 };
+	return `${checkedText(bytesPerSecond, dims, bytesPerSecond / ds, du)} (${checkedText(bytesPerSecond, dims, bytesPerSecond / bs, bu)})`;
 }
 
 const numberText = (name: NumberName, value: number): string => (name === "time_per_repetition_ns" ? timeText(value) : rateText(value));
@@ -126,9 +157,11 @@ export interface SeriesSummary {
 	/** The start of the newest Run, to the second: the moment the Series' citations are of. */
 	data_through: string;
 	groups: number;
+	/** Whether Method requests holds percentiles across this Series' requests. */
+	requests: boolean;
 }
 
-function summary(series: SeriesDerivation): SeriesSummary {
+function summary(series: SeriesDerivation, data?: LedgerData): SeriesSummary {
 	const { id, benchmark, params, build } = series.series;
 	const note = BENCHMARK_NOTES[benchmark];
 	const times = series.points.map((point) => point.started_at).sort(compareText);
@@ -155,6 +188,7 @@ function summary(series: SeriesDerivation): SeriesSummary {
 		newest_run_at: times[times.length - 1] ?? null,
 		data_through: seriesMoment(series),
 		groups: series.groups.length,
+		requests: data?.requests?.derivations.some((d) => d.series.id === id) ?? false,
 	};
 }
 
@@ -212,7 +246,7 @@ export interface SeriesList {
 }
 
 function sortedSummaries(data: LedgerData): SeriesSummary[] {
-	return data.derivations.derivations.map(summary).sort(
+	return data.derivations.derivations.map((series) => summary(series, data)).sort(
 		(a, b) =>
 			compareText(a.benchmark, b.benchmark) ||
 			compareText(a.instance_type ?? "", b.instance_type ?? "") ||
@@ -286,6 +320,189 @@ export interface SeriesDetail extends SeriesSummary {
 	runs_list: RunLink[];
 	runs_shown: number;
 	notes: string[];
+	/** Percentiles across the Series' requests (Method requests), when it is a Series of requests. */
+	request_figures: RequestDetail | null;
+}
+
+// ---------------------------------------------------------------- requests
+
+export interface CitedCount {
+	value: number;
+	citation: string;
+}
+
+export interface RequestPercentileFigure {
+	name: RequestPercentile;
+	/** Null when the count does not support it. */
+	value: CitedValue | null;
+	/** How many requests are ranked at or above it. */
+	at_or_above: CitedCount | null;
+	/** Why it is not reported, or null. */
+	not_reported: string | null;
+}
+
+export interface RequestPhaseFigures {
+	phase: Phase;
+	name: string;
+	count: CitedCount;
+	min: CitedValue;
+	max: CitedValue;
+	percentiles: RequestPercentileFigure[];
+}
+
+export interface RequestPoolFigures {
+	runs: CitedCount;
+	requests: number;
+	failed: CitedCount | null;
+	failures: Array<{ phase: string; kind: string; count: CitedCount }>;
+	phases: RequestPhaseFigures[];
+}
+
+export interface RequestDetail {
+	method: string;
+	derivations: string;
+	data_through: string;
+	runs: number;
+	counted: number;
+	failed_runs: number;
+	pool: RequestPoolFigures;
+	groups: Array<{ id: string; pool: RequestPoolFigures }>;
+	by: Array<{ fact: string; what: string; values: Array<{ value: string; pool: RequestPoolFigures }> }>;
+	notes: string[];
+}
+
+const PCT_NAMES: Record<RequestPercentile, string> = { p50: "50th", p90: "90th", p95: "95th", p99: "99th", "p99.9": "99.9th" };
+
+function phaseFigures(id: string, phase: Phase, name: string, stats: Stats, version: number, moment: string, scope: RequestScope): RequestPhaseFigures {
+	const timed = (value: number, stat: "min" | "max" | RequestPercentile): CitedValue => ({ value, unit: "ns", text: timeText(value), citation: requestStatCitation(id, phase, stat, version, moment, scope) });
+	return {
+		phase,
+		name,
+		count: { value: stats.count, citation: requestStatCitation(id, phase, "count", version, moment, scope) },
+		min: timed(stats.min, "min"),
+		max: timed(stats.max, "max"),
+		percentiles: REQUEST_PERCENTILES.map((pct) => {
+			const value = stats[pct];
+			if (value === null) return { name: pct, value: null, at_or_above: null, not_reported: `not reported: ${stats.count} requests, and a ${PCT_NAMES[pct]} percentile needs at least ${leastRequests(pct)}` };
+			return {
+				name: pct,
+				value: timed(value, pct),
+				at_or_above: { value: stats.at_or_above[pct] as number, citation: requestTailCitation(id, phase, pct, version, moment, scope) },
+				not_reported: null,
+			};
+		}),
+	};
+}
+
+function poolFigures(
+	id: string,
+	pool: Pick<Pool, "runs" | "requests"> & Partial<Pick<PoolSummary, "failed" | "failures">> & { phases: Partial<Record<Phase, Stats>> },
+	phases: readonly Phase[],
+	names: (phase: Phase) => string,
+	version: number,
+	moment: string,
+	scope: RequestScope,
+): RequestPoolFigures {
+	const group = scope !== null && "group" in scope ? scope.group : null;
+	const counts = scope === null || "group" in scope;
+	return {
+		runs: { value: pool.runs, citation: requestRunsCitation(id, version, moment, scope) },
+		requests: pool.requests,
+		failed: counts ? { value: pool.failed ?? 0, citation: requestFailedCitation(id, version, moment, group) } : null,
+		failures: counts ? (pool.failures ?? []).map((f) => ({ phase: f.phase, kind: f.kind, count: { value: f.count, citation: requestFailedCitation(id, version, moment, group, f) } })) : [],
+		phases: phases.flatMap((phase) => {
+			const stats = pool.phases[phase];
+			return stats === undefined ? [] : [phaseFigures(id, phase, names(phase), stats, version, moment, scope)];
+		}),
+	};
+}
+
+/** The values, in words: "a", or "a and b", or "a, b and c". No count: those are figures, cited where they are shown. */
+function valuesText(values: ReadonlyArray<string | null>): string {
+	const words = values.map((value) => value ?? "(none)");
+	return words.length <= 1 ? (words[0] ?? "(none)") : `${words.slice(0, -1).join(", ")} and ${words.at(-1)}`;
+}
+
+/**
+ * What the Series' Runs and requests record of what was measured, and
+ * nothing they do not record: the params as given, the Service and its inputs
+ * as delivered, the box's Region as its provider names it, and what the
+ * requests' own events show (method and target, signing, whether each opened
+ * its own connection, TLS, address blocks). The path between box and server
+ * is not stated: the Runs' dumps record it.
+ */
+export function describeRequests(series: RequestsSeries): string[] {
+	const facts = new Map(series.pool.facts.map((f) => [f.fact as string, f.values.map(({ value }) => value)]));
+	const seen = (fact: string): string | null => {
+		const values = facts.get(fact);
+		return values === undefined ? null : `${valuesText(values)}${values.length > 1 ? ` (${values.length > 2 ? "all" : "both"} among them)` : ""}`;
+	};
+	const { recorded } = series;
+	const lines: string[] = [];
+	const asked = [seen("method"), seen("target")].filter((part) => part !== null).join(" ");
+	const service =
+		recorded.services.length === 0
+			? "the Runs name no Service"
+			: recorded.services
+					.map((one) => `the Service ${one.name}, with the inputs ${Object.keys(one.inputs).sort(compareText).map((key) => `${key}=${one.inputs[key]}`).join(" ") || "(none)"} as delivered to the binary`)
+					.join("; ") + (recorded.without_service > 0 ? "; some Runs name no Service" : "");
+	const region = valuesText(recorded.regions.map(({ value }) => value));
+	lines.push(
+		`What the Runs record: params ${paramsText(series.series.params)}; ${service}; the box in Region ${region}, as its provider names it.` +
+			(series.pool.requests === 0 ? " No request succeeded, so the requests show nothing more." : ""),
+	);
+	if (series.pool.requests > 0) {
+		const shown: string[] = [];
+		if (asked !== "") shown.push(`requests sent as ${asked}`);
+		const signing = seen("signing");
+		if (signing !== null) shown.push(`signing ${signing}`);
+		shown.push(series.pool.phases.dns !== undefined ? "each opened a connection of its own (a name lookup, connect and TLS handshake in its time)" : "each went over a connection kept open from before it (no name lookup, connect or TLS in its time)");
+		for (const [fact, words] of [["tls_version", "TLS version"], ["cipher", "cipher"], ["tls_group", "key-exchange group"], ["address_block", "server address block"]] as const) {
+			const value = seen(fact);
+			if (value !== null) shown.push(`${words} ${value}`);
+		}
+		lines.push(`What the succeeded requests' own events show: ${shown.join("; ")}.`);
+	}
+	lines.push(
+		"The path between the box and the server is not stated here: each Run's dumps record it (sections network, ec2_route_tables and ec2_vpc_endpoints). Failed requests are counted, never timed.",
+	);
+	return lines;
+}
+
+function requestDetail(data: LedgerData, series: RequestsSeries): RequestDetail {
+	const requests = data.requests as NonNullable<LedgerData["requests"]>;
+	const id = series.series.id;
+	const version = requests.method.version;
+	const moment = seriesMoment(series);
+	const names = (phase: Phase): string => requests.phases.find((p) => p.phase === phase)?.name ?? phase;
+	const counted = series.points.filter((point) => point.counted).length;
+	const notes: string[] = [
+		"Percentiles here are across requests, each request one sample, pooled across the counted Runs; a percentile is given only when the requests support it (a 99th needs 100, a 99.9th 1000), with how many requests are ranked at or above it.",
+		`Pooled percentiles are read from histograms of ${requests.histogram.bins_per_doubling} bins per doubling of time: within ${(requests.histogram.precision * 100).toFixed(2)}% of the exact figure.`,
+		...describeRequests(series),
+	];
+	if (counted === 1) notes.push("One counted Run: the requests are those of one box at one time; the spread across boxes is not known yet.");
+	if (series.groups.length > 1) notes.push(`Split into ${series.groups.length} groups by Method series v1's split facts; the Series-wide figures mix them.`);
+	if (series.pool.by.length > 0) notes.push(`The requests differed in ${series.pool.by.map((b) => b.fact).join(" and ")}: the figures by each value are below; the Series-wide figures mix them.`);
+	return {
+		method: `${requests.method.name} version ${version}`,
+		derivations: data.requestsFrom ?? "",
+		data_through: moment,
+		runs: series.points.length,
+		counted,
+		failed_runs: series.points.length - counted,
+		pool: poolFigures(id, series.pool, PHASES, names, version, moment, null),
+		groups: series.groups.length < 2 ? [] : series.groups.map((group) => ({ id: group.id, pool: poolFigures(id, group.pool, ["total", "first_byte"], names, version, moment, { group: group.id }) })),
+		by: series.pool.by.map((breakdown) => ({
+			fact: breakdown.fact,
+			what: requests.request_facts.find((f) => f.fact === breakdown.fact)?.what ?? "",
+			values: breakdown.values.map((value) => ({
+				value: value.value,
+				pool: poolFigures(id, value, ["total", "first_byte", "connect", "tls"], names, version, moment, { fact: breakdown.fact, value: value.value }),
+			})),
+		})),
+		notes,
+	};
 }
 
 export type ShowResult =
@@ -348,6 +565,12 @@ function detail(data: LedgerData, series: SeriesDerivation, runs: number | "all"
 		);
 	}
 	if (base.caveat !== null) notes.push(base.caveat);
+	const requestSeries = data.requests?.derivations.find((d) => d.series.id === id) ?? null;
+	notes.push(
+		requestSeries === null
+			? "LedgerMath holds no 99th percentile of this Series: its percentiles are across Runs (5th, 50th, 95th). Only Series of requests (Method requests) have percentiles across requests, up to the 99th and 99.9th."
+			: "Its percentiles across Runs above stop at the 95th; its percentiles across requests (Method requests, below) go to the 99th and 99.9th where the requests support them.",
+	);
 	return {
 		...base,
 		method: `${data.derivations.method.name} version ${data.derivations.method.version}`,
@@ -357,6 +580,7 @@ function detail(data: LedgerData, series: SeriesDerivation, runs: number | "all"
 		runs_list: shown.map((point) => runLink(data, point)),
 		runs_shown: shown.length,
 		notes,
+		request_figures: requestSeries === null ? null : requestDetail(data, requestSeries),
 	};
 }
 
@@ -555,6 +779,9 @@ export interface About {
 	benchmarks: Record<string, number>;
 	benchmarks_without_series: string[];
 	instance_types: Record<string, number>;
+	/** Method requests' Derivations: where from, and how many Series of requests. */
+	requests_derivations: string | null;
+	request_series: number;
 	price_files: string[];
 	price_file: string | null;
 	price_file_fetched_at: string | null;
@@ -585,6 +812,8 @@ export function about(data: LedgerData): About {
 			.filter((name) => !benchmarks.has(name))
 			.sort(compareText),
 		instance_types: Object.fromEntries(countBy(all.map((s) => s.instance_type ?? "(no instance type)"))),
+		requests_derivations: data.requestsFrom,
+		request_series: data.requests?.derivations.length ?? 0,
 		price_files: data.priceFiles,
 		price_file: data.prices?.path ?? null,
 		price_file_fetched_at: data.prices?.file.fetched_at ?? null,
@@ -610,6 +839,10 @@ export function aboutText(data: LedgerData, a: About): string {
 		`Benchmarks with Series: ${listed(new Map(Object.entries(a.benchmarks)))}.`,
 		`Benchmarks with no Series in this data: ${a.benchmarks_without_series.length === 0 ? "none" : a.benchmarks_without_series.join(", ")}.`,
 		`Instance types with Series: ${listed(new Map(Object.entries(a.instance_types)))}.`,
+		"Percentiles across Runs: the 5th, 50th and 95th of every Series (Method series); no 99th percentile across Runs.",
+		a.requests_derivations === null
+			? "Percentiles across requests: none in this data (no requests-derivations.json), so no 99th percentile at all."
+			: `Percentiles across requests (Method requests): ${a.request_series} Series of requests, each phase of an HTTPS GET to S3 up to the 99th and 99.9th percentile where the requests support them, from ${a.requests_derivations}.`,
 	];
 	if (a.price_file === null) lines.push("Price files: none.");
 	else {
@@ -636,7 +869,7 @@ function seriesLines(series: SeriesSummary[]): string[] {
 		lines.push(
 			`  ${s.id}  ${s.instance_type ?? "(no instance type)"}  ${s.availability_zone_id ?? "-"}  ${paramsText(s.params)}  build ${s.build}  ` +
 				`${s.counted} counted of ${s.runs} Runs, ${s.boots} boots, newest ${s.newest_run_at === null ? "-" : atSecond(s.newest_run_at)}` +
-				`${s.groups > 1 ? `, split into ${s.groups} groups` : ""}`,
+				`${s.groups > 1 ? `, split into ${s.groups} groups` : ""}${s.requests ? ", percentiles across requests: show it" : ""}`,
 		);
 		for (const note of s.variant) lines.push(`      this set: ${note}`);
 	}
@@ -698,6 +931,7 @@ export function showText(data: LedgerData, result: ShowResult): string {
 			for (const stats of group.numbers) lines.push(...numberLines(stats, "  "));
 			lines.push("");
 		}
+		if (s.request_figures !== null) lines.push(...requestLines(s.request_figures), "");
 		lines.push(`Runs behind these numbers (${s.runs_shown} of ${s.runs}, newest first${s.runs_shown < s.runs ? "; --runs all lists every one" : ""}):`);
 		for (const run of s.runs_list) {
 			lines.push(`  ${run.link}  ${atSecond(run.started_at)}  group ${run.group}  ${run.counted ? "counted" : `failed: ${run.failure}`}`);
@@ -709,6 +943,43 @@ export function showText(data: LedgerData, result: ShowResult): string {
 		);
 	}
 	return `${lines.join("\n")}\n`;
+}
+
+function phaseLines(figures: RequestPhaseFigures, indent: string): string[] {
+	const lines = [`${indent}${figures.phase}, ${figures.name}, over ${figures.count.value} requests ${figures.count.citation}:`];
+	lines.push(`${indent}  min   ${figures.min.text.padEnd(14)} ${figures.min.citation}`);
+	for (const pct of figures.percentiles) {
+		if (pct.value === null) lines.push(`${indent}  ${pct.name.padEnd(5)} ${pct.not_reported}`);
+		else {
+			const tail = pct.name === "p50" || pct.at_or_above === null ? "" : `, ${pct.at_or_above.value} ${pct.at_or_above.value === 1 ? "request" : "requests"} at or above it ${pct.at_or_above.citation}`;
+			lines.push(`${indent}  ${pct.name.padEnd(5)} ${pct.value.text.padEnd(14)} ${pct.value.citation}${tail}`);
+		}
+	}
+	lines.push(`${indent}  max   ${figures.max.text.padEnd(14)} ${figures.max.citation}`);
+	return lines;
+}
+
+function poolLines(pool: RequestPoolFigures, indent: string): string[] {
+	const lines = [`${indent}from ${pool.runs.value} counted Runs ${pool.runs.citation}`];
+	if (pool.failed !== null) {
+		lines.push(`${indent}failed requests, in no time: ${pool.failed.value} ${pool.failed.citation}`);
+		for (const f of pool.failures) lines.push(`${indent}  ${f.phase} ${f.kind}: ${f.count.value} ${f.count.citation}`);
+	}
+	for (const phase of pool.phases) lines.push(...phaseLines(phase, indent));
+	return lines;
+}
+
+function requestLines(r: RequestDetail): string[] {
+	const lines = [
+		`Percentiles across requests, Method ${r.method}: ${r.runs} Runs (${r.counted} counted, ${r.failed_runs} failed), data through ${r.data_through}:`,
+		...poolLines(r.pool, "  "),
+	];
+	for (const note of r.notes) lines.push(`Note: ${note}`);
+	for (const group of r.groups) lines.push("", `Group ${group.id}, its requests:`, ...poolLines(group.pool, "  "));
+	for (const breakdown of r.by) {
+		for (const value of breakdown.values) lines.push("", `Requests with ${breakdown.fact} ${value.value} (${breakdown.what}):`, ...poolLines(value.pool, "  "));
+	}
+	return lines;
 }
 
 export function pricesText(data: LedgerData, result: PriceResult): string {

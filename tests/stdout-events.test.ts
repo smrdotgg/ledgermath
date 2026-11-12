@@ -5,6 +5,7 @@ import { cpSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync }
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { directoryRecords } from "../methods/records";
 import { readStream } from "../methods/run";
 import { derive, gather, serialize } from "../methods/v1";
 import { checkBucketDirectory, type RunRecord } from "../scripts/check-runs";
@@ -149,6 +150,22 @@ describe("Method version 1 reads every Run's events from its stdout blob", () =>
 		expect(serialize(derive(runs, blobs))).toBe(readFileSync(join(SAMPLES, "older-shape-derivations.json"), "utf8"));
 	}, SLOW);
 
+	test("and gives the same bytes from kept records as from the streams, fetching no stream the second time", async () => {
+		const directory = join(scratch, "older-samples-records");
+		for (const sample of OLDER) cpSync(join(SAMPLES, sample, "runs"), join(directory, "runs"), { recursive: true });
+		const runs = readRunFiles(directory);
+		const fetch = blobsFromDirectories(OLDER.map((sample) => join(SAMPLES, sample, "blobs")));
+		const records = directoryRecords(join(scratch, "older-samples-kept"));
+		const first = await gather(runs, fetch, { records });
+		expect(first.counts.kept).toBe(0);
+		const stdouts = new Set(runs.map((file) => (file.record as { stdout: string }).stdout));
+		const second = await gather(runs, async (hash) => (stdouts.has(hash) ? Promise.reject(new Error(`fetched ${hash}`)) : fetch(hash)), { records });
+		expect(second.counts).toEqual({ fetched: 0, kept: stdouts.size });
+		const expected = readFileSync(join(SAMPLES, "older-shape-derivations.json"), "utf8");
+		expect(serialize(derive(runs, first))).toBe(expected);
+		expect(serialize(derive(runs, second))).toBe(expected);
+	}, SLOW);
+
 	test("and counts a Run of the new shape exactly as the same Run of the older shape", async () => {
 		const older = new HandMade();
 		const newer = new HandMade();
@@ -188,7 +205,7 @@ describe("Method version 1 reads every Run's events from its stdout blob", () =>
 				inFlight--;
 				return made.fetch(hash);
 			},
-			3,
+			{ concurrency: 3 },
 		);
 		for (const hash of stdouts) {
 			expect(gathered.blobs.has(hash)).toBe(false);

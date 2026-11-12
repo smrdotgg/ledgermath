@@ -5,7 +5,7 @@
  * scripts/lib/answer-check.ts says exactly what it checks; the citation
  * syntax is in scripts/lib/citation.ts and skills/ledgermath/SKILL.md.
  *
- *     bun scripts/check-answer.ts [--data LOCATION] [--derivations FILE] [--question FILE] [--verbose] [--json] ANSWER
+ *     bun scripts/check-answer.ts [--data LOCATION] [--derivations FILE] [--requests-derivations FILE] [--question FILE] [--verbose] [--json] ANSWER
  *
  *   --data LOCATION   the data the answer was written from, as for scripts/lookup.ts; default $LEDGERMATH_DATA
  *   --question FILE   the question; its numbers count as given
@@ -20,7 +20,7 @@ import { parseArgs } from "node:util";
 import { checkAnswer, reportText } from "./lib/answer-check";
 import { loadLedger, openLocation } from "./lib/ledger-data";
 
-const USAGE = "usage: bun scripts/check-answer.ts [--data LOCATION] [--derivations FILE] [--question FILE] [--verbose] [--json] ANSWER";
+const USAGE = "usage: bun scripts/check-answer.ts [--data LOCATION] [--derivations FILE] [--requests-derivations FILE] [--question FILE] [--verbose] [--json] ANSWER";
 
 async function main(): Promise<number> {
 	const { values, positionals } = parseArgs({
@@ -28,6 +28,7 @@ async function main(): Promise<number> {
 		options: {
 			data: { type: "string" },
 			derivations: { type: "string" },
+			"requests-derivations": { type: "string" },
 			question: { type: "string" },
 			verbose: { type: "boolean", default: false },
 			json: { type: "boolean", default: false },
@@ -45,7 +46,7 @@ async function main(): Promise<number> {
 			return 2;
 		}
 	}
-	const data = await loadLedger(openLocation(base), { derivations: values.derivations });
+	const data = await loadLedger(openLocation(base), { derivations: values.derivations, requestsDerivations: values["requests-derivations"] });
 	const report = await checkAnswer(readFileSync(answerPath, "utf8"), data, values.question === undefined ? "" : readFileSync(values.question, "utf8"));
 	process.stdout.write(values.json ? `${JSON.stringify(report, null, 2)}\n` : reportText(report, { answer: answerPath, data: base, verbose: values.verbose }));
 	return report.pass ? 0 : 1;

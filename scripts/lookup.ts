@@ -3,19 +3,24 @@
  * output (derivations.json) and the price files (prices/), with a citation
  * beside every number. skills/ledgermath/SKILL.md says how an agent uses it.
  *
- *     bun scripts/lookup.ts [--data LOCATION] [--derivations FILE] [--prices-date YYYY-MM-DD] [--json] COMMAND [ARGS]
+ *     bun scripts/lookup.ts [--data LOCATION] [--derivations FILE] [--requests-derivations FILE] [--prices-date YYYY-MM-DD] [--json] COMMAND [ARGS]
  *
  *   about                       what the data hold: Series, benchmarks, instance types, price files
  *   series [WORD...]            the Series, or those matching every word
  *   show ID|WORD... [--runs N|all]
  *                               one Series: percentiles with citations, groups, the Runs behind them
- *                               (newest 10 by default)
+ *                               (newest 10 by default); for a Series of requests, also the
+ *                               percentiles of each phase across its requests (Method requests)
  *   prices WORD...              the prices matching every word, with AWS's words and citations
  *
  *   --data LOCATION    a directory holding derivations.json, runs/ and prices/ (a clone of the
  *                      Runs repository with a derivations file), or a base web address serving
  *                      them; default $LEDGERMATH_DATA
  *   --derivations FILE read the derivations from this file instead of LOCATION/derivations.json
+ *   --requests-derivations FILE
+ *                      read Method requests' Derivations from this file instead of
+ *                      LOCATION/requests-derivations.json (which may be absent: then no
+ *                      percentile across requests is held)
  *   --prices-date D    use the price file of that date instead of the newest
  *   --json             the same answer as JSON
  *
@@ -31,7 +36,7 @@ import { loadLedger, openLocation } from "./lib/ledger-data";
 import { about, aboutText, findPrices, listSeries, pricesText, seriesListText, showSeries, showText } from "./lib/lookup";
 
 const USAGE =
-	"usage: bun scripts/lookup.ts [--data LOCATION] [--derivations FILE] [--prices-date YYYY-MM-DD] [--json] " +
+	"usage: bun scripts/lookup.ts [--data LOCATION] [--derivations FILE] [--requests-derivations FILE] [--prices-date YYYY-MM-DD] [--json] " +
 	"(about | series [WORD...] | show ID|WORD... [--runs N|all] | prices WORD...)";
 
 function fail(message: string): never {
@@ -45,6 +50,7 @@ async function main(): Promise<void> {
 		options: {
 			data: { type: "string" },
 			derivations: { type: "string" },
+			"requests-derivations": { type: "string" },
 			"prices-date": { type: "string" },
 			runs: { type: "string" },
 			json: { type: "boolean", default: false },
@@ -66,7 +72,7 @@ async function main(): Promise<void> {
 		else fail("--runs is a positive whole number or all");
 	}
 
-	const data = await loadLedger(openLocation(base), { derivations: values.derivations, pricesDate: values["prices-date"] });
+	const data = await loadLedger(openLocation(base), { derivations: values.derivations, requestsDerivations: values["requests-derivations"], pricesDate: values["prices-date"] });
 	const out = (json: unknown, text: string): void => {
 		process.stdout.write(values.json ? `${JSON.stringify(json, null, 2)}\n` : text);
 	};
