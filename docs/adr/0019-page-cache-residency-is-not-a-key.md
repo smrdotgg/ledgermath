@@ -1,3 +1,5 @@
 # Page-cache residency is not a state or fixture key
 
+_Changed by ADR-0029: nothing drops the page cache before a Run; a disk benchmark makes its own reads cold and reports the file's resident pages, and the dump records `/proc/meminfo` before and after._
+
 No key declares whether a file fixture is in the page cache. The Provisioner drops caches before every Run as a bundle constant, and the runner records the drop time, each file fixture's resident page count, and the `Cached`, `Dirty`, and `MemFree` lines of `/proc/meminfo` as recorded-only facts; cold reads come from `O_DIRECT` in the binary. Residency can be guaranteed (`mmap` then a successful `mlock` keeps the pages in RAM until unlocked), but a lock belongs to the process that takes it, so the Provisioner could hand one over only through a helper process alive for the whole Run; no Benchmark needs that, and a Benchmark that wants a warm read takes the lock itself, pinned by its Artifact hash, with its PRD saying so. If a Variant ever needs it, the key returns as `resident: all`, realized by a Provisioner helper holding `mlock` through the Run and observed by the helper's return plus `fincore`.

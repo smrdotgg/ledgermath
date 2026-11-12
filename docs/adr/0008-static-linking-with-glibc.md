@@ -1,3 +1,5 @@
 # Artifacts are statically linked against glibc
 
+_Changed by ADR-0029: CI checks that each static build runs as the only file in a `FROM scratch` container, and `memory_read` also has a dynamic build, run beside the static one until the measurement this decision is provisional on has been made._
+
 Artifacts are statically linked, and CI rejects a binary that asks for a program interpreter or lists a needed shared library, so that the Artifact hash covers every instruction the process runs except the kernel's. Dynamic linking was rejected because it puts the box's libc inside the measured path, where a libc update moves numbers at a setup-hash boundary shared with every Series on the Target. musl was rejected because its routines are slower and the Archive outside git removed the size argument for it. Provisional on the maintainer-run linking experiment recorded in the #14 resolution: if static glibc is slower than dynamic glibc on any Benchmark, this decision is retaken with those numbers.

@@ -1,5 +1,7 @@
 # One Artifact per Benchmark per architecture, no build-time parameters
 
+_Changed by ADR-0029: parameters are still never compiled in, but the binary is built on the box at every boot instead of once per architecture or CPU profile, and a benchmark may have more than one named build (`static`, `dynamic`)._
+
 A Benchmark builds to one Artifact per target architecture and has no build-time parameters, even though compiling per parameter value would give sharper hash boundaries. Any source change therefore puts a boundary on every Station of the Benchmark, and the transition run, which already runs on every affected Station before merge, shows which moved. This removes the author's judgement about which parameters select code; the cost is minutes of instance time per pull request.
 
 Amended by ADR-0007: "architecture" now reads "CPU profile".

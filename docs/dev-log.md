@@ -44,9 +44,9 @@ numbers.** Everything above is context for *why*, not scope for *what*.
 ## 2. The contract (read this twice)
 
 **A benchmark is a static native binary that prints a stream of events to stdout, one
-JSON object per line. All diagnostics go to stderr.** It receives its parameters and the
-Provisioner's outputs as environment variables, and it prints nothing it was told, only
-what it observed.
+JSON object per line. All diagnostics go to stderr.** It receives its parameters, and the
+inputs of any Service it measures, as environment variables, and it prints nothing it was
+told, only what it observed.
 
 Decided in Provider abstraction and declarative run spec (#22) on 2026-10-24, replacing
 the JSON array of result records the proof of concept printed. ADR-0022 records why. The
@@ -148,8 +148,8 @@ trace of that sample in the stream; its exit status and stderr are the evidence.
 
 ### What is gone, and why
 
-- `benchmark` and `variant`: declared values. The controller that launched the binary
-  knows which Station it is running.
+- `benchmark` and `variant`: declared values. The runner that launched the binary knows
+  which benchmark and params it gave, and writes them into the Run.
 - `mean_ns`, `median_ns`, `throughput_bytes_per_second`, and the per-sample average:
   derivable. Methods compute them from the sample timestamps and repetition counts.
 - `unit`: implied by the contract.

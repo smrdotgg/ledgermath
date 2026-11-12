@@ -1,3 +1,7 @@
+> **As built.** Some terms below belong only to the design specified in `docs/adr/`, which the build plan (#36) set aside, and were never built.
+> [ADR-0029](docs/adr/0029-record-every-run-and-judge-afterwards.md) says, for every term, whether it is in force as defined, in force with a stated difference, or not built.
+> Check it before using a term for the system that exists.
+
 # LedgerMath
 
 Continuous napkin math: an open, permanent ledger of raw performance measurements from real data-center hardware and services, plus the auditable math that turns them into usable numbers.
