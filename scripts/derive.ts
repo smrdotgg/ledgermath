@@ -18,7 +18,9 @@
  *                       Stdout blobs are read from it if there, but never kept in it
  *   --records DIR       keep each stream's reduced record here, per Method
  *                       (methods/records.ts): a stream with a record for every Method
- *                       asked for is not fetched again
+ *                       asked for is not fetched again. Records made by other code
+ *                       for a Method asked for (DIR/<method>-v<version>-<another
+ *                       digest>), which are never read, are removed
  *   --region R          the bucket's region (default us-east-2)
  *
  * At least one of --out and --requests-out. With --records, a stream that
@@ -36,8 +38,8 @@
  * then 1, so the failure is seen; 0 when every Method asked for succeeded.
  */
 
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { parseArgs } from "node:util";
 
 import { directoryRecords, keepRecords, type RecordStore, type ReduceCounts, type StreamReducer } from "../methods/records";
@@ -79,6 +81,28 @@ async function runMethod(method: { name: string; version: number }, out: string,
 		console.error(`method ${method.name} v${method.version} failed, and wrote no Derivations: ${failure.error} -> ${failurePath(out)}`);
 		return false;
 	}
+}
+
+/**
+ * Removes, from a directory of records, every directory of a Method asked for
+ * that is not its current key: records made by other code, which no key of
+ * this code names, so the cache that keeps the directory does not grow with
+ * every change to the code. Returns their names.
+ */
+function removeOtherCode(directory: string, keys: ReadonlyArray<string | null>): string[] {
+	if (!existsSync(directory)) return [];
+	const removed: string[] = [];
+	for (const key of keys) {
+		if (key === null) continue;
+		const prefix = key.replace(/[0-9a-f]{16}$/, "");
+		for (const name of readdirSync(directory)) {
+			if (name.startsWith(prefix) && name !== key) {
+				rmSync(join(directory, name), { recursive: true, force: true });
+				removed.push(name);
+			}
+		}
+	}
+	return removed.sort();
 }
 
 async function main(): Promise<void> {
@@ -169,7 +193,11 @@ async function main(): Promise<void> {
 				};
 			})) && ok;
 	}
-	if (records !== null) console.log(`streams: ${counts.fetched} fetched and reduced, ${counts.kept} records read back from ${values.records}`);
+	if (records !== null) {
+		console.log(`streams: ${counts.fetched} fetched and reduced, ${counts.kept} records read back from ${values.records}`);
+		const removed = removeOtherCode(values.records as string, [values.out ? SERIES_RECORD.key : null, values["requests-out"] ? REQUESTS_RECORD.key : null]);
+		if (removed.length > 0) console.log(`removed the records of other code, never read: ${removed.join(", ")}`);
+	}
 	if (!ok) process.exit(1);
 }
 

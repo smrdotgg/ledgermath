@@ -1,9 +1,10 @@
 import { afterAll, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
 import * as requests from "../methods/requests/v1";
+import { REQUESTS_RECORD_KEY } from "../methods/requests/v1/record";
 import type { Run } from "../methods/run";
 import type { DerivationsFile as RequestsFile } from "../methods/requests/v1/output";
 import * as series from "../methods/v1";
@@ -86,6 +87,19 @@ describe("scripts/derive.ts", () => {
 		expect(second.code).toBe(0);
 		expect(existsSync(out)).toBe(true);
 		expect(existsSync(failurePath(out))).toBe(false);
+	});
+
+	test("records made by other code for a Method asked for are removed; another Method's are left", () => {
+		const { dir } = directory("other-code");
+		const records = join(dir, "records");
+		for (const name of ["requests-v1-r1", "requests-v1-0123456789abcdef", "series-v1-fedcba9876543210", "series-v2-0123456789abcdef"]) {
+			mkdirSync(join(records, name), { recursive: true });
+			writeFileSync(join(records, name, "x.json"), "{}\n");
+		}
+		const result = run("derive.ts", ["--runs", dir, "--blobs", join(dir, "blobs"), "--records", records, "--requests-out", join(dir, "r.json")]);
+		expect(result.code).toBe(0);
+		expect(result.stdout).toContain("removed the records of other code, never read: requests-v1-0123456789abcdef, requests-v1-r1");
+		expect(readdirSync(records).sort()).toEqual([REQUESTS_RECORD_KEY, "series-v1-fedcba9876543210", "series-v2-0123456789abcdef"].sort());
 	});
 
 	test("build-page refuses to build from a part that is neither Derivations nor a note", () => {

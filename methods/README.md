@@ -68,7 +68,9 @@ Method asked for has no record of it, and then once for all of them.
   code is never read. **The cost**, accepted: after such a change every stream is fetched
   and reduced once more (about 20 MB on 2026-11-11, growing by about 44 MB a day of
   `http_get` streams), on the next run of the workflow. A change elsewhere (the derive
-  step, the output's shape, the page) costs nothing. Packages imported by name (ajv) are
+  step, the output's shape, the page) costs nothing. `scripts/derive.ts` removes the
+  directories of records made by other code for the Methods it runs, which are never read,
+  so the workflow's cache does not grow with every change. Packages imported by name (ajv) are
   not in the digest; the lockfile pins them.
 - **A record is kept with the sha256 of its content** (canonical JSON), and used only when
   it parses, names its reducer and its blob, has that digest, and **holds together** by the
