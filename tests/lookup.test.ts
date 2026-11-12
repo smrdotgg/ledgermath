@@ -3,6 +3,7 @@ import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 import { BENCHMARK_NOTES } from "../scripts/lib/benchmark-notes";
+import { quantities } from "../scripts/lib/quantity";
 import { resolveCitation } from "../scripts/lib/citation";
 import { type LedgerData, loadLedger, openLocation, PRICE_PROBE_DAYS } from "../scripts/lib/ledger-data";
 import {
@@ -43,6 +44,24 @@ describe("the benchmark notes", () => {
 			expect(existsSync(join(ROOT, note?.source ?? "")), note?.source).toBe(true);
 		}
 		expect(Object.keys(BENCHMARK_NOTES).sort()).toEqual([...new Set(schedule.benchmarks.map((entry) => entry.name))].sort());
+	});
+
+	test("no quantity is written by hand: the checker's own reader finds no number in any line the tool prints", () => {
+		for (const [name, note] of Object.entries(BENCHMARK_NOTES)) {
+			for (const text of [note.measures, note.repetition, note.bytes ?? "", note.caveat ?? "", ...(note.variants ?? []).map((v) => v.note)]) {
+				expect(quantities(text).map((q) => q.text), `${name}: ${text}`).toEqual([]);
+			}
+		}
+		// A size or limit is named by the dump section that records it.
+		expect(BENCHMARK_NOTES.disk_write?.variants?.find((v) => v.match.disk === "root_volume")?.note).toContain("dump section ec2_volumes");
+		expect(BENCHMARK_NOTES.compressed_memory_read?.measures).toContain("dump sections lscpu and sys_cpu");
+	});
+
+	test("every benchmark whose binary runs on one thread says so", () => {
+		const threaded = new Set(["memory_read", "mutex", "tcp_echo"]);
+		for (const [name, note] of Object.entries(BENCHMARK_NOTES)) {
+			if (!threaded.has(name)) expect(note.measures, name).toMatch(/\bone thread\b/);
+		}
 	});
 });
 
@@ -254,10 +273,6 @@ describe("citations", () => {
 				[match.begin_range_citation, match.begin_range],
 				[match.end_range_citation, match.end_range],
 			] as const) {
-				if (citation === null) {
-					expect(text).toBe("Inf");
-					continue;
-				}
 				const range = await resolveCitation(citation.slice(4, -1), data);
 				expect(range.ok && range.kind === "range" && range.text).toBe(text);
 			}

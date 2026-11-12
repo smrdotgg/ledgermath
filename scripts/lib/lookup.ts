@@ -610,8 +610,9 @@ export interface PriceMatch {
 	begin_range: string;
 	end_range: string;
 	/** Where the tier begins and ends, in AWS's unit; null for "Inf", which cites nothing. */
-	begin_range_citation: string | null;
-	end_range_citation: string | null;
+	/** Where the tier begins and ends, in AWS's unit; AWS writes the last tier's end as the word "Inf", and its citation is of that word. */
+	begin_range_citation: string;
+	end_range_citation: string;
 	effective_date: string;
 	citation: string;
 	file: string;
@@ -687,8 +688,8 @@ export function allPrices(prices: LoadedPrices): PriceMatch[] {
 						description: String(dimension.description),
 						begin_range: String(dimension.beginRange),
 						end_range: String(dimension.endRange),
-						begin_range_citation: Number.isFinite(Number(dimension.beginRange)) ? rangeCitation(prices.path, sku, String(dimension.rateCode), "beginRange") : null,
-						end_range_citation: Number.isFinite(Number(dimension.endRange)) ? rangeCitation(prices.path, sku, String(dimension.rateCode), "endRange") : null,
+						begin_range_citation: rangeCitation(prices.path, sku, String(dimension.rateCode), "beginRange"),
+						end_range_citation: rangeCitation(prices.path, sku, String(dimension.rateCode), "endRange"),
 						effective_date: String(term.effectiveDate),
 						citation: priceCitation(prices.path, sku, String(dimension.rateCode)),
 						file: prices.path,
@@ -995,7 +996,7 @@ export function pricesText(data: LedgerData, result: PriceResult): string {
 			lines.push(
 				`${match.price_per_unit} ${match.currency} per ${match.unit}   ${match.citation}`,
 				`  AWS's description: "${match.description}"`,
-				`  tier from ${match.begin_range} ${match.unit}${match.begin_range_citation === null ? "" : ` ${match.begin_range_citation}`} to ${match.end_range}${match.end_range_citation === null ? "" : ` ${match.unit} ${match.end_range_citation}`}`,
+				`  tier from ${match.begin_range} ${match.unit} ${match.begin_range_citation} to ${Number.isFinite(Number(match.end_range)) ? `${match.end_range} ${match.unit}` : match.end_range} ${match.end_range_citation}`,
 				`  effective ${match.effective_date}; price file of ${match.file_date}`,
 				`  ${match.product_family}, SKU ${match.sku}, rate code ${match.rate_code}, selected by rule ${match.rule}; ${match.offer} offer file version ${match.offer_version}, published ${match.offer_published}`,
 			);
