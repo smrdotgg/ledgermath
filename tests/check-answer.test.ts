@@ -4,10 +4,10 @@ import { join, resolve } from "node:path";
 
 import type { SeriesDerivation } from "../methods/v1/output";
 import { checkAnswer, type CheckReport, type NumberStatus } from "../scripts/lib/answer-check";
-import { NUMBERS, seriesMoment, statAt } from "../scripts/lib/citation";
+import { citationMismatch, NUMBERS, parameterUnit, seriesMoment, statAt } from "../scripts/lib/citation";
 import { type LedgerData, loadLedger, openLocation } from "../scripts/lib/ledger-data";
 import { findPrices, type PriceMatch } from "../scripts/lib/lookup";
-import { agrees, parseUnit, quantities, quantityWords } from "../scripts/lib/quantity";
+import { agrees, parseUnit, type Quantity, quantities, quantityWords } from "../scripts/lib/quantity";
 import { type Fixture, makeFixture } from "./lookup-fixtures";
 
 setDefaultTimeout(60_000);
@@ -275,7 +275,7 @@ describe("an answer written as the skill says", () => {
 		const dropped = await checkAnswer(answer(c).replace("0.48 s × $1.36 per hour = $0.00018", "0.48 s × $1.36 = $0.00018"), data, QUESTION);
 		expect(dropped.problems.some((p) => p.message.startsWith('"$1.36" is not accounted for'))).toBe(true);
 		const result = await checkAnswer(answer(c).replace("× $1.36 per hour = $0.00018", "× $1.36 per hour = $0.00018 per hour"), data, QUESTION);
-		expect(result.problems.some((p) => p.message.includes("does not follow from the arithmetic on its line") && p.message.includes("USD"))).toBe(true);
+		expect(result.problems.some((p) => p.message.includes("does not follow from the arithmetic on its line") && p.message.includes("where the result is written in US dollars per second"))).toBe(true);
 		const invented = await checkAnswer(answer(c).replace("× 80% =", "× 90% ="), data, QUESTION);
 		expect(invented.problems.some((p) => p.message.startsWith('"90%" is not accounted for'))).toBe(true);
 	});
@@ -305,7 +305,7 @@ describe("a citation of the Series as of a moment", () => {
 		expect(ok.pass).toBe(true);
 		expect(ok.notes[0]?.message).toContain("so it was checked against the 2 counted Runs that started by 2026-11-13T04:12:00Z");
 		const now = await checkAnswer(`p50 8 ms ${earlier}\n${link}`, data);
-		expect(now.problems[0]?.message).toContain("the citation is 7500000 ns");
+		expect(now.problems[0]?.message).toContain("expected 7.5 ms (the cited value is 7500000 ns); found 8 ms");
 	});
 
 	test("of a later moment than the data loaded, or another Method version: a problem", async () => {
@@ -327,11 +327,15 @@ describe("a tier's range", () => {
 		expect((await checkAnswer(`The first tier ends at 10240 GB ${end}.`, data)).pass).toBe(true);
 		// 10 TB stands for 9.5 to 10.5 TB, which holds 10240 GB; 10000 GB does not.
 		expect((await checkAnswer(`The first tier ends at 10 TB ${end}.`, data)).pass).toBe(true);
-		expect((await checkAnswer(`The first tier ends at 10000 GB ${end}.`, data)).problems[0]?.message).toContain("the tier's endRange is 10240 GB");
+		expect((await checkAnswer(`The first tier ends at 10000 GB ${end}.`, data)).problems[0]?.message).toContain("expected 10240 GB, the tier's endRange; found 10000 GB");
+		// The last tier's end is AWS's word "Inf": cited as it is, it accounts for no number, and a number before it does not match.
 		const last = findPrices(data, ["data-transfer-out-to-internet"]).matches.find((p) => p.end_range === "Inf") as PriceMatch;
-		expect(last.end_range_citation).toBeNull();
-		const inf = await checkAnswer(`It ends at 999 GB [lm:${last.file}#${last.sku}/${last.rate_code}/endRange].`, data);
-		expect(inf.problems[0]?.message).toContain('the tier\'s endRange is "Inf", not a number');
+		expect(last.end_range_citation).toBe(`[lm:${last.file}#${last.sku}/${last.rate_code}/endRange]`);
+		const inf = await checkAnswer(`The last tier has no end: Inf ${last.end_range_citation}.`, data);
+		expect(inf.pass).toBe(true);
+		expect(inf.notes).toEqual([]);
+		const number = await checkAnswer(`It ends at 999 GB ${last.end_range_citation}.`, data);
+		expect(number.problems[0]?.message).toContain('the tier\'s endRange is AWS\'s word "Inf", which states no number; found 999 GB');
 	});
 });
 
@@ -353,7 +357,9 @@ describe("what a careful writer writes", () => {
 
 	test("dates with a month's name and a price file's path pass; a number beside them still counts", async () => {
 		expect(await fails("Prices of November 11, 2026 (11 November 2026, Nov. 11 2026, November 2026), from prices/2026/11/11/aws.json and kit/data/prices/2026/11/11/aws.json.")).toEqual([]);
-		expect(await fails("In November 2026 we need 11 machines.")).toEqual(['"11" is not accounted for: no citation or assumption after it; not in the question; not the result of arithmetic; not a repeat of a number accounted for']);
+		expect(await fails("In November 2026 we need 11 machines.")).toEqual([
+			'"11" is not accounted for: nothing cites it, marks it as an assumption or computes it, and the same value and unit is neither in the question nor stated by a number accounted for. To fix, put a citation or [assumption: <source>] right after it, or show the arithmetic that gives it.',
+		]);
 		expect(await fails("November 30 instances are needed.")).toHaveLength(1);
 		expect(await fails("prices/2026/11/11/aws.json lists 777 GB.")).toHaveLength(1);
 	});
@@ -398,7 +404,7 @@ describe("what a careful writer writes", () => {
 		const wrapped = "Price: $1.36 per hour [lm:prices/2026/11/11/aws.json#NKB8DU47ZKKBXW65/\nNKB8DU47ZKKBXW65.JRTCKXETXF.6YS6EN2CT7].";
 		expect(await fails(wrapped)).toEqual([]);
 		const open = await fails("Update size: 20 GB [assumption: my guess\n\nNext paragraph.");
-		expect(open.some((m) => m.endsWith("it has no closing ]"))).toBe(true);
+		expect(open.some((m) => m.includes("it has no closing ]"))).toBe(true);
 	});
 
 	test("key=value of a cited Series is its parameter text; any other is a number", async () => {
@@ -412,6 +418,86 @@ describe("what a careful writer writes", () => {
 	test("two numbers without dimensions repeat each other only in the same unit", async () => {
 		expect(await fails("Conversion: 1000 GB per TB [assumption: decimal prefixes].\nWe need 1 machine.")).toHaveLength(1);
 		expect(await fails("Share kept: 50% [assumption: a guess].\nThat is 50% of the bandwidth.")).toEqual([]);
+	});
+});
+
+/**
+ * What the second trial (2026-11-12) showed: honest lines of arithmetic
+ * rejected for how their units were worded, one mistake reported dozens of
+ * times, messages nobody could act on, a benchmark citation taking a number,
+ * a parameter with its unit in its name. Each passes now; its nearest wrong
+ * neighbour still fails.
+ */
+describe("the second trial's lines", () => {
+	const QUESTION = "A service reads 10 million 4 KiB objects a day. How many durable writes per second can one thread make?";
+	const fails = async (answer: string, question = QUESTION): Promise<string[]> => (await checkAnswer(answer, data, question)).problems.map((p) => p.message);
+	const time = (): string => `Time per write: 14.5 µs ${context().timeCitation}\n${context().links}`;
+
+	test("a line passes when its result follows as plain numbers, even if its units are worded loosely", async () => {
+		expect(await fails("Month: 30 days [assumption: a 30-day month]\nMonthly: 10000000 per day × 30 days = 300000000")).toEqual([]);
+		expect(await fails("Monthly: 10000000 per day × 30 days [assumption: a 30-day month] = 300000000 GETs per month")).toEqual([]);
+		expect(await fails("Reads: 10000000 GETs per day, from the question.")).toEqual([]);
+		expect(await fails(`${time()}\nHalf of them: 10000000 GETs per day × 50% [assumption: the median's half] = 5000000 GETs per day\nSerial time: 5000000 GETs per day × 14.5 µs per GET = 72500000 µs per day`)).toEqual([]);
+	});
+
+	test("its nearest wrong neighbours fail: a result that follows neither way, an operand nobody accounted for", async () => {
+		const wrong = await fails("Month: 30 days [assumption: a 30-day month]\nMonthly: 10000000 per day × 30 days = 3000000000");
+		expect(wrong).toHaveLength(1);
+		expect(wrong[0]).toContain(
+			'"3000000000" does not follow from the arithmetic on its line: expected about 300000000 (294999985 to 305000015, given how its operands are rounded), from the numbers as written and with their units',
+		);
+		expect(wrong[0]).toContain("found 3000000000. To fix, write the result its operands give, or correct the operand that is wrong.");
+		const unaccounted = await fails("Monthly: 10000000 per day × 31 days = 310000000");
+		expect(unaccounted[0]).toContain('"31 days" is not accounted for');
+		expect(unaccounted[0]).toContain("1 other number depends on it and is not reported separately (line 1)");
+	});
+
+	test("a rate from a time: things per second is 1 ÷ seconds per thing, or a unit conversion ÷ the time", async () => {
+		expect(await fails(`${time()}\nRate: 1 ÷ 14.5 µs per write = 68965.5 writes per second`)).toEqual([]);
+		expect(await fails(`${time()}\nRate: 1000000 µs per second ÷ 14.5 µs per write = 68965.5 writes/s`)).toEqual([]);
+		expect(await fails(`${time()}\nRate: 1 ÷ 14.5 µs per write = 68965.5 writes per hour`)).toHaveLength(1);
+	});
+
+	test("a rounding with an arrow, and a figure repeated in prose, may have fewer digits; a wrong one may not", async () => {
+		const rate = `${time()}\nRate: 1 ÷ 14.5 µs per write = 68965.5 writes per second → 69000 writes per second`;
+		expect(await fails(`${rate}\nAbout 69000 writes/s, or 68970 writes per second.`)).toEqual([]);
+		expect(await fails(`${time()}\nRate: 1 ÷ 14.5 µs per write = 68965.5 writes per second → 67000 writes per second`)).toHaveLength(1);
+		expect(await fails(`${rate}\nAbout 60000 writes per second.`)).toHaveLength(1);
+	});
+
+	test("one mistake is reported once, with the numbers that depend on it counted", async () => {
+		const answer = [
+			time(),
+			"Rate: 1 ÷ 14.5 µs per write = 60000 writes per second",
+			"Per hour: 60000 writes per second × 3600 = 216000000 writes per hour",
+			"Per day: 216000000 writes per hour × 24 = 5184000000",
+			"So about 60000 writes per second, 216000000 an hour.",
+		].join("\n");
+		const problems = await fails(answer);
+		expect(problems).toHaveLength(1);
+		expect(problems[0]).toContain('"60000 writes per second" does not follow from the arithmetic on its line: expected about 0.0689663');
+		expect(problems[0]).toContain("or about 68966.3 (68728.5 to 69204.2, given how its operands are rounded) writes per second with their units; found 60000 writes per second.");
+		expect(problems[0]).toContain("8 other numbers depend on it and are not reported separately (lines 5, 6, 7)");
+	});
+
+	test("a benchmark citation describes: it takes no number, and a number before it is judged by the other rules", async () => {
+		expect(await fails("Each write is 8 KiB [lm:benchmark/disk_write], as the question says.", "How many 8 KiB writes per second?")).toEqual([]);
+		expect(await fails("Each write is 8 KiB [lm:benchmark/disk_write].", "How many writes per second?")).toEqual([
+			'"8 KiB" is not accounted for: nothing cites it, marks it as an assumption or computes it, and the same value and unit is neither in the question nor stated by a number accounted for. To fix, put a citation or [assumption: <source>] right after it, or show the arithmetic that gives it.',
+		]);
+	});
+
+	test("a parameter whose key ends in a unit matches its value bare or in that unit, never in another", () => {
+		const resolved = { ok: true as const, kind: "param" as const, series: context().memory, key: "gap_mean_ms", value: 200 };
+		const one = (text: string) => quantities(text)[0] as Quantity;
+		expect(citationMismatch(resolved, one("200 ms"))).toBeNull();
+		expect(citationMismatch(resolved, one("0.2 s"))).toBeNull();
+		expect(citationMismatch(resolved, one("200"))).toBeNull();
+		expect(citationMismatch(resolved, one("200 µs"))).toBe("expected 200 ms, the parameter gap_mean_ms, or the same in another unit of seconds; found 200 µs");
+		expect(citationMismatch(resolved, one("200 MB"))).toContain("which is bytes, not seconds");
+		expect(citationMismatch({ ...resolved, key: "object_bytes", value: 4096 }, one("4 KiB"))).toBeNull();
+		expect(parameterUnit("budget_seconds")).toEqual({ dims: { s: 1 }, factor: 1, name: "seconds" });
+		expect(parameterUnit("threads")).toBeNull();
 	});
 });
 
@@ -444,7 +530,9 @@ describe("links, markers and what is not a number", () => {
 		expect((await checkAnswer(`From 2 Runs ${c.countCitation}.\n${c.links}`, data)).pass).toBe(true);
 		expect((await checkAnswer(`From 3 Runs ${c.countCitation}.\n${c.links}`, data)).pass).toBe(false);
 		const borrowed = await checkAnswer(`Workers: 2 [assumption: a layout].\nFrom 2 Runs.`, data);
-		expect(borrowed.problems.map((p) => p.message)).toEqual(['"2" is not accounted for: a count of Runs or boots is accounted for only by a Series\' count citation, or as a repeat of a number cited by one']);
+		expect(borrowed.problems.map((p) => p.message)).toEqual([
+			'"2" counts Runs or boots: expected a Series\' count citation right after it, or the same count cited elsewhere; found neither. To fix, cite it with the count citation the tool prints.',
+		]);
 	});
 
 	test("a marker belongs to the nearest number before it, and to no other", async () => {

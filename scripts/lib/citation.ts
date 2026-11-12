@@ -43,7 +43,7 @@ import { percentile } from "../../methods/v1/numbers";
 import type { Point, SeriesDerivation } from "../../methods/v1/output";
 import { BENCHMARK_NOTES } from "./benchmark-notes";
 import type { LedgerData } from "./ledger-data";
-import { agrees, type Dims, multiply, parseUnit, type Quantity, quantities, sameUnit, type Unit } from "./quantity";
+import { agrees, type Dims, dimsWords, multiply, parseUnit, type Quantity, quantities, readable, sameDims, sameUnit, type Unit, unitAtom } from "./quantity";
 
 export const NUMBERS = ["time_per_repetition_ns", "bytes_per_second"] as const;
 export type NumberName = (typeof NUMBERS)[number];
@@ -347,45 +347,84 @@ export async function resolveCitation(inside: string, data: LedgerData): Promise
 	};
 }
 
-/** Why a number does not match what its citation resolved to, or null when it does. */
+/**
+ * The unit a parameter's key names at its end: gap_mean_ms in milliseconds,
+ * budget_seconds in seconds, object_bytes in bytes (and bytes_per_sample, which
+ * names bytes first); none for a key that names none.
+ */
+export function parameterUnit(key: string): { dims: Dims; factor: number; name: string } | null {
+	const parts = key.split("_");
+	const last = parts[parts.length - 1] as string;
+	const atom = parts.length > 1 ? unitAtom(last) : null;
+	if (atom !== null && (atom.dims.s !== undefined || atom.dims.B !== undefined) && Object.keys(atom.dims).length === 1) return { ...atom, name: last };
+	if (parts.includes("bytes")) return { dims: { B: 1 }, factor: 1, name: "bytes" };
+	return null;
+}
+
+/** A value in base units as a person would read it beside q: in q's own unit when the dimensions agree. */
+function expectedBeside(q: Quantity, base: number, dims: Dims, inItsUnit: string): string {
+	if (sameDims(q.unit.dims, dims) && q.unit.text !== "") return `${readable(base / q.unit.factor)} ${q.unit.text.replace(/^\$/, "$ ").trim()} (${inItsUnit})`;
+	return inItsUnit;
+}
+
+/** What a number was found to be, in words: its value, and what its unit measures when that is not what was expected. */
+function found(q: Quantity, dims: Dims): string {
+	const text = q.text.trim();
+	if (sameDims(q.unit.dims, dims)) return `found ${text}`;
+	if (q.unit.text === "") return `found ${text} with no unit`;
+	return `found ${text}, which is ${dimsWords(q.unit.dims)}, not ${dimsWords(dims)}`;
+}
+
+/**
+ * Why a number does not match what its citation resolved to, as "expected …;
+ * found …", or null when it does.
+ */
 export function citationMismatch(resolved: Resolved, q: Quantity): string | null {
 	if (!resolved.ok) return resolved.reason;
 	switch (resolved.kind) {
 		case "measured": {
-			if (resolved.stat === "count") return agrees(q, resolved.value, {}) ? null : `the citation is a count of ${resolved.value} Runs`;
-			const { dims, toBase } = NUMBER_UNIT[resolved.number];
-			if (q.unit.text === "") return `it has no unit; the citation is in ${NUMBER_UNIT[resolved.number].unit}`;
-			return agrees(q, resolved.value * toBase, dims) ? null : `the citation is ${resolved.value} ${NUMBER_UNIT[resolved.number].unit}`;
+			if (resolved.stat === "count") return agrees(q, resolved.value, {}) ? null : `expected ${resolved.value}, the number of counted Runs cited; ${found(q, {})}`;
+			const { dims, toBase, unit } = NUMBER_UNIT[resolved.number];
+			if (agrees(q, resolved.value * toBase, dims)) return null;
+			return `expected ${expectedBeside(q, resolved.value * toBase, dims, `the cited value is ${readable(resolved.value)} ${unit}`)}; ${found(q, dims)}`;
 		}
 		case "requests": {
 			if (resolved.unit === "count") {
 				// A count of requests may be written bare or with its noun ("2 requests"); a count of Runs is read bare.
-				return agrees(q, resolved.value, {}) || agrees(q, resolved.value, { req: 1 }) ? null : `the citation is a count of ${resolved.value}`;
+				if (agrees(q, resolved.value, {}) || agrees(q, resolved.value, { req: 1 })) return null;
+				return `expected ${resolved.value}, the count cited; ${found(q, {})}`;
 			}
-			if (q.unit.text === "") return "it has no unit; the citation is in ns";
-			return agrees(q, resolved.value * 1e-9, { s: 1 }) ? null : `the citation is ${resolved.value} ns`;
+			if (agrees(q, resolved.value * 1e-9, { s: 1 })) return null;
+			return `expected ${expectedBeside(q, resolved.value * 1e-9, { s: 1 }, `the cited value is ${readable(resolved.value)} ns`)}; ${found(q, { s: 1 })}`;
 		}
 		case "param": {
 			if (typeof resolved.value !== "number") return `the parameter ${resolved.key} is ${JSON.stringify(resolved.value)}, not a number`;
-			const dims: Dims = resolved.key.endsWith("_bytes") ? { B: 1 } : {};
-			return agrees(q, resolved.value, dims) ? null : `the parameter ${resolved.key} is ${resolved.value}${resolved.key.endsWith("_bytes") ? " bytes" : ""}`;
+			// The value as the tool prints it (gap_mean_ms 200), or written in the unit its key names (200 ms, 0.2 s).
+			const unit = parameterUnit(resolved.key);
+			const dims: Dims = unit?.dims ?? {};
+			const base = resolved.value * (unit?.factor ?? 1);
+			if (agrees(q, base, dims) || (q.unit.text === "" && agrees(q, resolved.value, {}))) return null;
+			return `expected ${resolved.value}${unit === null ? "" : ` ${unit.name}`}, the parameter ${resolved.key}${unit === null ? "" : `, or the same in another unit of ${dimsWords(dims)}`}; ${found(q, dims)}`;
 		}
 		case "price": {
 			if (resolved.unit === null) return `AWS's unit "${resolved.awsUnit}" is one the checker does not read`;
 			const own: Unit = { dims: multiply({ USD: 1 }, resolved.unit.dims, -1), factor: 1 / resolved.unit.factor, text: "" };
-			if (!sameUnit(q.unit, own)) return `a price is cited in AWS's own unit, USD per ${resolved.awsUnit}; rescaling it is a line of arithmetic`;
-			return agrees(q, resolved.usd * own.factor, own.dims) ? null : `the price is ${resolved.usd} USD per ${resolved.awsUnit}`;
+			if (!sameUnit(q.unit, own)) {
+				return `expected the price in AWS's own unit, ${resolved.usd} USD per ${resolved.awsUnit}; found ${q.text.trim()}. A price in another unit (per 1000000 requests, per month) is a line of arithmetic from the cited one`;
+			}
+			return agrees(q, resolved.usd * own.factor, own.dims) ? null : `expected ${resolved.usd} USD per ${resolved.awsUnit}, the cited price; found ${q.text.trim()}`;
 		}
 		case "range": {
 			if (resolved.unit === null) return `AWS's unit "${resolved.awsUnit}" is one the checker does not read`;
 			const value = Number(resolved.text);
-			if (resolved.text === "" || !Number.isFinite(value)) return `the tier's ${resolved.end} is "${resolved.text}", not a number`;
-			return agrees(q, value * resolved.unit.factor, resolved.unit.dims) ? null : `the tier's ${resolved.end} is ${resolved.text} ${resolved.awsUnit}`;
+			if (resolved.text === "" || !Number.isFinite(value)) return `the tier's ${resolved.end} is AWS's word "${resolved.text}", which states no number; found ${q.text.trim()}. Cite "${resolved.text}" with no number before it`;
+			if (agrees(q, value * resolved.unit.factor, resolved.unit.dims)) return null;
+			return `expected ${resolved.text} ${resolved.awsUnit}, the tier's ${resolved.end}; ${found(q, resolved.unit.dims)}`;
 		}
 		case "attribute": {
 			const value = quantities(resolved.text)[0];
-			if (value === undefined) return `AWS's words "${resolved.text}" hold no number`;
-			return agrees(q, value.value, value.unit.dims) ? null : `AWS's words are "${resolved.text}"`;
+			if (value === undefined) return `AWS's words "${resolved.text}" hold no number; found ${q.text.trim()}. Quote the words with their citation, and state any reading of them as an assumption`;
+			return agrees(q, value.value, value.unit.dims) ? null : `expected "${resolved.text}", AWS's words; ${found(q, value.unit.dims)}`;
 		}
 		case "benchmark":
 			return "a benchmark's description cites no number";

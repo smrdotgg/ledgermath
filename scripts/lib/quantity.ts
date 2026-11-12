@@ -34,11 +34,19 @@ export interface Quantity {
 	written: number;
 	/** Half the place of the last written digit, in the same terms as written: 0.0005 for 112.269, 0.5 for 30,000,000. */
 	half: number;
+	/** The same with a whole number's trailing zeros not significant: 50 for 33300, 0.0005 for 112.269. How a figure rounded to fewer digits is read. */
+	looseHalf: number;
 	unit: Unit;
 	/** written × unit.factor: in base units. */
 	value: number;
 	/** Whether it is a bare power (10^9, 2^30), which is exact. */
 	power: boolean;
+	/**
+	 * Its unit read with the time after it in prose ("216000000 an hour",
+	 * "$11571.20 a month", "10000000 each day"), which a repeat may be matched
+	 * by as well as by its unit; null when no such time follows.
+	 */
+	alt: Unit | null;
 }
 
 const DIMENSIONS: readonly Dimension[] = ["B", "s", "USD", "req", "io"];
@@ -57,6 +65,32 @@ export function multiply(a: Dims, b: Dims, power = 1): Dims {
 
 export function sameDims(a: Dims, b: Dims): boolean {
 	return DIMENSIONS.every((d) => (a[d] ?? 0) === (b[d] ?? 0));
+}
+
+const DIMENSION_WORDS: Readonly<Record<Dimension, [string, string]>> = {
+	B: ["byte", "bytes"],
+	s: ["second", "seconds"],
+	USD: ["US dollar", "US dollars"],
+	req: ["request", "requests"],
+	io: ["I/O operation", "I/O operations"],
+};
+
+/** Dimensions in words, for a person: "bytes per second", "US dollars per request", "no unit". */
+export function dimsWords(dims: Dims): string {
+	const up = DIMENSIONS.filter((d) => (dims[d] ?? 0) > 0).map((d) => `${DIMENSION_WORDS[d][1]}${(dims[d] as number) > 1 ? ` to the power ${dims[d]}` : ""}`);
+	const down = DIMENSIONS.filter((d) => (dims[d] ?? 0) < 0).map((d) => DIMENSION_WORDS[d][0]);
+	if (up.length === 0 && down.length === 0) return "no unit";
+	return `${up.join(" × ") || "1"}${down.length === 0 ? "" : ` per ${down.join(" per ")}`}`;
+}
+
+/** A number for a person: six significant digits, no exponent below 10^15. */
+export function readable(value: number): string {
+	if (!Number.isFinite(value)) return String(value);
+	if (value === 0) return "0";
+	const magnitude = Math.floor(Math.log10(Math.abs(value)));
+	if (magnitude >= 15 || magnitude < -12) return value.toPrecision(6);
+	const text = value.toFixed(Math.max(0, 5 - magnitude));
+	return text.includes(".") ? text.replace(/0+$/, "").replace(/\.$/, "") : text;
 }
 
 /** "B/s", "USD/s", "USD/(B s)", "" for none. */
@@ -157,7 +191,53 @@ const SCALE: Readonly<Record<string, number>> = {
 	M: 1e6,
 };
 
-/** The scale word and the unit after a number: "million", "GB/s", " per hour", "-byte", "USD per Hrs", "per 1,000 requests". */
+/** Words that are never the thing a rate counts: "per the README", "a day of". */
+const NOT_A_THING = new Set(
+	"the a an each every per of in on at to for and or nor is are was were be been with from that this these those its their our his her one than as by into over under more less about up down so it we you they if then which who what when where not no".split(
+		" ",
+	),
+);
+/** A noun: the thing counted in "10000000 GETs per day", or counted by "30.06 µs per write". */
+const NOUN = /^[A-Za-z]+(?:-[A-Za-z]+)*/;
+/** What joins a unit to its denominator: "/s", " per hour". */
+const DENOMINATOR = /^(?:\/| per )/;
+
+function noun(text: string): string | null {
+	const word = NOUN.exec(text)?.[0];
+	if (word === undefined || NOT_A_THING.has(word.toLowerCase()) || /[A-Za-z0-9_]/.test(text.charAt(word.length))) return null;
+	return word;
+}
+
+/** A denominator at the start of text: its unit, how many of it ("per 1,000 requests"), and its length; a noun counts as no unit. */
+function readDenominator(text: string, nouns: boolean): { dims: Dims; factor: number; length: number } | null {
+	const sep = DENOMINATOR.exec(text);
+	if (sep === null) return null;
+	const timeOnly = false;
+	let j = sep[0].length;
+	let count = 1;
+	const n = /^(\d{1,3}(?:,\d{3})+|\d+) /.exec(text.slice(j));
+	if (n !== null && !timeOnly && sep[0] !== "/") {
+		count = Number((n[1] as string).replace(/,/g, ""));
+		j += n[0].length;
+	}
+	const den = readAtom(text.slice(j));
+	if (den !== null && !/[A-Za-z0-9_]/.test(text.charAt(j + den.length))) {
+		if (timeOnly && !sameDims(den.dims, { s: 1 })) return null;
+		return { dims: den.dims, factor: den.factor * count, length: j + den.length };
+	}
+	if (!nouns || timeOnly || count !== 1) return null;
+	const word = noun(text.slice(j));
+	return word === null ? null : { dims: {}, factor: 1, length: j + word.length };
+}
+
+/**
+ * The scale word and the unit after a number: "million", "GB/s", " per hour",
+ * "-byte", "USD per Hrs", "per 1,000 requests". A count of things per unit of
+ * time carries as a rate, and a unit per thing as that unit: the noun is
+ * read and adds no dimension ("10000000 GETs per day" is a rate per day,
+ * "33269.9 writes/s" one per second, "30.06 µs per write" a time), except
+ * requests, which are a dimension of their own because AWS prices them.
+ */
 function readUnit(text: string, dollar: boolean): { scale: number; unit: Unit; length: number } {
 	let i = 0;
 	let scale = 1;
@@ -181,23 +261,30 @@ function readUnit(text: string, dollar: boolean): { scale: number; unit: Unit; l
 			i += numerator.length + atom.length;
 		}
 	}
-	// Denominators: "/s", " per hour", " per GB-month", " per 1,000 requests".
-	for (;;) {
-		const sep = /^(?:\/| per )/.exec(text.slice(i));
-		if (sep === null) break;
-		let j = i + sep[0].length;
-		let count = 1;
-		const n = /^(\d{1,3}(?:,\d{3})+|\d+) /.exec(text.slice(j));
-		if (n !== null && sep[0] !== "/") {
-			count = Number((n[1] as string).replace(/,/g, ""));
-			j += n[0].length;
+	// Or the thing a rate counts: " GETs" before " per day" or "/s"; before "/s", up to two words may describe it ("durable writes/s").
+	if (unitStart < 0 && !dollar && text.charAt(i) === " ") {
+		let j = i;
+		for (let words = 0; words < 3 && text.charAt(j) === " "; words++) {
+			const word = noun(text.slice(j + 1));
+			if (word === null) break;
+			j += 1 + word.length;
+			const den = readDenominator(text.slice(j), false);
+			const tight = text.charAt(j) === "/";
+			if (den !== null && sameDims(den.dims, { s: 1 }) && (words === 0 || tight)) {
+				unitStart = i + 1;
+				i = j;
+				break;
+			}
 		}
-		const den = readAtom(text.slice(j));
-		if (den === null || /[A-Za-z0-9_]/.test(text.charAt(j + den.length))) break;
+	}
+	// Denominators: "/s", " per hour", " per GB-month", " per 1,000 requests", " per write", " a day".
+	for (;;) {
+		const den = readDenominator(text.slice(i), true);
+		if (den === null) break;
 		if (unitStart < 0) unitStart = i;
 		dims = multiply(dims, den.dims, -1);
-		factor /= den.factor * count;
-		i = j + den.length;
+		factor /= den.factor;
+		i += den.length;
 	}
 	const unitText = unitStart < 0 ? (dollar ? "$" : "") : `${dollar ? "$" : ""}${text.slice(unitStart, i).replace(/^[ -]/, "")}`;
 	return { scale, unit: { dims, factor, text: unitText }, length: i };
@@ -269,6 +356,8 @@ export function quantities(text: string): Quantity[] {
 
 		let written = Number(digits.replace(/,/g, ""));
 		let half = halfOfLastDigit(digits);
+		// A whole number's trailing zeros, which a figure rounded to fewer digits leaves.
+		const zeros = digits.includes(".") ? 0 : (/0*$/.exec(digits.replace(/,/g, ""))?.[0].length ?? 0);
 		let power = false;
 		const bare = /^\^([+-]?\d+)/.exec(text.slice(end));
 		if (exponent !== null) {
@@ -284,7 +373,8 @@ export function quantities(text: string): Quantity[] {
 		}
 
 		if (text.charAt(end) === "%") {
-			found.push({ text: text.slice(start, end + 1), start, end: end + 1, written: sign * written, half, unit: { dims: {}, factor: 0.01, text: "%" }, value: sign * written * 0.01, power });
+			const looseHalf = power || exponent !== null ? half : half * 10 ** Math.min(zeros, digits.replace(/,/g, "").length - 1);
+			found.push({ text: text.slice(start, end + 1), start, end: end + 1, written: sign * written, half, looseHalf, unit: { dims: {}, factor: 0.01, text: "%" }, value: sign * written * 0.01, power, alt: null });
 			read = end + 1;
 			continue;
 		}
@@ -295,7 +385,11 @@ export function quantities(text: string): Quantity[] {
 		written *= unit.scale;
 		half *= unit.scale;
 		end += unit.length;
-		found.push({ text: text.slice(start, end), start, end, written: sign * written, half, unit: unit.unit, value: sign * written * unit.unit.factor, power });
+		const looseHalf = (power || exponent !== null ? half : half * 10 ** Math.min(zeros, digits.replace(/,/g, "").length - 1));
+		const article = /^ (?:a|an|each|every) ([A-Za-z]+)(?![A-Za-z0-9])/.exec(text.slice(end));
+		const time = article === null ? null : unitAtom(article[1] as string);
+		const alt = time !== null && sameDims(time.dims, { s: 1 }) ? { dims: multiply(unit.unit.dims, time.dims, -1), factor: unit.unit.factor / time.factor, text: `${unit.unit.text}${article?.[0]}` } : null;
+		found.push({ text: text.slice(start, end), start, end, written: sign * written, half, looseHalf, unit: unit.unit, value: sign * written * unit.unit.factor, power, alt });
 		read = end;
 	}
 	return found;

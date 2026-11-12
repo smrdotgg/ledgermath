@@ -6,16 +6,30 @@
  * - cited: the nearest citation after it on its line resolves, and the number
  *   is the cited value, in the cited unit (a measured number may be written
  *   with another prefix or time unit of the same dimensions; a price only in
- *   AWS's own unit);
+ *   AWS's own unit; a parameter whose key ends in a unit, bare or in that
+ *   unit). A benchmark citation ([lm:benchmark/…]) describes and attaches to
+ *   no number;
  * - an assumption: the nearest marker after it on its line is
  *   [assumption: <source>], and the source has words;
  * - derived: the result of a line of arithmetic (a = b, a ≈ b, or a → b for
- *   rounding up, down or to nearest) whose operands are all accounted for,
- *   at least one of them not a conversion constant, and whose result the
- *   checker recomputes and finds equal within the rounding of the digits
- *   written;
+ *   rounding up, down or to nearest at the result's last significant digit)
+ *   whose operands are all accounted for, at least one of them not a
+ *   conversion constant, and whose result the checker recomputes and finds
+ *   equal within the rounding of the digits written, either with units
+ *   carried or as plain numbers exactly as written;
  * - a repeat of a number accounted for anywhere in the answer, with the same
- *   value, as its digits round it, and the same dimensions.
+ *   value, as its digits round it (fewer digits allowed: 33300 for 33269.9),
+ *   and the same dimensions, a count of requests aside; a time after it in
+ *   prose ("216000000 an hour") may be read as its unit or not.
+ *
+ * A count of things per unit of time carries as a rate ("10000000 GETs per
+ * day", "33269.9 writes/s"), and a unit per thing as that unit ("30.06 µs per
+ * write"): the reciprocal of a time per thing is a rate of things.
+ *
+ * Each first cause is reported once: a number that fails only because it uses
+ * or repeats another unaccounted number is counted against that one, not
+ * reported again. Every problem says what was expected, what was found, and
+ * what would fix it.
  *
  * Inside a line of arithmetic, a pure unit-conversion constant (CONSTANTS)
  * may be an operand. Anything else is a problem, and so are: a citation or
@@ -53,7 +67,7 @@ import { createHash } from "node:crypto";
 
 import { citationMismatch, NUMBER_UNIT, type Resolved, resolveCitation, RUN_PATH, seriesMoment } from "./citation";
 import type { LedgerData } from "./ledger-data";
-import { agrees, type Dims, dimsText, multiply, type Quantity, quantities, quantityWords, sameDims } from "./quantity";
+import { agrees, type Dims, dimsWords, multiply, type Quantity, quantities, quantityWords, readable, sameDims } from "./quantity";
 import { RUNS_REPOSITORY } from "./runs-repository";
 
 export type NumberStatus = "question" | "cited" | "assumption" | "derived" | "repeat" | "constant" | "unaccounted";
@@ -88,12 +102,38 @@ export interface CheckReport {
 
 /**
  * Pure unit-conversion constants, accepted as operands inside a line of
- * arithmetic and nowhere else: bits per byte, hours per day, seconds per
- * minute and minutes per hour, percent, days per year, AWS's hours per month
- * and per year, seconds per hour and per day, and the decimal and binary
- * prefixes.
+ * arithmetic and nowhere else: one (for a reciprocal), bits per byte, hours
+ * per day, seconds per minute and minutes per hour, percent, days per year,
+ * AWS's hours per month and per year, seconds per hour and per day, and the
+ * decimal and binary prefixes. A ratio of units worth exactly one written
+ * with its units ("1000000 µs/s", "3600 s per hour", "730 hours per month") is
+ * one too; "30 days per month" is not, since it is not exactly one.
  */
-export const CONSTANTS: ReadonlySet<number> = new Set([8, 24, 60, 100, 365, 730, 1000, 1024, 3600, 8760, 86400, 1e6, 1e9, 1e12, 1e15, 1e18, 2 ** 20, 2 ** 30, 2 ** 40, 2 ** 50]);
+export const CONSTANTS: ReadonlySet<number> = new Set([1, 8, 24, 60, 100, 365, 730, 1000, 1024, 3600, 8760, 86400, 1e6, 1e9, 1e12, 1e15, 1e18, 2 ** 20, 2 ** 30, 2 ** 40, 2 ** 50]);
+
+/** Counts of things that are dimensions of their own (requests, I/O operations), which a question's number never names. */
+const COUNTS = new Set(["req", "io"]);
+
+/** Dimensions with the counts of things left out: how a number is matched against the question, a repeat, or a recomputed result. */
+function withoutCounts(dims: Dims): Dims {
+	return Object.fromEntries(Object.entries(dims).filter(([d]) => !COUNTS.has(d))) as Dims;
+}
+
+/** agrees(), with counts of things left out of both units. */
+function agreesWithoutCounts(q: Quantity, value: number, dims: Dims): boolean {
+	return agrees({ ...q, unit: { ...q.unit, dims: withoutCounts(q.unit.dims) } }, value, withoutCounts(dims));
+}
+
+/**
+ * How a repeat in prose is matched: without counts of things, allowed fewer
+ * digits (33300 for 33269.9), and with the time after it in prose or without
+ * ("216000000 an hour" repeats "216000000 writes per hour").
+ */
+function repeats(q: Quantity, value: number, dims: Dims): boolean {
+	const loose = { ...q, half: q.looseHalf };
+	if (agreesWithoutCounts(loose, value, dims)) return true;
+	return q.alt !== null && agreesWithoutCounts({ ...loose, unit: q.alt, value: q.written * q.alt.factor }, value, dims);
+}
 
 /** Addresses at which the Runs repository shows a Run, before its path. */
 const RUNS_REPOSITORY_PREFIXES: readonly RegExp[] = [
@@ -164,6 +204,8 @@ interface Num {
 	countsRuns: boolean;
 	/** It is cited with a Series' count citation. */
 	countCited: boolean;
+	/** The problem already reporting it (its citation does not resolve or parse), which its dependants' count is added to. */
+	reportedBy?: Problem;
 }
 
 type Token = { kind: "num"; num: Num } | { kind: "op"; op: string };
@@ -228,15 +270,19 @@ function linkToken(text: string, start: number, end: number): string {
 	return text.slice(from, end);
 }
 
-/** A number of the question, and the same number per unit of time when the sentence says "per second" after it. */
+/**
+ * A number of the question, and the same number per unit of time when the
+ * sentence says so after it: "10 TB … per second", "10 million objects a
+ * day", "… each hour".
+ */
 function questionQuantities(question: string): Quantity[] {
 	const out: Quantity[] = [];
 	for (const q of quantities(question)) {
 		out.push(q);
 		const sentence = question.slice(q.end).split(/[.?!](?:\s|$)/)[0] ?? "";
-		const per = /\bper (second|minute|hour|day|month|year)\b/.exec(sentence);
+		const per = /\b(?:per|an?|each|every) (second|minute|hour|day|week|month|year)\b/.exec(sentence);
 		if (per !== null && q.unit.dims.s === undefined) {
-			const seconds = { second: 1, minute: 60, hour: 3600, day: 86400, month: 730 * 3600, year: 8760 * 3600 }[per[1] as string] as number;
+			const seconds = { second: 1, minute: 60, hour: 3600, day: 86400, week: 7 * 86400, month: 730 * 3600, year: 8760 * 3600 }[per[1] as string] as number;
 			const unit = { dims: multiply(q.unit.dims, { s: 1 }, -1), factor: q.unit.factor / seconds, text: `${q.unit.text} per ${per[1]}` };
 			out.push({ ...q, unit, value: q.written * unit.factor });
 		}
@@ -258,7 +304,9 @@ function sameKind(a: Quantity, b: Quantity): boolean {
 }
 
 function isConstant(n: Num): boolean {
-	return Object.keys(n.q.unit.dims).length === 0 && n.q.unit.factor === 1 && n.q.written > 0 && CONSTANTS.has(n.q.written);
+	if (Object.keys(n.q.unit.dims).length > 0 || n.q.written <= 0 || n.q.unit.text === "%") return false;
+	if (n.q.unit.factor === 1) return CONSTANTS.has(n.q.written);
+	return n.q.unit.text !== "" && Math.abs(n.q.value - 1) <= 1e-12;
 }
 
 interface Interval {
@@ -454,6 +502,127 @@ function describe(resolved: Resolved): string {
 	}
 }
 
+/** A recomputed interval as a person reads it: "about X", with the range its operands' rounding leaves when that is wide. */
+function about(lo: number, hi: number): string {
+	const mid = (lo + hi) / 2;
+	const wide = Math.abs(hi - lo) > 1e-3 * Math.max(Math.abs(mid), 1e-300);
+	return wide ? `about ${readable(mid)} (${readable(lo)} to ${readable(hi)}, given how its operands are rounded)` : `about ${readable(mid)}`;
+}
+
+/** What a line's operands give, both ways the checker accepts, beside the result as written. */
+function expectedOf(computed: Interval | null, r: Quantity): string {
+	if (computed === null) return "an expression the checker can compute, but its operators and numbers do not form one (check for a stray operator, or a number in its label)";
+	const digits = about(computed.wlo, computed.whi);
+	if (!computed.consistent) return `${digits} from the numbers as written (with their units they cannot be added, being of different kinds)`;
+	if (sameDims(withoutCounts(computed.dims), withoutCounts(r.unit.dims))) {
+		const lo = computed.lo / r.unit.factor;
+		const hi = computed.hi / r.unit.factor;
+		const unit = r.unit.text === "" ? "" : ` ${r.unit.text}`;
+		const same = Math.abs(lo - computed.wlo) <= 1e-9 * Math.max(Math.abs(lo), 1e-300) && Math.abs(hi - computed.whi) <= 1e-9 * Math.max(Math.abs(hi), 1e-300);
+		return same ? `${digits}${unit}, from the numbers as written and with their units` : `${digits} from the numbers as written, or ${about(lo, hi)}${unit} with their units`;
+	}
+	return `${digits} from the numbers as written, or with their units a value in ${dimsWords(computed.dims)}, where the result is written in ${r.unit.text === "" ? "no unit" : dimsWords(r.unit.dims)}`;
+}
+
+/**
+ * Settles every number still unaccounted for, and reports each first cause
+ * once. A number that fails only because it uses another unaccounted number
+ * (an operand of the line that computes it) or would repeat one is that
+ * number's dependant: it is not reported again, and the first cause says how
+ * many depend on it.
+ */
+function reportUnaccounted(all: Num[], steps: Step[], problems: Problem[]): void {
+	const operandsOf = (s: Step): Num[] => (s.tokens ?? []).filter((t): t is { kind: "num"; num: Num } => t.kind === "num").map((t) => t.num);
+	const stepOf = new Map<Num, Step>(steps.map((s) => [s.result, s]));
+	const stepWithOperand = new Map<Num, Step>(steps.flatMap((s) => operandsOf(s).map((o) => [o, s] as [Num, Step])));
+	const unaccounted = (n: Num): boolean => n.status === null || n.status === "unaccounted";
+	const dependsOn = new Map<Num, Num>();
+	const roots = new Set<Num>();
+
+	for (const n of all) {
+		if (n.status === "unaccounted") {
+			// It failed on its own: arithmetic that does not give it, a citation that does not match, resolve or parse, a marker with no source.
+			roots.add(n);
+			continue;
+		}
+		if (n.status !== null) continue;
+		n.status = "unaccounted";
+		const step = stepOf.get(n);
+		const operands = step === undefined ? [] : step.tokens === null ? [step.from as Num] : operandsOf(step);
+		if (n.countsRuns) {
+			n.detail = "a count of Runs or boots is accounted for only by a Series' count citation, or as a repeat of a number cited by one";
+			n.problem = `"${n.q.text.trim()}" counts Runs or boots: expected a Series' count citation right after it, or the same count cited elsewhere; found neither. To fix, cite it with the count citation the tool prints.`;
+			roots.add(n);
+			continue;
+		}
+		if (step !== undefined && step.tokens !== null && operands.every(isConstant)) {
+			n.detail = "the result of arithmetic whose operands are only conversion constants";
+			n.problem = `"${n.q.text.trim()}" is computed only from conversion constants: expected at least one operand that is cited, assumed, from the question or computed above; found none. To fix, cite or assume the quantity being converted.`;
+			roots.add(n);
+			continue;
+		}
+		const blocking = operands.find((o) => !isConstant(o) && unaccounted(o));
+		if (step !== undefined && blocking !== undefined) {
+			n.detail = "the result of arithmetic whose operands are not all accounted for";
+			dependsOn.set(n, blocking);
+			continue;
+		}
+		const owner = stepWithOperand.get(n);
+		if (isConstant(n) && owner !== undefined) {
+			n.detail = "a conversion constant in arithmetic that has no accounted operand";
+			const other = operandsOf(owner).find((o) => o !== n && !isConstant(o) && unaccounted(o)) ?? owner.result;
+			dependsOn.set(n, other);
+			continue;
+		}
+		// A number that would repeat another unaccounted one depends on it; a computed one first.
+		const like = all.filter((k) => k !== n && unaccounted(k) && sameKind(n.q, k.q) && repeats(n.q, k.q.value, k.q.unit.dims));
+		const source = like.find((k) => stepOf.has(k)) ?? like.find((k) => all.indexOf(k) < all.indexOf(n));
+		n.detail = `no citation or assumption after it; not in the question; not the result of arithmetic; not a repeat of a number accounted for${stepWithOperand.has(n) ? " (an operand of arithmetic)" : ""}`;
+		if (source !== undefined) {
+			dependsOn.set(n, source);
+			continue;
+		}
+		n.problem = `"${n.q.text.trim()}" is not accounted for: nothing cites it, marks it as an assumption or computes it, and the same value and unit is neither in the question nor stated by a number accounted for. To fix, put a citation or [assumption: <source>] right after it, or show the arithmetic that gives it.`;
+		roots.add(n);
+	}
+
+	const rootOf = (n: Num): Num => {
+		const seen = new Set<Num>();
+		let at = n;
+		while (!roots.has(at) && dependsOn.has(at) && !seen.has(at)) {
+			seen.add(at);
+			at = dependsOn.get(at) as Num;
+		}
+		return at;
+	};
+	const dependants = new Map<Num, Num[]>();
+	for (const n of all) {
+		if (n.status !== "unaccounted" || roots.has(n)) continue;
+		const root = rootOf(n);
+		if (root === n) {
+			// A circle of numbers that only repeat one another: the first of them is the cause.
+			n.problem = `"${n.q.text.trim()}" is not accounted for: it only repeats numbers that are themselves not accounted for. To fix, cite, assume or compute one of them.`;
+			roots.add(n);
+			continue;
+		}
+		roots.add(root);
+		dependants.set(root, [...(dependants.get(root) ?? []), n]);
+		n.detail = `${n.detail}; it depends on "${root.q.text.trim()}" (line ${root.line}), which is not accounted for`;
+	}
+	for (const root of all.filter((n) => roots.has(n))) {
+		const later = dependants.get(root) ?? [];
+		const lines = [...new Set(later.map((n) => n.line))].sort((a, b) => a - b);
+		const shown = lines.length > 8 ? `${lines.slice(0, 8).join(", ")}, …` : lines.join(", ");
+		const suffix = later.length === 0 ? "" : ` ${later.length} other number${later.length === 1 ? " depends" : "s depend"} on it and ${later.length === 1 ? "is" : "are"} not reported separately (line${lines.length === 1 ? "" : "s"} ${shown}).`;
+		if (root.reportedBy !== undefined) {
+			root.reportedBy.message += suffix;
+			continue;
+		}
+		const message = root.problem ?? `"${root.q.text.trim()}" is not accounted for: ${root.detail}`;
+		problems.push({ line: root.line, message: message + suffix });
+	}
+}
+
 export async function checkAnswer(answer: string, data: LedgerData, question = ""): Promise<CheckReport> {
 	const problems: Problem[] = [];
 	const notes: Problem[] = [];
@@ -564,10 +733,17 @@ export async function checkAnswer(answer: string, data: LedgerData, question = "
 		// Markers: each belongs to the nearest number before it, after the marker before it.
 		let previousEnd = 0;
 		for (const marker of markers) {
+			// A benchmark citation describes what is measured: it attaches to no number, and numbers before it are judged by the other rules.
+			const described = resolvedOf.get(marker);
+			if (described !== undefined && described.ok && described.kind === "benchmark") {
+				citations.push({ line, citation: marker.text, resolved: describe(described), problem: null });
+				continue;
+			}
 			const target = nums.filter((n) => n.q.start >= previousEnd && n.q.end <= marker.start).pop();
 			previousEnd = marker.end;
 			if (marker.kind === "assumption") {
-				if (marker.malformed !== null) problems.push({ line, message: `${marker.text}: ${marker.malformed}` });
+				const malformed = marker.malformed === null ? undefined : { line, message: `${marker.text}: ${marker.malformed}. To fix, close it and say where the number comes from: [assumption: <source>].` };
+				if (malformed !== undefined) problems.push(malformed);
 				if (target === undefined) {
 					notes.push({ line, message: `${marker.text} follows no number on its line` });
 					continue;
@@ -578,24 +754,29 @@ export async function checkAnswer(answer: string, data: LedgerData, question = "
 				} else {
 					target.status = "unaccounted";
 					target.detail = "its assumption marker gives no source";
+					target.reportedBy = malformed;
 				}
 				continue;
 			}
 			if (marker.malformed !== null) {
-				problems.push({ line, message: `${marker.text} is not a citation: ${marker.malformed}` });
+				const problem = { line, message: `${marker.text} is not a citation: ${marker.malformed}` };
+				problems.push(problem);
 				citations.push({ line, citation: marker.text, resolved: null, problem: marker.malformed });
 				if (target !== undefined) {
 					target.status = "unaccounted";
 					target.detail = `its citation ${marker.text} does not parse`;
+					target.reportedBy = problem;
 				}
 				continue;
 			}
 			const resolved = resolvedOf.get(marker) as Resolved;
 			const checked: CheckedCitation = { line, citation: marker.text, resolved: resolved.ok ? describe(resolved) : null, problem: null };
 			citations.push(checked);
+			let unresolved: Problem | undefined;
 			if (!resolved.ok) {
 				checked.problem = resolved.reason;
-				problems.push({ line, message: `${marker.text} does not resolve: ${resolved.reason}` });
+				unresolved = { line, message: `${marker.text} does not resolve: ${resolved.reason}` };
+				problems.push(unresolved);
 			} else if (resolved.kind === "measured" || resolved.kind === "param" || resolved.kind === "requests") {
 				if (!citedSeries.has(resolved.series.series.id)) citedSeries.set(resolved.series.series.id, line);
 				if ((resolved.kind === "measured" || resolved.kind === "requests") && resolved.asOf === "earlier") {
@@ -606,14 +787,17 @@ export async function checkAnswer(answer: string, data: LedgerData, question = "
 				}
 			}
 			if (target === undefined) {
-				// Words cite no number: a benchmark's description, or AWS's catalog words that hold none.
-				const words = resolved.ok && (resolved.kind === "benchmark" || (resolved.kind === "attribute" && quantities(resolved.text).length === 0));
+				// Words cite no number: AWS's catalog words that hold none, or a tier's end AWS writes as "Inf".
+				const words =
+					resolved.ok &&
+					((resolved.kind === "attribute" && quantities(resolved.text).length === 0) || (resolved.kind === "range" && !Number.isFinite(Number(resolved.text))));
 				if (!words) notes.push({ line, message: `${marker.text} follows no number on its line` });
 				continue;
 			}
 			if (!resolved.ok) {
 				target.status = "unaccounted";
 				target.detail = `its citation ${marker.text} does not resolve`;
+				target.reportedBy = unresolved;
 				continue;
 			}
 			const runsCount = (resolved.kind === "measured" && resolved.stat === "count") || (resolved.kind === "requests" && resolved.countsRuns);
@@ -622,7 +806,9 @@ export async function checkAnswer(answer: string, data: LedgerData, question = "
 			if (mismatch !== null) {
 				target.status = "unaccounted";
 				target.detail = `${marker.text}: ${mismatch}`;
-				target.problem = `"${target.q.text.trim()}" is not what its citation ${marker.text} says: ${mismatch}`;
+				// A mismatch that already says what to do (a rescaled price, AWS's word "Inf", catalog words) keeps its own advice.
+				const fix = /\. [A-Z]/.test(mismatch) ? "." : ". To fix, write the cited value in its unit, or cite the figure you mean.";
+				target.problem = `"${target.q.text.trim()}" does not match its citation ${marker.text}: ${mismatch}${fix}`;
 				checked.problem = mismatch;
 				continue;
 			}
@@ -635,7 +821,7 @@ export async function checkAnswer(answer: string, data: LedgerData, question = "
 
 		for (const n of nums) {
 			if (n.status !== null || n.countsRuns) continue;
-			const match = given.find((g) => agrees(n.q, g.value, g.unit.dims));
+			const match = given.find((g) => agreesWithoutCounts(n.q, g.value, g.unit.dims) || (n.q.alt !== null && agreesWithoutCounts({ ...n.q, unit: n.q.alt }, g.value, g.unit.dims)));
 			if (match !== undefined) {
 				n.status = "question";
 				n.detail = `in the question: "${match.text.trim()}"`;
@@ -651,10 +837,8 @@ export async function checkAnswer(answer: string, data: LedgerData, question = "
 		for (const step of steps) {
 			if (step.done || step.result.status !== null || step.result.countsRuns) continue;
 			let computed: Interval | null;
-			let constants = false;
 			if (step.tokens !== null) {
 				const operands = step.tokens.filter((t): t is { kind: "num"; num: Num } => t.kind === "num").map((t) => t.num);
-				constants = operands.some(isConstant);
 				const ready = operands.every((o) => isAccounted(o) || (isConstant(o) && o.status === null));
 				if (!ready || !operands.some((o) => isAccounted(o))) continue;
 				for (const o of operands) if (o.status === null) {
@@ -671,28 +855,30 @@ export async function checkAnswer(answer: string, data: LedgerData, question = "
 			changed = true;
 			const r = step.result;
 			const rf = r.q.unit.factor;
-			const room = step.rounds ? 2 * r.q.half : r.q.half;
+			// A rounding (→) may be to fewer digits: up, down or to nearest at the result's last significant digit.
+			const room = step.rounds ? 2 * r.q.looseHalf : r.q.half;
 			// The result's rounding interval, open at its ends, meets the recomputed interval.
 			const near = (lo: number, hi: number, value: number, half: number, scale: number): boolean => {
 				const noise = 1e-12 * Math.max(Math.abs(lo), Math.abs(hi), Math.abs(value));
 				const reach = half * (1 - 1e-9) * Math.abs(scale);
 				return value + reach > lo - noise && value - reach < hi + noise;
 			};
-			const byUnits = computed !== null && computed.consistent && sameDims(computed.dims, r.q.unit.dims) && near(computed.lo, computed.hi, r.q.value, room, rf);
-			const byDigits = computed !== null && constants && near(computed.wlo, computed.whi, r.q.written, room, 1);
+			// Either with units carried, or as plain numbers exactly as written: a line whose numbers are right is not rejected for how its units are worded.
+			const byUnits = computed !== null && computed.consistent && sameDims(withoutCounts(computed.dims), withoutCounts(r.q.unit.dims)) && near(computed.lo, computed.hi, r.q.value, room, rf);
+			const byDigits = computed !== null && near(computed.wlo, computed.whi, r.q.written, room, 1);
 			if (byUnits || byDigits) {
 				r.status = "derived";
 				r.detail = step.rounds ? "a rounding, shown with →, of the value before it" : "the result of arithmetic on its line, recomputed";
 			} else {
 				r.status = "unaccounted";
-				const got = computed === null ? "operands that do not combine" : `${computed.lo === computed.hi ? computed.lo : `${computed.lo} to ${computed.hi}`} ${dimsText(computed.dims)}`;
-				r.detail = `its arithmetic does not give it: recomputed ${got}${computed !== null && !sameDims(computed.dims, r.q.unit.dims) ? `, not ${dimsText(r.q.unit.dims)}` : ""}`;
-				r.problem = `"${r.q.text.trim()}" does not follow from the arithmetic on its line: recomputed ${got}${computed !== null && !sameDims(computed.dims, r.q.unit.dims) ? `, where it is ${dimsText(r.q.unit.dims)}` : ""}`;
+				const expected = expectedOf(computed, r.q);
+				r.detail = `its arithmetic does not give it: expected ${expected}`;
+				r.problem = `"${r.q.text.trim()}" does not follow from the arithmetic on its line: expected ${expected}; found ${r.q.text.trim()}. To fix, write the result its operands give, or correct the operand that is wrong.`;
 			}
 		}
 		for (const n of all) {
 			if (n.status !== null) continue;
-			const known = all.find((k) => k !== n && isAccounted(k) && (!n.countsRuns || k.countCited) && sameKind(n.q, k.q) && (agrees(n.q, k.exact ?? k.q.value, k.q.unit.dims) || agrees(n.q, k.q.value, k.q.unit.dims)));
+			const known = all.find((k) => k !== n && isAccounted(k) && (!n.countsRuns || k.countCited) && sameKind(n.q, k.q) && (repeats(n.q, k.exact ?? k.q.value, k.q.unit.dims) || repeats(n.q, k.q.value, k.q.unit.dims)));
 			if (known !== undefined) {
 				n.status = "repeat";
 				n.detail = `the same as "${known.q.text.trim()}" (line ${known.line}, ${known.status})`;
@@ -701,32 +887,7 @@ export async function checkAnswer(answer: string, data: LedgerData, question = "
 		}
 	}
 
-	const numsOf = (s: Step): Num[] => (s.tokens ?? []).filter((t): t is { kind: "num"; num: Num } => t.kind === "num").map((t) => t.num);
-	const operandOf = new Set(steps.flatMap(numsOf));
-	const onlyConstants = new Set(steps.filter((s) => s.tokens !== null && numsOf(s).every(isConstant)).map((s) => s.result));
-	const resultOf = new Set(steps.map((s) => s.result));
-	for (const n of all) {
-		if (n.status === null && onlyConstants.has(n)) {
-			n.status = "unaccounted";
-			n.detail = "the result of arithmetic whose operands are only conversion constants: at least one must be accounted for";
-		}
-		if (n.status === null && operandOf.has(n) && isConstant(n)) {
-			n.status = "unaccounted";
-			n.detail = "a conversion constant in arithmetic that has no accounted operand";
-		}
-	}
-	for (const n of all) {
-		if (n.status === null) {
-			n.status = "unaccounted";
-			n.detail = n.countsRuns
-				? "a count of Runs or boots is accounted for only by a Series' count citation, or as a repeat of a number cited by one"
-				: resultOf.has(n)
-				? "the result of arithmetic whose operands are not all accounted for"
-				: `no citation or assumption after it; not in the question; not the result of arithmetic; not a repeat of a number accounted for${operandOf.has(n) ? " (an operand of arithmetic)" : ""}`;
-			n.problem = `"${n.q.text.trim()}" is not accounted for: ${n.detail}`;
-		}
-		if (n.status === "unaccounted") problems.push({ line: n.line, message: n.problem ?? `"${n.q.text.trim()}" is not accounted for: ${n.detail}` });
-	}
+	reportUnaccounted(all, steps, problems);
 
 	// Run links: each a Run of the data, with the bytes the Derivation cites.
 	const runsByPath = new Map<string, { series: string; sha256: string }>();
