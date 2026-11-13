@@ -11,6 +11,9 @@ task, **read this whole file first**, then read the specific PRD you were assign
 > It keeps running beside the new runner until step 4 of the build plan (#36), which
 > reverses the decision of Provider abstraction and declarative run spec (#22) to delete
 > it. Section 2 is current: `memory_read` and the step-2 runner implement it.
+>
+> **Note (2026-11-13).** July's pipeline was retired on 2026-11-13 (section 7, that day).
+> Its code stays as sections 3 to 7 describe it; the stage `smr` must not be deployed.
 
 ---
 
@@ -60,7 +63,7 @@ cannot, the order of the stream.
 | Path | What it is |
 |------|------------|
 | `benchmarks/harness/c/` | The C harness (`lm.h`, `lm.c`), which prints the stream; `lm_event.h` and `lm_event.c`, which emit a benchmark's own events and further `observed` events; `lm_fixed.h` and `lm_fixed.c`, samples of fixed work with a step before each outside its interval (`disk_read_sequential`); `lm_disk.h` and `lm_disk.c`, what the disk benchmarks observe about the file they opened and its device, and their `device_counters` event; and `lm_fixture.h`, the disk Fixture's pattern, defined once. For `http_get`: `lm_lines.h` and `lm_lines.c`, a request's events built in one buffer and written after it ends, each received field decided once on the text written, and a guard that replaces any line still holding a registered secret; `lm_dns`, `lm_http`, `lm_sigv4` and `lm_tls` (a DNS client, an HTTP/1.1 parser, SigV4 signing, and AWS-LC with its offer pinned); `vendor/aws-lc.lock`, which pins AWS-LC's source archive by hash, with `vendor/build-aws-lc.sh` and `vendor/fetch-aws-lc.sh`. `lm.c` stays as it is, so `memory_read`'s binary keeps its bytes. A benchmark in another language prints the same lines without them. |
-| `benchmarks/<name>/` | One benchmark: its source, a `README.md` (what it measures, its parameters, its observed values, its elision guard, and every difference from July's version), and a `Makefile` offering `make BUILD=static` or `BUILD=dynamic` (one file at `build/<build>/<name>`), `make -s compiler` and `make -s resolved`. All thirteen are on the stream: `memory_read`, `compressed_memory_read`, `memory_read_random`, `memory_write`, `syscall`, `hash`, `sort`, `tcp_echo`, `mutex`, `disk_read_random`, `disk_read_io_uring`, `disk_read_sequential` and `disk_write`. July's copies stay in `benchmarks/c/` until July's pipeline is retired. |
+| `benchmarks/<name>/` | One benchmark: its source, a `README.md` (what it measures, its parameters, its observed values, its elision guard, and every difference from July's version), and a `Makefile` offering `make BUILD=static` or `BUILD=dynamic` (one file at `build/<build>/<name>`), `make -s compiler` and `make -s resolved`. All thirteen are on the stream: `memory_read`, `compressed_memory_read`, `memory_read_random`, `memory_write`, `syscall`, `hash`, `sort`, `tcp_echo`, `mutex`, `disk_read_random`, `disk_read_io_uring`, `disk_read_sequential` and `disk_write`. July's copies stay in `benchmarks/c/`, the code of the retired proof of concept. |
 | `schemas/events.schema.json` | One line of the stream. |
 | `scripts/check-events.py` | The order of a stream: `./build/static/memory_read --quick \| python3 scripts/check-events.py --quick`. Needs only Python 3. |
 | `scripts/check-scratch.py` | Runs every static build of `schedule.json` as the only file in a `FROM scratch` container, once per parameter set, and checks each stream. A set asking for CPUs this machine's topology cannot provide (`mutex`'s `distinct_cores` or `smt_siblings`), or for `io_uring` a kernel refuses (`kernel.io_uring_disabled`), is reported as skipped, with the reason, only when the binary refuses it in its own words: exit 2, `started` alone on stdout, and its refusal line for that set on stderr; anything else fails (`tests/check-scratch.test.ts`). The disk sets get a 64 MiB Fixture made by `runner/fixture.c`, mounted at their `dir`. Needs Docker. |
@@ -883,4 +886,19 @@ A migrated benchmark is done only when **all** of these hold:
   six-digit rounding boundaries did not). The checker reads numbers, not meaning, and the
   README and the skill now say so for these figures. On the 35 real Runs every figure is as
   before.
+- **2026-11-13** — Step 4 of the build plan (#36, brief #42): July's pipeline is retired.
+  Its daily launch schedule (stage `smr`) was switched off in AWS by hand at 15:58 UTC,
+  after check 6 on #38 passed; its hourly reaper is left on, and its bucket and results,
+  the last for 2026-11-12, are kept. Its code stays in the repository, unchanged, as the
+  proof of concept the build started from. The stage `smr` must not be deployed: a deploy
+  would switch the schedule back on. With it goes the schedule check's rule that refused
+  a `c6i.8xlarge` boot from 22:20 to 23:40 UTC (`JULY_RULE` in `infra/runs/schedule.ts`),
+  with its tests and the comments and README passages that leaned on July's 23:10 launch.
+  The other quota rules (every target's vCPUs together with what is reserved fit the
+  quota; one target's boots at least 60 minutes apart) and the launch's protections (never
+  retried, a one-minute event age, a scheduled launch more than ten minutes late refused,
+  one box per slot) are unchanged: a late or duplicate box wastes money and can overlap
+  another box of its own target, which the quota rules count on never happening.
+  `schedule.json` and `runner/` are unchanged, so the boot times, what a box runs and the
+  runner's hash stay as they were. Not deployed.
 - _(agents: append your entry here, one per merged benchmark)_

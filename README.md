@@ -9,9 +9,9 @@ to end, is #37; step 3, the first Method and a page, is #39; step 6, prices, is 
 the agent skill and opening the repository, is #47.
 `docs/dev-log.md` section 2 is the event contract.
 
-Two pipelines live here side by side. The new one, described first, writes Runs.
-July's proof of concept (`benchmarks/c/`, its own JSON format) keeps running unchanged
-until step 4 of the plan replaces it.
+Two pipelines live here. The new one, described first, writes Runs. July's proof of
+concept (`benchmarks/c/`, its own JSON format) was retired on 2026-11-13; its code stays,
+as the base the build started from (last section).
 
 ## Layout
 
@@ -150,7 +150,7 @@ checked. These scenarios show the path, not S3's numbers.
 ## The daily box: a `-runs` stage
 
 Any SST stage whose name ends in `-runs` deploys `infra/runs/stack.ts`. Every other stage
-deploys July's stack, below, unchanged.
+deploys July's stack, below, unchanged; July's stage, `smr`, must not be deployed.
 
 `schedule.json` names the targets: an instance type, its zone, and the times of day,
 UTC, it boots. Today there are five, all in `us-east-2c`, four boots a day each:
@@ -166,14 +166,14 @@ UTC, it boots. Today there are five, all in `us-east-2c`, four boots a day each:
 The stage makes one EventBridge schedule per target, a cron listing its boot times (for
 `c6i.8xlarge`, `cron(10 4,10,16,22 * * ? *)`), and every schedule invokes the one launch
 Lambda with the scheduled time and the instance type. The Lambda launches one box of that
-type from `ami-03499a87bbb39a09a` (Amazon Linux 2023.12.20260710.0, the image July has
-used since 2026-07-18). The Lambda is never retried, Lambda drops the invocation if it
-waited in Lambda's queue for more than a minute, and the handler refuses a scheduled
-launch more than ten minutes after its scheduled time, so a late box cannot overlap boots
-the schedule keeps apart, and refuses a scheduled launch of a type that is not a target.
-A scheduled launch's EC2 client token comes from the stage, the instance type and the
-scheduled time, so one slot of one target can start at most one box. Its user-data is
-`runner/box.sh`, which:
+type from `ami-03499a87bbb39a09a` (Amazon Linux 2023.12.20260710.0, the image July's
+pipeline used from 2026-07-18 until it was retired). The Lambda is never retried, Lambda
+drops the invocation if it waited in Lambda's queue for more than a minute, and the
+handler refuses a scheduled launch more than ten minutes after its scheduled time, so a
+late box cannot overlap boots the schedule keeps apart, and refuses a scheduled launch of
+a type that is not a target. A scheduled launch's EC2 client token comes from the stage,
+the instance type and the scheduled time, so one slot of one target can start at most one
+box. Its user-data is `runner/box.sh`, which:
 
 1. sets a shutdown timer that ends the box 45 minutes after it started, whatever happens;
 2. installs `gcc`, `make`, `glibc-static`, `tar`, `gzip`, `util-linux`, `nvme-cli`,
@@ -439,12 +439,10 @@ a deploy stops if `schedule.json` fails its check (`infra/runs/schedule.ts`). Th
 refuses: a malformed target or time; a time listed twice for one target; a type listed as
 two targets; targets in more than one zone (the stage launches into one subnet); an
 `instance_types` value that is not a target's type; a key it does not know (so a
-misspelt `instance_types` cannot silently mean every type); the same parameter set twice
-for one benchmark, build and type; and, while July's pipeline runs, a `c6i.8xlarge` boot
-from 22:20 to 23:40 UTC, so it never overlaps July's 23:10 box (that rule goes when July's
-pipeline is retired). A target's boots usually share one minute past the hour and so make
-one schedule; boots at other minutes get a schedule each, named by the minute
-(`BoxLaunchC6i8xlargeAt10`).
+misspelt `instance_types` cannot silently mean every type); and the same parameter set
+twice for one benchmark, build and type. A target's boots usually share one minute past
+the hour and so make one schedule; boots at other minutes get a schedule each, named by
+the minute (`BoxLaunchC6i8xlargeAt10`).
 
 The check also keeps every box inside the account's vCPU quota, whatever the times.
 `"vcpu_quota": { "limit": 64, "reserved_outside_schedule": 4 }` declares the quota and
@@ -452,9 +450,7 @@ the dev machine's share. Every target's `vcpus` added together, plus what is res
 must fit the limit (58 + 4 = 62 of 64 today), and two boots of one target must be at least
 60 minutes apart, across midnight too, because a box lives at most 55 minutes. A new
 target's `vcpus` is AWS's `DefaultVCpus` for the type. Check every declared number against
-AWS, read-only, with `AWS_PROFILE=tabot-dev bun scripts/check-targets.ts`. While July's
-pipeline runs, its 23:10 box is the one thing these rules do not cover, hence the July
-rule.
+AWS, read-only, with `AWS_PROFILE=tabot-dev bun scripts/check-targets.ts`.
 
 A boot's summary (`boots/<yyyy>/<mm>/<dd>/<boot>.json`) accounts for every execution the
 schedule names: `runs`; `not_run`, with the `reason` (told to stop before starting it, or
@@ -556,8 +552,7 @@ those whose `instance_types` name it.
 Mind the quota. A box that fails to end itself lives until the reaper finds it, up to 55
 minutes. A 2-vCPU type such as `c6i.large` fits at any time (the worst moment holds 62 of
 64 vCPUs). Anything larger can meet the quota from HH:10 to HH+1:45 for HH = 04, 10, 16
-and 22, when the scheduled boxes may be up; a 32-vCPU type also from 23:10 until July's
-box has ended, while July's pipeline runs.
+and 22, when the scheduled boxes may be up.
 
 ```bash
 export AWS_PROFILE=tabot-dev AWS_REGION=us-east-2
@@ -955,9 +950,12 @@ make -C benchmarks/c quick     # build + run all, smaller buffers/fewer samples 
 make -C benchmarks/c run       # build + run all, full samples
 ```
 
-Once a day at **23:10 UTC** EventBridge Scheduler invokes a Lambda that launches a
-`c6i.8xlarge`. The instance builds `benchmarks/c`, runs `run-all.sh`, uploads JSON to S3,
-and terminates itself.
+**Retired on 2026-11-13.** From 2026-07-11, once a day at 23:10 UTC, EventBridge
+Scheduler invoked a Lambda that launched a `c6i.8xlarge`; the instance built
+`benchmarks/c`, ran `run-all.sh`, uploaded JSON to S3, and terminated itself. That daily
+schedule is now switched off in AWS. The bucket and its results, the last for 2026-11-12,
+are kept. The code stays as the proof of concept the build started from. **Do not deploy
+the stage `smr`**: a deploy would switch its daily schedule back on.
 
 | Piece | Location |
 |-------|----------|
