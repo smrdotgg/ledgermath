@@ -9,8 +9,8 @@ import {
  * Terminates boxes of this -runs stage that are still up long after they should
  * have ended themselves. A box sets a 45-minute shutdown timer as its first
  * act; one still up at 50 minutes has failed to end, and would otherwise bill
- * all day and hold 32 vCPUs of the quota when July's pipeline launches at
- * 23:10.
+ * all day and still hold its vCPUs of the quota when its target's next boot
+ * comes, which could then be refused.
  *
  * It only ever touches this stage's boxes: the describe filter, the check in
  * staleBoxes, and its IAM policy (infra/runs/stack.ts) each require the tags

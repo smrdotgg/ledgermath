@@ -45,8 +45,8 @@ import { tlsArchive } from "./tls-archive";
 
 /**
  * Amazon Linux 2023 2023.12.20260710.0, kernel 6.1: the image July's pipeline
- * has booted since 2026-07-18. The image, and with it the kernel and the
- * compiler, changes only when this line does.
+ * booted from 2026-07-18 until it was retired. The image, and with it the
+ * kernel and the compiler, changes only when this line does.
  */
 const IMAGE_ID = "ami-03499a87bbb39a09a";
 const REAP_SCHEDULE = "rate(5 minutes)";

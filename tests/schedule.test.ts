@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { HTTP_GET_FIXTURES } from "../infra/runs/fixtures";
-import { appliesTo, JULY_RULE, MIN_BOOT_GAP_MINUTES, parseSchedule, type Schedule, scheduleProblems } from "../infra/runs/schedule";
+import { appliesTo, MIN_BOOT_GAP_MINUTES, parseSchedule, type Schedule, scheduleProblems } from "../infra/runs/schedule";
 
 const ROOT = join(import.meta.dir, "..");
 const FILE = JSON.parse(readFileSync(join(ROOT, "schedule.json"), "utf8")) as Schedule;
@@ -263,22 +263,6 @@ describe("the schedule's check", () => {
 				"targets: m5.large boots at 23:30 and 00:10, 40 minutes apart; a target's boots must be at least 60 minutes apart, across midnight too, so one box has ended before the next starts",
 			]);
 			expect(problemsAfter((s) => (target(s, 1).boots_utc = ["23:30", "00:30"]))).toEqual([]);
-		});
-	});
-
-	describe("while July's pipeline runs", () => {
-		test("no c6i.8xlarge boots from 22:20 to 23:40 UTC, both included", () => {
-			expect(JULY_RULE).toEqual({ instanceType: "c6i.8xlarge", from: "22:20", to: "23:40" });
-			for (const time of ["22:20", "22:30", "23:10", "23:40"]) {
-				const problems = problemsAfter((s) => (target(s, 0).boots_utc = ["10:10", time]));
-				expect(problems.length).toBe(1);
-				expect(problems[0]).toStartWith(`targets: c6i.8xlarge boots at ${time}, but no c6i.8xlarge may boot from 22:20 to 23:40 UTC`);
-			}
-			for (const time of ["22:19", "23:41", "00:00"]) expect(problemsAfter((s) => (target(s, 0).boots_utc = ["10:10", time]))).toEqual([]);
-		});
-
-		test("other types may boot then", () => {
-			for (const time of ["22:20", "23:10", "23:40"]) expect(problemsAfter((s) => (target(s, 1).boots_utc = [time]))).toEqual([]);
 		});
 	});
 

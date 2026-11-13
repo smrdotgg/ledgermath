@@ -106,19 +106,6 @@ const QUOTA_KEYS = new Set(["limit", "reserved_outside_schedule"]);
 export const MIN_BOOT_GAP_MINUTES = 60;
 const MINUTES_PER_DAY = 24 * 60;
 
-/**
- * July's pipeline (stage `smr`, sst.config.ts) launches a 32-vCPU c6i.8xlarge
- * every day at 23:10 UTC. While it runs, that box is the one thing the quota
- * rules above do not cover: it is not a target, so its vCPUs are not in the
- * sum. Two 32-vCPU boxes and the dev machine's 4 vCPUs do not fit the
- * account's 64-vCPU quota, and a box of ours can hold its vCPUs for up to 55
- * minutes (the reaper's 50, plus its 5-minute interval), so no c6i.8xlarge
- * boot is scheduled from 22:20 to 23:40 UTC, both included. The smaller
- * targets fit beside July's box (26 + 32 + 4 = 62).
- * This rule goes away when July's pipeline is retired (step 4 of #36).
- */
-export const JULY_RULE = { instanceType: "c6i.8xlarge", from: "22:20", to: "23:40" } as const;
-
 /** Minutes after midnight of an HH:MM time. */
 export function minuteOfDay(time: string): number {
 	return Number(time.slice(0, 2)) * 60 + Number(time.slice(3, 5));
@@ -303,19 +290,6 @@ export function scheduleProblems(value: unknown): string[] {
 				`targets: ${target.instance_type} boots at ${time(minute)} and ${time(next)}, ${next - minute} minute${next - minute === 1 ? "" : "s"} apart; a target's boots must be at least ${MIN_BOOT_GAP_MINUTES} minutes apart, across midnight too, so one box has ended before the next starts`,
 			);
 		});
-	}
-
-	// July's 32-vCPU box; see JULY_RULE. Goes away when July's pipeline is retired.
-	for (const target of targets) {
-		if (target.instance_type !== JULY_RULE.instanceType) continue;
-		for (const time of target.boots_utc) {
-			const minute = minuteOfDay(time);
-			if (minute >= minuteOfDay(JULY_RULE.from) && minute <= minuteOfDay(JULY_RULE.to)) {
-				problems.push(
-					`targets: ${target.instance_type} boots at ${time}, but no ${JULY_RULE.instanceType} may boot from ${JULY_RULE.from} to ${JULY_RULE.to} UTC while July's pipeline launches its own at 23:10 (the 64-vCPU quota fits one)`,
-				);
-			}
-		}
 	}
 
 	if (!Array.isArray(value.benchmarks)) {

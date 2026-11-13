@@ -29,8 +29,9 @@ const SCHEDULED_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/;
 /**
  * A scheduled launch this late is not started. Lambda can hold an asynchronous
  * event for a while after throttling or an error of its own, and a box started
- * long after its slot could overlap the next boots, or July's 23:10 box, in
- * ways the schedule's times were chosen to avoid (infra/runs/schedule.ts).
+ * long after its slot wastes money and could overlap its own target's next
+ * boot, which the schedule's times are kept apart to avoid
+ * (infra/runs/schedule.ts).
  */
 export const LATEST_START_MS = 10 * 60 * 1000;
 
