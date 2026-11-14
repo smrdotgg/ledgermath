@@ -972,13 +972,16 @@ one that adds a day's objects; `verify` takes a few minutes more for `check-runs
 
 ### The cutover
 
-Rounds start at 04:10, 10:10, 16:10 and 22:10 UTC; the last box of a round (`i4i.2xlarge`,
-at :50) has ended by HH+1:45 at the latest, reaper included. The `runs` workflow runs at
-00:00, 06:00, 12:00, 18:00 and 22:40. The cutover itself (steps 6 to 12) happens in one gap
-between rounds: after the 06:00 workflow run has finished, so that the Runs repository holds
-the 04:10 round, and before 10:00, ten minutes before the next round. No slot fires in it,
-so no deploy can lose a round or run one twice. The gaps from 12:00 to 16:00 and from 18:00
-to 22:00 serve as well.
+Rounds start at 04:10, 10:10, 16:10 and 22:10 UTC, with a box at :10, :20, :30, :40 and :50.
+A scheduled launch is refused more than ten minutes after its time, and the reaper ends a box
+at most 55 minutes after it started, so the last box of a round (`i4i.2xlarge`, launched at
+:50 or up to ten minutes later) has ended by HH+1:55 at the latest. The `runs` workflow runs
+at 00:00, 06:00, 12:00, 18:00 and 22:40. The cutover itself (steps 6 to 12) happens in one
+gap between rounds: after the 06:00 workflow run has finished, so that the Runs repository
+holds the 04:10 round, and before the 10:10 slot. No slot fires in it, so a deploy made in it
+can neither lose a round nor start one twice, as long as each has finished by its time in
+the table below. The gaps from 12:00 to 16:10 and from 18:00 to 22:10 serve as well, with
+every time six or twelve hours later.
 
 Before, on any day:
 
@@ -992,8 +995,19 @@ Before, on any day:
    `aws scheduler list-schedules --profile tabot-production --region us-east-2 --query 'Schedules[].[Name,State]' --output text`
    shows its reaper's schedule and nothing else.
 3. **One box by hand there**, an `m5.large`, a target that fits the quota even before it is
-   raised ("Trigger a boot by hand", with `STAGE=production-runs`). When its log is in the
-   bucket (about 15 minutes), check what it left:
+   raised. First the two buckets' names and a clone of the Runs repository, which this step
+   and every verification below read:
+
+   ```bash
+   DEV_BUCKET=$(jq -r .bucket .sst/outputs.smr-runs.json)
+   PROD_BUCKET=$(jq -r .bucket .sst/outputs.production-runs.json)
+   git clone git@github.com:smrdotgg/ledgermath-runs.git /tmp/ledgermath-runs-verify
+   git -C /tmp/ledgermath-runs-verify remote set-url --push origin no-push   # it is only read
+   ```
+
+   Then the launch ("Trigger a boot by hand", with `STAGE=production-runs` and
+   `ACCOUNT=(--profile tabot-production --region us-east-2)`). When its log is in the bucket
+   (about 15 minutes), check what it left:
 
    ```bash
    aws s3 sync "s3://$PROD_BUCKET" /tmp/prod-bucket --exclude 'source/*' --exclude 'logs/*' \
@@ -1009,40 +1023,85 @@ Before, on any day:
    Changes: one instance in the production account for at most 55 minutes, and its Runs,
    blobs, boot summary and log in the production bucket. They are real Runs of an
    `m5.large` and are published with the rest once the workflow reads that bucket.
-4. **Copy the data** (`copy --dry-run`, then `copy`, above), while the development account
-   goes on with its rounds. Changes: adds objects to the production bucket. The deploy has
-   already put AWS-LC's archive and the Fixture blobs there, under the same keys and bytes
-   as the development bucket's; they are found the same.
-5. **Verify** (above). Changes nothing.
+4. **Copy the data** (`copy --dry-run`, then `copy`, as in "Copying the data"), while the
+   development account goes on with its rounds. Changes: adds objects to the production
+   bucket. The deploy has already put AWS-LC's archive and the Fixture blobs there, under the
+   same keys and bytes as the development bucket's; they are read and found the same.
+5. **Verify** (as in "Copying the data", with `--check-dir /tmp/prod-check-1`). Changes
+   nothing.
 
-The cutover, in one gap (here, 06:30 to 10:00):
+The cutover, in one gap (here, 06:30 to 10:10). Each deploy has a time by which it must have
+succeeded, so that there is time left to go back; going back must be over before the first
+slot:
+
+| By | Must have succeeded | If it has not |
+|----|---------------------|---------------|
+| 09:00 | Step 9: `production-runs` deployed, with its schedules | Go back (below) |
+| 09:30 | Step 10: `smr-runs` deployed, without them | Go back |
+| 10:00 | Going back, when it was needed | Both stages are scheduled for the 10:10 round (below) |
 
 6. **The last development round is complete**: `aws ec2 describe-instances --profile tabot-dev --region us-east-2 --filters Name=tag:ledgermath-stage,Values=smr-runs Name=instance-state-name,Values=pending,running`
    lists nothing, and `aws s3 ls "s3://$DEV_BUCKET/boots/<yyyy>/<mm>/<dd>/" --profile tabot-dev`
    holds that round's five boot summaries. Changes nothing.
-7. **Copy again and verify again**, against a fresh `git pull` of the Runs repository
-   checkout (the 06:00 run has added the round). The copy adds what the development bucket
-   gained since step 4. From here until step 10 the development bucket gains nothing more,
-   because its next slot is 10:10. Changes: adds objects to the production bucket.
-8. **Make `production-runs` the scheduled stage**: `SCHEDULED_STAGE = "production-runs"` in
-   `infra/runs/stages.ts`, and the one line of `tests/runs-stages.test.ts` that pins it;
-   `bun test`; a pull request, merged to main; pull main. Changes: the repository.
-9. **Deploy `production-runs`** from main. Changes, in the production account: the five
-   launch schedules (each with its role) and the launch function's list of targets.
-   Nothing fires before 10:10.
-10. **Deploy `smr-runs`** from main. Changes, in the development account: its five launch
-    schedules and their roles are deleted, and its launch function's list of targets
-    becomes `none (this stage is not the scheduled stage)`, so even a schedule that
-    survived would launch nothing.
+7. **Copy again and verify again**: `git -C /tmp/ledgermath-runs-verify pull` (the 06:00 run
+   has added the round), `copy`, and `verify` with a directory of its own, `--check-dir
+   /tmp/prod-check-2` (it refuses `/tmp/prod-check-1`, which holds the first verification's
+   objects; remove that one first if the disk is short). The copy adds what the development
+   bucket gained since step 4. From here until step 10 the development bucket gains nothing
+   more, because its next slot is 10:10. Changes: adds objects to the production bucket. If
+   either fails, stop here: nothing else has changed.
+8. **Make `production-runs` the scheduled stage**: first note main as it is, `git fetch
+   origin && BEFORE=$(git rev-parse origin/main)`; it schedules `smr-runs`, and going back
+   deploys from it. Then `SCHEDULED_STAGE = "production-runs"` in `infra/runs/stages.ts`,
+   and the one line of `tests/runs-stages.test.ts` that pins it; `bun test`; a pull request,
+   merged to main; pull main. Changes: the repository.
+9. **Deploy `production-runs`** from main, **succeeded by 09:00**. Changes, in the production
+   account: the five launch schedules (each with its role) and the launch function's list of
+   targets. Nothing fires before 10:10. Check: the command of step 11, with
+   `--profile tabot-production`, lists the five `ledgermath-production-runs-BoxLaunch…`
+   schedules and its reaper's. A deploy that fails partway can leave some of the five
+   schedules made and others not, and the list of targets changed or not; run it again, and
+   it carries on from what is there. Until step 10, development keeps its schedules and
+   every round.
+10. **Deploy `smr-runs`** from main, **succeeded by 09:30**. Changes, in the development
+    account: its five launch schedules and their roles are deleted, and its launch
+    function's list of targets becomes `none (this stage is not the scheduled stage)`, so
+    even a schedule that survived would launch nothing. A deploy that fails partway can
+    leave some schedules deleted and others not, and the list of targets as it was; run it
+    again.
 
-    Production first: between the two deploys both stages are scheduled, never neither. A
-    slot that fired between them would start one box in each account, and the
-    development box's Runs would stay in the development bucket, which the workflow no
-    longer reads: nothing published twice, at the cost of one box. In the other order a slot
-    in between would start no box at all, a lost round. In the gap no slot fires either way.
-    If the second deploy fails, deploy it again before 10:00; if it cannot be made to work
-    by then, the 10:10 round also runs in the development account, harmlessly, until it
-    does.
+    Production first: between the two deploys both stages are scheduled, never neither; in
+    the other order, a slot that fired between them would launch no box at all. No slot
+    fires between them as long as both have succeeded by their times.
+
+**Going back**, over by 10:00, when step 9 or 10 has not succeeded by its time: deploy both
+stages from `BEFORE` ("Deploy", in a checkout of it, `git checkout --detach "$BEFORE"`, and
+`git checkout main` after). `smr-runs` first, so that any of its schedules a partial step 10
+deleted is back before production loses its own (when step 10 was never started, `smr-runs`
+is as it was and needs no deploy); then `production-runs`, which loses whatever schedules
+step 9 made and gets an empty list of targets again. Then step 11's command gives the other
+answer: development lists its five launch schedules, its reaper's and July's reaper's;
+production its reaper's alone. Revert step 8's commit on main (a pull request), and try
+again another day. The workflow still reads the development bucket, as step 12 had not come,
+and nothing else needs undoing: the production bucket keeps what the copy and the box of
+step 3 put there, and the next try's copy finds it there and the same.
+
+**If both stages are still scheduled at 10:10** (a deploy did not succeed in time, and
+going back was not over): at each slot whose target has a launch schedule in both accounts,
+two boxes start, one in each account, from separate quotas and with separate client tokens,
+and each writes its Runs to its own stage's bucket. Nothing removes either set. Every Run is
+recorded truthfully and kept, so these are two real sets of Runs of the same targets, made
+by two boxes minutes apart, not damaged data. A reader of a Series sees, at that slot, two
+Runs minutes apart where there is usually one; both count in the Series' percentiles and
+counts, and they fall in one group unless a fact Method series v1 splits on differs between
+the two boxes, as it can between any two boxes of a type (an `m5.large` can come on another
+processor). Both sets are published: the development bucket's by the workflow while it reads
+that bucket, the production bucket's once it reads that one. So when the cutover goes on
+after such a round, copy and verify again (step 7) once the round's development boxes have
+ended (step 6's check), before step 12; when it goes back, production's Runs of that round
+wait in its bucket for the next try, as the box of step 3's do. Finish going back, or the
+cutover, before the 16:10 round, so that it happens to one round only.
+
 11. **Check the schedules.**
     `aws scheduler list-schedules --profile tabot-dev --region us-east-2 --query "Schedules[?State=='ENABLED'].Name" --output text`
     lists only `ledgermath-smr-runs-BoxReaperSchedule-…` and July's
@@ -1072,11 +1131,15 @@ After the cutover:
 13. **The first production round**, 10:10 to 10:50. While it runs:
     `aws ec2 describe-instances --profile tabot-production --region us-east-2 --filters Name=tag:ledgermath-stage,Values=production-runs`
     shows the boxes, the launch function's log (`/aws/lambda/<launchFunction>`) has five
-    launches and no refusal, and the development account starts no box. By 11:40 the
-    production bucket holds the round's five boot summaries; `check-runs.ts` on a sync of
-    the bucket passes. The 12:00 run copies, pushes and derives them; then, with its `page`
-    artifact (`gh run download <run> --repo smrdotgg/ledgermath -n page -D /tmp/page`),
-    this prints every Series whose group changed at the move, and should print nothing:
+    launches and no refusal, and the development account starts no box. The round's last
+    box has ended by 11:55 at the latest; check that it has, rather than wait for a time:
+    the same command with `Name=instance-state-name,Values=pending,running` added lists
+    nothing, `aws s3 ls "s3://$PROD_BUCKET/boots/<yyyy>/<mm>/<dd>/" --profile tabot-production`
+    holds the round's five boot summaries, and `check-runs.ts` on a sync of the bucket
+    passes. The first workflow run after that (normally the 12:00 one) copies, pushes and
+    derives them; then, with its `page` artifact
+    (`gh run download <run> --repo smrdotgg/ledgermath -n page -D /tmp/page`), this prints
+    every Series whose group changed at the move, and should print nothing:
 
     ```bash
     CUT=2026-11-DDT10:00:00Z   # the day of the cutover, before the first production round
@@ -1089,15 +1152,61 @@ After the cutover:
 
     Changes nothing.
 14. **Going back, if the production round fails** (no boxes, too few, Runs that do not
-    check out): in the next gap, before 16:00, revert step 8's commit (a pull request,
-    merged), deploy `smr-runs` first and `production-runs` second (now the development
-    stage gains its schedules first, for the same reason), and set both variables back to
-    `smr-runs`'s outputs (`.sst/outputs.smr-runs.json`). The 16:10 round then runs in the
-    development account. Changes: the schedules and launch functions' lists of both stages,
-    and the two variables. Run files already copied from the production bucket stay in the
-    Runs repository: Runs are never removed, and the copy job only adds. For a later try,
-    run steps 6 to 13 again: the copy adds what the development bucket gained, the
-    production bucket keeps its own Runs, and the verification passes with them there.
+    check out): in the next gap, after the 12:00 workflow run, with the times of steps 9
+    and 10 six hours later (the first deploy succeeded by 15:00, the second by 15:30, going
+    back over by 16:00). The production bucket now holds Runs and blobs the development
+    bucket lacks, those of the box of step 3 and of every production round, and some are
+    already in the Runs repository; they are copied back before the workflow reads the
+    development bucket again.
+
+    1. Note main as it is, `git fetch origin && AFTER=$(git rev-parse origin/main)`: it
+       schedules `production-runs`. Revert step 8's commit (a pull request, merged), and
+       pull main.
+    2. Deploy `smr-runs`, then `production-runs`, from main: now the development stage gains
+       its schedules first, for the reason step 10 gives. Check with step 11's command,
+       whose answers are now the other way round. If a deploy has not succeeded by its
+       time, put both back as they were, from `AFTER`, `production-runs` first and then
+       `smr-runs`, by 16:00: the 16:10 round then runs in production, and going back is tried
+       again in the next gap. If both are still scheduled at 16:10, see above.
+    3. Once production has no box left (step 13's command, with `pending,running`, lists
+       nothing; with its schedules gone, no more start), copy what only the production
+       bucket holds into the development bucket, with the same add-only copy, and verify:
+
+       ```bash
+       BACK=(--from-bucket "$PROD_BUCKET" --from-profile tabot-production --to-bucket "$DEV_BUCKET" --to-profile tabot-dev)
+       bun scripts/copy-bucket.ts copy "${BACK[@]}" --dry-run
+       bun scripts/copy-bucket.ts copy "${BACK[@]}"
+       git -C /tmp/ledgermath-runs-verify pull
+       bun scripts/copy-bucket.ts verify "${BACK[@]}" --runs-repository /tmp/ledgermath-runs-verify --check-dir /tmp/dev-check-1
+       ```
+
+       The copy writes nothing the development bucket holds, and adds the Run files, boot
+       summaries, logs and blobs only the production bucket holds. The verification passes
+       only when every object of the production bucket, and every Run file and boot summary
+       of the Runs repository, is in the development bucket with the same bytes. Without
+       this, a Run already published could name blobs that only the production bucket
+       holds: the workflow, reading the development bucket, might still find what it needs
+       in its cache, and would fail once the cache is lost or evicted, or when a new
+       reducing code reads a stream again.
+    4. Then, and not before, point the workflow back at the development bucket:
+
+       ```bash
+       gh variable set RUNS_BUCKET --repo smrdotgg/ledgermath --body "$(jq -r .bucket .sst/outputs.smr-runs.json)"
+       gh variable set RUNS_AWS_ROLE_ARN --repo smrdotgg/ledgermath --body "$(jq -r .runsReaderRole .sst/outputs.smr-runs.json)"
+       gh workflow run runs.yml --repo smrdotgg/ledgermath
+       ```
+
+       The run by hand publishes, now from the development bucket, any production Run the
+       Runs repository lacked, and derives.
+
+    Changes: the schedules and launch functions' lists of targets of both stages, the
+    development bucket (added to only), and the two variables. The 16:10 round runs in the
+    development account, and its Runs are published once step 4 points the workflow at that
+    bucket. Nothing is removed: the production bucket keeps its objects, and Run files
+    already copied from it stay in the Runs repository (Runs are never removed, and the copy
+    job only adds). For a later try, run steps 6 to 13 again: the copy adds what the
+    development bucket gained, finds production's own objects there and the same, and the
+    verification passes.
 
 ## Prices
 
