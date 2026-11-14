@@ -71,7 +71,47 @@ export interface HandMadeRun {
 	networkSections?: boolean;
 	/** The Service whose inputs were delivered beside the params, as runner/run.py records it. */
 	service?: Run["service"];
+	/**
+	 * The AWS account the box ran in. Adds what the dump records of it, shaped
+	 * like runner/run.py's: the instance identity document in provider, the
+	 * EC2 API's record of the instance (ec2_instance) and of the path out of
+	 * its subnet (ec2_route_tables, ec2_vpc_endpoints), and network, which
+	 * names no account (ACCOUNT_NETWORK).
+	 */
+	account?: HandMadeAccount;
 }
+
+/** An AWS account and its default VPC, as a box's dump names them. */
+export interface HandMadeAccount {
+	/** Twelve digits; in tests, one of AWS's documentation examples. */
+	id: string;
+	vpc: string;
+	subnet: string;
+	routeTable: string;
+	internetGateway: string;
+	securityGroup: string;
+	/** The instance profile's role, as the stage named it. */
+	instanceProfile: string;
+}
+
+/**
+ * The network section of a box in a default VPC's subnet in use2-az3,
+ * 172.31.32.0/20, shaped like a real dump's: the routes (/proc/net/route, in
+ * hex: the default route via 172.31.32.1, the resolver 172.31.0.2, the
+ * subnet), the MTU and the resolver. Every default VPC has 172.31.0.0/16, and
+ * both accounts' default subnets in use2-az3 are 172.31.32.0/20.
+ */
+export const ACCOUNT_NETWORK: Record<string, unknown> = {
+	"/proc/net/route":
+		"Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT\n" +
+		"ens5\t00000000\t01201FAC\t0003\t0\t0\t512\t00000000\t0\t0\t0\n" +
+		"ens5\t02001FAC\t01201FAC\t0007\t0\t0\t512\tFFFFFFFF\t0\t0\t0\n" +
+		"ens5\t00201FAC\t00000000\t0001\t0\t0\t512\t00F0FFFF\t0\t0\t0\n" +
+		"ens5\t01201FAC\t00000000\t0005\t0\t0\t512\tFFFFFFFF\t0\t0\t0\n",
+	"/etc/resolv.conf": "nameserver 172.31.0.2\nsearch us-east-2.compute.internal\n",
+	"/sys/class/net/ens5/mtu": "9001\n",
+	"$ ethtool -i ens5": { exit: 0, stderr: "", stdout: "driver: ena\n" },
+};
 
 export const DEFAULT_PARAMS = { size_bytes: 1073741824, threads: 1, path: "scalar" };
 
@@ -108,6 +148,7 @@ export class HandMade {
 			n: number;
 			diskSections: HandMadeRun["diskSections"];
 			networkSections?: boolean;
+			account?: HandMadeAccount;
 		},
 	): string {
 		// Shaped like runner/cpuid.c's output and lscpu -J's, for four CPUs.
@@ -154,8 +195,74 @@ export class HandMade {
 			provider: this.section({ "http://169.254.169.254/latest/meta-data/instance-id": `i-${o.boot}` }),
 			...(o.diskSections === undefined ? {} : this.diskSections(moment, o.boot, o.n, o.diskSections.catalog ?? "revision 1")),
 			...(o.networkSections ? this.networkSections(moment, o.n) : {}),
+			...(o.account === undefined ? {} : this.accountSections(o.account, o.boot)),
 		};
 		return this.put(`${JSON.stringify({ schema: "ledgermath.dump/1", taken_at: o.startedAt, sections }, null, 2)}\n`);
+	}
+
+	/** What a dump records of the account and VPC the box ran in: the same on every dump of a boot. */
+	private accountSections(account: HandMadeAccount, boot: string): Record<string, string> {
+		const command = (stdout: unknown) => ({ exit: 0, stderr: "", stdout: `${JSON.stringify(stdout, null, 4)}\n` });
+		const instance = `i-${boot}`;
+		const identity = {
+			accountId: account.id,
+			architecture: "x86_64",
+			availabilityZone: "us-east-2c",
+			imageId: "ami-0123456789abcdef0",
+			instanceId: instance,
+			instanceType: "c6i.8xlarge",
+			pendingTime: "2026-11-14T04:10:05Z",
+			privateIp: "172.31.40.7",
+			region: "us-east-2",
+			version: "2017-09-30",
+		};
+		return {
+			provider: this.section({
+				"http://169.254.169.254/latest/dynamic/instance-identity/document": `${JSON.stringify(identity, null, 2)}`,
+				"http://169.254.169.254/latest/meta-data/instance-id": instance,
+				"http://169.254.169.254/latest/meta-data/placement/availability-zone-id": "use2-az3",
+			}),
+			ec2_instance: this.section({
+				[`$ aws ec2 describe-instances --instance-ids ${instance} --region us-east-2 --output json`]: command({
+					Reservations: [
+						{
+							OwnerId: account.id,
+							Instances: [
+								{
+									InstanceId: instance,
+									VpcId: account.vpc,
+									SubnetId: account.subnet,
+									SecurityGroups: [{ GroupId: account.securityGroup }],
+									IamInstanceProfile: { Arn: `arn:aws:iam::${account.id}:instance-profile/${account.instanceProfile}` },
+									NetworkInterfaces: [{ OwnerId: account.id, VpcId: account.vpc }],
+								},
+							],
+						},
+					],
+				}),
+			}),
+			ec2_route_tables: this.section({
+				[`$ aws ec2 describe-route-tables --filters Name=association.subnet-id,Values=${account.subnet} --region us-east-2 --output json`]: command({ RouteTables: [] }),
+				[`$ aws ec2 describe-route-tables --filters Name=vpc-id,Values=${account.vpc} Name=association.main,Values=true --region us-east-2 --output json`]: command({
+					RouteTables: [
+						{
+							OwnerId: account.id,
+							RouteTableId: account.routeTable,
+							VpcId: account.vpc,
+							Associations: [{ Main: true, RouteTableId: account.routeTable }],
+							Routes: [
+								{ DestinationCidrBlock: "172.31.0.0/16", GatewayId: "local", Origin: "CreateRouteTable", State: "active" },
+								{ DestinationCidrBlock: "0.0.0.0/0", GatewayId: account.internetGateway, Origin: "CreateRoute", State: "active" },
+							],
+						},
+					],
+				}),
+			}),
+			ec2_vpc_endpoints: this.section({
+				[`$ aws ec2 describe-vpc-endpoints --filters Name=vpc-id,Values=${account.vpc} --region us-east-2 --output json`]: command({ VpcEndpoints: [] }),
+			}),
+			network: this.section(ACCOUNT_NETWORK),
+		};
 	}
 
 	private diskSections(moment: "before" | "after", boot: string, n: number, catalog: string): Record<string, string> {
@@ -256,8 +363,8 @@ export class HandMade {
 				instance_id: `i-${boot}`,
 			},
 			environment: {
-				before: this.dump("before", { processor, kernel, ...calibrated, boot, startedAt, n, diskSections: options.diskSections, networkSections: options.networkSections }),
-				after: this.dump("after", { processor, kernel, ...calibrated, boot, startedAt, n, diskSections: options.diskSections, networkSections: options.networkSections }),
+				before: this.dump("before", { processor, kernel, ...calibrated, boot, startedAt, n, diskSections: options.diskSections, networkSections: options.networkSections, account: options.account }),
+				after: this.dump("after", { processor, kernel, ...calibrated, boot, startedAt, n, diskSections: options.diskSections, networkSections: options.networkSections, account: options.account }),
 			},
 			runner: this.put("a runner manifest"),
 			exit: options.exit ?? { code: 0 },
