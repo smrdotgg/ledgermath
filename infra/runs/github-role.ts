@@ -19,9 +19,10 @@ export const GITHUB_REF = "refs/heads/main";
 export const READABLE_PREFIXES = ["runs/", "boots/", "blobs/"] as const;
 
 export interface PolicyStatement {
+	Sid?: string;
 	Effect: "Allow" | "Deny";
 	Action: string[];
-	Principal?: { Federated: string } | { AWS: string };
+	Principal?: { Federated: string } | { AWS: string } | { Service: string };
 	Resource?: string[];
 	Condition?: Record<string, Record<string, string | string[]>>;
 }
