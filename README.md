@@ -175,10 +175,14 @@ its own: only `AWS_PROFILE` in its environment, after keys there (`AWS_ACCESS_KE
 the rest, as `eval "$(aws configure export-credentials ...)"` leaves them) and a web identity
 (`AWS_WEB_IDENTITY_TOKEN_FILE`). So for every `-runs` stage and every SST command (`deploy`,
 `diff`, `dev`, `remove` and the rest), `sst.config.ts` stops SST before its first request
-when the environment, or the `.env` beside `sst.config.ts`, holds an `AWS_PROFILE` other
+when the environment, or the `.env` SST loads after `app()`, holds an `AWS_PROFILE` other
 than the stage's own, `SST_AWS_NO_PROFILE`, `AWS_ACCESS_KEY_ID`, `AWS_ACCESS_KEY`,
 `AWS_SECRET_ACCESS_KEY`, `AWS_SECRET_KEY`, `AWS_SESSION_TOKEN` or
-`AWS_WEB_IDENTITY_TOKEN_FILE` (`infra/runs/deploy-account.ts`). SST then prints only
+`AWS_WEB_IDENTITY_TOKEN_FILE` (`infra/runs/deploy-account.ts`). That `.env` is the one
+beside the config SST selected, found from the file SST evaluates `app()` in,
+`<that config's directory>/.sst/platform/sst.config.<n>.mjs`: wherever SST runs, and with
+or without `--config`. Evaluated anywhere else (by another version of SST, say), `app()` cannot
+tell which `.env` SST will load, and refuses. SST then prints only
 "Unexpected error occurred"; the refusal, which names each variable and what to unset, is
 written to the terminal and to `.sst/log/sst.log`. A second check, in the stack before it
 declares anything, compares the account the provider acts in with the one `aws sts

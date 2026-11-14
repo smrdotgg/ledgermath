@@ -1,5 +1,6 @@
-import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { afterAll, describe, expect, test } from "bun:test";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { FOREIGN_CREDENTIALS } from "../infra/runs/deploy-account";
@@ -30,12 +31,18 @@ interface AppSettings {
 	providers: { aws: { profile: string; region?: string } };
 }
 
+/** A checkout's directory with no .env: what app() reads, as SST evaluates it, for a config there. */
+const CHECKOUT = mkdtempSync(join(tmpdir(), "runs-stages-test-"));
+afterAll(() => rmSync(CHECKOUT, { recursive: true, force: true }));
+
 /**
  * sst.config.ts's app(), as SST calls it: the file is imported with $config
  * standing in for SST's (which returns what it is given), and app() is
- * awaited with the stage. run() is never called. The variables that would
- * make app() refuse a -runs stage (infra/runs/deploy-account.ts) are out of
- * the environment while it runs, whatever the shell running the tests holds.
+ * awaited with the stage, with process.argv[1] the file SST 4.17.0 would
+ * evaluate it in for a config in CHECKOUT. run() is never called. The
+ * variables that would make app() refuse a -runs stage
+ * (infra/runs/deploy-account.ts) are out of the environment while it runs,
+ * whatever the shell running the tests holds.
  */
 async function appOf(stage: string | undefined): Promise<AppSettings> {
 	const globals = globalThis as unknown as { $config?: (config: unknown) => unknown };
@@ -45,10 +52,13 @@ async function appOf(stage: string | undefined): Promise<AppSettings> {
 	const config = (await import(path)).default as { app: (input: { stage?: string }) => AppSettings | Promise<AppSettings> };
 	const read = ["AWS_PROFILE", ...Object.keys(FOREIGN_CREDENTIALS)];
 	const saved = Object.fromEntries(read.map((name) => [name, process.env[name]]));
+	const argv1 = process.argv[1];
 	for (const name of read) delete process.env[name];
+	process.argv[1] = join(CHECKOUT, ".sst", "platform", "sst.config.1794675310918.mjs");
 	try {
 		return await config.app({ stage });
 	} finally {
+		process.argv[1] = argv1 as string;
 		for (const name of read) if (saved[name] !== undefined) process.env[name] = saved[name];
 	}
 }

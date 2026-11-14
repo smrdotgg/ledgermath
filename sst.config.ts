@@ -20,8 +20,9 @@ export default $config({
 	async app(input) {
 		if (input?.stage?.endsWith("-runs")) {
 			const { runsStageApp } = await import("./infra/runs/stages");
-			// Before SST makes any request: nothing in the environment may send it,
-			// or the provider, to another account than the stage's.
+			// Before SST makes any request: nothing in the environment, or in the
+			// .env SST loads after app(), may send it, or the provider, to another
+			// account than the stage's.
 			const { refuseForeignCredentials } = await import("./infra/runs/deploy-account");
 			refuseForeignCredentials(input.stage);
 			return runsStageApp(input.stage);

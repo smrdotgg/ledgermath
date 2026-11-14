@@ -4,8 +4,9 @@
  *
  * stages.ts names the account by a profile of the AWS CLI, which app()
  * returns to SST. SST 4.17.0 does not always use it. What it does, read in
- * its source (pkg/project/provider/aws.go, pkg/project/run.go,
- * cmd/sst/cli/cli.go and project.go) and in the SDKs it uses (the AWS SDK for
+ * its source (pkg/project/provider/aws.go, pkg/project/project.go,
+ * pkg/project/run.go, pkg/js/js.go, cmd/sst/cli/cli.go and
+ * cmd/sst/cli/project.go) and in the SDKs it uses (the AWS SDK for
  * Go v2, config 1.27.11, in SST itself and, through aws-sdk-go-base
  * v2.0.0-beta.70, in Pulumi's AWS provider 7.20.0):
  *
@@ -24,10 +25,23 @@
  *     them. So keys left in a shell, as `eval "$(aws configure
  *     export-credentials ...)"` leaves them, send the resources to their
  *     account while SST keeps the stage's state in the profile's.
- *   - SST reads the .env of the directory it runs in, and .env.<stage> beside
- *     sst.config.ts, into its environment before it calls app(); and the .env
- *     beside sst.config.ts after app(), before its first request (the same
- *     file, unless SST runs in a subdirectory).
+ *   - SST loads the .env of the directory it runs in (godotenv.Load() in
+ *     cmd/sst/cli/cli.go) and .env.<stage> beside the config it selected
+ *     (godotenv.Overload, in Stage()) before it calls app(), so both are in
+ *     the environment app() sees; and the .env beside that config after
+ *     app(), before its first request (godotenv.Load, in InitProject in
+ *     cmd/sst/cli/project.go), which sets only the variables not already set,
+ *     empty or not.
+ *   - The config it selected is the --config path, made absolute, or else the
+ *     first sst.config.ts upwards from the directory it runs in (Discover, in
+ *     project.go). SST evaluates app() by bundling that config into
+ *     <the config's directory>/.sst/platform/sst.config.<milliseconds>.mjs
+ *     (js.Build in pkg/js/js.go, given that directory by New in
+ *     pkg/project/project.go) and running `node --no-warnings <that file>`.
+ *     So app()'s process.argv[1] is that path, as SST made it (node makes a
+ *     path absolute and leaves links in it as they are), and the directory
+ *     three levels up is the one whose .env SST loads after app(), wherever
+ *     SST runs and whether or not it was given --config.
  *
  * Two layers:
  *
@@ -35,9 +49,11 @@
  *      -runs stage and every command (deploy, diff, dev, remove and the
  *      rest), before SST makes any request: it refuses an AWS_PROFILE other
  *      than the stage's profile, SST_AWS_NO_PROFILE, keys or a web identity
- *      in the environment, and the same in the .env beside sst.config.ts
- *      (found as SST finds sst.config.ts without --config: upwards from the
- *      directory it runs in).
+ *      in the environment, and the same in the .env beside the config SST
+ *      selected, found from process.argv[1] as above. When app() is evaluated
+ *      from anything else (another version of SST, or a program importing
+ *      sst.config.ts), which .env SST will load cannot be told, and it
+ *      refuses.
  *   2. confirmDeployAccount(), which runsStack() runs before it declares
  *      anything: the account the provider acts in (aws.getCallerIdentity) must
  *      be the account the AWS CLI reaches with the stage's profile (`aws sts
@@ -51,7 +67,7 @@
 
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 
 import { stageAccount, stageProfile } from "./stages";
 
@@ -70,25 +86,29 @@ export const FOREIGN_CREDENTIALS: Readonly<Record<string, string>> = {
 	AWS_WEB_IDENTITY_TOKEN_FILE: "a web identity comes before any profile for the provider that makes the stage's resources",
 };
 
-/** The .env SST loads beside sst.config.ts, and its text. */
+/** The .env SST loads beside the config it selected, and its text. */
 export interface DotEnv {
 	path: string;
 	text: string;
 }
 
+/** The file SST 4.17.0 evaluates app() in, and the directory of the config it selected. */
+const SST_EVALUATES_IN = /^(\/.+)\/\.sst\/platform\/sst\.config\.\d+\.mjs$/;
+
 /**
- * The .env beside sst.config.ts, found as SST finds sst.config.ts: in the
- * first directory, from `from` upwards, that holds one. Null when there is
- * no such file.
+ * The directory of the config SST selected, from the path of the file it
+ * evaluates app() in (process.argv[1]):
+ * <that directory>/.sst/platform/sst.config.<milliseconds>.mjs. Null for any
+ * other path, or none.
  */
-export function projectDotEnv(from: string): DotEnv | null {
-	for (let directory = from; ; directory = dirname(directory)) {
-		if (existsSync(join(directory, "sst.config.ts"))) {
-			const path = join(directory, ".env");
-			return existsSync(path) ? { path, text: readFileSync(path, "utf8") } : null;
-		}
-		if (dirname(directory) === directory) return null;
-	}
+export function sstProjectRoot(evaluatedIn: string | undefined): string | null {
+	return (evaluatedIn === undefined ? null : SST_EVALUATES_IN.exec(evaluatedIn)?.[1]) ?? null;
+}
+
+/** The .env in the directory of the config SST selected, which SST loads after app(). Null when there is none. */
+export function projectDotEnv(root: string): DotEnv | null {
+	const path = join(root, ".env");
+	return existsSync(path) ? { path, text: readFileSync(path, "utf8") } : null;
 }
 
 /**
@@ -124,29 +144,41 @@ export interface ForeignCredential {
 	problem: string;
 }
 
-function problemsIn(stage: string, variables: Map<string, string>, where: "environment" | string): ForeignCredential[] {
-	const profile = stageProfile(stage);
-	const prefix = where === "environment" ? "" : `${where} sets `;
-	const found: ForeignCredential[] = [];
-	const awsProfile = variables.get("AWS_PROFILE");
-	if (awsProfile !== undefined && awsProfile !== "" && awsProfile !== profile) {
-		found.push({ name: "AWS_PROFILE", where, problem: `${prefix}AWS_PROFILE=${awsProfile}: SST uses it in place of the stage's profile` });
-	}
-	for (const [name, why] of Object.entries(FOREIGN_CREDENTIALS)) {
-		const value = variables.get(name);
-		if (value !== undefined && value !== "") found.push({ name, where, problem: `${prefix}${name} (its value not shown): ${why}` });
-	}
-	return found;
+/** Why a variable set to this value would send SST, or the provider, to another account than the stage's; null when it would not. */
+function whyForeign(stage: string, name: string, value: string): string | null {
+	if (value === "") return null;
+	if (name === "AWS_PROFILE") return value === stageProfile(stage) ? null : "SST uses it in place of the stage's profile";
+	return FOREIGN_CREDENTIALS[name] ?? null;
 }
 
+/** A variable as a refusal shows it: AWS_PROFILE with its value, any other without. */
+function shown(name: string, value: string): string {
+	return name === "AWS_PROFILE" ? `AWS_PROFILE=${value}` : `${name} (its value not shown)`;
+}
+
+const READ = ["AWS_PROFILE", ...Object.keys(FOREIGN_CREDENTIALS)];
+
 /**
- * Every reason, in an environment and the .env beside sst.config.ts, that SST
- * could act on another account than the one stages.ts names for the stage.
- * An AWS_PROFILE that is the stage's own profile is no reason.
+ * Every reason, in an environment and the .env SST loads after app(), that
+ * SST could act on another account than the one stages.ts names for the
+ * stage. An AWS_PROFILE that is the stage's own profile is no reason.
  */
 export function foreignCredentials(stage: string, environment: Environment, dotEnv: DotEnv | null): ForeignCredential[] {
-	const present = new Map(Object.entries(environment).filter((entry): entry is [string, string] => entry[1] !== undefined));
-	return [...problemsIn(stage, present, "environment"), ...(dotEnv === null ? [] : problemsIn(stage, dotEnvVariables(dotEnv.text), dotEnv.path))];
+	const found: ForeignCredential[] = [];
+	for (const name of READ) {
+		const value = environment[name];
+		const why = value === undefined ? null : whyForeign(stage, name, value);
+		if (why !== null) found.push({ name, where: "environment", problem: `${shown(name, value as string)}: ${why}` });
+	}
+	if (dotEnv === null) return found;
+	const lines = dotEnvVariables(dotEnv.text);
+	for (const name of READ) {
+		const value = lines.get(name);
+		const why = value === undefined ? null : whyForeign(stage, name, value);
+		if (why === null) continue;
+		found.push({ name, where: dotEnv.path, problem: `${dotEnv.path} sets ${shown(name, value as string)}: SST loads that file into its environment after app(); ${why}` });
+	}
+	return found;
 }
 
 /**
@@ -167,26 +199,39 @@ export function tellTerminal(message: string): void {
 
 /**
  * Stops SST, before its first request to AWS, when foreignCredentials finds
- * anything, saying what to unset. sst.config.ts's app() calls it for every
- * -runs stage.
+ * anything, saying what to unset, or when the .env SST will load after app()
+ * cannot be found because app() is not being evaluated where SST 4.17.0
+ * evaluates it (`evaluatedIn`, process.argv[1]). sst.config.ts's app() calls
+ * it for every -runs stage.
  */
 export function refuseForeignCredentials(
 	stage: string,
 	environment: Environment = process.env,
-	from: string = process.cwd(),
+	evaluatedIn: string | undefined = process.argv[1],
 	tell: (message: string) => void = tellTerminal,
 ): void {
-	const dotEnv = projectDotEnv(from);
+	const opening = `SST stops here, before any request to AWS. The stage ${stage} deploys to the ${stageAccount(stage)} account, with the profile ${stageProfile(stage)} (infra/runs/stages.ts)`;
+	const root = sstProjectRoot(evaluatedIn);
+	if (root === null) {
+		const message = [
+			`${opening}, and after app() SST loads the .env beside the config it selected, which could name another account.`,
+			`Which file that is cannot be told: SST 4.17.0 evaluates app() in <the config's directory>/.sst/platform/sst.config.<n>.mjs, and this app() runs in ${evaluatedIn || "no file"}.`,
+			"Run SST 4.17.0 itself (bunx sst, as package.json pins it), from the checkout or with --config.",
+		].join("\n");
+		tell(message);
+		throw new Error(message);
+	}
+	const dotEnv = projectDotEnv(root);
 	const found = foreignCredentials(stage, environment, dotEnv);
 	if (found.length === 0) return;
 	const inEnvironment = found.filter((item) => item.where === "environment").map((item) => item.name);
 	const inDotEnv = found.filter((item) => item.where !== "environment").map((item) => item.name);
 	const remedies = [
 		...(inEnvironment.length === 0 ? [] : [`unset ${inEnvironment.join(" ")}`]),
-		...(inDotEnv.length === 0 ? [] : [`take ${inDotEnv.join(", ")} out of ${dotEnv?.path}`]),
+		...(inDotEnv.length === 0 ? [] : [`take the line${inDotEnv.length === 1 ? "" : "s"} setting ${inDotEnv.join(", ")} out of ${dotEnv?.path}`]),
 	];
 	const message = [
-		`SST stops here, before any request to AWS. The stage ${stage} deploys to the ${stageAccount(stage)} account, with the profile ${stageProfile(stage)} (infra/runs/stages.ts), and this would send SST, or the provider that makes the stage's resources, to another:`,
+		`${opening}, and this would send SST, or the provider that makes the stage's resources, to another:`,
 		...found.map((item) => `  ${item.problem}`),
 		`Then ${remedies.join(", and ")}, and run the command again. The README's recipes name the profile on each command and export nothing.`,
 	].join("\n");
