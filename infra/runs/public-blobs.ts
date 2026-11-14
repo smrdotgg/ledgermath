@@ -1,33 +1,40 @@
 /**
  * Public blobs: an Amazon CloudFront distribution on the Free flat-rate
- * pricing plan in front of the stage's bucket, so that anyone can read
+ * pricing plan in front of one stage's bucket, so that anyone can read
  * blobs/sha256/<hex> and nothing else of it. The bucket stays private, with
  * its public access block on: CloudFront reads it through Origin Access
- * Control, and the bucket policy lets this one distribution read objects
- * under blobs/sha256/ and nothing more.
+ * Control, and, only while the state is "on", the bucket policy lets this one
+ * distribution read objects under blobs/sha256/ and nothing more.
  *
- * Nothing exists until PUBLIC_BLOBS.state says so (below). The states, in the
- * order a stage goes through them:
+ * Only PUBLIC_BLOBS.stage ever has any of it: on every other stage nothing
+ * is made and AWS is not asked anything, whatever PUBLIC_BLOBS.state says.
+ * On that stage, the states, in the order it goes through them:
  *
- *   off   nothing: the bucket and everything else are exactly as without
- *         this file. The default, so merging this deploys nothing.
- *   dark  everything is made, but the distribution is disabled, so it serves
- *         nothing to anyone, and with PUBLIC_BLOBS.plan "code" the deploy
- *         also subscribes it to the Free plan (AWS::PricingPlanManager::
- *         Subscription, through Cloud Control). A disabled distribution is
- *         never on pay-as-you-go traffic, because it has none.
- *   on    the distribution is enabled. The deploy refuses to go on unless
- *         AWS says, at that moment, that the web ACL is in an ACTIVE Free
- *         plan subscription (judgePlan): so there is no moment when the
- *         distribution serves anyone on pay-as-you-go pricing.
+ *   off     nothing: the bucket and everything else are exactly as without
+ *           this file. The default, so merging this deploys nothing.
+ *   dark    everything is made, but the distribution is disabled, so it
+ *           serves nothing to anyone, and with PUBLIC_BLOBS.plan "code" the
+ *           deploy also subscribes it to the Free plan (AWS::PricingPlan
+ *           Manager::Subscription, through Cloud Control). A disabled
+ *           distribution has no traffic, so nothing to bill.
+ *   closed  only if AWS refuses to subscribe a disabled distribution: the
+ *           distribution is enabled, so that the plan can be attached, but
+ *           serves nothing: every address gets 404 from a viewer-request
+ *           function, and the bucket policy grants it nothing, so no request
+ *           reaches S3 and no blob can be read.
+ *   on      the distribution serves blobs: the real function, and the grant.
+ *           The deploy goes on only if AWS says, at that moment, that an
+ *           ACTIVE plan covers the distribution.
  *
- * Going back: from on to dark disables it; from dark or on to off deletes
- * everything, the plan subscription first (a Free plan is cancelled at once).
+ * What is deployed decides what a deploy may do (public-blobs-guard.ts): from
+ * an enabled distribution the only way out is "dark". A watch in the stage
+ * (plan-watch.ts) disables an enabled distribution that no ACTIVE plan
+ * covers, every 5 minutes, deploy or not.
  *
  * The plan allows, and so this uses, only what the Free plan supports:
  * managed cache and response-headers policies (custom ones are a Business
  * feature), CloudFront Functions (included), no access logs (Pro), at most 5
- * cache behaviours (2 used) and 5 WAF rules (3 used), Origin Access Control
+ * cache behaviours (2 used) and 5 WAF rules (4 used), Origin Access Control
  * (Origin Access Identity is refused), and no legacy ForwardedValues.
  *
  * Plain data: no SST global is used, so tests can import it.
@@ -37,7 +44,10 @@
 
 import type { PolicyStatement } from "./github-role";
 
-export type PublicBlobsState = "off" | "dark" | "on";
+export type PublicBlobsState = "off" | "dark" | "closed" | "on";
+/** The states in which the distribution exists. */
+export type DeployedState = Exclude<PublicBlobsState, "off">;
+export const DEPLOYED_STATES: readonly DeployedState[] = ["dark", "closed", "on"];
 
 /**
  * How the distribution gets its Free plan. "code": the deploy creates the
@@ -48,6 +58,7 @@ export type PublicBlobsState = "off" | "dark" | "on";
  * for when Cloud Control cannot create one.
  */
 export type PlanAttachment = "code" | "console";
+export const PLAN_ATTACHMENTS: readonly PlanAttachment[] = ["code", "console"];
 
 export interface CustomDomain {
 	/** The name readers use, such as blobs.example.org: one alias, under the plan's one apex domain. */
@@ -57,6 +68,8 @@ export interface CustomDomain {
 }
 
 export interface PublicBlobsSetting {
+	/** The one stage that may have a public distribution. */
+	stage: string;
 	state: PublicBlobsState;
 	plan: PlanAttachment;
 	/** null: the default *.cloudfront.net name. */
@@ -75,6 +88,7 @@ export interface PublicBlobsSetting {
  * distribution's domain name.
  */
 export const PUBLIC_BLOBS: PublicBlobsSetting = {
+	stage: "production-runs",
 	state: "off",
 	plan: "code",
 	domain: null,
@@ -137,10 +151,40 @@ export const FREE_PLAN = {
  * within a minute; WAF then blocks that address (usually within 30 seconds of
  * it going over, AWS says) until its count over the last 5 minutes falls
  * below the limit, and blocked requests do not count against the plan's
- * allowance. What the limit does not do is keep the month inside the
- * allowance: one address held just under it makes 432,000 requests a day.
+ * allowance. It puts no ceiling on the total: TOTAL_RATE_LIMIT does.
  */
 export const RATE_LIMIT = { requests: 1_500, windowSeconds: 300 } as const;
+
+/**
+ * The ceiling on all requests for blobs together, from every address: 6,000
+ * in any 5 minutes (20 a second), counted by one WAF rate-based rule whose
+ * aggregation is CONSTANT ("count all"), scoped down to URI paths that start
+ * with /blobs/, so that anything else served later is not counted. Over it,
+ * every request for a blob is refused, for everyone, until the rate falls.
+ *
+ * What it bounds is what S3 can bill: only a request for a blob can reach the
+ * bucket, and at most 6,000 × 288 five-minute windows × 31 days = 53,568,000
+ * a month get past the rule, which at S3's $0.0004 per 1,000 GETs in
+ * us-east-2 is $21.43 if every one of them missed CloudFront's cache.
+ * WAF's count is an estimate and acts within seconds, so that is a ceiling
+ * in practice, not to the cent.
+ */
+export const TOTAL_RATE_LIMIT = { requests: 6_000, windowSeconds: 300, pathPrefix: "/blobs/" } as const;
+
+/** S3 Standard GET and HEAD requests in us-east-2, USD per 1,000 (AWS's price list of 2026-11-09). */
+export const S3_GET_USD_PER_THOUSAND = 0.0004;
+
+/** The most requests the ceiling lets through in a month of `days` days, and what S3 bills for them if all miss the cache. */
+export function monthlyCeiling(days: number): { requests: number; usd: number } {
+	const windows = (days * 24 * 3600) / TOTAL_RATE_LIMIT.windowSeconds;
+	const requests = TOTAL_RATE_LIMIT.requests * windows;
+	return { requests, usd: (requests / 1000) * S3_GET_USD_PER_THOUSAND };
+}
+
+/** How often the watch runs, and how long it leaves a closed distribution that no plan covers. */
+export const WATCH_SCHEDULE = "rate(5 minutes)";
+export const WATCH_INTERVAL_MINUTES = 5;
+export const CLOSED_GRACE_MINUTES = 60;
 
 /** The resources' names: unique in the account, and per stage. */
 export interface PublicBlobsNames {
@@ -149,7 +193,6 @@ export interface PublicBlobsNames {
 	blobRequestFunction: string;
 	blobResponseFunction: string;
 	noRouteFunction: string;
-	comment: string;
 }
 
 export function publicBlobsNames(app: string, stage: string): PublicBlobsNames {
@@ -160,35 +203,55 @@ export function publicBlobsNames(app: string, stage: string): PublicBlobsNames {
 		blobRequestFunction: `${prefix}-blob-request`,
 		blobResponseFunction: `${prefix}-blob-response`,
 		noRouteFunction: `${prefix}-no-route`,
-		comment: `LedgerMath ${stage}: public blobs (blobs/sha256/* only)`,
 	};
 }
 
-export interface PublicBlobsPlan {
-	state: "dark" | "on";
-	distributionEnabled: boolean;
-	/** The deploy creates the Free plan subscription. */
-	subscribeInCode: boolean;
-	/** The deploy stops unless AWS says the Free plan is ACTIVE. */
-	requireActivePlan: boolean;
-	domain: CustomDomain | null;
+/**
+ * The distribution's comment, which is also the record of what the stage
+ * last deployed: the deploy and the watch read it back from AWS
+ * (public-blobs-guard.ts, parseComment). At most 128 characters.
+ */
+export function distributionComment(stage: string, state: DeployedState, plan: PlanAttachment): string {
+	return `LedgerMath ${stage} public blobs (blobs/sha256/* only): state=${state} plan=${plan}`;
 }
 
-/** What a deploy makes for a setting: nothing at all for "off". */
-export function publicBlobsPlan(setting: PublicBlobsSetting): PublicBlobsPlan | null {
-	if (setting.state === "off") return null;
+export interface PublicBlobsPlan {
+	stage: string;
+	state: DeployedState;
+	plan: PlanAttachment;
+	/** closed and on: the distribution is enabled. */
+	distributionEnabled: boolean;
+	/** on only: the blobs behaviour's real function, and the bucket grant. */
+	serveBlobs: boolean;
+	/** The deploy creates the Free plan subscription. */
+	subscribeInCode: boolean;
+	/** Pulumi refuses to delete or replace the distribution and the subscription while it is enabled. */
+	protect: boolean;
+	domain: CustomDomain | null;
+	comment: string;
+}
+
+/** What a deploy of `stage` makes for a setting: nothing at all for "off", or for any stage but setting.stage. */
+export function publicBlobsPlan(setting: PublicBlobsSetting, stage: string): PublicBlobsPlan | null {
+	if (stage !== setting.stage || setting.state === "off") return null;
+	const enabled = setting.state === "closed" || setting.state === "on";
 	return {
+		stage,
 		state: setting.state,
-		distributionEnabled: setting.state === "on",
+		plan: setting.plan,
+		distributionEnabled: enabled,
+		serveBlobs: setting.state === "on",
 		subscribeInCode: setting.plan === "code",
-		requireActivePlan: setting.state === "on",
+		protect: enabled,
 		domain: setting.domain,
+		comment: distributionComment(stage, setting.state, setting.plan),
 	};
 }
 
 /**
  * The Runs bucket's arguments. With no transform they are, byte for byte,
- * what stack.ts passed before this file existed, so "off" changes nothing.
+ * what stack.ts passed before this file existed, so "off", "dark" and
+ * "closed" leave the bucket policy as it was.
  */
 export function runsBucketArgs<T>(policyTransform: T | null): { versioning: true; transform?: { policy: T } } {
 	return policyTransform === null ? { versioning: true } : { versioning: true, transform: { policy: policyTransform } };
@@ -197,10 +260,11 @@ export function runsBucketArgs<T>(policyTransform: T | null): { versioning: true
 export const BLOB_GRANT_SID = "PublicBlobsThroughCloudFront";
 
 /**
- * What the bucket policy adds: the CloudFront service may GetObject under
- * blobs/sha256/, only on behalf of this distribution. Not ListBucket, so the
- * distribution can never list the bucket, and a blob that is not there gets
- * 403 from S3, not 404. Not GetObjectVersion, so no older version of any key.
+ * What the bucket policy adds, in "on" only: the CloudFront service may
+ * GetObject under blobs/sha256/, only on behalf of this distribution. Not
+ * ListBucket, so the distribution can never list the bucket, and a blob that
+ * is not there gets 403 from S3, not 404. Not GetObjectVersion, so no older
+ * version of any key.
  */
 export function blobGrant(bucketArn: string, distributionArn: string): PolicyStatement {
 	return {
@@ -289,13 +353,14 @@ export const CUSTOM_DOMAIN_TLS_POLICY = "TLSv1.2_2025";
 
 /**
  * The distribution: two cache behaviours. blobs/sha256/* reaches the bucket,
- * and its viewer-request function refuses (404) any address that is not
- * exactly /blobs/sha256/<64 lowercase hex>, before the cache or the bucket
- * sees it. The default behaviour reaches nothing: its function answers 404
- * to every request. GET and HEAD only, HTTPS only (plain HTTP gets 403),
- * HTTP/2 and HTTP/3, IPv6, every edge location.
+ * and in "on" its viewer-request function refuses (404) any address that is
+ * not exactly /blobs/sha256/<64 lowercase hex>, before the cache or the bucket
+ * sees it; in "dark" and "closed" it has the no-route function, which answers
+ * 404 to everything. The default behaviour reaches nothing: its function
+ * answers 404 to every request. GET and HEAD only, HTTPS only (plain HTTP
+ * gets 403), HTTP/2 and HTTP/3, IPv6, every edge location.
  */
-export function distributionArgs<T>(refs: DistributionRefs<T>, plan: PublicBlobsPlan, comment: string): DistributionSpec<T> {
+export function distributionArgs<T>(refs: DistributionRefs<T>, plan: PublicBlobsPlan): DistributionSpec<T> {
 	const behaviour = (associations: Array<FunctionAssociation<T>>): CacheBehaviour<T> => ({
 		targetOriginId: ORIGIN_ID,
 		viewerProtocolPolicy: "https-only",
@@ -308,7 +373,7 @@ export function distributionArgs<T>(refs: DistributionRefs<T>, plan: PublicBlobs
 	});
 	return {
 		enabled: plan.distributionEnabled,
-		comment,
+		comment: plan.comment,
 		isIpv6Enabled: true,
 		httpVersion: "http2and3",
 		priceClass: "PriceClass_All",
@@ -320,7 +385,7 @@ export function distributionArgs<T>(refs: DistributionRefs<T>, plan: PublicBlobs
 			{
 				pathPattern: BLOB_PATH_PATTERN,
 				...behaviour([
-					{ eventType: "viewer-request", functionArn: refs.blobRequestFunctionArn },
+					{ eventType: "viewer-request", functionArn: plan.serveBlobs ? refs.blobRequestFunctionArn : refs.noRouteFunctionArn },
 					{ eventType: "viewer-response", functionArn: refs.blobResponseFunctionArn },
 				]),
 			},
@@ -353,8 +418,8 @@ const NOT_FOUND_SOURCE = [
 ].join("\n");
 
 /**
- * The blobs behaviour's viewer-request function: a blob's address goes on to
- * the cache and the bucket, anything else gets 404 here.
+ * The blobs behaviour's viewer-request function, in "on": a blob's address
+ * goes on to the cache and the bucket, anything else gets 404 here.
  */
 export const BLOB_REQUEST_FUNCTION_CODE = [
 	`var BLOB = new RegExp(${JSON.stringify(BLOB_URI_PATTERN)});`,
@@ -384,7 +449,10 @@ export const BLOB_RESPONSE_FUNCTION_CODE = [
 	"",
 ].join("\n");
 
-/** The default behaviour's function: every request that is not under blobs/sha256/ gets 404, and reaches neither cache nor bucket. */
+/**
+ * The default behaviour's function, and the blobs behaviour's in "dark" and
+ * "closed": every request gets 404, and reaches neither cache nor bucket.
+ */
 export const NO_ROUTE_FUNCTION_CODE = [NOT_FOUND_SOURCE, "function handler(event) {", "  return notFound();", "}", ""].join("\n");
 
 /** CloudFront Functions' limit on a function's code. */
@@ -396,11 +464,24 @@ export interface VisibilityConfig {
 	sampledRequestsEnabled: boolean;
 }
 
+export interface UriPrefixMatch {
+	byteMatchStatement: {
+		fieldToMatch: { uriPath: Record<string, never> };
+		positionalConstraint: "STARTS_WITH";
+		searchString: string;
+		textTransformations: Array<{ priority: number; type: "NONE" }>;
+	};
+}
+
 export interface RateRule {
 	name: string;
 	priority: number;
 	action: { block: Record<string, never> };
-	statement: { rateBasedStatement: { limit: number; aggregateKeyType: "IP"; evaluationWindowSec: number } };
+	statement: {
+		rateBasedStatement:
+			| { limit: number; aggregateKeyType: "IP"; evaluationWindowSec: number }
+			| { limit: number; aggregateKeyType: "CONSTANT"; evaluationWindowSec: number; scopeDownStatement: UriPrefixMatch };
+	};
 	visibilityConfig: VisibilityConfig;
 }
 
@@ -428,37 +509,70 @@ export type WebAclRule = RateRule | ManagedRule;
  */
 export const MANAGED_RULE_GROUPS = ["AWSManagedRulesAmazonIpReputationList", "AWSManagedRulesKnownBadInputsRuleSet"] as const;
 
+export const PER_ADDRESS_RULE = "per-address-rate-limit";
+export const TOTAL_RULE = "all-blob-requests-ceiling";
+
 function visibility(metricName: string): VisibilityConfig {
 	return { cloudwatchMetricsEnabled: true, metricName, sampledRequestsEnabled: true };
 }
 
-/** The web ACL's rules: the per-address rate limit first, then the managed groups. 3 of the Free plan's 5. */
+/**
+ * The web ACL's rules, 4 of the Free plan's 5, in the order WAF evaluates
+ * them (lowest priority first, stopping at the first that blocks): the two
+ * managed groups, then the per-address limit, then the ceiling on the total.
+ * So a request a managed group or the per-address limit has already blocked
+ * is never counted by the ceiling: a single runaway address is cut off by its
+ * own rule, and does not use up everyone's allowance under the ceiling. The
+ * ceiling counts exactly the requests for blobs that would otherwise go on to
+ * CloudFront's cache and, on a miss, the bucket.
+ */
 export function webAclRules(metricPrefix: string): WebAclRule[] {
-	const rate: RateRule = {
-		name: "per-address-rate-limit",
-		priority: 0,
-		action: { block: {} },
-		statement: { rateBasedStatement: { limit: RATE_LIMIT.requests, aggregateKeyType: "IP", evaluationWindowSec: RATE_LIMIT.windowSeconds } },
-		visibilityConfig: visibility(`${metricPrefix}-rate-limit`),
-	};
 	const managed = MANAGED_RULE_GROUPS.map(
 		(name, index): ManagedRule => ({
 			name,
-			priority: index + 1,
+			priority: index,
 			overrideAction: { none: {} },
 			statement: { managedRuleGroupStatement: { vendorName: "AWS", name } },
 			visibilityConfig: visibility(`${metricPrefix}-${name}`),
 		}),
 	);
-	return [rate, ...managed];
+	const perAddress: RateRule = {
+		name: PER_ADDRESS_RULE,
+		priority: managed.length,
+		action: { block: {} },
+		statement: { rateBasedStatement: { limit: RATE_LIMIT.requests, aggregateKeyType: "IP", evaluationWindowSec: RATE_LIMIT.windowSeconds } },
+		visibilityConfig: visibility(`${metricPrefix}-rate-limit`),
+	};
+	const total: RateRule = {
+		name: TOTAL_RULE,
+		priority: managed.length + 1,
+		action: { block: {} },
+		statement: {
+			rateBasedStatement: {
+				limit: TOTAL_RATE_LIMIT.requests,
+				aggregateKeyType: "CONSTANT",
+				evaluationWindowSec: TOTAL_RATE_LIMIT.windowSeconds,
+				scopeDownStatement: {
+					byteMatchStatement: {
+						fieldToMatch: { uriPath: {} },
+						positionalConstraint: "STARTS_WITH",
+						searchString: TOTAL_RATE_LIMIT.pathPrefix,
+						textTransformations: [{ priority: 0, type: "NONE" }],
+					},
+				},
+			},
+		},
+		visibilityConfig: visibility(`${metricPrefix}-ceiling`),
+	};
+	return [...managed, perAddress, total];
 }
 
 /**
- * The Cloud Control desired state of the Free plan subscription
- * (AWS::PricingPlanManager::Subscription). A move to Pro is made in the
- * console or with the CLI, and this is left saying FREE: CloudFormation's
- * handler refuses to change a tier, and a deploy sends the subscription only
- * what changed in this document, so it never undoes the upgrade.
+ * The Cloud Control type of the Free plan subscription, and its desired
+ * state. A move to Pro is made in the console or with the CLI, and this is
+ * left saying FREE: CloudFormation's handler refuses to change a tier, and a
+ * deploy sends the subscription only what changed in this document, so it
+ * never undoes the upgrade.
  */
 export const SUBSCRIPTION_TYPE = "AWS::PricingPlanManager::Subscription";
 
@@ -466,99 +580,49 @@ export function subscriptionState(distributionArn: string, webAclArn: string): s
 	return JSON.stringify({ PlanFamily: "CloudFront", PlanTier: "FREE", UsageLevel: "DEFAULT", ResourceArns: [distributionArn, webAclArn] });
 }
 
-/** A subscription as `aws pricing-plan-manager list-subscriptions` lists it. */
-export interface SubscriptionSummary {
-	arn: string;
-	planFamily: string;
-	planTier: string;
-	status: string;
-	resourceArns: string[];
-}
-
-export interface PlanVerdict {
-	active: boolean;
-	/** Why, in words. */
-	reason: string;
-	subscriptionArn: string | null;
-	tier: string | null;
-}
-
-/** A web ACL's ARN, by name, from `aws wafv2 list-web-acls --scope CLOUDFRONT` output; null when it is not there. */
-export function webAclArnByName(output: unknown, name: string): { arn: string | null; complete: boolean } {
-	const page = output as { WebACLs?: Array<{ Name?: unknown; ARN?: unknown }>; NextMarker?: unknown };
-	if (!Array.isArray(page.WebACLs)) throw new Error("aws wafv2 list-web-acls: no WebACLs in its output");
-	const found = page.WebACLs.find((acl) => acl.Name === name);
-	return { arn: typeof found?.ARN === "string" ? found.ARN : null, complete: typeof page.NextMarker !== "string" || page.NextMarker === "" };
-}
-
-/** The subscriptions in `aws pricing-plan-manager list-subscriptions` output, and whether that was all of them. */
-export function subscriptionsFrom(output: unknown): { subscriptions: SubscriptionSummary[]; complete: boolean } {
-	const page = output as { subscriptionSummaries?: unknown[]; nextToken?: unknown };
-	if (!Array.isArray(page.subscriptionSummaries)) throw new Error("aws pricing-plan-manager list-subscriptions: no subscriptionSummaries in its output");
-	const subscriptions = page.subscriptionSummaries.map((entry, index) => {
-		const s = entry as Partial<Record<keyof SubscriptionSummary, unknown>>;
-		if (typeof s.arn !== "string" || typeof s.planFamily !== "string" || typeof s.planTier !== "string" || typeof s.status !== "string" || !Array.isArray(s.resourceArns)) {
-			throw new Error(`aws pricing-plan-manager list-subscriptions: subscription ${index} lacks arn, planFamily, planTier, status or resourceArns`);
-		}
-		return { arn: s.arn, planFamily: s.planFamily, planTier: s.planTier, status: s.status, resourceArns: s.resourceArns.map(String) };
-	});
-	return { subscriptions, complete: page.nextToken === undefined || page.nextToken === null || page.nextToken === "" };
-}
-
-/**
- * Whether the distribution may be enabled: AWS lists an ACTIVE CloudFront
- * plan subscription whose resources include this stage's web ACL (a web ACL
- * in a plan serves that plan's distribution and no other). Any tier will do,
- * so moving to Pro changes nothing here. Anything else, including a list
- * that might go on past the page read, is no.
- */
-export function judgePlan(webAcl: { arn: string | null; complete: boolean }, listed: { subscriptions: SubscriptionSummary[]; complete: boolean }): PlanVerdict {
-	if (webAcl.arn === null) {
-		return { active: false, reason: webAcl.complete ? "the stage's web ACL does not exist yet" : "the stage's web ACL is not on the first page of web ACLs", subscriptionArn: null, tier: null };
-	}
-	const covering = listed.subscriptions.filter((s) => s.planFamily === "CloudFront" && s.resourceArns.includes(webAcl.arn as string));
-	const active = covering.find((s) => s.status === "ACTIVE");
-	if (active !== undefined) {
-		return { active: true, reason: `${active.planTier} plan ${active.arn} is ACTIVE`, subscriptionArn: active.arn, tier: active.planTier };
-	}
-	if (covering.length > 0) {
-		const s = covering[0] as SubscriptionSummary;
-		return { active: false, reason: `the plan subscription ${s.arn} is ${s.status}, not ACTIVE`, subscriptionArn: s.arn, tier: s.planTier };
-	}
-	return {
-		active: false,
-		reason: listed.complete ? "no plan subscription covers the stage's web ACL" : "no plan subscription on the first page covers the stage's web ACL",
-		subscriptionArn: null,
-		tier: null,
-	};
+/** `--profile <name>`, or nothing when the stage names no profile (its credentials then come from the environment). */
+export function profileFlag(profile: string | undefined): string {
+	return profile === undefined ? "" : ` --profile ${profile}`;
 }
 
 /** The console steps that subscribe the distribution to the Free plan, for PUBLIC_BLOBS.plan "console". */
-export function consoleSteps(names: PublicBlobsNames): string[] {
+export function consoleSteps(stage: string, profile: string | undefined): string[] {
 	return [
-		"Subscribe the disabled distribution to the Free plan, in the CloudFront console (https://console.aws.amazon.com/cloudfront/v4/home):",
-		`  1. Distributions: open the one whose description is "${names.comment}" (ID in the stage output publicBlobs.distributionId). Its status is Disabled.`,
-		"  2. Choose its pricing plan (Manage plan), pick Free, and confirm. Its web ACL,",
-		`     ${names.webAcl}, is already associated; nothing else needs to change.`,
+		"Subscribe the distribution to the Free plan, in the CloudFront console (https://console.aws.amazon.com/cloudfront/v4/home),",
+		`signed in to the account of the stage ${stage}:`,
+		`  1. Distributions: open the one whose description starts "LedgerMath ${stage} public blobs" (ID in the stage output publicBlobs.distributionId).`,
+		"  2. Choose its pricing plan (Manage plan), pick Free, and confirm. Its web ACL is already associated; nothing else needs to change.",
 		"  3. Wait until the plan shows as active (the API's status ACTIVE; AWS says 2 to 5 minutes).",
 		"  Or, the same from the CLI (a Free plan activates at once; no approval):",
-		`     aws pricing-plan-manager create-subscription --region ${GLOBAL_REGION} --plan-family CloudFront --plan-tier FREE \\`,
+		`     aws pricing-plan-manager create-subscription --region ${GLOBAL_REGION}${profileFlag(profile)} --plan-family CloudFront --plan-tier FREE \\`,
 		"       --resource-arns <publicBlobs.distributionArn> <publicBlobs.webAclArn>",
 	];
 }
 
-/** What the deploy prints, for a plan. */
-export function reminder(plan: PublicBlobsPlan, names: PublicBlobsNames): string[] {
-	const check = `aws pricing-plan-manager list-subscriptions --region ${GLOBAL_REGION}`;
+/** What the deploy prints after it has judged the transition, for the state being deployed. */
+export function reminder(plan: PublicBlobsPlan, profile: string | undefined): string[] {
+	const check = `aws pricing-plan-manager list-subscriptions --region ${GLOBAL_REGION}${profileFlag(profile)}`;
+	const lines = [`Public blobs on ${plan.stage} (the only stage that has them): ${plan.state}.`];
 	if (plan.state === "dark") {
-		return [
-			"Public blobs: dark. The distribution is DISABLED and serves nothing.",
-			...(plan.subscribeInCode
-				? ["This deploy subscribes it to the Free plan (AWS::PricingPlanManager::Subscription)."]
-				: consoleSteps(names)),
-			`Then check the plan is ACTIVE (${check}), set PUBLIC_BLOBS.state to "on" in infra/runs/public-blobs.ts, commit, and deploy.`,
-			'The "on" deploy stops by itself unless AWS says the plan is ACTIVE.',
-		];
+		lines.push(
+			"The distribution is DISABLED and serves nothing; the bucket grants it nothing.",
+			...(plan.subscribeInCode ? ["This deploy subscribes it to the Free plan (AWS::PricingPlanManager::Subscription)."] : consoleSteps(plan.stage, profile)),
+			`Next: check that the plan is ACTIVE and covers the distribution (${check}),`,
+			'then set PUBLIC_BLOBS.state to "on" in infra/runs/public-blobs.ts, commit, and deploy; that deploy stops unless the plan is ACTIVE.',
+			'Only if AWS refused to subscribe the disabled distribution: set "closed" instead, deploy, attach the plan, check it, then "on".',
+		);
+	} else if (plan.state === "closed") {
+		lines.push(
+			"The distribution is ENABLED but answers 404 to every address; the bucket grants it nothing, so no blob can be read.",
+			...(plan.subscribeInCode ? ["This deploy subscribes it to the Free plan (AWS::PricingPlanManager::Subscription)."] : consoleSteps(plan.stage, profile)),
+			`Next: check that the plan is ACTIVE and covers the distribution (${check}), set PUBLIC_BLOBS.state to "on", commit, and deploy.`,
+			`The watch disables a closed distribution that no ACTIVE plan covers ${CLOSED_GRACE_MINUTES} minutes after its last change.`,
+		);
+	} else {
+		lines.push(
+			"The distribution is enabled and serves blobs/sha256/<hex> to anyone (stage output publicBlobs.blobAddress).",
+			`The watch checks every ${WATCH_INTERVAL_MINUTES} minutes that an ACTIVE plan covers it, and disables it if not.`,
+		);
 	}
-	return ["Public blobs: on. The distribution is enabled, and serves blobs/sha256/<hex> to anyone."];
+	return lines;
 }

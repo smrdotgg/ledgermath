@@ -32,11 +32,12 @@
  * main can assume let .github/workflows/runs.yml read Runs, boot summaries
  * and blobs from the bucket (infra/runs/github-role.ts).
  *
- * When PUBLIC_BLOBS says so, and only then, a CloudFront distribution on the
- * Free flat-rate plan lets anyone read blobs/sha256/<hex>, and nothing else
- * of the bucket, which stays private (infra/runs/public-blobs.ts). It is off
- * by default: then the bucket's arguments, and everything else here, are as
- * they were without it.
+ * On the one stage PUBLIC_BLOBS names, and only when it says so, a CloudFront
+ * distribution on the Free flat-rate plan lets anyone read blobs/sha256/<hex>,
+ * and nothing else of the bucket, which stays private
+ * (infra/runs/public-blobs.ts). It is off by default, and on every other
+ * stage nothing of it exists: then the bucket's arguments, and everything
+ * else here, are as they were without it.
  */
 
 import { execFileSync } from "node:child_process";
@@ -103,14 +104,15 @@ export function runsStack() {
 	// Checked before anything is made: a missing or wrong copy stops the deploy
 	// here, saying how to fetch it.
 	const tls = tlsArchive($cli.paths.root);
-	// null while PUBLIC_BLOBS.state is "off". For "on", stops a deploy here
-	// unless AWS says the distribution's Free plan is ACTIVE.
-	const publicBlobs = preparePublicBlobs(PUBLIC_BLOBS, !NON_DEPLOYING.has($cli.command));
+	// null on every stage but PUBLIC_BLOBS.stage, and there while "off". On
+	// that stage it first reads what is deployed and stops a deploy or a
+	// removal the transition rules refuse (infra/runs/public-blobs-guard.ts).
+	const publicBlobs = preparePublicBlobs(PUBLIC_BLOBS, $cli.command);
 
 	// Runs are added and never edited: versioning keeps every earlier object
-	// even if a key is written twice. With public blobs, the bucket policy also
-	// lets the distribution read blobs/sha256/*; without, the arguments are
-	// { versioning: true }, as they always were.
+	// even if a key is written twice. With public blobs "on", the bucket policy
+	// also lets the distribution read blobs/sha256/*; otherwise the arguments
+	// are { versioning: true }, as they always were.
 	const bucket = new sst.aws.Bucket("RunsBucket", runsBucketArgs(publicBlobs?.bucketPolicy ?? null));
 	const source = new aws.s3.BucketObjectv2("Source", {
 		bucket: bucket.name,

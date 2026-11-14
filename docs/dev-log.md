@@ -930,4 +930,33 @@ A migrated benchmark is done only when **all** of these hold:
   create the subscription and that AWS subscribes a disabled distribution (the README says
   what to do if not), and whether the Free plan accepts the managed response-headers
   policy, which AWS's table allows and one report says the console refused.
+- **2026-11-14** — Public blobs, after an independent review: six findings, all about the
+  bill not depending on outside traffic and the distribution never serving off a plan. The
+  distribution is now for one stage, `PUBLIC_BLOBS.stage` = `production-runs` (the
+  scheduled pipeline moves to that account; `smr-runs` becomes a development stage):
+  elsewhere nothing is made and AWS is not asked, and every AWS call the deploy makes or
+  prints uses the stage's own profile. **A ceiling**: a second WAF rate rule counts every
+  request under `/blobs/` together (aggregation `CONSTANT`, with a URI-path scope-down) and
+  blocks all of them over 6,000 per 5 minutes, evaluated last so that requests the managed
+  groups or the per-address limit already blocked are not counted; at most 53,568,000
+  requests a 31-day month, $21.43 of S3 GETs if all missed the cache. AWS accepted the four
+  rules (`wafv2 check-capacity`, read-only: 231 units; without the scope-down it refused).
+  **Transitions**: the distribution's comment records the state and plan last deployed; a
+  deploy first reads it with `aws cloudfront list-distributions` (paged by hand: the CLI's
+  own paging prints nothing at all for an account with no distribution) and the plan
+  listing, and refuses `off`, removal or a change of plan from anything but a `dark`
+  distribution that reports disabled, `on` without an ACTIVE plan, and `closed`/`on` after
+  the watch disabled the distribution behind the stage's back; Pulumi `protect` on the
+  distribution and subscription while enabled is a second lock. **The watch**: a Lambda
+  every 5 minutes disables an enabled distribution no ACTIVE plan covers, or one it cannot
+  ask about twice in a row (a tag on the distribution remembers the first time), and logs
+  a scheduled cancellation with its date; it may list subscriptions and read, update and
+  tag that one distribution. **`closed`**, between `dark` and `on`, only if AWS will not
+  subscribe a disabled distribution: enabled, 404 to everything, no bucket grant (the grant
+  now exists only in `on`). **The reader** refuses redirects, naming both addresses.
+  **Derivations through a public address**: both Methods on the sample Runs (and two
+  hand-made `http_get` Runs, since no sample is one), from a directory and through a local
+  HTTPS stand-in under a path prefix, give the same bytes. The README now says plainly that
+  every blob a box uploads is served as `binary/octet-stream`, so a browser downloads it.
+  Two SDK clients join the dependencies, for the watch. Not deployed.
 - _(agents: append your entry here, one per merged benchmark)_

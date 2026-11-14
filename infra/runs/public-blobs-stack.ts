@@ -1,13 +1,25 @@
 /// <reference path="../../.sst/platform/config.d.ts" />
 
 /**
- * Makes the public-blobs resources (infra/runs/public-blobs.ts) of a -runs
- * stage, and nothing at all while PUBLIC_BLOBS.state is "off".
+ * Makes the public-blobs resources (infra/runs/public-blobs.ts) of the one
+ * stage PUBLIC_BLOBS.stage names. On any other stage it returns at once:
+ * nothing is made, and AWS is not asked anything.
+ *
+ * On that stage, before anything else, it reads what is deployed, read-only,
+ * with the AWS CLI and the stage's own profile (`aws cloudfront
+ * list-distributions`, and `aws pricing-plan-manager list-subscriptions` when
+ * a distribution exists), and judges the transition (public-blobs-guard.ts).
+ * A deploy, `sst dev` or `sst remove` that is not allowed stops there, before
+ * any resource is touched; `sst diff` and `sst refresh` only warn. When AWS
+ * cannot be asked, that is not allowed either. Pulumi's `protect` on the
+ * distribution and the subscription, while the distribution is enabled, is a
+ * second lock: Pulumi refuses to delete either until a "dark" deploy has
+ * lifted it.
  *
  * stack.ts calls preparePublicBlobs before it makes the Runs bucket, because
- * the bucket's one policy (which SST makes) must also hold the grant to the
- * distribution, and the distribution needs the bucket: the grant goes in
- * through the bucket's transform.policy, with the distribution's ARN as a
+ * in "on" the bucket's one policy (which SST makes) must also hold the grant
+ * to the distribution, and the distribution needs the bucket: the grant goes
+ * in through the bucket's transform.policy, with the distribution's ARN as a
  * deferred output that create() resolves once the distribution exists. (Not
  * through the bucket's `policy` argument: SST holds back bucket.name and
  * bucket.nodes.bucket until that argument resolves, and the distribution
@@ -15,20 +27,21 @@
  *
  * In us-east-1, by the `region` argument the provider's resources take since
  * @pulumi/aws 7 (no second provider): the web ACL, whose CLOUDFRONT scope
- * lives there, and the plan subscription, whose API is only there.
+ * lives there, and the plan subscription, whose API is only there. The watch
+ * runs in the stage's own Region and calls both APIs in us-east-1.
  */
 
 import { execFileSync } from "node:child_process";
 
+import { watchPermissions } from "./plan-watch";
 import {
 	BLOB_PREFIX,
 	BLOB_REQUEST_FUNCTION_CODE,
 	BLOB_RESPONSE_FUNCTION_CODE,
+	type DeployedState,
 	distributionArgs,
 	GLOBAL_REGION,
-	judgePlan,
 	NO_ROUTE_FUNCTION_CODE,
-	type PlanVerdict,
 	type PublicBlobsNames,
 	type PublicBlobsPlan,
 	type PublicBlobsSetting,
@@ -37,14 +50,14 @@ import {
 	reminder,
 	SUBSCRIPTION_TYPE,
 	subscriptionState,
-	subscriptionsFrom,
-	webAclArnByName,
+	WATCH_SCHEDULE,
 	webAclRules,
 	withBlobGrant,
 } from "./public-blobs";
+import { type AwsCli, coverage, judgeTransition, type PlanVerdict, readDeployed, readSubscriptions, type Target } from "./public-blobs-guard";
 
 export interface PublicBlobsOutputs {
-	state: "dark" | "on";
+	state: DeployedState;
 	enabled: boolean;
 	distributionId: $util.Output<string>;
 	distributionArn: $util.Output<string>;
@@ -54,57 +67,67 @@ export interface PublicBlobsOutputs {
 	webAclArn: $util.Output<string>;
 	/** The Free plan subscription's ARN, or what to do instead. */
 	plan: $util.Output<string> | string;
+	watchFunction: $util.Output<string>;
 }
 
 export interface PublicBlobs {
-	/** The Runs bucket's transform.policy: SST's policy, with the grant to the distribution added. */
-	bucketPolicy: (args: aws.s3.BucketPolicyArgs) => undefined;
+	/** In "on" only: the Runs bucket's transform.policy, SST's policy with the grant to the distribution added. */
+	bucketPolicy: ((args: aws.s3.BucketPolicyArgs) => undefined) | null;
 	/** Makes the resources, once the bucket exists. */
 	create(bucket: sst.aws.Bucket): PublicBlobsOutputs;
 }
 
-/** One read-only AWS CLI call, in us-east-1, with the stage's profile. */
-function awsJson(args: string[], profile: string | undefined): unknown {
-	const command = [...args, "--region", GLOBAL_REGION, "--output", "json", ...(profile === undefined ? [] : ["--profile", profile])];
-	return JSON.parse(execFileSync("aws", command, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }));
+/** SST commands that change nothing in AWS: a refused transition only warns. */
+const LOOKING_ONLY = new Set(["diff", "refresh"]);
+
+/** The profile the stage's AWS provider uses: sst.config.ts's, or AWS_PROFILE's. */
+function stageProfile(): string | undefined {
+	return new $util.Config("aws").get("profile") ?? process.env.AWS_PROFILE;
 }
 
-/** Asks AWS whether the stage's web ACL is in an ACTIVE plan subscription. */
-function checkPlan(webAclName: string, profile: string | undefined): PlanVerdict {
-	try {
-		const webAcl = webAclArnByName(awsJson(["wafv2", "list-web-acls", "--scope", "CLOUDFRONT", "--limit", "100"], profile), webAclName);
-		return judgePlan(webAcl, subscriptionsFrom(awsJson(["pricing-plan-manager", "list-subscriptions"], profile)));
-	} catch (error) {
-		const message = error instanceof Error ? error.message : String(error);
-		return { active: false, reason: `AWS could not be asked (${message.split("\n").slice(0, 3).join(" ")})`, subscriptionArn: null, tier: null };
-	}
+/** The AWS CLI, read-only, with the stage's profile. */
+function awsCli(profile: string | undefined): AwsCli {
+	return (args) => {
+		const command = [...args, "--region", GLOBAL_REGION, "--output", "json", ...(profile === undefined ? [] : ["--profile", profile])];
+		return JSON.parse(execFileSync("aws", command, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }));
+	};
 }
 
 /**
- * What stack.ts needs before and after it makes the bucket, or null for
- * "off". For "on", first asks AWS whether the Free plan is ACTIVE, and stops
- * a deploy that would enable the distribution without it (sst diff, remove
- * and refresh only warn).
+ * What stack.ts needs before and after it makes the bucket, or null when
+ * nothing is to be made (another stage, or "off" with nothing deployed).
+ * Throws when the transition from what is deployed is not allowed.
  */
-export function preparePublicBlobs(setting: PublicBlobsSetting, deploying: boolean): PublicBlobs | null {
-	const plan = publicBlobsPlan(setting);
-	if (plan === null) return null;
-	const names = publicBlobsNames($app.name, $app.stage);
-	if (plan.requireActivePlan) {
-		const verdict = checkPlan(names.webAcl, new $util.Config("aws").get("profile"));
-		if (verdict.active) {
-			console.warn(`Public blobs: ${verdict.reason}.`);
-		} else {
-			const message = [
-				`Public blobs: the distribution may not be enabled: ${verdict.reason}.`,
-				'Enabling it now would serve blobs on pay-as-you-go pricing. Deploy with PUBLIC_BLOBS.state "dark" first',
-				"(infra/runs/public-blobs.ts), check that its Free plan is ACTIVE, then deploy \"on\" again.",
-			].join("\n");
-			if (deploying) throw new Error(message);
-			console.warn(`${message}\n(sst ${$cli.command} goes on; a deploy would stop here.)`);
+export function preparePublicBlobs(setting: PublicBlobsSetting, command: string): PublicBlobs | null {
+	if ($app.stage !== setting.stage) return null;
+	const profile = stageProfile();
+	const cli = awsCli(profile);
+	const target: Target = command === "remove" ? { kind: "remove" } : { kind: "deploy", state: setting.state, plan: setting.plan };
+
+	const deployed = readDeployed(cli, setting.stage);
+	let verdict: PlanVerdict | null = null;
+	if (deployed.kind === "present") {
+		try {
+			verdict = coverage(deployed.arn, readSubscriptions(cli));
+		} catch (error) {
+			console.warn(`Public blobs: the plan subscriptions could not be listed: ${error instanceof Error ? error.message.split("\n")[0] : String(error)}`);
 		}
 	}
-	console.warn(reminder(plan, names).join("\n"));
+	const judgement = judgeTransition(deployed, target, verdict);
+	for (const warning of judgement.warnings) console.warn(`Public blobs: WARNING: ${warning}.`);
+	if (!judgement.allowed) {
+		const message = `Public blobs on ${setting.stage}: not allowed: ${judgement.reason}`;
+		if (!LOOKING_ONLY.has(command)) throw new Error(message);
+		console.warn(`${message}\n(sst ${command} goes on; a deploy would stop here.)`);
+	} else {
+		console.warn(`Public blobs on ${setting.stage}: ${judgement.reason}.`);
+	}
+
+	const plan = publicBlobsPlan(setting, $app.stage);
+	if (plan === null) return null;
+	console.warn(reminder(plan, profile).join("\n"));
+	const names = publicBlobsNames($app.name, $app.stage);
+	if (!plan.serveBlobs) return { bucketPolicy: null, create: (bucket) => createResources(plan, names, bucket, null) };
 	const [distributionArn, setDistributionArn] = $util.deferredOutput<string>();
 	return {
 		bucketPolicy: (args: aws.s3.BucketPolicyArgs): undefined => {
@@ -122,13 +145,13 @@ function createResources(
 	plan: PublicBlobsPlan,
 	names: PublicBlobsNames,
 	bucket: sst.aws.Bucket,
-	setDistributionArn: (arn: $util.Output<string>) => void,
+	setDistributionArn: ((arn: $util.Output<string>) => void) | null,
 ): PublicBlobsOutputs {
 	// The plan requires a web ACL; the plan pays for it and its rules.
 	const webAcl = new aws.wafv2.WebAcl("PublicBlobsWebAcl", {
 		region: GLOBAL_REGION,
 		name: names.webAcl,
-		description: "LedgerMath public blobs - per-address rate limit and AWS managed rules, required by the CloudFront Free plan",
+		description: "LedgerMath public blobs - per-address limit, ceiling on all blob requests, AWS managed rules; required by the CloudFront Free plan",
 		scope: "CLOUDFRONT",
 		defaultAction: { allow: {} },
 		rules: webAclRules(names.webAcl),
@@ -158,7 +181,7 @@ function createResources(
 	const noRouteFunction = new aws.cloudfront.Function("PublicBlobsNoRouteFunction", {
 		name: names.noRouteFunction,
 		runtime: "cloudfront-js-2.0",
-		comment: "LedgerMath public blobs: 404 for every address outside blobs/sha256/",
+		comment: "LedgerMath public blobs: 404 for every address",
 		code: NO_ROUTE_FUNCTION_CODE,
 		publish: true,
 	});
@@ -174,21 +197,41 @@ function createResources(
 				noRouteFunctionArn: noRouteFunction.arn,
 			},
 			plan,
-			names.comment,
 		),
+		{ protect: plan.protect },
 	);
-	setDistributionArn(distribution.arn);
+	if (setDistributionArn !== null) setDistributionArn(distribution.arn);
 	// Created after the distribution and the web ACL it names, and so deleted
 	// before them: AWS refuses to delete a distribution that is on a plan.
 	const subscription = plan.subscribeInCode
-		? new aws.cloudcontrol.Resource("PublicBlobsFreePlan", {
-				region: GLOBAL_REGION,
-				typeName: SUBSCRIPTION_TYPE,
-				desiredState: $resolve({ distributionArn: distribution.arn, webAclArn: webAcl.arn }).apply(({ distributionArn, webAclArn }) =>
-					subscriptionState(distributionArn, webAclArn),
-				),
-			})
+		? new aws.cloudcontrol.Resource(
+				"PublicBlobsFreePlan",
+				{
+					region: GLOBAL_REGION,
+					typeName: SUBSCRIPTION_TYPE,
+					desiredState: $resolve({ distributionArn: distribution.arn, webAclArn: webAcl.arn }).apply(({ distributionArn, webAclArn }) =>
+						subscriptionState(distributionArn, webAclArn),
+					),
+				},
+				{ protect: plan.protect },
+			)
 		: null;
+	// Disables the distribution when no ACTIVE plan covers it, deploy or not.
+	const watch = new sst.aws.CronV2("PublicBlobsWatch", {
+		schedule: WATCH_SCHEDULE,
+		timezone: "UTC",
+		function: {
+			handler: "infra/runs/plan-watch-handler.handler",
+			timeout: "60 seconds",
+			environment: {
+				LEDGERMATH_STAGE: plan.stage,
+				LEDGERMATH_DISTRIBUTION_ID: distribution.id,
+				LEDGERMATH_DISTRIBUTION_ARN: distribution.arn,
+			},
+			permissions: distribution.arn.apply((arn) => watchPermissions(arn)),
+			nodejs: { install: ["@aws-sdk/client-cloudfront", "@aws-sdk/client-pricing-plan-manager"] },
+		},
+	});
 	const host = plan.domain === null ? distribution.domainName : $output(plan.domain.name);
 	return {
 		state: plan.state,
@@ -199,5 +242,6 @@ function createResources(
 		blobAddress: $interpolate`https://${host}/${BLOB_PREFIX}<hex>`,
 		webAclArn: webAcl.arn,
 		plan: subscription === null ? 'none made: PUBLIC_BLOBS.plan is "console"; subscribe in the console' : subscription.id,
+		watchFunction: watch.nodes.function.name,
 	};
 }

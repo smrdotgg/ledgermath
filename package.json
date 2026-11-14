@@ -12,7 +12,9 @@
 	},
 	"peerDependencies": {},
 	"dependencies": {
+		"@aws-sdk/client-cloudfront": "^3.1099.0",
 		"@aws-sdk/client-ec2": "^3.848.0",
+		"@aws-sdk/client-pricing-plan-manager": "^3.1099.0",
 		"sst": "4.17.0"
 	}
 }
