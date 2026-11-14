@@ -565,6 +565,9 @@ cp .sst/outputs.json ".sst/outputs.$STAGE.json"   # outputs.json is the last dep
 git checkout -- sst-env.d.ts      # SST rewrites it for the stage; the committed one is July's
 ```
 
+Mind the name: `--stage production`, without `-runs`, is July's stack's own production
+stage, which `sst.config.ts` still sends to the production account. Never deploy it.
+
 The stage's outputs (bucket, launch function, every target with its boot times and its
 schedules' cron expressions and payloads, commit) are printed and written to
 `.sst/outputs.json`, which the next deploy of any stage from the same checkout replaces;
