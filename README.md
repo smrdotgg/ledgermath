@@ -41,6 +41,8 @@ as the base the build started from (last section).
 | `scripts/lookup.ts` | The lookup tool the skill uses: the Series, one Series' percentiles and Runs, prices by word, each number beside its citation (`scripts/lib/lookup.ts`, `scripts/lib/citation.ts`, `scripts/lib/ledger-data.ts`; what each benchmark measures, `scripts/lib/benchmark-notes.ts`) |
 | `scripts/check-answer.ts` | Checks an answer written with the skill: every number from the question, cited, an assumption, recomputed arithmetic, or a repeat; every citation resolving in the data (`scripts/lib/answer-check.ts`, `scripts/lib/quantity.ts`) |
 | `CONTRIBUTING.md` | How to add a benchmark in any language, a target, a Method version, and what a pull request says |
+| `LICENSE`, `NOTICE`, `THIRD-PARTY-NOTICES.md` | The code's licence (Apache-2.0), its notice, and what comes from other projects, with their licences (section "Licence" below) |
+| `docs/runs-repository/` | The Runs repository's `README.md` and `LICENSE` (CC BY 4.0), kept here and copied there |
 | `tests/` | `bun test`: the schemas against sample Runs, the Run checker, the schedule's check, the runner's timeout and stop races and its instance-type filtering, the dump's sections, the disk provisioning's decisions, the disk Fixture and the binaries' checks of it, the launch schedules, launch and reap logic, the box's and the workflow's roles, the Method, the copy job, the page, the alarm and the workflows, and the price fetch, cut, schema and recompute check on excerpts of AWS's files (`tests/samples/prices/`) |
 
 ## A benchmark, locally
@@ -968,3 +970,16 @@ Results land at `s3://<Results bucket>/results/<instance-type>/<timestamp>.json`
 (plus `.meta.json`, `.status.json` and `.log`). Source for the runner is staged at
 `s3://…/source/benchmarks-c.zip` on every deploy. July's stack picks the most recent
 Amazon Linux 2023 image at every deploy, so deploying it again would change its image.
+
+## Licence
+
+The code in this repository is licensed under the Apache License 2.0: [`LICENSE`](LICENSE)
+and [`NOTICE`](NOTICE). Some of it comes from other projects, and the benchmark binaries
+contain third-party libraries (the GNU C Library and GCC's runtime library in every one,
+AWS-LC in `http_get`'s). [`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md) lists them, with
+their licences and where their source is.
+
+The data, the Runs and boot summaries in the Runs repository (`smrdotgg/ledgermath-runs`),
+are licensed under CC BY 4.0. That repository's README says how to give credit and what the
+licence does not cover, AWS's price records among them; it and the repository's `LICENSE`
+are kept here, in [`docs/runs-repository/`](docs/runs-repository/), and copied there.

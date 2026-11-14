@@ -165,3 +165,12 @@ GitHub runs `bun test` and `check-scratch.py` on every push (`.github/workflows/
 
 Never edit a Run, a boot summary or a price file: they are added once and kept as they
 are. A correction is a new Method version, never a changed record.
+
+## Licence
+
+A contribution to this repository is made under its licence, the Apache License 2.0
+([`LICENSE`](LICENSE)), whose section 5 provides that anything submitted for inclusion is
+under its terms unless the contributor says otherwise. Code that comes from another project
+keeps its own licence: name it in [`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md) in the
+same pull request. The Runs that the project's own boxes produce are published under CC BY
+4.0 in the Runs repository ([`docs/runs-repository/README.md`](docs/runs-repository/README.md)).
