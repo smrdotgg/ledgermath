@@ -1,12 +1,8 @@
 {
 	"$schema": "https://json.schemastore.org/package.json",
 	"name": "ledgermath",
-	"module": "index.ts",
 	"type": "module",
 	"private": true,
-	"workspaces": [
-		"./packages/*"
-	],
 	"devDependencies": {
 		"@types/aws-lambda": "8.10.162",
 		"@types/bun": "latest",
@@ -16,7 +12,6 @@
 	"peerDependencies": {},
 	"dependencies": {
 		"@aws-sdk/client-ec2": "^3.848.0",
-		"sst": "4.17.0",
-		"zod": "^4.4.3"
+		"sst": "4.17.0"
 	}
 }
