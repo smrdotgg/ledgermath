@@ -519,6 +519,14 @@ export type WebAclRule = RateRule | ManagedRule;
  */
 export const MANAGED_RULE_GROUPS = ["AWSManagedRulesAmazonIpReputationList", "AWSManagedRulesKnownBadInputsRuleSet"] as const;
 
+/**
+ * The web ACL's description. WAF takes letters, digits, whitespace and
+ * _+=:#@/-,. only (API_CreateWebACL.html, Description), so no semicolon.
+ */
+export const WEB_ACL_DESCRIPTION = "LedgerMath public blobs - per-address limit, limit on all blob requests together, AWS managed rules, required by the CloudFront Free plan";
+/** That pattern, as AWS states it. */
+export const WEB_ACL_DESCRIPTION_PATTERN = /^[\w+=:#@/\-,.][\w+=:#@/\-,.\s]+[\w+=:#@/\-,.]$/;
+
 export const PER_ADDRESS_RULE = "per-address-rate-limit";
 export const TOTAL_RULE = "all-blob-requests-ceiling";
 

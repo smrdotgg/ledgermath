@@ -51,6 +51,7 @@ import {
 	SUBSCRIPTION_TYPE,
 	subscriptionState,
 	WATCH_SCHEDULE,
+	WEB_ACL_DESCRIPTION,
 	webAclRules,
 	withBlobGrant,
 } from "./public-blobs";
@@ -151,7 +152,7 @@ function createResources(
 	const webAcl = new aws.wafv2.WebAcl("PublicBlobsWebAcl", {
 		region: GLOBAL_REGION,
 		name: names.webAcl,
-		description: "LedgerMath public blobs - per-address limit, ceiling on all blob requests, AWS managed rules; required by the CloudFront Free plan",
+		description: WEB_ACL_DESCRIPTION,
 		scope: "CLOUDFRONT",
 		defaultAction: { allow: {} },
 		rules: webAclRules(names.webAcl),

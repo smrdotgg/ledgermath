@@ -40,6 +40,8 @@ import {
 	subscriptionState,
 	TOTAL_RATE_LIMIT,
 	TOTAL_RULE,
+	WEB_ACL_DESCRIPTION,
+	WEB_ACL_DESCRIPTION_PATTERN,
 	webAclRules,
 	withBlobGrant,
 } from "../infra/runs/public-blobs";
@@ -508,6 +510,14 @@ describe("the web ACL", () => {
 			visibilityConfig: { cloudwatchMetricsEnabled: true, metricName: `${NAMES.webAcl}-ceiling`, sampledRequestsEnabled: true },
 		});
 		expect(TOTAL_RATE_LIMIT).toEqual({ requests: 6_000, windowSeconds: 300, pathPrefix: "/blobs/" });
+	});
+
+	test("has a description WAF accepts, which the stack uses", () => {
+		expect(WEB_ACL_DESCRIPTION).toMatch(WEB_ACL_DESCRIPTION_PATTERN);
+		expect(WEB_ACL_DESCRIPTION.length).toBeLessThanOrEqual(256);
+		expect(String(WEB_ACL_DESCRIPTION_PATTERN)).toBe(String(/^[\w+=:#@/\-,.][\w+=:#@/\-,.\s]+[\w+=:#@/\-,.]$/));
+		for (const refused of ["a; b", "a (b)", "a <b>", " a", "a "]) expect(refused).not.toMatch(WEB_ACL_DESCRIPTION_PATTERN);
+		expect(RESOURCES).toContain("description: WEB_ACL_DESCRIPTION,");
 	});
 
 	test("has rule and metric names WAF accepts", () => {
