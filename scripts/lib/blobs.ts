@@ -82,7 +82,7 @@ export function blobsFromBucket(bucket: BlobStore, cache: string | null, options
  */
 export const PUBLIC_REQUESTS_PER_SECOND = 4;
 
-export type HttpFetch = (url: string) => Promise<Response>;
+export type HttpFetch = (url: string, init: RequestInit) => Promise<Response>;
 
 export interface PublicStoreOptions {
 	fetch?: HttpFetch;
@@ -100,14 +100,17 @@ const S3_ACCESS_DENIED = /<Code>AccessDenied<\/Code>/;
  * blobs/sha256/<hex> under a public base address, such as
  * https://d111111abcdef8.cloudfront.net. 404, or S3's 403 AccessDenied, is
  * "no such blob" (null). Any other 403 is a refusal (the distribution's
- * per-address rate limit, or an address on AWS's reputation list), and any
- * other status is an error: both throw, rather than pass for a missing blob.
- * blobsFromBucket checks every blob's hash, so a wrong body is refused.
+ * per-address rate limit or its ceiling on all requests, or an address on
+ * AWS's reputation list), and any other status is an error: both throw,
+ * rather than pass for a missing blob. A redirect is never followed: the
+ * reader contacts the host it was given and no other, so a 3xx throws,
+ * naming both addresses. blobsFromBucket checks every blob's hash, so a
+ * wrong body is refused.
  */
 export function publicBlobStore(base: string, options: PublicStoreOptions = {}): BlobStore {
 	if (!/^https:\/\/[^/]/.test(base)) throw new Error(`${JSON.stringify(base)}: a public blob address starts with https://`);
 	const root = base.replace(/\/+$/, "");
-	const fetchUrl = options.fetch ?? ((url: string) => fetch(url));
+	const fetchUrl: HttpFetch = options.fetch ?? ((url, init) => fetch(url, init));
 	const perSecond = options.perSecond ?? PUBLIC_REQUESTS_PER_SECOND;
 	if (!(perSecond > 0)) throw new Error(`perSecond must be above 0, not ${perSecond}`);
 	const interval = Number.isFinite(perSecond) ? 1000 / perSecond : 0;
@@ -128,7 +131,12 @@ export function publicBlobStore(base: string, options: PublicStoreOptions = {}):
 			if (!BLOB_KEY.test(key)) throw new Error(`${root}: serves blobs/sha256/<hex> only, not ${JSON.stringify(key)}`);
 			const url = `${root}/${key}`;
 			await turn();
-			const response = await fetchUrl(url);
+			const response = await fetchUrl(url, { redirect: "manual" });
+			if ((response.status >= 300 && response.status < 400) || response.type === "opaqueredirect" || response.redirected) {
+				const location = response.headers.get("location");
+				await response.body?.cancel();
+				throw new Error(`${url}: HTTP ${response.status} redirect to ${location === null ? "(no Location header)" : location}; refused, a blob is read only from the address given`);
+			}
 			if (response.ok) return new Uint8Array(await response.arrayBuffer());
 			const body = await response.text();
 			if (response.status === 404) return null;
