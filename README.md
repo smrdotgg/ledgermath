@@ -578,12 +578,14 @@ time: a schedule the deploy creates, changes or removes could miss its slot, and
 old schedule and its replacement both exist, one slot could launch twice. Any other stage
 has no schedule, and can be deployed at any time.
 
-`sst diff` changes nothing in a stage, but the first SST command of any kind in an account
-bootstraps SST there, once per account and Region: a state bucket `sst-state-<random>`
-(versioned) and an asset bucket `sst-asset-<random>`, an ECR repository `sst-asset`, and the
-SSM parameter `/sst/bootstrap`; and the first command for a stage stores its passphrase in
-the SSM parameter `/sst/passphrase/ledgermath/<stage>` (SecureString). The development
-account has them for `smr` and `smr-runs`; the production account has none yet.
+`sst diff` changes nothing in a stage, but SST bootstraps itself in an account the first
+time it needs its state there, once per account and Region (SST's documentation names `sst
+deploy` and `sst dev`; expect a first `sst diff` to do it too, as it reads the same state): a
+state bucket `sst-state-<random>` (versioned), an asset bucket `sst-asset-<random>`, an ECR
+repository `sst-asset` and the SSM parameter `/sst/bootstrap`; and it stores each stage's
+passphrase in the SSM parameter `/sst/passphrase/ledgermath/<stage>` (SecureString). The
+development account has them, for `smr` and `smr-runs`; the production account has none
+yet.
 
 What the first deploy of `production-runs` creates in the production account, as long as
 it is not the scheduled stage: the Runs bucket (versioned, public access blocked, an
