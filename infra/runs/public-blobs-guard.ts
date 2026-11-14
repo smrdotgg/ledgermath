@@ -308,10 +308,12 @@ export interface Judgement {
 	warnings: string[];
 }
 
-/** What SST says about the stage being deployed, read before AWS is asked anything. */
+/** What SST says about the stage and the command, read before AWS is asked anything. */
 export interface StageSettings {
 	/** $app.protect: sst.config.ts's app() says protect: true for the stage, so SST refuses `sst remove` on it. */
 	protect: boolean;
+	/** $dev: the command is `sst dev`, or `sst deploy --dev` (SST 4.17 runs both as "deploy" with Dev set). */
+	dev: boolean;
 }
 
 /**
@@ -326,6 +328,10 @@ export interface StageSettings {
  * whatever the distribution is doing. What stops it is SST's stage
  * protection: for a protected stage SST refuses `sst remove` before anything
  * else (ErrProtectedStage, same file).
+ *
+ * And none but "off" is deployed in dev mode: `sst dev` replaces a function
+ * with a stub that works only while the local session runs (the watch sets
+ * dev: false and stays real), and redeploys whenever a file changes.
  */
 export function stageRefusals(state: PublicBlobsState, stage: StageSettings): string[] {
 	if (state === "off") return [];
@@ -334,6 +340,12 @@ export function stageRefusals(state: PublicBlobsState, stage: StageSettings): st
 		refusals.push(
 			`the stage is not protected, so \`sst remove\` could destroy the distribution and cancel its plan with no check of what is deployed ` +
 				"(sst remove does not run this program). Public blobs are made only on a stage whose app settings in sst.config.ts say protect: true",
+		);
+	}
+	if (stage.dev) {
+		refusals.push(
+			"this is sst dev (or sst deploy --dev), which deploys functions as stubs that work only while a local session runs and redeploys " +
+				'whenever a file changes. Deploy public blobs with sst deploy; on this stage, sst dev only with PUBLIC_BLOBS.state "off"',
 		);
 	}
 	return refusals;

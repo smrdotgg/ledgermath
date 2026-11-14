@@ -17,7 +17,8 @@
  * transition is allowed; when the subscriptions cannot be listed, "on" is not.
  *
  * Before that, and before AWS is asked anything, a state other than "off"
- * needs a protected stage ($app.protect, sst.config.ts's app()): `sst remove`
+ * is refused in dev mode ($dev: `sst dev`, `sst deploy --dev`), and needs a
+ * protected stage ($app.protect, sst.config.ts's app()): `sst remove`
  * never runs this program (SST 4.17 runs `pulumi destroy` without
  * --run-program), so nothing here can judge a removal, and only SST's stage
  * protection, which refuses `sst remove` outright, stops one. Pulumi's
@@ -129,7 +130,7 @@ function refuse(message: string, command: string): void {
  */
 export function preparePublicBlobs(setting: PublicBlobsSetting, command: string): PublicBlobs | null {
 	if ($app.stage !== setting.stage) return null;
-	const refusals = stageRefusals(setting.state, { protect: $app.protect === true });
+	const refusals = stageRefusals(setting.state, { protect: $app.protect === true, dev: $dev === true });
 	if (refusals.length > 0) refuse(`Public blobs on ${setting.stage}: not allowed: ${refusals.join("; ")}.`, command);
 	const profile = stageProfile();
 	const cli = awsCli(profile);
@@ -250,11 +251,15 @@ function createResources(
 			)
 		: null;
 	// Disables the distribution when no ACTIVE plan covers it, deploy or not.
+	// dev: false, so that it is always the real function: in SST 4.17 a
+	// function defaults to live development, and `sst dev` would deploy a stub
+	// that works only while a local session runs.
 	const watch = new sst.aws.CronV2("PublicBlobsWatch", {
 		schedule: WATCH_SCHEDULE,
 		timezone: "UTC",
 		function: {
 			handler: "infra/runs/plan-watch-handler.handler",
+			dev: false,
 			timeout: "60 seconds",
 			environment: {
 				LEDGERMATH_STAGE: plan.stage,

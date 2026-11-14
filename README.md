@@ -806,7 +806,9 @@ SST refuses `sst remove` before it does anything. So public blobs are made only 
 protected stage: a deploy of `dark`, `closed` or `on` stops, before AWS is asked anything,
 unless `$app.protect` is true (`off` is always allowed: it makes nothing). `sst.config.ts`
 gives `-runs` stages no `protect` today, so until it does, `production-runs` can deploy only
-`off`. What stage protection does not prevent: it is a setting SST reads from
+`off`. Nor does `sst dev` (or `sst deploy --dev`, which SST runs the same way, with `$dev`
+true) deploy anything but `off` there: dev mode deploys each function as a stub that works
+only while a local session runs, and redeploys whenever a file changes. What stage protection does not prevent: it is a setting SST reads from
 `sst.config.ts` at each command, not a lock in AWS, so `sst remove` from a checkout whose
 `sst.config.ts` says otherwise, `pulumi destroy` run by hand on the state, and deleting the
 resources in the console or with the AWS CLI all go ahead; and it does not stop a deploy,
@@ -820,7 +822,9 @@ remove` there removes what it always did.
 
 **The watch.** A Lambda in the stage, `PublicBlobsWatch` (stage output
 `publicBlobs.watchFunction`), runs every 5 minutes, deploy or not
-(`infra/runs/plan-watch.ts`). If the distribution is enabled and no ACTIVE plan covers it,
+(`infra/runs/plan-watch.ts`). It is always deployed as the real function (`dev: false`;
+SST 4.17's functions otherwise default to live development, and `sst dev` would deploy a
+stub in its place). If the distribution is enabled and no ACTIVE plan covers it,
 it disables it; if it cannot tell (the plan API unreachable, or an answer it cannot read),
 it records the time in a tag on the distribution (`ledgermath-plan-watch-unknown-since`),
 and if it cannot tell the next time either, it disables it; if it cannot keep that tag, it

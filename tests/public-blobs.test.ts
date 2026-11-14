@@ -176,9 +176,9 @@ describe("the switch", () => {
 		expect(RESOURCES).not.toContain('"remove"');
 	});
 
-	test("refuses anything but off on a stage SST does not protect, before it asks AWS anything", () => {
+	test("refuses anything but off on a stage SST does not protect, or under sst dev, before it asks AWS anything", () => {
 		const prepare = RESOURCES.slice(RESOURCES.indexOf("export function preparePublicBlobs"), RESOURCES.indexOf("function createResources("));
-		const check = prepare.indexOf("const refusals = stageRefusals(setting.state, { protect: $app.protect === true });");
+		const check = prepare.indexOf("const refusals = stageRefusals(setting.state, { protect: $app.protect === true, dev: $dev === true });");
 		expect(check).toBeGreaterThan(prepare.indexOf("if ($app.stage !== setting.stage) return null;"));
 		expect(prepare).toContain("if (refusals.length > 0) refuse(`Public blobs on ${setting.stage}: not allowed: ${refusals.join(\"; \")}.`, command);");
 		for (const later of ["stageProfile()", "awsCli(", "readManaged(", "readDeployed("]) expect(check).toBeLessThan(prepare.indexOf(later));

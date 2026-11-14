@@ -383,15 +383,24 @@ describe("the transitions", () => {
 
 	test("need a protected stage for anything but off: sst remove runs no check, and only SST's protection stops it", () => {
 		for (const state of ["dark", "closed", "on"] as const) {
-			expect(stageRefusals(state, { protect: true })).toEqual([]);
-			const refusals = stageRefusals(state, { protect: false });
+			expect(stageRefusals(state, { protect: true, dev: false })).toEqual([]);
+			const refusals = stageRefusals(state, { protect: false, dev: false });
 			expect(refusals.length).toBe(1);
 			expect(refusals[0]).toContain("the stage is not protected");
 			expect(refusals[0]).toContain("sst remove does not run this program");
 			expect(refusals[0]).toContain("protect: true");
 		}
 		// off makes nothing, and takes down only what the table lets it.
-		expect(stageRefusals("off", { protect: false })).toEqual([]);
+		expect(stageRefusals("off", { protect: false, dev: false })).toEqual([]);
+	});
+
+	test("refuse sst dev for anything but off", () => {
+		for (const state of ["dark", "closed", "on"] as const) {
+			const refusals = stageRefusals(state, { protect: true, dev: true });
+			expect(refusals).toEqual([expect.stringContaining("this is sst dev (or sst deploy --dev)")]);
+			expect(stageRefusals(state, { protect: false, dev: true }).length).toBe(2);
+		}
+		expect(stageRefusals("off", { protect: true, dev: true })).toEqual([]);
 	});
 
 	test("carry a scheduled cancellation through as a warning", () => {

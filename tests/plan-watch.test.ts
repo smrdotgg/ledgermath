@@ -193,10 +193,10 @@ describe("the watch's permissions", () => {
 		expect(UNKNOWN_MARKER_TAG).toMatch(/^[\w.:/=+\-@]{1,128}$/);
 	});
 
-	test("are what the stage gives it, every 5 minutes, with the distribution's id and ARN", () => {
+	test("are what the stage gives it, every 5 minutes, with the distribution's id and ARN, as a real function even under sst dev", () => {
 		expect(WATCH_SCHEDULE).toBe("rate(5 minutes)");
 		expect(RESOURCES).toContain('new sst.aws.CronV2("PublicBlobsWatch", {');
-		expect(RESOURCES).toContain('handler: "infra/runs/plan-watch-handler.handler",');
+		expect(RESOURCES).toContain('handler: "infra/runs/plan-watch-handler.handler",\n\t\t\tdev: false,');
 		expect(RESOURCES).toContain("permissions: distribution.arn.apply((arn) => watchPermissions(arn)),");
 		expect(RESOURCES).toContain("LEDGERMATH_DISTRIBUTION_ID: distribution.id,");
 		expect(RESOURCES).toContain("LEDGERMATH_DISTRIBUTION_ARN: distribution.arn,");
