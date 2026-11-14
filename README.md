@@ -750,12 +750,18 @@ adds the grant, after the same check that the plan is ACTIVE. The order is alway
 then `closed` only if needed, then `on`.
 
 **What a deploy may do from what is deployed.** Before it touches anything, a deploy to
-`production-runs` reads, read-only, what is deployed: the distribution's comment records
-the state and plan attachment the stage last deployed, and `aws cloudfront
-list-distributions` returns it beside `Enabled` and `Status`; when a distribution exists,
-`aws pricing-plan-manager list-subscriptions` says whether an ACTIVE plan covers it, and
-any scheduled cancellation or downgrade, which the deploy prints as a warning with its date
-(`infra/runs/public-blobs-guard.ts`). A transition the table refuses stops the deploy
+`production-runs` reads what is deployed (`infra/runs/public-blobs-guard.ts`). Which
+distribution is the stage's comes from the stage's own state: SST pulls the stage's Pulumi
+state before every command and runs Pulumi against that copy, so the distribution it
+records, by ID, is the one the deploy will update, and when it records none the deploy will
+create one (the guard reads the copy that SST names in `PULUMI_BACKEND_URL`; SST 4.17's
+`pkg/project/run.go`). Then, read-only, `aws cloudfront list-distributions` returns that
+distribution beside `Enabled` and `Status`, and its comment records the state and plan
+attachment the stage last deployed. The two must agree: the recorded ID listed, with the
+ARN and the comment the state last saw, and no other distribution of the account carrying
+the stage's comment. When the distribution exists, `aws pricing-plan-manager
+list-subscriptions` says whether an ACTIVE plan covers it, by its ARN, and any scheduled
+cancellation or downgrade, which the deploy prints as a warning with its date. A transition the table refuses stops the deploy
 (`sst deploy`, `sst dev`, `sst remove`) with a message saying what to deploy first; `sst
 diff` and `sst refresh` only warn. When AWS cannot be asked, nothing is allowed. Rows: what
 is deployed; columns: the state deployed to, with the same plan attachment unless said.
@@ -768,9 +774,20 @@ is deployed; columns: the state deployed to, with the same plan attachment unles
 | `dark`, but enabled by hand | no | no | yes | yes | yes | no | no |
 | `closed` or `on`, enabled | no | no | yes | yes | yes | no | no |
 | `closed` or `on`, disabled by the watch or by hand | no | no | yes | no | no | no | no |
-| cannot tell (AWS not answering, two distributions, an edited comment) | no | no | no | no | no | no | no |
+| cannot tell (below) | no | no | no | no | no | no | no |
 
 ¹ Only when an ACTIVE plan covers the distribution; otherwise no, in every row.
+
+"Cannot tell" is any of: the stage's state cannot be read, or holds the distribution more
+than once, or awaiting deletion, or with an operation on it unfinished; `aws cloudfront
+list-distributions` fails, or answers something that does not add up; two distributions
+carry the stage's comment; one carries it that the state does not record (made by hand,
+say: a deploy would make another beside it, and that one's plan says nothing about the new
+one); the recorded one is not listed (deleted outside the stage: `sst refresh` brings the
+state up to date); or its comment is gone, or is not the one the state last saw (edited
+outside the stage, whatever the edit). What this cannot see: a state that is itself wrong
+(edited by hand, restored from an older copy, or refreshed after a change made outside the
+stage, which it then takes for the stage's own).
 
 So from an enabled distribution the only way out is `dark`; `off`, removal and a change of
 `PUBLIC_BLOBS.plan` come only after `dark` has been deployed and the distribution reports

@@ -5,10 +5,13 @@
  * stage PUBLIC_BLOBS.stage names. On any other stage it returns at once:
  * nothing is made, and AWS is not asked anything.
  *
- * On that stage, before anything else, it reads what is deployed, read-only,
- * with the AWS CLI and the stage's own profile (`aws cloudfront
- * list-distributions`, and `aws pricing-plan-manager list-subscriptions` when
- * a distribution exists), and judges the transition (public-blobs-guard.ts).
+ * On that stage, before anything else, it reads what is deployed: which
+ * distribution the stage's own state records (the copy SST pulled for this
+ * run, so the one this deploy will update, by ID), then, read-only, with the
+ * AWS CLI and the stage's own profile, `aws cloudfront list-distributions`,
+ * which must agree with it, and `aws pricing-plan-manager list-subscriptions`
+ * when a distribution exists; and it judges the transition
+ * (public-blobs-guard.ts).
  * A deploy, `sst dev` or `sst remove` that is not allowed stops there, before
  * any resource is touched; `sst diff` and `sst refresh` only warn. When AWS
  * cannot be asked, that is not allowed either. Pulumi's `protect` on the
@@ -32,6 +35,7 @@
  */
 
 import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 
 import { watchPermissions } from "./plan-watch";
 import {
@@ -55,7 +59,7 @@ import {
 	webAclRules,
 	withBlobGrant,
 } from "./public-blobs";
-import { type AwsCli, coverage, judgeTransition, type PlanVerdict, readDeployed, readSubscriptions, type Target } from "./public-blobs-guard";
+import { type AwsCli, coverage, DISTRIBUTION_NAME, judgeTransition, type PlanVerdict, readDeployed, readManaged, readSubscriptions, type Target } from "./public-blobs-guard";
 
 export interface PublicBlobsOutputs {
 	state: DeployedState;
@@ -105,7 +109,10 @@ export function preparePublicBlobs(setting: PublicBlobsSetting, command: string)
 	const cli = awsCli(profile);
 	const target: Target = command === "remove" ? { kind: "remove" } : { kind: "deploy", state: setting.state, plan: setting.plan };
 
-	const deployed = readDeployed(cli, setting.stage);
+	// The distribution this deploy will update, by ID, from the copy of the
+	// stage's state SST pulled for this run; then AWS's listing, which must agree.
+	const managed = readManaged((path) => readFileSync(path, "utf8"), process.env.PULUMI_BACKEND_URL, $app.name, $app.stage);
+	const deployed = readDeployed(cli, setting.stage, managed);
 	let verdict: PlanVerdict | null = null;
 	if (deployed.kind === "present") {
 		try {
@@ -186,8 +193,9 @@ function createResources(
 		code: NO_ROUTE_FUNCTION_CODE,
 		publish: true,
 	});
+	// Under DISTRIBUTION_NAME: the guard finds it in the stage's state by that name.
 	const distribution = new aws.cloudfront.Distribution(
-		"PublicBlobsDistribution",
+		DISTRIBUTION_NAME,
 		distributionArgs<$util.Input<string>>(
 			{
 				bucketDomain: bucket.nodes.bucket.bucketRegionalDomainName,
