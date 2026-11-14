@@ -1,5 +1,5 @@
 {
-	"description": "Third-party source packages LedgerMath offers beside its published binaries, in the same bucket, at blobs/sha256/<sha256>. scripts/publish-third-party-source.ts uploads each one the bucket lacks, after checking its size and SHA-256. image is the Amazon Linux image infra/runs/stack.ts pins, whose packages the binaries are built with; tests/licences.test.ts fails when the two differ, so a new image cannot leave a stale entry here or in THIRD-PARTY-NOTICES.md.",
+	"description": "Third-party source packages LedgerMath offers beside its published binaries, in the same bucket, at blobs/sha256/<sha256>. scripts/publish-third-party-source.ts creates each one the bucket lacks, with a write that never replaces an object, and reads every one back to check its size and SHA-256. image is the Amazon Linux image infra/runs/stack.ts pins, whose packages the binaries are built with; tests/licences.test.ts fails when the two differ, so a new image cannot leave a stale entry here or in THIRD-PARTY-NOTICES.md.",
 	"image": {
 		"id": "ami-03499a87bbb39a09a",
 		"release": "2023.12.20260710.0"

@@ -43,7 +43,7 @@ as the base the build started from (last section).
 | `CONTRIBUTING.md` | How to add a benchmark in any language, a target, a Method version, and what a pull request says |
 | `LICENSE`, `NOTICE`, `THIRD-PARTY-NOTICES.md` | The code's licence (Apache-2.0), its notice, and what comes from other projects, with their licences (section "Licence" below) |
 | `third-party/` | glibc 2.34's `COPYING.LIB` and `LICENSES`, and `sources.lock.json`, the third-party source packages kept in the bucket beside the binaries |
-| `scripts/publish-third-party-source.ts` | Uploads to the bucket the source packages `third-party/sources.lock.json` names and the bucket lacks |
+| `scripts/publish-third-party-source.ts` | Puts the source packages `third-party/sources.lock.json` names into the bucket, create-only, and reads every one back to check its bytes (`scripts/lib/sigv4.ts` signs its conditional PUT) |
 | `docs/runs-repository/` | The Runs repository's `README.md` and `LICENSE` (CC BY 4.0), kept here and copied there |
 | `tests/` | `bun test`: the schemas against sample Runs, the Run checker, the schedule's check, the runner's timeout and stop races and its instance-type filtering, the dump's sections, the disk provisioning's decisions, the disk Fixture and the binaries' checks of it, the launch schedules, launch and reap logic, the box's and the workflow's roles, the Method, the copy job, the page, the alarm and the workflows, and the price fetch, cut, schema and recompute check on excerpts of AWS's files (`tests/samples/prices/`) |
 
@@ -1004,21 +1004,31 @@ The binaries are blobs in the stage's bucket, and the source package of the glib
 built against is kept there too, as a blob named by its hash.
 [`third-party/sources.lock.json`](third-party/sources.lock.json) names it (its name,
 version, Amazon Linux's address, size and SHA-256), and
-`scripts/publish-third-party-source.ts` uploads what the bucket lacks:
+`scripts/publish-third-party-source.ts` puts it there:
 
 ```bash
 export AWS_PROFILE=tabot-dev AWS_REGION=us-east-2
-eval "$(aws configure export-credentials --format env)"   # Bun's S3 client reads keys from the environment
+eval "$(aws configure export-credentials --format env)"   # the script reads keys from the environment
 BUCKET=$(jq -r .bucket .sst/outputs.json)
 
-bun scripts/publish-third-party-source.ts --bucket "$BUCKET" --dry-run   # what it would upload; changes nothing
-bun scripts/publish-third-party-source.ts --bucket "$BUCKET"             # downloads, checks size and SHA-256, uploads
-bun scripts/publish-third-party-source.ts --bucket "$BUCKET"             # again: uploads nothing
+bun scripts/publish-third-party-source.ts --bucket "$BUCKET" --dry-run   # checks what is there; uploads nothing
+bun scripts/publish-third-party-source.ts --bucket "$BUCKET"             # downloads, checks, creates, reads back
+bun scripts/publish-third-party-source.ts --bucket "$BUCKET"             # again: reads back, uploads nothing
 ```
 
-It never overwrites a blob: when the key exists at the right size it does nothing, and when
-it exists at another size it stops. `--directory DIR` publishes into a directory laid out
-like the bucket instead, with no AWS. The lock names the image `infra/runs/stack.ts` pins,
-and `bun test` fails when the two differ. So a change of image means a new entry for its
-glibc in the lock and in `THIRD-PARTY-NOTICES.md`, and a run of the script before the new
-binaries are published.
+The credentials need `s3:GetObject` and `s3:PutObject` on the bucket's `blobs/*`, and
+`s3:ListBucket` on the bucket: without it, S3 answers a HEAD for a missing key with 403
+instead of 404, and the script stops at the first source package it has to upload.
+
+It never overwrites or deletes an object. It creates each one with `If-None-Match: *`, so S3
+refuses the write if the key has appeared since the script looked, and it removes only the
+directory it made for its own download. Every object it finds, or creates, it reads back
+whole and hashes: one with other bytes than the lock's stops it, changing nothing. Its last
+line says whether every source package of the lock is now in the bucket with the right bytes
+(`VERIFIED: …`), and it exits non-zero when it stopped.
+
+`--directory DIR` publishes into a directory laid out like the bucket instead, with no AWS,
+and refuses a symbolic link anywhere on the path. The lock names the image
+`infra/runs/stack.ts` pins, and `bun test` fails when the two differ. So a change of image
+means a new entry for its glibc in the lock and in `THIRD-PARTY-NOTICES.md`, and a run of the
+script before the new binaries are published.
