@@ -961,4 +961,28 @@ A migrated benchmark is done only when **all** of these hold:
   HTTPS stand-in under a path prefix, give the same bytes. The README now says plainly that
   every blob a box uploads is served as `binary/octet-stream`, so a browser downloads it.
   Two SDK clients join the dependencies, for the watch. Not deployed.
+- **2026-11-14** — Public blobs, after a re-check of the review's fixes. **The total limit
+  is a rate limit, not a cap**: AWS documents rate-based rules as approximate (requests over
+  the limit can pass for minutes, and changing a rule resets its counts), so $21.43 is what
+  a month costs at the steady rate, and nothing caps S3 request charges; the README links
+  AWS's caveats. **Which distribution is the stage's** now comes from the stage's own
+  state, the copy SST pulls before every command and names in `PULUMI_BACKEND_URL` (SST
+  4.17's `pkg/project/run.go`; checked with Pulumi 3.215 and a local file backend that the
+  program sees it, and that `pulumi destroy` does not run the program): the distribution it
+  records, by ID, is the one the deploy updates, and the listing must agree with it, so a
+  look-alike carrying the comment, or the stage's own with its comment edited, is "unknown"
+  and refuses. **`sst remove` runs no guard** (it is `pulumi destroy` without
+  `--run-program`), so the `remove` target is gone, and any state but `off` needs a
+  protected stage (`$app.protect`): SST refuses `sst remove` on one. `sst.config.ts`
+  protects no `-runs` stage yet, so `production-runs` deploys only `off` until it does.
+  **`sst dev`**: the watch sets `dev: false`, and any state but `off` is refused under
+  `$dev`. **The watch** handles an unreadable distribution like its other unknowns (taken to
+  be enabled and past any grace), retries an ETag conflict (`PreconditionFailed`) three
+  times, and nothing promises it acts within so many minutes: the delay is the schedule, the
+  run and CloudFront's propagation, and polling cannot rule out uncovered delivery. **Plan
+  changes** still count as uncovered while `SYNC_IN_PROGRESS`, on purpose; the README, the
+  deploy's reminder and the scheduled-change warning say to deploy `dark` before changing
+  or cancelling the plan. Found on the way: the web ACL's description had a semicolon, which
+  WAF's pattern refuses, so the first `dark` deploy would have failed; it is now a tested
+  constant. Not deployed.
 - _(agents: append your entry here, one per merged benchmark)_
