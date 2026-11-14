@@ -26,7 +26,8 @@
  * runs/ and boots/, written into --check-dir (an empty or new directory,
  * about as large as the bucket; each verification needs a new one).
  * --no-check-runs leaves that last check out, and the verification is then
- * reported as incomplete.
+ * reported as incomplete. A --runs-repository without runs/ and boots/ is
+ * refused.
  *
  * Each profile's keys come from `aws configure export-credentials --profile`,
  * are held in memory only, and are never printed (scripts/lib/aws-credentials.ts).

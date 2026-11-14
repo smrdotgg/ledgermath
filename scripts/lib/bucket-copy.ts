@@ -452,10 +452,23 @@ export function checkRunsScript(directory: string): { status: number | null; out
 	return { status: done.status, output: `${done.stdout ?? ""}${done.stderr ?? ""}` };
 }
 
-/** Every file under part/ of a directory, as keys with forward slashes; a symbolic link anywhere is refused. */
+/**
+ * Refuses a path that is not a checkout of the Runs repository: one without a
+ * runs/ and a boots/ directory of its own (a typo, say) would otherwise be
+ * read as a repository with no files, and nothing of it compared.
+ */
+function checkRunsRepository(root: string): void {
+	for (const part of ["runs", "boots"]) {
+		const found = lstatSync(join(root, part), { throwIfNoEntry: false });
+		if (found === undefined || !found.isDirectory()) {
+			throw new Error(`${root}: has no ${part}/ directory, so it is not a checkout of the Runs repository (--runs-repository)`);
+		}
+	}
+}
+
+/** Every file under part/ of a checkout of the Runs repository, as keys with forward slashes; a symbolic link anywhere is refused. */
 function filesUnder(root: string, part: string): string[] {
 	const directory = join(root, part);
-	if (!existsSync(directory)) return [];
 	return readdirSync(directory, { recursive: true, withFileTypes: true })
 		.filter((entry) => {
 			if (entry.isSymbolicLink()) throw new Error(`${join(entry.parentPath, entry.name)} is a symbolic link; the verification reads through none`);
@@ -479,7 +492,9 @@ function writeInto(directory: string, key: string, bytes: Uint8Array): void {
  * a blob's bytes, at both ends, must hash to its key); every Run file and boot
  * summary in the Runs repository is at the destination with the same bytes;
  * and scripts/check-runs.ts passes on the destination's blobs/, runs/ and
- * boots/, written into checkDirectory.
+ * boots/, written into checkDirectory. A Runs repository without runs/ and
+ * boots/ is refused before anything is read, and a key with a "." or ".."
+ * segment, which cannot be read by its name, is a problem.
  */
 export async function verifyCopy(source: WritableBucket, destination: WritableBucket, options: VerifyOptions): Promise<VerifyReport> {
 	const concurrency = options.concurrency ?? DEFAULT_CONCURRENCY;
@@ -489,6 +504,7 @@ export async function verifyCopy(source: WritableBucket, destination: WritableBu
 	const report: VerifyReport = { same: { count: 0, bytes: 0 }, onlyAtDestination: 0, repositoryFiles: 0, checkRuns: null, problems: [] };
 	const problems = report.problems;
 	const checkDirectory = options.checkDirectory;
+	checkRunsRepository(options.runsRepository);
 	if (checkDirectory !== null) {
 		if (existsSync(checkDirectory) && (!lstatSync(checkDirectory).isDirectory() || readdirSync(checkDirectory).length > 0)) {
 			throw new Error(`${checkDirectory}: must be an empty directory, or not exist, so that it holds the destination's objects and nothing else`);
@@ -498,6 +514,15 @@ export async function verifyCopy(source: WritableBucket, destination: WritableBu
 
 	const sourceListed = await listAll(source, delays);
 	const destinationListed = await listAll(destination, delays);
+	// A key a request cannot name is reported, and left out of what is read.
+	const requestable = (objects: BucketObject[], where: string): BucketObject[] =>
+		objects.filter((object) => {
+			const why = unrequestable(object.key);
+			if (why !== null) problems.push(`${why} (${where})`);
+			return why === null;
+		});
+	for (const [prefix, objects] of sourceListed) sourceListed.set(prefix, requestable(objects, "in the source"));
+	for (const [prefix, objects] of destinationListed) destinationListed.set(prefix, requestable(objects, "at the destination"));
 	const sourceKeys = new Set([...sourceListed.values()].flat().map((object) => object.key));
 	const destinationAll = [...destinationListed.values()].flat();
 	const destinationByKey = byKey(destinationAll);

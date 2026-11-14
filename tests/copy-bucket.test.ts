@@ -472,6 +472,30 @@ describe("the verification", () => {
 		expect(report.checkRuns).toBeNull();
 	}, TIMEOUT_MS);
 
+	test("refuses, before reading anything, a Runs repository without runs/ and boots/: a mistyped path is not an empty repository", async () => {
+		await copyBucket(source, destination, FAST);
+		const before = standin.requests.length;
+		const typo = fresh("ledgermath-runs-typo");
+		await expect(verifyCopy(source, destination, { ...FAST, runsRepository: typo, checkDirectory: null })).rejects.toThrow(
+			`${typo}: has no runs/ directory, so it is not a checkout of the Runs repository (--runs-repository)`,
+		);
+		const half = fresh("ledgermath-runs-half");
+		mkdirSync(join(half, "runs"), { recursive: true });
+		await expect(verifyCopy(source, destination, { ...FAST, runsRepository: half, checkDirectory: null })).rejects.toThrow("has no boots/ directory");
+		expect(standin.requests.length).toBe(before);
+	}, TIMEOUT_MS);
+
+	test("reports a key with a . or .. segment, at either end, as a problem", async () => {
+		await copyBucket(source, destination, FAST);
+		standin.put("source", "logs/a/../parent.log", "a log");
+		standin.put("destination", "runs/./x.json", "{}");
+		const report = await verifyCopy(source, destination, { ...FAST, runsRepository: runsRepository(), checkDirectory: null });
+		expect(report.problems).toEqual([
+			'logs/a/../parent.log: has a "." or ".." segment, which a request\'s URL resolves away, so it cannot be read or written by its name; copy it by hand (in the source)',
+			'runs/./x.json: has a "." or ".." segment, which a request\'s URL resolves away, so it cannot be read or written by its name; copy it by hand (at the destination)',
+		]);
+	}, TIMEOUT_MS);
+
 	test("refuses a check directory that already holds something", async () => {
 		const checkDirectory = fresh("check");
 		mkdirSync(checkDirectory);
@@ -619,6 +643,9 @@ describe("scripts/copy-bucket.ts", () => {
 		expect(usage.stderr).toContain("usage: bun scripts/copy-bucket.ts copy");
 		const both = await run(["verify", ...buckets(), "--runs-repository", SAMPLE], bin);
 		expect(both.status).toBe(2);
+		const typo = await run(["verify", ...buckets(), "--runs-repository", join(scratch, "no-such-checkout"), "--no-check-runs"], bin);
+		expect(typo.status).toBe(1);
+		expect(typo.stderr).toContain("no-such-checkout: has no runs/ directory, so it is not a checkout of the Runs repository (--runs-repository)");
 		expect(existsSync(join(scratch, "nothing"))).toBe(false);
 	}, TIMEOUT_MS);
 });
