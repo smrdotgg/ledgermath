@@ -1,0 +1,20 @@
+{
+	"description": "Third-party source packages LedgerMath offers beside its published binaries, in the same bucket, at blobs/sha256/<sha256>. scripts/publish-third-party-source.ts creates each one the bucket lacks, with a write that never replaces an object, and reads every one back to check its size and SHA-256. image is the Amazon Linux image infra/runs/stack.ts pins, whose packages the binaries are built with; tests/licences.test.ts fails when the two differ, so a new image cannot leave a stale entry here or in THIRD-PARTY-NOTICES.md.",
+	"image": {
+		"id": "ami-03499a87bbb39a09a",
+		"release": "2023.12.20260710.0"
+	},
+	"sources": [
+		{
+			"name": "glibc",
+			"version": "2.34-231.amzn2023.0.4",
+			"why": "The GNU C Library is linked into every static benchmark binary (LGPL-2.1-or-later). This is the source package of the glibc-static package the boxes install.",
+			"binary_package": "glibc-static-2.34-231.amzn2023.0.4.x86_64",
+			"file": "glibc-2.34-231.amzn2023.0.4.src.rpm",
+			"url": "https://cdn.amazonlinux.com/al2023/blobstore/5c14047c719844c616626f2c139ae5b4fb19023762407565e824186e5812f9cf/glibc-2.34-231.amzn2023.0.4.src.rpm",
+			"bytes": 19983463,
+			"sha256": "5c14047c719844c616626f2c139ae5b4fb19023762407565e824186e5812f9cf",
+			"content_type": "application/x-rpm"
+		}
+	]
+}

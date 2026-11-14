@@ -1,0 +1,18 @@
+LedgerMath
+Copyright 2026 The LedgerMath Authors
+
+This repository includes test cases from AWS C Auth, whose NOTICE reads:
+
+    AWS C Auth
+    Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+    SPDX-License-Identifier: Apache-2.0.
+
+The http_get benchmark binary built from this repository contains AWS-LC,
+whose NOTICE reads:
+
+    AWS-LC
+    Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+
+THIRD-PARTY-NOTICES.md lists everything in this repository, and in the
+benchmark binaries built from it, that comes from another project, with its
+licence and the notices that licence requires.

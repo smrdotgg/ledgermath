@@ -41,6 +41,10 @@ as the base the build started from (last section).
 | `scripts/lookup.ts` | The lookup tool the skill uses: the Series, one Series' percentiles and Runs, prices by word, each number beside its citation (`scripts/lib/lookup.ts`, `scripts/lib/citation.ts`, `scripts/lib/ledger-data.ts`; what each benchmark measures, `scripts/lib/benchmark-notes.ts`) |
 | `scripts/check-answer.ts` | Checks an answer written with the skill: every number from the question, cited, an assumption, recomputed arithmetic, or a repeat; every citation resolving in the data (`scripts/lib/answer-check.ts`, `scripts/lib/quantity.ts`) |
 | `CONTRIBUTING.md` | How to add a benchmark in any language, a target, a Method version, and what a pull request says |
+| `LICENSE`, `NOTICE`, `THIRD-PARTY-NOTICES.md` | The code's licence (Apache-2.0), its notice, and what comes from other projects, with their licences (section "Licence" below) |
+| `third-party/` | glibc 2.34's `COPYING.LIB` and `LICENSES`, and `sources.lock.json`, the third-party source packages kept in the bucket beside the binaries |
+| `scripts/publish-third-party-source.ts` | Puts the source packages `third-party/sources.lock.json` names into the bucket, create-only, and reads every one back to check its bytes (`scripts/lib/sigv4.ts` signs its conditional PUT) |
+| `docs/runs-repository/` | The Runs repository's `README.md` and `LICENSE` (CC BY 4.0), kept here and copied there |
 | `tests/` | `bun test`: the schemas against sample Runs, the Run checker, the schedule's check, the runner's timeout and stop races and its instance-type filtering, the dump's sections, the disk provisioning's decisions, the disk Fixture and the binaries' checks of it, the launch schedules, launch and reap logic, the box's and the workflow's roles, the Method, the copy job, the page, the alarm and the workflows, and the price fetch, cut, schema and recompute check on excerpts of AWS's files (`tests/samples/prices/`) |
 
 ## A benchmark, locally
@@ -968,3 +972,63 @@ Results land at `s3://<Results bucket>/results/<instance-type>/<timestamp>.json`
 (plus `.meta.json`, `.status.json` and `.log`). Source for the runner is staged at
 `s3://…/source/benchmarks-c.zip` on every deploy. July's stack picks the most recent
 Amazon Linux 2023 image at every deploy, so deploying it again would change its image.
+
+## Licence
+
+LedgerMath's own code in this repository is licensed under the Apache License 2.0:
+[`LICENSE`](LICENSE) and [`NOTICE`](NOTICE). Not everything in the repository is
+LedgerMath's own. Files that came from other projects keep their own licences and notices:
+napkin-math's MIT notice goes with the benchmarks translated or ported from it, AWS C Auth's
+SigV4 test cases keep theirs, AWS's data in the test fixtures is AWS's, and the licence texts
+under [`third-party/`](third-party/) and [`docs/runs-repository/`](docs/runs-repository/)
+are their authors'. [`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md) says which, file by
+file.
+
+The benchmark binaries contain third-party libraries. Each static binary contains parts of
+the GNU C Library (LGPL-2.1-or-later) and of GCC's runtime library, and `http_get`'s also
+contains AWS-LC. The dynamic build of `memory_read` loads the C library at run time, and
+contains only the start-up files of glibc and GCC and one object of GCC's runtime library.
+`THIRD-PARTY-NOTICES.md` lists what is in which binary, with the licences, the notices and
+where the source is. glibc's licence text and its other notices are in
+[`third-party/glibc-2.34/`](third-party/glibc-2.34/).
+
+The data, the Runs and boot summaries in the Runs repository (`smrdotgg/ledgermath-runs`),
+are licensed under CC BY 4.0. That repository's README says how credit can be given and what
+the licence does not cover, AWS's price records among them; it and the repository's
+`LICENSE` are kept here, in [`docs/runs-repository/`](docs/runs-repository/), and copied
+there.
+
+### glibc's source beside the binaries
+
+The binaries are blobs in the stage's bucket, and the source package of the glibc they were
+built against is kept there too, as a blob named by its hash.
+[`third-party/sources.lock.json`](third-party/sources.lock.json) names it (its name,
+version, Amazon Linux's address, size and SHA-256), and
+`scripts/publish-third-party-source.ts` puts it there:
+
+```bash
+export AWS_PROFILE=tabot-dev AWS_REGION=us-east-2
+eval "$(aws configure export-credentials --format env)"   # the script reads keys from the environment
+BUCKET=$(jq -r .bucket .sst/outputs.json)
+
+bun scripts/publish-third-party-source.ts --bucket "$BUCKET" --dry-run   # checks what is there; uploads nothing
+bun scripts/publish-third-party-source.ts --bucket "$BUCKET"             # downloads, checks, creates, reads back
+bun scripts/publish-third-party-source.ts --bucket "$BUCKET"             # again: reads back, uploads nothing
+```
+
+The credentials need `s3:GetObject` and `s3:PutObject` on the bucket's `blobs/*`, and
+`s3:ListBucket` on the bucket: without it, S3 answers a HEAD for a missing key with 403
+instead of 404, and the script stops at the first source package it has to upload.
+
+It never overwrites or deletes an object. It creates each one with `If-None-Match: *`, so S3
+refuses the write if the key has appeared since the script looked, and it removes only the
+directory it made for its own download. Every object it finds, or creates, it reads back
+whole and hashes: one with other bytes than the lock's stops it, changing nothing. Its last
+line says whether every source package of the lock is now in the bucket with the right bytes
+(`VERIFIED: …`), and it exits non-zero when it stopped.
+
+`--directory DIR` publishes into a directory laid out like the bucket instead, with no AWS,
+and refuses a symbolic link anywhere on the path. The lock names the image
+`infra/runs/stack.ts` pins, and `bun test` fails when the two differ. So a change of image
+means a new entry for its glibc in the lock and in `THIRD-PARTY-NOTICES.md`, and a run of the
+script before the new binaries are published.
