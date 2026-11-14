@@ -12,7 +12,7 @@ copyright notice and licence text. It records where things came from. It is not 
 advice.
 
 1. [In this repository](#1-in-this-repository): napkin-math; AWS C Auth's SigV4 test
-   cases; mattpocock/skills; AWS's data in test fixtures
+   cases; mattpocock/skills; Linux's `statx` declarations; AWS's data in test fixtures
 2. [In the published benchmark binaries](#2-in-the-published-benchmark-binaries): the GNU
    C Library; GCC's runtime library; AWS-LC
 3. [JavaScript packages](#3-javascript-packages)
@@ -32,7 +32,8 @@ License (notice and text below). LedgerMath began as a port of its benchmarks to
   are C translations of napkin-math's
   `benches/benchmarks/memory_read.rs`: the scalar read loop (x86 assembly, instruction for
   instruction), the AVX2 read loop with four accumulators and its reduction, and the pool of
-  pinned threads that each fill their own slice and meet at three barriers around every pass.
+  pinned threads that each fill their own slice, meeting at one barrier once their slices
+  are filled and at two around every pass.
 - **Ported, with the code written anew in C.**
   `benchmarks/memory_read_random/memory_read_random.c` and July's
   `benchmarks/c/bench_memory_read_random.c` keep the design of napkin-math's
@@ -125,6 +126,28 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
+### Linux's `statx` declarations
+
+`benchmarks/harness/c/lm_disk.c` declares the `statx` structure (`struct lm_statx`,
+`struct lm_statx_timestamp`) and the masks it asks for (`LM_STATX_BASIC_STATS`,
+`LM_STATX_BTIME`, `LM_STATX_MNT_ID`, `LM_STATX_DIOALIGN`) following Linux 6.1's
+`include/uapi/linux/stat.h`: the same fields in the same order, with the same padding and
+the same mask values, under other names. `LM_AT_EMPTY_PATH` has the value of `AT_EMPTY_PATH`
+in Linux 6.1's `include/uapi/linux/fcntl.h`. Both headers are marked
+`SPDX-License-Identifier: GPL-2.0 WITH Linux-syscall-note`. The text of that note, in the
+kernel's `LICENSES/exceptions/Linux-syscall-note` at tag v6.1, begins:
+
+```
+   NOTE! This copyright does *not* cover user programs that use kernel
+ services by normal system calls - this is merely considered normal use
+ of the kernel, and does *not* fall under the heading of "derived work".
+```
+
+and the same file says the note "is used together with one of the above SPDX-Licenses to
+mark user space API (uapi) header files so they can be included into non GPL compliant user
+space application code". `lm_disk.c` uses the structure to call the `statx` system call
+directly.
+
 ### AWS's data in test fixtures
 
 AWS's own published data, reproduced as AWS published it, for the tests. LedgerMath's
@@ -147,47 +170,188 @@ bucket under the hash of its bytes. Every Run names its binary (`binary.blob`) a
 source archive it was built from (`source`), and records the compiler and the commands the
 build ran (`binary.compiler`, `binary.command`). Every benchmark has a static build, linked
 with `gcc -static`, so its binary contains parts of the libraries below. `memory_read` also
-has a dynamic build, which loads the C library at run time.
+has a dynamic build, which loads the C library at run time: the only parts of these
+libraries in that file are the start-up files of glibc and GCC and one object of GCC's
+runtime library.
+
+What is in which binary was read from link maps on 2026-11-14. Each of the 14 benchmarks
+was built with `make BUILD=static`, and `memory_read` also with `BUILD=dynamic`, in Amazon
+Linux 2023 release 2023.12.20260710.0 with the packages a box installs (gcc
+11.5.0-5.amzn2023.0.5, glibc-static 2.34-231.amzn2023.0.4, binutils 2.41; `http_get` with
+AWS-LC built as its lock says). Each was then linked again with `-Wl,-Map`, which gave the
+same bytes. Every glibc object a map lists was matched by name to its source file in glibc
+2.34 (with Amazon Linux's patches checked for files they add). The header of each such file,
+and the headers it includes, were searched for any notice other than the Free Software
+Foundation's, and every file found was read. The boxes' own binaries were not mapped: their
+`-march=native` resolves on their own processors, which can change a binary's own code and,
+in principle, which library objects it needs.
 
 ### The GNU C Library (glibc)
 
-- **Where**: linked statically into every static benchmark binary.
+**LedgerMath's benchmark binaries use the GNU C Library, and the library and its use in them
+are covered by the GNU Lesser General Public License, version 2.1 or later**, whose text is
+[`third-party/glibc-2.34/COPYING.LIB`](third-party/glibc-2.34/COPYING.LIB). Some of the
+library's files carry other notices as well. glibc collects them in
+[`third-party/glibc-2.34/LICENSES`](third-party/glibc-2.34/LICENSES), and asks that the file
+be distributed with any binary built from the library. Which of them concern which binary is
+below. Both files are glibc 2.34's own, byte for byte: they are the same in glibc's git at
+tag `glibc-2.34`, in GNU's release tarball `glibc-2.34.tar.xz`, and in Amazon Linux's source
+package, none of whose patches changes them.
+
+- **Where**: every static benchmark binary contains parts of glibc's `libc.a`; `http_get`
+  also two objects of its `libm.a`. Every binary, the dynamic `memory_read` included,
+  contains glibc's start-up files (below).
 - **Version**: 2.34, as Amazon Linux 2023 builds it. The boxes boot the image pinned in
   `infra/runs/stack.ts` (`ami-03499a87bbb39a09a`, Amazon Linux 2023 release
   2023.12.20260710.0) and install `glibc-static` from that release's repository, where the
   newest is `glibc-static-2.34-231.amzn2023.0.4.x86_64`. The sample Runs in
   `tests/samples/`, built in a container of that release, record that package. Each Run's
   dump records the exact package its binary was built with (section `packages`).
-- **Licence**: the GNU Lesser General Public License, version 2.1 or later
-  (LGPL-2.1-or-later), with some parts under other licences, which the `LICENSES` file in
-  glibc's source lists. Amazon Linux's source package declares, for everything it builds
-  (programs that are not linked into the benchmarks included): "LGPLv2+ and LGPLv2+ with
-  exceptions and GPLv2+ and GPLv2+ with exceptions and BSD and Inner-Net and ISC and Public
-  Domain and GFDL".
 - **Corresponding source**: Amazon Linux 2023's source package
-  `glibc-2.34-231.amzn2023.0.4.src.rpm`, SHA-256
-  `5c14047c719844c616626f2c139ae5b4fb19023762407565e824186e5812f9cf`, in the source
-  repository of release 2023.12.20260710 (its address is in
-  <https://cdn.amazonlinux.com/al2023/core/mirrors/2023.12.20260710/SRPMS/mirror.list>).
-- **Relinking with another glibc**, as the LGPL provides for: everything needed to rebuild a
-  binary's own object files is public. The Run names the source archive, which holds the
-  benchmark's source and its `Makefile`, and records the compiler and the exact commands the
-  build ran; the image is pinned. Compile the same sources the same way, then link the
-  objects against a modified glibc.
+  `glibc-2.34-231.amzn2023.0.4.src.rpm`, 19,983,463 bytes, SHA-256
+  `5c14047c719844c616626f2c139ae5b4fb19023762407565e824186e5812f9cf`. It holds GNU's release
+  tarball `glibc-2.34.tar.xz` (SHA-256
+  `44d26a1fe20b8853a48f470ead01e4279e869ac149b195dda4e44a195d981ab2`), the patches Amazon
+  Linux applies, and the spec file that applies them. It is offered from the same place as
+  the binaries: in the bucket that holds them, as the blob
+  `blobs/sha256/5c14047c719844c616626f2c139ae5b4fb19023762407565e824186e5812f9cf`, which
+  `scripts/publish-third-party-source.ts` puts there from
+  [`third-party/sources.lock.json`](third-party/sources.lock.json). It is also at Amazon
+  Linux's own address,
+  <https://cdn.amazonlinux.com/al2023/blobstore/5c14047c719844c616626f2c139ae5b4fb19023762407565e824186e5812f9cf/glibc-2.34-231.amzn2023.0.4.src.rpm>.
+- **Relinking with a modified glibc**, as section 6 of the licence provides for: the source
+  of everything else in a static binary is public. The Run names the source archive, which
+  holds the benchmark's source and its `Makefile`, and records the compiler and the exact
+  commands the build ran. AWS-LC's source archive is a blob too (below), and the image is
+  pinned. Compile the same sources the same way, then link them against the modified library.
+- Amazon Linux's source package declares, for everything it builds (programs not linked into
+  the benchmarks included): "LGPLv2+ and LGPLv2+ with exceptions and GPLv2+ and GPLv2+ with
+  exceptions and BSD and Inner-Net and ISC and Public Domain and GFDL".
+
+**Start-up files.** `crt1.o`, `crti.o` and `crtn.o` are glibc's (package `glibc-devel`),
+and every binary contains them. `crt1.o` is made from `sysdeps/x86_64/start.S`,
+`sysdeps/x86/abi-note.c`, `csu/init.c` and `csu/static-reloc.c`; `crti.o` and `crtn.o` from
+`sysdeps/x86_64/crti.S` and `sysdeps/x86_64/crtn.S`. All are under LGPL-2.1-or-later.
+`start.S`, `abi-note.c`, `crti.S` and `crtn.S` add: "In addition to the permissions in the
+GNU Lesser General Public License, the Free Software Foundation gives you unlimited
+permission to link the compiled version of this file with other programs, and to distribute
+those programs without any restriction coming from the use of this file." `csu/init.c`
+holds one constant (`_IO_stdin_used`) and `csu/static-reloc.c` at most an empty function;
+those two carry the licence without that sentence. GCC's own start-up files are listed under
+GCC below.
+
+**The notices of `LICENSES` in each binary**:
+
+| Binaries | Notices of `LICENSES` | Linked files of glibc 2.34 that carry them |
+|---|---|---|
+| Every static binary (all 14) | The 4.4 BSD licence of the Regents of the University of California | `libio/filedoalloc.c` and `libio/wfiledoalloc.c` (stdio's buffers), `gmon/prof-freq.c` |
+| `memory_read`, `mutex`, `tcp_echo`, `http_get` | Also those of the DNS resolver taken from BIND 4.9.5: UC Berkeley (the same 4.4 BSD licence), Digital Equipment Corporation and Internet Software Consortium | `resolv/res_init.c`, `resolv/res-close.c`, `resolv/res_randomid.c`, `resolv/inet_addr.c`, `resolv/res_libc.c`, `resolv/inet_pton.c`, `resolv/inet_pton_length.c` (added by one of Amazon Linux's patches), `inet/inet_mkadr.c`. In `memory_read`, `mutex` and `tcp_echo`, `pthread_create` refers to the resolver's per-thread state, which brings them in; in `http_get`, `getaddrinfo` does |
+| `http_get` | Also Craig Metz's Inner Net License, Version 2.00 | `sysdeps/posix/getaddrinfo.c`. AWS-LC's socket helper refers to `getaddrinfo`, so the link brings it in (and warns about it); nothing in `http_get` calls it, because the binary resolves names itself |
+| `http_get` | Also Sun fdlibm's | `sysdeps/ieee754/dbl-64/s_log1p.c` (`log1p`, which draws the gaps between requests) |
+| `http_get` | More of the resolver's (UC Berkeley, DEC, ISC) | `resolv/inet_ntop.c`, `inet/inet_net.c`, `resolv/dn_expand.c`, `resolv/dn_skipname.c`, `resolv/res_mkquery.c`, `resolv/res_query.c`, `resolv/res_send.c`, `resolv/res-name-checking.c`, `resolv/res_context_hostalias.c`, `resolv/res_nameinquery.c`, `resolv/res_queriesmatch.c`, `resolv/nss_dns/dns-host.c`, `resolv/nss_dns/dns-network.c`, `nss/nss_files/files-hosts.c` (which includes `resolv/mapv4v6addr.h`, added by one of Amazon Linux's patches), and the nine `resolv/ns_*.c` below |
+
+The individual files give their own years in these notices (for example "Copyright (c)
+1985, 1989, 1993" for UC Berkeley in `resolv/res_init.c`); `LICENSES` gives one form of each.
+No file under the other notices of `LICENSES` is linked into any binary: Sun RPC (Oracle
+America), CMU's for Mach and for `if_ppp.h`, Intel's for the Itanium mathematical functions,
+Eric Young's DES, the WIDE Project's `rcmd`, Tom Lord's, Henry Spencer's, the University of
+Cambridge's PCRE tests, and Stephen L. Moshier's long double functions. Headers under the Sun
+RPC notice are read when some linked files are compiled (`<netdb.h>` includes
+`rpc/netdb.h`; `malloc/thread-freeres.c` includes `rpc/rpc.h`), for their declarations.
+
+**Notices in linked files that `LICENSES` does not reproduce**, as the files have them, all in
+`http_get`:
+
+`resolv/ns_name_compress.c`, `resolv/ns_name_ntop.c`, `resolv/ns_name_pack.c`,
+`resolv/ns_name_pton.c`, `resolv/ns_name_skip.c`, `resolv/ns_name_uncompress.c` and
+`resolv/ns_name_unpack.c`:
+
+```
+ * Copyright (c) 2004 by Internet Systems Consortium, Inc. ("ISC")
+ * Copyright (c) 1996,1999 by Internet Software Consortium.
+ *
+ * Permission to use, copy, modify, and distribute this software for any
+ * purpose with or without fee is hereby granted, provided that the above
+ * copyright notice and this permission notice appear in all copies.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS" AND ISC DISCLAIMS ALL WARRANTIES
+ * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+ * MERCHANTABILITY AND FITNESS.  IN NO EVENT SHALL ISC BE LIABLE FOR
+ * ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+ * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+ * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT
+ * OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+ */
+```
+
+`resolv/ns_makecanon.c` and `resolv/ns_samename.c`:
+
+```
+ * Copyright (c) 2004 by Internet Systems Consortium, Inc. ("ISC")
+ * Copyright (c) 1995,1999 by Internet Software Consortium.
+ *
+ * Permission to use, copy, modify, and distribute this software for any
+ * purpose with or without fee is hereby granted, provided that the above
+ * copyright notice and this permission notice appear in all copies.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS" AND INTERNET SOFTWARE CONSORTIUM DISCLAIMS
+ * ALL WARRANTIES WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES
+ * OF MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL INTERNET SOFTWARE
+ * CONSORTIUM BE LIABLE FOR ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL
+ * DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR
+ * PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS
+ * ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS
+ * SOFTWARE.
+ */
+```
+
+`resolv/nss_dns/dns-network.c` (beside the 4.4 BSD licence):
+
+```
+/* Copyright (c) 1993 Carlos Leandro and Rui Salgueiro
+ *      Dep. Matematica Universidade de Coimbra, Portugal, Europe
+ *
+ * Permission to use, copy, modify, and distribute this software for any
+ * purpose with or without fee is hereby granted, provided that the above
+ * copyright notice and this permission notice appear in all copies.
+ */
+```
 
 ### GCC's runtime library
 
-- **Where**: `gcc -static` links GCC's start-up files (`crtbeginT.o`, `crtend.o`) into
-  every static binary, with the parts of `libgcc.a` and `libgcc_eh.a` that the program or
-  glibc calls for, such as the CPU detection behind `__builtin_cpu_supports`.
+- **Where**: every static binary contains GCC's start-up files `crtbeginT.o` and `crtend.o`,
+  and these objects of `libgcc.a` and `libgcc_eh.a`, which glibc's `libc.a` refers to: the
+  quad-precision routines `addtf3`, `letf2`, `multf3`, `unordtf2` and `sfp-exceptions`, and
+  the unwinder (`unwind-dw2`, `unwind-dw2-fde-dip`, `unwind-c`). `hash`, `memory_read` and
+  `memory_write` also contain `cpuinfo`, the CPU detection behind `__builtin_cpu_supports`;
+  `http_get` also contains `_umoddi3`, which AWS-LC refers to. The dynamic `memory_read`
+  contains `crtbegin.o`, `crtend.o` and `cpuinfo`.
 - **Version**: GCC 11.5.0, Amazon Linux 2023's `gcc-11.5.0-5.amzn2023.0.5` in the pinned
   release. Every Run records its compiler (`binary.compiler`, for example
   `cc (GCC) 11.5.0 20240719 (Red Hat 11.5.0-5)`).
-- **Licence**: the GNU General Public License, version 3 or later, with the GCC Runtime
-  Library Exception, version 3.1. The exception permits a program compiled by GCC in the
-  ordinary way (an "Eligible Compilation Process"), together with these parts, to be
-  distributed under terms of one's choice.
-- **Source**: `gcc-11.5.0-5.amzn2023.0.5.src.rpm`, in the same source repository.
+- **Licence**, as the files' headers state it. These were read in GCC's source at tag
+  `releases/gcc-11.5.0`; Amazon Linux's source package was not read.
+  - `libgcc/crtstuff.c` (the start-up files), `libgcc/libgcc2.c` (`_umoddi3`),
+    `libgcc/config/i386/cpuinfo.c`, `libgcc/config/i386/sfp-exceptions.c` and the
+    unwinder's files are under the GNU General Public License, version 3 or later, and say:
+    "Under Section 7 of GPL version 3, you are granted additional permissions described in
+    the GCC Runtime Library Exception, version 3.1, as published by the Free Software
+    Foundation."
+  - The quad-precision routines (`libgcc/soft-fp/addtf3.c`, `letf2.c`, `multf3.c`,
+    `unordtf2.c`) are under LGPL-2.1-or-later, with "unlimited permission to link the
+    compiled version of this file into combinations with other programs, and to distribute
+    those combinations without any restriction coming from the use of this file."
+- **The exception**, in the words of its section 1 (GCC's `COPYING.RUNTIME`): "You have
+  permission to propagate a work of Target Code formed by combining the Runtime Library with
+  Independent Modules, even if such propagation would otherwise violate the terms of GPLv3,
+  provided that all Target Code was generated by Eligible Compilation Processes. You may then
+  convey such a combination under terms of your choice, consistent with the licensing of the
+  Independent Modules." It calls a Compilation Process "Eligible" "if it is done using GCC,
+  alone or with other GPL-compatible software, or if it is done without using any work based
+  on GCC". LedgerMath's binaries are compiled by GCC and linked by GNU ld, as each Run's
+  build record shows.
+- **Source**: `gcc-11.5.0-5.amzn2023.0.5.src.rpm`, in the same Amazon Linux repository as
+  glibc's. It is not stored in the bucket.
 
 ### AWS-LC
 
@@ -637,13 +801,26 @@ and are not published.
 
 ## 4. What is not listed
 
-- The implementations of published algorithms and protocols in the benchmarks and the
-  harness: SipHash-1-3, SHA-256 (scalar, and with the SHA extensions), CRC32C, the LSD radix
-  sort, xorshift64, xorshift64*, SplitMix64 and its finalizer, FNV-1a, the Fisher-Yates
-  shuffle, AWS Signature Version 4, and the DNS (RFC 1035) and HTTP/1.1 (RFC 9112) parsers.
-  They are code of this repository. Where an algorithm fixes the shape of the code (its
-  constants, or the order of the SHA extensions' instructions), it matches other
-  implementations of the same algorithm; we found no code copied from another project.
+- Implementations of published algorithms and protocols in the benchmarks and the harness:
+  SHA-256 (the scalar version), CRC32C, the LSD radix sort, xorshift64, xorshift64*,
+  SplitMix64 and its finalizer, FNV-1a, the Fisher-Yates shuffle, AWS Signature Version 4,
+  and the DNS (RFC 1035) and HTTP/1.1 (RFC 9112) parsers. Where an algorithm fixes the shape
+  of the code (its constants, its rounds), they match other implementations of it. No other
+  project's implementation was identified as the source of any of them.
+- Two routines that resemble public-domain code, which asks for no notice; we say so because
+  it is not known whether that code was used:
+  - The SHA-256 routine that uses the SHA extensions (`sha256_compress_ni` in
+    `benchmarks/hash/hash.c`, and the same body in `benchmarks/c/bench_hash.c`) closely
+    resembles Jeffrey Walton's public-domain `sha256-x86.c`
+    (<https://github.com/noloader/SHA-Intrinsics>), itself based on code by Intel, Sean
+    Gulley and the miTLS project. Whether that file was used as a reference when the routine
+    was written has not been established.
+  - The SipHash-1-3 function (`siphash13_64` in the same two files) follows the round of
+    SipHash's reference implementation (<https://github.com/veorq/SipHash>) closely. That
+    implementation's `siphash.c` dedicates it to the public domain under CC0, and its
+    repository also offers it under the MIT licence and Apache-2.0 with LLVM exceptions.
+    The plan the benchmark was written from, `docs/prds/04-hash.md`, asked for a
+    public-domain SipHash implementation to be vendored into the file.
 - Short facts from AWS's documentation used in tests and samples: the S3 User Guide's
   example credentials and signatures (`tests/http-get.test.ts`) and AWS's example
   identifiers (`tests/samples/README.md`).
