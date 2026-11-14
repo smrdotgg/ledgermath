@@ -1,8 +1,8 @@
 /**
  * Where and when a -runs stage launches its boxes: the targets of
  * schedule.json, checked by infra/runs/schedule.ts. infra/runs/stack.ts makes
- * one launch schedule from each, and an invalid schedule.json stops the deploy
- * here. scripts/alarm.ts reads the same targets from the schedule it is given.
+ * one launch schedule from each in the scheduled stage (infra/runs/stages.ts)
+ * and none in any other, and an invalid schedule.json stops the deploy here. scripts/alarm.ts reads the same targets from the schedule it is given.
  * Nothing else names an instance type or a boot time.
  *
  * Plain data: no SST global is used, so tests and scripts can import it.
@@ -14,6 +14,7 @@ import scheduleFile from "../../schedule.json";
 
 import { type ScheduledEvent, scheduledEvent } from "./launch-event";
 import { parseSchedule, type Schedule, type Target } from "./schedule";
+import { isScheduledStage } from "./stages";
 
 /** schedule.json, checked. */
 export const SCHEDULE: Schedule = parseSchedule(scheduleFile);
@@ -76,5 +77,31 @@ export function launchSchedules(targets: readonly Target[]): LaunchSchedule[] {
 	return schedules;
 }
 
-/** The stage's launch schedules. */
+/** The launch schedules of the targets: what the scheduled stage makes. */
 export const LAUNCH_SCHEDULES: readonly LaunchSchedule[] = launchSchedules(TARGETS);
+
+/**
+ * The launch schedules a stage makes: every one for the scheduled stage
+ * (infra/runs/stages.ts), none for any other, whose boxes start only by hand.
+ */
+export function stageLaunchSchedules(stage: string): readonly LaunchSchedule[] {
+	return isScheduledStage(stage) ? LAUNCH_SCHEDULES : [];
+}
+
+/**
+ * Stands in for the list of target types in a stage without launch
+ * schedules. The launch refuses a scheduled launch of a type the list does
+ * not name (unscheduledType, infra/runs/launch-event.ts), and this names
+ * none, so even a schedule left behind in such a stage launches nothing; a
+ * launch by hand names its type and is never refused for it. It is not empty
+ * because the launch takes an empty value for one never set.
+ */
+export const NO_SCHEDULED_TYPES = "none (this stage is not the scheduled stage)";
+
+/**
+ * The launch function's LEDGERMATH_TARGET_INSTANCE_TYPES: the targets' types,
+ * comma-separated, for the scheduled stage; NO_SCHEDULED_TYPES for any other.
+ */
+export function scheduledTargetTypes(stage: string): string {
+	return isScheduledStage(stage) ? TARGETS.map((target) => target.instance_type).join(",") : NO_SCHEDULED_TYPES;
+}

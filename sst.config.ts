@@ -10,17 +10,15 @@
  *
  * A stage whose name ends in -runs is instead the step-2 runner, which writes
  * Runs: infra/runs/stack.ts. Every other stage is the stack below, unchanged.
+ * Which account a -runs stage deploys to, and whether it is retained and
+ * protected, is decided in infra/runs/stages.ts: production-runs to the
+ * production account, every other -runs stage to the development account.
  */
 export default $config({
-	app(input) {
+	async app(input) {
 		if (input?.stage?.endsWith("-runs")) {
-			return {
-				name: "ledgermath",
-				// Its bucket holds Runs, which are kept forever: `sst remove` keeps it.
-				removal: "retain",
-				home: "aws",
-				providers: { aws: { profile: "tabot-dev", region: "us-east-2" } },
-			};
+			const { runsStageApp } = await import("./infra/runs/stages");
+			return runsStageApp(input.stage);
 		}
 		return {
 			name: "ledgermath",
