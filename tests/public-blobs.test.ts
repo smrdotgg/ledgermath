@@ -45,6 +45,7 @@ import {
 	webAclRules,
 	withBlobGrant,
 } from "../infra/runs/public-blobs";
+import { PRODUCTION_STAGE, runsStageApp } from "../infra/runs/stages";
 import { blobsFromBucket, PUBLIC_REQUESTS_PER_SECOND, publicBlobStore } from "../scripts/lib/blobs";
 
 const ROOT = join(import.meta.dir, "..");
@@ -182,6 +183,12 @@ describe("the switch", () => {
 		expect(check).toBeGreaterThan(prepare.indexOf("if ($app.stage !== setting.stage) return null;"));
 		expect(prepare).toContain("if (refusals.length > 0) refuse(`Public blobs on ${setting.stage}: not allowed: ${refusals.join(\"; \")}.`, command);");
 		for (const later of ["stageProfile()", "awsCli(", "readManaged(", "readDeployed("]) expect(check).toBeLessThan(prepare.indexOf(later));
+	});
+
+	test("the stage public blobs are for is the one stages.ts protects, and no other -runs stage is", () => {
+		expect(PUBLIC_BLOBS.stage).toBe(PRODUCTION_STAGE);
+		expect(runsStageApp(PUBLIC_BLOBS.stage).protect).toBe(true);
+		expect(runsStageApp("smr-runs").protect).toBe(false);
 	});
 
 	test("makes the web ACL, the access control, three functions, the distribution, the subscription and the watch; nothing else", () => {

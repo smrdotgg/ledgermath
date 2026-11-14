@@ -6,8 +6,13 @@
  *     bun scripts/check-runs.ts DIR                   everything below
  *     bun scripts/check-runs.ts --no-blobs DIR        the Run files alone
  *     bun scripts/check-runs.ts --omitted FILE DIR    blobs listed in FILE may be absent
+ *     bun scripts/check-runs.ts --result FILE DIR     also writes FILE, below
  *
- * FILE is a JSON array of {"blob": "sha256:<hex>", ...}, as tests/samples has.
+ * FILE for --omitted is a JSON array of {"blob": "sha256:<hex>", ...}, as
+ * tests/samples has. --result writes {"runs": <Run files read>, "failing":
+ * [<the path under DIR of every file a problem is about>]} to FILE, whether
+ * all holds or not, once the check is done (scripts/lib/bucket-copy.ts's
+ * verification compares two of these).
  *
  * For every Run file:
  *   - it validates against schemas/run.schema.json;
@@ -32,7 +37,7 @@
 
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { gunzipSync } from "node:zlib";
 
@@ -125,6 +130,8 @@ export interface CheckResult {
 	/** Runs whose runner manifest was checked against their source archive, and Runs whose was not. */
 	manifests: { checked: number; unchecked: number };
 	problems: string[];
+	/** The files the problems are about, as paths under the directory (Run files, boot summaries, blobs), each once, sorted. */
+	failing: string[];
 }
 
 const sha256 = (bytes: Buffer): string => createHash("sha256").update(bytes).digest("hex");
@@ -204,6 +211,12 @@ export interface CheckOptions {
 export function checkBucketDirectory(directory: string, options: CheckOptions): CheckResult {
 	const validators = loadValidators();
 	const problems: string[] = [];
+	const failing = new Set<string>();
+	/** A problem with one file, named by its path under the directory. */
+	const problem = (where: string, what: string): void => {
+		problems.push(`${where}: ${what}`);
+		failing.add(where);
+	};
 	const checkedBlobs = new Map<string, Buffer | null>();
 	const archives = new Map<string, Map<string, Buffer>>();
 	const manifests = { checked: 0, unchecked: 0 };
@@ -218,7 +231,7 @@ export function checkBucketDirectory(directory: string, options: CheckOptions): 
 		if (existsSync(path)) {
 			bytes = readFileSync(path);
 			if (createHash("sha256").update(bytes).digest("hex") !== hex) {
-				problems.push(`blobs/sha256/${hex}: its bytes do not hash to its name`);
+				problem(`blobs/sha256/${hex}`, "its bytes do not hash to its name");
 			}
 		}
 		checkedBlobs.set(hash, bytes);
@@ -233,11 +246,11 @@ export function checkBucketDirectory(directory: string, options: CheckOptions): 
 		try {
 			record = JSON.parse(readFileSync(file, "utf8"));
 		} catch (error) {
-			problems.push(`${where}: not JSON: ${String(error)}`);
+			problem(where, `not JSON: ${String(error)}`);
 			continue;
 		}
 		if (!validators.run(record)) {
-			problems.push(`${where}: ${describeErrors(validators.run)}`);
+			problem(where, describeErrors(validators.run));
 			continue;
 		}
 		const run = record;
@@ -245,14 +258,14 @@ export function checkBucketDirectory(directory: string, options: CheckOptions): 
 
 		const day = run.started_at.slice(0, 10).replaceAll("-", "/");
 		const expected = join("runs", day, `${run.id}.json`);
-		if (where !== expected) problems.push(`${where}: should be at ${expected}`);
+		if (where !== expected) problem(where, `should be at ${expected}`);
 
 		if (!options.blobs) continue;
 
 		for (const hash of hashesIn(run)) {
 			const bytes = blob(hash);
 			if (bytes === null) {
-				if (!options.omitted?.has(hash)) problems.push(`${where}: ${hash} has no blob`);
+				if (!options.omitted?.has(hash)) problem(where, `${hash} has no blob`);
 				continue;
 			}
 			if (hash !== run.environment.before && hash !== run.environment.after) continue;
@@ -263,12 +276,12 @@ export function checkBucketDirectory(directory: string, options: CheckOptions): 
 				index = null;
 			}
 			if (!isDumpIndex(index)) {
-				problems.push(`${where}: ${hash} is not a ${DUMP_SCHEMA} index`);
+				problem(where, `${hash} is not a ${DUMP_SCHEMA} index`);
 				continue;
 			}
 			for (const [section, sectionHash] of Object.entries(index.sections)) {
 				if (!HASH.test(sectionHash) || blob(sectionHash) === null) {
-					problems.push(`${where}: dump ${hash} section ${section}: ${sectionHash} has no blob`);
+					problem(where, `dump ${hash} section ${section}: ${sectionHash} has no blob`);
 				}
 			}
 		}
@@ -281,13 +294,13 @@ export function checkBucketDirectory(directory: string, options: CheckOptions): 
 				try {
 					archive = readTarGz(source);
 				} catch (error) {
-					problems.push(`${where}: its source archive cannot be read: ${String(error)}`);
+					problem(where, `its source archive cannot be read: ${String(error)}`);
 					archive = new Map();
 				}
 				archives.set(run.source, archive);
 			}
-			for (const problem of runnerManifestProblems(manifest.toString("utf8"), archive)) {
-				problems.push(`${where}: runner manifest: ${problem}`);
+			for (const mismatch of runnerManifestProblems(manifest.toString("utf8"), archive)) {
+				problem(where, `runner manifest: ${mismatch}`);
 			}
 			manifests.checked++;
 		} else {
@@ -298,18 +311,18 @@ export function checkBucketDirectory(directory: string, options: CheckOptions): 
 		if (stdout === null) continue;
 		const stream = readStream(stdout);
 		stream.events.forEach((event, index) => {
-			if (!validators.event(event)) problems.push(`${where}: stdout line ${index + 1}: ${describeErrors(validators.event)}`);
+			if (!validators.event(event)) problem(where, `stdout line ${index + 1}: ${describeErrors(validators.event)}`);
 		});
 		eventCount += stream.events.length;
 		if (run.stdout_bytes !== undefined && (run.stdout_bytes !== stdout.length || run.stdout_lines !== stream.lines)) {
-			problems.push(`${where}: says its stdout is ${run.stdout_bytes} bytes and ${run.stdout_lines} lines; the blob is ${stdout.length} and ${stream.lines}`);
+			problem(where, `says its stdout is ${run.stdout_bytes} bytes and ${run.stdout_lines} lines; the blob is ${stdout.length} and ${stream.lines}`);
 		}
 		if (run.events !== undefined) {
 			const events = run.events;
 			const same = events.length === stream.events.length && events.every((event, index) => JSON.stringify(event) === JSON.stringify(stream.events[index]));
-			if (!same) problems.push(`${where}: its events are not its stdout's, line for line`);
+			if (!same) problem(where, `its events are not its stdout's, line for line`);
 			if ((run.events_error?.line ?? null) !== (stream.error?.line ?? null)) {
-				problems.push(`${where}: its events_error names ${run.events_error ? `line ${run.events_error.line}` : "no line"}; its stdout stops parsing at ${stream.error ? `line ${stream.error.line}` : "no line"}`);
+				problem(where, `its events_error names ${run.events_error ? `line ${run.events_error.line}` : "no line"}; its stdout stops parsing at ${stream.error ? `line ${stream.error.line}` : "no line"}`);
 			}
 		}
 
@@ -319,7 +332,7 @@ export function checkBucketDirectory(directory: string, options: CheckOptions): 
 			if (quick) args.push("--quick");
 			const checked = spawnSync("python3", args, { input: stdout, encoding: "utf8" });
 			if (checked.status !== 0) {
-				problems.push(`${where}: check-events.py: ${(checked.stderr || checked.error?.message || "").trim()}`);
+				problem(where, `check-events.py: ${(checked.stderr || checked.error?.message || "").trim()}`);
 			}
 		}
 	}
@@ -329,13 +342,13 @@ export function checkBucketDirectory(directory: string, options: CheckOptions): 
 		const summary = JSON.parse(readFileSync(file, "utf8")) as { runs?: Array<{ id?: unknown }> };
 		for (const listed of summary.runs ?? []) {
 			if (typeof listed.id !== "string" || !runIds.has(listed.id)) {
-				problems.push(`${where}: lists run ${String(listed.id)}, which is not under runs/`);
+				problem(where, `lists run ${String(listed.id)}, which is not under runs/`);
 			}
 		}
 	}
 
 	const resolved = [...checkedBlobs.values()].filter((bytes) => bytes !== null).length;
-	return { runs: runFiles.length, events: eventCount, blobs: resolved, manifests, problems };
+	return { runs: runFiles.length, events: eventCount, blobs: resolved, manifests, problems, failing: [...failing].sort() };
 }
 
 export function loadOmitted(file: string): Set<string> {
@@ -347,19 +360,22 @@ if (import.meta.main) {
 	const args = process.argv.slice(2);
 	let blobs = true;
 	let omitted: Set<string> | undefined;
+	let resultFile: string | undefined;
 	const directories: string[] = [];
 	for (let i = 0; i < args.length; i++) {
 		const arg = args[i] ?? "";
 		if (arg === "--no-blobs") blobs = false;
 		else if (arg === "--omitted" && args[i + 1]) omitted = loadOmitted(args[++i] ?? "");
+		else if (arg === "--result" && args[i + 1]) resultFile = args[++i];
 		else directories.push(arg);
 	}
 	if (directories.length !== 1 || !directories[0]) {
-		console.error("usage: bun scripts/check-runs.ts [--no-blobs] [--omitted FILE] DIR");
+		console.error("usage: bun scripts/check-runs.ts [--no-blobs] [--omitted FILE] [--result FILE] DIR");
 		process.exit(2);
 	}
 	const directory = resolve(directories[0]);
 	const result = checkBucketDirectory(directory, { blobs, omitted });
+	if (resultFile !== undefined) writeFileSync(resultFile, `${JSON.stringify({ runs: result.runs, failing: result.failing })}\n`);
 	for (const problem of result.problems) console.error(problem);
 	if (result.runs === 0) {
 		console.error(`no Run files under ${join(basename(dirname(directory)), basename(directory))}/runs`);

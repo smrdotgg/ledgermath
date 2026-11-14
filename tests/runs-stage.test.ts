@@ -289,18 +289,19 @@ describe("where and when the stage launches", () => {
 		]);
 	});
 
-	test("is made by the stack from placement.ts alone: one launch function, a CronV2 per schedule, nothing hard-coded", () => {
-		expect(STACK).toContain('import { LAUNCH_SCHEDULES, TARGETS, ZONE } from "./placement";');
+	test("is made by the stack from placement.ts alone: one launch function, a CronV2 per schedule of the stage, nothing hard-coded", () => {
+		expect(STACK).toContain('import { scheduledTargetTypes, stageLaunchSchedules, TARGETS, ZONE } from "./placement";');
 		expect(STACK).toContain('new sst.aws.Function("BoxLaunchHandler", {');
 		// The function of step 2's CronV2 BoxLaunch, kept rather than replaced.
 		expect(STACK).toContain("const launchAliases = [{ parent: `urn:pulumi:${$app.stage}::${$app.name}::sst:aws:CronV2::BoxLaunch` }];");
 		expect(STACK).toContain("}, { aliases: launchAliases });");
-		expect(STACK).toContain("for (const schedule of LAUNCH_SCHEDULES) {");
+		// Only the scheduled stage's are made (tests/runs-stages.test.ts).
+		expect(STACK).toContain("const launchSchedules = stageLaunchSchedules($app.stage);\n\tfor (const schedule of launchSchedules) {");
 		expect(STACK).toContain("new sst.aws.CronV2(schedule.name, {");
 		expect(STACK).toContain("schedule: schedule.expression,");
 		expect(STACK).toContain("event: schedule.event,");
 		expect(STACK).toContain("function: launch,");
-		expect(STACK).toContain('LEDGERMATH_TARGET_INSTANCE_TYPES: TARGETS.map((target) => target.instance_type).join(","),');
+		expect(STACK).toContain("LEDGERMATH_TARGET_INSTANCE_TYPES: scheduledTargetTypes($app.stage),");
 		expect(STACK).toContain('{ name: "availability-zone", values: [ZONE] }');
 		// Never retried; an event older than a minute is dropped.
 		expect(STACK).toMatch(/new sst\.aws\.Function\("BoxLaunchHandler", \{[^]*?retries: 0,\n\t\ttransform: \{ eventInvokeConfig: \{ maximumEventAgeInSeconds: 60 \} \},/);
@@ -311,6 +312,7 @@ describe("where and when the stage launches", () => {
 
 	test("lists every target and its schedules among the stack's outputs", () => {
 		expect(STACK).toContain("targets: TARGETS.map((target) => ({");
+		expect(STACK).toContain("schedules: launchSchedules.filter((schedule) => schedule.instanceType === target.instance_type)");
 		expect(STACK).toContain("expression: `${schedule.expression} UTC`,");
 		expect(STACK).toContain("payload: schedule.event,");
 	});

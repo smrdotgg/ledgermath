@@ -1,9 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { parseSchedule } from "../infra/runs/schedule";
-import { type AwsFacts, compareWithAws } from "../scripts/check-targets";
+import { type AwsFacts, awsArguments, compareWithAws } from "../scripts/check-targets";
 
 // scripts/check-targets.ts compares schedule.json with what AWS answers. AWS
 // is not reached here (CI has no access): these are made-up answers.
@@ -47,4 +49,51 @@ describe("comparing schedule.json with AWS", () => {
 			"could not read the quota L-1216C47A",
 		]);
 	});
+});
+
+describe("which account it reads", () => {
+	test("the account of the stage it is run for, by that account's profile", () => {
+		expect(awsArguments("production-runs")).toEqual(["--profile", "tabot-production", "--output", "json"]);
+		expect(awsArguments("smr-runs")).toEqual(["--profile", "tabot-dev", "--output", "json"]);
+		expect(awsArguments("alice-runs")).toEqual(["--profile", "tabot-dev", "--output", "json"]);
+		expect(() => awsArguments("production")).toThrow("is not a -runs stage");
+	});
+
+	test("every call names the stage's profile, whatever AWS_PROFILE says; no --stage is a usage error", () => {
+		// A stand-in aws that records its arguments and answers as the production account would before its quota is raised.
+		const directory = mkdtempSync(join(tmpdir(), "check-targets-"));
+		try {
+			const calls = join(directory, "calls");
+			writeFileSync(
+				join(directory, "aws"),
+				[
+					"#!/bin/sh",
+					`echo "$*" >> '${calls}'`,
+					'case "$*" in',
+					'  *describe-instance-types*) echo \'[["c6i.8xlarge",32],["m5.large",2],["c8i.2xlarge",8],["c8a.2xlarge",8],["i4i.2xlarge",8]]\' ;;',
+					'  *describe-instance-type-offerings*) echo \'["c6i.8xlarge","m5.large","c8i.2xlarge","c8a.2xlarge","i4i.2xlarge"]\' ;;',
+					"  *get-service-quota*) echo 5.0 ;;",
+					"esac",
+					"",
+				].join("\n"),
+			);
+			chmodSync(join(directory, "aws"), 0o755);
+			const script = join(import.meta.dir, "..", "scripts", "check-targets.ts");
+			const env = { ...process.env, PATH: `${directory}:${process.env.PATH}`, AWS_PROFILE: "tabot-dev" };
+			const done = spawnSync("bun", [script, "--stage", "production-runs"], { encoding: "utf8", env, timeout: 30_000 });
+			expect(done.status).toBe(1);
+			expect(done.stdout).toContain("in the account of production-runs (profile tabot-production)");
+			expect(done.stderr).toContain("MISMATCH: vcpu_quota.limit is 64; the applied quota L-1216C47A is 5");
+			const lines = readFileSync(calls, "utf8").trim().split("\n");
+			expect(lines.length).toBe(3);
+			for (const line of lines) expect(line).toEndWith("--profile tabot-production --output json");
+
+			const usage = spawnSync("bun", [script], { encoding: "utf8", env, timeout: 30_000 });
+			expect(usage.status).toBe(2);
+			expect(usage.stderr).toContain("--stage STAGE");
+			expect(readFileSync(calls, "utf8").trim().split("\n").length).toBe(3);
+		} finally {
+			rmSync(directory, { recursive: true, force: true });
+		}
+	}, 60_000);
 });
