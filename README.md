@@ -25,11 +25,12 @@ as the base the build started from (last section).
 | `scripts/check-events.py` | Checks a stream's order; needs only Python 3 |
 | `scripts/check-runs.ts` | Checks a directory laid out like the bucket: schemas, every hash, every stream read from its stdout blob, runner manifests |
 | `scripts/check-disk-runs.ts` | Checks that every disk Run in such a directory found the disk it declares, that its evidence adds up, and that its dump bears it out |
-| `scripts/check-targets.ts` | Checks `schedule.json`'s targets' `vcpus`, their zone offerings and `vcpu_quota.limit` against AWS, read-only; needs AWS access, so not part of `bun test` |
+| `scripts/check-targets.ts` | Checks `schedule.json`'s targets' `vcpus`, their zone offerings and `vcpu_quota.limit` against AWS, read-only, in the account of the stage it is given; needs AWS access, so not part of `bun test` |
 | `scripts/box-in-container/` | Boots `runner/box.sh` in Amazon Linux 2023 with S3 and shutdown stubbed, in several scenarios, `http_get` against a stand-in for S3 among them |
-| `infra/runs/` | The `-runs` SST stage: stack, launch Lambda, reaper, user-data, the schedule's check (`schedule.ts`), the targets and their launch schedules (`placement.ts`), the workflow's AWS role, the `s3_fixtures` Service's bucket, objects and role (`fixtures.ts`), AWS-LC's source archive (`tls-archive.ts`) |
+| `infra/runs/` | The `-runs` SST stage: stack, launch Lambda, reaper, user-data, the schedule's check (`schedule.ts`), the targets and their launch schedules (`placement.ts`), which account a stage deploys to and which one stage is scheduled (`stages.ts`), the workflow's AWS role, the `s3_fixtures` Service's bucket, objects and role (`fixtures.ts`), AWS-LC's source archive (`tls-archive.ts`) |
 | `methods/` | Methods, versioned, turning Runs into Derivations (`methods/README.md`): `series` v1 (`v1/`) one number per Run for every Series; `requests` v1 (`requests/v1/`) each phase of a request across requests, for the Series of requests; `records.ts` the reduced record of a stream, kept between runs |
 | `scripts/copy-runs.ts` | The copy job: the bucket's Run files and boot summaries into the Runs repository |
+| `scripts/copy-bucket.ts` | Copies one `-runs` bucket into another, across two accounts, only ever adding, and checks the copy (`scripts/lib/bucket-copy.ts`): the move to the production account |
 | `scripts/derive.ts`, `scripts/build-page.ts` | Run the Methods over the Runs; turn their Derivations into the page |
 | `scripts/alarm.ts` | Opens, or comments on, one issue when a watched Series has had no Run for 48 hours, or the newest price file is more than 48 hours old |
 | `.github/workflows/runs.yml` | All four on a schedule: copy, push, derive, page, alarm |
@@ -45,7 +46,7 @@ as the base the build started from (last section).
 | `third-party/` | glibc 2.34's `COPYING.LIB` and `LICENSES`, and `sources.lock.json`, the third-party source packages kept in the bucket beside the binaries |
 | `scripts/publish-third-party-source.ts` | Puts the source packages `third-party/sources.lock.json` names into the bucket, create-only, and reads every one back to check its bytes (`scripts/lib/sigv4.ts` signs its conditional PUT) |
 | `docs/runs-repository/` | The Runs repository's `README.md` and `LICENSE` (CC BY 4.0), kept here and copied there |
-| `tests/` | `bun test`: the schemas against sample Runs, the Run checker, the schedule's check, the runner's timeout and stop races and its instance-type filtering, the dump's sections, the disk provisioning's decisions, the disk Fixture and the binaries' checks of it, the launch schedules, launch and reap logic, the box's and the workflow's roles, the Method, the copy job, the page, the alarm and the workflows, and the price fetch, cut, schema and recompute check on excerpts of AWS's files (`tests/samples/prices/`) |
+| `tests/` | `bun test`: the schemas against sample Runs, the Run checker, the schedule's check, the runner's timeout and stop races and its instance-type filtering, the dump's sections, the disk provisioning's decisions, the disk Fixture and the binaries' checks of it, the launch schedules, which account each stage deploys to and which one is scheduled, launch and reap logic, the box's and the workflow's roles, the Method (and that the move to the production account starts no group), the copy job, the bucket copy against a stand-in for S3, the page, the alarm and the workflows, and the price fetch, cut, schema and recompute check on excerpts of AWS's files (`tests/samples/prices/`) |
 
 ## A benchmark, locally
 
@@ -156,6 +157,45 @@ checked. These scenarios show the path, not S3's numbers.
 Any SST stage whose name ends in `-runs` deploys `infra/runs/stack.ts`. Every other stage
 deploys July's stack, below, unchanged; July's stage, `smr`, must not be deployed.
 
+### Two accounts, one scheduled stage
+
+Two AWS accounts, each reached through a profile of the AWS CLI on the machine that
+deploys. `infra/runs/stages.ts` decides which a `-runs` stage deploys to, and nothing
+else names a profile (`sst.config.ts` takes a `-runs` stage's settings from it):
+
+| Stage | Account (profile) | On `sst remove` | For |
+|-------|-------------------|-----------------|-----|
+| `production-runs` | production (`tabot-production`) | the stack is kept, and SST refuses outright (`protect`) | The boxes that boot on the schedule, the bucket that keeps their Runs and blobs for good, and what the `runs` workflow reads, once it is the scheduled stage |
+| any other `-runs` stage, such as `smr-runs` | development (`tabot-dev`) | the stack is kept | Trying changes, with boxes launched by hand |
+
+What lives where:
+
+- **Production**: the stage `production-runs` (its Runs bucket and fixtures bucket, launch
+  function, reaper, box and fixtures roles, GitHub's OIDC provider and the role the
+  workflow assumes) and SST's own state for the account.
+- **Development**: the stage `smr-runs` (the same parts; its bucket holds every Run made
+  before the move and is kept as it is), the dev machine, July's retired stack (stage
+  `smr`) and its bucket, and SST's own state for the account.
+
+One stage is the scheduled one: `SCHEDULED_STAGE` in `infra/runs/stages.ts`. Only it gets
+the launch schedules below. Every other `-runs` stage gets the launch function, the reaper,
+the buckets and the roles, and no schedule: its boxes start only by hand. Its launch
+function's list of targets (`LEDGERMATH_TARGET_INSTANCE_TYPES`) names none, so a scheduled
+payload, from a schedule left behind for instance, is refused and launches nothing; a launch
+by hand names its type and is unaffected. The scheduled stage is `smr-runs` until the move
+to the production account, below ("Moving the schedule to the production account"), which
+makes it `production-runs`. The alarm and the workflow know no stage: the alarm watches
+`schedule.json`'s targets in the Runs repository, which the workflow fills from the bucket
+named by `RUNS_BUCKET`, so that must be the scheduled stage's bucket (if it is not, the
+alarm reports every watched Series within 48 hours).
+
+Each account has its own vCPU quota (`vcpu_quota` in `schedule.json` declares the scheduled
+stage's account's; `reserved_outside_schedule` is what launches by hand and, in the
+development account, the dev machine may hold), its own GitHub OIDC provider (an account
+holds one per URL, so only one `-runs` stage per account can create it: `production-runs`
+in production, `smr-runs` in development, where a second `-runs` stage would fail to
+deploy), and its own SST state.
+
 `schedule.json` names the targets: an instance type, its zone, and the times of day,
 UTC, it boots. Today there are five, all in `us-east-2c`, four boots a day each:
 
@@ -167,7 +207,7 @@ UTC, it boots. Today there are five, all in `us-east-2c`, four boots a day each:
 | `c8a.2xlarge` | 8 | 04:40, 10:40, 16:40, 22:40 |
 | `i4i.2xlarge` | 8 | 04:50, 10:50, 16:50, 22:50 |
 
-The stage makes one EventBridge schedule per target, a cron listing its boot times (for
+The scheduled stage makes one EventBridge schedule per target, a cron listing its boot times (for
 `c6i.8xlarge`, `cron(10 4,10,16,22 * * ? *)`), and every schedule invokes the one launch
 Lambda with the scheduled time and the instance type. The Lambda launches one box of that
 type from `ami-03499a87bbb39a09a` (Amazon Linux 2023.12.20260710.0, the image July's
@@ -454,7 +494,9 @@ the dev machine's share. Every target's `vcpus` added together, plus what is res
 must fit the limit (58 + 4 = 62 of 64 today), and two boots of one target must be at least
 60 minutes apart, across midnight too, because a box lives at most 55 minutes. A new
 target's `vcpus` is AWS's `DefaultVCpus` for the type. Check every declared number against
-AWS, read-only, with `AWS_PROFILE=tabot-dev bun scripts/check-targets.ts`.
+AWS, read-only, in the account of the stage that is or will be scheduled:
+`bun scripts/check-targets.ts --stage production-runs` reads the production account with
+its profile, `--stage smr-runs` the development account.
 
 A boot's summary (`boots/<yyyy>/<mm>/<dd>/<boot>.json`) accounts for every execution the
 schedule names: `runs`; `not_run`, with the `reason` (told to stop before starting it, or
@@ -510,23 +552,48 @@ Not guaranteed:
 ### Deploy
 
 ```bash
-aws sso login --profile tabot-dev
+STAGE=smr-runs                    # or production-runs, which deploys to the production account
+aws sso login --profile tabot-dev # production-runs: --profile tabot-production
 bun install
 # AWS-LC's source archive, once: the deploy uploads it as a blob, and stops if it is missing
 # or its hash is not aws-lc.lock's. AWS_LC_ARCHIVE=<path> points it at a copy elsewhere.
 benchmarks/harness/c/vendor/fetch-aws-lc.sh .sst/ledgermath-vendor/aws-lc-5.14.0.tar.gz
 git status                        # must be clean (sst-env.d.ts aside): a deploy refuses a tree that differs from HEAD
-bunx sst diff --stage smr-runs    # what the deploy would add, change and delete; changes nothing
-bunx sst deploy --stage smr-runs  # the stage uses profile tabot-dev in us-east-2
+bunx sst diff --stage "$STAGE"    # what the deploy would add, change and delete
+bunx sst deploy --stage "$STAGE"  # the profile and the Region (us-east-2) come from infra/runs/stages.ts
+cp .sst/outputs.json ".sst/outputs.$STAGE.json"   # outputs.json is the last deploy's, whichever stage that was
 git checkout -- sst-env.d.ts      # SST rewrites it for the stage; the committed one is July's
 ```
 
 The stage's outputs (bucket, launch function, every target with its boot times and its
 schedules' cron expressions and payloads, commit) are printed and written to
-`.sst/outputs.json`. Deploying a new commit is the only way the box's source, or the
-schedules, change. Avoid deploying within ten minutes of a boot time: a schedule the
-deploy creates, changes or removes could miss its slot, and while an old schedule and its
-replacement both exist, one slot could launch twice.
+`.sst/outputs.json`, which the next deploy of any stage from the same checkout replaces;
+the commands below read the copy kept per stage. A stage that is not the scheduled one lists
+every target with no schedules. Deploying a new commit is the only way the box's source, or
+the schedules, change. Avoid deploying the scheduled stage within ten minutes of a boot
+time: a schedule the deploy creates, changes or removes could miss its slot, and while an
+old schedule and its replacement both exist, one slot could launch twice. Any other stage
+has no schedule, and can be deployed at any time.
+
+`sst diff` changes nothing in a stage, but the first SST command of any kind in an account
+bootstraps SST there, once per account and Region: a state bucket `sst-state-<random>`
+(versioned) and an asset bucket `sst-asset-<random>`, an ECR repository `sst-asset`, and the
+SSM parameter `/sst/bootstrap`; and the first command for a stage stores its passphrase in
+the SSM parameter `/sst/passphrase/ledgermath/<stage>` (SecureString). The development
+account has them for `smr` and `smr-runs`; the production account has none yet.
+
+What the first deploy of `production-runs` creates in the production account, as long as
+it is not the scheduled stage: the Runs bucket (versioned, public access blocked, an
+HTTPS-only policy, CORS) holding `source/<commit>.tar.gz`, AWS-LC's source archive and the
+three Fixture blobs; the fixtures bucket (public access blocked, HTTPS-only) with the
+three Fixtures copied into it; the security group `BoxSg` in the default VPC; the box's
+role, its policy and its instance profile; the fixtures reader role and its policy; the
+launch function (its role, log group, code in SST's asset bucket, and the event-invoke
+configuration that stops retries); the reaper (a function likewise, an EventBridge
+Scheduler schedule every five minutes and the schedule's role); GitHub's OIDC provider for
+`token.actions.githubusercontent.com`; and the role `RunsReaderRole` with its policy. No
+launch schedule. Once it is the scheduled stage, a deploy adds the five launch schedules,
+each with its role, and sets the launch function's list of targets.
 
 What the first deploy with `http_get` adds to a stage: the fixtures bucket (with its
 public access block and HTTPS-only policy), three Fixture blobs in the Runs bucket (16.9
@@ -553,21 +620,29 @@ a fresh client token each time. Its Runs are real Runs of that type, and its box
 the entries of `schedule.json` for that type: every entry without `instance_types`, and
 those whose `instance_types` name it.
 
-Mind the quota. A box that fails to end itself lives until the reaper finds it, up to 55
-minutes. A 2-vCPU type such as `c6i.large` fits at any time (the worst moment holds 62 of
-64 vCPUs). Anything larger can meet the quota from HH:10 to HH+1:45 for HH = 04, 10, 16
-and 22, when the scheduled boxes may be up.
+In a stage that is not the scheduled one, which is what a stage in the development account
+is for once the schedule has moved, this is the only way a box starts.
+
+Mind the quota of the stage's account. A box that fails to end itself lives until the
+reaper finds it, up to 55 minutes. In the scheduled stage's account, a 2-vCPU type such as
+`c6i.large` fits at any time (the worst moment holds 62 of 64 vCPUs), and anything larger
+can meet the quota from HH:10 to HH+1:45 for HH = 04, 10, 16 and 22, when the scheduled
+boxes may be up. In an account with no scheduled stage, the scheduled boxes take nothing:
+the development account then holds only the dev machine's 4 vCPUs. The production account's
+quota is 5 vCPUs until the increase to 64 is granted, so until then only a type of at most
+5 vCPUs, such as the target `m5.large` (2), can be launched there.
 
 ```bash
-export AWS_PROFILE=tabot-dev AWS_REGION=us-east-2
-FN=$(jq -r .launchFunction .sst/outputs.json)
-BUCKET=$(jq -r .bucket .sst/outputs.json)
+STAGE=smr-runs                                 # or production-runs
+export AWS_PROFILE=tabot-dev AWS_REGION=us-east-2   # production-runs: AWS_PROFILE=tabot-production
+FN=$(jq -r .launchFunction ".sst/outputs.$STAGE.json")
+BUCKET=$(jq -r .bucket ".sst/outputs.$STAGE.json")
 
 aws lambda invoke --function-name "$FN" --cli-binary-format raw-in-base64-out \
   --payload '{"instanceType": "c6i.large"}' /tmp/launch.json && cat /tmp/launch.json
 # any type: '{"instanceType": "i4i.2xlarge"}'; a payload without instanceType is an error
 
-aws ec2 describe-instances --filters Name=tag:ledgermath-stage,Values=smr-runs \
+aws ec2 describe-instances --filters "Name=tag:ledgermath-stage,Values=$STAGE" \
   --query 'Reservations[].Instances[].[InstanceId,InstanceType,State.Name,LaunchTime]' --output table
 aws ec2 get-console-output --instance-id <id> --latest --output text | tail -40
 
@@ -606,9 +681,10 @@ is a build artifact, not hosted.
 ### Locally
 
 ```bash
-export AWS_PROFILE=tabot-dev AWS_REGION=us-east-2
+STAGE=production-runs                                      # the scheduled stage; smr-runs before the move
+export AWS_PROFILE=tabot-production AWS_REGION=us-east-2   # smr-runs: AWS_PROFILE=tabot-dev
 eval "$(aws configure export-credentials --format env)"   # Bun's S3 client reads keys from the environment
-BUCKET=$(jq -r .bucket .sst/outputs.json)                 # or: aws s3 ls | grep ledgermath-smr-runs
+BUCKET=$(jq -r .bucket ".sst/outputs.$STAGE.json")        # or: aws s3 ls | grep "ledgermath-$STAGE"
 
 git clone git@github.com:smrdotgg/ledgermath-runs.git /tmp/ledgermath-runs
 git -C /tmp/ledgermath-runs remote set-url --push origin no-push   # a scratch clone pushes nowhere
@@ -671,8 +747,8 @@ It needs:
 
 | Where | Name | What it holds |
 |-------|------|---------------|
-| Variable | `RUNS_AWS_ROLE_ARN` | The stage's output `runsReaderRole` (`jq -r .runsReaderRole .sst/outputs.json` after a deploy) |
-| Variable | `RUNS_BUCKET` | The stage's output `bucket`, the bucket's name |
+| Variable | `RUNS_AWS_ROLE_ARN` | The scheduled stage's output `runsReaderRole` (`jq -r .runsReaderRole .sst/outputs.<stage>.json` after a deploy) |
+| Variable | `RUNS_BUCKET` | The scheduled stage's output `bucket`, the bucket's name |
 | Secret | `RUNS_REPO_DEPLOY_KEY` | The private half of an SSH key whose public half is a deploy key of `smrdotgg/ledgermath-runs` **with write access** (it pushes) |
 
 For the key: `ssh-keygen -t ed25519 -N '' -C ledgermath-runs-copy -f runs-deploy-key`,
@@ -681,12 +757,14 @@ add `runs-deploy-key.pub` under the Runs repository's Settings → Deploy keys w
 both files. The alarm needs nothing more: the workflow asks for `issues: write`.
 
 The role comes with the stage. A deploy of a `-runs` stage creates GitHub's OIDC provider
-for `token.actions.githubusercontent.com` (audience `sts.amazonaws.com`; an account holds
-one per URL, so only one `-runs` stage per account can create it) and the role
-`RunsReaderRole`, which only workflows of `smrdotgg/ledgermath` on `refs/heads/main` can
-assume and which may list the bucket and read `runs/*`, `boots/*` and `blobs/*`, nothing
-else (`infra/runs/github-role.ts`). A workflow started from another branch cannot assume
-it.
+for `token.actions.githubusercontent.com` in its account (audience `sts.amazonaws.com`; an
+account holds one per URL, so only one `-runs` stage per account can create it:
+`production-runs` in the production account, `smr-runs` in the development account) and
+the role `RunsReaderRole`, which only workflows of `smrdotgg/ledgermath` on
+`refs/heads/main` can assume and which may list the bucket and read `runs/*`, `boots/*` and
+`blobs/*`, nothing else (`infra/runs/github-role.ts`). A workflow started from another
+branch cannot assume it. Both variables name the scheduled stage's; the other stage's role
+stays, unused.
 
 ### The alarm
 
@@ -725,6 +803,232 @@ workflow, the merge that brought it. Without `--prices-since`, or with it empty,
 file is not reported. Whether the price files are stale is part of the state each post
 carries, so it too is written only when it changes; when they are fresh again while
 Series are still stale, the next post says so.
+
+## Moving the schedule to the production account
+
+GitHub issue #57. The boxes that boot on the schedule, the bucket their Runs and blobs go
+to, and what the workflow reads move from the development account to the production
+account, in the same Region and zone, from the same image, with the same instance types and
+schedule. The development account keeps the dev machine, `smr-runs` for boxes by hand, and
+`smr-runs`'s bucket as it is: it holds the Runs of the first days, and nothing is deleted.
+
+### Why no Series starts a new group
+
+A Series is its benchmark, params, build, instance type and zone ID, and Method series v1
+splits it on the binary, the runner manifest, `samples`, the image and the dump sections
+`cpuid`, `lscpu`, `sys_cpu`, `kernel`, `process` and `packages` (`methods/v1/facts.ts`).
+None of them reads the account:
+
+- The zone ID `use2-az3` is `us-east-2c` in both accounts, and the pinned image
+  `ami-03499a87bbb39a09a` (Amazon's, public) is visible from the production account in
+  us-east-2 (both checked, read-only, on 2026-11-14). The instance types, `schedule.json`,
+  `runner/` and the benchmarks do not change, as long as `production-runs` is deployed from
+  a commit whose `runner/`, `benchmarks/` and `schedule.json` are those `smr-runs` runs;
+  another commit there would start new groups by itself, for the commit and not the move.
+- What a box records differently in the other account: the account ID in `provider` (the
+  instance identity document), in `ec2_instance` and in `ec2_route_tables`; the IDs of the
+  VPC, subnet, route table, internet gateway, security group and instance profile in
+  `ec2_instance`, `ec2_route_tables` and `ec2_vpc_endpoints` (whose command lines name
+  them); the stage in the box's `Name` tag (`ec2_instance`); and an `http_get` Run's Service
+  inputs, which name the stage's own fixtures bucket. Version 1 splits on none of these
+  sections, and `service` is neither in the Series nor split on.
+- `network`, which version 1 does not split on either, stays the same: both default VPCs
+  are 172.31.0.0/16 with DNS support and host names on and the DHCP options
+  `us-east-2.compute.internal` and `AmazonProvidedDNS`; both default subnets in `use2-az3`
+  are 172.31.32.0/20, map a public address at launch and have no route table of their own;
+  both main route tables send 0.0.0.0/0 to an internet gateway; neither VPC has an
+  endpoint; neither account encrypts EBS volumes by default. So the routes, the resolver
+  (172.31.0.2) and the MTU a box records are the same.
+
+`tests/account-move.test.ts` derives two boots made as the two accounts' boxes would make
+them: one Series, one group, in both Methods. On the page, "what differed" between the last
+Run before the move and the first after it lists those sections, as not split on, and
+Method requests v1 lists both fixtures endpoints among what an `http_get` Series' Runs
+record. Not caused by the move, and handled as before: a type that AWS places on more than
+one processor (an `m5.large` can be a Skylake or a Cascade Lake) can still split on the
+processor in either account.
+
+### Copying the data
+
+`scripts/copy-bucket.ts copy` copies every object under `blobs/`, `runs/`, `boots/` and
+`logs/` from one bucket to another, reading with one profile's keys and writing with
+another's (`aws configure export-credentials`, held in memory and never printed or
+written). It only ever adds. Everything at both ends is listed first, and every object the
+destination already holds is compared with the source's before anything is written: a blob
+by its key (the SHA-256 of its bytes) and size, anything else by its bytes; a difference
+stops it, and nothing is written. Each object is then read whole and checked (a blob's bytes
+must hash to its key, any other object's must have the MD5 its ETag gives, when the ETag is
+an MD5), looked for at the destination once more (one that appeared meanwhile is compared,
+never overwritten), written in one PUT with the source's exact `Content-Type`, and looked
+at again (size, type, and an ETag that is the MD5 of what was sent). Any problem stops it,
+saying what it copied; run again, it carries on, and a second complete run copies nothing.
+Blobs are copied first, then Run files, boot summaries and logs, so the destination never
+holds a Run whose blobs it lacks. At most 16 objects are in flight (`--concurrency`) and
+256 MiB of them held (`--memory-mib`); one larger object (AWS-LC's archive, 155 MB) is held
+alone. `--dry-run` lists, compares and counts, writing nothing.
+
+Only `Content-Type` is carried: no object of a `-runs` bucket has other metadata (`box.sh`
+sets none, and `aws s3 cp` and the deploy set only the type). The source is versioned and
+the copy reads the current version of each key; on 2026-11-14 no key of the development
+bucket had more than one version, and its one delete marker is on a `source/` archive a
+deploy replaced, outside what is copied (every source archive a Run names is a blob too).
+
+`scripts/copy-bucket.ts verify` reads both buckets and writes neither: every source object
+under those prefixes must be at the destination with the same bytes (both read and compared,
+and every blob's bytes hashed to its key), every Run file and boot summary of a checkout of
+the Runs repository must be at the destination with the same bytes, and
+`scripts/check-runs.ts` must pass on the destination's `blobs/`, `runs/` and `boots/`,
+written into `--check-dir` (an empty directory with room for the bucket, about 650 MB).
+
+```bash
+DEV_BUCKET=$(jq -r .bucket .sst/outputs.smr-runs.json)
+PROD_BUCKET=$(jq -r .bucket .sst/outputs.production-runs.json)
+FROM=(--from-bucket "$DEV_BUCKET" --from-profile tabot-dev --to-bucket "$PROD_BUCKET" --to-profile tabot-production)
+
+bun scripts/copy-bucket.ts copy "${FROM[@]}" --dry-run
+bun scripts/copy-bucket.ts copy "${FROM[@]}"
+
+git clone git@github.com:smrdotgg/ledgermath-runs.git /tmp/ledgermath-runs-verify
+bun scripts/copy-bucket.ts verify "${FROM[@]}" --runs-repository /tmp/ledgermath-runs-verify --check-dir /tmp/prod-check
+```
+
+How long: on 2026-11-14 the development bucket held 33,366 objects under those prefixes
+(627 MB: 30,852 blobs, 2,373 Run files, 66 boot summaries, 75 logs), growing by about
+10,600 objects and 130 MB a day. From the dev machine, listing both ends and comparing what is held took 11
+s, and reading every object twice and hashing every blob, as `verify` does, took 144 s.
+The copy makes five requests per object (two reads and three at the destination), so
+expect 5 to 15 minutes for the first copy, and a few minutes for one that adds a day's
+objects;
+`verify` takes a few minutes more for `check-runs.ts`.
+
+### The cutover
+
+Rounds start at 04:10, 10:10, 16:10 and 22:10 UTC; the last box of a round (`i4i.2xlarge`,
+at :50) has ended by HH+1:45 at the latest, reaper included. The `runs` workflow runs at
+00:00, 06:00, 12:00, 18:00 and 22:40. The cutover itself (steps 6 to 12) happens in one gap
+between rounds: after the 06:00 workflow run has finished, so that the Runs repository holds
+the 04:10 round, and before 10:00, ten minutes before the next round. No slot fires in it,
+so no deploy can lose a round or run one twice. The gaps from 12:00 to 16:00 and from 18:00
+to 22:00 serve as well.
+
+Before, on any day:
+
+1. **The quota.** `bun scripts/check-targets.ts --stage production-runs` must say
+   "everything matches": the production account's quota is 64 vCPUs. Changes nothing.
+2. **Deploy `production-runs`**, while it is not the scheduled stage, from main ("Deploy",
+   with `STAGE=production-runs` and the profile `tabot-production`), at any time.
+   Changes, in the production account only: SST's bootstrap and the stage's resources
+   ("Deploy" lists them), with no launch schedule. Check: every target in its outputs has
+   `schedules: []`, and
+   `aws scheduler list-schedules --profile tabot-production --region us-east-2 --query 'Schedules[].[Name,State]' --output text`
+   shows its reaper's schedule and nothing else.
+3. **One box by hand there**, an `m5.large`, a target that fits the quota even before it is
+   raised ("Trigger a boot by hand", with `STAGE=production-runs`). When its log is in the
+   bucket (about 15 minutes), check what it left:
+
+   ```bash
+   aws s3 sync "s3://$PROD_BUCKET" /tmp/prod-bucket --exclude 'source/*' --exclude 'logs/*' \
+     --profile tabot-production --region us-east-2
+   bun scripts/check-runs.ts /tmp/prod-bucket
+   # The same runner, image and zone ID as the newest m5.large Runs of the development account,
+   # in a clone of the Runs repository (as in "Copying the data"):
+   jq -r '[.provider.instance_type, .provider.image_id, .provider.availability_zone_id, .runner] | @tsv' /tmp/prod-bucket/runs/*/*/*/*.json | sort | uniq -c
+   jq -r 'select(.provider.instance_type == "m5.large") | [.started_at, .provider.image_id, .provider.availability_zone_id, .runner] | @tsv' \
+     /tmp/ledgermath-runs-verify/runs/*/*/*/*.json | sort | tail -3
+   ```
+
+   Changes: one instance in the production account for at most 55 minutes, and its Runs,
+   blobs, boot summary and log in the production bucket. They are real Runs of an
+   `m5.large` and are published with the rest once the workflow reads that bucket.
+4. **Copy the data** (`copy --dry-run`, then `copy`, above), while the development account
+   goes on with its rounds. Changes: adds objects to the production bucket. The deploy has
+   already put AWS-LC's archive and the Fixture blobs there, under the same keys and bytes
+   as the development bucket's; they are found the same.
+5. **Verify** (above). Changes nothing.
+
+The cutover, in one gap (here, 06:30 to 10:00):
+
+6. **The last development round is complete**: `aws ec2 describe-instances --profile tabot-dev --region us-east-2 --filters Name=tag:ledgermath-stage,Values=smr-runs Name=instance-state-name,Values=pending,running`
+   lists nothing, and `aws s3 ls "s3://$DEV_BUCKET/boots/<yyyy>/<mm>/<dd>/" --profile tabot-dev`
+   holds that round's five boot summaries. Changes nothing.
+7. **Copy again and verify again**, against a fresh `git pull` of the Runs repository
+   checkout (the 06:00 run has added the round). The copy adds what the development bucket
+   gained since step 4. From here until step 10 the development bucket gains nothing more,
+   because its next slot is 10:10. Changes: adds objects to the production bucket.
+8. **Make `production-runs` the scheduled stage**: `SCHEDULED_STAGE = "production-runs"` in
+   `infra/runs/stages.ts`, and the one line of `tests/runs-stages.test.ts` that pins it;
+   `bun test`; a pull request, merged to main; pull main. Changes: the repository.
+9. **Deploy `production-runs`** from main. Changes, in the production account: the five
+   launch schedules (each with its role) and the launch function's list of targets.
+   Nothing fires before 10:10.
+10. **Deploy `smr-runs`** from main. Changes, in the development account: its five launch
+    schedules and their roles are deleted, and its launch function's list of targets
+    becomes `none (this stage is not the scheduled stage)`, so even a schedule that
+    survived would launch nothing.
+
+    Production first: between the two deploys both stages are scheduled, never neither. A
+    slot that fired between them would start one box in each account, and the
+    development box's Runs would stay in the development bucket, which the workflow no
+    longer reads: nothing published twice, at the cost of one box. In the other order a slot
+    in between would start no box at all, a lost round. In the gap no slot fires either way.
+    If the second deploy fails, deploy it again before 10:00; if it cannot be made to work
+    by then, the 10:10 round also runs in the development account, harmlessly, until it
+    does.
+11. **Check the schedules.**
+    `aws scheduler list-schedules --profile tabot-dev --region us-east-2 --query "Schedules[?State=='ENABLED'].Name" --output text`
+    lists only `ledgermath-smr-runs-BoxReaperSchedule-…` and July's
+    `ledgermath-smr-ReapStaleSchedule-…` (July's `DailyLaunch` is disabled): the
+    development account has no enabled launch schedule. The same with
+    `--profile tabot-production` lists the five `ledgermath-production-runs-BoxLaunch…`
+    schedules and its reaper's. Changes nothing.
+12. **Point the workflow at the production bucket**:
+
+    ```bash
+    gh variable set RUNS_BUCKET --repo smrdotgg/ledgermath --body "$(jq -r .bucket .sst/outputs.production-runs.json)"
+    gh variable set RUNS_AWS_ROLE_ARN --repo smrdotgg/ledgermath --body "$(jq -r .runsReaderRole .sst/outputs.production-runs.json)"
+    gh workflow run runs.yml --repo smrdotgg/ledgermath
+    ```
+
+    Changes: the two repository variables in GitHub. The run by hand shows the workflow
+    assuming the production account's role through that account's OIDC provider; it adds
+    to the Runs repository the files of the box of step 3, the only Run files and boot
+    summary the repository lacks, and derives as before. Its cache holds dump blobs by hash
+    and each stream's reduced record by the stdout blob's hash and the reducing code;
+    nothing in it names a bucket, and the production bucket holds the same blobs under the
+    same keys, verified byte for byte, so the cache is right as it is and need not be
+    cleared.
+
+After the cutover:
+
+13. **The first production round**, 10:10 to 10:50. While it runs:
+    `aws ec2 describe-instances --profile tabot-production --region us-east-2 --filters Name=tag:ledgermath-stage,Values=production-runs`
+    shows the boxes, the launch function's log (`/aws/lambda/<launchFunction>`) has five
+    launches and no refusal, and the development account starts no box. By 11:40 the
+    production bucket holds the round's five boot summaries; `check-runs.ts` on a sync of
+    the bucket passes. The 12:00 run copies, pushes and derives them; then, with its `page`
+    artifact (`gh run download <run> --repo smrdotgg/ledgermath -n page -D /tmp/page`),
+    this prints every Series whose group changed at the move, and should print nothing:
+
+    ```bash
+    CUT=2026-11-DDT10:00:00Z   # the day of the cutover, before the first production round
+    jq -r --arg cut "$CUT" '.derivations[] | . as $d
+      | ($d.points | map({key: .run, value: .started_at}) | from_entries) as $at
+      | $d.differed[] | select($at[.from] < $cut and $at[.to] >= $cut and (.facts | length) > 0)
+      | "\($d.series.id) \($d.series.benchmark) \($d.series.instance_type) \($d.series.params | tojson): \(.facts | join(", "))"' \
+      /tmp/page/derivations.json
+    ```
+
+    Changes nothing.
+14. **Going back, if the production round fails** (no boxes, too few, Runs that do not
+    check out): in the next gap, before 16:00, revert step 8's commit (a pull request,
+    merged), deploy `smr-runs` first and `production-runs` second (now the development
+    stage gains its schedules first, for the same reason), and set both variables back to
+    `smr-runs`'s outputs (`.sst/outputs.smr-runs.json`). The 16:10 round then runs in the
+    development account. Changes: the schedules and launch functions' lists of both stages,
+    and the two variables. Run files already copied from the production bucket stay in the
+    Runs repository: Runs are never removed, and the copy job only adds. For a later try,
+    run steps 6 to 13 again: the copy adds what the development bucket gained, the
+    production bucket keeps its own Runs, and the verification passes with them there.
 
 ## Prices
 

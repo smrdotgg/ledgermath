@@ -120,17 +120,21 @@ describe("which account a -runs stage deploys to", () => {
 const delivered = (time: string, instanceType: string): unknown =>
 	JSON.parse(JSON.stringify(scheduledEvent(instanceType)).replace(SCHEDULED_TIME_PLACEHOLDER, time));
 
+/** -runs stages other than the scheduled one, whichever that is. */
+const UNSCHEDULED = ["smr-runs", "production-runs", "alice-runs", "dev-runs"].filter((stage) => stage !== SCHEDULED_STAGE);
+
 describe("the one scheduled stage", () => {
 	test("is smr-runs until the cutover", () => {
+		// The cutover changes SCHEDULED_STAGE to production-runs, and this line with it
+		// (README, "Moving the schedule to the production account"). No other test names it.
 		expect(SCHEDULED_STAGE).toBe("smr-runs");
-		expect(isScheduledStage("smr-runs")).toBe(true);
-		expect(isScheduledStage("production-runs")).toBe(false);
-		expect(isScheduledStage("alice-runs")).toBe(false);
+		expect(isScheduledStage(SCHEDULED_STAGE)).toBe(true);
+		for (const stage of UNSCHEDULED) expect(isScheduledStage(stage)).toBe(false);
 	});
 
 	test("gets every launch schedule, exactly those smr-runs has had, so deploying it changes none", () => {
-		expect(stageLaunchSchedules("smr-runs")).toBe(LAUNCH_SCHEDULES);
-		expect(stageLaunchSchedules("smr-runs").map((schedule) => [schedule.name, schedule.expression, schedule.event])).toEqual([
+		expect(stageLaunchSchedules(SCHEDULED_STAGE)).toBe(LAUNCH_SCHEDULES);
+		expect(stageLaunchSchedules(SCHEDULED_STAGE).map((schedule) => [schedule.name, schedule.expression, schedule.event])).toEqual([
 			["BoxLaunchC6i8xlargeAt10", "cron(10 4,10,16,22 * * ? *)", { scheduledTime: "<aws.scheduler.scheduled-time>", instanceType: "c6i.8xlarge" }],
 			["BoxLaunchM5LargeAt20", "cron(20 4,10,16,22 * * ? *)", { scheduledTime: "<aws.scheduler.scheduled-time>", instanceType: "m5.large" }],
 			["BoxLaunchC8i2xlargeAt30", "cron(30 4,10,16,22 * * ? *)", { scheduledTime: "<aws.scheduler.scheduled-time>", instanceType: "c8i.2xlarge" }],
@@ -138,19 +142,20 @@ describe("the one scheduled stage", () => {
 			["BoxLaunchI4i2xlargeAt50", "cron(50 4,10,16,22 * * ? *)", { scheduledTime: "<aws.scheduler.scheduled-time>", instanceType: "i4i.2xlarge" }],
 		]);
 		// The launch function's list of targets, as deployed to smr-runs before this change.
-		expect(scheduledTargetTypes("smr-runs")).toBe("c6i.8xlarge,m5.large,c8i.2xlarge,c8a.2xlarge,i4i.2xlarge");
-		expect(scheduledTargetTypes("smr-runs")).toBe(TARGETS.map((target) => target.instance_type).join(","));
+		expect(scheduledTargetTypes(SCHEDULED_STAGE)).toBe("c6i.8xlarge,m5.large,c8i.2xlarge,c8a.2xlarge,i4i.2xlarge");
+		expect(scheduledTargetTypes(SCHEDULED_STAGE)).toBe(TARGETS.map((target) => target.instance_type).join(","));
 	});
 
 	test("is the only stage with launch schedules: every other gets none", () => {
-		for (const stage of ["production-runs", "alice-runs", "dev-runs"]) {
+		expect(UNSCHEDULED.length).toBe(3);
+		for (const stage of UNSCHEDULED) {
 			expect(stageLaunchSchedules(stage)).toEqual([]);
 			expect(scheduledTargetTypes(stage)).toBe(NO_SCHEDULED_TYPES);
 		}
 	});
 
 	test("in any other stage the launch refuses every scheduled payload, so a schedule left behind launches nothing; by hand, any type", async () => {
-		const unscheduled = scheduledTargetTypes("production-runs").split(",");
+		const unscheduled = scheduledTargetTypes(UNSCHEDULED[0] as string).split(",");
 		for (const target of TARGETS) {
 			const reason = unscheduledType(delivered("2026-11-15T10:10:00Z", target.instance_type), unscheduled);
 			expect(reason).toContain(`names ${target.instance_type}, which is not a target of the deployed schedule (none (this stage is not the scheduled stage))`);
@@ -160,7 +165,7 @@ describe("the one scheduled stage", () => {
 
 		// The handler, with the environment such a stage's function gets: refused before any AWS call.
 		const before = process.env.LEDGERMATH_TARGET_INSTANCE_TYPES;
-		process.env.LEDGERMATH_TARGET_INSTANCE_TYPES = scheduledTargetTypes("alice-runs");
+		process.env.LEDGERMATH_TARGET_INSTANCE_TYPES = scheduledTargetTypes(UNSCHEDULED[1] as string);
 		try {
 			const outcome = await launch(delivered("2026-11-15T10:10:00Z", "c6i.8xlarge"), new Date("2026-11-15T10:10:01Z"));
 			expect(outcome.launched).toBe(false);
