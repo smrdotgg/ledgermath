@@ -160,8 +160,6 @@ licence does not cover it, and LedgerMath claims no rights in it.
   made.
 - `scripts/box-in-container/ec2/*.json`: the records the EC2 API's `DescribeInstanceTypes`
   gave for three instance types.
-- `packages/shared/src/utils/aws-ec2-instance-types.ts`, `aws-regions.ts` and
-  `aws-zones.ts`: lists of AWS's names for instance types, Regions and zones.
 
 ## 2. In the published benchmark binaries
 
@@ -794,7 +792,6 @@ and are not published.
 | `@aws-sdk/client-ec2` | 3.1085.0 | Apache-2.0 | The Lambda functions that launch and reap boxes (`infra/`) |
 | `sst` | 4.17.0 | MIT | Deploying the stack (`sst.config.ts`, `infra/`) |
 | `ajv` | 8.20.0 | MIT | Checking Runs, events and price files against `schemas/` |
-| `zod` | 4.4.3 | MIT | `packages/shared` |
 | `typescript` | 7.0.2 | Apache-2.0 | Type checking (`bunx tsc --noEmit`) |
 | `@types/aws-lambda` | 8.10.162 | MIT | Type definitions |
 | `@types/bun` | 1.3.14 | MIT | Type definitions |
