@@ -798,9 +798,11 @@ stage, which it then takes for the stage's own); and anything that changes after
 deploy has read it. The checks are made once, as the deploy starts, so a plan cancelled, or
 the distribution changed in the console, after that is not seen; in particular, `on`'s
 approval holds for that moment only, and a cancellation during or after the deploy leaves
-the distribution serving without a plan until the watch acts. SST's lock keeps two SST
-commands on the stage from running at once; the watch, and changes made in the console or
-with the CLI, do not take it.
+the distribution serving without a plan until the watch acts. SST's lock keeps two
+commands that change the stage (`sst deploy`, `sst refresh`, `sst remove`) from running at
+once. `sst diff` does not take it: a diff run while a deploy is under way can read the
+state from before that deploy beside what AWS reports during it, and its checks only warn.
+The watch, and changes made in the console or with the CLI, do not take the lock either.
 
 So from an enabled distribution the only way out is `dark`; `off` and a change of
 `PUBLIC_BLOBS.plan` come only after `dark` has been deployed and the distribution reports
