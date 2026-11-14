@@ -149,33 +149,43 @@ export const FREE_PLAN = {
  * limit, which leaves room for WAF's estimate being near, not exact. A
  * runaway loop does tens to hundreds of requests a second and passes 1,500
  * within a minute; WAF then blocks that address (usually within 30 seconds of
- * it going over, AWS says) until its count over the last 5 minutes falls
- * below the limit, and blocked requests do not count against the plan's
- * allowance. It puts no ceiling on the total: TOTAL_RATE_LIMIT does.
+ * it going over, possibly several minutes, AWS says) until its estimate of
+ * the address's rate falls below the limit, and blocked requests do not count
+ * against the plan's allowance. It does not limit the total: TOTAL_RATE_LIMIT
+ * does, as approximately.
  */
 export const RATE_LIMIT = { requests: 1_500, windowSeconds: 300 } as const;
 
 /**
- * The ceiling on all requests for blobs together, from every address: 6,000
- * in any 5 minutes (20 a second), counted by one WAF rate-based rule whose
- * aggregation is CONSTANT ("count all"), scoped down to URI paths that start
- * with /blobs/, so that anything else served later is not counted. Over it,
- * every request for a blob is refused, for everyone, until the rate falls.
+ * The rate limit on all requests for blobs together, from every address:
+ * 6,000 in any 5 minutes (20 a second), counted by one WAF rate-based rule
+ * whose aggregation is CONSTANT ("count all"), scoped down to URI paths that
+ * start with /blobs/, so that anything else served later is not counted.
+ * Over it, every request for a blob is refused, for everyone, until the rate
+ * falls.
  *
- * What it bounds is what S3 can bill: only a request for a blob can reach the
- * bucket, and at most 6,000 × 288 five-minute windows × 31 days = 53,568,000
- * a month get past the rule, which at S3's $0.0004 per 1,000 GETs in
- * us-east-2 is $21.43 if every one of them missed CloudFront's cache.
- * WAF's count is an estimate and acts within seconds, so that is a ceiling
- * in practice, not to the cent.
+ * AWS enforces it approximately, and says so
+ * (docs.aws.amazon.com/waf/latest/developerguide/waf-rule-statement-type-rate-based-caveats.html):
+ * WAF estimates the rate, weighting recent requests, and limits near the
+ * limit, not exactly at it; a rate over the limit can pass for up to several
+ * minutes before WAF acts (usually under 30 seconds); and changing any of the
+ * rule's rate settings resets its counts, which can pause it for up to a
+ * minute. So it is not a cap on what S3 can bill, and nothing here is: there
+ * is no hard cap on S3 request charges. monthAtTotalLimit gives what a month
+ * costs at exactly this rate throughout; bursts can exceed it.
  */
 export const TOTAL_RATE_LIMIT = { requests: 6_000, windowSeconds: 300, pathPrefix: "/blobs/" } as const;
 
 /** S3 Standard GET and HEAD requests in us-east-2, USD per 1,000 (AWS's price list of 2026-11-09). */
 export const S3_GET_USD_PER_THOUSAND = 0.0004;
 
-/** The most requests the ceiling lets through in a month of `days` days, and what S3 bills for them if all miss the cache. */
-export function monthlyCeiling(days: number): { requests: number; usd: number } {
+/**
+ * The requests in a month of `days` days at exactly TOTAL_RATE_LIMIT's rate
+ * throughout, and what S3 bills for them if every one misses CloudFront's
+ * cache: what a month costs at the configured steady rate, an estimate and
+ * not a maximum (bursts can exceed it; see TOTAL_RATE_LIMIT).
+ */
+export function monthAtTotalLimit(days: number): { requests: number; usd: number } {
 	const windows = (days * 24 * 3600) / TOTAL_RATE_LIMIT.windowSeconds;
 	const requests = TOTAL_RATE_LIMIT.requests * windows;
 	return { requests, usd: (requests / 1000) * S3_GET_USD_PER_THOUSAND };
@@ -519,12 +529,16 @@ function visibility(metricName: string): VisibilityConfig {
 /**
  * The web ACL's rules, 4 of the Free plan's 5, in the order WAF evaluates
  * them (lowest priority first, stopping at the first that blocks): the two
- * managed groups, then the per-address limit, then the ceiling on the total.
+ * managed groups, then the per-address limit, then the limit on the total.
  * So a request a managed group or the per-address limit has already blocked
- * is never counted by the ceiling: a single runaway address is cut off by its
- * own rule, and does not use up everyone's allowance under the ceiling. The
- * ceiling counts exactly the requests for blobs that would otherwise go on to
- * CloudFront's cache and, on a miss, the bucket.
+ * is never counted by the total's rule: a single runaway address is cut off
+ * by its own rule, and does not use up everyone's allowance under the total.
+ * The total's rule counts every other request whose path starts with
+ * /blobs/: each one the blob function lets on to CloudFront's cache and, on a
+ * miss, the bucket, and also the malformed ones under /blobs/ that the
+ * function then answers with 404 (WAF sees a request before the function).
+ * Its name, TOTAL_RULE, says "ceiling"; it is a rate limit WAF enforces
+ * approximately (TOTAL_RATE_LIMIT).
  */
 export function webAclRules(metricPrefix: string): WebAclRule[] {
 	const managed = MANAGED_RULE_GROUPS.map(

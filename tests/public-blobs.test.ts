@@ -23,7 +23,7 @@ import {
 	MANAGED_CACHE_POLICY,
 	MANAGED_RESPONSE_HEADERS_POLICY,
 	MANAGED_RULE_GROUPS,
-	monthlyCeiling,
+	monthAtTotalLimit,
 	NO_ROUTE_FUNCTION_CODE,
 	ORIGIN_ID,
 	PER_ADDRESS_RULE,
@@ -415,7 +415,7 @@ describe("the functions", () => {
 		expect(`/${BLOB_PATH_PATTERN}`.replace("*", HEX)).toBe(`/blobs/sha256/${HEX}`);
 	});
 
-	test("every address the blob function lets through is one the ceiling counts", () => {
+	test("every address the blob function lets through is one the total limit counts", () => {
 		expect(`/${BLOB_PREFIX}${HEX}`.startsWith(TOTAL_RATE_LIMIT.pathPrefix)).toBe(true);
 		expect(BLOB_URI_PATTERN.startsWith(`^${TOTAL_RATE_LIMIT.pathPrefix}`)).toBe(true);
 	});
@@ -456,7 +456,7 @@ describe("the web ACL", () => {
 		return rule;
 	};
 
-	test("has 4 of the Free plan's 5 rules: two AWS managed groups, the per-address limit, then the ceiling on the total", () => {
+	test("has 4 of the Free plan's 5 rules: two AWS managed groups, the per-address limit, then the limit on the total", () => {
 		expect(rules.length).toBe(4);
 		expect(rules.length).toBeLessThanOrEqual(FREE_PLAN.wafRules);
 		expect(rules.map((rule) => [rule.priority, rule.name])).toEqual([
@@ -469,12 +469,12 @@ describe("the web ACL", () => {
 		for (const rule of rules.slice(0, 2)) expect(rule).toMatchObject({ overrideAction: { none: {} } });
 	});
 
-	test("evaluates the ceiling last, so what an earlier rule blocked is never counted against everyone", () => {
+	test("evaluates the limit on the total last, so what an earlier rule blocked is never counted against everyone", () => {
 		const priorities = new Map(rules.map((rule) => [rule.name, rule.priority]));
-		const ceiling = priorities.get(TOTAL_RULE) as number;
-		expect(Math.max(...rules.map((rule) => rule.priority))).toBe(ceiling);
-		expect(priorities.get(PER_ADDRESS_RULE) as number).toBeLessThan(ceiling);
-		for (const name of MANAGED_RULE_GROUPS) expect(priorities.get(name) as number).toBeLessThan(ceiling);
+		const total = priorities.get(TOTAL_RULE) as number;
+		expect(Math.max(...rules.map((rule) => rule.priority))).toBe(total);
+		expect(priorities.get(PER_ADDRESS_RULE) as number).toBeLessThan(total);
+		for (const name of MANAGED_RULE_GROUPS) expect(priorities.get(name) as number).toBeLessThan(total);
 		expect(new Set(rules.map((rule) => rule.priority)).size).toBe(rules.length);
 	});
 
@@ -525,21 +525,24 @@ describe("the web ACL", () => {
 		expect(9_000 / PUBLIC_REQUESTS_PER_SECOND / 60).toBe(37.5);
 		expect(RATE_LIMIT.requests / 50).toBeLessThan(60);
 		expect(RATE_LIMIT.requests).toBeGreaterThanOrEqual(10); // WAF's least
-		// The ceiling is above one address's limit, so one address alone never trips it,
+		// The total limit is above one address's, so one address alone never trips it,
 		// and five polite mirrors at once use it all.
 		expect(TOTAL_RATE_LIMIT.requests).toBeGreaterThan(RATE_LIMIT.requests);
 		expect(TOTAL_RATE_LIMIT.requests / (PUBLIC_REQUESTS_PER_SECOND * window)).toBe(5);
 	});
 
-	test("bounds what S3 can bill in a month: 6,000 × 288 × 31 requests, $21.43, as the README says", () => {
+	test("a month at the total limit's steady rate: 6,000 × 288 × 31 requests, $21.43 of S3 GETs, an estimate and not a cap, as the README says", () => {
 		expect((24 * 3600) / TOTAL_RATE_LIMIT.windowSeconds).toBe(288);
-		const month = monthlyCeiling(31);
+		const month = monthAtTotalLimit(31);
 		expect(month.requests).toBe(6_000 * 288 * 31);
 		expect(month.requests).toBe(53_568_000);
 		expect(S3_GET_USD_PER_THOUSAND).toBe(0.0004);
 		expect(month.usd).toBeCloseTo(21.4272, 6);
 		expect(TOTAL_RATE_LIMIT.requests / TOTAL_RATE_LIMIT.windowSeconds).toBe(20);
-		for (const phrase of ["6,000 × 288 × 31", "53,568,000", "$21.43", "20 a second"]) expect(README).toContain(phrase);
+		const prose = README.slice(README.indexOf("### Public blobs"), README.indexOf("## The Runs repository")).replace(/\s+/g, " ");
+		for (const phrase of ["6,000 × 288 × 31", "53,568,000", "$21.43", "20 a second", "waf-rule-statement-type-rate-based-caveats.html", "There is no hard cap on S3 request charges"]) expect(prose).toContain(phrase);
+		// Nothing calls the figure a ceiling or a maximum.
+		for (const claim of ["the ceiling's $21.43", "at most 53,568,000", "a ceiling in practice", "up to the ceiling", "ceiling"]) expect(prose).not.toContain(claim);
 	});
 });
 

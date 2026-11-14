@@ -626,7 +626,7 @@ stays on: CloudFront signs its requests with Origin Access Control.
 | the same, for a blob it does not hold (yet) | 403 `AccessDenied` from S3, which says 403 rather than 404 to a reader that may not list the bucket; CloudFront keeps the error 10 seconds, so a blob that appears later is served soon after |
 | any other address, `/` included | 404 from a function |
 | plain HTTP | 403 |
-| over the per-address limit or the ceiling, or from an address on AWS's IP reputation list | 403 from WAF (a custom status such as 429 needs Pro) |
+| over the per-address limit or the total limit (as WAF estimates them), or from an address on AWS's IP reputation list | 403 from WAF (a custom status such as 429 needs Pro) |
 
 A blob's response carries `Cache-Control: public, max-age=31536000, immutable` (its key
 is its hash, so it never changes), `Access-Control-Allow-Origin: *` (a page on any origin
@@ -686,30 +686,38 @@ for), evaluated in this order after the two managed rule groups:
    day's new blobs at 4 a second, the pace `scripts/lib/blobs.ts` keeps, takes 37.5
    minutes at 1,200 per 5 minutes, 20% under the limit, which leaves room for WAF's
    estimate being near rather than exact. A runaway loop does tens to hundreds a second and
-   passes 1,500 within a minute; WAF blocks that address until its count over the last 5
-   minutes falls back under. Over IPv6 one client can spread across many addresses; WAF
+   passes 1,500 within a minute; WAF blocks that address until its rate, as WAF estimates
+   it, falls back under. Over IPv6 one client can spread across many addresses; WAF
    counts each on its own.
-2. **A ceiling on all requests for blobs together**: 6,000 in any 5 minutes, 20 a second,
-   counted from every address as one (aggregation `CONSTANT`, "count all", which needs a
-   scope-down statement: here, URI paths that start with `/blobs/`, so that anything else
-   served from the distribution later is not counted). Every request the blob function lets
-   through starts with `/blobs/`, so none reaches S3 uncounted.
+2. **A limit on all requests for blobs together** (the total limit): 6,000 in any 5
+   minutes, 20 a second, counted from every address as one (aggregation `CONSTANT`, "count
+   all", which needs a scope-down statement: here, URI paths that start with `/blobs/`, so
+   that anything else served from the distribution later is not counted). Every request the
+   blob function lets through starts with `/blobs/`, so none reaches S3 uncounted; the
+   malformed addresses under `/blobs/` that the function answers with 404 are counted too,
+   since WAF sees a request before the function does.
 
-   *What it is.* A bound on what outside traffic can make S3 bill: only a request for a
-   blob can reach the bucket, and at most 6,000 × 288 × 31 = 53,568,000 requests get past
+   *What it is.* A rate limit that AWS enforces approximately, on the only requests that can
+   reach the bucket. At its rate, all month, 6,000 × 288 × 31 = 53,568,000 requests get past
    the rule in a 31-day month (288 five-minute windows a day), about 53.6 million, which at
-   $0.0004 per 1,000 GETs is $21.43 if every one of them missed CloudFront's cache all
-   month. *What it is not.* A bound to the cent: WAF's count is an estimate that weights
-   recent requests, and AWS says it acts usually within 30 seconds of the rate going over,
-   possibly minutes, so a burst can pass for that long; it is a ceiling in practice. And it
-   is not selective: while the total is over the limit, every request for a blob is refused,
-   for everyone, polite mirrors included (five of them at 4 a second fill it). Service
-   resumes by itself when the rate over the last 5 minutes falls below the limit; nothing
-   needs to be done. The ceiling also counts requests CloudFront serves from its cache.
+   $0.0004 per 1,000 GETs is $21.43 if every one of them missed CloudFront's cache: what a
+   month costs at the configured steady rate. *What it is not.* A cap. AWS says rate-based
+   rules are "not intended for precise request-rate limiting"
+   ([rate-based rule caveats](https://docs.aws.amazon.com/waf/latest/developerguide/waf-rule-statement-type-rate-based-caveats.html)):
+   WAF estimates the rate, weighting recent requests, and limits near the limit rather than
+   exactly at it; requests can come in over the limit for up to several minutes before WAF
+   starts limiting them (usually under 30 seconds); and changing any of the rule's rate
+   settings resets its counts, which can pause it for up to a minute. So bursts can exceed
+   the figure, by much more than rounding when they are large or repeated. There is no hard
+   cap on S3 request charges here. Nor is it selective: while the total is over the limit,
+   every request for a blob is refused, for everyone, polite mirrors included (five of them
+   at 4 a second fill it). Service resumes by itself when WAF's estimate of the rate falls
+   below the limit; nothing needs to be done. The total limit also counts requests
+   CloudFront serves from its cache.
 
-Because the ceiling comes last, a request a managed group or the per-address limit has
+Because the total limit comes last, a request a managed group or the per-address limit has
 already blocked is never counted against everyone, so one runaway address is cut off by
-its own rule without spending the ceiling. Beside them, two free AWS managed rule groups,
+its own rule without using up the total. Beside them, two free AWS managed rule groups,
 `AWSManagedRulesAmazonIpReputationList` and `AWSManagedRulesKnownBadInputsRuleSet`: 4
 rules of the Free plan's 5. `AWSManagedRulesCommonRuleSet`, the console's third default,
 is left out: it guards applications that parse what they are sent, and it blocks requests
@@ -720,7 +728,8 @@ check-capacity`, read-only, on 2026-11-14: 231 capacity units).
 $0.0004 per 1,000 in us-east-2 (AWS's price list of 2026-11-09), and the plan does not
 cover it; transfer from S3 to CloudFront is free. On the Free allowance, if every request
 missed: $0.40 a month, $1.20 in the month of a 3× spike; beyond that AWS keeps serving, at
-$0.40 per further million misses, up to the ceiling's $21.43 a month. A blob already
+$0.40 per further million misses: $21.43 for a month at the total limit's steady rate, and
+more if bursts get past it, since nothing caps it. A blob already
 cached at an edge does not miss; a 403 for a missing key may be free (S3 does not bill
 AccessDenied to requests from outside the account), but count it. The plan's 5 GB of S3
 storage credits offsets that much of the bucket's storage.
@@ -804,7 +813,7 @@ the deploy prints the next step each time.
    - the web ACL `ledgermath-production-runs-public-blobs`, scope `CLOUDFRONT`, in
      us-east-1 (the provider's resources take a `region` since `@pulumi/aws` 7, so no
      second provider): default allow, the two managed groups, the per-address limit, the
-     ceiling;
+     total limit;
    - the Origin Access Control `ledgermath-production-runs-public-blobs` (S3, always sign,
      SigV4);
    - the CloudFront Functions `ledgermath-production-runs-blob-request`,
@@ -867,7 +876,7 @@ tabot-production --arn <publicBlobs.plan> --if-match <eTag from get-subscription
 CloudFormation's subscription refuses to change a tier itself, and a deploy touches the
 subscription only when its desired state changes, so the upgrade stays. (Whether it would
 accept a desired tier equal to the one AWS already has is not verified.) The deploy and
-the watch accept any ACTIVE tier. With Pro, consider raising the ceiling with the
+the watch accept any ACTIVE tier. With Pro, consider raising the total limit with the
 allowance.
 
 **A custom domain** is one line in `PUBLIC_BLOBS`, `domain: { name, certificateArn }` with
@@ -890,7 +899,7 @@ are in. Nothing here uses a feature a plan refuses (no Origin Access Identity, l
 groups). A static site served later from the same distribution would take the default
 behaviour (in place of the 404 function, with a second origin or an origin path) and fits
 in the 5 behaviours, but would share the allowance and the per-address limit with the
-blobs (not the ceiling, which counts only `/blobs/`), could set its own headers only
+blobs (not the total limit, which counts only `/blobs/`), could set its own headers only
 through a function, and would have no logs below Pro. A second distribution, on a second
 Free plan, would keep them apart.
 

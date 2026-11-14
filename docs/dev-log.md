@@ -935,12 +935,14 @@ A migrated benchmark is done only when **all** of these hold:
   distribution is now for one stage, `PUBLIC_BLOBS.stage` = `production-runs` (the
   scheduled pipeline moves to that account; `smr-runs` becomes a development stage):
   elsewhere nothing is made and AWS is not asked, and every AWS call the deploy makes or
-  prints uses the stage's own profile. **A ceiling**: a second WAF rate rule counts every
-  request under `/blobs/` together (aggregation `CONSTANT`, with a URI-path scope-down) and
-  blocks all of them over 6,000 per 5 minutes, evaluated last so that requests the managed
-  groups or the per-address limit already blocked are not counted; at most 53,568,000
-  requests a 31-day month, $21.43 of S3 GETs if all missed the cache. AWS accepted the four
-  rules (`wafv2 check-capacity`, read-only: 231 units; without the scope-down it refused).
+  prints uses the stage's own profile. **A limit on the total**: a second WAF rate rule
+  counts every request under `/blobs/` together (aggregation `CONSTANT`, with a URI-path
+  scope-down) and blocks all of them over 6,000 per 5 minutes, evaluated last so that
+  requests the managed groups or the per-address limit already blocked are not counted; at
+  that steady rate a 31-day month is 53,568,000 requests, $21.43 of S3 GETs if all missed
+  the cache, an estimate and not a cap, since WAF enforces the rate approximately. AWS
+  accepted the four rules (`wafv2 check-capacity`, read-only: 231 units; without the
+  scope-down it refused).
   **Transitions**: the distribution's comment records the state and plan last deployed; a
   deploy first reads it with `aws cloudfront list-distributions` (paged by hand: the CLI's
   own paging prints nothing at all for an account with no distribution) and the plan
