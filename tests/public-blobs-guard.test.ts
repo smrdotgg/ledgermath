@@ -18,6 +18,7 @@ import {
 	readDeployed,
 	readManaged,
 	readSubscriptions,
+	stageRefusals,
 	stateFilePath,
 	type SubscriptionSummary,
 	subscriptionsPage,
@@ -225,7 +226,7 @@ describe("which distribution is the stage's", () => {
 		// Deleted outside the stage.
 		expect(findDeployed([], STAGE, managedOne("E3", ON))).toMatchObject({ kind: "unknown", reason: expect.stringContaining("which AWS does not list") });
 		for (const target of ["off", "dark", "closed", "on"] as const) {
-			expect(judgeTransition(edited, { kind: "deploy", state: target, plan: "code" }, ACTIVE).allowed).toBe(false);
+			expect(judgeTransition(edited, { state: target, plan: "code" }, ACTIVE).allowed).toBe(false);
 		}
 	});
 
@@ -242,7 +243,7 @@ describe("which distribution is the stage's", () => {
 			const deployed = readDeployed(() => page(listing), STAGE, managed);
 			expect([name, deployed]).toEqual([name, { kind: "unknown", reason: expect.stringContaining(reason) }]);
 			// Even handed the look-alike's coverage, nothing is allowed.
-			for (const target of ["off", "dark", "closed", "on"] as const) expect([name, target, judgeTransition(deployed, { kind: "deploy", state: target, plan: "code" }, lookalikeCovered).allowed]).toEqual([name, target, false]);
+			for (const target of ["off", "dark", "closed", "on"] as const) expect([name, target, judgeTransition(deployed, { state: target, plan: "code" }, lookalikeCovered).allowed]).toEqual([name, target, false]);
 		}
 	});
 });
@@ -303,8 +304,7 @@ describe("whether a plan covers the distribution", () => {
 });
 
 describe("the transitions", () => {
-	const deploy = (state: PublicBlobsState, plan: PlanAttachment = "code"): Target => ({ kind: "deploy", state, plan });
-	const REMOVE: Target = { kind: "remove" };
+	const deploy = (state: PublicBlobsState, plan: PlanAttachment = "code"): Target => ({ state, plan });
 
 	// [what is deployed, the target, the plan check, allowed]
 	const situations: Record<string, Deployed> = {
@@ -320,7 +320,6 @@ describe("the transitions", () => {
 	};
 	const targets: Record<string, Target> = {
 		off: deploy("off"),
-		remove: REMOVE,
 		dark: deploy("dark"),
 		closed: deploy("closed"),
 		"on (plan ACTIVE)": deploy("on"),
@@ -332,18 +331,18 @@ describe("the transitions", () => {
 	const N = false;
 	// Columns in the order of `targets`.
 	const expected: Record<string, boolean[]> = {
-		"nothing":                       [Y, Y, Y, N, N, Y, N, N],
-		"dark, disabled":                [Y, Y, Y, Y, Y, Y, N, N],
-		"dark, disabling":               [N, N, Y, Y, Y, N, N, N],
-		"dark, enabled by hand":         [N, N, Y, Y, Y, N, N, N],
-		"closed, enabled":               [N, N, Y, Y, Y, N, N, N],
-		"on, enabled":                   [N, N, Y, Y, Y, N, N, N],
-		"on, disabled by the watch":     [N, N, Y, N, N, N, N, N],
-		"closed, disabled by the watch": [N, N, Y, N, N, N, N, N],
-		"cannot tell":                   [N, N, N, N, N, N, N, N],
+		"nothing":                       [Y, Y, N, N, Y, N, N],
+		"dark, disabled":                [Y, Y, Y, Y, Y, N, N],
+		"dark, disabling":               [N, Y, Y, Y, N, N, N],
+		"dark, enabled by hand":         [N, Y, Y, Y, N, N, N],
+		"closed, enabled":               [N, Y, Y, Y, N, N, N],
+		"on, enabled":                   [N, Y, Y, Y, N, N, N],
+		"on, disabled by the watch":     [N, Y, N, N, N, N, N],
+		"closed, disabled by the watch": [N, Y, N, N, N, N, N],
+		"cannot tell":                   [N, N, N, N, N, N, N],
 	};
 
-	test("allow exactly the table: from an enabled distribution only dark (or staying closed/on); off, removal and a plan change only from dark, disabled", () => {
+	test("allow exactly the table: from an enabled distribution only dark (or staying closed/on); off and a plan change only from dark, disabled", () => {
 		const got: Record<string, boolean[]> = {};
 		for (const [name, deployed] of Object.entries(situations)) {
 			got[name] = Object.values(targets).map((target) => judgeTransition(deployed, target, ACTIVE).allowed);
@@ -369,7 +368,7 @@ describe("the transitions", () => {
 		expect(enabledOff.reason).toContain("is enabled, Deployed");
 		expect(enabledOff.reason).toContain('Deploy with PUBLIC_BLOBS.state "dark"');
 		expect(enabledOff.reason).toContain("wait until the distribution reports disabled (Enabled false, Status Deployed");
-		expect(judgeTransition(present("on", true), REMOVE, ACTIVE).reason).toContain("removing the stage would cancel its plan while it may still serve");
+		expect(enabledOff.reason).toContain('"off" would cancel its plan while it may still serve');
 		const lapsed = judgeTransition(present("on", true), deploy("on"), NONE);
 		expect(lapsed.reason).toContain("no ACTIVE plan covers it (no plan lists the distribution)");
 		expect(lapsed.reason).toContain("the watch disables it within 5 minutes of the plan lapsing (10 if AWS cannot be asked); to disable it at once, deploy \"dark\"");
@@ -380,6 +379,19 @@ describe("the transitions", () => {
 		expect(judgeTransition(present("on", true), deploy("on", "console"), ACTIVE).reason).toContain('Changing PUBLIC_BLOBS.plan from "code" to "console"');
 		expect(judgeTransition({ kind: "absent" }, deploy("on"), ACTIVE).reason).toContain('A distribution is made only disabled: deploy "dark" first.');
 		expect(judgeTransition({ kind: "unknown", reason: "x" }, deploy("off"), null).reason).toBe("what is deployed cannot be told: x");
+	});
+
+	test("need a protected stage for anything but off: sst remove runs no check, and only SST's protection stops it", () => {
+		for (const state of ["dark", "closed", "on"] as const) {
+			expect(stageRefusals(state, { protect: true })).toEqual([]);
+			const refusals = stageRefusals(state, { protect: false });
+			expect(refusals.length).toBe(1);
+			expect(refusals[0]).toContain("the stage is not protected");
+			expect(refusals[0]).toContain("sst remove does not run this program");
+			expect(refusals[0]).toContain("protect: true");
+		}
+		// off makes nothing, and takes down only what the table lets it.
+		expect(stageRefusals("off", { protect: false })).toEqual([]);
 	});
 
 	test("carry a scheduled cancellation through as a warning", () => {

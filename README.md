@@ -761,20 +761,22 @@ attachment the stage last deployed. The two must agree: the recorded ID listed, 
 ARN and the comment the state last saw, and no other distribution of the account carrying
 the stage's comment. When the distribution exists, `aws pricing-plan-manager
 list-subscriptions` says whether an ACTIVE plan covers it, by its ARN, and any scheduled
-cancellation or downgrade, which the deploy prints as a warning with its date. A transition the table refuses stops the deploy
-(`sst deploy`, `sst dev`, `sst remove`) with a message saying what to deploy first; `sst
-diff` and `sst refresh` only warn. When AWS cannot be asked, nothing is allowed. Rows: what
+cancellation or downgrade, which the deploy prints as a warning with its date. A
+transition the table refuses stops the deploy with a message saying what to deploy first;
+`sst diff` and `sst refresh` only warn. When the stage's state cannot be read or the
+distributions cannot be listed, nothing is allowed (the last row); when the subscriptions
+cannot be listed, `on` is refused and the other columns are judged without them. Rows: what
 is deployed; columns: the state deployed to, with the same plan attachment unless said.
 
-| Deployed | `off` | remove | `dark` | `closed` | `on`¹ | `dark`, plan changed | `closed`/`on`, plan changed |
-|----------|-------|--------|--------|----------|-------|----------------------|-----------------------------|
-| nothing | yes | yes | yes | no | no | yes | no |
-| `dark`, disabled (`Deployed`) | yes | yes | yes | yes | yes | yes | no |
-| `dark`, still disabling (`InProgress`) | no | no | yes | yes | yes | no | no |
-| `dark`, but enabled by hand | no | no | yes | yes | yes | no | no |
-| `closed` or `on`, enabled | no | no | yes | yes | yes | no | no |
-| `closed` or `on`, disabled by the watch or by hand | no | no | yes | no | no | no | no |
-| cannot tell (below) | no | no | no | no | no | no | no |
+| Deployed | `off` | `dark` | `closed` | `on`¹ | `dark`, plan changed | `closed`/`on`, plan changed |
+|----------|-------|--------|----------|-------|----------------------|-----------------------------|
+| nothing | yes | yes | no | no | yes | no |
+| `dark`, disabled (`Deployed`) | yes | yes | yes | yes | yes | no |
+| `dark`, still disabling (`InProgress`) | no | yes | yes | yes | no | no |
+| `dark`, but enabled by hand | no | yes | yes | yes | no | no |
+| `closed` or `on`, enabled | no | yes | yes | yes | no | no |
+| `closed` or `on`, disabled by the watch or by hand | no | yes | no | no | no | no |
+| cannot tell (below) | no | no | no | no | no | no |
 
 ¹ Only when an ACTIVE plan covers the distribution; otherwise no, in every row.
 
@@ -789,15 +791,32 @@ outside the stage, whatever the edit). What this cannot see: a state that is its
 (edited by hand, restored from an older copy, or refreshed after a change made outside the
 stage, which it then takes for the stage's own).
 
-So from an enabled distribution the only way out is `dark`; `off`, removal and a change of
+So from an enabled distribution the only way out is `dark`; `off` and a change of
 `PUBLIC_BLOBS.plan` come only after `dark` has been deployed and the distribution reports
 disabled (`Enabled` false, `Status` `Deployed`). A distribution the watch disabled while the
 stage says `closed` or `on` takes a `dark` deploy before anything else, because a deploy of
-`on` would not enable it again (the stage still records it enabled). Pulumi's `protect` on
-the distribution and the subscription, set while the distribution is enabled, is a second
-lock: Pulumi refuses to delete either until a `dark` deploy lifts it. `production-runs` is
-a protected stage, so `sst remove` is refused there anyway; a dev stage such as `smr-runs`
-never has any of this, so `sst remove` there removes what it always did.
+`on` would not enable it again (the stage still records it enabled).
+
+**`sst remove` runs none of these checks.** SST 4.17's `sst remove` runs `pulumi destroy`,
+which destroys what the stage's saved state holds without running the program
+(`pkg/project/run.go`), so the table has no column for it: a removal would cancel the plan
+and delete the distribution whatever the distribution is doing. What stops it is SST's
+stage protection: for a stage whose app settings in `sst.config.ts` say `protect: true`,
+SST refuses `sst remove` before it does anything. So public blobs are made only on a
+protected stage: a deploy of `dark`, `closed` or `on` stops, before AWS is asked anything,
+unless `$app.protect` is true (`off` is always allowed: it makes nothing). `sst.config.ts`
+gives `-runs` stages no `protect` today, so until it does, `production-runs` can deploy only
+`off`. What stage protection does not prevent: it is a setting SST reads from
+`sst.config.ts` at each command, not a lock in AWS, so `sst remove` from a checkout whose
+`sst.config.ts` says otherwise, `pulumi destroy` run by hand on the state, and deleting the
+resources in the console or with the AWS CLI all go ahead; and it does not stop a deploy,
+which deletes or replaces what the program says (the table judges those). Pulumi's
+`protect` on the distribution and the subscription, set while the distribution is enabled,
+is a second, narrower lock, kept in the stage's saved state: Pulumi refuses to delete or
+replace either, in a deploy or a destroy, until a `dark` deploy lifts it. It does not
+prevent changes made in place, changes in the console or with the CLI, or cancelling the
+plan outside the stage. A dev stage such as `smr-runs` never has any of this, so `sst
+remove` there removes what it always did.
 
 **The watch.** A Lambda in the stage, `PublicBlobsWatch` (stage output
 `publicBlobs.watchFunction`), runs every 5 minutes, deploy or not

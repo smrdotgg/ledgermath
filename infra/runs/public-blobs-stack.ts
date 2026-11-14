@@ -11,13 +11,19 @@
  * AWS CLI and the stage's own profile, `aws cloudfront list-distributions`,
  * which must agree with it, and `aws pricing-plan-manager list-subscriptions`
  * when a distribution exists; and it judges the transition
- * (public-blobs-guard.ts).
- * A deploy, `sst dev` or `sst remove` that is not allowed stops there, before
- * any resource is touched; `sst diff` and `sst refresh` only warn. When AWS
- * cannot be asked, that is not allowed either. Pulumi's `protect` on the
- * distribution and the subscription, while the distribution is enabled, is a
- * second lock: Pulumi refuses to delete either until a "dark" deploy has
- * lifted it.
+ * (public-blobs-guard.ts). A deploy that is not allowed stops there, before
+ * any resource is touched; `sst diff` and `sst refresh` only warn. When the
+ * stage's state cannot be read or the distributions cannot be listed, no
+ * transition is allowed; when the subscriptions cannot be listed, "on" is not.
+ *
+ * Before that, and before AWS is asked anything, a state other than "off"
+ * needs a protected stage ($app.protect, sst.config.ts's app()): `sst remove`
+ * never runs this program (SST 4.17 runs `pulumi destroy` without
+ * --run-program), so nothing here can judge a removal, and only SST's stage
+ * protection, which refuses `sst remove` outright, stops one. Pulumi's
+ * `protect` on the distribution and the subscription, while the distribution
+ * is enabled, is a narrower lock kept in the stage's saved state: Pulumi
+ * refuses to delete or replace either until a "dark" deploy has lifted it.
  *
  * stack.ts calls preparePublicBlobs before it makes the Runs bucket, because
  * in "on" the bucket's one policy (which SST makes) must also hold the grant
@@ -59,7 +65,18 @@ import {
 	webAclRules,
 	withBlobGrant,
 } from "./public-blobs";
-import { type AwsCli, coverage, DISTRIBUTION_NAME, judgeTransition, type PlanVerdict, readDeployed, readManaged, readSubscriptions, type Target } from "./public-blobs-guard";
+import {
+	type AwsCli,
+	coverage,
+	DISTRIBUTION_NAME,
+	judgeTransition,
+	type PlanVerdict,
+	readDeployed,
+	readManaged,
+	readSubscriptions,
+	stageRefusals,
+	type Target,
+} from "./public-blobs-guard";
 
 export interface PublicBlobsOutputs {
 	state: DeployedState;
@@ -98,16 +115,25 @@ function awsCli(profile: string | undefined): AwsCli {
 	};
 }
 
+/** Stops the command with `message`, or, for a command that changes nothing in AWS, warns and goes on. */
+function refuse(message: string, command: string): void {
+	if (!LOOKING_ONLY.has(command)) throw new Error(message);
+	console.warn(`${message}\n(sst ${command} goes on; a deploy would stop here.)`);
+}
+
 /**
  * What stack.ts needs before and after it makes the bucket, or null when
  * nothing is to be made (another stage, or "off" with nothing deployed).
- * Throws when the transition from what is deployed is not allowed.
+ * Throws when the stage may not have public blobs, or when the transition
+ * from what is deployed is not allowed.
  */
 export function preparePublicBlobs(setting: PublicBlobsSetting, command: string): PublicBlobs | null {
 	if ($app.stage !== setting.stage) return null;
+	const refusals = stageRefusals(setting.state, { protect: $app.protect === true });
+	if (refusals.length > 0) refuse(`Public blobs on ${setting.stage}: not allowed: ${refusals.join("; ")}.`, command);
 	const profile = stageProfile();
 	const cli = awsCli(profile);
-	const target: Target = command === "remove" ? { kind: "remove" } : { kind: "deploy", state: setting.state, plan: setting.plan };
+	const target: Target = { state: setting.state, plan: setting.plan };
 
 	// The distribution this deploy will update, by ID, from the copy of the
 	// stage's state SST pulled for this run; then AWS's listing, which must agree.
@@ -124,9 +150,7 @@ export function preparePublicBlobs(setting: PublicBlobsSetting, command: string)
 	const judgement = judgeTransition(deployed, target, verdict);
 	for (const warning of judgement.warnings) console.warn(`Public blobs: WARNING: ${warning}.`);
 	if (!judgement.allowed) {
-		const message = `Public blobs on ${setting.stage}: not allowed: ${judgement.reason}`;
-		if (!LOOKING_ONLY.has(command)) throw new Error(message);
-		console.warn(`${message}\n(sst ${command} goes on; a deploy would stop here.)`);
+		refuse(`Public blobs on ${setting.stage}: not allowed: ${judgement.reason}`, command);
 	} else {
 		console.warn(`Public blobs on ${setting.stage}: ${judgement.reason}.`);
 	}

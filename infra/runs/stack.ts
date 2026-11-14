@@ -105,8 +105,8 @@ export function runsStack() {
 	// here, saying how to fetch it.
 	const tls = tlsArchive($cli.paths.root);
 	// null on every stage but PUBLIC_BLOBS.stage, and there while "off". On
-	// that stage it first reads what is deployed and stops a deploy or a
-	// removal the transition rules refuse (infra/runs/public-blobs-guard.ts).
+	// that stage it first reads what is deployed and stops a deploy the
+	// transition rules refuse (infra/runs/public-blobs-guard.ts).
 	const publicBlobs = preparePublicBlobs(PUBLIC_BLOBS, $cli.command);
 
 	// Runs are added and never edited: versioning keeps every earlier object

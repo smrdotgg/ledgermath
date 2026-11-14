@@ -17,10 +17,14 @@
  *
  * The rule (judgeTransition): a distribution is made only disabled ("dark");
  * from an enabled one, or one still deploying, the only way out is "dark";
- * "off", removal, and a change of PUBLIC_BLOBS.plan are made only from "dark"
- * once the distribution reports disabled; "closed" and "on" only from what
- * the stage itself left (so not after the watch, or a person, disabled it
- * behind the stage's back); and "on" only when an ACTIVE plan covers it.
+ * "off" and a change of PUBLIC_BLOBS.plan are made only from "dark" once the
+ * distribution reports disabled; "closed" and "on" only from what the stage
+ * itself left (so not after the watch, or a person, disabled it behind the
+ * stage's back); and "on" only when an ACTIVE plan covers it.
+ *
+ * It judges deploys only. `sst remove` never runs the program, so never
+ * reaches it; only SST's stage protection stops a removal, and public blobs
+ * are made only on a protected stage (stageRefusals).
  *
  * Plain data: no SST global, no AWS client.
  */
@@ -292,12 +296,47 @@ export function coverage(distributionArn: string, subscriptions: readonly Subscr
 	return { active: false, reason: "no plan lists the distribution", subscriptionArn: null, tier: null, warnings };
 }
 
-export type Target = { kind: "deploy"; state: PublicBlobsState; plan: PlanAttachment } | { kind: "remove" };
+/** What a deploy deploys: PUBLIC_BLOBS.state and PUBLIC_BLOBS.plan. */
+export interface Target {
+	state: PublicBlobsState;
+	plan: PlanAttachment;
+}
 
 export interface Judgement {
 	allowed: boolean;
 	reason: string;
 	warnings: string[];
+}
+
+/** What SST says about the stage being deployed, read before AWS is asked anything. */
+export interface StageSettings {
+	/** $app.protect: sst.config.ts's app() says protect: true for the stage, so SST refuses `sst remove` on it. */
+	protect: boolean;
+}
+
+/**
+ * Why a deploy of `state` may not run on the stage at all, whatever is
+ * deployed; empty when it may. "off" always may: it makes nothing, and it
+ * takes down only what judgeTransition lets it.
+ *
+ * Every other state needs a protected stage. `sst remove` destroys what the
+ * stage's saved state holds without running the program (SST 4.17 runs
+ * `pulumi destroy`, without --run-program: pkg/project/run.go), so no check
+ * here can stop it, and it would cancel the plan and delete the distribution
+ * whatever the distribution is doing. What stops it is SST's stage
+ * protection: for a protected stage SST refuses `sst remove` before anything
+ * else (ErrProtectedStage, same file).
+ */
+export function stageRefusals(state: PublicBlobsState, stage: StageSettings): string[] {
+	if (state === "off") return [];
+	const refusals: string[] = [];
+	if (!stage.protect) {
+		refusals.push(
+			`the stage is not protected, so \`sst remove\` could destroy the distribution and cancel its plan with no check of what is deployed ` +
+				"(sst remove does not run this program). Public blobs are made only on a stage whose app settings in sst.config.ts say protect: true",
+		);
+	}
+	return refusals;
 }
 
 const DARK_FIRST =
@@ -311,10 +350,10 @@ export function judgeTransition(deployed: Deployed, target: Target, verdict: Pla
 	const refuse = (reason: string): Judgement => ({ allowed: false, reason, warnings });
 	if (deployed.kind === "unknown") return refuse(`what is deployed cannot be told: ${deployed.reason}`);
 
-	const leaving = target.kind === "remove" || target.state === "off";
-	const what = target.kind === "remove" ? "removing the stage" : `"${target.state}"`;
+	const leaving = target.state === "off";
+	const what = `"${target.state}"`;
 	if (deployed.kind === "absent") {
-		if (leaving || (target.kind === "deploy" && target.state === "dark")) return allow("no distribution is deployed");
+		if (leaving || target.state === "dark") return allow("no distribution is deployed");
 		return refuse(`no distribution is deployed, and ${what} would make one enabled. A distribution is made only disabled: deploy "dark" first.`);
 	}
 
@@ -326,7 +365,6 @@ export function judgeTransition(deployed: Deployed, target: Target, verdict: Pla
 		if (!quiet) return refuse(`${now}. ${what} would cancel its plan while it may still serve. ${DARK_FIRST}, then ${what}.`);
 		return refuse(`${now}, but the stage last deployed it "${recorded.state}" (the watch, or a person, disabled it). ${DARK_FIRST}, then ${what}.`);
 	}
-	if (target.kind !== "deploy") return refuse("unreachable");
 	if (target.plan !== recorded.plan) {
 		if (target.state === "dark" && quiet && recorded.state === "dark") return allow(`${now}: the plan attachment may change`);
 		return refuse(

@@ -170,7 +170,18 @@ describe("the switch", () => {
 		expect(prepare).not.toMatch(/new (aws|sst)\./);
 		// A refused transition throws for every command but diff and refresh.
 		expect(RESOURCES).toContain('const LOOKING_ONLY = new Set(["diff", "refresh"]);');
-		expect(prepare).toContain("if (!LOOKING_ONLY.has(command)) throw new Error(message);");
+		expect(RESOURCES).toContain("if (!LOOKING_ONLY.has(command)) throw new Error(message);");
+		expect(prepare).toContain("refuse(`Public blobs on ${setting.stage}: not allowed: ${judgement.reason}`, command);");
+		// sst remove never runs the program, so nothing here judges a removal.
+		expect(RESOURCES).not.toContain('"remove"');
+	});
+
+	test("refuses anything but off on a stage SST does not protect, before it asks AWS anything", () => {
+		const prepare = RESOURCES.slice(RESOURCES.indexOf("export function preparePublicBlobs"), RESOURCES.indexOf("function createResources("));
+		const check = prepare.indexOf("const refusals = stageRefusals(setting.state, { protect: $app.protect === true });");
+		expect(check).toBeGreaterThan(prepare.indexOf("if ($app.stage !== setting.stage) return null;"));
+		expect(prepare).toContain("if (refusals.length > 0) refuse(`Public blobs on ${setting.stage}: not allowed: ${refusals.join(\"; \")}.`, command);");
+		for (const later of ["stageProfile()", "awsCli(", "readManaged(", "readDeployed("]) expect(check).toBeLessThan(prepare.indexOf(later));
 	});
 
 	test("makes the web ACL, the access control, three functions, the distribution, the subscription and the watch; nothing else", () => {
