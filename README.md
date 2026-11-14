@@ -888,20 +888,46 @@ processor in either account.
 
 `scripts/copy-bucket.ts copy` copies every object under `blobs/`, `runs/`, `boots/` and
 `logs/` from one bucket to another, reading with one profile's keys and writing with
-another's (`aws configure export-credentials`, held in memory and never printed or
-written). It only ever adds. Everything at both ends is listed first, and every object the
-destination already holds is compared with the source's before anything is written: a blob
-by its key (the SHA-256 of its bytes) and size, anything else by its bytes; a difference
-stops it, and nothing is written. Each object is then read whole and checked (a blob's bytes
-must hash to its key, any other object's must have the MD5 its ETag gives, when the ETag is
-an MD5), looked for at the destination once more (one that appeared meanwhile is compared,
-never overwritten), written in one PUT with the source's exact `Content-Type`, and looked
-at again (size, type, and an ETag that is the MD5 of what was sent). Any problem stops it,
-saying what it copied; run again, it carries on, and a second complete run copies nothing.
+another's (`aws configure export-credentials --profile`, which no variable in the environment
+overrides; held in memory and never printed or written). It works either way: the
+development bucket into the production bucket for the move, and the production bucket into
+the development bucket to go back (step 14). It only ever adds:
+
+- Everything at both ends is listed first, and every object the destination already holds
+  is read there and compared before anything is written: a blob's bytes there must hash to
+  its key, the SHA-256 of the source's bytes (the source's copy of a blob already there is
+  not read; `verify` reads both); any other object's bytes must equal the source's. A
+  difference stops it, and nothing is written. That, exactly, is what its report calls
+  "already at the destination, read there and the same".
+- Each object to copy is looked at in the source (its size and ETag must still be the
+  listed ones), read whole and checked: a blob's bytes must hash to its key; any other
+  object's must have the MD5 its ETag gives, and when they do not, it is read a second time
+  and the two reads must agree. (An ETag is the MD5 of the bytes only for an object written
+  in one part with SSE-S3 or no encryption, which the copy cannot tell from the ETag; the
+  development bucket's default encryption is SSE-S3.)
+- It is written in one PUT with `If-None-Match: *` and the source's exact `Content-Type`,
+  signed with its bytes' SHA-256 (`scripts/lib/s3-create.ts`): S3 writes it only if the key
+  does not exist, so no object is ever replaced, whoever else writes to the bucket and
+  whenever, and refuses bytes other than those hashed. When S3 answers that the key exists
+  (412) or is being written (409), the object there is read and compared with the bytes read
+  from the source: the same counts as already there; other bytes stop the copy, naming the
+  key. A written object is then looked at: its size and type must be what was sent, and its
+  bytes too (by its ETag when that is their MD5, else read back).
+- Any problem stops it. The report counts as copied every object whose PUT S3 acknowledged,
+  whatever was found after; names every key whose PUT went without an answer that says
+  whether S3 wrote it (none came, or a 5xx), which a second run settles; and says "wrote
+  nothing" only when no PUT was sent. Run again, it carries on, and a second complete run
+  copies nothing.
+
 Blobs are copied first, then Run files, boot summaries and logs, so the destination never
 holds a Run whose blobs it lacks. At most 16 objects are in flight (`--concurrency`) and
 256 MiB of them held (`--memory-mib`); one larger object (AWS-LC's archive, 155 MB) is held
 alone. `--dry-run` lists, compares and counts, writing nothing.
+
+A key with a `.` or `..` segment (`logs/a/../b.log`) is listed but cannot be requested by
+its name, because a request's URL resolves the segment away: one stops `copy` before
+anything is written, and is a problem for `verify`. On 2026-11-14 no key of the development
+bucket had one. Every other key is copied as it is.
 
 Only `Content-Type` is carried: no object of a `-runs` bucket has other metadata (`box.sh`
 sets none, and `aws s3 cp` and the deploy set only the type). The source is versioned and
@@ -913,8 +939,14 @@ deploy replaced, outside what is copied (every source archive a Run names is a b
 under those prefixes must be at the destination with the same bytes (both read and compared,
 and every blob's bytes hashed to its key), every Run file and boot summary of a checkout of
 the Runs repository must be at the destination with the same bytes, and
-`scripts/check-runs.ts` must pass on the destination's `blobs/`, `runs/` and `boots/`,
-written into `--check-dir` (an empty directory with room for the bucket, about 650 MB).
+`scripts/check-runs.ts` must pass on the destination's `blobs/`, `runs/` and `boots/`.
+`--runs-repository` must be a checkout: a path without `runs/` and `boots/` directories is
+refused before anything is read. The destination's objects are written into `--check-dir`,
+which must be new or empty, with room for the bucket (about 650 MB): it refuses a directory
+that holds anything, so every verification needs one of its own (`/tmp/prod-check-1`, then
+`/tmp/prod-check-2`, ...; remove one once its verification has passed). `verify` is the
+check of the copy, byte for byte at both ends; `copy` alone does not read the source's copy
+of a blob the destination already holds.
 
 ```bash
 DEV_BUCKET=$(jq -r .bucket .sst/outputs.smr-runs.json)
@@ -924,18 +956,19 @@ FROM=(--from-bucket "$DEV_BUCKET" --from-profile tabot-dev --to-bucket "$PROD_BU
 bun scripts/copy-bucket.ts copy "${FROM[@]}" --dry-run
 bun scripts/copy-bucket.ts copy "${FROM[@]}"
 
-git clone git@github.com:smrdotgg/ledgermath-runs.git /tmp/ledgermath-runs-verify
-bun scripts/copy-bucket.ts verify "${FROM[@]}" --runs-repository /tmp/ledgermath-runs-verify --check-dir /tmp/prod-check
+git clone git@github.com:smrdotgg/ledgermath-runs.git /tmp/ledgermath-runs-verify   # once; later, git -C ... pull
+bun scripts/copy-bucket.ts verify "${FROM[@]}" --runs-repository /tmp/ledgermath-runs-verify --check-dir /tmp/prod-check-1
 ```
 
 How long: on 2026-11-14 the development bucket held 33,366 objects under those prefixes
 (627 MB: 30,852 blobs, 2,373 Run files, 66 boot summaries, 75 logs), growing by about
-10,600 objects and 130 MB a day. From the dev machine, listing both ends and comparing what is held took 11
-s, and reading every object twice and hashing every blob, as `verify` does, took 144 s.
-The copy makes five requests per object (two reads and three at the destination), so
-expect 5 to 15 minutes for the first copy, and a few minutes for one that adds a day's
-objects;
-`verify` takes a few minutes more for `check-runs.ts`.
+10,600 objects and 130 MB a day. From the dev machine, listing both ends took 11 s, and
+reading every object twice and hashing every blob, as `verify` does, took 144 s. The copy
+reads what the destination already holds once (for a copy after the first, about the whole
+bucket: half of what `verify` reads), and makes four requests per object it writes (a HEAD
+and a GET at the source, the PUT and a HEAD at the destination, and a GET more when an ETag
+is not the bytes' MD5). So expect 5 to 15 minutes for the first copy, and a few minutes for
+one that adds a day's objects; `verify` takes a few minutes more for `check-runs.ts`.
 
 ### The cutover
 
