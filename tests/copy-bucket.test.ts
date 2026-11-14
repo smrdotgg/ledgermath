@@ -504,6 +504,57 @@ describe("the verification", () => {
 	}, TIMEOUT_MS);
 });
 
+describe("going back: production into development, after a failed cutover", () => {
+	const PRODUCTION_KEY = "AKIAPRODUCTIONEXAMP0";
+	const DEVELOPMENT_KEY = "AKIADEVELOPMENTEXAM0";
+	const RUN = "runs/2026/11/10/01a1c7a6-0108-7db1-8ec4-3d1f9390b22b.json";
+	const BY_HAND = "logs/by-hand/2026-11-15/i-0fedcba9876543210/user-data.log";
+
+	test("adds to development what only production holds, touches nothing development has, and verifies", async () => {
+		// Production holds every object development had at the cutover, and what its own boxes made since:
+		// here a Run file, a boot summary and three blobs that development lacks. Development holds one
+		// object of its own, a log of a box launched by hand there after the cutover.
+		const production = standin.bucket("production", { readers: [PRODUCTION_KEY] });
+		const development = standin.bucket("development", { writers: [DEVELOPMENT_KEY] });
+		standin.secrets.set(DEVELOPMENT_KEY, "development-secret");
+		for (const [key, object] of sourceObjects()) production.objects.set(key, { ...object, writes: 1 });
+		const boot = [...sourceObjects().keys()].find((key) => key.startsWith("boots/")) as string;
+		const blobs = [...sourceObjects().keys()].filter((key) => key.startsWith("blobs/") && key !== BIG_KEY).slice(0, 3);
+		const productionOnly = [RUN, boot, ...blobs];
+		for (const [key, object] of sourceObjects()) if (!productionOnly.includes(key)) development.objects.set(key, { ...object, writes: 1 });
+		standin.put("development", BY_HAND, "by hand, after the cutover\n", "text/plain");
+		const from = new S3Bucket("production", "us-east-2", { endpoint: standin.url, credentials: () => ({ accessKeyId: PRODUCTION_KEY, secretAccessKey: "production-secret" }) });
+		const to = new S3Bucket("development", "us-east-2", { endpoint: standin.url, credentials: () => ({ accessKeyId: DEVELOPMENT_KEY, secretAccessKey: "development-secret" }) });
+
+		// The Runs repository has published production's Run already: before the copy back, development fails the verification.
+		const repository = fresh("ledgermath-runs");
+		for (const part of ["runs", "boots"]) cpSync(join(SAMPLE, part), join(repository, part), { recursive: true });
+		const before = await verifyCopy(from, to, { ...FAST, runsRepository: repository, checkDirectory: null });
+		expect(before.problems).toContain(`${RUN}: in the Runs repository, not at the destination`);
+		expect(before.problems).toContain(`${RUN}: in the source, not at the destination`);
+
+		const report = await copyBucket(from, to, FAST);
+		expect(report.copied.count).toBe(productionOnly.length);
+		expect(puts().map((request) => request.key).sort()).toEqual([...productionOnly].sort());
+		expect(puts().every((request) => request.bucket === "development" && request.keyId === DEVELOPMENT_KEY)).toBe(true);
+		for (const [key, object] of development.objects) {
+			expect(object.writes).toBe(1);
+			if (key !== BY_HAND) expect(Buffer.from(object.bytes).equals(production.objects.get(key)?.bytes as Uint8Array)).toBe(true);
+		}
+		expect(new TextDecoder().decode(development.objects.get(BY_HAND)?.bytes)).toBe("by hand, after the cutover\n");
+
+		const checkRunsOmitting = (directory: string) => {
+			const done = Bun.spawnSync([process.execPath, join(ROOT, "scripts", "check-runs.ts"), "--omitted", join(SAMPLE, "omitted-blobs.json"), directory]);
+			return { status: done.exitCode, output: `${done.stdout.toString()}${done.stderr.toString()}` };
+		};
+		const after = await verifyCopy(from, to, { ...FAST, runsRepository: repository, checkDirectory: fresh("check"), checkRuns: checkRunsOmitting });
+		expect(after.problems).toEqual([]);
+		expect(after.onlyAtDestination).toBe(1);
+		expect(after.checkRuns?.passed).toBe(true);
+		expect(standin.requests.some((request) => request.bucket === "production" && request.method !== "GET" && request.method !== "HEAD")).toBe(false);
+	}, TIMEOUT_MS);
+});
+
 describe("the keys of each account", () => {
 	const exported = {
 		Version: 1,
