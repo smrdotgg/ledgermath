@@ -27,7 +27,7 @@ as the base the build started from (last section).
 | `scripts/check-disk-runs.ts` | Checks that every disk Run in such a directory found the disk it declares, that its evidence adds up, and that its dump bears it out |
 | `scripts/check-targets.ts` | Checks `schedule.json`'s targets' `vcpus`, their zone offerings and `vcpu_quota.limit` against AWS, read-only; needs AWS access, so not part of `bun test` |
 | `scripts/box-in-container/` | Boots `runner/box.sh` in Amazon Linux 2023 with S3 and shutdown stubbed, in several scenarios, `http_get` against a stand-in for S3 among them |
-| `infra/runs/` | The `-runs` SST stage: stack, launch Lambda, reaper, user-data, the schedule's check (`schedule.ts`), the targets and their launch schedules (`placement.ts`), the workflow's AWS role, the `s3_fixtures` Service's bucket, objects and role (`fixtures.ts`), AWS-LC's source archive (`tls-archive.ts`) |
+| `infra/runs/` | The `-runs` SST stage: stack, launch Lambda, reaper, user-data, the schedule's check (`schedule.ts`), the targets and their launch schedules (`placement.ts`), the workflow's AWS role, the `s3_fixtures` Service's bucket, objects and role (`fixtures.ts`), AWS-LC's source archive (`tls-archive.ts`), the public blobs' CloudFront distribution on the Free plan, off until switched on (`public-blobs.ts`, `public-blobs-stack.ts`) |
 | `methods/` | Methods, versioned, turning Runs into Derivations (`methods/README.md`): `series` v1 (`v1/`) one number per Run for every Series; `requests` v1 (`requests/v1/`) each phase of a request across requests, for the Series of requests; `records.ts` the reduced record of a stream, kept between runs |
 | `scripts/copy-runs.ts` | The copy job: the bucket's Run files and boot summaries into the Runs repository |
 | `scripts/derive.ts`, `scripts/build-page.ts` | Run the Methods over the Runs; turn their Derivations into the page |
@@ -584,6 +584,197 @@ bun scripts/check-runs.ts /tmp/runs-bucket
 
 The source archive is also in `blobs/` (a Run's `source`), so this checks every Run's
 runner manifest against it too.
+
+### Public blobs: CloudFront on the Free plan
+
+Published numbers are recomputed from Run files and blobs, so the blobs have to be
+readable by anyone. A CloudFront distribution on the **Free flat-rate plan** does that:
+$0 a month, and no overage charge whatever strangers download, so the bill never depends
+on them. It is built and **off**: nothing is public, and nothing of it exists in AWS,
+until `PUBLIC_BLOBS.state` in `infra/runs/public-blobs.ts` says so. The workflow keeps
+reading the bucket directly with its role and is not affected either way.
+
+**What is public, and what is not.** `GET` and `HEAD` of
+
+```
+https://<distribution>.cloudfront.net/blobs/sha256/<hex>     (stage output publicBlobs.blobAddress)
+```
+
+where `<hex>` is the 64 lowercase hex digits of the SHA-256 of the blob's bytes. Nothing
+else: not `runs/`, `boots/`, `logs/` or `source/`, not a listing of the bucket, not an
+older version of any key. Two locks, each enough alone. The bucket policy lets the
+CloudFront service `s3:GetObject` under `blobs/sha256/` only, and only on behalf of this
+distribution (`AWS:SourceArn`); never `s3:ListBucket`. And the distribution reaches the
+bucket only from its `blobs/sha256/*` behaviour, whose viewer-request CloudFront Function
+answers 404 to any address that is not exactly a hash, while the default behaviour's
+function answers 404 to everything; neither 404 reaches the cache or the bucket. Query
+strings are neither in the cache key nor passed on, so `?versionId=` never reaches S3.
+The bucket stays private and its public access block stays on: CloudFront signs its
+requests with Origin Access Control.
+
+| Request | Answer |
+|---------|--------|
+| `GET /blobs/sha256/<hex>` of a blob the bucket holds | 200, the bytes as stored |
+| the same, for a blob it does not hold (yet) | 403 `AccessDenied` from S3, which says 403 rather than 404 to a reader that may not list the bucket; CloudFront keeps the error 10 seconds, so a blob that appears later is served soon after |
+| any other address, `/` included | 404 from a function |
+| plain HTTP | 403 |
+| over the rate limit, or from an address on AWS's IP reputation list | 403 from WAF (a custom status such as 429 needs Pro) |
+
+A blob's response carries `Cache-Control: public, max-age=31536000, immutable` (its key
+is its hash, so it never changes), `Access-Control-Allow-Origin: *` (a page on any origin
+can `fetch()` it), `X-Content-Type-Options: nosniff` and `Content-Security-Policy:
+default-src 'none'; sandbox`, from the viewer-response function; the AWS managed
+response-headers policy `CORS-and-SecurityHeadersPolicy` adds CORS and `nosniff` to every
+response, errors included, which the function does not see (CloudFront runs
+viewer-response functions only below status 400). CloudFront itself keeps a blob 24
+hours, the managed cache policy's default, because the box uploads blobs without a
+`Cache-Control` of their own; the Free plan allows only managed cache policies (custom
+ones are Business), so a year at the edge would take uploads that carry
+`max-age=31536000`.
+
+Content types are what S3 holds, untouched. `aws s3 sync` in `runner/box.sh` guesses a
+type from a file's name, and a blob's name has no extension, so the box's blobs (dumps,
+stdout, binaries, source archives) have none and S3 serves them as `binary/octet-stream`;
+the deploy's own blobs are `application/gzip` (AWS-LC's archive) and
+`application/octet-stream` (the Fixtures). None has a `Content-Encoding`, and the
+distribution does not compress, so every client gets the stored bytes, the ones the hash
+names: `curl -O` saves them as they are, `fetch()` reads them, and a browser opened on the
+address downloads a file. With `nosniff` it does not sniff them into a page, and nothing is
+rendered or run, binaries included; should a blob ever be rendered, the CSP sandbox lets it
+run nothing. The cost: a text dump opened in a browser downloads rather than shows.
+
+**Reading through it.** `bun scripts/derive.ts ... --blobs-url
+https://<distribution>.cloudfront.net` reads blobs there instead of `--bucket`, with no
+credentials (`publicBlobStore` in `scripts/lib/blobs.ts`). As with the bucket, every blob's
+SHA-256 is checked before it is used or cached, which is what makes bytes from a public
+address trustworthy at all. 404 and S3's 403 `AccessDenied` mean no such blob; any other
+403 is a refusal and stops the run rather than pass for a missing blob; and it starts at
+most 4 requests a second, however many are in flight. `scripts/check-runs.ts` reads a local
+copy (synchronously) and the lookup tool reads Derivations, Runs and prices, not blobs:
+neither fetches a blob, so neither has the option.
+
+**The plan.** Free: $0 a month, for 1,000,000 requests and 100 GB a month. Requests WAF
+blocks and blocked DDoS traffic do not count. AWS emails at 50%, 80% and 100%, and the
+console shows the month's usage. Going over is never billed. AWS's words
+([flat-rate-pricing-plan.html](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/flat-rate-pricing-plan.html),
+"What happens when usage exceeds the allowance"): the allowance is "not a hard limit"; the
+first spike to 3 times the allowance in a month does not affect service; sustained excess
+is judged over 2 to 3 months or more; then "your traffic might be served from fewer or more
+distant edge locations, or performance might be adjusted", in proportion to the excess. It
+speaks of the distribution's traffic, everyone's, not of the addresses that caused it, and
+gives no figure. The data grow by about 9,000 blobs a day, so one daily mirror of the new
+blobs is about 270,000 requests a month, a quarter of the allowance; a full download of
+the data outgrows it, and that is when to move to Pro.
+
+**What it still costs.** S3 bills a GET for every request that misses CloudFront's cache,
+$0.0004 per 1,000 in us-east-2 (AWS's price list of 2026-11-09), and the plan does not
+cover it; transfer from S3 to CloudFront is free. At worst every request of the month
+misses: $0.40 on the Free allowance, $1.20 in the month of a 3× spike, and $0.40 per
+further million, since AWS keeps serving past the allowance (a blob already cached at a
+regional edge does not miss; a 403 for a missing key may be free, as S3 does not bill
+AccessDenied to requests from outside the account, but count it). The plan's 5 GB of S3
+storage credits offsets that much of the bucket's storage.
+
+**The rate limit.** 1,500 requests per address in any 5 minutes, about 5 a second (the
+plan's IP-based rate limiting, a WAF rate-based rule). A mirror fetching a day's new blobs
+at 4 a second, the pace `scripts/lib/blobs.ts` keeps, takes 37.5 minutes at 1,200 per 5
+minutes, 20% under the limit, which leaves room for WAF's estimate being near rather than
+exact. A runaway loop does tens to hundreds a second and passes 1,500 within a minute;
+WAF blocks the address, usually within 30 seconds of it going over, until its count over
+the last 5 minutes falls back under, and blocked requests do not count against the
+allowance. The limit does not keep the month inside the allowance: an address held just
+under it makes 432,000 requests a day. Over IPv6 one client can spread across many
+addresses; WAF counts each address on its own. Beside it, two free AWS managed rule
+groups, `AWSManagedRulesAmazonIpReputationList` and `AWSManagedRulesKnownBadInputsRuleSet`
+(3 of the Free plan's 5 rules). `AWSManagedRulesCommonRuleSet`, the console's third
+default, is left out: it guards applications that parse what they are sent, and it blocks
+requests without a `User-Agent`.
+
+**Turning it on**, with no moment on pay-as-you-go pricing:
+
+1. Set `state: "dark"` in `infra/runs/public-blobs.ts`, commit, `bunx sst diff --stage
+   smr-runs`, then deploy as above. It makes, and the deploy prints what comes next:
+   - the web ACL `ledgermath-smr-runs-public-blobs`, scope `CLOUDFRONT`, in us-east-1
+     (the provider's resources take a `region` since `@pulumi/aws` 7, so no second
+     provider): default allow, the rate limit, the two managed groups;
+   - the Origin Access Control `ledgermath-smr-runs-public-blobs` (S3, always sign, SigV4);
+   - the CloudFront Functions `ledgermath-smr-runs-blob-request`,
+     `ledgermath-smr-runs-blob-response` and `ledgermath-smr-runs-no-route`
+     (`cloudfront-js-2.0`, published);
+   - the distribution, **disabled**: a disabled distribution serves nothing, so it has no
+     traffic to bill;
+   - a change to the bucket's policy: SST's HTTPS-only statement, plus the grant;
+   - the Free plan subscription, `AWS::PricingPlanManager::Subscription` in us-east-1,
+     through Cloud Control (`aws.cloudcontrol.Resource`: the installed provider, 7.20.0,
+     has no resource of its own for it). A Free plan activates at once.
+2. Check that the plan is ACTIVE: `aws pricing-plan-manager list-subscriptions --region
+   us-east-1 --profile tabot-dev` lists it, tier `FREE`, status `ACTIVE`, with the
+   distribution and the web ACL.
+3. Set `state: "on"`, commit, deploy. Before it changes anything the deploy asks AWS,
+   read-only, whether the web ACL is in an ACTIVE plan (`aws wafv2 list-web-acls` and `aws
+   pricing-plan-manager list-subscriptions`: an AWS CLI that has `pricing-plan-manager`,
+   such as 2.39), and stops if not (`sst diff` only warns). The distribution is enabled;
+   it takes a few minutes to reach every edge.
+4. `curl -sSI https://<distribution>.cloudfront.net/blobs/sha256/<hex>` for a blob a Run
+   names: 200, and the headers above.
+
+Until the plan is attached the web ACL is billed as usual, by the hour ($5 a month and $1
+a rule): cents, for the minutes between the distribution and the subscription the same
+deploy makes. Not verified, because nothing has been
+deployed: that Cloud Control can create the subscription; that AWS subscribes a disabled
+distribution; and that the Free plan takes the managed response-headers policy (AWS's
+feature table allows managed ones; one report says the console refused a response-headers
+policy, likely a custom one). If AWS refuses the plan over that policy, the subscription
+fails with a `ValidationException` while the distribution is still disabled: drop
+`responseHeadersPolicyId` in `distributionArgs`, and the viewer-response function still
+gives every blob CORS and `nosniff`; only errors lose them. If Cloud Control cannot
+create the subscription, set `plan: "console"`: the deploy then makes no subscription and
+prints these steps instead, to take between steps 1 and 2:
+
+1. In the CloudFront console, Distributions, open the distribution described "LedgerMath
+   smr-runs: public blobs (blobs/sha256/* only)" (stage output
+   `publicBlobs.distributionId`); it is Disabled.
+2. Choose its pricing plan, pick Free, confirm. Its web ACL is already associated.
+3. Wait for the plan to show as active (2 to 5 minutes, AWS says). The same from the CLI:
+   `aws pricing-plan-manager create-subscription --region us-east-1 --plan-family
+   CloudFront --plan-tier FREE --resource-arns <publicBlobs.distributionArn>
+   <publicBlobs.webAclArn>`.
+
+If AWS will not subscribe a disabled distribution, no order avoids a moment on
+pay-as-you-go: set `plan: "console"`, enable the distribution in the console and subscribe
+it at once, then set `state: "on"` and deploy. Its address has been published nowhere, so
+nobody else can reach it in those minutes.
+
+**Moving to Pro** ($15 a month, prorated, still flat: 10 million requests and 50 TB a
+month, access logs, 10 behaviours, 25 WAF rules, custom WAF responses): in the console, or
+`aws pricing-plan-manager update-subscription --region us-east-1 --arn <publicBlobs.plan>
+--if-match <eTag from get-subscription> --plan-tier PRO`. Leave `subscriptionState` in
+`infra/runs/public-blobs.ts` as it is: CloudFormation's subscription refuses to change a
+tier itself, and a deploy touches the subscription only when its desired state changes,
+so the upgrade stays. (Whether it would accept a desired tier equal to the one AWS already
+has is not verified.) The check before enabling accepts any ACTIVE tier.
+
+**A custom domain** is one line in `PUBLIC_BLOBS`, `domain: { name, certificateArn }` with
+an ACM certificate in us-east-1, then a DNS record to the distribution. With it the TLS
+policy is `TLSv1.2_2025`; on the `*.cloudfront.net` name CloudFront sets TLSv1 itself, and
+no policy can be chosen.
+
+**Turning it off.** `"dark"` disables the distribution and keeps the plan. `"off"`
+deletes everything, the subscription first (a Free plan is cancelled at once; AWS refuses
+to delete a distribution that is on a plan). While on a plan the web ACL cannot be
+replaced, so do not rename it.
+
+**The Free plan's limits, here and later.** Three Free plans per account: one per stage
+that turns this on. 5 cache behaviours (2 used), 5 WAF rules (3 used), no access logs, so
+no record of who downloaded what beyond the console's usage figures. Only managed cache
+and response-headers policies; CloudFront Functions are in. Nothing here uses a feature a
+plan refuses (no Origin Access Identity, legacy `ForwardedValues`, real-time logs,
+Lambda@Edge, continuous deployment, customer rule groups). A static site served later
+from the same distribution would take the default behaviour (in place of the 404
+function, with a second origin or an origin path) and fits in the 5 behaviours, but would
+share the allowance and the per-address limit with the blobs, could set its own headers
+only through a function, and would have no logs below Pro. A second distribution, on a
+second Free plan, would keep them apart.
 
 ## The Runs repository, the Method and the page
 

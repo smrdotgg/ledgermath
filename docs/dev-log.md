@@ -901,4 +901,33 @@ A migrated benchmark is done only when **all** of these hold:
   another box of its own target, which the quota rules count on never happening.
   `schedule.json` and `runner/` are unchanged, so the boot times, what a box runs and the
   runner's hash stay as they were. Not deployed.
+- **2026-11-14** — Public blobs, built and off (`infra/runs/public-blobs.ts`,
+  `public-blobs-stack.ts`). The maintainer's decision: a CloudFront distribution on the
+  Free flat-rate plan in front of the private bucket, so that the bill never depends on
+  what strangers download. Only `GET`/`HEAD` of `/blobs/sha256/<hex>`: the bucket policy
+  lets this distribution's CloudFront service `s3:GetObject` under `blobs/sha256/` alone
+  (never `ListBucket`), and only the `blobs/sha256/*` behaviour reaches the bucket, behind a
+  function that answers 404 to anything but a hash; the default behaviour's function
+  answers 404 to everything. Origin Access Control; the public access block stays on.
+  What the Free plan allows decided the rest: managed policies only
+  (`CachingOptimizedForUncompressedObjects`, `CORS-and-SecurityHeadersPolicy`; custom ones
+  are Business), so `Cache-Control: public, max-age=31536000, immutable`, the CSP sandbox
+  and CORS on success come from a viewer-response function, and CloudFront keeps a blob
+  24 hours, since uploads carry no `Cache-Control`; no compression, so the bytes served are
+  the hashed bytes. The web ACL a plan requires: a per-address limit of 1,500 requests per
+  5 minutes (a day's ~9,000 new blobs at the readers' 4 a second takes 37.5 minutes, 20%
+  under it; a runaway loop passes it within a minute), the IP reputation and known-bad-input
+  groups. The plan itself is `AWS::PricingPlanManager::Subscription` through Cloud Control
+  (Pulumi AWS 7.20.0 has no resource for it); the web ACL and it use the resources' own
+  `region: "us-east-1"`. The switch is a committed constant with three states: `off` (no
+  resource, the bucket's arguments exactly `{ versioning: true }`, no output), `dark`
+  (everything, the distribution disabled, the plan subscribed), `on` (enabled, and the
+  deploy first asks AWS, read-only, whether the web ACL is in an ACTIVE plan, and stops if
+  not), so no moment is spent public on pay-as-you-go. `scripts/derive.ts --blobs-url`
+  reads blobs through it, hash-checked as from the bucket, paced at 4 a second, a 403 that
+  is not S3's `AccessDenied` taken as a refusal, never as a missing blob. Type-checked
+  against SST 4.17's platform types; not deployed, so unverified: that Cloud Control can
+  create the subscription and that AWS subscribes a disabled distribution (the README says
+  what to do if not), and whether the Free plan accepts the managed response-headers
+  policy, which AWS's table allows and one report says the console refused.
 - _(agents: append your entry here, one per merged benchmark)_
