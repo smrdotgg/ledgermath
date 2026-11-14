@@ -797,6 +797,8 @@ and are not published.
 | Package | Version | Licence | What uses it |
 |---|---|---|---|
 | `@aws-sdk/client-ec2` | 3.1085.0 | Apache-2.0 | The Lambda functions that launch and reap boxes (`infra/`) |
+| `@aws-sdk/client-cloudfront` | 3.1169.0 | Apache-2.0 | The Lambda function that disables the public-blobs distribution when no plan covers it (`infra/runs/plan-watch-handler.ts`) |
+| `@aws-sdk/client-pricing-plan-manager` | 3.1169.0 | Apache-2.0 | The same function, which lists the plan subscriptions |
 | `sst` | 4.17.0 | MIT | Deploying the stack (`sst.config.ts`, `infra/`) |
 | `ajv` | 8.20.0 | MIT | Checking Runs, events and price files against `schemas/` |
 | `typescript` | 7.0.2 | Apache-2.0 | Type checking (`bunx tsc --noEmit`) |

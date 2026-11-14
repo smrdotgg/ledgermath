@@ -32,6 +32,13 @@
  * GitHub's OIDC provider and a role that only this repository's workflows on
  * main can assume let .github/workflows/runs.yml read Runs, boot summaries
  * and blobs from the bucket (infra/runs/github-role.ts).
+ *
+ * On the one stage PUBLIC_BLOBS names, and only when it says so, a CloudFront
+ * distribution on the Free flat-rate plan lets anyone read blobs/sha256/<hex>,
+ * and nothing else of the bucket, which stays private
+ * (infra/runs/public-blobs.ts). It is off by default, and on every other
+ * stage nothing of it exists: then the bucket's arguments, and everything
+ * else here, are as they were without it.
  */
 
 import { execFileSync } from "node:child_process";
@@ -43,6 +50,8 @@ import { confirmDeployAccount } from "./deploy-account";
 import { fixturesReaderPolicy, fixturesReaderTrustPolicy, writeFixtureFiles } from "./fixtures";
 import { GITHUB_OIDC_AUDIENCE, GITHUB_OIDC_URL, readPolicy, trustPolicy } from "./github-role";
 import { scheduledTargetTypes, stageLaunchSchedules, TARGETS, ZONE } from "./placement";
+import { PUBLIC_BLOBS, runsBucketArgs } from "./public-blobs";
+import { preparePublicBlobs } from "./public-blobs-stack";
 import { tlsArchive } from "./tls-archive";
 
 /**
@@ -100,10 +109,16 @@ export async function runsStack() {
 	// Checked before anything is made: a missing or wrong copy stops the deploy
 	// here, saying how to fetch it.
 	const tls = tlsArchive($cli.paths.root);
+	// null on every stage but PUBLIC_BLOBS.stage, and there while "off". On
+	// that stage it first reads what is deployed and stops a deploy the
+	// transition rules refuse (infra/runs/public-blobs-guard.ts).
+	const publicBlobs = preparePublicBlobs(PUBLIC_BLOBS, $cli.command);
 
 	// Runs are added and never edited: versioning keeps every earlier object
-	// even if a key is written twice.
-	const bucket = new sst.aws.Bucket("RunsBucket", { versioning: true });
+	// even if a key is written twice. With public blobs "on", the bucket policy
+	// also lets the distribution read blobs/sha256/*; otherwise the arguments
+	// are { versioning: true }, as they always were.
+	const bucket = new sst.aws.Bucket("RunsBucket", runsBucketArgs(publicBlobs?.bucketPolicy ?? null));
 	const source = new aws.s3.BucketObjectv2("Source", {
 		bucket: bucket.name,
 		key: archive.key,
@@ -304,6 +319,8 @@ export async function runsStack() {
 		policy: bucket.arn.apply((arn) => JSON.stringify(readPolicy(arn))),
 	});
 
+	const publicBlobsOutputs = publicBlobs === null ? null : publicBlobs.create(bucket);
+
 	return {
 		bucket: bucket.name,
 		runsReaderRole: readerRole.arn,
@@ -328,5 +345,7 @@ export async function runsStack() {
 		tlsArchiveKey: tls.key,
 		fixturesBucket: fixturesBucket.name,
 		fixturesRole: fixturesRole.arn,
+		// Absent while off, so the outputs are as they were.
+		...(publicBlobsOutputs === null ? {} : { publicBlobs: publicBlobsOutputs }),
 	};
 }

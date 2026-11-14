@@ -1,8 +1,10 @@
 /**
  * Blobs by hash: from directories laid out as sha256/<hex> (such as
- * tests/samples/scheduled/blobs, or a cache), or from a bucket's blobs/sha256/,
- * kept in a local cache. Every blob is checked against its hash before it is
- * returned or cached.
+ * tests/samples/scheduled/blobs, or a cache), from a bucket's blobs/sha256/,
+ * or from a public address serving the same paths (the stage's CloudFront
+ * distribution, infra/runs/public-blobs.ts), kept in a local cache. Every
+ * blob is checked against its hash before it is returned or cached: from a
+ * public address that is what makes its bytes trustworthy at all.
  */
 
 import { createHash } from "node:crypto";
@@ -10,9 +12,9 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "
 import { join } from "node:path";
 
 import type { FetchBlob } from "../../methods/run";
-import type { Bucket } from "./bucket";
 
 const HASH = /^sha256:([0-9a-f]{64})$/;
+const BLOB_KEY = /^blobs\/sha256\/[0-9a-f]{64}$/;
 
 function hexOf(hash: string): string {
 	const hex = HASH.exec(hash)?.[1];
@@ -38,12 +40,20 @@ export function blobsFromDirectories(directories: readonly string[]): FetchBlob 
 	};
 }
 
+/** Where blobsFromBucket reads blobs/sha256/<hex>: a bucket (scripts/lib/bucket.ts), or a public address. */
+export interface BlobStore {
+	/** What it is, for messages. */
+	readonly name: string;
+	/** An object's bytes, or null when there is no such key. */
+	get(key: string): Promise<Uint8Array | null>;
+}
+
 /**
- * Fetches blobs/sha256/<hex> from the bucket, looking in cache/sha256/<hex>
+ * Fetches blobs/sha256/<hex> from the store, looking in cache/sha256/<hex>
  * first, and keeping each fetched blob there once checked, unless `keep` is
  * false (for stdout blobs, of which a Method keeps a reduced record instead).
  */
-export function blobsFromBucket(bucket: Bucket, cache: string | null, options: { keep?: boolean } = {}): FetchBlob {
+export function blobsFromBucket(bucket: BlobStore, cache: string | null, options: { keep?: boolean } = {}): FetchBlob {
 	const keep = options.keep ?? true;
 	const local = cache === null ? null : blobsFromDirectories([cache]);
 	return async (hash) => {
@@ -61,6 +71,81 @@ export function blobsFromBucket(bucket: Bucket, cache: string | null, options: {
 			renameSync(`${path}.tmp`, path);
 		}
 		return bytes;
+	};
+}
+
+/**
+ * The pace a reader of a public address keeps unless told otherwise: 4
+ * requests a second, 1,200 in any 5 minutes, under the distribution's limit
+ * of 1,500 per address per 5 minutes (RATE_LIMIT in
+ * infra/runs/public-blobs.ts), however many fetches are in flight.
+ */
+export const PUBLIC_REQUESTS_PER_SECOND = 4;
+
+export type HttpFetch = (url: string, init: RequestInit) => Promise<Response>;
+
+export interface PublicStoreOptions {
+	fetch?: HttpFetch;
+	/** Requests started per second, at most; Infinity for no pacing. */
+	perSecond?: number;
+	/** For tests: the clock and the wait the pacing uses. */
+	now?: () => number;
+	sleep?: (ms: number) => Promise<void>;
+}
+
+/** S3's answer, through the distribution, for a key it does not hold: the distribution may not list the bucket, so S3 says 403, not 404. */
+const S3_ACCESS_DENIED = /<Code>AccessDenied<\/Code>/;
+
+/**
+ * blobs/sha256/<hex> under a public base address, such as
+ * https://d111111abcdef8.cloudfront.net. 404, or S3's 403 AccessDenied, is
+ * "no such blob" (null). Any other 403 is a refusal (the distribution's
+ * per-address rate limit or its ceiling on all requests, or an address on
+ * AWS's reputation list), and any other status is an error: both throw,
+ * rather than pass for a missing blob. A redirect is never followed: the
+ * reader contacts the host it was given and no other, so a 3xx throws,
+ * naming both addresses. blobsFromBucket checks every blob's hash, so a
+ * wrong body is refused.
+ */
+export function publicBlobStore(base: string, options: PublicStoreOptions = {}): BlobStore {
+	if (!/^https:\/\/[^/]/.test(base)) throw new Error(`${JSON.stringify(base)}: a public blob address starts with https://`);
+	const root = base.replace(/\/+$/, "");
+	const fetchUrl: HttpFetch = options.fetch ?? ((url, init) => fetch(url, init));
+	const perSecond = options.perSecond ?? PUBLIC_REQUESTS_PER_SECOND;
+	if (!(perSecond > 0)) throw new Error(`perSecond must be above 0, not ${perSecond}`);
+	const interval = Number.isFinite(perSecond) ? 1000 / perSecond : 0;
+	const now = options.now ?? Date.now;
+	const sleep = options.sleep ?? ((ms: number) => Bun.sleep(ms));
+	let next = -Infinity;
+	// Each request takes the next free start time, interval after the one
+	// before, so concurrent fetches are spaced too.
+	const turn = async (): Promise<void> => {
+		const at = Math.max(now(), next);
+		next = at + interval;
+		const wait = at - now();
+		if (wait > 0) await sleep(wait);
+	};
+	return {
+		name: root,
+		async get(key) {
+			if (!BLOB_KEY.test(key)) throw new Error(`${root}: serves blobs/sha256/<hex> only, not ${JSON.stringify(key)}`);
+			const url = `${root}/${key}`;
+			await turn();
+			const response = await fetchUrl(url, { redirect: "manual" });
+			if ((response.status >= 300 && response.status < 400) || response.type === "opaqueredirect" || response.redirected) {
+				const location = response.headers.get("location");
+				await response.body?.cancel();
+				throw new Error(`${url}: HTTP ${response.status} redirect to ${location === null ? "(no Location header)" : location}; refused, a blob is read only from the address given`);
+			}
+			if (response.ok) return new Uint8Array(await response.arrayBuffer());
+			const body = await response.text();
+			if (response.status === 404) return null;
+			if (response.status === 403 && S3_ACCESS_DENIED.test(body)) return null;
+			if (response.status === 403) {
+				throw new Error(`${url}: HTTP 403, refused by the distribution (its per-address rate limit, or an address AWS lists as bad); slow down and try again later`);
+			}
+			throw new Error(`${url}: HTTP ${response.status}`);
+		},
 	};
 }
 

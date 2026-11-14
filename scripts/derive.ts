@@ -4,7 +4,8 @@
  * (the Series whose samples are requests, a latency distribution per phase).
  *
  *     bun scripts/derive.ts --runs DIR [--out FILE] [--requests-out FILE] [--blobs DIR]...
- *                           [--bucket NAME [--cache DIR]] [--records DIR] [--region R]
+ *                           [--bucket NAME | --blobs-url URL [--blobs-per-second N]] [--cache DIR] [--records DIR]
+ *                           [--region R]
  *
  *   --runs DIR          holds runs/<yyyy>/<mm>/<dd>/<id>.json: a checkout of the Runs
  *                       repository, or a copy of the bucket
@@ -14,6 +15,11 @@
  *                       may be given more than once, and is looked in before the bucket
  *   --bucket NAME       fetch other blobs from the -runs stage's bucket (credentials from the
  *                       environment: see scripts/lib/bucket.ts)
+ *   --blobs-url URL     or from the public address serving the bucket's blobs/sha256/
+ *                       (https://<distribution>.cloudfront.net; no credentials); a redirect
+ *                       is refused, never followed
+ *   --blobs-per-second N  start at most N requests a second there (default 4, under the
+ *                       distribution's per-address rate limit)
  *   --cache DIR         keep the dump blobs fetched from the bucket here, as sha256/<hex>.
  *                       Stdout blobs are read from it if there, but never kept in it
  *   --records DIR       keep each stream's reduced record here, per Method
@@ -49,14 +55,14 @@ import type { FetchBlob } from "../methods/run";
 import * as series from "../methods/v1";
 import { SERIES_RECORD } from "../methods/v1/record";
 import { S3Bucket } from "./lib/bucket";
-import { blobsFromBucket, blobsFromDirectories, firstOf } from "./lib/blobs";
+import { type BlobStore, blobsFromBucket, blobsFromDirectories, firstOf, publicBlobStore } from "./lib/blobs";
 import { failurePath, methodFailure } from "./lib/method-failure";
 import { readRunFiles } from "./lib/run-files";
 import { RUNS_BUCKET_REGION } from "./lib/runs-repository";
 
 const USAGE =
 	"usage: bun scripts/derive.ts --runs DIR [--out FILE] [--requests-out FILE] [--blobs DIR]... " +
-	"[--bucket NAME [--cache DIR]] [--records DIR] [--region R]";
+	"[--bucket NAME | --blobs-url URL [--blobs-per-second N]] [--cache DIR] [--records DIR] [--region R]";
 
 function write(path: string, text: string): void {
 	mkdirSync(dirname(path), { recursive: true });
@@ -113,12 +119,20 @@ async function main(): Promise<void> {
 			"requests-out": { type: "string" },
 			blobs: { type: "string", multiple: true },
 			bucket: { type: "string" },
+			"blobs-url": { type: "string" },
+			"blobs-per-second": { type: "string" },
 			cache: { type: "string" },
 			records: { type: "string" },
 			region: { type: "string" },
 		},
 	});
-	if (!values.runs || (!values.out && !values["requests-out"]) || (!values.blobs?.length && !values.bucket)) {
+	if (
+		!values.runs ||
+		(!values.out && !values["requests-out"]) ||
+		(!values.blobs?.length && !values.bucket && !values["blobs-url"]) ||
+		(values.bucket && values["blobs-url"]) ||
+		(values["blobs-per-second"] !== undefined && (!values["blobs-url"] || !(Number(values["blobs-per-second"]) > 0)))
+	) {
 		console.error(USAGE);
 		process.exit(2);
 	}
@@ -128,11 +142,15 @@ async function main(): Promise<void> {
 		blobSources.push(blobsFromDirectories(values.blobs));
 		streamSources.push(blobsFromDirectories(values.blobs));
 	}
-	if (values.bucket) {
-		const bucket = new S3Bucket(values.bucket, values.region ?? RUNS_BUCKET_REGION);
+	const store: BlobStore | null = values.bucket
+		? new S3Bucket(values.bucket, values.region ?? RUNS_BUCKET_REGION)
+		: values["blobs-url"]
+			? publicBlobStore(values["blobs-url"], values["blobs-per-second"] === undefined ? {} : { perSecond: Number(values["blobs-per-second"]) })
+			: null;
+	if (store !== null) {
 		const cache = values.cache ?? null;
-		blobSources.push(blobsFromBucket(bucket, cache));
-		streamSources.push(blobsFromBucket(bucket, cache, { keep: false }));
+		blobSources.push(blobsFromBucket(store, cache));
+		streamSources.push(blobsFromBucket(store, cache, { keep: false }));
 	}
 	const fetchBlob = firstOf(blobSources);
 	const fetchStream = firstOf(streamSources);

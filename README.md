@@ -27,7 +27,7 @@ as the base the build started from (last section).
 | `scripts/check-disk-runs.ts` | Checks that every disk Run in such a directory found the disk it declares, that its evidence adds up, and that its dump bears it out |
 | `scripts/check-targets.ts` | Checks `schedule.json`'s targets' `vcpus`, their zone offerings and `vcpu_quota.limit` against AWS, read-only, in the account of the stage it is given; needs AWS access, so not part of `bun test` |
 | `scripts/box-in-container/` | Boots `runner/box.sh` in Amazon Linux 2023 with S3 and shutdown stubbed, in several scenarios, `http_get` against a stand-in for S3 among them |
-| `infra/runs/` | The `-runs` SST stage: stack, launch Lambda, reaper, user-data, the schedule's check (`schedule.ts`), the targets and their launch schedules (`placement.ts`), which account a stage deploys to and which one stage is scheduled (`stages.ts`), what stops SST acting on another account than a stage's (`deploy-account.ts`), the workflow's AWS role, the `s3_fixtures` Service's bucket, objects and role (`fixtures.ts`), AWS-LC's source archive (`tls-archive.ts`) |
+| `infra/runs/` | The `-runs` SST stage: stack, launch Lambda, reaper, user-data, the schedule's check (`schedule.ts`), the targets and their launch schedules (`placement.ts`), which account a stage deploys to and which one stage is scheduled (`stages.ts`), what stops SST acting on another account than a stage's (`deploy-account.ts`), the workflow's AWS role, the `s3_fixtures` Service's bucket, objects and role (`fixtures.ts`), AWS-LC's source archive (`tls-archive.ts`), the public blobs' CloudFront distribution on the Free plan, for one stage, off until switched on (`public-blobs.ts`; what a deploy may do from what is deployed, `public-blobs-guard.ts`; the resources, `public-blobs-stack.ts`; the watch that disables it without a plan, `plan-watch.ts`, `plan-watch-handler.ts`) |
 | `methods/` | Methods, versioned, turning Runs into Derivations (`methods/README.md`): `series` v1 (`v1/`) one number per Run for every Series; `requests` v1 (`requests/v1/`) each phase of a request across requests, for the Series of requests; `records.ts` the reduced record of a stream, kept between runs |
 | `scripts/copy-runs.ts` | The copy job: the bucket's Run files and boot summaries into the Runs repository |
 | `scripts/copy-bucket.ts` | Copies one `-runs` bucket into another, across two accounts, only ever adding, and checks the copy (`scripts/lib/bucket-copy.ts`): the move to the production account |
@@ -704,6 +704,440 @@ bun scripts/check-runs.ts /tmp/runs-bucket
 
 The source archive is also in `blobs/` (a Run's `source`), so this checks every Run's
 runner manifest against it too.
+
+### Public blobs: CloudFront on the Free plan
+
+Published numbers are recomputed from Run files and blobs, so the blobs have to be
+readable by anyone. A CloudFront distribution on the **Free flat-rate plan** does that:
+$0 a month for CloudFront, and no CloudFront overage charge whatever strangers download
+(S3 still bills each request that misses the cache: "What it still costs", below). It is
+built and **off**:
+nothing is public, and nothing of it exists in AWS, until `PUBLIC_BLOBS.state` in
+`infra/runs/public-blobs.ts` says so.
+
+**One stage only.** `PUBLIC_BLOBS.stage` names the stage that may have it:
+`production-runs`, the stage that holds the permanent data (deployed with the profile
+`tabot-production`). On every other stage, `smr-runs` included, nothing of it is created
+and AWS is not even asked, whatever `PUBLIC_BLOBS.state` says; the public address exists
+only on `production-runs`. Every AWS call the deploy makes, and every command it prints,
+uses the profile of the stage being deployed (its provider's, from `sst.config.ts`, or
+`AWS_PROFILE`). The workflow keeps reading the bucket directly with its role and is not
+affected either way.
+
+**What is public, and what is not.** In the state `on`, `GET` and `HEAD` of
+
+```
+https://<distribution>.cloudfront.net/blobs/sha256/<hex>     (stage output publicBlobs.blobAddress)
+```
+
+where `<hex>` is the 64 lowercase hex digits of the SHA-256 of the blob's bytes. Nothing
+else: not `runs/`, `boots/`, `logs/` or `source/`, not a listing of the bucket, not an
+older version of any key. Two locks, each enough alone. The bucket policy lets the
+CloudFront service `s3:GetObject` under `blobs/sha256/` only, and only on behalf of this
+distribution (`AWS:SourceArn`); never `s3:ListBucket`; and it carries that grant only in
+`on`. And the distribution reaches the bucket only from its `blobs/sha256/*` behaviour,
+whose viewer-request CloudFront Function answers 404 to any address that is not exactly a
+hash, while the default behaviour's function answers 404 to everything; neither 404
+reaches the cache or the bucket. Query strings are neither in the cache key nor passed on,
+so `?versionId=` never reaches S3. The bucket stays private and its public access block
+stays on: CloudFront signs its requests with Origin Access Control.
+
+| Request | Answer |
+|---------|--------|
+| `GET /blobs/sha256/<hex>` of a blob the bucket holds | 200, the bytes as stored |
+| the same, for a blob it does not hold (yet) | 403 `AccessDenied` from S3, which says 403 rather than 404 to a reader that may not list the bucket; CloudFront keeps the error 10 seconds, so a blob that appears later is served soon after |
+| any other address, `/` included | 404 from a function |
+| plain HTTP | 403 |
+| over the per-address limit or the total limit (as WAF estimates them), or from an address on AWS's IP reputation list | 403 from WAF (a custom status such as 429 needs Pro) |
+
+A blob's response carries `Cache-Control: public, max-age=31536000, immutable` (its key
+is its hash, so it never changes), `Access-Control-Allow-Origin: *` (a page on any origin
+can `fetch()` it), `X-Content-Type-Options: nosniff` and `Content-Security-Policy:
+default-src 'none'; sandbox`, from the viewer-response function; the AWS managed
+response-headers policy `CORS-and-SecurityHeadersPolicy` adds CORS and `nosniff` to every
+response, errors included, which the function does not see (CloudFront runs
+viewer-response functions only below status 400). CloudFront itself keeps a blob 24
+hours, the managed cache policy's default, because the box uploads blobs without a
+`Cache-Control` of their own; the Free plan allows only managed cache policies (custom
+ones are Business), so a year at the edge would take uploads that carry
+`max-age=31536000`.
+
+**Every blob the boxes upload is served as `binary/octet-stream`**, because the upload
+sets no content type: `aws s3 sync` in `runner/box.sh` guesses one from a file's name, a
+blob's name has no extension, and S3 then stores `binary/octet-stream`. That is so for
+dumps, stdout, binaries and source archives alike; only the deploy's own blobs differ
+(`application/gzip` for AWS-LC's archive, `application/octet-stream` for the Fixtures).
+The upload is not changed. None has a `Content-Encoding`, and the distribution does not
+compress, so every client gets the stored bytes, the ones the hash names: `curl -O` saves
+them as they are, and `fetch()` reads them. **A browser opened on a blob's address
+therefore downloads it rather than showing it**, a text dump included; with `nosniff` it
+does not sniff it into a page, nothing is rendered or run, binaries included, and should
+a blob ever be rendered, the CSP sandbox lets it run nothing.
+
+**Reading through it.** `bun scripts/derive.ts ... --blobs-url
+https://<distribution>.cloudfront.net` reads blobs there instead of `--bucket`, with no
+credentials (`publicBlobStore` in `scripts/lib/blobs.ts`). As with the bucket, every blob's
+SHA-256 is checked before it is used or cached, which is what makes bytes from a public
+address trustworthy at all. It never follows a redirect: it contacts the host it was given
+and no other, and a 3xx stops the run with an error that names both addresses. 404 and S3's
+403 `AccessDenied` mean no such blob; any other 403 (WAF) is a refusal and stops the run
+rather than pass for a missing blob. It starts at most 4 requests a second, however many
+are in flight (`--blobs-per-second N` to change that). `tests/public-blobs-derive.test.ts`
+runs both Methods on the sample Runs from a directory and through a local HTTPS stand-in
+and requires the same bytes. `scripts/check-runs.ts` reads a local copy (synchronously) and
+the lookup tool reads Derivations, Runs and prices, not blobs: neither fetches a blob, so
+neither has the option.
+
+**The plan.** Free: $0 a month, for 1,000,000 requests and 100 GB a month. Requests WAF
+blocks and blocked DDoS traffic do not count. AWS emails at 50%, 80% and 100%, and the
+console shows the month's usage. Going over is never billed. AWS's words
+([flat-rate-pricing-plan.html](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/flat-rate-pricing-plan.html),
+"What happens when usage exceeds the allowance"): the allowance is "not a hard limit"; the
+first spike to 3 times the allowance in a month does not affect service; sustained excess
+is judged over 2 to 3 months or more; then "your traffic might be served from fewer or more
+distant edge locations, or performance might be adjusted", in proportion to the excess. It
+speaks of the distribution's traffic, everyone's, not of the addresses that caused it, and
+gives no figure. The data grow by about 9,000 blobs a day, so one daily mirror of the new
+blobs is about 270,000 requests a month, a quarter of the allowance; a full download of
+the data outgrows it, and that is when to move to Pro.
+
+**Two rate limits** (AWS WAF rate-based rules, in the web ACL the plan requires and pays
+for), evaluated in this order after the two managed rule groups:
+
+1. **Per address**: 1,500 requests in any 5 minutes, about 5 a second. A mirror fetching a
+   day's new blobs at 4 a second, the pace `scripts/lib/blobs.ts` keeps, takes 37.5
+   minutes at 1,200 per 5 minutes, 20% under the limit, which leaves room for WAF's
+   estimate being near rather than exact. A runaway loop does tens to hundreds a second and
+   passes 1,500 within a minute; WAF blocks that address until its rate, as WAF estimates
+   it, falls back under. Over IPv6 one client can spread across many addresses; WAF
+   counts each on its own.
+2. **A limit on all requests for blobs together** (the total limit): 6,000 in any 5
+   minutes, 20 a second, counted from every address as one (aggregation `CONSTANT`, "count
+   all", which needs a scope-down statement: here, URI paths that start with `/blobs/`, so
+   that anything else served from the distribution later is not counted). Every request the
+   blob function lets through starts with `/blobs/`, so none reaches S3 uncounted; the
+   malformed addresses under `/blobs/` that the function answers with 404 are counted too,
+   since WAF sees a request before the function does.
+
+   *What it is.* A rate limit that AWS enforces approximately, on the only requests that can
+   reach the bucket. At its rate, all month, 6,000 × 288 × 31 = 53,568,000 requests get past
+   the rule in a 31-day month (288 five-minute windows a day), about 53.6 million, which at
+   $0.0004 per 1,000 GETs is $21.43 if every one of them missed CloudFront's cache: what a
+   month costs at the configured steady rate. *What it is not.* A cap. AWS says rate-based
+   rules are "not intended for precise request-rate limiting"
+   ([rate-based rule caveats](https://docs.aws.amazon.com/waf/latest/developerguide/waf-rule-statement-type-rate-based-caveats.html)):
+   WAF estimates the rate, weighting recent requests, and limits near the limit rather than
+   exactly at it; requests can come in over the limit for up to several minutes before WAF
+   starts limiting them (usually under 30 seconds); and changing any of the rule's rate
+   settings resets its counts, which can pause it for up to a minute. So bursts can exceed
+   the figure, by much more than rounding when they are large or repeated. There is no hard
+   cap on S3 request charges here. Nor is it selective: while the total is over the limit,
+   every request for a blob is refused, for everyone, polite mirrors included (five of them
+   at 4 a second fill it). Service resumes by itself when WAF's estimate of the rate falls
+   below the limit; nothing needs to be done. The total limit also counts requests
+   CloudFront serves from its cache.
+
+Because the total limit comes last, a request a managed group or the per-address limit has
+already blocked is never counted against everyone, so one runaway address is cut off by
+its own rule without using up the total. Beside them, two free AWS managed rule groups,
+`AWSManagedRulesAmazonIpReputationList` and `AWSManagedRulesKnownBadInputsRuleSet`: 4
+rules of the Free plan's 5. `AWSManagedRulesCommonRuleSet`, the console's third default,
+is left out: it guards applications that parse what they are sent, and it blocks requests
+without a `User-Agent`. AWS accepted the four rules as written (`aws wafv2
+check-capacity`, read-only, on 2026-11-14: 231 capacity units), which says they are valid
+rules, not that the Free plan takes them ("Not verified", below).
+
+**What it still costs.** S3 bills a GET for every request that misses CloudFront's cache,
+$0.0004 per 1,000 in us-east-2 (AWS's price list of 2026-11-09), and the plan does not
+cover it; transfer from S3 to CloudFront is free. On the Free allowance, if every request
+missed: $0.40 a month, $1.20 in the month of a 3× spike; beyond that AWS keeps serving, at
+$0.40 per further million misses: $21.43 for a month at the total limit's steady rate, and
+more if bursts get past it, since nothing caps it. A blob already cached at an edge does
+not miss; a 403 for a missing key may be free (S3 does not bill AccessDenied to requests
+from outside the account), but count it. The plan's 5 GB of S3 storage credits offsets that
+much of the bucket's storage.
+
+**The states.** `PUBLIC_BLOBS.state`, on `production-runs`:
+
+| State | Distribution | Bucket grant | Plan | Serves |
+|-------|--------------|--------------|------|--------|
+| `off` | none | none | none | nothing |
+| `dark` | disabled | none | subscribed by the deploy (`plan: "code"`) or by hand (`"console"`) | nothing |
+| `closed` | enabled | none | as in `dark` | 404 to every address it lets through (WAF's 403s, and CloudFront's for plain HTTP or another method, aside); no request reaches S3 |
+| `on` | enabled | yes | must be ACTIVE: the deploy checks, once, as it starts | `/blobs/sha256/<hex>` |
+
+`closed` is needed only if AWS refuses to subscribe a disabled distribution: it is
+enabled so that the plan can be attached, but the blobs behaviour has the 404 function and
+the bucket grants it nothing, so no blob can be read. Being enabled, it takes public
+traffic, and until the plan is attached that traffic is billed at pay-as-you-go rates
+(below, after the steps). `on` swaps in the real function and adds the grant, after the
+same check that the plan is ACTIVE. The order is always `dark`, then `closed` only if
+needed, then `on`.
+
+**What a deploy may do from what is deployed.** Before it touches anything, a deploy to
+`production-runs` reads what is deployed (`infra/runs/public-blobs-guard.ts`). Which
+distribution is the stage's comes from the stage's own state: SST pulls the stage's Pulumi
+state before every command and runs Pulumi against that copy, so the distribution it
+records, by ID, is the one the deploy will update, and when it records none the deploy will
+create one (the guard reads the copy that SST names in `PULUMI_BACKEND_URL`; SST 4.17's
+`pkg/project/run.go`). Then, read-only, `aws cloudfront list-distributions` returns that
+distribution beside `Enabled` and `Status`, and its comment records the state and plan
+attachment the stage last deployed. The two must agree: the recorded ID listed, with the
+ARN and the comment the state last saw, and no other distribution of the account carrying
+the stage's comment. When the distribution exists, `aws pricing-plan-manager
+list-subscriptions` says whether an ACTIVE plan covers it, by its ARN, and any scheduled
+cancellation or downgrade, which the deploy prints as a warning with its date. A
+transition the table refuses stops the deploy with a message saying what to deploy first;
+`sst diff` and `sst refresh` only warn. When the stage's state cannot be read or the
+distributions cannot be listed, nothing is allowed (the last row); when the subscriptions
+cannot be listed, `on` is refused and the other columns are judged without them. Rows: what
+is deployed; columns: the state deployed to, with the same plan attachment unless said.
+
+| Deployed | `off` | `dark` | `closed` | `on`¹ | `dark`, plan changed | `closed`/`on`, plan changed |
+|----------|-------|--------|----------|-------|----------------------|-----------------------------|
+| nothing | yes | yes | no | no | yes | no |
+| `dark`, disabled (`Deployed`) | yes | yes | yes | yes | yes | no |
+| `dark`, still disabling (`InProgress`) | no | yes | yes | yes | no | no |
+| `dark`, but enabled by hand | no | yes | yes | yes | no | no |
+| `closed` or `on`, enabled | no | yes | yes | yes | no | no |
+| `closed` or `on`, disabled by the watch or by hand | no | yes | no | no | no | no |
+| cannot tell (below) | no | no | no | no | no | no |
+
+¹ Only when an ACTIVE plan covers the distribution; otherwise no, in every row.
+
+"Cannot tell" is any of: the stage's state cannot be read, or holds the distribution more
+than once, or awaiting deletion, or with an operation on it unfinished; `aws cloudfront
+list-distributions` fails, or answers something that does not add up; two distributions
+carry the stage's comment; one carries it that the state does not record (made by hand,
+say: a deploy would make another beside it, and that one's plan says nothing about the new
+one); the recorded one is not listed (deleted outside the stage: `sst refresh` brings the
+state up to date); or its comment is gone, or is not the one the state last saw (edited
+outside the stage, whatever the edit). What this cannot see: a state that is itself wrong
+(edited by hand, restored from an older copy, or refreshed after a change made outside the
+stage, which it then takes for the stage's own); and anything that changes after the
+deploy has read it. The checks are made once, as the deploy starts, so a plan cancelled, or
+the distribution changed in the console, after that is not seen; in particular, `on`'s
+approval holds for that moment only, and a cancellation during or after the deploy leaves
+the distribution serving without a plan until the watch acts. SST's lock keeps two
+commands that change the stage (`sst deploy`, `sst refresh`, `sst remove`) from running at
+once. `sst diff` does not take it: a diff run while a deploy is under way can read the
+state from before that deploy beside what AWS reports during it, and its checks only warn.
+The watch, and changes made in the console or with the CLI, do not take the lock either.
+
+So from an enabled distribution the only way out is `dark`; `off` and a change of
+`PUBLIC_BLOBS.plan` come only after `dark` has been deployed and the distribution reports
+disabled (`Enabled` false, `Status` `Deployed`). A distribution the watch disabled while the
+stage says `closed` or `on` takes a `dark` deploy before anything else, because a deploy of
+`on` would not enable it again (the stage still records it enabled).
+
+**`sst remove` runs none of these checks.** SST 4.17's `sst remove` runs `pulumi destroy`,
+which destroys what the stage's saved state holds without running the program
+(`pkg/project/run.go`), so the table has no column for it: a removal would cancel the plan
+and delete the distribution whatever the distribution is doing. What stops it is SST's
+stage protection: for a stage whose app settings in `sst.config.ts` say `protect: true`,
+SST refuses `sst remove` before it does anything. So public blobs are made only on a
+protected stage: a deploy of `dark`, `closed` or `on` stops, before AWS is asked anything,
+unless `$app.protect` is true (`off` is always allowed: it makes nothing).
+`infra/runs/stages.ts` protects `production-runs`, the stage `PUBLIC_BLOBS` names, and no
+other `-runs` stage; a test holds the two together. Nor does `sst dev` (or `sst deploy --dev`, which SST runs the same way, with
+`$dev` true) deploy anything but `off` there: dev mode deploys each function as a stub that
+works only while a local session runs, and redeploys whenever a file changes. What stage
+protection does not prevent: it is a setting SST reads from `sst.config.ts` at each
+command, not a lock in AWS, so `sst remove` from a checkout whose `sst.config.ts` says
+otherwise, `pulumi destroy` run by hand on the state, and deleting the resources in the
+console or with the AWS CLI all go ahead; and it does not stop a deploy, which deletes or
+replaces what the program says (the table judges those). Pulumi's `protect` on the
+distribution and the subscription, set while the distribution is enabled, is a second,
+narrower lock, kept in the stage's saved state: Pulumi refuses to delete or replace either,
+in a deploy or a destroy, until a `dark` deploy lifts it. It does not prevent changes made
+in place, changes in the console or with the CLI, or cancelling the plan outside the stage.
+A dev stage such as `smr-runs` never has any of this, so `sst remove` there removes what it
+always did.
+
+**The watch.** A Lambda in the stage, `PublicBlobsWatch` (stage output
+`publicBlobs.watchFunction`), runs every 5 minutes, deploy or not
+(`infra/runs/plan-watch.ts`). It is always deployed as the real function (`dev: false`; SST
+4.17's functions otherwise default to live development, and `sst dev` would deploy a stub
+in its place). If the distribution is enabled and no ACTIVE plan covers it, it disables it
+(a listing that succeeds but leaves the plan out, should AWS ever answer so, counts as no
+plan): it reads the configuration, writes it back with `Enabled` false under the ETag it
+read, and when the configuration changed in between (a deploy, a person: CloudFront answers
+`PreconditionFailed`), reads it again and retries, three attempts in all. If it cannot tell
+whether a plan covers it (the plan API unreachable, or an answer it cannot read), it
+records the time in a tag on the distribution (`ledgermath-plan-watch-unknown-since`), and
+when it cannot tell and finds the tag already there, it disables it. A run that can tell
+clears the tag, so the two runs are usually consecutive, but need not be if clearing failed
+in between, and any value of the tag counts. If it cannot keep the tag, it disables the
+distribution at once. It does nothing to a disabled distribution, and does not exist while
+the state is `off`. A `closed` distribution is left alone for 60 minutes after its last
+change (CloudFront's `LastModifiedTime`, by the Lambda's clock; each change to its
+configuration starts them again), so that the plan can be attached, and is disabled by the
+first run after that if still uncovered. If the distribution itself cannot be read, the
+watch cannot tell whether it is enabled, or a `closed` one within its grace, so it takes it
+to be enabled and past its grace: it still lists the plans, and disables it on the same
+terms, through `GetDistributionConfig` and `UpdateDistribution`, which may answer when
+`GetDistribution` did not; if CloudFront answers none of them, the run fails and the
+distribution goes on as it is, serving if it was. A plan with a scheduled cancellation or
+downgrade is logged as a warning with its date, and acted on once it stops being ACTIVE.
+Every disable is logged as `public blobs watch: DISABLED the distribution`, with the
+reason; a failure to disable fails the invocation. No alarm is raised on either.
+
+*How long uncovered delivery lasts.* The watch polls, so it cannot guarantee that the
+distribution never serves without a plan. From the moment a plan stops covering an enabled
+distribution to the moment no edge serves it, the time is the wait for the watch's next run
+(it is scheduled every 5 minutes), plus the run itself, plus CloudFront's propagation of
+the disabled configuration, during which edges that do not have it yet keep serving with
+the old one ([updating a distribution](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/HowToUpdateDistribution.html));
+one run more when the plans cannot be listed; 60 minutes or more for a `closed`
+distribution; and no end at all while CloudFront refuses the watch's calls. What the
+distribution serves in that time is billed at pay-as-you-go rates.
+
+Its role may do exactly this (`watchPermissions`, plus the Lambda basic execution policy
+SST adds for its own logs):
+
+```
+pricingplanmanager:ListSubscriptions     on "*" (Pricing Plan Manager has no resource type)
+cloudfront:GetDistribution, cloudfront:GetDistributionConfig, cloudfront:UpdateDistribution,
+cloudfront:ListTagsForResource, cloudfront:TagResource, cloudfront:UntagResource
+                                         on this distribution's ARN only
+```
+
+**Turning it on, on `production-runs`**, with no moment when blobs are served on
+pay-as-you-go pricing (`closed`, if it is needed, is billed at pay-as-you-go rates for the
+404s and the inspection of what reaches it until the plan is attached). Every command uses
+the stage's own profile (`tabot-production`); the deploy prints the next step each time.
+
+1. Set `state: "dark"` in `infra/runs/public-blobs.ts`, commit, `bunx sst diff --stage
+   production-runs`, then deploy that stage. It makes:
+   - the web ACL `ledgermath-production-runs-public-blobs`, scope `CLOUDFRONT`, in
+     us-east-1 (the provider's resources take a `region` since `@pulumi/aws` 7, so no
+     second provider): default allow, the two managed groups, the per-address limit, the
+     total limit;
+   - the Origin Access Control `ledgermath-production-runs-public-blobs` (S3, always sign,
+     SigV4);
+   - the CloudFront Functions `ledgermath-production-runs-blob-request`,
+     `ledgermath-production-runs-blob-response` and `ledgermath-production-runs-no-route`
+     (`cloudfront-js-2.0`, published);
+   - the distribution, **disabled**: it serves nothing, so it has no traffic to bill; its
+     blobs behaviour has the 404 function, and the bucket policy is not touched;
+   - the Free plan subscription, `AWS::PricingPlanManager::Subscription` in us-east-1,
+     through Cloud Control (`aws.cloudcontrol.Resource`: the installed provider, 7.20.0,
+     has no resource of its own for it). A Free plan activates at once;
+   - the watch.
+2. Check the plan: `aws pricing-plan-manager list-subscriptions --region us-east-1
+   --profile tabot-production` lists it, tier `FREE`, status `ACTIVE`, with the
+   distribution (`publicBlobs.distributionArn`) and the web ACL.
+3. Only if step 1 failed because AWS refused to subscribe a disabled distribution: set
+   `state: "closed"`, commit, deploy (the distribution is enabled, answering 404 to
+   everything; with `plan: "code"` this deploy creates the subscription), and check the
+   plan as in step 2 before the watch's 60 minutes are up.
+4. Set `state: "on"`, commit, deploy. Before it changes anything the deploy checks that an
+   ACTIVE plan covers the distribution, and stops if not; it checks once, so a plan
+   cancelled after that is left to the watch. The distribution is enabled (or stays so),
+   gets the real function, and the bucket policy gets the grant; it takes a few minutes to
+   reach every edge.
+5. `curl -sSI https://<distribution>.cloudfront.net/blobs/sha256/<hex>` for a blob a Run
+   names: 200, and the headers above.
+
+With `plan: "console"` the deploy makes no subscription and prints the console steps
+instead, to take after step 1 (or 3): in the CloudFront console, signed in to the stage's
+account, open the distribution whose description starts "LedgerMath production-runs
+public blobs" (`publicBlobs.distributionId`), choose its pricing plan, pick Free, confirm
+(its web ACL is already associated), and wait for it to show as active; or `aws
+pricing-plan-manager create-subscription --region us-east-1 --profile tabot-production
+--plan-family CloudFront --plan-tier FREE --resource-arns <publicBlobs.distributionArn>
+<publicBlobs.webAclArn>`. Use it if Cloud Control cannot create the subscription.
+
+Until the plan is attached the web ACL is billed as usual: by the hour ($5 a month and $1 a
+rule), and for each request it inspects. With the distribution disabled that is cents, for
+the minutes between the distribution and the subscription the same deploy makes. `closed`
+is different: it enables the distribution before the plan is attached, so until then
+public edge traffic is billed at pay-as-you-go rates, although no blob is served and S3 is
+never reached. Every request that finds the address is inspected by the web ACL, which is
+billed even when it blocks the request, and each one it lets through is a CloudFront
+request, a function invocation (the 404) and the bytes of the answer. The address is not
+published, so few should find it, but nothing limits them: the rate limits refuse
+requests, and a refused request is still inspected. The watch disables a `closed`
+distribution still uncovered once its 60 minutes are up, by its next run and with
+propagation after that, if CloudFront answers it (above); there is no fixed maximum for
+what that window costs.
+
+**Not verified, because nothing has been deployed.** That the program, run by SST, sees
+`PULUMI_BACKEND_URL` and the stage's state at the path the guard expects (seen with Pulumi
+3.215, the version SST 4.17 runs, and a local file backend, not yet under SST; if not,
+every deploy of `production-runs`, `off` included, stops with "the stage's state could not
+be read", and `sst diff`, which only warns, shows it first); that Cloud Control creates the
+subscription (the type is registered, `FULLY_MUTABLE`, and its list handler answers in both
+accounts, read-only, on 2026-11-14); that AWS subscribes a disabled distribution (if not,
+`closed`); that the Free plan takes the managed response-headers policy (AWS's feature
+table allows managed ones; one report says the console refused a response-headers policy,
+likely a custom one: if AWS refuses the plan over it, the subscription fails while the
+distribution is still disabled; drop `responseHeadersPolicyId` in `distributionArgs`, and
+the viewer-response function still gives every blob CORS and `nosniff`); that the Free plan
+counts each managed rule group as one of its 5 rules, and takes a string match on the URI
+path in a scope-down (regular expressions are a Business feature; a string match is not
+listed as a paid one); that `cloudfront:UpdateDistribution` alone lets the watch disable a
+distribution with a web ACL (the Service Authorization Reference lists no other dependency
+for it); whether an ordinary update of the distribution's configuration, such as the deploy
+of `on` itself, moves its subscription out of `ACTIVE` for a while (AWS documents
+`SYNC_IN_PROGRESS` for changes to the subscription, not to the distribution; if an update
+does it too, the watch disables a distribution it finds in that state, right after a deploy
+of `on` if that is when, and it takes a `dark` deploy to recover); and the watch's own
+behaviour against AWS.
+
+**Changing or cancelling the plan: deploy `dark` first.** The deploy and the watch count a
+plan only while its status is `ACTIVE`. While AWS applies a change to a subscription it
+reports `SYNC_IN_PROGRESS` (AWS shows it for downgrades, scheduled cancellations and
+approvals, and says it typically takes 2 to 5 minutes: [subscription
+lifecycle](https://docs.aws.amazon.com/PricingPlanManager/latest/UserGuide/getting-started-pricingplanmanager-api.html)),
+and the watch counts that as no plan, on purpose: it cannot tell a covered distribution
+whose plan is being changed from one whose plan is going away, so it fails closed. A
+distribution whose paid plan has a cancellation scheduled for the end of the month, and
+covers it until then, is therefore disabled while AWS applies the cancellation. So before
+changing the tier, scheduling a cancellation or downgrade, or calling one off, deploy
+`dark`; make the change; wait until `list-subscriptions` shows the plan `ACTIVE` again;
+then deploy `on`. Otherwise expect the watch to disable the distribution, and then only a
+`dark` deploy brings it back (the deploy refuses `on` until the stage has recorded it
+disabled). A deploy of `on` prints this, and the deploy and the watch repeat it beside any
+scheduled change they see.
+
+**Moving to Pro** ($15 a month, prorated, still flat: 10 million requests and 50 TB a
+month, access logs, 10 behaviours, 25 WAF rules, custom WAF responses): with the
+distribution `dark` (above), in the console, or `aws pricing-plan-manager
+update-subscription --region us-east-1 --profile tabot-production --arn <publicBlobs.plan>
+--if-match <eTag from get-subscription> --plan-tier PRO`; then, once the plan is `ACTIVE`,
+deploy `on`. Leave `subscriptionState` in `infra/runs/public-blobs.ts` as it is:
+CloudFormation's subscription refuses to change a tier itself, and a deploy touches the
+subscription only when its desired state changes, so the upgrade stays. (Whether it would
+accept a desired tier equal to the one AWS already has is not verified.) The deploy and
+the watch accept any ACTIVE tier. With Pro, consider raising the total limit with the
+allowance.
+
+**A custom domain** is one line in `PUBLIC_BLOBS`, `domain: { name, certificateArn }` with
+an ACM certificate in us-east-1, then a DNS record to the distribution. With it the TLS
+policy is `TLSv1.2_2025`; on the `*.cloudfront.net` name CloudFront sets TLSv1 itself, and
+no policy can be chosen.
+
+**Turning it off.** Deploy `dark`: the distribution is disabled, the grant removed, the
+plan kept, and Pulumi's protection lifted. The grant and the distribution are changed
+independently, and edges keep serving with the old configuration, cached blobs included,
+until the disabled one reaches them. Once `aws cloudfront list-distributions` shows
+it `Enabled` false and `Status` `Deployed`, `off` deletes everything, the subscription
+first (a Free plan is cancelled at once; AWS refuses to delete a distribution that is on a
+plan). While on a plan the web ACL cannot be replaced, so do not rename it.
+
+**The Free plan's limits, here and later.** Three Free plans per account: one is used
+here, in the production account. 5 cache behaviours (2 used), 5 WAF rules (4 used), no
+access logs, so no record of who downloaded what beyond the console's usage figures and
+the WAF metrics. Only managed cache and response-headers policies; CloudFront Functions
+are in. Nothing here uses a feature a plan refuses (no Origin Access Identity, legacy
+`ForwardedValues`, real-time logs, Lambda@Edge, continuous deployment, customer rule
+groups). A static site served later from the same distribution would take the default
+behaviour (in place of the 404 function, with a second origin or an origin path) and fits
+in the 5 behaviours, but would share the allowance and the per-address limit with the
+blobs (not the total limit, which counts only `/blobs/`), could set its own headers only
+through a function, and would have no logs below Pro. A second distribution, on a second
+Free plan, would keep them apart.
 
 ## The Runs repository, the Method and the page
 

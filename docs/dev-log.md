@@ -937,4 +937,94 @@ A migrated benchmark is done only when **all** of these hold:
   boots in one group. **The cutover** is a numbered procedure in the README ("Moving the
   schedule to the production account"). Waiting on the maintainer: the production quota
   (5 vCPUs; 64 requested).
+- **2026-11-14** — Public blobs, built and off (`infra/runs/public-blobs.ts`,
+  `public-blobs-stack.ts`). The maintainer's decision: a CloudFront distribution on the
+  Free flat-rate plan in front of the private bucket, so that the bill never depends on
+  what strangers download. Only `GET`/`HEAD` of `/blobs/sha256/<hex>`: the bucket policy
+  lets this distribution's CloudFront service `s3:GetObject` under `blobs/sha256/` alone
+  (never `ListBucket`), and only the `blobs/sha256/*` behaviour reaches the bucket, behind a
+  function that answers 404 to anything but a hash; the default behaviour's function
+  answers 404 to everything. Origin Access Control; the public access block stays on.
+  What the Free plan allows decided the rest: managed policies only
+  (`CachingOptimizedForUncompressedObjects`, `CORS-and-SecurityHeadersPolicy`; custom ones
+  are Business), so `Cache-Control: public, max-age=31536000, immutable`, the CSP sandbox
+  and CORS on success come from a viewer-response function, and CloudFront keeps a blob
+  24 hours, since uploads carry no `Cache-Control`; no compression, so the bytes served are
+  the hashed bytes. The web ACL a plan requires: a per-address limit of 1,500 requests per
+  5 minutes (a day's ~9,000 new blobs at the readers' 4 a second takes 37.5 minutes, 20%
+  under it; a runaway loop passes it within a minute), the IP reputation and known-bad-input
+  groups. The plan itself is `AWS::PricingPlanManager::Subscription` through Cloud Control
+  (Pulumi AWS 7.20.0 has no resource for it); the web ACL and it use the resources' own
+  `region: "us-east-1"`. The switch is a committed constant with three states: `off` (no
+  resource, the bucket's arguments exactly `{ versioning: true }`, no output), `dark`
+  (everything, the distribution disabled, the plan subscribed), `on` (enabled, and the
+  deploy first asks AWS, read-only, whether the web ACL is in an ACTIVE plan, and stops if
+  not), so no moment is spent public on pay-as-you-go. `scripts/derive.ts --blobs-url`
+  reads blobs through it, hash-checked as from the bucket, paced at 4 a second, a 403 that
+  is not S3's `AccessDenied` taken as a refusal, never as a missing blob. Type-checked
+  against SST 4.17's platform types; not deployed, so unverified: that Cloud Control can
+  create the subscription and that AWS subscribes a disabled distribution (the README says
+  what to do if not), and whether the Free plan accepts the managed response-headers
+  policy, which AWS's table allows and one report says the console refused.
+- **2026-11-14** — Public blobs, after an independent review: six findings, all about the
+  bill not depending on outside traffic and the distribution never serving off a plan. The
+  distribution is now for one stage, `PUBLIC_BLOBS.stage` = `production-runs` (the
+  scheduled pipeline moves to that account; `smr-runs` becomes a development stage):
+  elsewhere nothing is made and AWS is not asked, and every AWS call the deploy makes or
+  prints uses the stage's own profile. **A limit on the total**: a second WAF rate rule
+  counts every request under `/blobs/` together (aggregation `CONSTANT`, with a URI-path
+  scope-down) and blocks all of them over 6,000 per 5 minutes, evaluated last so that
+  requests the managed groups or the per-address limit already blocked are not counted; at
+  that steady rate a 31-day month is 53,568,000 requests, $21.43 of S3 GETs if all missed
+  the cache, an estimate and not a cap, since WAF enforces the rate approximately. AWS
+  accepted the four rules (`wafv2 check-capacity`, read-only: 231 units; without the
+  scope-down it refused).
+  **Transitions**: the distribution's comment records the state and plan last deployed; a
+  deploy first reads it with `aws cloudfront list-distributions` (paged by hand: the CLI's
+  own paging prints nothing at all for an account with no distribution) and the plan
+  listing, and refuses `off`, removal or a change of plan from anything but a `dark`
+  distribution that reports disabled, `on` without an ACTIVE plan, and `closed`/`on` after
+  the watch disabled the distribution behind the stage's back; Pulumi `protect` on the
+  distribution and subscription while enabled is a second lock. **The watch**: a Lambda
+  every 5 minutes disables an enabled distribution no ACTIVE plan covers, or one it cannot
+  ask about twice in a row (a tag on the distribution remembers the first time), and logs
+  a scheduled cancellation with its date; it may list subscriptions and read, update and
+  tag that one distribution. **`closed`**, between `dark` and `on`, only if AWS will not
+  subscribe a disabled distribution: enabled, 404 to everything, no bucket grant (the grant
+  now exists only in `on`). **The reader** refuses redirects, naming both addresses.
+  **Derivations through a public address**: both Methods on the sample Runs (and two
+  hand-made `http_get` Runs, since no sample is one), from a directory and through a local
+  HTTPS stand-in under a path prefix, give the same bytes. The README now says plainly that
+  every blob a box uploads is served as `binary/octet-stream`, so a browser downloads it.
+  Two SDK clients join the dependencies, for the watch. Not deployed.
+- **2026-11-14** — Public blobs, after a re-check of the review's fixes. **The total limit
+  is a rate limit, not a cap**: AWS documents rate-based rules as approximate (requests over
+  the limit can pass for minutes, and changing a rule resets its counts), so $21.43 is what
+  a month costs at the steady rate, and nothing caps S3 request charges; the README links
+  AWS's caveats. **Which distribution is the stage's** now comes from the stage's own
+  state, the copy SST pulls before every command and names in `PULUMI_BACKEND_URL` (SST
+  4.17's `pkg/project/run.go`; checked with Pulumi 3.215 and a local file backend that the
+  program sees it, and that `pulumi destroy` does not run the program): the distribution it
+  records, by ID, is the one the deploy updates, and the listing must agree with it, so a
+  look-alike carrying the comment, or the stage's own with its comment edited, is "unknown"
+  and refuses. **`sst remove` runs no guard** (it is `pulumi destroy` without
+  `--run-program`), so the `remove` target is gone, and any state but `off` needs a
+  protected stage (`$app.protect`): SST refuses `sst remove` on one. `sst.config.ts`
+  protects no `-runs` stage yet, so `production-runs` deploys only `off` until it does.
+  **`sst dev`**: the watch sets `dev: false`, and any state but `off` is refused under
+  `$dev`. **The watch** handles an unreadable distribution like its other unknowns (taken to
+  be enabled and past any grace), retries an ETag conflict (`PreconditionFailed`) three
+  times, and nothing promises it acts within so many minutes: the delay is the schedule, the
+  run and CloudFront's propagation, and polling cannot rule out uncovered delivery. **Plan
+  changes** still count as uncovered while `SYNC_IN_PROGRESS`, on purpose; the README, the
+  deploy's reminder and the scheduled-change warning say to deploy `dark` before changing
+  or cancelling the plan. Found on the way: the web ACL's description had a semicolon, which
+  WAF's pattern refuses, so the first `dark` deploy would have failed; it is now a tested
+  constant. Not deployed.
+- **2026-11-14** — Public blobs, brought together with the two accounts (`stages.ts`).
+  `production-runs`, the one stage `PUBLIC_BLOBS` names, is the stage `stages.ts` sends to
+  the production account and protects, so the entry above's "protects no `-runs` stage yet"
+  no longer holds: `dark`, `closed` and `on` can be deployed there, and a test fails if the
+  two ever name different stages. Also corrected after a second re-check: SST's lock does
+  not cover `sst diff`. Not deployed.
 - _(agents: append your entry here, one per merged benchmark)_
