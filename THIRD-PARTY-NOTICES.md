@@ -177,12 +177,16 @@ was built with `make BUILD=static`, and `memory_read` also with `BUILD=dynamic`,
 Linux 2023 release 2023.12.20260710.0 with the packages a box installs (gcc
 11.5.0-5.amzn2023.0.5, glibc-static 2.34-231.amzn2023.0.4, binutils 2.41; `http_get` with
 AWS-LC built as its lock says). Each was then linked again with `-Wl,-Map`, which gave the
-same bytes. Every glibc object a map lists was matched by name to its source file in glibc
-2.34 (with Amazon Linux's patches checked for files they add). The header of each such file,
-and the headers it includes, were searched for any notice other than the Free Software
-Foundation's, and every file found was read. The boxes' own binaries were not mapped: their
-`-march=native` resolves on their own processors, which can change a binary's own code and,
-in principle, which library objects it needs.
+same bytes. Every glibc object a map lists was matched by name to the files of that name in
+glibc 2.34, and those files, and the headers they include, were searched for any notice other
+than the Free Software Foundation's. Each object named below was then resolved to the file
+the build actually compiles for it: glibc takes the first file of that name in the `sysdeps`
+directories its `configure` chooses, in order, and the generic one only when there is none.
+The order used is the one `configure` gives for x86_64-pc-linux-gnu with multi-arch, run on
+the source with Amazon Linux's patches applied (`rpmbuild -bp`), 29 directories from
+`sysdeps/unix/sysv/linux/x86_64/64` to `sysdeps/generic`. The boxes' own binaries were not
+mapped: their `-march=native` resolves on their own processors, which can change a binary's
+own code and, in principle, which library objects it needs.
 
 ### The GNU C Library (glibc)
 
@@ -242,14 +246,17 @@ GCC below.
 
 | Binaries | Notices of `LICENSES` | Linked files of glibc 2.34 that carry them |
 |---|---|---|
-| Every static binary (all 14) | The 4.4 BSD licence of the Regents of the University of California | `libio/filedoalloc.c` and `libio/wfiledoalloc.c` (stdio's buffers), `gmon/prof-freq.c` |
+| Every static binary (all 14) | The 4.4 BSD licence of the Regents of the University of California | `libio/filedoalloc.c` and `libio/wfiledoalloc.c` (stdio's buffers) |
 | `memory_read`, `mutex`, `tcp_echo`, `http_get` | Also those of the DNS resolver taken from BIND 4.9.5: UC Berkeley (the same 4.4 BSD licence), Digital Equipment Corporation and Internet Software Consortium | `resolv/res_init.c`, `resolv/res-close.c`, `resolv/res_randomid.c`, `resolv/inet_addr.c`, `resolv/res_libc.c`, `resolv/inet_pton.c`, `resolv/inet_pton_length.c` (added by one of Amazon Linux's patches), `inet/inet_mkadr.c`. In `memory_read`, `mutex` and `tcp_echo`, `pthread_create` refers to the resolver's per-thread state, which brings them in; in `http_get`, `getaddrinfo` does |
 | `http_get` | Also Craig Metz's Inner Net License, Version 2.00 | `sysdeps/posix/getaddrinfo.c`. AWS-LC's socket helper refers to `getaddrinfo`, so the link brings it in (and warns about it); nothing in `http_get` calls it, because the binary resolves names itself |
 | `http_get` | Also Sun fdlibm's | `sysdeps/ieee754/dbl-64/s_log1p.c` (`log1p`, which draws the gaps between requests) |
 | `http_get` | More of the resolver's (UC Berkeley, DEC, ISC) | `resolv/inet_ntop.c`, `inet/inet_net.c`, `resolv/dn_expand.c`, `resolv/dn_skipname.c`, `resolv/res_mkquery.c`, `resolv/res_query.c`, `resolv/res_send.c`, `resolv/res-name-checking.c`, `resolv/res_context_hostalias.c`, `resolv/res_nameinquery.c`, `resolv/res_queriesmatch.c`, `resolv/nss_dns/dns-host.c`, `resolv/nss_dns/dns-network.c`, `nss/nss_files/files-hosts.c` (which includes `resolv/mapv4v6addr.h`, added by one of Amazon Linux's patches), and the nine `resolv/ns_*.c` below |
 
-The individual files give their own years in these notices (for example "Copyright (c)
-1985, 1989, 1993" for UC Berkeley in `resolv/res_init.c`); `LICENSES` gives one form of each.
+`prof-freq.o`, also in every static binary, is compiled from
+`sysdeps/unix/sysv/linux/prof-freq.c`, which is under the LGPL alone, not from the generic
+`gmon/prof-freq.c`, which carries the 4.4 BSD notice. The individual files give their own
+years in these notices (for example "Copyright (c) 1985, 1989, 1993" for UC Berkeley in
+`resolv/res_init.c`); `LICENSES` gives one form of each.
 No file under the other notices of `LICENSES` is linked into any binary: Sun RPC (Oracle
 America), CMU's for Mach and for `if_ppp.h`, Intel's for the Itanium mathematical functions,
 Eric Young's DES, the WIDE Project's `rcmd`, Tom Lord's, Henry Spencer's, the University of
