@@ -36,11 +36,13 @@
  *     read back).
  *   - Any problem stops the copy: no object is started after it, those being
  *     written finish. The report counts as written every object whose PUT S3
- *     acknowledged, whatever was found after; names every key whose PUT went
- *     without an answer that says whether it was written; and says "wrote
- *     nothing" only when no PUT was sent. Run again, it carries on from where
- *     it was: what is at the destination is compared, not copied. A second
- *     complete run copies nothing.
+ *     acknowledged, whatever was found after; names every key a PUT went for
+ *     without an answer that says whether it was written, unless a later PUT
+ *     S3 acknowledged, or a comparison with the destination, settled it (a
+ *     later refusal does not: the earlier PUT may have written it); and says
+ *     "wrote nothing" only when no PUT was sent. Run again, it carries on from
+ *     where it was: what is at the destination is compared, not copied. A
+ *     second complete run copies nothing.
  *
  * The order keeps the destination as a box keeps a bucket: no Run file
  * before its blobs. Listed logs/, boots/, runs/, then blobs/ (the reverse of
@@ -99,7 +101,12 @@ export interface CopyReport {
 	copied: Tally;
 	/** PUTs sent, answered or not. */
 	putsSent: number;
-	/** Keys whose PUT was sent without an answer that says whether S3 wrote it (no answer, or a 5xx): they may be at the destination, or not. */
+	/**
+	 * Keys a PUT was sent for without an answer that says whether S3 wrote it
+	 * (no answer, or a 5xx), and that nothing settled since (a PUT S3
+	 * acknowledged, or a comparison with the object at the destination): they
+	 * may be at the destination, or not.
+	 */
 	unknown: string[];
 	/** The most bytes of objects counted as held at once (each object twice when a second copy of it may be read). */
 	peakBytesHeld: number;
@@ -354,8 +361,12 @@ export async function copyBucket(source: WritableBucket, destination: WritableBu
 		const counted = 2 * object.size;
 		await budget.take(counted);
 		let sent = false;
-		// Whether the last PUT of this key went without an answer that says what became of it.
-		let unanswered = false;
+		// Whether a PUT of this key may have written it, with nothing since that
+		// says whether it did: from the first PUT without such an answer (none
+		// came, or a 5xx) until a PUT S3 acknowledges, or the object at the
+		// destination is read and compared. A later refusal (a 403, say) settles
+		// nothing: the earlier PUT may have written the object all the same.
+		let unsettled = false;
 		try {
 			const head = await attempt(`looking at ${source.name}/${object.key}`, delays, () => source.head(object.key));
 			if (head === null) throw new Error(`${object.key}: gone from the source since it was listed`);
@@ -369,18 +380,21 @@ export async function copyBucket(source: WritableBucket, destination: WritableBu
 				if (stopping && !sent) return "skipped" as const;
 				sent = true;
 				report.putsSent += 1;
-				unanswered = true;
 				let answer: Awaited<ReturnType<WritableBucket["create"]>>;
 				try {
 					answer = await destination.create(object.key, bytes, head.contentType);
 				} catch (error) {
-					if (error instanceof CreateRefused && error.status < 500) unanswered = false;
+					if (!(error instanceof CreateRefused && error.status < 500)) unsettled = true;
 					throw error;
 				}
-				unanswered = false;
-				if (answer === "created") return "written" as const;
+				if (answer === "created") {
+					unsettled = false;
+					return "written" as const;
+				}
 				const theirs = await destination.get(object.key);
 				if (theirs === null) throw new Error(`S3 answered ${answer === "exists" ? "412, the key exists" : "409, a write is in progress"}, and there is no object to read yet`);
+				// Compared: the object there is the source's, or another's that no PUT of ours wrote.
+				unsettled = false;
 				if (sameBytes(theirs, bytes)) return "same" as const;
 				throw new Fatal(`${object.key}: appeared at the destination while it was being copied, with other bytes than the source's; it was not replaced`);
 			});
@@ -401,7 +415,7 @@ export async function copyBucket(source: WritableBucket, destination: WritableBu
 			if (wrong.length > 0) throw new Error(`${object.key}: written (S3 acknowledged it), but the destination's object has ${wrong.join(", ")}`);
 		} catch (error) {
 			stopping = true;
-			if (unanswered) report.unknown.push(object.key);
+			if (unsettled) report.unknown.push(object.key);
 			problems.push(error instanceof Error ? error.message : String(error));
 		} finally {
 			budget.give(counted);

@@ -922,10 +922,12 @@ the development bucket to go back (step 14). It only ever adds:
   key. A written object is then looked at: its size and type must be what was sent, and its
   bytes too (by its ETag when that is their MD5, else read back).
 - Any problem stops it. The report counts as copied every object whose PUT S3 acknowledged,
-  whatever was found after; names every key whose PUT went without an answer that says
-  whether S3 wrote it (none came, or a 5xx), which a second run settles; and says "wrote
-  nothing" only when no PUT was sent. Run again, it carries on, and a second complete run
-  copies nothing.
+  whatever was found after; names every key a PUT went for without an answer that says
+  whether S3 wrote it (none came, or a 5xx) and that nothing settled after (a PUT S3
+  acknowledged, or the object there read and compared; a later refusal, a 403 say, settles
+  nothing, as the earlier PUT may have written it), which a second run settles; and says
+  "wrote nothing" only when no PUT was sent. Run again, it carries on, and a second complete
+  run copies nothing.
 
 Blobs are copied first, then Run files, boot summaries and logs, so the destination never
 holds a Run whose blobs it lacks. At most 16 objects are in flight (`--concurrency`) and

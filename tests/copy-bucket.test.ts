@@ -337,6 +337,37 @@ describe("the copy", () => {
 		expect(destinationObjects().get(key)?.writes).toBe(1);
 	}, TIMEOUT_MS);
 
+	test("a PUT without an answer stays not known when the PUTs after it are refused (403): the first may have written the object", async () => {
+		const key = "logs/2026/11/10/a-boot.log";
+		let first = true;
+		standin.fault = (request) => {
+			if (request.bucket !== "destination" || request.method !== "PUT" || request.key !== key) return undefined;
+			// The first PUT is stored and answered 500; the retries are refused, as when the session's rights change.
+			if (first) {
+				first = false;
+				standin.put("destination", key, "the box's log\n", "text/plain");
+				return new Response("<Error><Code>InternalError</Code><Message>We encountered an internal error.</Message></Error>", { status: 500 });
+			}
+			return new Response("<Error><Code>AccessDenied</Code><Message>Access Denied</Message></Error>", { status: 403 });
+		};
+		const stopped = (await copyBucket(source, destination, { ...FAST, concurrency: 1 }).catch((error: unknown) => error)) as CopyStopped;
+		expect(stopped).toBeInstanceOf(CopyStopped);
+		expect(stopped.problems).toHaveLength(1);
+		expect(stopped.problems[0]).toContain("answered 403, AccessDenied: Access Denied");
+		expect(puts().filter((request) => request.key === key).length).toBe(3);
+		expect(stopped.report.unknown).toEqual([key]);
+		// The destination holds every object counted as written, and that one.
+		expect(stopped.report.copied.count).toBe(destinationObjects().size - 1);
+		expect(stopped.message).toContain(`; whether 1 more was written is not known: ${key}`);
+		expect(destinationObjects().get(key)?.writes).toBe(1);
+		// Run again, it finds the object there and compares it: the same, written once.
+		standin.fault = undefined;
+		const resumed = await copyBucket(source, destination, FAST);
+		expect(resumed.copied.count + resumed.same.count).toBe(sourceObjects().size);
+		expect(puts().filter((request) => request.key === key).length).toBe(3);
+		expect(destinationObjects().get(key)?.writes).toBe(1);
+	}, TIMEOUT_MS);
+
 	test("a PUT S3 refuses outright (403) writes nothing and leaves nothing unknown, but is not \"wrote nothing\"", async () => {
 		standin.fault = (request) =>
 			request.method === "PUT" ? new Response("<Error><Code>AccessDenied</Code><Message>Access Denied</Message></Error>", { status: 403 }) : undefined;
