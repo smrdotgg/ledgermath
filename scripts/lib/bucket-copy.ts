@@ -61,7 +61,8 @@
 
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
 
 import { type BucketObject, describeS3Error, md5Of, type WritableBucket } from "./bucket";
@@ -445,12 +446,30 @@ export interface VerifyOptions {
 	 * verification is then incomplete, and says so).
 	 */
 	checkDirectory: string | null;
+	/**
+	 * Where the source's blobs/, runs/ and boots/ are written as they are
+	 * compared (only with a checkDirectory). When check-runs.ts fails on the
+	 * destination's, and the copy has no other problem, it is run on these
+	 * too, and its failing on the destination is no problem as long as every
+	 * file it fails on there it also fails on here: a Run kept as it was
+	 * recorded, which does not validate at either end. Null or absent:
+	 * check-runs.ts must pass on the destination's.
+	 */
+	sourceCheckDirectory?: string | null;
 	concurrency?: number;
 	memoryBytes?: number;
 	retryDelaysMs?: readonly number[];
 	progress?: (line: string) => void;
-	/** Runs scripts/check-runs.ts on a directory; its exit status and output. */
-	checkRuns?: (directory: string) => { status: number | null; output: string };
+	/** Runs scripts/check-runs.ts on a directory (checkRunsScript). */
+	checkRuns?: (directory: string) => CheckRunsOutcome;
+}
+
+/** What scripts/check-runs.ts said of a directory. */
+export interface CheckRunsOutcome {
+	status: number | null;
+	output: string;
+	/** What it wrote with --result: how many Run files it read, and the files its problems are about. Null when it wrote nothing. */
+	result: { runs: number; failing: string[] } | null;
 }
 
 export interface VerifyReport {
@@ -462,14 +481,29 @@ export interface VerifyReport {
 	repositoryFiles: number;
 	/** scripts/check-runs.ts's verdict on the copy of the destination: null when it was not run. */
 	checkRuns: { passed: boolean; output: string } | null;
+	/** Its verdict on the copy of the source (sourceCheckDirectory), run when it failed on the destination's: null when it was not run. */
+	sourceCheckRuns: { passed: boolean; output: string } | null;
+	/**
+	 * The files check-runs.ts failed on in the destination's objects when each
+	 * of them is one it failed on in the source's too, so that its failing is
+	 * no problem; empty otherwise.
+	 */
+	failingAsAtSource: string[];
 	problems: string[];
 }
 
-/** Runs scripts/check-runs.ts as its own process. */
-export function checkRunsScript(directory: string): { status: number | null; output: string } {
+/** Runs scripts/check-runs.ts as its own process, with `args` before the directory, and reads what it wrote with --result. */
+export function checkRunsScript(directory: string, args: readonly string[] = []): CheckRunsOutcome {
 	const script = resolve(import.meta.dir, "..", "check-runs.ts");
-	const done = spawnSync(process.execPath, [script, directory], { encoding: "utf8", maxBuffer: 256 * 1024 * 1024 });
-	return { status: done.status, output: `${done.stdout ?? ""}${done.stderr ?? ""}` };
+	const scratch = mkdtempSync(join(tmpdir(), "check-runs-result-"));
+	try {
+		const resultFile = join(scratch, "result.json");
+		const done = spawnSync(process.execPath, [script, ...args, "--result", resultFile, directory], { encoding: "utf8", maxBuffer: 256 * 1024 * 1024 });
+		const result = existsSync(resultFile) ? (JSON.parse(readFileSync(resultFile, "utf8")) as { runs: number; failing: string[] }) : null;
+		return { status: done.status, output: `${done.stdout ?? ""}${done.stderr ?? ""}`, result };
+	} finally {
+		rmSync(scratch, { recursive: true, force: true });
+	}
 }
 
 /**
@@ -498,6 +532,16 @@ function filesUnder(root: string, part: string): string[] {
 		.sort();
 }
 
+/** Refuses a directory to write objects into unless it is empty or does not exist; then makes it. */
+function emptyDirectory(directory: string, holds: string): void {
+	if (existsSync(directory) && (!lstatSync(directory).isDirectory() || readdirSync(directory).length > 0)) {
+		throw new Error(`${directory}: must be an empty directory, or not exist, so that it holds ${holds} and nothing else`);
+	}
+	mkdirSync(directory, { recursive: true });
+}
+
+const within = (inner: string, outer: string): boolean => resolve(inner) === resolve(outer) || resolve(inner).startsWith(`${resolve(outer)}${sep}`);
+
 function writeInto(directory: string, key: string, bytes: Uint8Array): void {
 	const path = join(directory, ...key.split("/"));
 	if (!resolve(path).startsWith(`${resolve(directory)}${sep}`)) throw new Error(`${key}: would be written outside ${directory}`);
@@ -512,25 +556,39 @@ function writeInto(directory: string, key: string, bytes: Uint8Array): void {
  * a blob's bytes, at both ends, must hash to its key); every Run file and boot
  * summary in the Runs repository is at the destination with the same bytes;
  * and scripts/check-runs.ts passes on the destination's blobs/, runs/ and
- * boots/, written into checkDirectory. A Runs repository without runs/ and
- * boots/ is refused before anything is read, and a key with a "." or ".."
- * segment, which cannot be read by its name, is a problem.
+ * boots/, written into checkDirectory. With a sourceCheckDirectory, the
+ * source's are written there too, and check-runs.ts may fail on the
+ * destination's as long as the copy has no other problem and every file it
+ * fails on there, it fails on in the source's as well. A Runs repository
+ * without runs/ and boots/ is refused before anything is read, and a key with
+ * a "." or ".." segment, which cannot be read by its name, is a problem.
  */
 export async function verifyCopy(source: WritableBucket, destination: WritableBucket, options: VerifyOptions): Promise<VerifyReport> {
 	const concurrency = options.concurrency ?? DEFAULT_CONCURRENCY;
 	const delays = options.retryDelaysMs ?? DEFAULT_RETRY_DELAYS_MS;
 	const progress = options.progress ?? (() => {});
 	const budget = new ByteBudget(options.memoryBytes ?? DEFAULT_MEMORY_BYTES);
-	const report: VerifyReport = { same: { count: 0, bytes: 0 }, onlyAtDestination: 0, repositoryFiles: 0, checkRuns: null, problems: [] };
+	const report: VerifyReport = {
+		same: { count: 0, bytes: 0 },
+		onlyAtDestination: 0,
+		repositoryFiles: 0,
+		checkRuns: null,
+		sourceCheckRuns: null,
+		failingAsAtSource: [],
+		problems: [],
+	};
 	const problems = report.problems;
 	const checkDirectory = options.checkDirectory;
+	const sourceCheckDirectory = options.sourceCheckDirectory ?? null;
 	checkRunsRepository(options.runsRepository);
-	if (checkDirectory !== null) {
-		if (existsSync(checkDirectory) && (!lstatSync(checkDirectory).isDirectory() || readdirSync(checkDirectory).length > 0)) {
-			throw new Error(`${checkDirectory}: must be an empty directory, or not exist, so that it holds the destination's objects and nothing else`);
+	if (sourceCheckDirectory !== null) {
+		if (checkDirectory === null) throw new Error("a directory for the source's objects needs one for the destination's (--source-check-dir needs --check-dir)");
+		if (within(sourceCheckDirectory, checkDirectory) || within(checkDirectory, sourceCheckDirectory)) {
+			throw new Error(`${sourceCheckDirectory} and ${checkDirectory}: the source's objects and the destination's need two directories, neither inside the other`);
 		}
-		mkdirSync(checkDirectory, { recursive: true });
 	}
+	if (checkDirectory !== null) emptyDirectory(checkDirectory, "the destination's objects");
+	if (sourceCheckDirectory !== null) emptyDirectory(sourceCheckDirectory, "the source's objects");
 
 	const sourceListed = await listAll(source, delays);
 	const destinationListed = await listAll(destination, delays);
@@ -568,6 +626,7 @@ export async function verifyCopy(source: WritableBucket, destination: WritableBu
 				if (ours === null) return void problems.push(`${object.key}: listed at the source, gone when read`);
 				if (!sameBytes(ours, theirs)) return void problems.push(`${object.key}: the destination's bytes differ from the source's`);
 				add(report.same, object.size);
+				if (sourceCheckDirectory !== null && keep(object.key)) writeInto(sourceCheckDirectory, object.key, ours);
 			}
 			if (keep(object.key)) writeInto(checkDirectory as string, object.key, theirs);
 		} catch (error) {
@@ -602,9 +661,34 @@ export async function verifyCopy(source: WritableBucket, destination: WritableBu
 	progress(`${report.repositoryFiles} of ${repositoryKeys.length} files of the Runs repository at the destination with the same bytes`);
 
 	if (checkDirectory !== null) {
-		const checked = (options.checkRuns ?? checkRunsScript)(checkDirectory);
+		const checkRuns = options.checkRuns ?? ((directory: string) => checkRunsScript(directory));
+		const checked = checkRuns(checkDirectory);
 		report.checkRuns = { passed: checked.status === 0, output: checked.output };
-		if (checked.status !== 0) problems.push(`scripts/check-runs.ts ${checkDirectory} failed (exit ${checked.status ?? "without a status"})`);
+		const failed = `scripts/check-runs.ts ${checkDirectory} failed (exit ${checked.status ?? "without a status"})`;
+		if (checked.status !== 0 && sourceCheckDirectory === null) problems.push(failed);
+		else if (checked.status !== 0 && problems.length > 0) {
+			// The source's directory lacks what was not compared: no fair comparison.
+			problems.push(`${failed}; not compared with the source's objects, as the copy has other problems`);
+		} else if (checked.status !== 0 && sourceCheckDirectory !== null) {
+			const atSource = checkRuns(sourceCheckDirectory);
+			report.sourceCheckRuns = { passed: atSource.status === 0, output: atSource.output };
+			const here = checked.result;
+			const there = atSource.result;
+			if (here === null || there === null) {
+				problems.push(`${failed}, and which files it failed on, here or in the source's objects (${sourceCheckDirectory}), it did not say`);
+			} else if (here.runs === 0 || here.failing.length === 0) {
+				// It failed for a reason that is no file's (no Run file at all): nothing to compare.
+				problems.push(`${failed}, and not on any file it named`);
+			} else {
+				const failingThere = new Set(there.failing);
+				const onlyHere = here.failing.filter((file) => !failingThere.has(file));
+				if (onlyHere.length > 0) {
+					problems.push(`${failed} on ${onlyHere.length} file${onlyHere.length === 1 ? "" : "s"} it does not fail on in the source's objects (${sourceCheckDirectory}): ${onlyHere.join(", ")}`);
+				} else {
+					report.failingAsAtSource = here.failing;
+				}
+			}
+		}
 	}
 	problems.sort();
 	return report;

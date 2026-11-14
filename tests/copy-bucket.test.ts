@@ -451,11 +451,8 @@ describe("the verification", () => {
 		for (const part of ["runs", "boots"]) cpSync(join(SAMPLE, part), join(directory, part), { recursive: true });
 		return directory;
 	}
-	/** check-runs as the CLI runs it, told which blobs the sample leaves out. */
-	const checkRunsOmitting = (directory: string) => {
-		const done = Bun.spawnSync([process.execPath, join(ROOT, "scripts", "check-runs.ts"), "--omitted", join(SAMPLE, "omitted-blobs.json"), directory]);
-		return { status: done.exitCode, output: `${done.stdout.toString()}${done.stderr.toString()}` };
-	};
+	/** check-runs as the verification runs it, told which blobs the sample leaves out. */
+	const checkRunsOmitting = (directory: string) => checkRunsScript(directory, ["--omitted", join(SAMPLE, "omitted-blobs.json")]);
 
 	test("passes after a copy: every source object has the same bytes, every file of the Runs repository is there, check-runs passes", async () => {
 		await copyBucket(source, destination, FAST);
@@ -528,6 +525,36 @@ describe("the verification", () => {
 		]);
 	}, TIMEOUT_MS);
 
+	test("the source's objects are compared with only when the copy is otherwise right, and only when check-runs says which files it failed on", async () => {
+		await copyBucket(source, destination, FAST);
+		const repository = runsRepository();
+		// A missing object: the source's directory would lack it, so no comparison is made.
+		destinationObjects().delete("logs/2026/11/10/a-boot.log");
+		const missing = await verifyCopy(source, destination, { ...FAST, runsRepository: repository, checkDirectory: fresh("check"), sourceCheckDirectory: fresh("source-check") });
+		expect(missing.problems).toEqual([
+			"logs/2026/11/10/a-boot.log: in the source, not at the destination",
+			expect.stringMatching(/^scripts\/check-runs\.ts .* failed \(exit 1\); not compared with the source's objects, as the copy has other problems$/),
+		]);
+		expect(missing.sourceCheckRuns).toBeNull();
+		await copyBucket(source, destination, FAST);
+		// A check-runs that wrote no result (it crashed, say): nothing can be compared.
+		const silent = (directory: string) => ({ ...checkRunsScript(directory), result: null });
+		const unsaid = await verifyCopy(source, destination, { ...FAST, runsRepository: repository, checkDirectory: fresh("check"), sourceCheckDirectory: fresh("source-check"), checkRuns: silent });
+		expect(unsaid.problems).toEqual([expect.stringMatching(/failed \(exit 1\), and which files it failed on, here or in the source's objects \(.*\), it did not say$/)]);
+		expect(unsaid.failingAsAtSource).toEqual([]);
+		// One that failed on no file it named (no Run file at all, say): nothing to compare either.
+		const noFile = (directory: string) => ({ status: 1, output: "no Run files", result: { runs: 0, failing: [] } });
+		const unnamed = await verifyCopy(source, destination, { ...FAST, runsRepository: repository, checkDirectory: fresh("check"), sourceCheckDirectory: fresh("source-check"), checkRuns: noFile });
+		expect(unnamed.problems).toEqual([expect.stringMatching(/failed \(exit 1\), and not on any file it named$/)]);
+		// The directories: a source's needs a destination's, and the two are apart.
+		const check = fresh("check");
+		await expect(verifyCopy(source, destination, { ...FAST, runsRepository: repository, checkDirectory: null, sourceCheckDirectory: fresh("source-check") })).rejects.toThrow(
+			"--source-check-dir needs --check-dir",
+		);
+		await expect(verifyCopy(source, destination, { ...FAST, runsRepository: repository, checkDirectory: check, sourceCheckDirectory: check })).rejects.toThrow("neither inside the other");
+		await expect(verifyCopy(source, destination, { ...FAST, runsRepository: repository, checkDirectory: check, sourceCheckDirectory: join(check, "runs") })).rejects.toThrow("neither inside the other");
+	}, TIMEOUT_MS);
+
 	test("refuses a check directory that already holds something", async () => {
 		const checkDirectory = fresh("check");
 		mkdirSync(checkDirectory);
@@ -575,14 +602,66 @@ describe("going back: production into development, after a failed cutover", () =
 		}
 		expect(new TextDecoder().decode(development.objects.get(BY_HAND)?.bytes)).toBe("by hand, after the cutover\n");
 
-		const checkRunsOmitting = (directory: string) => {
-			const done = Bun.spawnSync([process.execPath, join(ROOT, "scripts", "check-runs.ts"), "--omitted", join(SAMPLE, "omitted-blobs.json"), directory]);
-			return { status: done.exitCode, output: `${done.stdout.toString()}${done.stderr.toString()}` };
-		};
+		const checkRunsOmitting = (directory: string) => checkRunsScript(directory, ["--omitted", join(SAMPLE, "omitted-blobs.json")]);
 		const after = await verifyCopy(from, to, { ...FAST, runsRepository: repository, checkDirectory: fresh("check"), checkRuns: checkRunsOmitting });
 		expect(after.problems).toEqual([]);
 		expect(after.onlyAtDestination).toBe(1);
 		expect(after.checkRuns?.passed).toBe(true);
+		expect(standin.requests.some((request) => request.bucket === "production" && request.method !== "GET" && request.method !== "HEAD")).toBe(false);
+	}, TIMEOUT_MS);
+
+	test("when production holds a Run that does not validate, the copy back keeps it as it is, and the verification says it fails at both ends", async () => {
+		// The rollback's reason: production's round left a Run that does not validate. It is kept as
+		// recorded, published already, and copied back byte for byte; check-runs fails on it in either bucket.
+		const INVALID = "runs/2026/11/15/01a1ccad-0000-7000-8000-000000000001.json";
+		const production = standin.bucket("production", { readers: [PRODUCTION_KEY] });
+		const development = standin.bucket("development", { writers: [DEVELOPMENT_KEY] });
+		for (const [key, object] of sourceObjects()) {
+			production.objects.set(key, { ...object, writes: 1 });
+			development.objects.set(key, { ...object, writes: 1 });
+		}
+		standin.put("production", INVALID, "{}\n", "application/json");
+		const from = new S3Bucket("production", "us-east-2", { endpoint: standin.url, credentials: () => ({ accessKeyId: PRODUCTION_KEY, secretAccessKey: "production-secret" }) });
+		const to = new S3Bucket("development", "us-east-2", { endpoint: standin.url, credentials: () => ({ accessKeyId: DEVELOPMENT_KEY, secretAccessKey: "development-secret" }) });
+		const repository = fresh("ledgermath-runs");
+		for (const part of ["runs", "boots"]) cpSync(join(SAMPLE, part), join(repository, part), { recursive: true });
+		mkdirSync(join(repository, "runs", "2026", "11", "15"), { recursive: true });
+		writeFileSync(join(repository, ...INVALID.split("/")), "{}\n");
+		const checkRunsOmitting = (directory: string) => checkRunsScript(directory, ["--omitted", join(SAMPLE, "omitted-blobs.json")]);
+
+		const report = await copyBucket(from, to, FAST);
+		expect(report.copied.count).toBe(1);
+		expect(new TextDecoder().decode(development.objects.get(INVALID)?.bytes)).toBe("{}\n");
+
+		// Without the source's objects to compare with, the faithful copy can never pass.
+		const alone = await verifyCopy(from, to, { ...FAST, runsRepository: repository, checkDirectory: fresh("check"), checkRuns: checkRunsOmitting });
+		expect(alone.problems).toEqual([expect.stringMatching(/^scripts\/check-runs\.ts .* failed \(exit 1\)$/)]);
+		expect(alone.checkRuns?.output).toContain(`${INVALID}: / must have required property`);
+
+		// With them: every object is in development with the same bytes, and the one file check-runs fails on
+		// there, it fails on in production's objects too.
+		const checkDirectory = fresh("dev-check");
+		const sourceCheckDirectory = fresh("prod-check");
+		const both = await verifyCopy(from, to, { ...FAST, runsRepository: repository, checkDirectory, sourceCheckDirectory, checkRuns: checkRunsOmitting });
+		expect(both.problems).toEqual([]);
+		expect(both.same.count).toBe(production.objects.size);
+		expect(both.checkRuns?.passed).toBe(false);
+		expect(both.sourceCheckRuns?.passed).toBe(false);
+		expect(both.failingAsAtSource).toEqual([INVALID]);
+		// The source's directory holds production's blobs, Run files and boot summaries, and nothing else.
+		expect(filesUnder(sourceCheckDirectory)).toEqual([...production.objects.keys()].filter((key) => !key.startsWith("logs/")).sort());
+
+		// Told nothing of the sample's left-out blobs, check-runs fails on all its Runs too, at both ends alike.
+		const plain = await verifyCopy(from, to, { ...FAST, runsRepository: repository, checkDirectory: fresh("dev-check"), sourceCheckDirectory: fresh("prod-check") });
+		expect(plain.problems).toEqual([]);
+		expect(plain.failingAsAtSource).toEqual([...filesUnder(join(SAMPLE, "runs")).map((file) => `runs/${file}`), INVALID].sort());
+
+		// A Run that does not validate in development alone is a problem still: it is not as at the source.
+		const OWN = "runs/2026/11/16/01a1ccad-0000-7000-8000-000000000002.json";
+		standin.put("development", OWN, '{"id": 1}\n', "application/json");
+		const own = await verifyCopy(from, to, { ...FAST, runsRepository: repository, checkDirectory: fresh("dev-check"), sourceCheckDirectory: fresh("prod-check"), checkRuns: checkRunsOmitting });
+		expect(own.problems).toEqual([expect.stringMatching(new RegExp(`^scripts/check-runs\\.ts .* failed \\(exit 1\\) on 1 file it does not fail on in the source's objects \\(.*\\): ${OWN}$`))]);
+		expect(own.failingAsAtSource).toEqual([]);
 		expect(standin.requests.some((request) => request.bucket === "production" && request.method !== "GET" && request.method !== "HEAD")).toBe(false);
 	}, TIMEOUT_MS);
 });
@@ -712,7 +791,17 @@ describe("scripts/copy-bucket.ts", () => {
 		expect(verified.status).toBe(0);
 		expect(verified.stdout).toContain("THE VERIFICATION IS INCOMPLETE");
 		expect(verified.stdout).toContain("the copy checks out");
-		for (const output of [dry, first, second, verified]) for (const secret of SECRETS) expect(`${output.stdout}${output.stderr}`).not.toContain(secret);
+
+		// The sample leaves blobs out, so check-runs fails on its Runs, here as in the source.
+		const sourceCheck = fresh("source-check");
+		const asAtSource = await run(["verify", ...buckets(), "--runs-repository", join(SAMPLE), "--check-dir", fresh("check"), "--source-check-dir", sourceCheck], bin);
+		const sampleRuns = filesUnder(join(SAMPLE, "runs")).length;
+		expect(asAtSource.stderr).toBe("");
+		expect(asAtSource.status).toBe(0);
+		expect(asAtSource.stdout).toContain(`scripts/check-runs.ts ${sourceCheck} (the source's objects): FAILED`);
+		expect(asAtSource.stdout).toContain(`files scripts/check-runs.ts fails on at the destination, each of which it fails on in the source's objects too: ${sampleRuns}`);
+		expect(asAtSource.stdout).toContain(`the copy checks out; ${sampleRuns} files do not validate, at the destination as in the source;`);
+		for (const output of [dry, first, second, verified, asAtSource]) for (const secret of SECRETS) expect(`${output.stdout}${output.stderr}`).not.toContain(secret);
 	}, TIMEOUT_MS);
 
 	test("stops with the CLI's words when a profile cannot be exported, and refuses bad usage", async () => {
@@ -726,6 +815,8 @@ describe("scripts/copy-bucket.ts", () => {
 		expect(usage.stderr).toContain("usage: bun scripts/copy-bucket.ts copy");
 		const both = await run(["verify", ...buckets(), "--runs-repository", SAMPLE], bin);
 		expect(both.status).toBe(2);
+		const sourceAlone = await run(["verify", ...buckets(), "--runs-repository", SAMPLE, "--no-check-runs", "--source-check-dir", fresh("source-check")], bin);
+		expect(sourceAlone.status).toBe(2);
 		const typo = await run(["verify", ...buckets(), "--runs-repository", join(scratch, "no-such-checkout"), "--no-check-runs"], bin);
 		expect(typo.status).toBe(1);
 		expect(typo.stderr).toContain("no-such-checkout: has no runs/ directory, so it is not a checkout of the Runs repository (--runs-repository)");

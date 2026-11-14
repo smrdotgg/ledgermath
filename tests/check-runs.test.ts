@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -105,5 +105,31 @@ describe("the runner manifest", () => {
 		const result = checkBucketDirectory(directory, { blobs: true, omitted: new Set([sourceHash]) });
 		expect(result.problems).toEqual([]);
 		expect(result.manifests).toEqual({ checked: 0, unchecked: 1 });
+	}, SUBPROCESS_TIMEOUT_MS);
+});
+
+describe("the files it fails on", () => {
+	test("are named once each, Run files and boot summaries alike, and --result writes them with the count of Run files", () => {
+		const directory = join(scratch, "failing");
+		mkdirSync(join(directory, "runs", "2026", "11", "15"), { recursive: true });
+		mkdirSync(join(directory, "boots", "2026", "11", "15"), { recursive: true });
+		// A Run file that does not validate, one that is not JSON, and a boot summary listing two Runs that are not there (two problems, one file).
+		writeFileSync(join(directory, "runs", "2026", "11", "15", "not-a-run.json"), "{}\n");
+		writeFileSync(join(directory, "runs", "2026", "11", "15", "not-json.json"), "{");
+		writeFileSync(join(directory, "boots", "2026", "11", "15", "a-boot.json"), JSON.stringify({ runs: [{ id: "missing" }, { id: "gone" }] }));
+		const result = checkBucketDirectory(directory, { blobs: true });
+		expect(result.failing).toEqual(["boots/2026/11/15/a-boot.json", "runs/2026/11/15/not-a-run.json", "runs/2026/11/15/not-json.json"]);
+		expect(result.problems.filter((problem) => problem.startsWith("boots/"))).toHaveLength(2);
+		for (const problem of result.problems) expect(result.failing.some((file) => problem.startsWith(`${file}: `))).toBe(true);
+
+		const written = join(scratch, "failing-result.json");
+		let status = 0;
+		try {
+			execFileSync(process.execPath, [join(ROOT, "scripts", "check-runs.ts"), "--result", written, directory], { stdio: "pipe" });
+		} catch (error) {
+			status = (error as { status: number }).status;
+		}
+		expect(status).toBe(1);
+		expect(JSON.parse(readFileSync(written, "utf8"))).toEqual({ runs: 2, failing: result.failing });
 	}, SUBPROCESS_TIMEOUT_MS);
 });

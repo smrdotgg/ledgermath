@@ -960,6 +960,21 @@ that holds anything, so every verification needs one of its own (`/tmp/prod-chec
 check of the copy, byte for byte at both ends; `copy` alone does not read the source's copy
 of a blob the destination already holds.
 
+Every Run is kept as it was recorded, whether it validates or not, and the copy carries it
+byte for byte: when the source holds a Run that `check-runs.ts` fails on, it fails on the
+destination's copy too, however faithful the copy. So `verify` takes `--source-check-dir`,
+a second directory, new or empty, apart from `--check-dir` and with room for the source
+bucket: the source's `blobs/`, `runs/` and `boots/` are written there as they are compared,
+and when `check-runs.ts` fails on the destination's and the copy has no other problem, it is
+run on the source's too. The verification then passes when every file it fails on at the
+destination, it also fails on in the source's objects: it lists those files and ends "the
+copy checks out; N files do not validate, at the destination as in the source". A file it
+fails on at the destination alone is a problem, and when anything else is wrong the two are
+not compared at all. (A Run file that does not validate against the schema is listed by the
+Methods as unreadable, in no Series.) `--no-check-runs` is no way round: it leaves out
+`check-runs.ts`, and with it every object only the destination holds, and reports the
+verification as incomplete. Every verification below names both directories.
+
 ```bash
 DEV_BUCKET=$(jq -r .bucket .sst/outputs.smr-runs.json)
 PROD_BUCKET=$(jq -r .bucket .sst/outputs.production-runs.json)
@@ -969,7 +984,8 @@ bun scripts/copy-bucket.ts copy "${FROM[@]}" --dry-run
 bun scripts/copy-bucket.ts copy "${FROM[@]}"
 
 git clone git@github.com:smrdotgg/ledgermath-runs.git /tmp/ledgermath-runs-verify   # once; later, git -C ... pull
-bun scripts/copy-bucket.ts verify "${FROM[@]}" --runs-repository /tmp/ledgermath-runs-verify --check-dir /tmp/prod-check-1
+bun scripts/copy-bucket.ts verify "${FROM[@]}" --runs-repository /tmp/ledgermath-runs-verify \
+  --check-dir /tmp/prod-check-1 --source-check-dir /tmp/dev-source-1
 ```
 
 How long: on 2026-11-14 the development bucket held 33,366 objects under those prefixes
@@ -1039,8 +1055,8 @@ Before, on any day:
    development account goes on with its rounds. Changes: adds objects to the production
    bucket. The deploy has already put AWS-LC's archive and the Fixture blobs there, under the
    same keys and bytes as the development bucket's; they are read and found the same.
-5. **Verify** (as in "Copying the data", with `--check-dir /tmp/prod-check-1`). Changes
-   nothing.
+5. **Verify** (as in "Copying the data", with `--check-dir /tmp/prod-check-1
+   --source-check-dir /tmp/dev-source-1`). Changes nothing.
 
 The cutover, in one gap (here, 06:30 to 10:10). Each deploy has a time by which it must have
 succeeded, so that there is time left to go back; going back must be over before the first
@@ -1056,9 +1072,10 @@ slot:
    lists nothing, and `aws s3 ls "s3://$DEV_BUCKET/boots/<yyyy>/<mm>/<dd>/" --profile tabot-dev`
    holds that round's five boot summaries. Changes nothing.
 7. **Copy again and verify again**: `git -C /tmp/ledgermath-runs-verify pull` (the 06:00 run
-   has added the round), `copy`, and `verify` with a directory of its own, `--check-dir
-   /tmp/prod-check-2` (it refuses `/tmp/prod-check-1`, which holds the first verification's
-   objects; remove that one first if the disk is short). The copy adds what the development
+   has added the round), `copy`, and `verify` with directories of its own, `--check-dir
+   /tmp/prod-check-2 --source-check-dir /tmp/dev-source-2` (it refuses `/tmp/prod-check-1`
+   and `/tmp/dev-source-1`, which hold the first verification's objects; remove those first
+   if the disk is short). The copy adds what the development
    bucket gained since step 4. From here until step 10 the development bucket gains nothing
    more, because its next slot is 10:10. Changes: adds objects to the production bucket. If
    either fails, stop here: nothing else has changed.
@@ -1189,17 +1206,27 @@ After the cutover:
        bun scripts/copy-bucket.ts copy "${BACK[@]}" --dry-run
        bun scripts/copy-bucket.ts copy "${BACK[@]}"
        git -C /tmp/ledgermath-runs-verify pull
-       bun scripts/copy-bucket.ts verify "${BACK[@]}" --runs-repository /tmp/ledgermath-runs-verify --check-dir /tmp/dev-check-1
+       bun scripts/copy-bucket.ts verify "${BACK[@]}" --runs-repository /tmp/ledgermath-runs-verify \
+         --check-dir /tmp/dev-check-1 --source-check-dir /tmp/prod-source-1
        ```
 
        The copy writes nothing the development bucket holds, and adds the Run files, boot
-       summaries, logs and blobs only the production bucket holds. The verification passes
-       only when every object of the production bucket, and every Run file and boot summary
-       of the Runs repository, is in the development bucket with the same bytes. Without
-       this, a Run already published could name blobs that only the production bucket
-       holds: the workflow, reading the development bucket, might still find what it needs
-       in its cache, and would fail once the cache is lost or evicted, or when a new
-       reducing code reads a stream again.
+       summaries, logs and blobs only the production bucket holds, each byte for byte, a Run
+       that does not validate like any other. The verification passes only when every
+       object of the production bucket, and every Run file and boot summary of the Runs
+       repository, is in the development bucket with the same bytes, and `check-runs.ts`
+       either passes on the development bucket's objects or fails only on files it also
+       fails on in the production bucket's (`--source-check-dir`, as in "Copying the data").
+       So when the round failed with Runs that do not validate, this step still completes:
+       those Runs are kept as they were recorded, in both buckets and in the Runs
+       repository, never repaired or removed, and `verify` lists them and ends "the copy
+       checks out; N files do not validate, at the destination as in the source". A file
+       that fails in the development bucket alone is a problem, and the step is not done.
+       Both directories need room for the bucket. Without this step, a Run already
+       published could name blobs that only the production bucket holds: the workflow,
+       reading the development bucket, might still find what it needs in its cache, and
+       would fail once the cache is lost or evicted, or when a new reducing code reads a
+       stream again.
     4. Then, and not before, point the workflow back at the development bucket:
 
        ```bash
@@ -1218,7 +1245,8 @@ After the cutover:
     already copied from it stay in the Runs repository (Runs are never removed, and the copy
     job only adds). For a later try, run steps 6 to 13 again: the copy adds what the
     development bucket gained, finds production's own objects there and the same, and the
-    verification passes.
+    verification passes (a Run that does not validate, now in both buckets, fails at both
+    ends alike).
 
 ## Prices
 
