@@ -5,8 +5,9 @@
  * in -runs here; every other stage gets July's stack, unchanged.
  *
  * schedule.json names the targets: instance types, their zone, and the times
- * of day each boots (infra/runs/placement.ts). Each target gets an EventBridge
- * schedule, and every schedule invokes the one launch Lambda, which launches
+ * of day each boots (infra/runs/placement.ts). In the one scheduled stage
+ * (infra/runs/stages.ts) each target gets an EventBridge schedule, and every
+ * schedule invokes the one launch Lambda, which launches
  * one box of that type. The box boots the pinned image with runner/box.sh as
  * its user-data, fetches the source archive of the deployed commit, runs the
  * schedule's entries for its type, uploads to this stage's bucket and
@@ -38,9 +39,10 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 
 import { boxPolicy } from "./box-role";
+import { confirmDeployAccount } from "./deploy-account";
 import { fixturesReaderPolicy, fixturesReaderTrustPolicy, writeFixtureFiles } from "./fixtures";
 import { GITHUB_OIDC_AUDIENCE, GITHUB_OIDC_URL, readPolicy, trustPolicy } from "./github-role";
-import { LAUNCH_SCHEDULES, TARGETS, ZONE } from "./placement";
+import { scheduledTargetTypes, stageLaunchSchedules, TARGETS, ZONE } from "./placement";
 import { tlsArchive } from "./tls-archive";
 
 /**
@@ -90,7 +92,10 @@ function sourceArchive(): SourceArchive {
 	return { commit, path, key: `source/${commit}.tar.gz` };
 }
 
-export function runsStack() {
+export async function runsStack() {
+	// Before anything is declared: the provider must act in the account the
+	// stage's profile reaches (infra/runs/deploy-account.ts).
+	confirmDeployAccount($app.stage, (await aws.getCallerIdentity({})).accountId);
 	const archive = sourceArchive();
 	// Checked before anything is made: a missing or wrong copy stops the deploy
 	// here, saying how to fetch it.
@@ -222,7 +227,7 @@ export function runsStack() {
 			LEDGERMATH_SOURCE_KEY: source.key,
 			LEDGERMATH_SOURCE_COMMIT: archive.commit,
 			LEDGERMATH_IMAGE_ID: IMAGE_ID,
-			LEDGERMATH_TARGET_INSTANCE_TYPES: TARGETS.map((target) => target.instance_type).join(","),
+			LEDGERMATH_TARGET_INSTANCE_TYPES: scheduledTargetTypes($app.stage),
 			LEDGERMATH_SUBNET_ID: subnet.id,
 			LEDGERMATH_SECURITY_GROUP_ID: securityGroup.id,
 			LEDGERMATH_INSTANCE_PROFILE: boxProfile.name,
@@ -245,8 +250,11 @@ export function runsStack() {
 	// per target today), each with its own role allowed to invoke the launch
 	// Lambda. Scheduler's own delivery retries are 0. The payload carries the
 	// scheduled time and the instance type: the launch's client token comes
-	// from both, so one slot of one target can only ever start one box.
-	for (const schedule of LAUNCH_SCHEDULES) {
+	// from both, so one slot of one target can only ever start one box. Only
+	// the scheduled stage has them (infra/runs/stages.ts); in any other, boxes
+	// start by hand, and the launch refuses a scheduled payload.
+	const launchSchedules = stageLaunchSchedules($app.stage);
+	for (const schedule of launchSchedules) {
 		new sst.aws.CronV2(schedule.name, {
 			schedule: schedule.expression,
 			timezone: "UTC",
@@ -306,7 +314,7 @@ export function runsStack() {
 			instanceType: target.instance_type,
 			zone: target.zone,
 			bootsUtc: target.boots_utc,
-			schedules: LAUNCH_SCHEDULES.filter((schedule) => schedule.instanceType === target.instance_type).map((schedule) => ({
+			schedules: launchSchedules.filter((schedule) => schedule.instanceType === target.instance_type).map((schedule) => ({
 				name: schedule.name,
 				expression: `${schedule.expression} UTC`,
 				payload: schedule.event,

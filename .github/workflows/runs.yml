@@ -1,5 +1,5 @@
 # Step 3 of the plan (#36, brief #39). Copies new Run files and boot summaries
-# from the -runs stage's bucket into smrdotgg/ledgermath-runs and pushes them,
+# from the scheduled -runs stage's bucket into smrdotgg/ledgermath-runs and pushes them,
 # derives every Series with Method series v1 and every Series of requests with
 # Method requests v1, builds the page, keeps the page and both files of
 # Derivations as an artifact, and opens (or comments on) one issue when a
@@ -8,10 +8,12 @@
 #
 # It needs, in this repository's settings (README, "The Runs repository, the
 # Method and the page"):
-#   variable RUNS_AWS_ROLE_ARN     the stage's runsReaderRole output
-#   variable RUNS_BUCKET           the stage's bucket output
+#   variable RUNS_AWS_ROLE_ARN     the scheduled stage's runsReaderRole output
+#   variable RUNS_BUCKET           the scheduled stage's bucket output
 #   secret   RUNS_REPO_DEPLOY_KEY  the private half of a deploy key of
 #                                  smrdotgg/ledgermath-runs with write access
+# infra/runs/stages.ts names the scheduled stage; the README ("Moving the
+# schedule to the production account") says when the two variables change.
 name: runs
 
 on:

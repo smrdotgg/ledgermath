@@ -901,4 +901,40 @@ A migrated benchmark is done only when **all** of these hold:
   another box of its own target, which the quota rules count on never happening.
   `schedule.json` and `runner/` are unchanged, so the boot times, what a box runs and the
   runner's hash stay as they were. Not deployed.
+- **2026-11-14** — The move to the production account, prepared (#57); nothing deployed,
+  nothing written in either account. **Accounts**: `infra/runs/stages.ts` decides which
+  account a `-runs` stage deploys to: `production-runs` to the production account (profile
+  `tabot-production`), retained and protected; every other to the development account
+  (`tabot-dev`), as `smr-runs` always has. `sst.config.ts`'s `app()` takes a `-runs`
+  stage's settings from it (now `async`, as SST allows; July's branch returns what it did).
+  SST 4.17.0 lets a non-empty `AWS_PROFILE` replace that profile, drops it under
+  `SST_AWS_NO_PROFILE`, and gives the provider that makes the resources only `AWS_PROFILE`,
+  after keys and a web identity in the environment; so `app()` refuses a `-runs` stage when
+  the environment or the `.env` beside `sst.config.ts` holds any of those for another
+  account, before SST's first request, and the stack, before it declares anything, compares
+  the provider's account with the one the stage's profile reaches
+  (`infra/runs/deploy-account.ts`). No recipe exports a profile or keys any more.
+  **One scheduled stage**: `SCHEDULED_STAGE`, `smr-runs` until the cutover, is the only stage
+  with launch schedules; every other gets the launch function, the reaper, the buckets and
+  the roles, and its launch function's list of targets names none, so a scheduled payload
+  launches nothing there. With the constant at `smr-runs`, a deploy of `smr-runs` makes the
+  same schedules and sets the same list as before; the launch and reaper code is untouched.
+  `scripts/check-targets.ts` takes `--stage` and reads that stage's account. **The copy**:
+  `scripts/copy-bucket.ts` copies `blobs/`, `runs/`, `boots/` and `logs/` between buckets in
+  two accounts, with each profile's exported keys held in memory only, only ever adding,
+  and verifies a copy, in either direction (back, for a rollback). Bun's S3 client adds
+  `;charset=utf-8` to `application/json` and `text/plain` when it writes, and cannot send
+  `If-None-Match`, so the copy writes each object with a PUT signed with the licence work's
+  SigV4 signer (`scripts/lib/s3-create.ts`): `If-None-Match: *`, so S3 never replaces an
+  object, and the exact type. Read-only against the development bucket: every one of its 30,852 blobs hashes to
+  its key; no key has a second version; reading all 627 MB twice took 144 s. **Series**:
+  read-only, both default VPCs and their subnets in `use2-az3` were compared (172.31.0.0/16
+  and 172.31.32.0/20 in both, the same DHCP options, main route tables and no endpoints)
+  and the image was found visible from the production account; what a dump records
+  differently there (the account ID and the VPC's IDs in `provider`, `ec2_instance`,
+  `ec2_route_tables`, `ec2_vpc_endpoints`; each stage's fixtures bucket in an `http_get`
+  Run's Service inputs) is in no split fact, and `tests/account-move.test.ts` shows two such
+  boots in one group. **The cutover** is a numbered procedure in the README ("Moving the
+  schedule to the production account"). Waiting on the maintainer: the production quota
+  (5 vCPUs; 64 requested).
 - _(agents: append your entry here, one per merged benchmark)_

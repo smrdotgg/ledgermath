@@ -8,8 +8,8 @@
  * taken as given. tests/sigv4.test.ts holds it to AWS's SigV4 test suite (the
  * cases of tests/http-get/sigv4/) and to the S3 User Guide's examples.
  *
- * scripts/publish-third-party-source.ts signs its one conditional PutObject
- * with it, because Bun's S3 client cannot send If-None-Match.
+ * scripts/lib/s3-create.ts signs its conditional PutObject with it, because
+ * Bun's S3 client cannot send If-None-Match.
  */
 
 import { createHash, createHmac } from "node:crypto";

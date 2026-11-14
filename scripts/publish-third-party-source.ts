@@ -44,7 +44,7 @@ import { join } from "node:path";
 import { parseArgs } from "node:util";
 
 import { addFile, RUNS_BUCKET_REGION, symlinkOnPath } from "./lib/runs-repository";
-import { amzDate, encodeUriPath, signV4 } from "./lib/sigv4";
+import { createObject, credentialsFromEnvironment, type Fetch, type S3Credentials } from "./lib/s3-create";
 
 export const SOURCES_LOCK = "third-party/sources.lock.json";
 
@@ -115,22 +115,9 @@ export interface BlobStore {
 	create(key: string, path: string, entry: SourceEntry): Promise<"created" | "exists">;
 }
 
-export type Fetch = (url: string | URL, init?: RequestInit) => Promise<Response>;
-
-export interface Credentials {
-	accessKeyId: string;
-	secretAccessKey: string;
-	sessionToken?: string;
-}
-
-/** The credentials Bun's S3 client would read: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY and, if set, AWS_SESSION_TOKEN. */
-export function credentialsFromEnvironment(environment: Record<string, string | undefined> = process.env): Credentials {
-	const { AWS_ACCESS_KEY_ID: accessKeyId, AWS_SECRET_ACCESS_KEY: secretAccessKey, AWS_SESSION_TOKEN: sessionToken } = environment;
-	if (!accessKeyId || !secretAccessKey) {
-		throw new Error('no AWS credentials in the environment: run eval "$(aws configure export-credentials --format env)" first');
-	}
-	return { accessKeyId, secretAccessKey, sessionToken: sessionToken || undefined };
-}
+export type { Fetch };
+export type Credentials = S3Credentials;
+export { credentialsFromEnvironment };
 
 export interface S3StoreOptions {
 	/** https://s3.<region>.amazonaws.com by default; a stand-in's address in tests. Path-style addressing either way. */
@@ -182,45 +169,27 @@ export class S3BlobStore implements BlobStore {
 	}
 
 	/**
-	 * One PutObject with If-None-Match: *, signed here with SigV4 (Bun's client
-	 * cannot send that header). The payload's SHA-256 is signed too, so S3
-	 * refuses a body that is not the bytes checked. 200: created; 412: the key
-	 * exists, nothing written; 409 (a delete raced the write): tried again, at
-	 * most three times in all.
+	 * One PutObject with If-None-Match: * (scripts/lib/s3-create.ts), whose
+	 * signed payload hash makes S3 refuse a body that is not the bytes
+	 * checked. 200: created; 412: the key exists, nothing written; 409 (a
+	 * delete raced the write): tried again, at most three times in all.
 	 */
 	async create(key: string, path: string, entry: SourceEntry): Promise<"created" | "exists"> {
-		const canonicalUri = `/${encodeUriPath(this.bucket)}/${encodeUriPath(key)}`;
-		const url = new URL(`${this.endpoint}${canonicalUri}`);
 		for (let attempt = 1; ; attempt++) {
-			const date = amzDate(this.now());
-			const headers: Array<[string, string]> = [
-				["host", url.host],
-				["content-type", entry.content_type],
-				["if-none-match", "*"],
-				["x-amz-content-sha256", entry.sha256],
-				["x-amz-date", date],
-			];
-			if (this.credentials.sessionToken) headers.push(["x-amz-security-token", this.credentials.sessionToken]);
-			const signed = signV4({
-				method: "PUT",
-				canonicalUri,
-				canonicalQuery: "",
-				headers,
-				payloadSha256: entry.sha256,
-				amzDate: date,
+			const answer = await createObject({
+				endpoint: this.endpoint,
+				bucket: this.bucket,
+				key,
 				region: this.region,
-				service: "s3",
-				accessKeyId: this.credentials.accessKeyId,
-				secretAccessKey: this.credentials.secretAccessKey,
+				credentials: this.credentials,
+				contentType: entry.content_type,
+				body: Bun.file(path),
+				payloadSha256: entry.sha256,
+				fetcher: this.fetcher,
+				now: this.now,
 			});
-			const sent = Object.fromEntries(headers.filter(([name]) => name !== "host"));
-			sent.authorization = signed.authorization;
-			const response = await this.fetcher(url, { method: "PUT", headers: sent, body: Bun.file(path) });
-			if (response.status === 200) return "created";
-			if (response.status === 412) return "exists";
-			const detail = (await response.text()).slice(0, 600);
-			if (response.status === 409 && attempt < 3) continue;
-			throw new Error(`PUT ${this.name}/${key} (If-None-Match: *): ${response.status} ${response.statusText} ${detail}`.trim());
+			if (answer !== "conflict") return answer;
+			if (attempt >= 3) throw new Error(`PUT ${this.name}/${key} (If-None-Match: *): 409 Conflict, ${attempt} times`);
 		}
 	}
 }

@@ -7,10 +7,12 @@ record every Run, judge afterwards"); the words used here (Run, Series, Method, 
 are defined in [`CONTEXT.md`](CONTEXT.md). The [README](README.md) says how every part works;
 this guide says where to make each kind of change and what a pull request needs.
 
-What you can add without access to the AWS account: a benchmark, a parameter set, a target
+What you can add without access to the AWS accounts: a benchmark, a parameter set, a target
 or boot time in the schedule, a Method version, a price rule set, and changes to the tools.
-What only the maintainer does: deploying (`bunx sst deploy`), the checks that read the
-account (`scripts/check-targets.ts`), and anything that needs a higher vCPU quota.
+What only the maintainer does: deploying (`bunx sst deploy`; `production-runs` goes to the
+production account, every other `-runs` stage to the development account), the checks that
+read an account (`scripts/check-targets.ts --stage`), and anything that needs a higher vCPU
+quota.
 
 ## Write a benchmark, in any language
 
