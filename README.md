@@ -921,8 +921,10 @@ the development bucket to go back (step 14). It only ever adds:
 
 Blobs are copied first, then Run files, boot summaries and logs, so the destination never
 holds a Run whose blobs it lacks. At most 16 objects are in flight (`--concurrency`) and
-256 MiB of them held (`--memory-mib`); one larger object (AWS-LC's archive, 155 MB) is held
-alone. `--dry-run` lists, compares and counts, writing nothing.
+256 MiB of their bytes counted as held (`--memory-mib`), an object twice when a second copy
+of it may be read to compare with; one object counted at more (AWS-LC's archive, 155 MB,
+counted at 310 MB) is held alone. That is a count of the objects' bytes, not of the
+process's memory. `--dry-run` lists, compares and counts, writing nothing.
 
 A key with a `.` or `..` segment (`logs/a/../b.log`) is listed but cannot be requested by
 its name, because a request's URL resolves the segment away: one stops `copy` before

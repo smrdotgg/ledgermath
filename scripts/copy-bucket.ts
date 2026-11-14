@@ -70,7 +70,7 @@ function printCopyReport(report: CopyReport, seconds: number): void {
 		console.log(`  not known whether written (a PUT without an answer that says): ${report.unknown.length} objects; run the copy again to find out`);
 		for (const key of report.unknown) console.log(`    ${key}`);
 	}
-	console.log(`  most held in memory at once: ${mb(report.peakBytesHeld)}; ${seconds.toFixed(1)} s`);
+	console.log(`  most bytes of objects counted as held at once: ${mb(report.peakBytesHeld)}; ${seconds.toFixed(1)} s`);
 }
 
 async function main(): Promise<number> {

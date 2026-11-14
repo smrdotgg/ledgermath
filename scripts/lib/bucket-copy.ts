@@ -49,9 +49,12 @@
  * it is done.
  *
  * Memory: at most `concurrency` objects are in flight, and at most
- * `memoryBytes` of their bytes are held at once; an object larger than that
- * is held alone. So what is held never exceeds the larger of memoryBytes and
- * the largest object.
+ * `memoryBytes` of their bytes are counted as held at once, each object being
+ * counted twice when two copies of it may be held (its bytes and a second
+ * read to compare with them; a blob already at the destination, read there
+ * alone, once); an object counted at more than that is held alone. So what is
+ * counted never exceeds the larger of memoryBytes and twice the largest
+ * object. It is a count of the objects' bytes, not of the process's memory.
  */
 
 import { spawnSync } from "node:child_process";
@@ -98,7 +101,7 @@ export interface CopyReport {
 	putsSent: number;
 	/** Keys whose PUT was sent without an answer that says whether S3 wrote it (no answer, or a 5xx): they may be at the destination, or not. */
 	unknown: string[];
-	/** The most bytes of objects held in memory at once. */
+	/** The most bytes of objects counted as held at once (each object twice when a second copy of it may be read). */
 	peakBytesHeld: number;
 }
 
@@ -346,7 +349,10 @@ export async function copyBucket(source: WritableBucket, destination: WritableBu
 
 	let stopping = false;
 	const copyOne = async (object: BucketObject): Promise<void> => {
-		await budget.take(object.size);
+		// Its bytes, and at times a second copy to compare them with: a second read
+		// of the source, the destination's object after a 412, or a read back.
+		const counted = 2 * object.size;
+		await budget.take(counted);
 		let sent = false;
 		// Whether the last PUT of this key went without an answer that says what became of it.
 		let unanswered = false;
@@ -398,7 +404,7 @@ export async function copyBucket(source: WritableBucket, destination: WritableBu
 			if (unanswered) report.unknown.push(object.key);
 			problems.push(error instanceof Error ? error.message : String(error));
 		} finally {
-			budget.give(object.size);
+			budget.give(counted);
 		}
 	};
 

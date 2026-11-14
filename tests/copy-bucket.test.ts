@@ -405,8 +405,9 @@ describe("the copy", () => {
 		const budget = 2 * 1024 * 1024;
 		const report = await copyBucket(counting, destination, { ...FAST, concurrency: 6, memoryBytes: budget });
 		expect(report.copied.count).toBe(sourceObjects().size);
-		expect(report.peakBytesHeld).toBeLessThanOrEqual(Math.max(budget, BIG.length));
-		expect(report.peakBytesHeld).toBeGreaterThanOrEqual(BIG.length); // the big blob, alone
+		// Each object in flight is counted twice: its bytes, and a second copy to compare them with.
+		expect(report.peakBytesHeld).toBeLessThanOrEqual(Math.max(budget, 2 * BIG.length));
+		expect(report.peakBytesHeld).toBeGreaterThanOrEqual(2 * BIG.length); // the big blob, alone
 		expect(mostInFlight).toBeLessThanOrEqual(6);
 		expect(mostInFlight).toBeGreaterThan(1);
 	}, TIMEOUT_MS);
