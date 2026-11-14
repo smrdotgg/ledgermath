@@ -7,7 +7,7 @@ import { join, relative, sep } from "node:path";
 import { parseExportedCredentials, profileCredentials } from "../scripts/lib/aws-credentials";
 import { type BucketObject, type ObjectHead, S3Bucket, type WritableBucket } from "../scripts/lib/bucket";
 import { CopyStopped, checkRunsScript, copyBucket, verifyCopy } from "../scripts/lib/bucket-copy";
-import { S3Standin } from "./s3-standin";
+import { type StandinBucket, S3Standin } from "./s3-standin";
 
 /** Each test talks to a local server, and some run scripts as processes: seconds on a loaded machine. */
 const TIMEOUT_MS = 60_000;
@@ -66,6 +66,8 @@ beforeEach(() => {
 	standin.start();
 	standin.bucket("source", { readers: [SOURCE_KEY] });
 	standin.bucket("destination", { writers: [DESTINATION_KEY] });
+	standin.secrets.set(SOURCE_KEY, "source-secret");
+	standin.secrets.set(DESTINATION_KEY, "destination-secret");
 	source = new S3Bucket("source", "us-east-2", { endpoint: standin.url, credentials: () => ({ accessKeyId: SOURCE_KEY, secretAccessKey: "source-secret", sessionToken: "source-token" }) });
 	destination = new S3Bucket("destination", "us-east-2", {
 		endpoint: standin.url,
@@ -107,6 +109,20 @@ describe("the copy", () => {
 		expect(standin.requests.some((request) => request.bucket === "source" && request.method !== "GET" && request.method !== "HEAD")).toBe(false);
 	}, TIMEOUT_MS);
 
+	test("sends every PUT with If-None-Match: *, signed, so S3 creates and never replaces", async () => {
+		await copyBucket(source, destination, FAST);
+		expect(puts().length).toBe(sourceObjects().size);
+		// The stand-in checked each one's signature and payload hash, or it would not have stored it.
+		for (const request of puts()) expect(request.ifNoneMatch).toBe("*");
+
+		// It does check: signed with another secret, the first PUT is refused.
+		destinationObjects().clear();
+		standin.secrets.set(DESTINATION_KEY, "not-the-destination-secret");
+		const refused = (await copyBucket(source, destination, { ...FAST, concurrency: 1 }).catch((error: unknown) => error)) as CopyStopped;
+		expect(refused.problems[0]).toContain("answered 403, SignatureDoesNotMatch");
+		expect(destinationObjects().size).toBe(0);
+	}, TIMEOUT_MS);
+
 	test("writes every blob before any Run file, every Run file before any boot summary, and those before any log", async () => {
 		await copyBucket(source, destination, FAST);
 		const order = puts().map((request) => request.key.split("/")[0]);
@@ -143,17 +159,39 @@ describe("the copy", () => {
 		const theirs = new Uint8Array(ours);
 		theirs[10] = (theirs[10] as number) ^ 1; // the same size, other bytes
 		standin.put("destination", key, theirs, "application/json");
-		const blob = [...sourceObjects().keys()].find((name) => name.startsWith("blobs/") && name !== BIG_KEY) as string;
+		const [blob, sameSize] = [...sourceObjects().keys()].filter((name) => name.startsWith("blobs/") && name !== BIG_KEY) as [string, string];
 		standin.put("destination", blob, text("a different size"));
+		// A blob of the right size with other bytes: read at the destination, its bytes do not hash to its key.
+		const wrong = new Uint8Array(sourceObjects().get(sameSize)?.bytes as Uint8Array);
+		wrong[0] = (wrong[0] as number) ^ 1;
+		standin.put("destination", sameSize, wrong);
 
 		const stopped = await copyBucket(source, destination, FAST).catch((error: unknown) => error);
 		expect(stopped).toBeInstanceOf(CopyStopped);
 		const problems = (stopped as CopyStopped).problems;
 		expect(problems).toContainEqual(`${key}: the destination's bytes differ from the source's`);
 		expect(problems.some((problem) => problem.startsWith(`${blob}: 16 bytes at the destination`))).toBe(true);
+		expect(problems).toContainEqual(`${sameSize}: the destination's bytes do not hash to its key`);
 		expect((stopped as CopyStopped).message).toContain("the copy stopped and wrote nothing");
+		expect((stopped as CopyStopped).report.putsSent).toBe(0);
 		expect(puts()).toEqual([]);
 		expect(destinationObjects().get(key)?.bytes).toEqual(theirs);
+	}, TIMEOUT_MS);
+
+	test("reads every object the destination already holds: a blob's bytes there are hashed, any other object's compared with the source's", async () => {
+		await copyBucket(source, destination, FAST);
+		const before = standin.requests.length;
+		const second = await copyBucket(source, destination, FAST);
+		const gets = standin.requests.slice(before).filter((request) => request.method === "GET" && request.key !== "");
+		const blobs = [...sourceObjects().keys()].filter((key) => key.startsWith("blobs/"));
+		const others = [...sourceObjects().keys()].filter((key) => !key.startsWith("blobs/"));
+		for (const key of blobs) {
+			expect(gets.filter((request) => request.key === key).map((request) => request.bucket)).toEqual(["destination"]);
+		}
+		for (const key of others) {
+			expect(gets.filter((request) => request.key === key).map((request) => request.bucket).sort()).toEqual(["destination", "source"]);
+		}
+		expect(second.same.count).toBe(sourceObjects().size);
 	}, TIMEOUT_MS);
 
 	test("stops when a blob's bytes do not hash to its key, writing nothing after; the Run files wait for their blobs", async () => {
@@ -165,6 +203,7 @@ describe("the copy", () => {
 		// The bad blob sorts first: nothing was written at all, and no Run file.
 		expect(puts()).toEqual([]);
 		expect(stopped.report.copied.count).toBe(0);
+		expect(stopped.message).toStartWith("the copy stopped and wrote nothing: 1 problem");
 	}, TIMEOUT_MS);
 
 	test("refuses, before anything, a key under blobs/ that is not named by a hash", async () => {
@@ -186,10 +225,15 @@ describe("the copy", () => {
 		};
 		const stopped = (await copyBucket(source, destination, { ...FAST, concurrency: 4 }).catch((error: unknown) => error)) as CopyStopped;
 		expect(stopped).toBeInstanceOf(CopyStopped);
-		expect(stopped.problems[0]).toContain("PUT answered 500, InternalError: We encountered an internal error.");
+		expect(stopped.problems[0]).toContain("(If-None-Match: *) answered 500, InternalError: We encountered an internal error.");
 		expect(stopped.problems[0]).toContain("(tried 3 times)");
 		expect(stopped.report.copied.count).toBe(10);
 		expect(destinationObjects().size).toBe(10);
+		// A 500 does not say whether S3 wrote the object: each key that got one is named as not known.
+		expect(stopped.report.unknown.length).toBe(stopped.problems.length);
+		for (const key of stopped.report.unknown) expect(destinationObjects().has(key)).toBe(false);
+		expect(stopped.message).toContain(`the copy stopped and had written 10 objects (${stopped.report.copied.bytes} bytes), replacing none; whether`);
+		expect(stopped.message).toContain(`written is not known: ${stopped.report.unknown.join(", ")}`);
 
 		standin.fault = undefined;
 		const resumed = await copyBucket(source, destination, FAST);
@@ -201,7 +245,7 @@ describe("the copy", () => {
 		}
 	}, TIMEOUT_MS);
 
-	test("a PUT that failed once is tried again; one whose answer was lost is found, not repeated", async () => {
+	test("a PUT that failed once is tried again; one whose answer was lost is refused when sent again (412) and found the same", async () => {
 		const failedOnce = "logs/2026/11/10/a-boot.log";
 		const lost = BIG_KEY;
 		const seen = new Set<string>();
@@ -222,29 +266,119 @@ describe("the copy", () => {
 		const report = await copyBucket(source, destination, FAST);
 		expect(destinationObjects().get(failedOnce)?.writes).toBe(1);
 		expect(destinationObjects().get(lost)?.writes).toBe(1);
+		expect(puts().filter((request) => request.key === lost).length).toBe(2);
 		expect(report.copied.count + report.same.count).toBe(sourceObjects().size);
 		expect(report.same.count).toBe(1);
+		expect(report.unknown).toEqual([]);
 	}, TIMEOUT_MS);
 
-	test("an object that appears at the destination while the copy runs is compared, never overwritten", async () => {
+	test("an object that appears at the destination between the check and its PUT is never replaced: the same bytes count as there, other bytes stop the copy", async () => {
 		const key = "runs/2026/11/10/01a1c7a6-0108-7db1-8ec4-3d1f9390b22b.json";
 		const other = "logs/2026/11/10/a-boot.log";
-		let appeared = false;
+		const placed = new Set<string>();
 		standin.fault = (request) => {
-			if (request.bucket === "destination" && request.method === "HEAD" && request.key === key && !appeared) {
-				appeared = true;
-				standin.put("destination", key, sourceObjects().get(key)?.bytes ?? text(""), "application/json");
-				standin.put("destination", other, "someone else's log\n", "text/plain");
+			// Someone else writes the key just as the copy's PUT arrives; the stand-in then answers the PUT as S3 would.
+			if (request.bucket === "destination" && request.method === "PUT" && (request.key === key || request.key === other) && !placed.has(request.key)) {
+				placed.add(request.key);
+				if (request.key === key) standin.put("destination", key, sourceObjects().get(key)?.bytes ?? text(""), "application/json");
+				else standin.put("destination", other, "someone else's log\n", "text/plain");
 			}
 			return undefined;
 		};
 		const stopped = (await copyBucket(source, destination, { ...FAST, concurrency: 1 }).catch((error: unknown) => error)) as CopyStopped;
 		expect(stopped).toBeInstanceOf(CopyStopped);
-		expect(stopped.problems).toEqual([`${other}: 19 bytes at the destination, 14 at the source`]);
-		expect(puts().some((request) => request.key === key || request.key === other)).toBe(false);
+		expect(stopped.problems).toEqual([`${other}: appeared at the destination while it was being copied, with other bytes than the source's; it was not replaced`]);
+		expect(puts().filter((request) => request.key === key || request.key === other).map((request) => request.key)).toEqual([key, other]);
+		// Each was written once, by the other writer, and kept.
 		expect(destinationObjects().get(key)?.writes).toBe(1);
+		expect(destinationObjects().get(other)?.writes).toBe(1);
 		expect(new TextDecoder().decode(destinationObjects().get(other)?.bytes)).toBe("someone else's log\n");
 		expect(stopped.report.same.count).toBe(1);
+		expect(stopped.report.unknown).toEqual([]);
+		expect(stopped.message).toStartWith(`the copy stopped and had written ${stopped.report.copied.count} objects`);
+	}, TIMEOUT_MS);
+
+	test("an object S3 acknowledged is counted as written even when the look afterwards fails, and the report says so", async () => {
+		const key = "logs/2026/11/10/a-boot.log";
+		standin.fault = (request) =>
+			request.bucket === "destination" && request.method === "HEAD" && request.key === key
+				? new Response(null, { status: 503 })
+				: undefined;
+		const stopped = (await copyBucket(source, destination, { ...FAST, concurrency: 1 }).catch((error: unknown) => error)) as CopyStopped;
+		expect(stopped).toBeInstanceOf(CopyStopped);
+		expect(stopped.problems).toHaveLength(1);
+		expect(stopped.problems[0]).toStartWith(`looking at s3://destination/${key} after writing it:`);
+		expect(destinationObjects().has(key)).toBe(true);
+		expect(stopped.report.copied.count).toBe(destinationObjects().size);
+		expect(stopped.report.unknown).toEqual([]);
+		expect(stopped.message).not.toContain("wrote nothing");
+		expect(stopped.message).toContain(`had written ${destinationObjects().size} objects`);
+	}, TIMEOUT_MS);
+
+	test("a key whose PUT never got an answer that says what became of it is named as not known", async () => {
+		const key = "logs/2026/11/10/a-boot.log";
+		let first = true;
+		standin.fault = (request) => {
+			if (request.bucket !== "destination" || request.method !== "PUT" || request.key !== key) return undefined;
+			// The first PUT is stored and its answer lost; every later one fails too.
+			if (first) standin.put("destination", key, "the box's log\n", "text/plain");
+			first = false;
+			return new Response("<Error><Code>InternalError</Code><Message>We encountered an internal error.</Message></Error>", { status: 500 });
+		};
+		const stopped = (await copyBucket(source, destination, { ...FAST, concurrency: 1 }).catch((error: unknown) => error)) as CopyStopped;
+		expect(stopped).toBeInstanceOf(CopyStopped);
+		expect(stopped.report.unknown).toEqual([key]);
+		expect(stopped.message).toContain(`; whether 1 more was written is not known: ${key}`);
+		expect(destinationObjects().has(key)).toBe(true);
+		// Run again, it finds the object and compares it.
+		standin.fault = undefined;
+		const resumed = await copyBucket(source, destination, FAST);
+		expect(resumed.copied.count + resumed.same.count).toBe(sourceObjects().size);
+		expect(destinationObjects().get(key)?.writes).toBe(1);
+	}, TIMEOUT_MS);
+
+	test("a PUT S3 refuses outright (403) writes nothing and leaves nothing unknown, but is not \"wrote nothing\"", async () => {
+		standin.fault = (request) =>
+			request.method === "PUT" ? new Response("<Error><Code>AccessDenied</Code><Message>Access Denied</Message></Error>", { status: 403 }) : undefined;
+		const stopped = (await copyBucket(source, destination, { ...FAST, concurrency: 1 }).catch((error: unknown) => error)) as CopyStopped;
+		expect(stopped.problems[0]).toContain("answered 403, AccessDenied: Access Denied");
+		expect(stopped.report.unknown).toEqual([]);
+		expect(stopped.report.putsSent).toBe(3);
+		expect(stopped.message).toStartWith("the copy stopped and had written 0 objects (0 bytes), replacing none: 1 problem");
+	}, TIMEOUT_MS);
+
+	test("with ETags that are not MD5s (SSE-KMS), an object is read twice instead of refused, and a written one is read back", async () => {
+		(standin.buckets.get("source") as StandinBucket).opaqueEtags = true;
+		(standin.buckets.get("destination") as StandinBucket).opaqueEtags = true;
+		const report = await copyBucket(source, destination, FAST);
+		expect(report.copied.count).toBe(sourceObjects().size);
+		const key = "logs/2026/11/10/a-boot.log";
+		const gets = standin.requests.filter((request) => request.method === "GET" && request.key === key);
+		expect(gets.map((request) => request.bucket)).toEqual(["source", "source", "destination"]);
+		// A blob is checked by its hash, whatever its ETag: read once at the source.
+		expect(standin.requests.filter((request) => request.method === "GET" && request.key === BIG_KEY && request.bucket === "source").length).toBe(1);
+
+		// An object that changes between the two reads stops the copy.
+		standin.buckets.get("destination")?.objects.clear();
+		let reads = 0;
+		standin.fault = (request) => {
+			if (request.bucket === "source" && request.method === "GET" && request.key === key && ++reads === 2) return new Response("the box's LOG\n", { headers: { etag: `"${"e".repeat(32)}"` } });
+			return undefined;
+		};
+		const stopped = (await copyBucket(source, destination, FAST).catch((error: unknown) => error)) as CopyStopped;
+		expect(stopped.problems).toEqual([`${key}: two reads of the source gave different bytes (and its ETag is not the MD5 of either)`]);
+		expect(destinationObjects().has(key)).toBe(false);
+	}, TIMEOUT_MS);
+
+	test("refuses, before anything, a key with a . or .. segment, which a request cannot name", async () => {
+		standin.put("source", "logs/a/../parent.log", "a log");
+		standin.put("source", "logs/a/./self.log", "a log");
+		const stopped = (await copyBucket(source, destination, FAST).catch((error: unknown) => error)) as CopyStopped;
+		expect(stopped.problems).toEqual([
+			'logs/a/../parent.log: has a "." or ".." segment, which a request\'s URL resolves away, so it cannot be read or written by its name; copy it by hand',
+			'logs/a/./self.log: has a "." or ".." segment, which a request\'s URL resolves away, so it cannot be read or written by its name; copy it by hand',
+		]);
+		expect(standin.requests.filter((request) => request.bucket === "destination" && request.key !== "")).toEqual([]);
 	}, TIMEOUT_MS);
 
 	test("holds at most its memory budget of bytes at once, or one larger object alone, and at most its concurrency of objects", async () => {
@@ -258,7 +392,7 @@ describe("the copy", () => {
 			name: source.name,
 			list: (prefix: string): Promise<BucketObject[]> => source.list(prefix),
 			head: (key: string): Promise<ObjectHead | null> => source.head(key),
-			put: (key: string, bytes: Uint8Array, contentType: string): Promise<void> => source.put(key, bytes, contentType),
+			create: (key: string, bytes: Uint8Array, contentType: string) => source.create(key, bytes, contentType),
 			get: async (key: string): Promise<Uint8Array | null> => {
 				mostInFlight = Math.max(mostInFlight, ++inFlight);
 				try {
@@ -465,7 +599,7 @@ describe("scripts/copy-bucket.ts", () => {
 		const second = await run(["copy", ...buckets()], bin);
 		expect(second.status).toBe(0);
 		expect(second.stdout).toContain("copied: 0 objects, 0.0 MB (0 bytes)");
-		expect(second.stdout).toContain(`already at the destination, the same: ${sourceObjects().size} objects`);
+		expect(second.stdout).toContain(`already at the destination, read there and the same: ${sourceObjects().size} objects`);
 
 		const verified = await run(["verify", ...buckets(), "--runs-repository", join(SAMPLE), "--no-check-runs"], bin);
 		expect(verified.status).toBe(0);

@@ -10,18 +10,23 @@
  *     [--region us-east-2] [--concurrency 16] [--memory-mib 256]
  *
  * copy: every object under blobs/, runs/, boots/ and logs/ of FROM that TO
- * lacks, read with FROM's profile and written with TO's. It only ever adds;
- * an object TO already holds is compared, and one that differs stops it
- * before anything is written. Stopped, it can be run again and carries on; a
- * second complete run copies nothing. --dry-run lists and compares, and says
- * what it would copy, writing nothing.
+ * lacks, read with FROM's profile and written with TO's, each with a PUT that
+ * S3 carries out only if the key does not exist. It only ever adds; an object
+ * TO already holds is read there and compared (a blob by hashing its bytes
+ * there, anything else with FROM's bytes), and one that differs stops it
+ * before anything is written. Stopped, it says what it wrote and which keys'
+ * fate is not known, and can be run again: it carries on; a second complete
+ * run copies nothing. --dry-run lists and compares, and says what it would
+ * copy, writing nothing. Either direction: development into production for
+ * the move, production into development to go back.
  *
  * verify: reads only. Every object of FROM under those prefixes is in TO with
  * the same bytes; every file under runs/ and boots/ of the Runs repository is
  * in TO with the same bytes; and scripts/check-runs.ts passes on TO's blobs/,
  * runs/ and boots/, written into --check-dir (an empty or new directory,
- * about as large as the bucket). --no-check-runs leaves that last check out,
- * and the verification is then reported as incomplete.
+ * about as large as the bucket; each verification needs a new one).
+ * --no-check-runs leaves that last check out, and the verification is then
+ * reported as incomplete.
  *
  * Each profile's keys come from `aws configure export-credentials --profile`,
  * are held in memory only, and are never printed (scripts/lib/aws-credentials.ts).
@@ -52,8 +57,18 @@ function printCopyReport(report: CopyReport, seconds: number): void {
 		const listed = report.listed[prefix];
 		console.log(`  source ${prefix.padEnd(7)} ${String(listed.count).padStart(7)} objects  ${mb(listed.bytes).padStart(10)}`);
 	}
-	console.log(`  already at the destination, the same: ${report.same.count} objects, ${mb(report.same.bytes)}`);
-	console.log(`  ${report.dryRun ? "would copy" : "copied"}: ${report.copied.count} objects, ${mb(report.copied.bytes)} (${report.copied.bytes} bytes)`);
+	console.log(
+		`  already at the destination, read there and the same: ${report.same.count} objects, ${mb(report.same.bytes)}` +
+			" (each blob's bytes there hash to its key; every other object's equal the source's)",
+	);
+	console.log(
+		`  ${report.dryRun ? "would copy" : "copied"}: ${report.copied.count} objects, ${mb(report.copied.bytes)} (${report.copied.bytes} bytes)` +
+			(report.dryRun ? "" : ", each one S3 acknowledged"),
+	);
+	if (report.unknown.length > 0) {
+		console.log(`  not known whether written (a PUT without an answer that says): ${report.unknown.length} objects; run the copy again to find out`);
+		for (const key of report.unknown) console.log(`    ${key}`);
+	}
 	console.log(`  most held in memory at once: ${mb(report.peakBytesHeld)}; ${seconds.toFixed(1)} s`);
 }
 

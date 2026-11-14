@@ -18,6 +18,10 @@ import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 
+import { type CreateAnswer, createObject, credentialsFromEnvironment, type S3Credentials } from "./s3-create";
+
+export type { CreateAnswer, S3Credentials };
+
 export interface BucketObject {
 	key: string;
 	size: number;
@@ -50,13 +54,6 @@ export function etagHex(etag: string | undefined): string | null {
 	return ETAG_HEX.exec(etag ?? "")?.[1] ?? null;
 }
 
-/** Keys for S3, held in memory only. */
-export interface S3Credentials {
-	accessKeyId: string;
-	secretAccessKey: string;
-	sessionToken?: string;
-}
-
 export interface S3BucketOptions {
 	/**
 	 * The keys to use, asked for before every request, so a provider can
@@ -79,8 +76,13 @@ export interface ObjectHead {
 export interface WritableBucket extends Bucket {
 	/** An object's size, ETag and Content-Type, or null when there is no such key. */
 	head(key: string): Promise<ObjectHead | null>;
-	/** Writes the object in one request, with exactly this Content-Type. */
-	put(key: string, bytes: Uint8Array, contentType: string): Promise<void>;
+	/**
+	 * Creates the object in one request, with exactly this Content-Type, only
+	 * if the key does not exist: "created"; "exists" or "conflict" when the
+	 * key exists or a conflicting write of it is in progress, and nothing was
+	 * written. It never replaces an object.
+	 */
+	create(key: string, bytes: Uint8Array, contentType: string): Promise<CreateAnswer>;
 }
 
 /**
@@ -95,13 +97,6 @@ export function describeS3Error(error: unknown): string {
 	if (label === "") return text === "" ? "Error" : text;
 	return text === "" ? label : `${label}: ${text}`;
 }
-
-/** The text of an XML element in an S3 error body, or null. */
-function xmlElement(body: string, name: string): string | null {
-	return new RegExp(`<${name}>([^<]*)</${name}>`).exec(body)?.[1] ?? null;
-}
-
-const PRESIGNED_PUT_SECONDS = 900;
 
 export class S3Bucket implements WritableBucket {
 	readonly name: string;
@@ -167,27 +162,24 @@ export class S3Bucket implements WritableBucket {
 	}
 
 	/**
-	 * Through a presigned URL and fetch, not the client's write: the client
-	 * adds ";charset=utf-8" to some types (application/json, text/plain),
-	 * and the object must keep its type exactly. Only the host is signed; the
-	 * URL carries the keys, so it is never shown, and a failure is reported
-	 * by S3's error code and message alone.
+	 * One PutObject with If-None-Match: * (scripts/lib/s3-create.ts), not the
+	 * client's write: S3 writes it only if the key does not exist, so nothing
+	 * is ever replaced, and the client could neither send that header nor keep
+	 * a type exact (it adds ";charset=utf-8" to application/json and
+	 * text/plain). The body's SHA-256 is signed, so S3 refuses bytes other
+	 * than these.
 	 */
-	async put(key: string, bytes: Uint8Array, contentType: string): Promise<void> {
-		const url = this.client().presign(key, { method: "PUT", expiresIn: PRESIGNED_PUT_SECONDS });
-		let response: Response;
-		try {
-			response = await fetch(url, { method: "PUT", body: bytes, headers: { "content-type": contentType } });
-		} catch (error) {
-			throw new Error(`${this.name}/${key}: PUT failed: ${describeS3Error(error)}`);
-		}
-		if (!response.ok) {
-			const body = await response.text().catch(() => "");
-			const code = xmlElement(body, "Code") ?? "no error code";
-			const message = xmlElement(body, "Message") ?? "";
-			throw new Error(`${this.name}/${key}: PUT answered ${response.status}, ${code}${message === "" ? "" : `: ${message}`}`);
-		}
-		await response.arrayBuffer();
+	async create(key: string, bytes: Uint8Array, contentType: string): Promise<CreateAnswer> {
+		return createObject({
+			endpoint: this.options.endpoint ?? `https://s3.${this.region}.amazonaws.com`,
+			bucket: this.bucket,
+			key,
+			region: this.region,
+			credentials: this.options.credentials?.() ?? credentialsFromEnvironment(),
+			contentType,
+			body: bytes,
+			payloadSha256: createHash("sha256").update(bytes).digest("hex"),
+		});
 	}
 }
 

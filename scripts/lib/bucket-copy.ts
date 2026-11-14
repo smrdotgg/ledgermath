@@ -1,32 +1,46 @@
 /**
  * Copies a -runs stage's bucket into another's, and checks the copy: what
  * scripts/copy-bucket.ts runs, from the development account's bucket to the
- * production account's (README, "Moving the schedule to the production
- * account").
+ * production account's for the move, and back for a rollback (README,
+ * "Moving the schedule to the production account").
  *
  * What is copied: every object under blobs/, runs/, boots/ and logs/, the
  * current version of each key (a GET without a version). Not source/: each
  * stage's deploy puts its own source archive there, and every archive a Run
- * names is also a blob.
+ * names is also a blob. A key with a "." or ".." segment cannot be requested
+ * by its name (the URL resolves it away), so one stops the copy before
+ * anything is written.
  *
  * The copy only ever adds:
  *
  *   - Everything at both ends is listed first, and every object already at
- *     the destination is compared with the source's before anything is
- *     written: a blob by its key, which is the SHA-256 of its bytes, so by
- *     its size alone; any other object by its bytes. One that differs stops
+ *     the destination is read there and compared before anything is
+ *     written: a blob's bytes there must hash to its key, the SHA-256 of the
+ *     source's bytes (the source's copy is not read); any other object is
+ *     read at both ends and compared byte for byte. One that differs stops
  *     the copy, and nothing is written.
- *   - Each object is then read whole, checked (a blob's bytes must hash to
- *     its key; any other object's must have the MD5 the source's ETag gives,
- *     when the ETag has an MD5's shape), and looked for at the destination
- *     once more just before it is written: one that appeared meanwhile is
- *     compared as above, and never overwritten. It is written in one PUT
- *     with the source's Content-Type, then looked at: its size, its type and
- *     its ETag (the MD5 of what was sent) must be what was written.
- *   - Any problem stops the copy: no object is written after it, those being
- *     written finish, and the report says what was copied. Run again, it
- *     carries on from where it was: what is at the destination is compared,
- *     not copied. A second complete run copies nothing.
+ *   - Each object to copy is then looked at in the source (its size and ETag
+ *     must still be the listed ones), read whole and checked: a blob's bytes
+ *     must hash to its key; any other object's must have the MD5 its ETag
+ *     gives, and when they do not (an ETag is the MD5 of the bytes only for
+ *     an object written in one part with SSE-S3 or no encryption, which the
+ *     copy cannot tell), it is read a second time and the two reads must be
+ *     the same. It is written in one PUT with If-None-Match: * and the
+ *     source's Content-Type (scripts/lib/s3-create.ts), so S3 writes it only
+ *     if the key does not exist: nothing is ever replaced. When S3 answers
+ *     that the key exists (412) or is being written (409), the destination's
+ *     object is read and compared with the bytes read from the source: the
+ *     same counts as already there, other bytes stop the copy. A written
+ *     object is then looked at: its size and type must be what was written,
+ *     and its bytes the ones sent (by its ETag when that is their MD5, else
+ *     read back).
+ *   - Any problem stops the copy: no object is started after it, those being
+ *     written finish. The report counts as written every object whose PUT S3
+ *     acknowledged, whatever was found after; names every key whose PUT went
+ *     without an answer that says whether it was written; and says "wrote
+ *     nothing" only when no PUT was sent. Run again, it carries on from where
+ *     it was: what is at the destination is compared, not copied. A second
+ *     complete run copies nothing.
  *
  * The order keeps the destination as a box keeps a bucket: no Run file
  * before its blobs. Listed logs/, boots/, runs/, then blobs/ (the reverse of
@@ -46,6 +60,7 @@ import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync
 import { dirname, join, relative, resolve, sep } from "node:path";
 
 import { type BucketObject, describeS3Error, md5Of, type WritableBucket } from "./bucket";
+import { CreateRefused, hasDotSegment } from "./s3-create";
 
 /** Copied in this order. */
 export const COPIED_PREFIXES = ["blobs/", "runs/", "boots/", "logs/"] as const;
@@ -71,12 +86,27 @@ export interface CopyReport {
 	dryRun: boolean;
 	/** What the source holds under each prefix. */
 	listed: Record<CopiedPrefix, Tally>;
-	/** Already at the destination, and the same. */
+	/**
+	 * At the destination already, read there and found the same: a blob,
+	 * whose bytes there hash to its key; any other object, whose bytes there
+	 * equal the source's.
+	 */
 	same: Tally;
-	/** Written; in a dry run, what would be. */
+	/** Written: every object whose PUT S3 acknowledged. In a dry run, what would be written. */
 	copied: Tally;
+	/** PUTs sent, answered or not. */
+	putsSent: number;
+	/** Keys whose PUT was sent without an answer that says whether S3 wrote it (no answer, or a 5xx): they may be at the destination, or not. */
+	unknown: string[];
 	/** The most bytes of objects held in memory at once. */
 	peakBytesHeld: number;
+}
+
+/** What a report says was written, for the message of a stopped copy. */
+export function writtenSummary(report: CopyReport): string {
+	if (report.putsSent === 0) return "wrote nothing";
+	const unknown = report.unknown.length === 0 ? "" : `; whether ${report.unknown.length} more ${report.unknown.length === 1 ? "was" : "were"} written is not known: ${report.unknown.join(", ")}`;
+	return `had written ${report.copied.count} objects (${report.copied.bytes} bytes), replacing none${unknown}`;
 }
 
 export class CopyStopped extends Error {
@@ -84,8 +114,9 @@ export class CopyStopped extends Error {
 		readonly problems: string[],
 		readonly report: CopyReport,
 	) {
-		const wrote = report.copied.count === 0 ? "wrote nothing" : `had written ${report.copied.count} objects (${report.copied.bytes} bytes) and overwrote nothing`;
-		super([`the copy stopped and ${wrote}: ${problems.length} problem${problems.length === 1 ? "" : "s"}`, ...problems.map((problem) => `  ${problem}`)].join("\n"));
+		super(
+			[`the copy stopped and ${writtenSummary(report)}: ${problems.length} problem${problems.length === 1 ? "" : "s"}`, ...problems.map((problem) => `  ${problem}`)].join("\n"),
+		);
 		this.name = "CopyStopped";
 	}
 }
@@ -172,6 +203,7 @@ async function attempt<T>(what: string, delays: readonly number[], request: () =
 }
 
 const sha256Hex = (bytes: Uint8Array): string => createHash("sha256").update(bytes).digest("hex");
+const sameBytes = (a: Uint8Array, b: Uint8Array): boolean => Buffer.from(a.buffer, a.byteOffset, a.byteLength).equals(b);
 
 function byKey(objects: readonly BucketObject[]): Map<string, BucketObject> {
 	return new Map(objects.map((object) => [object.key, object]));
@@ -183,10 +215,16 @@ async function listAll(bucket: WritableBucket, delays: readonly number[]): Promi
 	return listed;
 }
 
+/** Why a listed key cannot be copied by its name, or null. */
+function unrequestable(key: string): string | null {
+	return hasDotSegment(key) ? `${key}: has a "." or ".." segment, which a request's URL resolves away, so it cannot be read or written by its name; copy it by hand` : null;
+}
+
 /**
- * Whether an object at the destination is the source's: null when it is,
- * else the difference. A blob is its key's bytes, so only its size is
- * compared; any other object's bytes are fetched from both and compared.
+ * Whether an object the destination already holds is the source's: null when
+ * it is, else the difference. A blob is read at the destination only, and its
+ * bytes there must hash to its key; any other object is read at both ends and
+ * compared byte for byte.
  */
 async function difference(
 	source: WritableBucket,
@@ -197,26 +235,44 @@ async function difference(
 	delays: readonly number[],
 ): Promise<string | null> {
 	if (sourceSize !== destinationSize) return `${key}: ${destinationSize} bytes at the destination, ${sourceSize} at the source`;
-	if (BLOB_KEY.test(key)) return null;
+	const blob = BLOB_KEY.exec(key)?.[1];
+	if (blob !== undefined) {
+		const theirs = await attempt(`reading ${destination.name}/${key}`, delays, () => destination.get(key));
+		if (theirs === null) return `${key}: gone from the destination when read to compare`;
+		return sha256Hex(theirs) === blob ? null : `${key}: the destination's bytes do not hash to its key`;
+	}
 	const [ours, theirs] = await Promise.all([
 		attempt(`reading ${source.name}/${key}`, delays, () => source.get(key)),
 		attempt(`reading ${destination.name}/${key}`, delays, () => destination.get(key)),
 	]);
 	if (ours === null) return `${key}: gone from the source when read to compare`;
 	if (theirs === null) return `${key}: gone from the destination when read to compare`;
-	return Buffer.from(ours).equals(theirs) ? null : `${key}: the destination's bytes differ from the source's`;
+	return sameBytes(ours, theirs) ? null : `${key}: the destination's bytes differ from the source's`;
 }
 
-/** Why the bytes read for an object are not what the source holds, or null. */
-function readProblem(object: BucketObject, bytes: Uint8Array): string | null {
-	if (bytes.length !== object.size) return `${object.key}: read ${bytes.length} bytes, but the source lists ${object.size}`;
+/**
+ * A source object's bytes, read whole and checked: as many as listed; a
+ * blob's must hash to its key; any other object's must have the MD5 its ETag
+ * gives, or else be read again with the same bytes (the ETag of an object
+ * written in parts, or encrypted with SSE-KMS or SSE-C, is not an MD5).
+ */
+async function readSource(source: WritableBucket, object: BucketObject, delays: readonly number[]): Promise<Uint8Array> {
+	const read = async (): Promise<Uint8Array> => {
+		const bytes = await attempt(`reading ${source.name}/${object.key}`, delays, () => source.get(object.key));
+		if (bytes === null) throw new Error(`${object.key}: gone from the source since it was listed`);
+		if (bytes.length !== object.size) throw new Error(`${object.key}: read ${bytes.length} bytes, but the source lists ${object.size}`);
+		return bytes;
+	};
+	const bytes = await read();
 	const blob = BLOB_KEY.exec(object.key)?.[1];
 	if (blob !== undefined) {
 		const actual = sha256Hex(bytes);
-		return actual === blob ? null : `${object.key}: its bytes hash to ${actual}, not to its key`;
+		if (actual !== blob) throw new Error(`${object.key}: its bytes hash to ${actual}, not to its key`);
+		return bytes;
 	}
-	if (object.etag !== null && md5Of(bytes) !== object.etag) return `${object.key}: the bytes read do not have the MD5 the source's ETag gives`;
-	return null;
+	if (object.etag !== null && md5Of(bytes) === object.etag) return bytes;
+	if (!sameBytes(await read(), bytes)) throw new Error(`${object.key}: two reads of the source gave different bytes (and its ETag is not the MD5 of either)`);
+	return bytes;
 }
 
 export async function copyBucket(source: WritableBucket, destination: WritableBucket, options: CopyOptions = {}): Promise<CopyReport> {
@@ -232,6 +288,8 @@ export async function copyBucket(source: WritableBucket, destination: WritableBu
 		listed: Object.fromEntries(COPIED_PREFIXES.map((prefix) => [prefix, tally(sourceListed.get(prefix) ?? [])])) as Record<CopiedPrefix, Tally>,
 		same: { count: 0, bytes: 0 },
 		copied: { count: 0, bytes: 0 },
+		putsSent: 0,
+		unknown: [],
 		peakBytesHeld: 0,
 	};
 	const stop = (problems: string[]): never => {
@@ -239,9 +297,16 @@ export async function copyBucket(source: WritableBucket, destination: WritableBu
 		throw new CopyStopped(problems, report);
 	};
 
-	// Every key under blobs/ must be a blob's, so its key can stand for its bytes.
-	const misnamed = (sourceListed.get("blobs/") ?? []).filter((object) => !BLOB_KEY.test(object.key));
-	if (misnamed.length > 0) stop(misnamed.map((object) => `${object.key}: under blobs/ but not named blobs/sha256/<hex>, so it cannot be checked by its hash`));
+	// Every key under blobs/ must be a blob's, so its key can stand for its
+	// bytes; every key must be one a request can name.
+	const sourceAll = COPIED_PREFIXES.flatMap((prefix) => sourceListed.get(prefix) ?? []);
+	const refused = [
+		...(sourceListed.get("blobs/") ?? [])
+			.filter((object) => !BLOB_KEY.test(object.key))
+			.map((object) => `${object.key}: under blobs/ but not named blobs/sha256/<hex>, so it cannot be checked by its hash`),
+		...sourceAll.map((object) => unrequestable(object.key)).filter((why): why is string => why !== null),
+	];
+	if (refused.length > 0) stop(refused);
 
 	// What the destination already holds is compared before anything is written.
 	const problems: string[] = [];
@@ -258,7 +323,7 @@ export async function copyBucket(source: WritableBucket, destination: WritableBu
 		toCopy.set(prefix, missing);
 	}
 	await inPool(held, concurrency, () => false, async ({ object, there }) => {
-		const size = BLOB_KEY.test(object.key) ? 0 : 2 * object.size;
+		const size = BLOB_KEY.test(object.key) ? object.size : 2 * object.size;
 		await budget.take(size);
 		try {
 			const differs = await difference(source, destination, object.key, object.size, there.size, delays);
@@ -271,7 +336,7 @@ export async function copyBucket(source: WritableBucket, destination: WritableBu
 		}
 	});
 	if (problems.length > 0) stop(problems.sort());
-	progress(`${report.same.count} objects (${report.same.bytes} bytes) already at the destination, the same`);
+	progress(`${report.same.count} objects (${report.same.bytes} bytes) already at the destination, read there and the same`);
 
 	if (report.dryRun) {
 		for (const prefix of COPIED_PREFIXES) for (const object of toCopy.get(prefix) ?? []) add(report.copied, object.size);
@@ -282,42 +347,55 @@ export async function copyBucket(source: WritableBucket, destination: WritableBu
 	let stopping = false;
 	const copyOne = async (object: BucketObject): Promise<void> => {
 		await budget.take(object.size);
+		let sent = false;
+		// Whether the last PUT of this key went without an answer that says what became of it.
+		let unanswered = false;
 		try {
 			const head = await attempt(`looking at ${source.name}/${object.key}`, delays, () => source.head(object.key));
 			if (head === null) throw new Error(`${object.key}: gone from the source since it was listed`);
 			if (head.size !== object.size) throw new Error(`${object.key}: ${head.size} bytes at the source now, ${object.size} when listed`);
-			const bytes = await attempt(`reading ${source.name}/${object.key}`, delays, () => source.get(object.key));
-			if (bytes === null) throw new Error(`${object.key}: gone from the source since it was listed`);
-			const unread = readProblem(object, bytes);
-			if (unread !== null) throw new Error(unread);
+			if (head.etag !== object.etag) throw new Error(`${object.key}: changed at the source since it was listed (its ETag is not the listed one)`);
+			const bytes = await readSource(source, object, delays);
 
-			// Looked for again just before it is written, and again on each retry,
-			// so a PUT whose answer was lost is found rather than repeated.
+			// A PUT that only creates. Tried again when it fails; one whose answer
+			// was lost is refused the second time (412) and found the same.
 			const outcome = await attempt(`writing ${destination.name}/${object.key}`, delays, async () => {
-				const there = await destination.head(object.key);
-				if (there !== null) {
-					const differs = await difference(source, destination, object.key, object.size, there.size, delays);
-					if (differs !== null) throw new Fatal(differs);
-					return "same" as const;
+				if (stopping && !sent) return "skipped" as const;
+				sent = true;
+				report.putsSent += 1;
+				unanswered = true;
+				let answer: Awaited<ReturnType<WritableBucket["create"]>>;
+				try {
+					answer = await destination.create(object.key, bytes, head.contentType);
+				} catch (error) {
+					if (error instanceof CreateRefused && error.status < 500) unanswered = false;
+					throw error;
 				}
-				if (stopping) return "skipped" as const;
-				await destination.put(object.key, bytes, head.contentType);
-				return "written" as const;
+				unanswered = false;
+				if (answer === "created") return "written" as const;
+				const theirs = await destination.get(object.key);
+				if (theirs === null) throw new Error(`S3 answered ${answer === "exists" ? "412, the key exists" : "409, a write is in progress"}, and there is no object to read yet`);
+				if (sameBytes(theirs, bytes)) return "same" as const;
+				throw new Fatal(`${object.key}: appeared at the destination while it was being copied, with other bytes than the source's; it was not replaced`);
 			});
 			if (outcome === "same") add(report.same, object.size);
 			if (outcome !== "written") return;
+			add(report.copied, object.size);
+			if (report.copied.count % 1000 === 0) progress(`${report.copied.count} objects (${report.copied.bytes} bytes) copied`);
 
-			const written = await attempt(`looking at ${destination.name}/${object.key}`, delays, () => destination.head(object.key));
-			if (written === null) throw new Error(`${object.key}: not at the destination after it was written`);
+			const written = await attempt(`looking at ${destination.name}/${object.key} after writing it`, delays, () => destination.head(object.key));
+			if (written === null) throw new Error(`${object.key}: written (S3 acknowledged it), but not at the destination when looked at`);
 			const wrong: string[] = [];
 			if (written.size !== object.size) wrong.push(`${written.size} bytes, not ${object.size}`);
 			if (written.contentType !== head.contentType) wrong.push(`Content-Type ${JSON.stringify(written.contentType)}, not ${JSON.stringify(head.contentType)}`);
-			if (written.etag !== null && written.etag !== md5Of(bytes)) wrong.push("an ETag that is not the MD5 of the bytes sent");
-			if (wrong.length > 0) throw new Error(`${object.key}: written, but the destination's object has ${wrong.join(", ")}`);
-			add(report.copied, object.size);
-			if (report.copied.count % 1000 === 0) progress(`${report.copied.count} objects (${report.copied.bytes} bytes) copied`);
+			if (written.etag === null || written.etag !== md5Of(bytes)) {
+				const back = await attempt(`reading ${destination.name}/${object.key} back`, delays, () => destination.get(object.key));
+				if (back === null || !sameBytes(back, bytes)) wrong.push("other bytes than were sent");
+			}
+			if (wrong.length > 0) throw new Error(`${object.key}: written (S3 acknowledged it), but the destination's object has ${wrong.join(", ")}`);
 		} catch (error) {
 			stopping = true;
+			if (unanswered) report.unknown.push(object.key);
 			problems.push(error instanceof Error ? error.message : String(error));
 		} finally {
 			budget.give(object.size);
@@ -331,6 +409,7 @@ export async function copyBucket(source: WritableBucket, destination: WritableBu
 		progress(`${prefix} done: ${objects.length} objects to copy, ${report.copied.count} copied so far`);
 	}
 	report.peakBytesHeld = budget.peak;
+	report.unknown.sort();
 	if (problems.length > 0) stop(problems);
 	return report;
 }
@@ -442,7 +521,7 @@ export async function verifyCopy(source: WritableBucket, destination: WritableBu
 			if (inSource) {
 				const ours = await attempt(`reading ${source.name}/${object.key}`, delays, () => source.get(object.key));
 				if (ours === null) return void problems.push(`${object.key}: listed at the source, gone when read`);
-				if (!Buffer.from(ours).equals(theirs)) return void problems.push(`${object.key}: the destination's bytes differ from the source's`);
+				if (!sameBytes(ours, theirs)) return void problems.push(`${object.key}: the destination's bytes differ from the source's`);
 				add(report.same, object.size);
 			}
 			if (keep(object.key)) writeInto(checkDirectory as string, object.key, theirs);
