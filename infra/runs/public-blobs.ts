@@ -28,8 +28,9 @@
  *
  * What is deployed decides what a deploy may do (public-blobs-guard.ts): from
  * an enabled distribution the only way out is "dark". A watch in the stage
- * (plan-watch.ts) disables an enabled distribution that no ACTIVE plan
- * covers, every 5 minutes, deploy or not.
+ * (plan-watch.ts) runs every 5 minutes, deploy or not, and disables an
+ * enabled distribution that no ACTIVE plan covers; it polls, so it shortens
+ * uncovered delivery and cannot rule it out.
  *
  * The plan allows, and so this uses, only what the Free plan supports:
  * managed cache and response-headers policies (custom ones are a Business
@@ -638,7 +639,7 @@ export function reminder(plan: PublicBlobsPlan, profile: string | undefined): st
 			"The distribution is ENABLED but answers 404 to every address; the bucket grants it nothing, so no blob can be read.",
 			...(plan.subscribeInCode ? ["This deploy subscribes it to the Free plan (AWS::PricingPlanManager::Subscription)."] : consoleSteps(plan.stage, profile)),
 			`Next: check that the plan is ACTIVE and covers the distribution (${check}), set PUBLIC_BLOBS.state to "on", commit, and deploy.`,
-			`The watch disables a closed distribution that no ACTIVE plan covers ${CLOSED_GRACE_MINUTES} minutes after its last change.`,
+			`The watch leaves a closed distribution that no ACTIVE plan covers alone for ${CLOSED_GRACE_MINUTES} minutes after its last change, then disables it on its next run.`,
 		);
 	} else {
 		lines.push(

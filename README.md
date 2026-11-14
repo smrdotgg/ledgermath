@@ -824,16 +824,39 @@ remove` there removes what it always did.
 `publicBlobs.watchFunction`), runs every 5 minutes, deploy or not
 (`infra/runs/plan-watch.ts`). It is always deployed as the real function (`dev: false`;
 SST 4.17's functions otherwise default to live development, and `sst dev` would deploy a
-stub in its place). If the distribution is enabled and no ACTIVE plan covers it,
-it disables it; if it cannot tell (the plan API unreachable, or an answer it cannot read),
-it records the time in a tag on the distribution (`ledgermath-plan-watch-unknown-since`),
-and if it cannot tell the next time either, it disables it; if it cannot keep that tag, it
-disables it at once. It does nothing to a disabled distribution, and does not exist while
-the state is `off`. A `closed` distribution is left alone for 60 minutes after its last
-change, so that the plan can be attached, and disabled after that if still uncovered. A
-plan with a scheduled cancellation or downgrade is logged as a warning with its date, and
-acted on once it stops being ACTIVE. Every disable is logged as `public blobs watch:
-DISABLED the distribution`, with the reason; a failure to disable fails the invocation.
+stub in its place). If the distribution is enabled and no ACTIVE plan covers it, it
+disables it: it reads the configuration, writes it back with `Enabled` false under the
+ETag it read, and when the configuration changed in between (a deploy, a person: CloudFront
+answers `PreconditionFailed`), reads it again and retries, three attempts in all. If it
+cannot tell whether a plan covers it (the plan API unreachable, or an answer it cannot
+read), it records the time in a tag on the distribution
+(`ledgermath-plan-watch-unknown-since`), and when it cannot tell and finds the tag already
+there, it disables it. A run that can tell clears the tag, so the two runs are usually
+consecutive, but need not be if clearing failed in between, and any value of the tag
+counts. If it cannot keep the tag, it disables the distribution at once. It does nothing to
+a disabled distribution, and does not exist while the state is `off`. A `closed`
+distribution is left alone for 60 minutes after its last change (each change to its
+configuration starts them again), so that the plan can be attached, and is disabled by the
+first run after that if still uncovered. If the distribution itself cannot be read, the
+watch cannot tell whether it is enabled, or a `closed` one within its grace, so it takes it
+to be enabled and past its grace: it still lists the plans, and disables it on the same
+terms, through `GetDistributionConfig` and `UpdateDistribution`, which may answer when
+`GetDistribution` did not; if CloudFront answers none of them, the run fails and the
+distribution goes on as it is, serving if it was. A plan with a scheduled cancellation or
+downgrade is logged as a warning with its date, and acted on once it stops being ACTIVE.
+Every disable is logged as `public blobs watch: DISABLED the distribution`, with the
+reason; a failure to disable fails the invocation. No alarm is raised on either.
+
+*How long uncovered delivery lasts.* The watch polls, so it cannot guarantee that the
+distribution never serves without a plan. From the moment a plan stops covering an enabled
+distribution to the moment no edge serves it, the time is the wait for the watch's next run
+(it is scheduled every 5 minutes), plus the run itself, plus CloudFront's propagation of
+the disabled configuration, during which edges that do not have it yet keep serving with
+the old one ([updating a distribution](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/HowToUpdateDistribution.html));
+one run more when the plans cannot be listed; 60 minutes or more for a `closed`
+distribution; and no end at all while CloudFront refuses the watch's calls. What the
+distribution serves in that time is billed at pay-as-you-go rates.
+
 Its role may do exactly this (`watchPermissions`, plus the Lambda basic execution policy
 SST adds for its own logs):
 
@@ -871,7 +894,7 @@ the deploy prints the next step each time.
 3. Only if step 1 failed because AWS refused to subscribe a disabled distribution: set
    `state: "closed"`, commit, deploy (the distribution is enabled, answering 404 to
    everything; with `plan: "code"` this deploy creates the subscription), and check the
-   plan as in step 2 within the watch's 60 minutes.
+   plan as in step 2 before the watch's 60 minutes are up.
 4. Set `state: "on"`, commit, deploy. Before it changes anything the deploy checks that an
    ACTIVE plan covers the distribution, and stops if not. The distribution is enabled (or
    stays so), gets the real function, and the bucket policy gets the grant; it takes a few
@@ -888,11 +911,19 @@ pricing-plan-manager create-subscription --region us-east-1 --profile tabot-prod
 --plan-family CloudFront --plan-tier FREE --resource-arns <publicBlobs.distributionArn>
 <publicBlobs.webAclArn>`. Use it if Cloud Control cannot create the subscription.
 
-Until the plan is attached the web ACL is billed as usual, by the hour ($5 a month and $1
-a rule): cents, for the minutes between the distribution and the subscription the same
-deploy makes. In `closed` without a plan, a request that finds the unpublished address is
-a CloudFront request on pay-as-you-go pricing, answered 404 at the edge; the watch bounds
-that window to 60 minutes.
+Until the plan is attached the web ACL is billed as usual: by the hour ($5 a month and $1 a
+rule), and for each request it inspects. With the distribution disabled that is cents, for
+the minutes between the distribution and the subscription the same deploy makes. `closed`
+is different: it enables the distribution before the plan is attached, so until then
+public edge traffic is billed at pay-as-you-go rates, although no blob is served and S3 is
+never reached. Every request that finds the address is inspected by the web ACL, which is
+billed even when it blocks the request, and each one it lets through is a CloudFront
+request, a function invocation (the 404) and the bytes of the answer. The address is not
+published, so few should find it, but nothing limits them: the rate limits refuse
+requests, and a refused request is still inspected. The watch disables a `closed`
+distribution still uncovered once its 60 minutes are up, by its next run and with
+propagation after that, if CloudFront answers it (above); there is no fixed maximum for
+what that window costs.
 
 **Not verified, because nothing has been deployed.** That Cloud Control creates the
 subscription (the type is registered, `FULLY_MUTABLE`, and its list handler answers in both

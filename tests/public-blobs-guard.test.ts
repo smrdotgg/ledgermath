@@ -371,7 +371,9 @@ describe("the transitions", () => {
 		expect(enabledOff.reason).toContain('"off" would cancel its plan while it may still serve');
 		const lapsed = judgeTransition(present("on", true), deploy("on"), NONE);
 		expect(lapsed.reason).toContain("no ACTIVE plan covers it (no plan lists the distribution)");
-		expect(lapsed.reason).toContain("the watch disables it within 5 minutes of the plan lapsing (10 if AWS cannot be asked); to disable it at once, deploy \"dark\"");
+		expect(lapsed.reason).toContain("the watch disables it on a later run (it runs every 5 minutes, and leaves a closed one alone for 60 minutes after its last change)");
+		expect(lapsed.reason).toContain('edges serve the old configuration until the change reaches them; to stop it sooner, deploy "dark".');
+		expect(lapsed.reason).not.toContain("within");
 		const fromDark = judgeTransition(present("dark", false), deploy("on"), NONE);
 		expect(fromDark.reason).toContain('deploy "closed" first if AWS will not subscribe a disabled distribution');
 		const watched = judgeTransition(present("on", false), deploy("on"), ACTIVE);

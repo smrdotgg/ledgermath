@@ -397,7 +397,9 @@ export function judgeTransition(deployed: Deployed, target: Target, verdict: Pla
 		return refuse(
 			`${now}, and no ACTIVE plan covers it (${verdict.reason}). Serving would be on pay-as-you-go pricing, so "on" is not deployed. ` +
 				(deployed.enabled
-					? `It is enabled now: the watch disables it within ${WATCH_INTERVAL_MINUTES} minutes of the plan lapsing (${2 * WATCH_INTERVAL_MINUTES} if AWS cannot be asked); to disable it at once, deploy "dark".`
+					? `It is enabled now, so what it serves is billed at pay-as-you-go rates: the watch disables it on a later run (it runs every ${WATCH_INTERVAL_MINUTES} minutes, ` +
+						`and leaves a closed one alone for ${CLOSED_GRACE_MINUTES} minutes after its last change), and edges serve the old configuration until the change reaches them; ` +
+						'to stop it sooner, deploy "dark".'
 					: 'Attach the Free plan (or deploy "closed" first if AWS will not subscribe a disabled distribution), check it is ACTIVE, then deploy "on".'),
 		);
 	}

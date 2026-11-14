@@ -9,7 +9,7 @@ import {
 } from "@aws-sdk/client-cloudfront";
 import { ListSubscriptionsCommand, PricingPlanManagerClient } from "@aws-sdk/client-pricing-plan-manager";
 
-import { UNKNOWN_MARKER_TAG, type WatchClients, type WatchResult, watchOnce } from "./plan-watch";
+import { disableDistribution, UNKNOWN_MARKER_TAG, type WatchClients, type WatchResult, watchOnce } from "./plan-watch";
 import { GLOBAL_REGION } from "./public-blobs";
 import { type SubscriptionSummary, subscriptionsPage } from "./public-blobs-guard";
 
@@ -46,11 +46,19 @@ function realClients(id: string, arn: string): WatchClients {
 			} while (nextToken !== undefined);
 			return all;
 		},
-		async disable() {
-			const out = await cloudfront.send(new GetDistributionConfigCommand({ Id: id }));
-			if (out.DistributionConfig === undefined || out.ETag === undefined) throw new Error(`GetDistributionConfig ${id}: no configuration or ETag`);
-			if (out.DistributionConfig.Enabled === false) return;
-			await cloudfront.send(new UpdateDistributionCommand({ Id: id, IfMatch: out.ETag, DistributionConfig: { ...out.DistributionConfig, Enabled: false } }));
+		disable() {
+			// The whole configuration as returned, with Enabled false, under its ETag;
+			// read again and retried when the configuration changed in between.
+			return disableDistribution({
+				async read() {
+					const out = await cloudfront.send(new GetDistributionConfigCommand({ Id: id }));
+					if (out.DistributionConfig === undefined || out.ETag === undefined) throw new Error(`GetDistributionConfig ${id}: no configuration or ETag`);
+					return { config: out.DistributionConfig, enabled: out.DistributionConfig.Enabled !== false, eTag: out.ETag };
+				},
+				async writeDisabled(config, eTag) {
+					await cloudfront.send(new UpdateDistributionCommand({ Id: id, IfMatch: eTag, DistributionConfig: { ...config, Enabled: false } }));
+				},
+			});
 		},
 		readMarker,
 		async writeMarker(value) {
@@ -80,8 +88,8 @@ export async function handler(): Promise<WatchResult> {
 		else console.log(JSON.stringify(log));
 		return result;
 	} catch (error) {
-		// Thrown so the invocation counts as an error: the distribution could
-		// not be read, or could not be disabled when it had to be.
+		// Thrown so the invocation counts as an error: the distribution had to
+		// be disabled and could not be.
 		console.error(JSON.stringify({ message: "public blobs watch FAILED", stage, distribution: id, error: error instanceof Error ? error.message : String(error) }));
 		throw error;
 	}
