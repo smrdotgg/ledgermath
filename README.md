@@ -940,7 +940,11 @@ distribution still uncovered once its 60 minutes are up, by its next run and wit
 propagation after that, if CloudFront answers it (above); there is no fixed maximum for
 what that window costs.
 
-**Not verified, because nothing has been deployed.** That Cloud Control creates the
+**Not verified, because nothing has been deployed.** That the program, run by SST, sees
+`PULUMI_BACKEND_URL` and the stage's state at the path the guard expects (seen with Pulumi
+3.215, the version SST 4.17 runs, and a local file backend, not yet under SST; if not,
+every deploy of `production-runs`, `off` included, stops with "the stage's state could not
+be read", and `sst diff`, which only warns, shows it first); that Cloud Control creates the
 subscription (the type is registered, `FULLY_MUTABLE`, and its list handler answers in both
 accounts, read-only, on 2026-11-14); that AWS subscribes a disabled distribution (if not,
 `closed`); that the Free plan takes the managed response-headers policy (AWS's feature
