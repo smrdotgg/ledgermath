@@ -31,7 +31,9 @@ export type Fetch = (url: string | URL, init?: RequestInit) => Promise<Response>
 export function credentialsFromEnvironment(environment: Record<string, string | undefined> = process.env): S3Credentials {
 	const { AWS_ACCESS_KEY_ID: accessKeyId, AWS_SECRET_ACCESS_KEY: secretAccessKey, AWS_SESSION_TOKEN: sessionToken } = environment;
 	if (!accessKeyId || !secretAccessKey) {
-		throw new Error('no AWS credentials in the environment: run eval "$(aws configure export-credentials --format env)" first');
+		throw new Error(
+			'no AWS credentials in the environment: give this command keys in a subshell, ( eval "$(aws configure export-credentials --profile PROFILE --format env)" && COMMAND ), so the shell keeps none',
+		);
 	}
 	return { accessKeyId, secretAccessKey, sessionToken: sessionToken || undefined };
 }

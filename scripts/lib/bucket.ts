@@ -9,9 +9,10 @@
  * given them (scripts/copy-bucket.ts reads one bucket and writes another, in
  * two accounts). Locally, with the profile of the stage whose bucket it is
  * (infra/runs/stages.ts: tabot-production for production-runs, tabot-dev for
- * any other):
+ * any other), in a subshell, so that the shell keeps no keys that would reach
+ * a deploy (infra/runs/deploy-account.ts):
  *
- *     eval "$(aws configure export-credentials --profile tabot-production --format env)"
+ *     (eval "$(aws configure export-credentials --profile tabot-production --format env)" && bun scripts/...)
  */
 
 import { createHash } from "node:crypto";

@@ -27,7 +27,7 @@ as the base the build started from (last section).
 | `scripts/check-disk-runs.ts` | Checks that every disk Run in such a directory found the disk it declares, that its evidence adds up, and that its dump bears it out |
 | `scripts/check-targets.ts` | Checks `schedule.json`'s targets' `vcpus`, their zone offerings and `vcpu_quota.limit` against AWS, read-only, in the account of the stage it is given; needs AWS access, so not part of `bun test` |
 | `scripts/box-in-container/` | Boots `runner/box.sh` in Amazon Linux 2023 with S3 and shutdown stubbed, in several scenarios, `http_get` against a stand-in for S3 among them |
-| `infra/runs/` | The `-runs` SST stage: stack, launch Lambda, reaper, user-data, the schedule's check (`schedule.ts`), the targets and their launch schedules (`placement.ts`), which account a stage deploys to and which one stage is scheduled (`stages.ts`), the workflow's AWS role, the `s3_fixtures` Service's bucket, objects and role (`fixtures.ts`), AWS-LC's source archive (`tls-archive.ts`) |
+| `infra/runs/` | The `-runs` SST stage: stack, launch Lambda, reaper, user-data, the schedule's check (`schedule.ts`), the targets and their launch schedules (`placement.ts`), which account a stage deploys to and which one stage is scheduled (`stages.ts`), what stops SST acting on another account than a stage's (`deploy-account.ts`), the workflow's AWS role, the `s3_fixtures` Service's bucket, objects and role (`fixtures.ts`), AWS-LC's source archive (`tls-archive.ts`) |
 | `methods/` | Methods, versioned, turning Runs into Derivations (`methods/README.md`): `series` v1 (`v1/`) one number per Run for every Series; `requests` v1 (`requests/v1/`) each phase of a request across requests, for the Series of requests; `records.ts` the reduced record of a stream, kept between runs |
 | `scripts/copy-runs.ts` | The copy job: the bucket's Run files and boot summaries into the Runs repository |
 | `scripts/copy-bucket.ts` | Copies one `-runs` bucket into another, across two accounts, only ever adding, and checks the copy (`scripts/lib/bucket-copy.ts`): the move to the production account |
@@ -46,7 +46,7 @@ as the base the build started from (last section).
 | `third-party/` | glibc 2.34's `COPYING.LIB` and `LICENSES`, and `sources.lock.json`, the third-party source packages kept in the bucket beside the binaries |
 | `scripts/publish-third-party-source.ts` | Puts the source packages `third-party/sources.lock.json` names into the bucket, create-only, and reads every one back to check its bytes (`scripts/lib/s3-create.ts` sends its conditional PUT, which `scripts/lib/sigv4.ts` signs) |
 | `docs/runs-repository/` | The Runs repository's `README.md` and `LICENSE` (CC BY 4.0), kept here and copied there |
-| `tests/` | `bun test`: the schemas against sample Runs, the Run checker, the schedule's check, the runner's timeout and stop races and its instance-type filtering, the dump's sections, the disk provisioning's decisions, the disk Fixture and the binaries' checks of it, the launch schedules, which account each stage deploys to and which one is scheduled, launch and reap logic, the box's and the workflow's roles, the Method (and that the move to the production account starts no group), the copy job, the bucket copy against a stand-in for S3, the page, the alarm and the workflows, and the price fetch, cut, schema and recompute check on excerpts of AWS's files (`tests/samples/prices/`) |
+| `tests/` | `bun test`: the schemas against sample Runs, the Run checker, the schedule's check, the runner's timeout and stop races and its instance-type filtering, the dump's sections, the disk provisioning's decisions, the disk Fixture and the binaries' checks of it, the launch schedules, which account each stage deploys to and which one is scheduled, that SST stops before acting on another account, launch and reap logic, the box's and the workflow's roles, the Method (and that the move to the production account starts no group), the copy job, the bucket copy against a stand-in for S3, the page, the alarm and the workflows, and the price fetch, cut, schema and recompute check on excerpts of AWS's files (`tests/samples/prices/`) |
 
 ## A benchmark, locally
 
@@ -167,6 +167,28 @@ else names a profile (`sst.config.ts` takes a `-runs` stage's settings from it):
 |-------|-------------------|-----------------|-----|
 | `production-runs` | production (`tabot-production`) | the stack is kept, and SST refuses outright (`protect`) | The boxes that boot on the schedule, the bucket that keeps their Runs and blobs for good, and what the `runs` workflow reads, once it is the scheduled stage |
 | any other `-runs` stage, such as `smr-runs` | development (`tabot-dev`) | the stack is kept | Trying changes, with boxes launched by hand |
+
+Nothing in the shell that runs SST may choose another account. SST 4.17.0 lets a non-empty
+`AWS_PROFILE` take the place of the profile `stages.ts` gives it, drops that profile under
+`SST_AWS_NO_PROFILE`, and gives the provider that makes the stage's resources no profile of
+its own: only `AWS_PROFILE` in its environment, after keys there (`AWS_ACCESS_KEY_ID` and
+the rest, as `eval "$(aws configure export-credentials ...)"` leaves them) and a web identity
+(`AWS_WEB_IDENTITY_TOKEN_FILE`). So for every `-runs` stage and every SST command (`deploy`,
+`diff`, `dev`, `remove` and the rest), `sst.config.ts` stops SST before its first request
+when the environment, or the `.env` beside `sst.config.ts`, holds an `AWS_PROFILE` other
+than the stage's own, `SST_AWS_NO_PROFILE`, `AWS_ACCESS_KEY_ID`, `AWS_ACCESS_KEY`,
+`AWS_SECRET_ACCESS_KEY`, `AWS_SECRET_KEY`, `AWS_SESSION_TOKEN` or
+`AWS_WEB_IDENTITY_TOKEN_FILE` (`infra/runs/deploy-account.ts`). SST then prints only
+"Unexpected error occurred"; the refusal, which names each variable and what to unset, is
+written to the terminal and to `.sst/log/sst.log`. A second check, in the stack before it
+declares anything, compares the account the provider acts in with the one `aws sts
+get-caller-identity --profile <the stage's profile>` names, and stops on a difference; it runs
+for `sst deploy`, `diff`, `dev` and `refresh` (`sst remove` runs no program), and after SST's
+own requests (its bootstrap, its state). Neither writes an account ID anywhere. What they
+do not check: what a profile is. A profile is what the AWS CLI's configuration says it is,
+`AWS_CONFIG_FILE` and `AWS_SHARED_CREDENTIALS_FILE` included, for SST as for `aws`. No recipe
+in this README exports a profile or keys: each `aws` command names its profile, and a script
+that reads keys from the environment is given them in a subshell of its own.
 
 What lives where:
 
@@ -565,6 +587,11 @@ cp .sst/outputs.json ".sst/outputs.$STAGE.json"   # outputs.json is the last dep
 git checkout -- sst-env.d.ts      # SST rewrites it for the stage; the committed one is July's
 ```
 
+The shell needs no `AWS_PROFILE` and no keys: `sst.config.ts` gives SST the stage's profile,
+and refuses a `-runs` stage when the environment names another account (above, "Two
+accounts, one scheduled stage"). When SST stops with "Unexpected error occurred",
+`.sst/log/sst.log` says why.
+
 Mind the name: `--stage production`, without `-runs`, is July's stack's own production
 stage, which `sst.config.ts` still sends to the production account. Never deploy it.
 
@@ -631,34 +658,36 @@ is for once the schedule has moved, this is the only way a box starts.
 Mind the quota of the stage's account. A box that fails to end itself lives until the
 reaper finds it, up to 55 minutes. In the scheduled stage's account, a 2-vCPU type such as
 `c6i.large` fits at any time (the worst moment holds 62 of 64 vCPUs), and anything larger
-can meet the quota from HH:10 to HH+1:45 for HH = 04, 10, 16 and 22, when the scheduled
-boxes may be up. In an account with no scheduled stage, the scheduled boxes take nothing:
+can meet the quota from HH:10 to HH+1:55 for HH = 04, 10, 16 and 22, when the scheduled
+boxes may be up (the last launches at HH:50, or up to ten minutes later). In an account with no scheduled stage, the scheduled boxes take nothing:
 the development account then holds only the dev machine's 4 vCPUs. The production account's
 quota is 5 vCPUs until the increase to 64 is granted, so until then only a type of at most
 5 vCPUs, such as the target `m5.large` (2), can be launched there.
 
 ```bash
-STAGE=smr-runs                                 # or production-runs
-export AWS_PROFILE=tabot-dev AWS_REGION=us-east-2   # production-runs: AWS_PROFILE=tabot-production
-FN=$(jq -r .launchFunction ".sst/outputs.$STAGE.json")
+STAGE=smr-runs                                       # or production-runs
+ACCOUNT=(--profile tabot-dev --region us-east-2)     # production-runs: --profile tabot-production
+FN=$(jq -r .launchFunction ".sst/outputs.$STAGE.json")   # nothing is exported: each command names its account
 BUCKET=$(jq -r .bucket ".sst/outputs.$STAGE.json")
 
-aws lambda invoke --function-name "$FN" --cli-binary-format raw-in-base64-out \
+aws lambda invoke "${ACCOUNT[@]}" --function-name "$FN" --cli-binary-format raw-in-base64-out \
   --payload '{"instanceType": "c6i.large"}' /tmp/launch.json && cat /tmp/launch.json
 # any type: '{"instanceType": "i4i.2xlarge"}'; a payload without instanceType is an error
 
-aws ec2 describe-instances --filters "Name=tag:ledgermath-stage,Values=$STAGE" \
+aws ec2 describe-instances "${ACCOUNT[@]}" --filters "Name=tag:ledgermath-stage,Values=$STAGE" \
   --query 'Reservations[].Instances[].[InstanceId,InstanceType,State.Name,LaunchTime]' --output table
-aws ec2 get-console-output --instance-id <id> --latest --output text | tail -40
+aws ec2 get-console-output "${ACCOUNT[@]}" --instance-id <id> --latest --output text | tail -40
 
-aws s3 ls "s3://$BUCKET/logs/" --recursive
-aws s3 cp "s3://$BUCKET/logs/<yyyy>/<mm>/<dd>/<boot>.log" -
+aws s3 ls "${ACCOUNT[@]}" "s3://$BUCKET/logs/" --recursive
+aws s3 cp "${ACCOUNT[@]}" "s3://$BUCKET/logs/<yyyy>/<mm>/<dd>/<boot>.log" -
 ```
 
 ### Check what a boot left
 
+With `ACCOUNT` and `BUCKET` as above:
+
 ```bash
-aws s3 sync "s3://$BUCKET" /tmp/runs-bucket --exclude 'source/*' --exclude 'logs/*'
+aws s3 sync "${ACCOUNT[@]}" "s3://$BUCKET" /tmp/runs-bucket --exclude 'source/*' --exclude 'logs/*'
 bun scripts/check-runs.ts /tmp/runs-bucket
 ```
 
@@ -687,9 +716,11 @@ is a build artifact, not hosted.
 
 ```bash
 STAGE=production-runs                                      # the scheduled stage; smr-runs before the move
-export AWS_PROFILE=tabot-production AWS_REGION=us-east-2   # smr-runs: AWS_PROFILE=tabot-dev
-eval "$(aws configure export-credentials --format env)"   # Bun's S3 client reads keys from the environment
-BUCKET=$(jq -r .bucket ".sst/outputs.$STAGE.json")        # or: aws s3 ls | grep "ledgermath-$STAGE"
+PROFILE=tabot-production                                   # smr-runs: tabot-dev
+BUCKET=$(jq -r .bucket ".sst/outputs.$STAGE.json")        # or: aws s3 ls --profile "$PROFILE" | grep "ledgermath-$STAGE"
+# Bun's S3 client reads keys from the environment. Each command that reads the bucket gets
+# them in a subshell of its own, so this shell holds none (keys left in it would reach a deploy).
+with_keys() { (eval "$(aws configure export-credentials --profile "$PROFILE" --format env)" && "$@"); }
 
 git clone git@github.com:smrdotgg/ledgermath-runs.git /tmp/ledgermath-runs
 git -C /tmp/ledgermath-runs remote set-url --push origin no-push   # a scratch clone pushes nowhere
@@ -701,11 +732,11 @@ git -C /tmp/ledgermath-runs remote set-url --push origin no-push   # a scratch c
 # symbolic link. Each file is created exclusively, so one that appears meanwhile stops it
 # rather than being overwritten, and gets its name only once it is written whole and read
 # back the same; a write that comes up short stops the job and adds no part of the file.
-bun scripts/copy-runs.ts --bucket "$BUCKET" /tmp/ledgermath-runs
+with_keys bun scripts/copy-runs.ts --bucket "$BUCKET" /tmp/ledgermath-runs
 
 # The Methods, with dump blobs fetched by hash and kept in a cache, and each stream reduced
 # once to a record per Method and kept: a stream is fetched again only for a Run without one.
-bun scripts/derive.ts --runs /tmp/ledgermath-runs --bucket "$BUCKET" --cache /tmp/blob-cache \
+with_keys bun scripts/derive.ts --runs /tmp/ledgermath-runs --bucket "$BUCKET" --cache /tmp/blob-cache \
   --records /tmp/records --out /tmp/page/derivations.json --requests-out /tmp/page/requests-derivations.json
 
 # The page.
@@ -1316,13 +1347,15 @@ version, Amazon Linux's address, size and SHA-256), and
 `scripts/publish-third-party-source.ts` puts it there:
 
 ```bash
-export AWS_PROFILE=tabot-dev AWS_REGION=us-east-2
-eval "$(aws configure export-credentials --format env)"   # the script reads keys from the environment
-BUCKET=$(jq -r .bucket .sst/outputs.json)
+STAGE=smr-runs                     # the scheduled stage, whose bucket holds the binaries; production-runs after the move
+PROFILE=tabot-dev                  # production-runs: tabot-production
+BUCKET=$(jq -r .bucket ".sst/outputs.$STAGE.json")
+# The script reads keys from the environment: each run gets them in a subshell, and this shell holds none.
+with_keys() { (eval "$(aws configure export-credentials --profile "$PROFILE" --format env)" && "$@"); }
 
-bun scripts/publish-third-party-source.ts --bucket "$BUCKET" --dry-run   # checks what is there; uploads nothing
-bun scripts/publish-third-party-source.ts --bucket "$BUCKET"             # downloads, checks, creates, reads back
-bun scripts/publish-third-party-source.ts --bucket "$BUCKET"             # again: reads back, uploads nothing
+with_keys bun scripts/publish-third-party-source.ts --bucket "$BUCKET" --dry-run   # checks what is there; uploads nothing
+with_keys bun scripts/publish-third-party-source.ts --bucket "$BUCKET"             # downloads, checks, creates, reads back
+with_keys bun scripts/publish-third-party-source.ts --bucket "$BUCKET"             # again: reads back, uploads nothing
 ```
 
 The credentials need `s3:GetObject` and `s3:PutObject` on the bucket's `blobs/*`, and
