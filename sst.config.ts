@@ -13,11 +13,17 @@
  * Which account a -runs stage deploys to, and whether it is retained and
  * protected, is decided in infra/runs/stages.ts: production-runs to the
  * production account, every other -runs stage to the development account.
+ * infra/runs/deploy-account.ts stops SST when the environment would send a
+ * -runs stage elsewhere.
  */
 export default $config({
 	async app(input) {
 		if (input?.stage?.endsWith("-runs")) {
 			const { runsStageApp } = await import("./infra/runs/stages");
+			// Before SST makes any request: nothing in the environment may send it,
+			// or the provider, to another account than the stage's.
+			const { refuseForeignCredentials } = await import("./infra/runs/deploy-account");
+			refuseForeignCredentials(input.stage);
 			return runsStageApp(input.stage);
 		}
 		return {

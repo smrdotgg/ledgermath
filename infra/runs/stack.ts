@@ -39,6 +39,7 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 
 import { boxPolicy } from "./box-role";
+import { confirmDeployAccount } from "./deploy-account";
 import { fixturesReaderPolicy, fixturesReaderTrustPolicy, writeFixtureFiles } from "./fixtures";
 import { GITHUB_OIDC_AUDIENCE, GITHUB_OIDC_URL, readPolicy, trustPolicy } from "./github-role";
 import { scheduledTargetTypes, stageLaunchSchedules, TARGETS, ZONE } from "./placement";
@@ -91,7 +92,10 @@ function sourceArchive(): SourceArchive {
 	return { commit, path, key: `source/${commit}.tar.gz` };
 }
 
-export function runsStack() {
+export async function runsStack() {
+	// Before anything is declared: the provider must act in the account the
+	// stage's profile reaches (infra/runs/deploy-account.ts).
+	confirmDeployAccount($app.stage, (await aws.getCallerIdentity({})).accountId);
 	const archive = sourceArchive();
 	// Checked before anything is made: a missing or wrong copy stops the deploy
 	// here, saying how to fetch it.

@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { FOREIGN_CREDENTIALS } from "../infra/runs/deploy-account";
 import { watchedSeries } from "../scripts/alarm";
 import { launch } from "../infra/runs/launch-box";
 import { SCHEDULED_TIME_PLACEHOLDER, scheduledEvent, unscheduledType } from "../infra/runs/launch-event";
@@ -32,7 +33,9 @@ interface AppSettings {
 /**
  * sst.config.ts's app(), as SST calls it: the file is imported with $config
  * standing in for SST's (which returns what it is given), and app() is
- * awaited with the stage. run() is never called.
+ * awaited with the stage. run() is never called. The variables that would
+ * make app() refuse a -runs stage (infra/runs/deploy-account.ts) are out of
+ * the environment while it runs, whatever the shell running the tests holds.
  */
 async function appOf(stage: string | undefined): Promise<AppSettings> {
 	const globals = globalThis as unknown as { $config?: (config: unknown) => unknown };
@@ -40,7 +43,14 @@ async function appOf(stage: string | undefined): Promise<AppSettings> {
 	// A path held in a variable, so tsc does not follow it into a file that needs SST's types.
 	const path = join(ROOT, "sst.config.ts");
 	const config = (await import(path)).default as { app: (input: { stage?: string }) => AppSettings | Promise<AppSettings> };
-	return await config.app({ stage });
+	const read = ["AWS_PROFILE", ...Object.keys(FOREIGN_CREDENTIALS)];
+	const saved = Object.fromEntries(read.map((name) => [name, process.env[name]]));
+	for (const name of read) delete process.env[name];
+	try {
+		return await config.app({ stage });
+	} finally {
+		for (const name of read) if (saved[name] !== undefined) process.env[name] = saved[name];
+	}
 }
 
 describe("which account a -runs stage deploys to", () => {
