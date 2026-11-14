@@ -24,10 +24,10 @@
  * CloudFront answers none of them, the run fails, and the distribution goes
  * on as it is.
  *
- * A "closed" distribution (enabled, answering 404 to everything, before its
- * plan is attached) is left alone for CLOSED_GRACE_MINUTES after its last
- * change, so that the plan can be attached; after that it is disabled too if
- * still no plan covers it.
+ * A "closed" distribution (enabled but serving no blob, before its plan is
+ * attached) is left alone for CLOSED_GRACE_MINUTES after its last change, so
+ * that the plan can be attached; after that it is disabled too if still no
+ * plan covers it.
  *
  * A plan with a scheduled cancellation or downgrade is reported, with its
  * date, as a warning; it is acted on only once it stops being ACTIVE. Every

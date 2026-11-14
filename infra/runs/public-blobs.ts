@@ -223,7 +223,9 @@ export function publicBlobsNames(app: string, stage: string): PublicBlobsNames {
 /**
  * The distribution's comment, which is also the record of what the stage
  * last deployed: the deploy and the watch read it back from AWS
- * (public-blobs-guard.ts, parseComment). At most 128 characters.
+ * (public-blobs-guard.ts, parseComment), and the deploy requires it to be
+ * the comment the stage's state last saw (findDeployed). At most 128
+ * characters.
  */
 export function distributionComment(stage: string, state: DeployedState, plan: PlanAttachment): string {
 	return `LedgerMath ${stage} public blobs (blobs/sha256/* only): state=${state} plan=${plan}`;
