@@ -33,6 +33,13 @@ function filesUnder(root: string): string[] {
 		.sort();
 }
 
+/** A Runs repository holding the sample's Run files and boot summaries. */
+function runsRepository(): string {
+	const directory = fresh("ledgermath-runs");
+	for (const part of ["runs", "boots"]) cpSync(join(SAMPLE, part), join(directory, part), { recursive: true });
+	return directory;
+}
+
 let standin: S3Standin;
 let source: S3Bucket;
 let destination: S3Bucket;
@@ -178,10 +185,14 @@ describe("the copy", () => {
 		expect(destinationObjects().get(key)?.bytes).toEqual(theirs);
 	}, TIMEOUT_MS);
 
-	test("reads every object the destination already holds: a blob's bytes there are hashed, any other object's compared with the source's", async () => {
+	test("reads every object the destination holds that the source also lists: a blob's bytes there are hashed, any other object's compared with the source's", async () => {
 		await copyBucket(source, destination, FAST);
+		// An object only the destination holds, here a blob whose bytes are not its hash, is not read by the copy.
+		const own = `blobs/sha256/${sha256("the destination's own")}`;
+		standin.put("destination", own, "other bytes");
 		const before = standin.requests.length;
 		const second = await copyBucket(source, destination, FAST);
+		expect(standin.requests.slice(before).filter((request) => request.key === own)).toEqual([]);
 		const gets = standin.requests.slice(before).filter((request) => request.method === "GET" && request.key !== "");
 		const blobs = [...sourceObjects().keys()].filter((key) => key.startsWith("blobs/"));
 		const others = [...sourceObjects().keys()].filter((key) => !key.startsWith("blobs/"));
@@ -192,6 +203,9 @@ describe("the copy", () => {
 			expect(gets.filter((request) => request.key === key).map((request) => request.bucket).sort()).toEqual(["destination", "source"]);
 		}
 		expect(second.same.count).toBe(sourceObjects().size);
+		// The verification, given a check directory, reads it.
+		const verified = await verifyCopy(source, destination, { ...FAST, runsRepository: runsRepository(), checkDirectory: fresh("check"), checkRuns: () => ({ status: 0, output: "", result: { runs: 1, failing: [] } }) });
+		expect(verified.problems).toEqual([`${own}: the destination's bytes do not hash to its key`]);
 	}, TIMEOUT_MS);
 
 	test("stops when a blob's bytes do not hash to its key, writing nothing after; the Run files wait for their blobs", async () => {
@@ -445,12 +459,6 @@ describe("the copy", () => {
 });
 
 describe("the verification", () => {
-	/** A Runs repository holding the sample's Run files and boot summaries. */
-	function runsRepository(): string {
-		const directory = fresh("ledgermath-runs");
-		for (const part of ["runs", "boots"]) cpSync(join(SAMPLE, part), join(directory, part), { recursive: true });
-		return directory;
-	}
 	/** check-runs as the verification runs it, told which blobs the sample leaves out. */
 	const checkRunsOmitting = (directory: string) => checkRunsScript(directory, ["--omitted", join(SAMPLE, "omitted-blobs.json")]);
 

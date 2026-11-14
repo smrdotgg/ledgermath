@@ -12,9 +12,10 @@
  * copy: every object under blobs/, runs/, boots/ and logs/ of FROM that TO
  * lacks, read with FROM's profile and written with TO's, each with a PUT that
  * S3 carries out only if the key does not exist. It only ever adds; an object
- * TO already holds is read there and compared (a blob by hashing its bytes
- * there, anything else with FROM's bytes), and one that differs stops it
- * before anything is written. Stopped, it says what it wrote and which keys'
+ * of FROM that TO already holds is read there and compared (a blob by hashing
+ * its bytes there, anything else with FROM's bytes), and one that differs
+ * stops it before anything is written. An object only TO holds is not read
+ * (verify with --check-dir reads those under blobs/, runs/ and boots/). Stopped, it says what it wrote and which keys'
  * fate is not known, and can be run again: it carries on; a second complete
  * run copies nothing. --dry-run lists and compares, and says what it would
  * copy, writing nothing. Either direction: development into production for

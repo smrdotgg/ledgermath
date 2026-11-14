@@ -901,12 +901,16 @@ overrides; held in memory and never printed or written). It works either way: th
 development bucket into the production bucket for the move, and the production bucket into
 the development bucket to go back (step 14). It only ever adds:
 
-- Everything at both ends is listed first, and every object the destination already holds
-  is read there and compared before anything is written: a blob's bytes there must hash to
-  its key, the SHA-256 of the source's bytes (the source's copy of a blob already there is
-  not read; `verify` reads both); any other object's bytes must equal the source's. A
-  difference stops it, and nothing is written. That, exactly, is what its report calls
-  "already at the destination, read there and the same".
+- Everything at both ends is listed first, and every object the destination holds under a
+  key the source also lists is read there and compared before anything is written: a blob's
+  bytes there must hash to its key, the SHA-256 of the source's bytes (the source's copy of
+  a blob already there is not read; `verify` reads both); any other object's bytes must
+  equal the source's. A difference stops it, and nothing is written. That, exactly, is what
+  its report calls "already at the destination, read there and the same". An object only
+  the destination holds (going into production, those of the box of step 3 below, for one)
+  is not read by `copy` at all; `verify` with `--check-dir` reads those under `blobs/`,
+  `runs/` and `boots/`, hashes each blob to its key and gives them to `check-runs.ts`. A
+  log only the destination holds is read by neither.
 - Each object to copy is looked at in the source (its size and ETag must still be the
   listed ones), read whole and checked: a blob's bytes must hash to its key; any other
   object's must have the MD5 its ETag gives, and when they do not, it is read a second time
@@ -958,7 +962,8 @@ which must be new or empty, with room for the bucket (about 650 MB): it refuses 
 that holds anything, so every verification needs one of its own (`/tmp/prod-check-1`, then
 `/tmp/prod-check-2`, ...; remove one once its verification has passed). `verify` is the
 check of the copy, byte for byte at both ends; `copy` alone does not read the source's copy
-of a blob the destination already holds.
+of a blob the destination already holds, nor any object the destination holds and the
+source does not.
 
 Every Run is kept as it was recorded, whether it validates or not, and the copy carries it
 byte for byte: when the source holds a Run that `check-runs.ts` fails on, it fails on the
@@ -992,11 +997,13 @@ How long: on 2026-11-14 the development bucket held 33,366 objects under those p
 (627 MB: 30,852 blobs, 2,373 Run files, 66 boot summaries, 75 logs), growing by about
 10,600 objects and 130 MB a day. From the dev machine, listing both ends took 11 s, and
 reading every object twice and hashing every blob, as `verify` does, took 144 s. The copy
-reads what the destination already holds once (for a copy after the first, about the whole
-bucket: half of what `verify` reads), and makes four requests per object it writes (a HEAD
-and a GET at the source, the PUT and a HEAD at the destination, and a GET more when an ETag
-is not the bytes' MD5). So expect 5 to 15 minutes for the first copy, and a few minutes for
-one that adds a day's objects; `verify` takes a few minutes more for `check-runs.ts`.
+reads every object the destination holds that the source also lists, a blob at the
+destination only and anything else at both ends (for a copy after the first, about the
+whole bucket, and, blobs being most of its bytes, about half of what `verify` reads), and
+makes four requests per object it writes (a HEAD and a GET at the source, the PUT and a
+HEAD at the destination, and a GET more when an ETag is not the bytes' MD5). So expect 5 to
+15 minutes for the first copy, and a few minutes for one that adds a day's objects; `verify`
+takes a few minutes more for `check-runs.ts`.
 
 ### The cutover
 
@@ -1033,9 +1040,19 @@ Before, on any day:
    git -C /tmp/ledgermath-runs-verify remote set-url --push origin no-push   # it is only read
    ```
 
-   Then the launch ("Trigger a boot by hand", with `STAGE=production-runs` and
-   `ACCOUNT=(--profile tabot-production --region us-east-2)`). When its log is in the bucket
-   (about 15 minutes), check what it left:
+   Then the launch, as "Trigger a boot by hand" makes it, with production's launch function
+   and an `m5.large`:
+
+   ```bash
+   FN=$(jq -r .launchFunction .sst/outputs.production-runs.json)
+   aws lambda invoke --profile tabot-production --region us-east-2 --function-name "$FN" \
+     --cli-binary-format raw-in-base64-out --payload '{"instanceType": "m5.large"}' /tmp/launch.json \
+     && cat /tmp/launch.json
+   aws s3 ls "s3://$PROD_BUCKET/logs/" --recursive --profile tabot-production --region us-east-2
+   ```
+
+   When its log is in the bucket (about 15 minutes; the last command lists it), check what it
+   left:
 
    ```bash
    aws s3 sync "s3://$PROD_BUCKET" /tmp/prod-bucket --exclude 'source/*' --exclude 'logs/*' \
@@ -1054,7 +1071,9 @@ Before, on any day:
 4. **Copy the data** (`copy --dry-run`, then `copy`, as in "Copying the data"), while the
    development account goes on with its rounds. Changes: adds objects to the production
    bucket. The deploy has already put AWS-LC's archive and the Fixture blobs there, under the
-   same keys and bytes as the development bucket's; they are read and found the same.
+   same keys and bytes as the development bucket's; they are read and found the same. What
+   the box of step 3 left there, which the development bucket does not hold, the copy does
+   not read; step 5 does.
 5. **Verify** (as in "Copying the data", with `--check-dir /tmp/prod-check-1
    --source-check-dir /tmp/dev-source-1`). Changes nothing.
 

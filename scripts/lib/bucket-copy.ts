@@ -13,12 +13,14 @@
  *
  * The copy only ever adds:
  *
- *   - Everything at both ends is listed first, and every object already at
- *     the destination is read there and compared before anything is
- *     written: a blob's bytes there must hash to its key, the SHA-256 of the
- *     source's bytes (the source's copy is not read); any other object is
- *     read at both ends and compared byte for byte. One that differs stops
- *     the copy, and nothing is written.
+ *   - Everything at both ends is listed first, and every object the
+ *     destination holds under a key the source also lists is read there and
+ *     compared before anything is written: a blob's bytes there must hash to
+ *     its key, the SHA-256 of the source's bytes (the source's copy is not
+ *     read); any other object is read at both ends and compared byte for
+ *     byte. One that differs stops the copy, and nothing is written. An
+ *     object only the destination holds is not read: verifyCopy, given a
+ *     checkDirectory, reads those under blobs/, runs/ and boots/.
  *   - Each object to copy is then looked at in the source (its size and ETag
  *     must still be the listed ones), read whole and checked: a blob's bytes
  *     must hash to its key; any other object's must have the MD5 its ETag
@@ -319,7 +321,7 @@ export async function copyBucket(source: WritableBucket, destination: WritableBu
 	];
 	if (refused.length > 0) stop(refused);
 
-	// What the destination already holds is compared before anything is written.
+	// What the destination holds of what the source lists is compared before anything is written.
 	const problems: string[] = [];
 	const toCopy = new Map<CopiedPrefix, BucketObject[]>();
 	const held: Array<{ object: BucketObject; there: BucketObject }> = [];
