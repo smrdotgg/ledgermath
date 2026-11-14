@@ -188,7 +188,9 @@ that SST, which lets the file replace no variable already set, would keep the sh
 the same checkout, run from a shell without it, would take the file's, so the line goes.
 SST then prints only
 "Unexpected error occurred"; the refusal, which names each variable and what to unset, is
-written to the terminal and to `.sst/log/sst.log`. A second check, in the stack before it
+written to the terminal, and SST keeps it in the log it starts each command with,
+`/tmp/sst-<date>-<time>.log` (seen with `sst diff`: a stop in `app()` comes before SST has a
+`.sst/log/sst.log` for the command); `--print-logs` prints it. A second check, in the stack before it
 declares anything, compares the account the provider acts in with the one `aws sts
 get-caller-identity --profile <the stage's profile>` names, and stops on a difference; it runs
 for `sst deploy`, `diff`, `dev` and `refresh` (`sst remove` runs no program), and after SST's
@@ -597,8 +599,9 @@ git checkout -- sst-env.d.ts      # SST rewrites it for the stage; the committed
 
 The shell needs no `AWS_PROFILE` and no keys: `sst.config.ts` gives SST the stage's profile,
 and refuses a `-runs` stage when the environment names another account (above, "Two
-accounts, one scheduled stage"). When SST stops with "Unexpected error occurred",
-`.sst/log/sst.log` says why.
+accounts, one scheduled stage"). When SST stops with "Unexpected error occurred", the
+terminal says why just above it; so does the newest `/tmp/sst-<date>-<time>.log`, and
+`.sst/log/sst.log` for a stop later than `app()`.
 
 Mind the name: `--stage production`, without `-runs`, is July's stack's own production
 stage, which `sst.config.ts` still sends to the production account. Never deploy it.

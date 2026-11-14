@@ -197,8 +197,10 @@ export function foreignCredentials(stage: string, environment: Environment, dotE
 }
 
 /**
- * SST shows an error thrown by app() only in its log (.sst/log/sst.log, or
- * on the terminal with --print-logs); otherwise it prints "Unexpected error
+ * SST shows an error thrown by app() only in its log (the one it starts each
+ * command with, /tmp/sst-<date>-<time>.log, as seen with `sst diff`: app()
+ * comes before the command has a .sst/log/sst.log; or on the terminal with
+ * --print-logs); otherwise it prints "Unexpected error
  * occurred". So the refusal is also written to the terminal itself, when
  * there is one and the process's own stderr is not it, as under SST, which
  * captures app()'s output.
