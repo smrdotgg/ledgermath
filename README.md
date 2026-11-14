@@ -182,7 +182,11 @@ than the stage's own, `SST_AWS_NO_PROFILE`, `AWS_ACCESS_KEY_ID`, `AWS_ACCESS_KEY
 beside the config SST selected, found from the file SST evaluates `app()` in,
 `<that config's directory>/.sst/platform/sst.config.<n>.mjs`: wherever SST runs, and with
 or without `--config`. Evaluated anywhere else (by another version of SST, say), `app()` cannot
-tell which `.env` SST will load, and refuses. SST then prints only
+tell which `.env` SST will load, and refuses. A line of that `.env` naming another account is
+refused even when the shell already sets the variable (to the stage's profile, or empty), so
+that SST, which lets the file replace no variable already set, would keep the shell's value:
+the same checkout, run from a shell without it, would take the file's, so the line goes.
+SST then prints only
 "Unexpected error occurred"; the refusal, which names each variable and what to unset, is
 written to the terminal and to `.sst/log/sst.log`. A second check, in the stack before it
 declares anything, compares the account the provider acts in with the one `aws sts

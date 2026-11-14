@@ -178,6 +178,31 @@ describe("before SST makes any request: the environment", () => {
 		}
 	});
 
+	test("a .env line naming another account is refused even when the shell's value would win this time, and the refusal says why", () => {
+		const project = fresh("project");
+		mkdirSync(project);
+		writeFileSync(join(project, ".env"), "AWS_PROFILE=tabot-production\nSST_AWS_NO_PROFILE=1\n");
+		let message = "";
+		try {
+			// The shell names the stage's own profile, and sets SST_AWS_NO_PROFILE empty: SST would keep both.
+			refuseForeignCredentials("smr-runs", { AWS_PROFILE: "tabot-dev", SST_AWS_NO_PROFILE: "" }, evaluatedIn(project), () => {});
+		} catch (error) {
+			message = (error as Error).message;
+		}
+		const env = join(project, ".env");
+		expect(message.split("\n").slice(1, 3)).toEqual([
+			`  ${env} sets AWS_PROFILE=tabot-production: SST loads that file into its environment after app(); SST uses it in place of the stage's profile.` +
+				" This time the shell's AWS_PROFILE=tabot-dev wins, as SST lets the file replace no variable already set; from a shell without it, the same checkout would take the file's." +
+				" The file is the hazard, and is refused all the same",
+			`  ${env} sets SST_AWS_NO_PROFILE (its value not shown): SST loads that file into its environment after app(); SST drops the stage's profile.` +
+				" This time the shell's SST_AWS_NO_PROFILE, set and empty, wins, as SST lets the file replace no variable already set; from a shell without it, the same checkout would take the file's." +
+				" The file is the hazard, and is refused all the same",
+		]);
+		expect(message).toContain(`Then take the lines setting AWS_PROFILE, SST_AWS_NO_PROFILE out of ${env}, and run the command again.`);
+		// The shell's own value, the stage's profile, is no reason.
+		expect(message).not.toContain("unset");
+	});
+
 	test("reads a .env as SST's loader does for these lines", () => {
 		expect([...dotEnvVariables(['AWS_PROFILE="tabot-dev" # quoted', "  export  SST_AWS_NO_PROFILE=1", "AWS_SESSION_TOKEN=", "not a line", "#AWS_ACCESS_KEY_ID=x"].join("\n"))]).toEqual([
 			["AWS_PROFILE", "tabot-dev"],

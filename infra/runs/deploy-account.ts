@@ -53,7 +53,9 @@
  *      selected, found from process.argv[1] as above. When app() is evaluated
  *      from anything else (another version of SST, or a program importing
  *      sst.config.ts), which .env SST will load cannot be told, and it
- *      refuses.
+ *      refuses. A .env line is refused even when the shell already sets the
+ *      variable, so that SST would keep the shell's value: the same checkout,
+ *      from a shell without it, would take the file's.
  *   2. confirmDeployAccount(), which runsStack() runs before it declares
  *      anything: the account the provider acts in (aws.getCallerIdentity) must
  *      be the account the AWS CLI reaches with the stage's profile (`aws sts
@@ -162,6 +164,13 @@ const READ = ["AWS_PROFILE", ...Object.keys(FOREIGN_CREDENTIALS)];
  * Every reason, in an environment and the .env SST loads after app(), that
  * SST could act on another account than the one stages.ts names for the
  * stage. An AWS_PROFILE that is the stage's own profile is no reason.
+ *
+ * A line of the .env is a reason even when the environment already sets the
+ * variable, to the stage's profile or to nothing: SST then keeps the
+ * environment's value (godotenv.Load replaces no variable already set), and
+ * this one command would go to the right account. It is refused on purpose:
+ * the same checkout, run from a shell without the variable, would take the
+ * file's value, so the file is the hazard, and the refusal says so.
  */
 export function foreignCredentials(stage: string, environment: Environment, dotEnv: DotEnv | null): ForeignCredential[] {
 	const found: ForeignCredential[] = [];
@@ -176,7 +185,13 @@ export function foreignCredentials(stage: string, environment: Environment, dotE
 		const value = lines.get(name);
 		const why = value === undefined ? null : whyForeign(stage, name, value);
 		if (why === null) continue;
-		found.push({ name, where: dotEnv.path, problem: `${dotEnv.path} sets ${shown(name, value as string)}: SST loads that file into its environment after app(); ${why}` });
+		const shell = environment[name];
+		const thisTime =
+			shell === undefined
+				? ""
+				: `. This time the shell's ${shell === "" ? `${name}, set and empty,` : shown(name, shell)} wins, as SST lets the file replace no variable already set;` +
+					" from a shell without it, the same checkout would take the file's. The file is the hazard, and is refused all the same";
+		found.push({ name, where: dotEnv.path, problem: `${dotEnv.path} sets ${shown(name, value as string)}: SST loads that file into its environment after app(); ${why}${thisTime}` });
 	}
 	return found;
 }
