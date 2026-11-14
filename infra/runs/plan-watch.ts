@@ -30,7 +30,14 @@
  * still no plan covers it.
  *
  * A plan with a scheduled cancellation or downgrade is reported, with its
- * date, as a warning; it is acted on only once it stops being ACTIVE.
+ * date, as a warning; it is acted on only once it stops being ACTIVE. Every
+ * status but ACTIVE counts as no plan, SYNC_IN_PROGRESS included, which a
+ * subscription reports while AWS applies a change to it. That is deliberate:
+ * the watch cannot tell a covered distribution whose plan is being changed
+ * from one whose plan is going away, so it fails closed, and disables a
+ * covered distribution during a routine change to its plan. Plans are
+ * changed only with the distribution dark (README, "Changing or cancelling
+ * the plan").
  *
  * The decisions are here, with the AWS calls behind WatchClients, so tests
  * can stand them in; plan-watch-handler.ts gives the real ones.

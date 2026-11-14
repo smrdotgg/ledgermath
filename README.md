@@ -937,13 +937,34 @@ counts each managed rule group as one of its 5 rules, and takes a string match o
 path in a scope-down (regular expressions are a Business feature; a string match is not
 listed as a paid one); that `cloudfront:UpdateDistribution` alone lets the watch disable a
 distribution with a web ACL (the Service Authorization Reference lists no other dependency
-for it); and the watch's own behaviour against AWS.
+for it); whether an ordinary update of the distribution's configuration, such as the deploy
+of `on` itself, moves its subscription out of `ACTIVE` for a while (AWS documents
+`SYNC_IN_PROGRESS` for changes to the subscription, not to the distribution; if an update
+does it too, the watch disables a distribution it finds in that state, right after a deploy
+of `on` if that is when, and it takes a `dark` deploy to recover); and the watch's own
+behaviour against AWS.
+
+**Changing or cancelling the plan: deploy `dark` first.** The deploy and the watch count a
+plan only while its status is `ACTIVE`. While AWS applies a change to a subscription it
+reports `SYNC_IN_PROGRESS` (AWS shows it for downgrades, scheduled cancellations and
+approvals, and says it typically takes 2 to 5 minutes:
+[subscription lifecycle](https://docs.aws.amazon.com/PricingPlanManager/latest/UserGuide/getting-started-pricingplanmanager-api.html)),
+and the watch counts that as no plan, on purpose: it cannot tell a covered distribution
+whose plan is being changed from one whose plan is going away, so it fails closed. A
+distribution whose paid plan has a cancellation scheduled for the end of the month, and
+covers it until then, is therefore disabled while AWS applies the cancellation. So before changing the tier,
+scheduling a cancellation or downgrade, or calling one off, deploy `dark`; make the change;
+wait until `list-subscriptions` shows the plan `ACTIVE` again; then deploy `on`. Otherwise
+expect the watch to disable the distribution, and then only a `dark` deploy brings it back
+(the deploy refuses `on` until the stage has recorded it disabled). A deploy of `on` prints
+this, and the deploy and the watch repeat it beside any scheduled change they see.
 
 **Moving to Pro** ($15 a month, prorated, still flat: 10 million requests and 50 TB a
-month, access logs, 10 behaviours, 25 WAF rules, custom WAF responses): in the console, or
-`aws pricing-plan-manager update-subscription --region us-east-1 --profile
-tabot-production --arn <publicBlobs.plan> --if-match <eTag from get-subscription>
---plan-tier PRO`. Leave `subscriptionState` in `infra/runs/public-blobs.ts` as it is:
+month, access logs, 10 behaviours, 25 WAF rules, custom WAF responses): with the
+distribution `dark` (above), in the console, or `aws pricing-plan-manager
+update-subscription --region us-east-1 --profile tabot-production --arn <publicBlobs.plan>
+--if-match <eTag from get-subscription> --plan-tier PRO`; then, once the plan is `ACTIVE`,
+deploy `on`. Leave `subscriptionState` in `infra/runs/public-blobs.ts` as it is:
 CloudFormation's subscription refuses to change a tier itself, and a deploy touches the
 subscription only when its desired state changes, so the upgrade stays. (Whether it would
 accept a desired tier equal to the one AWS already has is not verified.) The deploy and

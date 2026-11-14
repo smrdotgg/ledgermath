@@ -294,12 +294,21 @@ describe("whether a plan covers the distribution", () => {
 		const cancelling = coverage(ARN, [sub("ACTIVE", { planTier: "PRO", scheduledChange: { changeType: "CANCELLATION", effectiveDate: "2026-12-01T00:00:00Z", planTier: null } })]);
 		expect(cancelling.active).toBe(true);
 		expect(cancelling.warnings).toEqual([
-			"the PRO plan arn:aws:pricingplanmanager::123456789012:subscription:sub_EXAMPLE has a scheduled CANCELLATION, effective on 2026-12-01T00:00:00Z; from then no plan covers the distribution, and the watch disables it",
+			"the PRO plan arn:aws:pricingplanmanager::123456789012:subscription:sub_EXAMPLE has a scheduled CANCELLATION, effective on 2026-12-01T00:00:00Z; from then no plan covers the distribution, and the watch disables it. " +
+				'The watch disables the distribution whenever the plan is not ACTIVE, a change being applied (SYNC_IN_PROGRESS) included: deploy "dark" before changing or cancelling the plan',
 		]);
 		const undated = coverage(ARN, [sub("ACTIVE", { scheduledChange: { changeType: "CANCELLATION", effectiveDate: null, planTier: null } })]);
 		expect(undated.warnings[0]).toContain("effective on a date AWS has not set yet");
 		const downgrade = coverage(ARN, [sub("ACTIVE", { planTier: "PRO", scheduledChange: { changeType: "DOWNGRADE", effectiveDate: "2026-12-01T00:00:00Z", planTier: "FREE" } })]);
 		expect(downgrade.warnings[0]).toContain("scheduled DOWNGRADE to FREE, effective on 2026-12-01T00:00:00Z");
+	});
+
+	test("is no while a change to the plan is being applied (SYNC_IN_PROGRESS), even one that keeps it until a later date: fails closed, on purpose", () => {
+		// As AWS shows a paid plan right after a cancellation is scheduled: benefits go on until the date, but the status is not ACTIVE.
+		const syncing = coverage(ARN, [sub("SYNC_IN_PROGRESS", { planTier: "PRO", scheduledChange: { changeType: "CANCELLATION", effectiveDate: null, planTier: null } })]);
+		expect(syncing.active).toBe(false);
+		expect(syncing.reason).toContain("is SYNC_IN_PROGRESS, not ACTIVE");
+		expect(syncing.warnings[0]).toContain('deploy "dark" before changing or cancelling the plan');
 	});
 });
 

@@ -276,7 +276,12 @@ export interface PlanVerdict {
 	warnings: string[];
 }
 
-/** Whether an ACTIVE plan covers the distribution, from every subscription of the account. Any tier will do. */
+/**
+ * Whether an ACTIVE plan covers the distribution, from every subscription of
+ * the account. Any tier will do; any status but ACTIVE will not, on purpose,
+ * SYNC_IN_PROGRESS (a change being applied) included: the deploy and the
+ * watch fail closed (plan-watch.ts).
+ */
 export function coverage(distributionArn: string, subscriptions: readonly SubscriptionSummary[]): PlanVerdict {
 	const covering = subscriptions.filter((s) => s.planFamily === "CloudFront" && s.resourceArns.includes(distributionArn));
 	const warnings = covering.flatMap((s) => {
@@ -287,7 +292,10 @@ export function coverage(distributionArn: string, subscriptions: readonly Subscr
 			s.scheduledChange.changeType === "CANCELLATION"
 				? "; from then no plan covers the distribution, and the watch disables it"
 				: "";
-		return [`the ${s.planTier} plan ${s.arn} has a scheduled ${what}, effective ${when}${then}`];
+		return [
+			`the ${s.planTier} plan ${s.arn} has a scheduled ${what}, effective ${when}${then}. ` +
+				'The watch disables the distribution whenever the plan is not ACTIVE, a change being applied (SYNC_IN_PROGRESS) included: deploy "dark" before changing or cancelling the plan',
+		];
 	});
 	const active = covering.find((s) => s.status === "ACTIVE");
 	if (active !== undefined) return { active: true, reason: `the ${active.planTier} plan ${active.arn} is ACTIVE`, subscriptionArn: active.arn, tier: active.planTier, warnings };

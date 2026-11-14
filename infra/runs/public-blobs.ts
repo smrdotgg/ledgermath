@@ -645,6 +645,8 @@ export function reminder(plan: PublicBlobsPlan, profile: string | undefined): st
 		lines.push(
 			"The distribution is enabled and serves blobs/sha256/<hex> to anyone (stage output publicBlobs.blobAddress).",
 			`The watch checks every ${WATCH_INTERVAL_MINUTES} minutes that an ACTIVE plan covers it, and disables it if not.`,
+			'Before changing or cancelling the plan, deploy "dark": the watch disables the distribution whenever the plan is not ACTIVE,',
+			'a change being applied (SYNC_IN_PROGRESS) included, and after that only a "dark" deploy brings it back.',
 		);
 	}
 	return lines;

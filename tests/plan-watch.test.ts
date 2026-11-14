@@ -161,6 +161,13 @@ describe("the watch", () => {
 		expect(s.calls).not.toContain("disable");
 	});
 
+	test("disables a covered distribution while a change to its plan is being applied (SYNC_IN_PROGRESS): fails closed, on purpose", async () => {
+		const s = standIn({ subscriptions: [sub("SYNC_IN_PROGRESS", { planTier: "PRO", scheduledChange: { changeType: "DOWNGRADE", effectiveDate: null, planTier: "FREE" } })] });
+		const result = await watchOnce(s.clients, CONFIG, NOW);
+		expect(result).toMatchObject({ action: "disabled", reason: expect.stringContaining("is SYNC_IN_PROGRESS, not ACTIVE") });
+		expect(result.warnings[0]).toContain('deploy "dark" before changing or cancelling the plan');
+	});
+
 	test("leaves a closed distribution alone for the grace after its last change, then disables it if still uncovered", async () => {
 		const closed = distributionComment(STAGE, "closed", "console");
 		const fresh = standIn({ distribution: { comment: closed, lastModified: new Date(NOW.getTime() - 10 * 60_000) }, subscriptions: [] });

@@ -590,7 +590,9 @@ describe("the Free plan subscription", () => {
 		const closed = reminder(plan("closed"), "p").join("\n");
 		expect(closed).toContain("ENABLED but answers 404 to every address");
 		expect(closed).toContain('set PUBLIC_BLOBS.state to "on"');
-		expect(reminder(plan("on"), "p").join("\n")).toContain("The watch checks every 5 minutes");
+		const on = reminder(plan("on"), "p").join("\n");
+		expect(on).toContain("The watch checks every 5 minutes");
+		expect(on).toContain('Before changing or cancelling the plan, deploy "dark"');
 	});
 });
 
