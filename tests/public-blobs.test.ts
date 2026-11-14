@@ -589,6 +589,7 @@ describe("the Free plan subscription", () => {
 		expect(byHand).toContain("--plan-tier FREE");
 		const closed = reminder(plan("closed"), "p").join("\n");
 		expect(closed).toContain("ENABLED but answers 404 to every address");
+		expect(closed).toContain("Until the plan is attached, the requests that reach it are billed at pay-as-you-go rates");
 		expect(closed).toContain('set PUBLIC_BLOBS.state to "on"');
 		const on = reminder(plan("on"), "p").join("\n");
 		expect(on).toContain("The watch checks every 5 minutes");

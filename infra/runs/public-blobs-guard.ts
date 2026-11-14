@@ -399,7 +399,7 @@ export function judgeTransition(deployed: Deployed, target: Target, verdict: Pla
 				`enable it again (the stage still records it enabled). ${DARK_FIRST}; then check the plan, and deploy "${target.state}" again.`,
 		);
 	}
-	if (target.state === "closed") return allow(`${now}: "closed" serves nothing; the plan can be attached`);
+	if (target.state === "closed") return allow(`${now}: "closed" serves no blob; the plan can be attached`);
 	if (verdict === null) return refuse(`${now}, and AWS could not be asked whether an ACTIVE plan covers it, so "on" is not deployed.`);
 	if (!verdict.active) {
 		return refuse(

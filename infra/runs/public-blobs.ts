@@ -19,9 +19,12 @@
  *           distribution has no traffic, so nothing to bill.
  *   closed  only if AWS refuses to subscribe a disabled distribution: the
  *           distribution is enabled, so that the plan can be attached, but
- *           serves nothing: every address gets 404 from a viewer-request
- *           function, and the bucket policy grants it nothing, so no request
- *           reaches S3 and no blob can be read.
+ *           serves no blob: every address WAF lets through gets 404 from a
+ *           viewer-request function, and the bucket policy grants it
+ *           nothing, so no request reaches S3. Enabled, it takes public
+ *           traffic, billed at pay-as-you-go rates until the plan is
+ *           attached (CloudFront requests, function invocations, WAF
+ *           inspections, transfer).
  *   on      the distribution serves blobs: the real function, and the grant.
  *           The deploy goes on only if AWS says, at that moment, that an
  *           ACTIVE plan covers the distribution.
@@ -637,6 +640,7 @@ export function reminder(plan: PublicBlobsPlan, profile: string | undefined): st
 	} else if (plan.state === "closed") {
 		lines.push(
 			"The distribution is ENABLED but answers 404 to every address; the bucket grants it nothing, so no blob can be read.",
+			"Until the plan is attached, the requests that reach it are billed at pay-as-you-go rates (CloudFront, its function, WAF), though S3 is never reached.",
 			...(plan.subscribeInCode ? ["This deploy subscribes it to the Free plan (AWS::PricingPlanManager::Subscription)."] : consoleSteps(plan.stage, profile)),
 			`Next: check that the plan is ACTIVE and covers the distribution (${check}), set PUBLIC_BLOBS.state to "on", commit, and deploy.`,
 			`The watch leaves a closed distribution that no ACTIVE plan covers alone for ${CLOSED_GRACE_MINUTES} minutes after its last change, then disables it on its next run.`,

@@ -589,7 +589,9 @@ runner manifest against it too.
 
 Published numbers are recomputed from Run files and blobs, so the blobs have to be
 readable by anyone. A CloudFront distribution on the **Free flat-rate plan** does that:
-$0 a month, and no overage charge whatever strangers download. It is built and **off**:
+$0 a month for CloudFront, and no CloudFront overage charge whatever strangers download
+(S3 still bills each request that misses the cache: "What it still costs", below). It is
+built and **off**:
 nothing is public, and nothing of it exists in AWS, until `PUBLIC_BLOBS.state` in
 `infra/runs/public-blobs.ts` says so.
 
@@ -722,17 +724,18 @@ its own rule without using up the total. Beside them, two free AWS managed rule 
 rules of the Free plan's 5. `AWSManagedRulesCommonRuleSet`, the console's third default,
 is left out: it guards applications that parse what they are sent, and it blocks requests
 without a `User-Agent`. AWS accepted the four rules as written (`aws wafv2
-check-capacity`, read-only, on 2026-11-14: 231 capacity units).
+check-capacity`, read-only, on 2026-11-14: 231 capacity units), which says they are valid
+rules, not that the Free plan takes them ("Not verified", below).
 
 **What it still costs.** S3 bills a GET for every request that misses CloudFront's cache,
 $0.0004 per 1,000 in us-east-2 (AWS's price list of 2026-11-09), and the plan does not
 cover it; transfer from S3 to CloudFront is free. On the Free allowance, if every request
 missed: $0.40 a month, $1.20 in the month of a 3× spike; beyond that AWS keeps serving, at
 $0.40 per further million misses: $21.43 for a month at the total limit's steady rate, and
-more if bursts get past it, since nothing caps it. A blob already
-cached at an edge does not miss; a 403 for a missing key may be free (S3 does not bill
-AccessDenied to requests from outside the account), but count it. The plan's 5 GB of S3
-storage credits offsets that much of the bucket's storage.
+more if bursts get past it, since nothing caps it. A blob already cached at an edge does
+not miss; a 403 for a missing key may be free (S3 does not bill AccessDenied to requests
+from outside the account), but count it. The plan's 5 GB of S3 storage credits offsets that
+much of the bucket's storage.
 
 **The states.** `PUBLIC_BLOBS.state`, on `production-runs`:
 
@@ -740,14 +743,16 @@ storage credits offsets that much of the bucket's storage.
 |-------|--------------|--------------|------|--------|
 | `off` | none | none | none | nothing |
 | `dark` | disabled | none | subscribed by the deploy (`plan: "code"`) or by hand (`"console"`) | nothing |
-| `closed` | enabled | none | as in `dark` | 404 to every address; no request reaches S3 |
-| `on` | enabled | yes | must be ACTIVE: the deploy checks | `/blobs/sha256/<hex>` |
+| `closed` | enabled | none | as in `dark` | 404 to every address it lets through (WAF's 403s, and CloudFront's for plain HTTP or another method, aside); no request reaches S3 |
+| `on` | enabled | yes | must be ACTIVE: the deploy checks, once, as it starts | `/blobs/sha256/<hex>` |
 
 `closed` is needed only if AWS refuses to subscribe a disabled distribution: it is
 enabled so that the plan can be attached, but the blobs behaviour has the 404 function and
-the bucket grants it nothing, so no blob can be read. `on` swaps in the real function and
-adds the grant, after the same check that the plan is ACTIVE. The order is always `dark`,
-then `closed` only if needed, then `on`.
+the bucket grants it nothing, so no blob can be read. Being enabled, it takes public
+traffic, and until the plan is attached that traffic is billed at pay-as-you-go rates
+(below, after the steps). `on` swaps in the real function and adds the grant, after the
+same check that the plan is ACTIVE. The order is always `dark`, then `closed` only if
+needed, then `on`.
 
 **What a deploy may do from what is deployed.** Before it touches anything, a deploy to
 `production-runs` reads what is deployed (`infra/runs/public-blobs-guard.ts`). Which
@@ -789,7 +794,13 @@ one); the recorded one is not listed (deleted outside the stage: `sst refresh` b
 state up to date); or its comment is gone, or is not the one the state last saw (edited
 outside the stage, whatever the edit). What this cannot see: a state that is itself wrong
 (edited by hand, restored from an older copy, or refreshed after a change made outside the
-stage, which it then takes for the stage's own).
+stage, which it then takes for the stage's own); and anything that changes after the
+deploy has read it. The checks are made once, as the deploy starts, so a plan cancelled, or
+the distribution changed in the console, after that is not seen; in particular, `on`'s
+approval holds for that moment only, and a cancellation during or after the deploy leaves
+the distribution serving without a plan until the watch acts. SST's lock keeps two SST
+commands on the stage from running at once; the watch, and changes made in the console or
+with the CLI, do not take it.
 
 So from an enabled distribution the only way out is `dark`; `off` and a change of
 `PUBLIC_BLOBS.plan` come only after `dark` has been deployed and the distribution reports
@@ -805,37 +816,39 @@ stage protection: for a stage whose app settings in `sst.config.ts` say `protect
 SST refuses `sst remove` before it does anything. So public blobs are made only on a
 protected stage: a deploy of `dark`, `closed` or `on` stops, before AWS is asked anything,
 unless `$app.protect` is true (`off` is always allowed: it makes nothing). `sst.config.ts`
-gives `-runs` stages no `protect` today, so until it does, `production-runs` can deploy only
-`off`. Nor does `sst dev` (or `sst deploy --dev`, which SST runs the same way, with `$dev`
-true) deploy anything but `off` there: dev mode deploys each function as a stub that works
-only while a local session runs, and redeploys whenever a file changes. What stage protection does not prevent: it is a setting SST reads from
-`sst.config.ts` at each command, not a lock in AWS, so `sst remove` from a checkout whose
-`sst.config.ts` says otherwise, `pulumi destroy` run by hand on the state, and deleting the
-resources in the console or with the AWS CLI all go ahead; and it does not stop a deploy,
-which deletes or replaces what the program says (the table judges those). Pulumi's
-`protect` on the distribution and the subscription, set while the distribution is enabled,
-is a second, narrower lock, kept in the stage's saved state: Pulumi refuses to delete or
-replace either, in a deploy or a destroy, until a `dark` deploy lifts it. It does not
-prevent changes made in place, changes in the console or with the CLI, or cancelling the
-plan outside the stage. A dev stage such as `smr-runs` never has any of this, so `sst
-remove` there removes what it always did.
+gives `-runs` stages no `protect` today, so until it does, `production-runs` can deploy
+only `off`. Nor does `sst dev` (or `sst deploy --dev`, which SST runs the same way, with
+`$dev` true) deploy anything but `off` there: dev mode deploys each function as a stub that
+works only while a local session runs, and redeploys whenever a file changes. What stage
+protection does not prevent: it is a setting SST reads from `sst.config.ts` at each
+command, not a lock in AWS, so `sst remove` from a checkout whose `sst.config.ts` says
+otherwise, `pulumi destroy` run by hand on the state, and deleting the resources in the
+console or with the AWS CLI all go ahead; and it does not stop a deploy, which deletes or
+replaces what the program says (the table judges those). Pulumi's `protect` on the
+distribution and the subscription, set while the distribution is enabled, is a second,
+narrower lock, kept in the stage's saved state: Pulumi refuses to delete or replace either,
+in a deploy or a destroy, until a `dark` deploy lifts it. It does not prevent changes made
+in place, changes in the console or with the CLI, or cancelling the plan outside the stage.
+A dev stage such as `smr-runs` never has any of this, so `sst remove` there removes what it
+always did.
 
 **The watch.** A Lambda in the stage, `PublicBlobsWatch` (stage output
 `publicBlobs.watchFunction`), runs every 5 minutes, deploy or not
-(`infra/runs/plan-watch.ts`). It is always deployed as the real function (`dev: false`;
-SST 4.17's functions otherwise default to live development, and `sst dev` would deploy a
-stub in its place). If the distribution is enabled and no ACTIVE plan covers it, it
-disables it: it reads the configuration, writes it back with `Enabled` false under the
-ETag it read, and when the configuration changed in between (a deploy, a person: CloudFront
-answers `PreconditionFailed`), reads it again and retries, three attempts in all. If it
-cannot tell whether a plan covers it (the plan API unreachable, or an answer it cannot
-read), it records the time in a tag on the distribution
-(`ledgermath-plan-watch-unknown-since`), and when it cannot tell and finds the tag already
-there, it disables it. A run that can tell clears the tag, so the two runs are usually
-consecutive, but need not be if clearing failed in between, and any value of the tag
-counts. If it cannot keep the tag, it disables the distribution at once. It does nothing to
-a disabled distribution, and does not exist while the state is `off`. A `closed`
-distribution is left alone for 60 minutes after its last change (each change to its
+(`infra/runs/plan-watch.ts`). It is always deployed as the real function (`dev: false`; SST
+4.17's functions otherwise default to live development, and `sst dev` would deploy a stub
+in its place). If the distribution is enabled and no ACTIVE plan covers it, it disables it
+(a listing that succeeds but leaves the plan out, should AWS ever answer so, counts as no
+plan): it reads the configuration, writes it back with `Enabled` false under the ETag it
+read, and when the configuration changed in between (a deploy, a person: CloudFront answers
+`PreconditionFailed`), reads it again and retries, three attempts in all. If it cannot tell
+whether a plan covers it (the plan API unreachable, or an answer it cannot read), it
+records the time in a tag on the distribution (`ledgermath-plan-watch-unknown-since`), and
+when it cannot tell and finds the tag already there, it disables it. A run that can tell
+clears the tag, so the two runs are usually consecutive, but need not be if clearing failed
+in between, and any value of the tag counts. If it cannot keep the tag, it disables the
+distribution at once. It does nothing to a disabled distribution, and does not exist while
+the state is `off`. A `closed` distribution is left alone for 60 minutes after its last
+change (CloudFront's `LastModifiedTime`, by the Lambda's clock; each change to its
 configuration starts them again), so that the plan can be attached, and is disabled by the
 first run after that if still uncovered. If the distribution itself cannot be read, the
 watch cannot tell whether it is enabled, or a `closed` one within its grace, so it takes it
@@ -868,8 +881,9 @@ cloudfront:ListTagsForResource, cloudfront:TagResource, cloudfront:UntagResource
 ```
 
 **Turning it on, on `production-runs`**, with no moment when blobs are served on
-pay-as-you-go pricing. Every command uses the stage's own profile (`tabot-production`);
-the deploy prints the next step each time.
+pay-as-you-go pricing (`closed`, if it is needed, is billed at pay-as-you-go rates for the
+404s and the inspection of what reaches it until the plan is attached). Every command uses
+the stage's own profile (`tabot-production`); the deploy prints the next step each time.
 
 1. Set `state: "dark"` in `infra/runs/public-blobs.ts`, commit, `bunx sst diff --stage
    production-runs`, then deploy that stage. It makes:
@@ -896,9 +910,10 @@ the deploy prints the next step each time.
    everything; with `plan: "code"` this deploy creates the subscription), and check the
    plan as in step 2 before the watch's 60 minutes are up.
 4. Set `state: "on"`, commit, deploy. Before it changes anything the deploy checks that an
-   ACTIVE plan covers the distribution, and stops if not. The distribution is enabled (or
-   stays so), gets the real function, and the bucket policy gets the grant; it takes a few
-   minutes to reach every edge.
+   ACTIVE plan covers the distribution, and stops if not; it checks once, so a plan
+   cancelled after that is left to the watch. The distribution is enabled (or stays so),
+   gets the real function, and the bucket policy gets the grant; it takes a few minutes to
+   reach every edge.
 5. `curl -sSI https://<distribution>.cloudfront.net/blobs/sha256/<hex>` for a blob a Run
    names: 200, and the headers above.
 
@@ -947,17 +962,18 @@ behaviour against AWS.
 **Changing or cancelling the plan: deploy `dark` first.** The deploy and the watch count a
 plan only while its status is `ACTIVE`. While AWS applies a change to a subscription it
 reports `SYNC_IN_PROGRESS` (AWS shows it for downgrades, scheduled cancellations and
-approvals, and says it typically takes 2 to 5 minutes:
-[subscription lifecycle](https://docs.aws.amazon.com/PricingPlanManager/latest/UserGuide/getting-started-pricingplanmanager-api.html)),
+approvals, and says it typically takes 2 to 5 minutes: [subscription
+lifecycle](https://docs.aws.amazon.com/PricingPlanManager/latest/UserGuide/getting-started-pricingplanmanager-api.html)),
 and the watch counts that as no plan, on purpose: it cannot tell a covered distribution
 whose plan is being changed from one whose plan is going away, so it fails closed. A
 distribution whose paid plan has a cancellation scheduled for the end of the month, and
-covers it until then, is therefore disabled while AWS applies the cancellation. So before changing the tier,
-scheduling a cancellation or downgrade, or calling one off, deploy `dark`; make the change;
-wait until `list-subscriptions` shows the plan `ACTIVE` again; then deploy `on`. Otherwise
-expect the watch to disable the distribution, and then only a `dark` deploy brings it back
-(the deploy refuses `on` until the stage has recorded it disabled). A deploy of `on` prints
-this, and the deploy and the watch repeat it beside any scheduled change they see.
+covers it until then, is therefore disabled while AWS applies the cancellation. So before
+changing the tier, scheduling a cancellation or downgrade, or calling one off, deploy
+`dark`; make the change; wait until `list-subscriptions` shows the plan `ACTIVE` again;
+then deploy `on`. Otherwise expect the watch to disable the distribution, and then only a
+`dark` deploy brings it back (the deploy refuses `on` until the stage has recorded it
+disabled). A deploy of `on` prints this, and the deploy and the watch repeat it beside any
+scheduled change they see.
 
 **Moving to Pro** ($15 a month, prorated, still flat: 10 million requests and 50 TB a
 month, access logs, 10 behaviours, 25 WAF rules, custom WAF responses): with the
@@ -977,7 +993,9 @@ policy is `TLSv1.2_2025`; on the `*.cloudfront.net` name CloudFront sets TLSv1 i
 no policy can be chosen.
 
 **Turning it off.** Deploy `dark`: the distribution is disabled, the grant removed, the
-plan kept, and Pulumi's protection lifted. Once `aws cloudfront list-distributions` shows
+plan kept, and Pulumi's protection lifted. The grant and the distribution are changed
+independently, and edges keep serving with the old configuration, cached blobs included,
+until the disabled one reaches them. Once `aws cloudfront list-distributions` shows
 it `Enabled` false and `Status` `Deployed`, `off` deletes everything, the subscription
 first (a Free plan is cancelled at once; AWS refuses to delete a distribution that is on a
 plan). While on a plan the web ACL cannot be replaced, so do not rename it.
