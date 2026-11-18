@@ -1985,12 +1985,13 @@ handed the finished files. The Vercel project has no Git repository connected, a
 Vercel's build system never runs. (The real site will be built from benchmark data that
 only the GitHub workflows have.)
 
-The workflow's `deploy` job runs after the build job has passed, `bun run check` included.
-It takes the `site` artifact that job uploaded, builds nothing, and runs
-`site/deploy/deploy.sh`: that lays the files out as Vercel's Build Output API asks
-(`.vercel/output/static`, and a `config.json` saying `{"version":3}`) in a temporary
-directory, and runs `vercel deploy --prebuilt` on it. The Vercel CLI is pinned in
-`site/deploy/package.json` and its `bun.lock`, apart from the site's own packages.
+The workflow's deploy job (`deploy-production` or `deploy-preview`) runs after the build
+job has passed, `bun run check` included. It takes the `site` artifact that job uploaded,
+builds nothing, and runs `site/deploy/deploy.sh`: that lays the files out as Vercel's
+Build Output API asks (`.vercel/output/static`, and a `config.json` saying
+`{"version":3}`) in a temporary directory, and runs `vercel deploy --prebuilt` on it. The
+Vercel CLI is pinned in `site/deploy/package.json` and its `bun.lock`, apart from the
+site's own packages.
 
 - A push to main, or a run by hand on main, deploys production: ledgermath.com moves to
   the new deployment. The job then fetches https://ledgermath.com/ and fails unless it
@@ -1998,36 +1999,48 @@ directory, and runs `vercel deploy --prebuilt` on it. The Vercel CLI is pinned i
   outside any script (`site/scripts/check-live.ts`, the same test `bun run check` makes of
   the built file), so the live page reads with JavaScript off.
 
-  Production deploy jobs share one concurrency group: one runs at a time, and a running
-  one is never cancelled, so no upload is cut off. A job that arrives while another runs
-  waits; GitHub keeps one waiting job per group, so a job that arrives while one already
-  waits cancels the waiting one (its run shows as cancelled). Jobs arrive in the order
-  their builds finish, not the order of their commits, and a re-run of an old run arrives
-  whenever it is started, still with its old commit. So before calling Vercel, each
-  production job checks out main as it is then (all its commits and trees, and of its
-  files only the workflow) and runs `site/deploy/fresh.ts`: the deploy goes ahead only if
-  the run's commit is on main and nothing under the paths that start the workflow on a
-  push (`site/**` and the workflow itself, read from the workflow's `on.push.paths`)
-  differs between that commit and main's tip. Otherwise the job skips the deploy and the
-  live check, passes, and says in the run's summary that main has moved on (or that the
-  commit is not on main), naming both commits. A newer commit that changed those paths
-  started a run of its own, which deploys after this one or already has; a newer commit
-  that changed nothing under them started none, and then the older run's site is main's
-  site and it deploys. So:
+  Production deploys run in the job `deploy-production`; its jobs, one per run, share one
+  concurrency group: one runs at a time, and a running one is never cancelled, so no
+  upload is cut off. A job that arrives while another runs waits, and the group keeps
+  every waiting job (`queue: max`; GitHub's default keeps one, and the next arrival
+  cancels it), so none is dropped. GitHub runs the waiting jobs one by one, roughly in the
+  order they began waiting; it does not promise that order. Up to 100 can wait; GitHub
+  cancels any beyond that. Jobs arrive in the order their builds finish, not the order of
+  their commits, and a re-run of an old run arrives whenever it is started, still with its
+  old commit. So before calling Vercel, each production job checks out main as it is then
+  (all its commits and trees, and of its files only the workflow) and runs
+  `site/deploy/fresh.ts`: the deploy goes ahead only if the run's commit is on main and
+  nothing under the paths that start the workflow on a push (`site/**` and the workflow
+  itself, read from the workflow's `on.push.paths`) differs between that commit and main's
+  tip. Otherwise the job skips the deploy and the live check, passes, and says in the
+  run's summary that main has moved on (or that the commit is not on main), naming both
+  commits. A newer commit that changed those paths started a run of its own, whose job
+  waits in the same group and deploys after this one, or already has; a newer commit that
+  changed nothing under them started none, and then the older run's site is main's site
+  and it deploys. If git itself fails in the check (a corrupt object, say), the job fails
+  rather than skip. So:
 
   - two pushes close together: ledgermath.com ends on the newer commit's site. The older
     commit's job skips if the newer commit is on main when it starts, which it always is
     when the newer job ran first; if the older job starts first and deploys, the newer
     one deploys after it;
+  - three runs, A deploying, then C (the newest commit) and B (an older one whose build
+    finished last) waiting: both wait, each takes its turn, B skips and C deploys, in
+    either order;
   - a re-run of an old production run skips, unless main's site has not changed since,
     when it deploys the same site again;
   - a run by hand on main deploys main's tip, unless main moves on while it builds;
   - a run whose commit is no longer on main (main was force-pushed past it) skips.
+
+  Main's site is deployed by the run of the commit that last changed it. If that run's
+  build fails, someone cancels it, or it never starts (a push that skips CI),
+  ledgermath.com stays on an older site while every older run's job skips; run the
+  workflow by hand on main to deploy main's tip.
 - A pull request from a branch of this repository, or a run by hand on another branch,
-  gets a preview deployment, which ledgermath.com does not serve. A newer push cancels the
-  preview before it.
-- A pull request from a fork is not given the repository's secrets, so its run skips the
-  `deploy` job and still passes. The workflow uses `pull_request`, never
+  gets a preview deployment from the job `deploy-preview`, which ledgermath.com does not
+  serve. A newer push cancels the preview before it.
+- A pull request from a fork is not given the repository's secrets, so its run skips
+  `deploy-preview` and still passes. The workflow uses `pull_request`, never
   `pull_request_target`, and the token is set only in the deploy step of a job that runs
   for this repository's own branches, so no code from a fork runs where the token is.
 
