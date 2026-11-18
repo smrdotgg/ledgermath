@@ -10,6 +10,19 @@ const PAGE = `<!DOCTYPE html><html><head><title>LedgerMath</title></head><body><
 const HTML = { "content-type": "text/html; charset=utf-8" };
 
 const answer = (body: string, init: ResponseInit = { headers: HTML }) => async () => new Response(body, init);
+/** A 200 HTML answer whose body fails partway through. */
+const brokenBody = async () =>
+	new Response(
+		new ReadableStream({
+			start(controller) {
+				controller.enqueue(new TextEncoder().encode("<!DOCTYPE html><html><body>"));
+			},
+			pull(controller) {
+				controller.error(new Error("connection reset"));
+			},
+		}),
+		{ headers: HTML },
+	);
 
 describe("checkLiveOnce", () => {
 	test("passes a 200 HTML page holding every line", async () => {
@@ -50,6 +63,21 @@ describe("checkLiveOnce", () => {
 		]);
 	});
 
+	test("takes the media type before any parameter, in any case", async () => {
+		expect(await checkLiveOnce(URL, TEXT, answer(PAGE, { headers: { "content-type": "TEXT/HTML ; charset=utf-8" } }))).toEqual([]);
+		expect(await checkLiveOnce(URL, TEXT, answer(PAGE, { headers: { "content-type": "text/html" } }))).toEqual([]);
+	});
+
+	test("fails a media type that only starts with text/html", async () => {
+		expect(await checkLiveOnce(URL, TEXT, answer(PAGE, { headers: { "content-type": "text/htmlish" } }))).toEqual([
+			`${URL} answered with Content-Type "text/htmlish", not text/html`,
+		]);
+	});
+
+	test("fails, rather than throws, when the body breaks off while being read", async () => {
+		expect(await checkLiveOnce(URL, TEXT, brokenBody)).toEqual([`${URL}: reading the body: connection reset`]);
+	});
+
 	test("fails when the request fails", async () => {
 		const problems = await checkLiveOnce(URL, TEXT, async () => {
 			throw new Error("connection refused");
@@ -62,6 +90,13 @@ describe("checkLive", () => {
 	test("tries again after a failed attempt", async () => {
 		let calls = 0;
 		const get = async () => (++calls === 1 ? new Response("", { status: 503 }) : new Response(PAGE, { headers: HTML }));
+		expect(await checkLive(URL, TEXT, { attempts: 3, wait: 0, get })).toEqual([]);
+		expect(calls).toBe(2);
+	});
+
+	test("tries again after a body that broke off", async () => {
+		let calls = 0;
+		const get = async () => (++calls === 1 ? brokenBody() : new Response(PAGE, { headers: HTML }));
 		expect(await checkLive(URL, TEXT, { attempts: 3, wait: 0, get })).toEqual([]);
 		expect(calls).toBe(2);
 	});

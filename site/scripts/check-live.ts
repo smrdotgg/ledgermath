@@ -9,7 +9,8 @@
  *     bun scripts/check-live.ts [URL]     (URL defaults to https://ledgermath.com/)
  *
  * A failed attempt is tried again, three attempts in all, ten seconds apart,
- * so a dropped connection does not fail a deploy. Exit 0 when an attempt
+ * so a dropped connection, before the answer or while its body is read, does
+ * not fail a deploy. Exit 0 when an attempt
  * passes, 1 when none does.
  */
 
@@ -33,8 +34,17 @@ export async function checkLiveOnce(url: string, texts: readonly string[], get: 
 		return [`${url} answered ${response.status}${location ? ` (Location: ${location})` : ""}, not 200`];
 	}
 	const type = response.headers.get("content-type") ?? "";
-	if (!type.startsWith("text/html")) return [`${url} answered with Content-Type ${JSON.stringify(type)}, not text/html`];
-	return missingText(await response.text(), texts).map(
+	// The media type is what comes before any `;` parameter, and is case-insensitive.
+	if (type.split(";", 1)[0]!.trim().toLowerCase() !== "text/html") {
+		return [`${url} answered with Content-Type ${JSON.stringify(type)}, not text/html`];
+	}
+	let body: string;
+	try {
+		body = await response.text();
+	} catch (error) {
+		return [`${url}: reading the body: ${error instanceof Error ? error.message : String(error)}`];
+	}
+	return missingText(body, texts).map(
 		(text) => `${url} does not hold, in its body outside any script: ${JSON.stringify(text)}`,
 	);
 }
