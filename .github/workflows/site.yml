@@ -1,7 +1,9 @@
-# Builds the placeholder website in site/ and checks what the build wrote:
-# index.html holds the page's text in its HTML (so the prerender ran and the
-# page reads with JavaScript off), and nothing in the output refers to a file
-# it lacks or to another origin. Keeps the built site as the artifact `site`.
+# Builds the placeholder website in site/ and checks what the build wrote with
+# `bun run check` (site/scripts/check-output.ts): index.html holds the page's
+# text (site/src/App.text.ts) in its body outside any script, so the prerender
+# ran and the page reads with JavaScript off, and nothing in the output refers
+# to a file it lacks or loads from another origin. The same commands work
+# locally inside site/. Keeps the built site as the artifact `site`.
 #
 # It deploys nowhere: where the site is hosted is not decided. A deploy is
 # meant to be one more job that `needs: build`, downloads the `site` artifact
@@ -38,15 +40,13 @@ jobs:
           bun-version: 1.4.4
       - run: bun install --frozen-lockfile
       - name: Type-check
-        run: bun run check
+        run: bun run typecheck
+      - name: Test the output check against its fixtures
+        run: bun test
       - name: Build, then prerender into dist/client
         run: bun run build
-      - name: index.html holds the page's text outside its scripts, and the output refers to no file it lacks
-        run: >-
-          bun scripts/check-output.ts dist/client
-          "LedgerMath"
-          "LedgerMath benchmarks cloud servers every day and records every Run."
-          "The site is on its way."
+      - name: index.html holds the page's text (src/App.text.ts) outside its scripts, and the output refers to no file it lacks
+        run: bun run check
       - name: The site carries the notices of the code it ships (THIRD-PARTY-NOTICES.md, section 3)
         run: cmp public/third-party-notices.txt dist/client/third-party-notices.txt
       - name: Keep the built site

@@ -1940,18 +1940,39 @@ the root's, and needs only Bun (Vite runs under Bun, not Node).
 ```bash
 cd site
 bun install --frozen-lockfile
-bun run check      # type-check
+bun run typecheck  # type-check
+bun test           # the output check's own tests (scripts/check-output.test.ts)
 bun run build      # site/dist/client
+bun run check      # checks site/dist/client, as the workflow does
 bun run preview    # serves site/dist/client at http://127.0.0.1:4173 (a port as argument to change it)
 bun run dev        # Vite's dev server, with hot reload
 ```
 
 `.github/workflows/site.yml` runs on pull requests and pushes to main that touch `site/` or
-the workflow, and by hand. It installs with the lockfile frozen, type-checks, builds, and
-checks the output with `site/scripts/check-output.ts`: `index.html` holds the page's text
-in its HTML, outside any script (which shows the prerender ran), and no HTML, CSS or
-JavaScript file in the output refers to a file the output lacks, or to another origin. It
-keeps the built site as the artifact `site`.
+the workflow, and by hand. It installs with the lockfile frozen, then runs the commands
+above in the same order: type-check, test, build, `bun run check`. It keeps the built site
+as the artifact `site`. `bun test` at the repository root leaves `site/` alone (root
+`bunfig.toml`); the site's tests run inside `site/`.
+
+`bun run check` (`site/scripts/check-output.ts`) checks two things in `site/dist/client`:
+
+- `index.html` exists and holds each line of the page's text in its body, outside any
+  script or style, which shows the prerender ran. The lines are listed in
+  `site/src/App.text.ts`; change them there when the page's text changes.
+- No HTML, CSS or JavaScript file refers to a file the output lacks, or loads anything from
+  another origin. It reads `src`, `href`, `srcset`, `imagesrcset`, `poster` and
+  `xlink:href` on any HTML element, `url()` in `<style>` blocks and `style` attributes,
+  imports in inline scripts, `url()` and `@import` in CSS files, and `import`,
+  `export … from` and `import()` of a quoted path in JavaScript files. `data:`, `about:`,
+  `mailto:` and `tel:` URLs and fragment-only references (`#id`) are self-contained and
+  pass. A link a reader follows (`href` on `<a>` or `<area>`) may go to another origin; a
+  path it names must exist.
+
+It does not read other file types (SVG, JSON, a web manifest), `image-set()` with bare
+strings, or URLs that JavaScript builds as it runs, and it does not render the page: it
+reads the HTML as text, so it cannot tell that text which is in the HTML is not shown (text
+inside a `<template>`, say). It is a check on what an honest build writes, not an HTML
+validator.
 
 It deploys nowhere: where the site is hosted is not decided. A deploy would be one more job
 in that workflow that needs the build job and takes the `site` artifact. The built site

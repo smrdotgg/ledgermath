@@ -1,0 +1,4 @@
+# bun test at the root runs tests/ and leaves site/ alone: site/ has its own
+# package.json and tests, run with `bun test` inside site/ (README, "The website").
+[test]
+pathIgnorePatterns = ["site/**"]

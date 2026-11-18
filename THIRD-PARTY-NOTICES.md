@@ -820,7 +820,7 @@ packages only build or check it.
 | `@solidjs/signals` | 2.0.1 | MIT | The page's script, through `solid-js` (in the built site) |
 | `@solidjs/vite-plugin` | 3.0.1 | MIT | Compiles the site; its generated entry and error boundary are in the page's script (in the built site) |
 | `vite` | 8.3.8 | MIT | Builds the site |
-| `typescript` | 7.0.2 | Apache-2.0 | Type checking (`bun run check` in `site/`) |
+| `typescript` | 7.0.2 | Apache-2.0 | Type checking (`bun run typecheck` in `site/`) |
 | `@types/bun` | 1.3.14 | MIT | Type definitions |
 
 The copyright notices and the MIT License's text for the four that the built site carries

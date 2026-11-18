@@ -7,7 +7,8 @@
 		"dev": "bunx --bun vite",
 		"build": "bunx --bun vite build && bun scripts/prerender.ts",
 		"preview": "bun scripts/serve.ts",
-		"check": "tsc --noEmit"
+		"typecheck": "tsc --noEmit",
+		"check": "bun scripts/check-output.ts"
 	},
 	"dependencies": {
 		"@solidjs/web": "2.0.1",
