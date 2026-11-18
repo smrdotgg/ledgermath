@@ -5,9 +5,13 @@
 # to a file it lacks or loads from another origin. The same commands work
 # locally inside site/. Keeps the built site as the artifact `site`.
 #
-# It deploys nowhere: where the site is hosted is not decided. A deploy is
-# meant to be one more job that `needs: build`, downloads the `site` artifact
-# and publishes it, with its own permissions; nothing in `build` changes.
+# Then `deploy` puts that artifact on Vercel as prebuilt files (Vercel builds
+# nothing; site/deploy/deploy.sh): a push to main or a run by hand on main
+# deploys production, ledgermath.com, and checks the live page
+# (site/scripts/check-live.ts); a pull request from a branch of this
+# repository, or a run by hand on another branch, gets a preview deployment.
+# A pull request from a fork gets no secrets, so its run skips `deploy` and
+# still passes; nothing a fork's code controls ever sees VERCEL_TOKEN.
 name: site
 
 on:
@@ -55,3 +59,65 @@ jobs:
           name: site
           path: site/dist/client/
           if-no-files-found: error
+
+  deploy:
+    name: deploy the built site to Vercel
+    needs: build
+    # A fork's pull request is not given the repository's secrets: skip the
+    # job rather than fail it. Same-repository branches are pushed by people
+    # with write access, who could read the secret anyway.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    # Production deploys run one at a time: a newer one waits for the one
+    # running instead of cancelling it mid-upload, so two cannot finish out of
+    # order. (GitHub keeps one waiting run per group: a third that arrives
+    # meanwhile replaces the waiting one, and the newest deploys.) A newer
+    # preview of the same pull request or branch cancels the one before.
+    concurrency:
+      group: site-deploy-${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && 'production' || github.ref }}
+      cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+    env:
+      TARGET: ${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && 'production' || 'preview' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.4
+      - name: The Vercel CLI, at the version site/deploy/package.json pins
+        working-directory: site/deploy
+        run: bun install --frozen-lockfile
+      - name: The site the build job built and checked
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: site
+          path: ${{ runner.temp }}/site
+      - name: Deploy as prebuilt files (${{ env.TARGET }})
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
+        run: site/deploy/deploy.sh "$RUNNER_TEMP/site" "$TARGET" >"$RUNNER_TEMP/deployment.json"
+      - name: The deployment's URL, in the job summary
+        run: |
+          url=$(jq -er '.deployment.url' "$RUNNER_TEMP/deployment.json")
+          {
+            echo "### Site deployed to Vercel: $TARGET"
+            echo
+            echo "- Deployment: $url"
+            if [ "$TARGET" = production ]; then
+              echo "- Production: https://ledgermath.com/"
+            else
+              echo "- A preview: opening it needs a Vercel login (Vercel Authentication)"
+            fi
+            echo "- Commit: $GITHUB_SHA"
+          } >>"$GITHUB_STEP_SUMMARY"
+          echo "$url"
+      - name: https://ledgermath.com/ answers 200 with the page's text (src/App.text.ts) in its HTML
+        if: env.TARGET == 'production'
+        working-directory: site
+        run: bun scripts/check-live.ts https://ledgermath.com/

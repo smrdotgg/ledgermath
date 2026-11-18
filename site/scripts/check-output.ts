@@ -158,6 +158,12 @@ function bodyText(html: string): string {
 	).replace(/\s+/g, " ");
 }
 
+/** The lines of TEXTS that HTML does not hold in its body outside any script or style; scripts/check-live.ts uses it too. */
+export function missingText(html: string, texts: readonly string[]): string[] {
+	const visible = bodyText(html);
+	return texts.filter((text) => !visible.includes(text));
+}
+
 /** Checks the built site in DIR against the page's TEXTS; see the comment at the top. */
 export function checkOutput(root: string, texts: readonly string[]): Result {
 	const dir = resolve(root);
@@ -168,9 +174,8 @@ export function checkOutput(root: string, texts: readonly string[]): Result {
 	if (!existsSync(index)) {
 		problems.push("index.html is missing");
 	} else {
-		const visible = bodyText(readFileSync(index, "utf8"));
-		for (const text of texts) {
-			if (!visible.includes(text)) problems.push(`index.html does not hold, in its body outside any script: ${JSON.stringify(text)}`);
+		for (const text of missingText(readFileSync(index, "utf8"), texts)) {
+			problems.push(`index.html does not hold, in its body outside any script: ${JSON.stringify(text)}`);
 		}
 	}
 
