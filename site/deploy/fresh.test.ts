@@ -2,7 +2,7 @@
 // inside site/.
 
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { freshness, SKIP, sitePaths, WORKFLOW } from "./fresh";
@@ -22,6 +22,13 @@ function run(cwd: string, ...args: string[]): string {
 	});
 	if (result.exitCode !== 0) throw new Error(`git ${args.join(" ")}: ${result.stderr}`);
 	return result.stdout.toString().trim();
+}
+
+/** Overwrites COMMIT's loose object with bytes git cannot inflate. */
+function corrupt(dir: string, commit: string) {
+	const object = join(dir, ".git", "objects", commit.slice(0, 2), commit.slice(2));
+	chmodSync(object, 0o644);
+	writeFileSync(object, "not a zlib stream");
 }
 
 /** A repository on main; commit() writes files and returns the new commit. */
@@ -117,6 +124,14 @@ describe("freshness", () => {
 		expect(verdict.message).toContain(`${"0".repeat(40)} is not on main (main's tip is ${tip})`);
 	});
 
+	test("throws with git's message when git cannot read the run's commit, rather than skip", () => {
+		const { dir, commit } = repo();
+		const a = commit({ "site/index.ts": "1" });
+		commit({ "site/index.ts": "2" });
+		corrupt(dir, a);
+		expect(() => freshness(a, "main", PATHS, dir)).toThrow(/rev-parse.*exit 128.*corrupt/s);
+	});
+
 	test("throws, in a shallow clone, rather than guess", () => {
 		const { dir, commit } = repo();
 		const a = commit({ "site/index.ts": "1" });
@@ -159,6 +174,18 @@ describe("the command", () => {
 		const skipped = command(dir, a, "main");
 		expect(skipped.status).toBe(SKIP);
 		expect(skipped.out).toContain("main has moved on");
+	});
+
+	test("fails, neither deploying nor skipping, when git fails on the run's commit", () => {
+		const { dir, commit } = repo();
+		const a = commit({ "site/index.ts": "1" });
+		commit({ "site/index.ts": "2" });
+		corrupt(dir, a);
+		const result = command(dir, a, "main");
+		expect(result.status).not.toBe(0);
+		expect(result.status).not.toBe(SKIP);
+		expect(result.err).toContain(`loose object ${a}`);
+		expect(result.err).toContain("is corrupt");
 	});
 
 	test("fails, neither deploying nor skipping, when it cannot tell", () => {

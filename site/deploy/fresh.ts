@@ -16,14 +16,16 @@
  * the run's commit.)
  *
  * If those paths differ, main has a newer commit that started a run of its
- * own, which deploys after this one or already has; deploying COMMIT would
- * move ledgermath.com back. If they do not differ, COMMIT's site is main's,
+ * own, which deploys after this one or already has (production deploy jobs
+ * wait their turn in one queue); deploying COMMIT would move ledgermath.com
+ * back. If they do not differ, COMMIT's site is main's,
  * even when main has moved on in files the site is not built from (which
  * start no run). A COMMIT that is not on main (force-pushed away) is never
  * deployed to production.
  *
  * Exit 0: deploy. Exit 3: skip; stdout says why, naming both commits. Any
- * other exit: the check itself failed, and the deploy must not go ahead.
+ * other exit: the check itself failed (a git command did, say), and the
+ * deploy must not go ahead.
  */
 
 import { fileURLToPath } from "node:url";
@@ -55,9 +57,17 @@ function git(cwd: string | undefined, ...args: string[]): { status: number; out:
 	return { status: result.exitCode, out: result.stdout.toString().trim(), err: result.stderr.toString().trim() };
 }
 
+/**
+ * REV's commit, or undefined if the clone has no such commit. With --quiet,
+ * git says that by exiting 1 and printing nothing; any other failure (a
+ * corrupt object exits 128) is git failing, not an answer, and throws with
+ * git's message.
+ */
 function resolve(cwd: string | undefined, rev: string): string | undefined {
 	const result = git(cwd, "rev-parse", "--verify", "--quiet", `${rev}^{commit}`);
-	return result.status === 0 ? result.out : undefined;
+	if (result.status === 0) return result.out;
+	if (result.status === 1 && result.err === "") return undefined;
+	throw new Error(`git rev-parse --verify ${rev}^{commit} failed (exit ${result.status}): ${result.err}`);
 }
 
 const notOnMain = (commit: string, tip: string): Verdict => ({
@@ -91,7 +101,8 @@ export function freshness(commit: string, main: string, pathspecs: readonly stri
 			deploy: false,
 			message:
 				`Production deploy skipped: main has moved on. What the site is built from differs between this run's commit ${ours} ` +
-				`and main's tip ${tip} (${shown}); the run for the newer commit deploys it.`,
+				`and main's tip ${tip} (${shown}). The newer commit's own run deploys main's site after this one, or already has; ` +
+				`if that run failed, was cancelled or never started, run this workflow by hand on main.`,
 		};
 	}
 	return {
