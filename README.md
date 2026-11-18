@@ -1941,7 +1941,7 @@ the root's, and needs only Bun (Vite runs under Bun, not Node).
 cd site
 bun install --frozen-lockfile
 bun run typecheck  # type-check
-bun test           # the output check's and the live check's own tests (scripts/*.test.ts)
+bun test           # the checks' and the deploy scripts' own tests (scripts/*.test.ts, deploy/*.test.ts)
 bun run build      # site/dist/client
 bun run check      # checks site/dist/client, as the workflow does
 bun run preview    # serves site/dist/client at http://127.0.0.1:4173 (a port as argument to change it)
@@ -1996,8 +1996,33 @@ directory, and runs `vercel deploy --prebuilt` on it. The Vercel CLI is pinned i
   the new deployment. The job then fetches https://ledgermath.com/ and fails unless it
   answers 200, without a redirect, with each line of `site/src/App.text.ts` in its HTML
   outside any script (`site/scripts/check-live.ts`, the same test `bun run check` makes of
-  the built file), so the live page reads with JavaScript off. Production deploys run one
-  at a time and never cancel each other, so two cannot finish out of order.
+  the built file), so the live page reads with JavaScript off.
+
+  Production deploy jobs share one concurrency group: one runs at a time, and a running
+  one is never cancelled, so no upload is cut off. A job that arrives while another runs
+  waits; GitHub keeps one waiting job per group, so a job that arrives while one already
+  waits cancels the waiting one (its run shows as cancelled). Jobs arrive in the order
+  their builds finish, not the order of their commits, and a re-run of an old run arrives
+  whenever it is started, still with its old commit. So before calling Vercel, each
+  production job checks out main as it is then (all its commits and trees, and of its
+  files only the workflow) and runs `site/deploy/fresh.ts`: the deploy goes ahead only if
+  the run's commit is on main and nothing under the paths that start the workflow on a
+  push (`site/**` and the workflow itself, read from the workflow's `on.push.paths`)
+  differs between that commit and main's tip. Otherwise the job skips the deploy and the
+  live check, passes, and says in the run's summary that main has moved on (or that the
+  commit is not on main), naming both commits. A newer commit that changed those paths
+  started a run of its own, which deploys after this one or already has; a newer commit
+  that changed nothing under them started none, and then the older run's site is main's
+  site and it deploys. So:
+
+  - two pushes close together: ledgermath.com ends on the newer commit's site. The older
+    commit's job skips if the newer commit is on main when it starts, which it always is
+    when the newer job ran first; if the older job starts first and deploys, the newer
+    one deploys after it;
+  - a re-run of an old production run skips, unless main's site has not changed since,
+    when it deploys the same site again;
+  - a run by hand on main deploys main's tip, unless main moves on while it builds;
+  - a run whose commit is no longer on main (main was force-pushed past it) skips.
 - A pull request from a branch of this repository, or a run by hand on another branch,
   gets a preview deployment, which ledgermath.com does not serve. A newer push cancels the
   preview before it.
@@ -2029,7 +2054,9 @@ cd site && bun run build && bun run check && cd ..
 site/deploy/deploy.sh site/dist/client preview      # or production
 ```
 
-It prints the deployment as JSON; `.url` is its URL. It needs `jq`.
+It prints the deployment as JSON; `.url` is its URL. It needs `jq`, and checks for it
+before the CLI runs. It fails, saying what was wrong, unless the CLI printed exactly one
+deployment object, READY, whose `url` is an absolute `https://` URL.
 
 The Vercel project was set up once by hand, not as infrastructure code. To repeat it:
 
