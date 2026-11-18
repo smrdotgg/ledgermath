@@ -11,11 +11,13 @@
 # Needs VERCEL_TOKEN, VERCEL_ORG_ID and VERCEL_PROJECT_ID in the environment
 # (the CLI reads all three from there), and `bun install --frozen-lockfile`
 # run in site/deploy, which installs the CLI at the version package.json pins.
-# Needs jq. Prints the deployment as one JSON object on stdout (its `url`,
-# `target`, `inspectorUrl` and so on) and fails unless its readyState is
-# READY; the CLI's progress goes to stderr. `vercel deploy --json` prints that
-# object bare, or under `deployment` when it takes itself to be run by an AI
-# agent; the script prints it the same way either way.
+# Needs jq, and checks for it before the CLI runs. Prints the deployment as
+# one JSON object on stdout (its `url`, `target`, `inspectorUrl` and so on);
+# the CLI's progress goes to stderr. `vercel deploy --json` prints that object
+# bare, or under `deployment` when it takes itself to be run by an AI agent;
+# the script prints it the same way either way. It fails, saying what was
+# wrong, unless the CLI printed exactly one JSON value holding one deployment
+# object whose readyState is READY and whose url is an absolute https:// URL.
 # .github/workflows/site.yml runs it.
 set -euo pipefail
 
@@ -33,6 +35,11 @@ for name in VERCEL_TOKEN VERCEL_ORG_ID VERCEL_PROJECT_ID; do
 done
 if [ ! -f "$site/index.html" ]; then
   echo "$site/index.html is missing: build the site first (bun run build in site/)" >&2
+  exit 2
+fi
+
+if ! command -v jq >/dev/null; then
+  echo "jq is not installed: it reads the CLI's result" >&2
   exit 2
 fi
 
@@ -58,4 +65,14 @@ if [ -n "$commit" ]; then
   args+=(--meta "commit=$commit")
 fi
 VERCEL_TELEMETRY_DISABLED=1 "$vercel" "${args[@]}" >"$out/deployment.json"
-jq -e '.deployment // . | if .readyState == "READY" and (.url | type) == "string" then . else error("the deployment is not READY: \(.)") end' "$out/deployment.json"
+# Slurped, so two objects, or none, are caught rather than each passed on.
+jq -s '
+  def fail(why): "vercel deploy --json printed \(why)\n" | halt_error(2);
+  if length != 1 then fail("\(length) JSON values, not one deployment object") else .[0] end
+  | if type == "object" and has("deployment") then .deployment else . end
+  | if type != "object" then fail("something other than a deployment object: \(tojson)")
+    elif .readyState != "READY" then fail("a deployment whose readyState is \(.readyState | tojson), not READY")
+    elif (.url | type) != "string" or (.url | test("^https://[^/?#@\\s]+(/|$)") | not) then
+      fail("a deployment whose url \(.url | tojson) is not an absolute https:// URL")
+    else . end
+' "$out/deployment.json"
