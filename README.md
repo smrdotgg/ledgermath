@@ -41,6 +41,7 @@ as the base the build started from (last section).
 | `skills/ledgermath/SKILL.md` | The agent skill: napkin math from LedgerMath's numbers, every number cited or marked as an assumption |
 | `scripts/lookup.ts` | The lookup tool the skill uses: the Series, one Series' percentiles and Runs, prices by word, each number beside its citation (`scripts/lib/lookup.ts`, `scripts/lib/citation.ts`, `scripts/lib/ledger-data.ts`; what each benchmark measures, `scripts/lib/benchmark-notes.ts`) |
 | `scripts/check-answer.ts` | Checks an answer written with the skill: every number from the question, cited, an assumption, recomputed arithmetic, or a repeat; every citation resolving in the data (`scripts/lib/answer-check.ts`, `scripts/lib/quantity.ts`) |
+| `site/` | The placeholder website: one page, SolidJS 2, prerendered to static files (section "The website" below); `.github/workflows/site.yml` builds and checks it, and deploys it nowhere |
 | `CONTRIBUTING.md` | How to add a benchmark in any language, a target, a Method version, and what a pull request says |
 | `LICENSE`, `NOTICE`, `THIRD-PARTY-NOTICES.md` | The code's licence (Apache-2.0), its notice, and what comes from other projects, with their licences (section "Licence" below) |
 | `third-party/` | glibc 2.34's `COPYING.LIB` and `LICENSES`, and `sources.lock.json`, the third-party source packages kept in the bucket beside the binaries |
@@ -1920,6 +1921,46 @@ the cited figure, in its unit, passes whatever the words around it call it, so a
 block described as the Series', passes as long as the value and the citation agree. Every
 value the lookup tool prints reads back, under the checker's rule, as the value its
 citation names (a value exactly halfway at six digits is printed with a digit more).
+
+## The website (`site/`)
+
+A placeholder: one page saying what LedgerMath is and that the site is on its way. It is
+there so the site's build and its checks are in place; the real website is still to be
+discussed, and nothing of it is designed yet.
+
+It is SolidJS 2, built with Vite and Solid's Vite plugin (`@solidjs/vite-plugin`, in its
+server-rendering mode), and prerendered: `vite build` writes the browser's files to
+`site/dist/client` and a server bundle to `site/dist/server`, then
+`site/scripts/prerender.ts` renders each page once with that bundle into
+`site/dist/client` and removes the bundle. What is left is plain HTML, CSS and JavaScript
+for any static host, with each page's content in its HTML, so it reads with JavaScript off;
+the script then hydrates it. `site/` has its own `package.json` and `bun.lock`, apart from
+the root's, and needs only Bun (Vite runs under Bun, not Node).
+
+```bash
+cd site
+bun install --frozen-lockfile
+bun run check      # type-check
+bun run build      # site/dist/client
+bun run preview    # serves site/dist/client at http://127.0.0.1:4173 (a port as argument to change it)
+bun run dev        # Vite's dev server, with hot reload
+```
+
+`.github/workflows/site.yml` runs on pull requests and pushes to main that touch `site/` or
+the workflow, and by hand. It installs with the lockfile frozen, type-checks, builds, and
+checks the output with `site/scripts/check-output.ts`: `index.html` holds the page's text
+in its HTML, outside any script (which shows the prerender ran), and no HTML, CSS or
+JavaScript file in the output refers to a file the output lacks, or to another origin. It
+keeps the built site as the artifact `site`.
+
+It deploys nowhere: where the site is hosted is not decided. A deploy would be one more job
+in that workflow that needs the build job and takes the `site` artifact. The built site
+carries Solid's runtime, so it also carries `third-party-notices.txt`
+(`THIRD-PARTY-NOTICES.md`, section 3).
+
+The box never sees it built or run: a box builds the benchmarks and runs `runner/`, nothing
+else. `site/` is in the source archive a deploy makes (a `git archive` of the whole commit),
+but not in a Run's runner manifest, which lists `runner/` alone.
 
 ## July's pipeline (`benchmarks/c/`, stage `smr`)
 

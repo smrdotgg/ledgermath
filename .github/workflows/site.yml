@@ -1,0 +1,57 @@
+# Builds the placeholder website in site/ and checks what the build wrote:
+# index.html holds the page's text in its HTML (so the prerender ran and the
+# page reads with JavaScript off), and nothing in the output refers to a file
+# it lacks or to another origin. Keeps the built site as the artifact `site`.
+#
+# It deploys nowhere: where the site is hosted is not decided. A deploy is
+# meant to be one more job that `needs: build`, downloads the `site` artifact
+# and publishes it, with its own permissions; nothing in `build` changes.
+name: site
+
+on:
+  pull_request:
+    paths:
+      - "site/**"
+      - ".github/workflows/site.yml"
+  push:
+    branches: [main]
+    paths:
+      - "site/**"
+      - ".github/workflows/site.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: type-check, build and check the site
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: site
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.4
+      - run: bun install --frozen-lockfile
+      - name: Type-check
+        run: bun run check
+      - name: Build, then prerender into dist/client
+        run: bun run build
+      - name: index.html holds the page's text outside its scripts, and the output refers to no file it lacks
+        run: >-
+          bun scripts/check-output.ts dist/client
+          "LedgerMath"
+          "LedgerMath benchmarks cloud servers every day and records every Run."
+          "The site is on its way."
+      - name: The site carries the notices of the code it ships (THIRD-PARTY-NOTICES.md, section 3)
+        run: cmp public/third-party-notices.txt dist/client/third-party-notices.txt
+      - name: Keep the built site
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: site
+          path: site/dist/client/
+          if-no-files-found: error

@@ -15,7 +15,7 @@ advice.
    cases; mattpocock/skills; Linux's `statx` declarations; AWS's data in test fixtures
 2. [In the published benchmark binaries](#2-in-the-published-benchmark-binaries): the GNU
    C Library; GCC's runtime library; AWS-LC
-3. [JavaScript packages](#3-javascript-packages)
+3. [JavaScript packages](#3-javascript-packages): the tools; the website, `site/`
 4. [What is not listed](#4-what-is-not-listed)
 
 ## 1. In this repository
@@ -787,7 +787,7 @@ DAMAGE.
 
 ## 3. JavaScript packages
 
-The tools in this repository run on Bun, with the packages `package.json` names at the
+The tools in this repository run on Bun, with the packages the root `package.json` names at the
 versions `bun.lock` pins. The packages are not in the repository (`bun install` fetches
 them), and none is part of anything LedgerMath publishes: the page
 (`scripts/build-page.ts`) uses no package and loads nothing from the network, and the
@@ -804,6 +804,29 @@ and are not published.
 | `typescript` | 7.0.2 | Apache-2.0 | Type checking (`bunx tsc --noEmit`) |
 | `@types/aws-lambda` | 8.10.162 | MIT | Type definitions |
 | `@types/bun` | 1.3.14 | MIT | Type definitions |
+
+### The website, `site/`
+
+The placeholder website has its own packages, which `site/package.json` names at the
+versions `site/bun.lock` pins. It is not published yet. Its build (`bun run build` in
+`site/`) writes the site to `site/dist/client`, and the site's JavaScript and HTML carry
+code from four of them: Solid's runtime and the entry the Vite plugin generates. The other
+packages only build or check it.
+
+| Package | Version | Licence | What uses it |
+|---|---|---|---|
+| `solid-js` | 2.0.1 | MIT | The page's script (in the built site) |
+| `@solidjs/web` | 2.0.1 | MIT | The page's script and the inline hydration script in its HTML (in the built site) |
+| `@solidjs/signals` | 2.0.1 | MIT | The page's script, through `solid-js` (in the built site) |
+| `@solidjs/vite-plugin` | 3.0.1 | MIT | Compiles the site; its generated entry and error boundary are in the page's script (in the built site) |
+| `vite` | 8.3.8 | MIT | Builds the site |
+| `typescript` | 7.0.2 | Apache-2.0 | Type checking (`bun run check` in `site/`) |
+| `@types/bun` | 1.3.14 | MIT | Type definitions |
+
+The copyright notices and the MIT License's text for the four that the built site carries
+are in [`site/public/third-party-notices.txt`](site/public/third-party-notices.txt), which
+the build copies into the site as `third-party-notices.txt`, so they travel with it
+wherever it is put.
 
 ## 4. What is not listed
 
