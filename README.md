@@ -41,7 +41,7 @@ as the base the build started from (last section).
 | `skills/ledgermath/SKILL.md` | The agent skill: napkin math from LedgerMath's numbers, every number cited or marked as an assumption |
 | `scripts/lookup.ts` | The lookup tool the skill uses: the Series, one Series' percentiles and Runs, prices by word, each number beside its citation (`scripts/lib/lookup.ts`, `scripts/lib/citation.ts`, `scripts/lib/ledger-data.ts`; what each benchmark measures, `scripts/lib/benchmark-notes.ts`) |
 | `scripts/check-answer.ts` | Checks an answer written with the skill: every number from the question, cited, an assumption, recomputed arithmetic, or a repeat; every citation resolving in the data (`scripts/lib/answer-check.ts`, `scripts/lib/quantity.ts`) |
-| `site/` | The placeholder website: one page, SolidJS 2, prerendered to static files (section "The website" below); `.github/workflows/site.yml` builds and checks it, and deploys it nowhere |
+| `site/` | The placeholder website: one page, SolidJS 2, prerendered to static files (section "The website" below); `.github/workflows/site.yml` builds and checks it, and deploys it to Vercel (`site/deploy/`) at https://ledgermath.com |
 | `CONTRIBUTING.md` | How to add a benchmark in any language, a target, a Method version, and what a pull request says |
 | `LICENSE`, `NOTICE`, `THIRD-PARTY-NOTICES.md` | The code's licence (Apache-2.0), its notice, and what comes from other projects, with their licences (section "Licence" below) |
 | `third-party/` | glibc 2.34's `COPYING.LIB` and `LICENSES`, and `sources.lock.json`, the third-party source packages kept in the bucket beside the binaries |
@@ -1941,7 +1941,7 @@ the root's, and needs only Bun (Vite runs under Bun, not Node).
 cd site
 bun install --frozen-lockfile
 bun run typecheck  # type-check
-bun test           # the output check's own tests (scripts/check-output.test.ts)
+bun test           # the checks' and the deploy scripts' own tests (scripts/*.test.ts, deploy/*.test.ts)
 bun run build      # site/dist/client
 bun run check      # checks site/dist/client, as the workflow does
 bun run preview    # serves site/dist/client at http://127.0.0.1:4173 (a port as argument to change it)
@@ -1974,10 +1974,113 @@ reads the HTML as text, so it cannot tell that text which is in the HTML is not 
 inside a `<template>`, say). It is a check on what an honest build writes, not an HTML
 validator.
 
-It deploys nowhere: where the site is hosted is not decided. A deploy would be one more job
-in that workflow that needs the build job and takes the `site` artifact. The built site
-carries Solid's runtime, so it also carries `third-party-notices.txt`
+The built site carries Solid's runtime, so it also carries `third-party-notices.txt`
 (`THIRD-PARTY-NOTICES.md`, section 3).
+
+### Where it is deployed
+
+The site is at https://ledgermath.com, hosted on Vercel (project `ledgermath`). Vercel only
+hosts files: the site is built in GitHub Actions, by the build job above, and Vercel is
+handed the finished files. The Vercel project has no Git repository connected, and
+Vercel's build system never runs. (The real site will be built from benchmark data that
+only the GitHub workflows have.)
+
+The workflow's deploy job (`deploy-production` or `deploy-preview`) runs after the build
+job has passed, `bun run check` included. It takes the `site` artifact that job uploaded,
+builds nothing, and runs `site/deploy/deploy.sh`: that lays the files out as Vercel's
+Build Output API asks (`.vercel/output/static`, and a `config.json` saying
+`{"version":3}`) in a temporary directory, and runs `vercel deploy --prebuilt` on it. The
+Vercel CLI is pinned in `site/deploy/package.json` and its `bun.lock`, apart from the
+site's own packages.
+
+- A push to main, or a run by hand on main, deploys production: ledgermath.com moves to
+  the new deployment. The job then fetches https://ledgermath.com/ and fails unless it
+  answers 200, without a redirect, with each line of `site/src/App.text.ts` in its HTML
+  outside any script (`site/scripts/check-live.ts`, the same test `bun run check` makes of
+  the built file), so the live page reads with JavaScript off.
+
+  Production deploys run in the job `deploy-production`; its jobs, one per run, share one
+  concurrency group: one runs at a time, and a running one is never cancelled, so no
+  upload is cut off. A job that arrives while another runs waits, and the group keeps
+  every waiting job (`queue: max`; GitHub's default keeps one, and the next arrival
+  cancels it), so none is dropped. GitHub runs the waiting jobs one by one, roughly in the
+  order they began waiting; it does not promise that order. Up to 100 can wait; GitHub
+  cancels any beyond that. Jobs arrive in the order their builds finish, not the order of
+  their commits, and a re-run of an old run arrives whenever it is started, still with its
+  old commit. So before calling Vercel, each production job checks out main as it is then
+  (all its commits and trees, and of its files only the workflow) and runs
+  `site/deploy/fresh.ts`: the deploy goes ahead only if the run's commit is on main and
+  nothing under the paths that start the workflow on a push (`site/**` and the workflow
+  itself, read from the workflow's `on.push.paths`) differs between that commit and main's
+  tip. Otherwise the job skips the deploy and the live check, passes, and says in the
+  run's summary that main has moved on (or that the commit is not on main), naming both
+  commits. A newer commit that changed those paths started a run of its own, whose job
+  waits in the same group and deploys after this one, or already has; a newer commit that
+  changed nothing under them started none, and then the older run's site is main's site
+  and it deploys. If git itself fails in the check (a corrupt object, say), the job fails
+  rather than skip. So:
+
+  - two pushes close together: ledgermath.com ends on the newer commit's site. The older
+    commit's job skips if the newer commit is on main when it starts, which it always is
+    when the newer job ran first; if the older job starts first and deploys, the newer
+    one deploys after it;
+  - three runs, A deploying, then C (the newest commit) and B (an older one whose build
+    finished last) waiting: both wait, each takes its turn, B skips and C deploys, in
+    either order;
+  - a re-run of an old production run skips, unless main's site has not changed since,
+    when it deploys the same site again;
+  - a run by hand on main deploys main's tip, unless main moves on while it builds;
+  - a run whose commit is no longer on main (main was force-pushed past it) skips.
+
+  Main's site is deployed by the run of the commit that last changed it. If that run's
+  build fails, someone cancels it, or it never starts (a push that skips CI),
+  ledgermath.com stays on an older site while every older run's job skips; run the
+  workflow by hand on main to deploy main's tip.
+- A pull request from a branch of this repository, or a run by hand on another branch,
+  gets a preview deployment from the job `deploy-preview`, which ledgermath.com does not
+  serve. A newer push cancels the preview before it.
+- A pull request from a fork is not given the repository's secrets, so its run skips
+  `deploy-preview` and still passes. The workflow uses `pull_request`, never
+  `pull_request_target`, and the token is set only in the deploy step of a job that runs
+  for this repository's own branches, so no code from a fork runs where the token is.
+
+The job writes the deployment's URL to the run's summary. Preview URLs need a Vercel login
+(the project's Vercel Authentication covers every deployment URL; only the custom domain is
+public), so CI checks only production.
+
+The workflow needs, in the repository's settings:
+
+| Name | Kind | What it is |
+|------|------|------------|
+| `VERCEL_TOKEN` | secret | A Vercel token scoped to the project `ledgermath` alone; it expires on 2027-11-18 |
+| `VERCEL_ORG_ID` | variable | The ID of the Vercel team that owns the project |
+| `VERCEL_PROJECT_ID` | variable | The project's ID |
+
+The Vercel CLI reads all three from the environment, so nothing runs `vercel login` or
+`vercel link`. Nor does anything run `vercel pull`: it fetches the project's settings and
+environment variables for a build, and this site is built without either. To deploy by
+hand, with the three in the environment:
+
+```bash
+cd site && bun run build && bun run check && cd ..
+(cd site/deploy && bun install --frozen-lockfile)
+site/deploy/deploy.sh site/dist/client preview      # or production
+```
+
+It prints the deployment as JSON; `.url` is its URL. It needs `jq`, and checks for it
+before the CLI runs. It fails, saying what was wrong, unless the CLI printed exactly one
+deployment object, READY, whose `url` is an absolute `https://` URL.
+
+The Vercel project was set up once by hand, not as infrastructure code. To repeat it:
+
+1. `vercel project add ledgermath` in the Hobby team, with framework preset none and no Git
+   repository connected.
+2. `vercel domains add ledgermath.com ledgermath`, with the domain's nameservers pointed at
+   Vercel's. `www.ledgermath.com` is not attached.
+3. Vercel Authentication on for every deployment except custom domains.
+4. A token scoped to that one project, saved as the secret `VERCEL_TOKEN`, and the team's
+   and project's IDs as the variables `VERCEL_ORG_ID` and `VERCEL_PROJECT_ID`. Replace the
+   token before it expires.
 
 The box never sees it built or run: a box builds the benchmarks and runs `runner/`, nothing
 else. `site/` is in the source archive a deploy makes (a `git archive` of the whole commit),

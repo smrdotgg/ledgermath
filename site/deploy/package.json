@@ -1,0 +1,8 @@
+{
+	"name": "ledgermath-site-deploy",
+	"license": "Apache-2.0",
+	"private": true,
+	"devDependencies": {
+		"vercel": "65.12.1"
+	}
+}
