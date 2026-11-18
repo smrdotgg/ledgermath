@@ -1027,4 +1027,13 @@ A migrated benchmark is done only when **all** of these hold:
   no longer holds: `dark`, `closed` and `on` can be deployed there, and a test fails if the
   two ever name different stages. Also corrected after a second re-check: SST's lock does
   not cover `sst diff`. Not deployed.
+- **2026-11-18** — `memory_read` keeps its dynamic build (#37, decision 6; #38, check 5).
+  The week of the static build beside the dynamic one ended with different numbers: on the
+  `scalar` path the dynamic build is faster on `m5.large`, `i4i.2xlarge` and `c6i.8xlarge`
+  (by 1.3% to 15.1%), and the same on `c8i.2xlarge`, `c8a.2xlarge` and the `avx2` path.
+  The maintainer decided to keep both builds, with no end date, and to leave the other
+  benchmarks static only for now. The cause, where the code or the buffer lands in memory,
+  is not yet measured, and finding it is deferred. ADR-0029 (decision 4) and ADR-0008's
+  note say so. Only documents changed: `schedule.json`, the code and the tests are as they
+  were.
 - _(agents: append your entry here, one per merged benchmark)_
