@@ -2029,7 +2029,7 @@ cd site && bun run build && bun run check && cd ..
 site/deploy/deploy.sh site/dist/client preview      # or production
 ```
 
-It prints the deployment as JSON; `.deployment.url` is its URL.
+It prints the deployment as JSON; `.url` is its URL. It needs `jq`.
 
 The Vercel project was set up once by hand, not as infrastructure code. To repeat it:
 

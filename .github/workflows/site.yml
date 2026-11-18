@@ -104,7 +104,7 @@ jobs:
         run: site/deploy/deploy.sh "$RUNNER_TEMP/site" "$TARGET" >"$RUNNER_TEMP/deployment.json"
       - name: The deployment's URL, in the job summary
         run: |
-          url=$(jq -er '.deployment.url' "$RUNNER_TEMP/deployment.json")
+          url=$(jq -er '.url' "$RUNNER_TEMP/deployment.json")
           {
             echo "### Site deployed to Vercel: $TARGET"
             echo
