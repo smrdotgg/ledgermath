@@ -35,8 +35,9 @@
 	--paper-2: #ebe4d1;
 	--ink: #1c2329;
 	--ink-2: #3b4248;
-	--pencil: #66665f;
-	--pencil-2: #5a5a53;
+	--pencil: #5c5c55;
+	--pencil-2: #52524b;
+	--bar-rng: #1c2329;
 	--rule: #c9d7d8;
 	--rule-2: #b3c6c9;
 	--rule-strong: #1c2329;
@@ -56,8 +57,9 @@
 		--paper-2: #171d21;
 		--ink: #ece5d3;
 		--ink-2: #c9c3b4;
-		--pencil: #969a94;
-		--pencil-2: #9fa39c;
+		--pencil: #a4a8a1;
+		--pencil-2: #adb1aa;
+		--bar-rng: #ece5d3;
 		--rule: #222c31;
 		--rule-2: #2e3a40;
 		--rule-strong: #c9c3b4;
@@ -296,8 +298,7 @@ h1 .sub {
 
 .ledger thead th.no,
 .ledger thead th.what,
-.ledger thead th.unit,
-.ledger thead th.note {
+.ledger thead th.unit {
 	font-variant-caps: all-small-caps;
 	letter-spacing: 0.06em;
 	color: var(--pencil);
@@ -323,11 +324,12 @@ td.no {
 
 th.what {
 	width: 19.5rem;
+	padding-right: 1.25rem;
 }
 
 th.unit,
 td.unit {
-	width: 3.25rem;
+	width: 5.25rem;
 	border-right: 3px double var(--red-rule);
 }
 
@@ -335,7 +337,21 @@ td.unit {
 	padding-top: 0.78rem;
 	font-size: 0.9375rem;
 	color: var(--ink-2);
-	white-space: nowrap;
+}
+
+td.unit .u {
+	display: block;
+	font-weight: 600;
+	color: var(--ink);
+}
+
+td.unit .dir {
+	display: block;
+	margin-top: 0.15rem;
+	font-size: 0.75rem;
+	line-height: 1.3;
+	font-style: italic;
+	color: var(--pencil);
 }
 
 th.mach,
@@ -382,26 +398,51 @@ th.mach > span {
 	font-size: 0.875rem;
 }
 
-th.note,
-td.note {
-	width: 10.25rem;
-	border-left: 3px double var(--red-rule);
-}
-
-td.note {
-	padding-right: 0;
+th.what .note {
+	display: block;
+	margin-top: 0.4rem;
 	font-size: 0.8125rem;
 	line-height: 1.4;
 	color: var(--pencil);
 }
 
-td.note span {
-	display: block;
-}
-
-td.note .per-rep {
+th.what .note .per-rep {
 	font-style: italic;
 	color: var(--ink-2);
+}
+
+/* a note in red pencil written across the row, where it times what every machine type shares */
+tr.entry.has-nb > td.fig-cell {
+	border-bottom: 0;
+	padding-bottom: 0.2rem;
+}
+
+.ledger td.nbcell {
+	padding: 0.2rem 0.75rem 0.75rem;
+	border-bottom: 1px solid var(--rule);
+	vertical-align: top;
+}
+
+tbody tr.nbrow:last-child > td.nbcell {
+	border-bottom: 0;
+}
+
+.nb {
+	display: block;
+	max-width: 62rem;
+	padding-left: 0.6rem;
+	border-left: 2px solid var(--red-rule);
+	font-size: 0.875rem;
+	line-height: 1.4;
+	font-style: italic;
+	color: var(--red);
+}
+
+.nb-mark {
+	font-style: normal;
+	font-weight: 600;
+	font-variant-caps: all-small-caps;
+	letter-spacing: 0.06em;
 }
 
 /* section rows: the account headings */
@@ -415,13 +456,24 @@ tr.sec th {
 	color: var(--red);
 }
 
+tr.sec td.mrep {
+	padding: 1.4rem 0.75rem 0.35rem;
+	vertical-align: bottom;
+	border-bottom: 1px solid var(--rule-2);
+	font-family: var(--mono);
+	font-size: 0.8125rem;
+	color: var(--pencil);
+	white-space: nowrap;
+}
+
 tr.sec .roman {
 	display: inline-block;
 	min-width: 2rem;
 	font-weight: 400;
 }
 
-tbody:first-of-type tr.sec th {
+tbody:first-of-type tr.sec th,
+tbody:first-of-type tr.sec td {
 	padding-top: 0.9rem;
 }
 
@@ -429,7 +481,8 @@ tr.entry > * {
 	border-bottom: 1px solid var(--rule);
 }
 
-tbody tr.entry:last-child > * {
+tbody tr.entry:last-child > *,
+tbody tr.entry.has-nb:nth-last-child(2) > * {
 	border-bottom: 0;
 }
 
@@ -472,6 +525,10 @@ td.fig-cell a:hover {
 	background: var(--hover);
 }
 
+td.fig-cell a:hover .runs {
+	text-decoration-thickness: 2px;
+}
+
 td.fig-cell a:hover .fig .d,
 td.fig-cell a:hover .fig .w {
 	text-decoration: underline;
@@ -497,13 +554,65 @@ td.fig-cell a:hover .fig .w {
 }
 
 .fig .p {
-	font-size: 0.74em;
+	font-size: 0.84em;
 	font-weight: 400;
 	color: var(--pencil);
+	letter-spacing: -0.01em;
 }
 
 .fig .p span {
-	margin-left: 0.18em;
+	margin-left: 0.2em;
+}
+
+.fig .p span:first-child {
+	margin-left: 0.14em;
+}
+
+/* the pencil rule: 0 to the median, drawn to the row's scale, with the p5–p95 range in ink */
+.bar {
+	position: relative;
+	display: block;
+	height: 5px;
+	margin: 0.4rem 0.75rem 0.3rem 0;
+}
+
+.bar-len {
+	position: absolute;
+	left: 0;
+	top: 1px;
+	height: 3px;
+	width: var(--to);
+	background: var(--pencil);
+	opacity: 0.4;
+}
+
+.bar-rng {
+	position: absolute;
+	top: 0;
+	height: 5px;
+	left: var(--lo);
+	width: max(2px, calc(var(--hi) - var(--lo)));
+	background: var(--bar-rng);
+	border-radius: 1px;
+}
+
+.range {
+	display: block;
+	font-size: 0.8125rem;
+	line-height: 1.35;
+	color: var(--pencil);
+	white-space: nowrap;
+}
+
+.range .runs {
+	color: var(--link);
+	text-decoration: underline;
+	text-decoration-thickness: 1px;
+	text-underline-offset: 0.18em;
+}
+
+.mkey {
+	display: none;
 }
 
 .foot-note {
@@ -511,6 +620,32 @@ td.fig-cell a:hover .fig .w {
 	max-width: 60rem;
 	font-size: 0.875rem;
 	color: var(--pencil);
+}
+
+/* the accounts, as a thumb index */
+.index-tabs ol {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.25rem 1.5rem;
+	margin: 0 0 0.6rem;
+	padding: 0;
+	list-style: none;
+	font-variant-caps: all-small-caps;
+	letter-spacing: 0.08em;
+	font-size: 1rem;
+}
+
+.index-tabs a {
+	color: var(--red);
+	text-decoration: none;
+}
+
+.index-tabs a:hover {
+	text-decoration: underline;
+}
+
+.index-tabs .roman {
+	font-weight: 400;
 }
 
 /* on a wide screen the ledger needs no scroll box, and its column heads stay in view */
@@ -671,6 +806,11 @@ td.fig-cell a:hover .fig .w {
 	font-weight: 400;
 }
 
+.quote .mono {
+	font-style: normal;
+	padding-inline: 0.1em;
+}
+
 .quote {
 	margin: 1rem 0 0;
 	font-size: 0.875rem;
@@ -683,7 +823,7 @@ td.fig-cell a:hover .fig .w {
 .api {
 	display: grid;
 	grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr);
-	gap: 4rem;
+	gap: 2.5rem 4rem;
 	margin-top: 4rem;
 	padding-top: 1.75rem;
 	border-top: 1px solid var(--rule-strong);
@@ -786,9 +926,157 @@ td.fig-cell a:hover .fig .w {
 	color: var(--link);
 }
 
-.addr > div:last-child dd {
+.addr dd.serif-dd {
 	font-family: var(--serif);
 	font-size: 0.9375rem;
+}
+
+.addr .sep-dot {
+	color: var(--pencil);
+}
+
+/* the ways in: one entry per address, each with its command */
+.ways {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+	border-top: 3px double var(--rule-strong);
+}
+
+.ways li {
+	display: grid;
+	grid-template-columns: 11rem minmax(0, 1fr);
+	gap: 0.2rem 1rem;
+	padding: 0.7rem 0;
+	border-bottom: 1px solid var(--rule);
+}
+
+.ways .way-h {
+	grid-row: 1 / 3;
+	font-variant-caps: all-small-caps;
+	letter-spacing: 0.06em;
+	font-size: 1rem;
+	font-weight: 600;
+	color: var(--ink);
+	padding-top: 0.1rem;
+}
+
+.ways .way-d {
+	font-size: 0.875rem;
+	color: var(--ink-2);
+}
+
+.ways .cmd {
+	margin: 0.2rem 0 0;
+}
+
+/* one Run, as its Series' file gives it */
+.point {
+	margin: 2rem 0 0;
+}
+
+.point figcaption {
+	max-width: 60rem;
+	font-size: 0.875rem;
+	color: var(--pencil);
+	margin-bottom: 0.6rem;
+}
+
+.point .cap-h {
+	display: block;
+	font-size: 1.0625rem;
+	font-weight: 600;
+	color: var(--ink);
+	margin-bottom: 0.15rem;
+}
+
+.point dl {
+	margin: 0;
+	padding: 0.4rem 0 0.4rem 1rem;
+	background: var(--paper-2);
+	border-left: 3px double var(--red-rule);
+}
+
+.point dl > div {
+	padding: 0.4rem 1rem 0.4rem 0;
+	border-bottom: 1px solid var(--rule);
+}
+
+.point dt,
+.point dd.v {
+	display: inline;
+}
+
+.point dd.v::before {
+	content: " ";
+}
+
+.point dl > div:last-child {
+	border-bottom: 0;
+}
+
+.point dt,
+.point dd.v {
+	font-family: var(--mono);
+	font-size: 0.8125rem;
+	overflow-wrap: anywhere;
+}
+
+.point dt {
+	font-weight: 500;
+	color: var(--ink);
+}
+
+.point dt::before {
+	content: "\"";
+	color: var(--pencil);
+}
+
+.point dt::after {
+	content: "\":";
+	color: var(--pencil);
+}
+
+.point dd {
+	margin: 0;
+}
+
+.point dd.v {
+	color: var(--ink-2);
+}
+
+.point dd.w {
+	display: block;
+	margin-top: 0.1rem;
+	font-size: 0.8125rem;
+	line-height: 1.4;
+	font-style: italic;
+	color: var(--pencil);
+}
+
+.start {
+	display: flex;
+	flex-direction: column;
+	gap: 0.3rem;
+	margin-top: 0.9rem;
+	max-width: 36rem;
+}
+
+.start-h {
+	font-variant-caps: all-small-caps;
+	letter-spacing: 0.06em;
+	font-size: 1.0625rem;
+	color: var(--red);
+	font-weight: 600;
+}
+
+.start .cmd {
+	margin: 0;
+	padding-block: 0.4rem;
+}
+
+.ph {
+	display: none;
 }
 
 /* ------------------------------------------------------------------ colophon */
@@ -974,6 +1262,44 @@ td.fig-cell a:hover .fig .w {
 		color: var(--pencil);
 	}
 
+	.ledger tr.entry {
+		grid-template-columns: 2rem minmax(0, 1fr) 5.5rem;
+	}
+
+	.ledger td.unit {
+		text-align: right;
+	}
+
+	.ledger td.unit .u {
+		font-size: 0.9375rem;
+	}
+
+	tr.sec td.mrep {
+		display: none;
+	}
+
+	.ledger tr.entry.has-nb {
+		border-bottom: 0;
+		padding-bottom: 0.4rem;
+	}
+
+	.ledger tr.nbrow {
+		display: grid;
+		grid-template-columns: 2rem minmax(0, 1fr);
+		padding-bottom: 0.8rem;
+		border-bottom: 1px solid var(--rule-2);
+	}
+
+	.ledger tr.nbrow > * {
+		border: 0;
+		padding: 0;
+		grid-column: 2;
+	}
+
+	tbody tr.nbrow:last-child {
+		border-bottom: 0;
+	}
+
 	.ledger td.fig-cell {
 		grid-column: 2 / 4;
 		display: grid;
@@ -983,45 +1309,46 @@ td.fig-cell a:hover .fig .w {
 		border-bottom: 1px solid var(--rule);
 	}
 
+	.ledger td.fig-cell .mkey {
+		display: block;
+		padding: 0.3rem 0 0.35rem;
+		line-height: 1.35;
+	}
+
+	.mkey .mk-it {
+		display: block;
+		font-family: var(--mono);
+		font-size: 0.8125rem;
+		color: var(--ink-2);
+	}
+
+	.mkey .mk-price {
+		display: block;
+		font-size: 0.8125rem;
+		color: var(--pencil);
+	}
+
 	.ledger td.unit + td.fig-cell {
 		margin-top: 0.55rem;
 		border-top: 1px solid var(--rule-2);
 	}
 
-	.ledger td.fig-cell::before {
-		content: attr(data-m);
-		font-family: var(--mono);
-		font-size: 0.8125rem;
-		line-height: 1.5rem;
-		padding: 0.25rem 0 0.2rem;
-		color: var(--pencil);
-	}
-
 	.ledger td.fig-cell a {
 		margin: 0;
-		padding: 0.25rem 0 0.2rem 0.5rem;
-		line-height: 1.5rem;
+		padding: 0.3rem 0 0.35rem 0.6rem;
+		line-height: 1.4rem;
 		border-left: 3px double var(--red-rule);
 		border-radius: 0;
+	}
+
+	.bar {
+		margin: 0.15rem 0.25rem 0.2rem 0;
 	}
 
 	.fig {
 		font-size: 1rem;
 	}
 
-	.ledger td.note {
-		grid-column: 2 / 4;
-		margin-top: 0.5rem;
-		font-size: 0.8125rem;
-	}
-
-	.ledger td.note span {
-		display: inline;
-	}
-
-	.ledger td.note .per-rep::after {
-		content: " ";
-	}
 
 	.back,
 	.api {
@@ -1029,8 +1356,114 @@ td.fig-cell a:hover .fig .w {
 		gap: 2.5rem;
 	}
 
+	/* the machines: one record each, the price beside the type */
+	.mtable,
+	.mtable tbody {
+		display: block;
+	}
+
+	.mtable thead {
+		position: absolute;
+		width: 1px;
+		height: 1px;
+		overflow: hidden;
+		clip-path: inset(50%);
+	}
+
 	.mtable {
-		min-width: 40rem;
+		border-top: 3px double var(--rule-strong);
+	}
+
+	.mtable tr {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: baseline;
+		padding: 0.6rem 0;
+		border-bottom: 1px solid var(--rule);
+	}
+
+	.mtable tr:last-child {
+		border-bottom: 0;
+	}
+
+	.mtable th,
+	.mtable td {
+		padding: 0;
+		border: 0;
+		text-align: left;
+	}
+
+	.mtable .m-type {
+		flex: 1;
+		font-size: 0.9375rem;
+	}
+
+	.mtable td.m-price,
+	.mtable td.num:last-child {
+		order: 1;
+		border: 0;
+		padding: 0;
+		font-size: 1.0625rem;
+		font-weight: 600;
+	}
+
+	.mtable .m-price .per {
+		font-weight: 400;
+		font-size: 0.8125rem;
+		color: var(--pencil);
+	}
+
+	.mtable .m-proc {
+		order: 2;
+		flex-basis: 100%;
+		margin-top: 0.2rem;
+	}
+
+	.mtable .m-proc .clock {
+		display: inline;
+		margin-left: 0.4rem;
+	}
+
+	.mtable .m-cpu,
+	.mtable .m-mem,
+	.mtable .m-net {
+		order: 3;
+		font-size: 0.875rem;
+		color: var(--ink-2);
+	}
+
+	.mtable .m-mem::before,
+	.mtable .m-net::before {
+		content: "·";
+		margin: 0 0.4rem;
+		color: var(--pencil);
+	}
+
+	.ph {
+		display: inline;
+	}
+
+	.start {
+		flex-direction: column;
+		align-items: stretch;
+		gap: 0.3rem;
+		margin-top: 0.75rem;
+	}
+
+	.ways li {
+		grid-template-columns: minmax(0, 1fr);
+	}
+
+	.ways .way-h {
+		grid-row: auto;
+	}
+
+	.point dl {
+		padding-left: 0.75rem;
+	}
+
+	.point dl > div {
+		padding-right: 0.75rem;
 	}
 
 	.tally {
