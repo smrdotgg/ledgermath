@@ -109,27 +109,19 @@ function cellTitle(row: HeadlineRow, lead: Lead, machine: string): string {
 	return `${machine}, ${unitLabel(row)}\np50 ${s(lead.p50)}\np5 ${s(lead.p5)}\np95 ${s(lead.p95)}\n${lead.count} Runs`;
 }
 
-// The poster's figure: the table's first cell, read memory sequentially on the first machine type.
-const heroRow = headline[0]!;
-const heroCell = heroRow.cells[0]!;
+// The poster's figure: the one headline cell whose Series file the snapshot keeps, so the page can follow
+// it all the way down, from this figure to its Series, to one of its Runs, to that Run's evidence.
+const heroRow = headline.find((row) => row.cells.some((cell) => cell.series.id === seriesFileContents.sample.id))!;
+const heroCell = heroRow.cells.find((cell) => cell.series.id === seriesFileContents.sample.id)!;
 const heroLead = leadFigure(heroRow.choice, heroCell.series);
 const heroShown = show(heroRow, heroLead.p50);
 const heroSplit = split(heroShown.full, rowPlaces(heroRow));
 
 const newest = formatMoment(snapshot.newestRunStartedAt);
-const oldest = formatMoment(snapshot.oldestRunStartedAt);
 const pricesFetched = formatMoment(snapshot.pricesFetchedAt);
 
 function price(m: (typeof machines)[number]): Shown {
 	return formatUsd(m.price.usdPerHour, { per: "hour" });
-}
-
-/** "11–19 Nov 2026" for two moments in one month; otherwise "30 Oct–19 Nov 2026". */
-function span(a: ReturnType<typeof formatMoment>, b: ReturnType<typeof formatMoment>): string {
-	const [ad, am, ay] = a.longDate.split(" ");
-	const [bd, bm, by] = b.longDate.split(" ");
-	if (am === bm && ay === by) return `${ad}–${bd} ${bm!.slice(0, 3)} ${by}`;
-	return `${ad} ${am!.slice(0, 3)}–${bd} ${bm!.slice(0, 3)} ${by}`;
 }
 
 /** The fewest and most Runs behind a machine type's 14 figures, as they stand: "34–36", or one count where all agree. */
@@ -154,10 +146,7 @@ function Masthead() {
 				<a href="#top">LedgerMath</a>
 			</div>
 			<p class="mast-cell">
-				Newest Run started{" "}
-				<time datetime={newest.iso} title={newest.full}>
-					{newest.longDate}, {newest.minute} UTC
-				</time>
+				<span class="mast-k">Boots</span> <span class="mast-t">04:10 10:10 16:10 22:10</span> UTC
 			</p>
 			<nav class="mast-nav" aria-label="On this page">
 				<a href="#figures">Figures</a>
@@ -173,10 +162,6 @@ function Poster() {
 			<h1 id="top" class="headline">
 				AWS machines, measured four times a&nbsp;day.
 			</h1>
-			<p class="boots">
-				<span class="boots-k">Scheduled boots</span>
-				<span class="boots-t">04:10 10:10 16:10 22:10</span> UTC
-			</p>
 			<div class="intro">
 				<p>
 					{formatCount(snapshot.benchmarkCount).full} benchmarks on {formatCount(snapshot.machineCount).full} freshly booted machine types in{" "}
@@ -207,8 +192,13 @@ function Poster() {
 						{" "}
 						/{" "}
 					</span>
-					<a class="hero-kicker-m" href={links.seriesFile(heroCell.series)}>
-						p50 of {formatCount(heroLead.count).full} Runs
+					<span class="hero-kicker-m">p50 of {formatCount(heroLead.count).full} Runs</span>
+					<span class="hero-kicker-sep" aria-hidden="true">
+						{" "}
+						/{" "}
+					</span>
+					<a class="hero-kicker-m" href="#trail">
+						to its evidence ↓
 					</a>
 				</p>
 				{/* The table's own form, set enormous: the compared digits, every other digit on the same baseline, the unit. */}
@@ -224,7 +214,7 @@ function Poster() {
 						{heroSplit.tail}
 					</span>
 					<span class="hero-unit" aria-hidden="true">
-						{heroShown.unit}
+						{unitLabel(heroRow)}
 					</span>
 				</p>
 			</div>
@@ -237,17 +227,19 @@ function Facts() {
 	return (
 		<dl class="facts">
 				<div>
-					<dt>Runs started</dt>
+					<dt>Newest Run started</dt>
 					<dd>
-						<time datetime={oldest.iso} title={`${oldest.full} to ${newest.full}`}>
-							{span(oldest, newest)}
+						<time datetime={newest.iso} title={newest.full}>
+							{newest.date} {newest.minute} UTC
 						</time>
 					</dd>
 				</div>
 				<div>
 					<dt>Runs kept</dt>
 					<dd>
-						<a href={links.seriesList}>{formatCount(snapshot.runCount).full}</a>
+						<a href={links.seriesList}>
+							{formatCount(snapshot.runCount).full} <span class="facts-s">in {formatCount(snapshot.seriesCount).full} Series</span>
+						</a>
 					</dd>
 				</div>
 				<div>
@@ -307,8 +299,10 @@ function FigureTable() {
 				<table style={{ "--wt": `${TAIL}ch` }}>
 					<thead>
 						<tr>
+							{/* The labels of the machine header's lines, each level with its line. */}
 							<th scope="col" class="corner">
-								On-Demand, cheapest first
+								<span class="corner-runs">Runs per figure</span>
+								<span class="corner-price">On-Demand, cheapest first</span>
 							</th>
 							{machines.map((m) => (
 								<th scope="col" class="mach">
@@ -317,7 +311,7 @@ function FigureTable() {
 										{m.vcpu} vCPU · {m.memory}
 									</span>
 									<span class="mach-proc">{proc(m.processor)}</span>
-									<span class="mach-runs">{runsOf(m.instanceType)} Runs</span>
+									<span class="mach-runs">{runsOf(m.instanceType)}</span>
 									<a class="mach-price" href={links.prices} title={`$${price(m).full} an hour: ${m.price.path.pointer}`}>
 										${price(m).full}/h
 									</a>
@@ -380,11 +374,13 @@ function FigureTable() {
 	);
 }
 
-// The worked example: the poster's own Series, as series.json lists it, cut to valid JSON. Its p50 is the
-// poster's figure in bytes per second, the same digits; its count is the poster's count of Runs.
+// The trail: the poster's own Series file, cut down to the poster's figure and the first of its Runs. Its
+// p50 is the poster's figure in nanoseconds per repetition, the same digits; its count is the poster's count
+// of Runs; the Run's own figure and the address of its evidence follow, exactly as the file holds them.
 const J = (v: unknown) => JSON.stringify(v);
 const walkKey = heroRow.choice.lead === "rate" ? "bytes_per_second" : "time_per_repetition_ns";
 const walkP = heroCell.series.derivations.series_v1.percentiles[walkKey]!;
+const run = seriesFileContents.point.example;
 const excerptHead = [
 	`{ "id": ${J(heroCell.series.id)},`,
 	`  "instance_type": ${J(heroCell.series.instance_type)},`,
@@ -395,12 +391,21 @@ const excerptHead = [
 	`      "p50": `,
 ].join("\n");
 const excerptP50 = J(walkP.p50);
-const excerptTail = [`,`, `      "p95": ${J(walkP.p95)} } } } } }`].join("\n");
-
-/** One real Run's evidence: the first point of the Series file the snapshot keeps as a sample. */
-const run = seriesFileContents.point.example;
-const runAt = formatMoment(run.started_at);
-const runLabel = headline.find((row) => row.choice.benchmark === seriesFileContents.sample.benchmark)!.choice.label;
+const excerptMid = [
+	`,`,
+	`      "p95": ${J(walkP.p95)} } },`,
+	`    "points": [ {`,
+	`      "run": ${J(run.run)},`,
+	`      "started_at": ${J(run.started_at)},`,
+	`      "counted": ${J(run.counted)},`,
+	`      ${J(walkKey)}: ${J(run[walkKey])},`,
+	`      "evidence":`,
+	`        `,
+].join("\n");
+const excerptEvidence = J(run.evidence);
+const excerptBoot = [`,`, `      "boot_summary":`, `        `].join("\n");
+const excerptBootUrl = J(run.boot_summary);
+const excerptTail = ` },\n      … ] } } }`;
 
 /** The API's three files under its one base address. */
 const BASE = links.index.slice(0, links.index.lastIndexOf("/") + 1);
@@ -418,11 +423,11 @@ function Api() {
 					02
 				</p>
 				<h2 id="api-h">The API</h2>
-				<p class="sec-lede">Static JSON, version 1. It only gains fields.</p>
 			</div>
 
 			<div class="grid">
 				<div class="api-main">
+					<p class="api-lede">Static JSON, version 1. It only gains fields.</p>
 					<div class="addr">
 						<p class="addr-base">{BASE}</p>
 						<ul class="addr-files">
@@ -436,19 +441,6 @@ function Api() {
 					</div>
 
 					<dl class="api-side">
-						<div>
-							<dt>Evidence of one Run</dt>
-							<dd>
-								<a class="api-run" href={run.evidence} title={`${runLabel}, ${seriesFileContents.sample.instanceType}, ${runAt.full}`}>
-									{seriesFileContents.sample.instanceType}, {runAt.date} {runAt.minute} UTC
-								</a>
-								<span class="mono api-tpl">
-									{links.evidenceBlobTemplate.split("blobs/")[0]}
-									<wbr />
-									blobs/{links.evidenceBlobTemplate.split("blobs/")[1]}
-								</span>
-							</dd>
-						</div>
 						<div>
 							<dt>Schemas</dt>
 							<dd class="api-links">
@@ -466,17 +458,27 @@ function Api() {
 					</dl>
 				</div>
 
-				<div class="api-walk">
+				<div class="api-walk" id="trail">
 					<h3 class="walk-h">
 						<a href={`#${anchor(heroRow)}`}>
 							{heroRow.choice.label}, {heroCell.machine.instanceType}
 						</a>
-						, in series.json
+						<span class="walk-sep" aria-hidden="true">
+							{" "}
+							/{" "}
+						</span>
+						<a class="mono" href={links.seriesFile(heroCell.series)}>
+							series/{heroCell.series.id}.json
+						</a>
 					</h3>
-					<pre class="json" role="region" tabindex="0" aria-label="An excerpt of series.json">
+					<pre class="json" role="region" tabindex="0" aria-label={`An excerpt of series/${heroCell.series.id}.json`}>
 						<code>
 							{excerptHead}
 							<b class="json-hit">{excerptP50}</b>
+							{excerptMid}
+							<a href={run.evidence}>{excerptEvidence}</a>
+							{excerptBoot}
+							{run.boot_summary ? <a href={run.boot_summary}>{excerptBootUrl}</a> : excerptBootUrl}
 							{excerptTail}
 						</code>
 					</pre>

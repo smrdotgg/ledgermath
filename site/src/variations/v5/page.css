@@ -165,6 +165,16 @@ pre {
 .mast-cell {
 	grid-column: 4 / span 5;
 	font-variant-numeric: tabular-nums;
+	font-weight: 600;
+}
+
+.mast-k {
+	color: var(--muted);
+	margin-right: 6px;
+}
+
+.mast-t {
+	word-spacing: 0.4em;
 }
 
 .mast-nav {
@@ -193,35 +203,9 @@ pre {
 	margin-top: -0.06em;
 }
 
-/* The cadence's four times, set straight under the words that name it. */
-.boots {
-	grid-column: 1 / span 8;
-	grid-row: 2;
-	display: flex;
-	flex-wrap: wrap;
-	align-items: baseline;
-	gap: 0 10px;
-	margin-top: 14px;
-	font-size: 22px;
-	font-weight: 640;
-	letter-spacing: -0.02em;
-	font-variant-numeric: tabular-nums;
-}
-
-.boots-k {
-	font-size: 13px;
-	font-weight: 700;
-	letter-spacing: 0;
-	color: var(--muted);
-}
-
-.boots-t {
-	word-spacing: 0.35em;
-}
-
 .intro {
 	grid-column: 9 / span 4;
-	grid-row: 1 / span 3;
+	grid-row: 1;
 	align-self: start;
 	padding-top: 6px;
 	font-size: 16px;
@@ -281,10 +265,11 @@ pre {
 	margin-right: 64px;
 }
 
+/* The poster's figure runs the full measure, under the headline and the facts both. */
 .hero {
-	grid-column: 1 / span 8;
-	grid-row: 3;
-	margin-top: 28px;
+	grid-column: 1 / -1;
+	grid-row: 2;
+	margin-top: 26px;
 }
 
 .hero-kicker {
@@ -318,40 +303,40 @@ pre {
 
 /*
  * The poster's figure, in the table's own form, on one baseline: the compared digits enormous, every
- * other digit touching them, smaller and lighter, then the unit.
+ * other digit touching them at half their size, the same red, so the whole reads as one number; then
+ * the unit, in ink.
  */
 .hero-figure {
 	display: flex;
+	flex-wrap: wrap;
 	align-items: baseline;
 	color: var(--red);
 	white-space: nowrap;
-	font-size: clamp(5rem, 9.4vw, 9rem);
-	line-height: 0.74;
+	font-size: clamp(4.5rem, 8vw, 7.4rem);
+	line-height: 0.8;
+	font-variant-numeric: tabular-nums;
 }
 
 .hero-head {
 	font-weight: 780;
-	letter-spacing: -0.065em;
+	letter-spacing: -0.06em;
 	margin-left: -0.045em;
-	font-variant-numeric: tabular-nums;
 }
 
 .hero-tail {
-	font-size: 0.22em;
-	font-weight: 430;
-	letter-spacing: -0.01em;
-	line-height: 1;
-	margin-left: 0.04em;
-	font-variant-numeric: tabular-nums;
+	font-size: 0.5em;
+	font-weight: 380;
+	letter-spacing: -0.045em;
+	margin-left: 0.02em;
 }
 
 .hero-unit {
-	font-size: 0.3em;
-	font-weight: 760;
-	letter-spacing: -0.05em;
+	font-size: 0.26em;
+	font-weight: 720;
+	letter-spacing: -0.03em;
 	line-height: 1;
 	color: var(--ink);
-	margin-left: 0.3em;
+	margin-left: 0.4em;
 }
 
 /* Freshness and provenance: a small grid of facts under the command, each a link to its file. */
@@ -380,6 +365,10 @@ pre {
 	letter-spacing: -0.02em;
 	line-height: 1.2;
 	font-variant-numeric: tabular-nums;
+}
+
+.facts-s {
+	font-weight: 500;
 }
 
 /* ---------------------------------------------------------------- section heads */
@@ -521,8 +510,24 @@ td {
 .corner {
 	width: 22%;
 	padding-left: 0 !important;
-	font-size: 13px;
+	font-size: 12px;
+	font-weight: 600;
 	color: var(--muted);
+}
+
+/* Each label level with the line it names: the Run counts' line, then the prices' line. */
+.corner span {
+	display: block;
+	white-space: nowrap;
+}
+
+.corner-runs {
+	line-height: 1.35;
+}
+
+.corner-price {
+	margin-top: 4px;
+	line-height: 20.4px; /* the price's 17px × 1.2 */
 }
 
 .mach span,
@@ -695,11 +700,15 @@ td {
 }
 
 /* The bar: zero to the median, on one zero-based scale per row; the bracket spans p5 to p95. */
+/*
+ * The bar: zero to the median, a 4px rule, on one zero-based scale per row. The bracket spans p5 to
+ * p95: two tall hairline caps, so even a narrow interval reads as two lines, never a block.
+ */
 .bar {
 	position: relative;
 	display: block;
 	height: 9px;
-	margin: 8px 0 0 auto;
+	margin: 9px 0 0 auto;
 	width: 100%;
 	max-width: 168px;
 }
@@ -715,40 +724,40 @@ td {
 .bar-f {
 	position: absolute;
 	left: 0;
-	top: 3px;
-	height: 3px;
+	top: 2.5px;
+	height: 4px;
 	background: var(--ink);
 }
 
 .bar-s {
 	position: absolute;
-	top: -2px;
-	bottom: -2px;
+	top: -4px;
+	bottom: -4px;
 	min-width: 3px;
-	border-inline: 2px solid var(--ink);
+	border-inline: 1px solid var(--ink);
 }
 
 .bar-s::before {
 	content: "";
 	position: absolute;
-	inset: 4px 0 auto;
+	inset: 8px 0 auto;
 	height: 1px;
 	background: var(--ink);
 }
 
-/* The poster's figure, in the table: found by the red rule above it, and nothing else. */
+/* The poster's figure, in the table: a red rule over the cell's own column, from the figure's edge to the bar's. */
 td.hero-cell {
-	box-shadow: inset 0 3px 0 var(--red);
+	background: linear-gradient(var(--red), var(--red)) no-repeat right top / min(168px, calc(100% - 14px)) 3px;
 }
 
 /* ---------------------------------------------------------------- API */
 
 .api-main {
-	grid-column: 1 / span 6;
+	grid-column: 1 / span 5;
 }
 
 .api-walk {
-	grid-column: 7 / span 6;
+	grid-column: 6 / span 7;
 }
 
 /* The base address once, its three files under it. */
@@ -799,19 +808,39 @@ td.hero-cell {
 	padding-top: 10px;
 }
 
+.walk-h .mono {
+	font-size: 12.5px;
+	font-weight: 600;
+}
+
+.walk-sep {
+	color: var(--red);
+	font-weight: 400;
+}
+
+/* Long addresses wrap inside the excerpt, indented under their key, so the column never scrolls. */
 .json {
 	border-left: 4px solid var(--red);
 	padding: 4px 0 4px 16px;
-	font-size: 12.5px;
+	font-size: 12px;
 	line-height: 1.6;
-	white-space: pre;
-	overflow-x: auto;
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
 }
 
-/* The p50: the poster's figure, the same digits in bytes per second. */
+/* The p50: the poster's figure, the same digits in nanoseconds per repetition. */
 .json-hit {
 	font-weight: 700;
 	color: var(--red);
+}
+
+.json a {
+	text-decoration-color: var(--hair);
+}
+
+.api-lede {
+	margin-bottom: 14px;
+	font-size: 15px;
 }
 
 .api-side {
@@ -887,19 +916,18 @@ td.hero-cell {
 	}
 
 	.headline,
-	.boots,
 	.hero {
 		grid-column: 1 / -1;
 	}
 
 	.intro {
 		grid-column: 1 / span 8;
-		grid-row: 3;
+		grid-row: 2;
 		margin-top: 32px;
 	}
 
 	.hero {
-		grid-row: 4;
+		grid-row: 3;
 	}
 
 	.sec-head h2 {
@@ -1005,8 +1033,20 @@ td.hero-cell {
 		margin-bottom: 14px;
 	}
 
+	/* The digits on one line, at half size the tail still touching; the unit on its own line under them. */
 	.hero-figure {
-		font-size: 16.5vw;
+		font-size: 14.6vw;
+		row-gap: 10px;
+	}
+
+	.hero-tail {
+		font-size: 0.44em;
+	}
+
+	.hero-unit {
+		flex-basis: 100%;
+		margin-left: 0;
+		font-size: 19px;
 	}
 
 	.jump {
@@ -1028,7 +1068,12 @@ td.hero-cell {
 	}
 
 	.facts dd {
-		font-size: 16px;
+		font-size: 14px;
+		letter-spacing: -0.03em;
+	}
+
+	.facts time {
+		white-space: nowrap;
 	}
 
 	section + section {
@@ -1080,9 +1125,24 @@ td.hero-cell {
 		padding: 0;
 	}
 
+	/* The corner becomes the list's column heads, over the Run counts and the prices. */
 	.figures thead th.corner {
+		display: grid;
+		grid-template-columns: 96px minmax(0, 1fr) auto;
+		column-gap: 10px;
 		padding-bottom: 6px !important;
 		border-bottom: 2px solid var(--ink);
+	}
+
+	.corner-runs {
+		grid-column: 2;
+	}
+
+	.corner-price {
+		grid-column: 3;
+		margin-top: 0;
+		line-height: 1.35;
+		text-align: right;
 	}
 
 	.figures thead th.mach {
@@ -1204,8 +1264,9 @@ td.hero-cell {
 	}
 
 	.ft {
-		font-size: 11px;
+		font-size: 11.5px;
 		letter-spacing: -0.03em;
+		color: var(--muted);
 	}
 
 	.bar {
@@ -1217,6 +1278,7 @@ td.hero-cell {
 
 	/* The mark indents the name only, so this line's bar keeps the same scale as its neighbours'. */
 	tr.row td.hero-cell {
+		background: none;
 		box-shadow: inset 3px 0 0 var(--red);
 	}
 
@@ -1238,26 +1300,17 @@ td.hero-cell {
 		min-width: 0;
 	}
 
+	/* On a phone the excerpt keeps its lines and scrolls sideways in its own box. */
 	.json {
 		font-size: 11.5px;
 		padding-left: 10px;
-		white-space: pre-wrap;
-		overflow-wrap: break-word;
+		white-space: pre;
+		overflow-wrap: normal;
+		overflow-x: auto;
 	}
 
-	.boots {
-		margin-top: 14px;
-		font-size: 19px;
-		gap: 0 8px;
-	}
-
-	.boots-k {
-		flex-basis: 100%;
-		font-size: 12px;
-	}
-
-	.boots-t {
-		word-spacing: 0.15em;
+	.mast-t {
+		word-spacing: 0.2em;
 	}
 
 	.foot {
