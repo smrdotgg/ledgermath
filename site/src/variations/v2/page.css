@@ -198,12 +198,31 @@ main {
 	margin-bottom: 0;
 }
 
-/* NAME: the one place the type gets large. */
+.nb {
+	white-space: nowrap;
+}
+
+/* ------------------------------------------------------------ NAME and SYNOPSIS */
+
+.hero {
+	display: grid;
+	grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+	column-gap: 56px;
+	align-items: start;
+	margin-top: 30px;
+}
+.hero > .sec {
+	margin-top: 0;
+}
+.hero #synopsis .body {
+	padding-left: 0;
+}
+
 .name h1 {
 	margin: 0;
-	max-width: 31ch;
-	font-size: 29px;
-	line-height: 1.28;
+	max-width: 34ch;
+	font-size: 28px;
+	line-height: 1.3;
 	font-weight: 600;
 	letter-spacing: -0.015em;
 	color: var(--fg);
@@ -214,47 +233,25 @@ main {
 	font-weight: 400;
 }
 .name .lede {
-	margin-top: 16px;
-	max-width: 62ch;
-	font-size: 16px;
+	margin-top: 12px;
+	max-width: 60ch;
+	font-size: 15px;
 	color: var(--fg-2);
 }
 
-/* SYNOPSIS */
-.cmds {
-	list-style: none;
-	margin: 0 0 14px;
-	font-size: 14px;
-	padding: 0;
-	border-left: 2px solid var(--acc);
-	background: var(--bg-2);
-	max-width: 110ch;
-}
 .cmd {
 	display: grid;
 	grid-template-columns: minmax(0, 1fr) auto;
-	align-items: baseline;
+	align-items: center;
 	gap: 0 2ch;
-	padding: 8px 14px 9px;
-	border-bottom: 1px solid var(--rule);
-}
-.cmd code {
-	grid-column: 1 / -1;
-	grid-row: 2;
-}
-.cmd .copy {
-	grid-column: 2;
-	grid-row: 1;
-}
-.cmd:last-child {
-	border-bottom: 0;
+	padding: 12px 14px;
+	font-size: 14px;
+	border-left: 2px solid var(--acc);
+	background: var(--bg-2);
 }
 .cmd code {
 	min-width: 0;
 	color: var(--fg);
-}
-.nb {
-	white-space: nowrap;
 }
 .cmd .prompt {
 	color: var(--acc);
@@ -267,9 +264,10 @@ main {
 .cmd code a:hover {
 	text-decoration-color: var(--acc);
 }
-.cmd-note {
-	color: var(--dim);
-	font-size: 13px;
+.syn-note {
+	margin-top: 10px !important;
+	color: var(--fg-2);
+	font-size: 14px;
 }
 .copy {
 	font: inherit;
@@ -280,7 +278,6 @@ main {
 	padding: 0 8px;
 	line-height: 1.7;
 	cursor: pointer;
-	align-self: center;
 }
 .copy:hover {
 	color: var(--fg);
@@ -291,103 +288,120 @@ main {
 	border-color: var(--acc);
 }
 
-/* The top: NAME, and STATUS beside it on a wide screen. */
-/* The top: NAME and SYNOPSIS side by side, STATUS across beneath them, so that on a wide
-   screen the first figures of DATA arrive on the first screen. */
-.hero {
-	display: grid;
-	grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-	column-gap: 56px;
-	align-items: start;
-	margin-top: 30px;
+/* ------------------------------------------------------------ STATUS: one line of facts */
+
+#status {
+	margin-top: 26px;
 }
-.hero > .sec {
-	margin-top: 0;
-}
-.hero #synopsis .body {
-	padding-left: 0;
-}
-.hero #status {
-	grid-column: 1 / -1;
-	margin-top: 20px;
-}
-.hero #status .body {
-	padding-left: 0;
-}
-/* Three columns of three, read down: when; how much; where and how. */
-#status .kv {
-	display: block;
-	columns: 3;
-	column-gap: 4ch;
-	font-size: 13px;
-	line-height: 1.5;
+.kv {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 4px 4ch;
+	margin: 0;
 	padding: 10px 0 0;
 	border-top: 1px solid var(--rule-2);
-}
-#status .kv > div {
-	display: grid;
-	grid-template-columns: 9ch minmax(0, 1fr);
-	column-gap: 1ch;
-	break-inside: avoid;
-	padding: 1px 0;
-}
-.frac {
-	color: var(--dim);
-	font-weight: 400;
-}
-/* The glance and the jump list under the lede serve the phone, where STATUS comes after DATA. */
-.glance,
-.goto {
-	display: none;
-}
-.syn-note {
+	font-size: 13.5px;
+	line-height: 1.5;
 	color: var(--fg-2);
-	font-size: 14px;
-}
-@media (max-width: 1180px) {
-	.hero {
-		grid-template-columns: minmax(0, 1fr);
-	}
-	.hero > #synopsis {
-		margin-top: 36px;
-	}
-	.hero #synopsis .body {
-		padding-left: var(--indent);
-	}
-	#status .kv {
-		columns: 2;
-	}
-}
-
-/* STATUS: key, value; like `systemctl status` */
-.kv {
-	margin: 0;
-	display: grid;
-	grid-template-columns: max-content 1fr;
-	column-gap: 3ch;
-	row-gap: 2px;
 }
 .kv > div {
-	display: contents;
+	display: flex;
+	gap: 1ch;
+	align-items: baseline;
 }
 .kv dt {
 	color: var(--dim);
 }
-.kv dt::after {
-	content: ":";
-}
 .kv dd {
 	margin: 0;
-	color: var(--fg-2);
-	min-width: 0;
-	overflow-wrap: anywhere;
+}
+.frac {
+	color: var(--dim);
+	font-size: 12px;
 }
 
 /* ------------------------------------------------------------ DATA */
 
+#data {
+	margin-top: 34px;
+}
+#data-h {
+	font-size: 17px;
+	display: flex;
+	flex-wrap: wrap;
+	align-items: baseline;
+	gap: 4px 4ch;
+}
+.h2-sub {
+	font-weight: 400;
+	letter-spacing: 0;
+	font-size: 14px;
+	color: var(--fg-2);
+}
+.jump {
+	display: inline-flex;
+	flex-wrap: wrap;
+	gap: 2px 2.5ch;
+}
+
+.key {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: baseline;
+	gap: 4px 4ch;
+	font-size: 13px;
+	color: var(--fg-2);
+}
+.dir {
+	color: var(--acc);
+}
+.key .dir + .dir {
+	margin-left: 0.5ch;
+}
+.key-sp {
+	position: relative;
+	display: inline-block;
+	width: 7ch;
+	height: 9px;
+	border-bottom: 1px solid var(--rule-2);
+	vertical-align: -1px;
+}
+.key-sp .sp-b {
+	width: 50%;
+}
+.key-sp .sp-r {
+	left: 30%;
+	width: 45%;
+}
+.key-sp .sp-m {
+	left: 50%;
+}
+
+.xt {
+	margin-left: auto;
+}
+.xt summary {
+	cursor: pointer;
+	list-style: none;
+	color: var(--acc);
+}
+.xt summary::-webkit-details-marker {
+	display: none;
+}
+.xt summary::before {
+	content: "[+] ";
+}
+.xt[open] summary::before {
+	content: "[−] ";
+}
+.xt summary:focus-visible {
+	outline: 2px solid var(--acc);
+	outline-offset: 2px;
+}
+
 .scroll {
 	overflow-x: auto;
-	margin-top: 16px;
+	margin-top: 14px;
 }
 
 table {
@@ -398,35 +412,30 @@ table {
 
 .data {
 	width: 100%;
-	min-width: 980px;
+	min-width: 1000px;
 	table-layout: fixed;
 }
 .data .c-unit {
-	width: 11ch;
+	width: 31ch;
 }
 
 .data thead th {
 	text-align: left;
 	vertical-align: bottom;
 	font-weight: 400;
-	padding: 0 0 10px 2ch;
+	padding: 8px 0 8px 2ch;
+	background: var(--bg);
 	border-bottom: 1px solid var(--rule-2);
-}
-.data .sect th,
-.data .desc th {
-	text-align: left;
-	font-weight: 400;
 }
 .data thead .corner {
-	vertical-align: bottom;
-	padding: 0 0 10px;
-	border-bottom: 1px solid var(--rule-2);
-	color: var(--dim);
+	padding-left: 0;
+	color: var(--fg);
+	font-weight: 600;
 }
 .m-name {
 	display: block;
-	font-weight: 600;
 	color: var(--fg);
+	font-weight: 600;
 }
 .m-spec {
 	display: block;
@@ -435,415 +444,247 @@ table {
 }
 
 .data .sect th {
-	padding: 40px 0 2px;
+	text-align: left;
+	font-weight: 400;
+	padding: 26px 0 6px;
+	border-bottom: 1px solid var(--rule);
 }
 .data thead + tbody .sect th {
 	padding-top: 16px;
 }
 .sect-name {
-	display: block;
 	color: var(--acc);
 	font-weight: 600;
-	letter-spacing: 0.1em;
+	letter-spacing: 0.08em;
 	text-transform: uppercase;
-	font-size: 16px;
-	padding-bottom: 6px;
-	border-bottom: 1px solid var(--rule-2);
-	scroll-margin-top: 16px;
-}
-.sect-note {
-	display: block;
-	max-width: 118ch;
-	margin-top: 8px;
-	color: var(--fg-2);
-	font-size: 13px;
-	line-height: 1.55;
-}
-.sect-note i {
-	font-style: normal;
-	font-weight: 600;
-	color: var(--fg);
-}
-.data .rehead td {
-	padding: 10px 0 0 2ch;
-	white-space: nowrap;
-	line-height: 1.45;
 }
 .sect-name::before {
 	content: "## ";
 	color: var(--dim);
 	font-weight: 400;
 }
-
-.data .desc th {
-	padding: 14px 0 4px;
-}
-.bench.first .desc th {
-	padding-top: 6px;
-}
-.b-label {
-	font-weight: 600;
-	color: var(--fg);
-	margin-right: 2ch;
-}
-.b-what {
-	color: var(--fg-2);
-}
-.b-shown {
-	display: block;
-	color: var(--fg-2);
-	font-size: 12.5px;
-}
-.b-shown .k,
-.about .k {
+.sect-tag {
+	margin-left: 3ch;
 	color: var(--dim);
-	font-style: italic;
-}
-.b-shown .k::after,
-.about .k::after {
-	content: ":";
 }
 
 .data .figs th,
-.data .figs td,
-.data .exact th,
-.data .exact td {
-	padding: 4px 0 14px;
+.data .figs td {
+	padding: 10px 0 9px 2ch;
 	vertical-align: top;
 	border-bottom: 1px dashed var(--rule);
-	white-space: pre;
 }
-.data .figs td,
-.data .exact td {
+.data .figs th {
 	padding-left: 0;
-}
-.data .unit {
 	text-align: left;
 	font-weight: 400;
 }
-.unit .u {
-	color: var(--acc);
+.b-label {
+	display: block;
+	color: var(--fg);
+	font-weight: 600;
+	text-decoration-color: var(--rule-2);
 }
-.dir {
-	margin-left: 0.6ch;
-	color: var(--fg-2);
+.b-label:hover {
+	text-decoration-color: currentColor;
 }
-.unit .u2 {
+.u {
 	display: block;
 	color: var(--dim);
 	font-size: 12.5px;
-	line-height: 1.5;
+}
+.u .dir {
+	font-size: 13.5px;
 }
 
-/* [+]: a row's p5 and p95 to the last digit and its Series files, without JavaScript. The rows
-   are in the table so they align with the figures above; the toggle opens them. */
-.more {
-	display: block;
-	margin-top: 2px;
-}
-.more summary {
+.fig {
 	display: inline-block;
-	list-style: none;
-	cursor: pointer;
-	font-size: 12px;
-	line-height: 1.5;
-	color: var(--acc);
-	white-space: nowrap;
+	white-space: pre;
+	color: var(--fg);
+	text-decoration: none;
 }
-.more summary::-webkit-details-marker {
-	display: none;
+.fig .lead {
+	border-bottom: 1px dotted var(--rule-2);
 }
-.more summary::before {
-	content: "[+] ";
+.fig:hover .lead {
+	border-bottom-color: var(--acc);
+}
+.digits {
+	white-space: pre;
+}
+.digits .lead {
+	color: var(--fg);
 	font-weight: 600;
 }
-.more[open] summary::before {
-	content: "[−] ";
-}
-.more summary:hover {
-	text-decoration: underline;
-	text-underline-offset: 3px;
-}
-.more summary:focus-visible {
-	outline: 2px solid var(--acc);
-	outline-offset: 2px;
-}
-.data .exact.about td {
-	white-space: normal;
+.digits .tail {
 	color: var(--fg-2);
-	padding: 4px 2ch 10px;
-	border-bottom: 1px dashed var(--rule);
 }
-.data .exact.about th {
-	padding-top: 4px;
-	border-bottom: 1px dashed var(--rule);
+
+/* The spread: a rule from zero to the row's largest p95, the range as a bar, the median as a tick. */
+.spread {
+	position: relative;
+	display: block;
+	height: 7px;
+	margin: 5px 2ch 0 0;
+	border-bottom: 1px solid var(--rule);
 }
-.about .ab {
-	display: inline;
-	margin-right: 2.5ch;
+.sp-b {
+	position: absolute;
+	left: 0;
+	bottom: 0;
+	height: 3px;
+	background: color-mix(in srgb, var(--dim) 40%, transparent);
 }
+.sp-r,
+.sp-m {
+	position: absolute;
+	display: block;
+}
+.sp-r {
+	bottom: -1px;
+	min-width: 3px;
+	height: 5px;
+	background: var(--fg-2);
+}
+.sp-m {
+	bottom: -1px;
+	width: 2px;
+	height: 8px;
+	margin-left: -1px;
+	background: var(--fg);
+}
+
+/* The exact lines: shown together, by the one switch above the table. */
 .data .exact {
 	display: none;
 }
-.bench:has(.more[open]) .exact {
+#data:has(.xt[open]) .data .exact {
 	display: table-row;
 }
-.bench:has(.more[open]) .figs > * {
+#data:has(.xt[open]) .data .figs th,
+#data:has(.xt[open]) .data .figs td {
 	border-bottom: 0;
-	padding-bottom: 6px;
 }
 .data .exact th,
 .data .exact td {
-	border-bottom: 0;
-	padding: 0 0 2px;
+	padding: 0 0 0 2ch;
 	font-size: 12.5px;
 	background: var(--bg-2);
-}
-.data .exact td {
-	padding-left: 2ch;
-}
-.data .exact.about td {
-	padding: 6px 2ch 10px;
+	text-align: left;
+	font-weight: 400;
+	color: var(--dim);
 }
 .data .exact th {
-	color: var(--dim);
 	padding-left: 1ch;
+	text-align: right;
+	padding-right: 1ch;
 }
-.data .exact:nth-child(n) td .digits .tail {
+.data .exact .digits .lead,
+.data .exact .digits .tail {
 	color: var(--fg-2);
+	font-weight: 400;
 }
-.data .exact.sids th,
-.data .exact.sids td {
+.data .exact.x-p5 > * {
+	padding-top: 6px;
+}
+.data .exact.x-n > * {
 	padding-bottom: 6px;
-}
-.exact .sid {
-	font-size: 12px;
+	border-bottom: 1px dashed var(--rule);
 }
 
-.figs .fig {
-	display: block;
-}
-/* The mark hangs in the two columns before the anchor: the figures, the heads and the ranges share one left edge. */
-.mk {
-	display: inline-block;
-	width: 2ch;
-	color: var(--acc);
-	font-weight: 600;
-}
-.m-near .mk {
-	color: var(--fg-2);
-	font-weight: 400;
-}
-.figs a {
-	color: var(--fg);
-	text-decoration: none;
-	display: inline-block;
-}
-/* Each median is a link to its Series file: a dotted rule under the bold digits says so at rest. */
-.figs a .lead {
-	text-decoration: underline dotted;
-	text-decoration-color: color-mix(in srgb, var(--fg) 40%, transparent);
-	text-decoration-thickness: 1px;
-	text-underline-offset: 4px;
-}
-.figs a:hover .lead,
-.figs a:focus-visible .lead {
-	text-decoration-style: solid;
-	text-decoration-color: var(--acc);
-}
-.m-best .digits .lead {
-	color: var(--acc);
-}
-.m-best a .lead {
-	text-decoration-color: color-mix(in srgb, var(--acc) 50%, transparent);
-}
-.digits .lead {
-	font-weight: 600;
-	color: var(--fg);
-}
-.digits .tail {
-	color: var(--dim);
-}
-.rng {
-	display: block;
-	padding-left: 2ch;
-	color: var(--fg-2);
-	font-size: 12.5px;
-	line-height: 1.5;
-}
-.rng .n {
-	margin-left: 1.5ch;
-	color: var(--dim);
+/* A wide screen holds the whole table: let the head stay with the reader. */
+@media (min-width: 1180px) {
+	.scroll {
+		overflow: visible;
+	}
+	.data thead th {
+		position: sticky;
+		top: 0;
+		z-index: 1;
+	}
 }
 
-/* The jump list and the legend, one line above the table. */
-.jump {
-	display: flex;
-	flex-wrap: wrap;
-	align-items: baseline;
-	gap: 4px 0;
-	margin-top: 14px;
-	font-size: 13.5px;
-}
-.jump .sep {
-	padding: 0 1ch;
-	color: var(--dim);
-}
-.jump .legend {
-	margin-left: auto;
-	color: var(--dim);
-	font-size: 13px;
-}
-.jump .legend .dir {
-	color: var(--fg);
-}
-.jump .legend .dir:first-child {
-	margin-left: 0;
-}
-.jump .legend > .nb + .nb {
-	margin-left: 2.5ch;
-}
-.lg-mk {
-	color: var(--acc);
-	font-weight: 600;
-}
-.lg-mk.near {
-	color: var(--fg-2);
-	font-weight: 400;
-}
-.sum-more {
-	font-weight: 400;
-}
+/* ------------------------------------------------------------ MACHINES, FILES, SEE ALSO */
 
-/* A point of a Series file, abridged. */
-.json {
-	margin: 10px 0 4px;
-	padding: 10px 14px;
-	background: var(--bg-2);
-	border-left: 2px solid var(--rule-2);
-	font: inherit;
-	font-size: 12.5px;
-	line-height: 1.55;
-	white-space: pre-wrap;
-	overflow-wrap: anywhere;
-	color: var(--fg-2);
+/* On a wide screen MACHINES sits beside FILES and SEE ALSO. */
+.foot {
+	display: grid;
+	grid-template-columns: auto minmax(0, 1fr);
+	column-gap: 64px;
+	align-items: start;
+	margin-top: 40px;
 }
-.jl0 {
-	display: block;
+.foot > .sec {
+	margin-top: 0;
 }
-.jl {
-	display: block;
-	padding-left: 4ch;
-	text-indent: -2ch;
+.foot > #machines {
+	grid-row: span 2;
 }
-.json-note {
-	display: block;
-	font-size: 13px;
-	color: var(--dim);
+.foot > #see-also {
+	margin-top: 26px;
 }
-.j-k {
-	color: var(--fg);
-}
-.j-s {
-	color: var(--fg-2);
-}
-.j-v {
-	color: var(--acc);
-	font-weight: 600;
-}
-.j-n,
-.j-c {
-	color: var(--dim);
-}
-
-/* ------------------------------------------------------------ MACHINES */
 
 .machines {
-	min-width: 900px;
-	width: 100%;
+	margin-top: 4px;
+	font-size: 13.5px;
 }
 .machines th,
 .machines td {
-	vertical-align: baseline;
+	padding: 5px 4ch 5px 0;
 	text-align: left;
-	padding: 7px 3ch 7px 0;
-	border-bottom: 1px dashed var(--rule);
+	border-bottom: 1px solid var(--rule);
 	white-space: nowrap;
-	color: var(--fg-2);
 }
 .machines thead th {
-	font-weight: 400;
 	color: var(--dim);
-	border-bottom: 1px solid var(--rule-2);
-	padding-top: 0;
+	font-weight: 400;
+	border-bottom-color: var(--rule-2);
 }
 .machines tbody th {
 	font-weight: 600;
 	color: var(--fg);
 }
+.machines td {
+	color: var(--fg-2);
+}
 .machines .r {
 	text-align: right;
-}
-.machines th:last-child,
-.machines td:last-child {
-	padding-right: 0;
 }
 .machines .price {
 	color: var(--fg);
 	font-weight: 600;
+	padding-right: 0;
 }
 .machines .price::before {
 	content: "$";
 	color: var(--dim);
 	font-weight: 400;
 }
+.machines th:last-child {
+	padding-right: 0;
+}
 
-/* ------------------------------------------------------------ METHODS, FILES */
-
-.defs,
 .files {
-	margin: 14px 0 14px;
-	max-width: 100ch;
+	margin: 0;
+	font-size: 13.5px;
 }
-.defs > div,
-.files > div {
-	margin-bottom: 12px;
-}
-.defs dt {
-	font-weight: 600;
-	color: var(--fg);
-}
-.defs dd {
-	margin: 2px 0 0 var(--indent);
-	color: var(--fg-2);
-	max-width: 80ch;
-	font-size: 14px;
-}
-
 .files > div {
 	display: grid;
-	grid-template-columns: 27ch minmax(0, 1fr);
-	gap: 3ch;
-	margin-bottom: 6px;
+	grid-template-columns: max-content minmax(0, 1fr);
+	column-gap: 3ch;
+	padding: 3px 0;
 }
-.files dt code {
+.files dt {
 	color: var(--fg);
 }
 .files dd {
 	margin: 0;
 	color: var(--fg-2);
 }
-.host {
-	margin-top: 14px;
-}
-
-.code0 {
-	color: var(--acc);
-	font-weight: 600;
-}
 
 .xref {
-	max-width: 100ch;
+	font-size: 13.5px;
+	color: var(--fg-2);
 }
 
 /* ------------------------------------------------------------ phone */
@@ -856,131 +697,95 @@ table {
 		--indent: 0;
 		padding: 0 16px;
 	}
-	.manhead .mid,
-	.manfoot .mid {
-		display: none;
-	}
 	.manhead,
 	.manfoot {
 		font-size: 12px;
 	}
+	.manfoot span:nth-child(2) {
+		display: none;
+	}
+	.manhead {
+		padding-top: 14px;
+	}
 	.sec {
-		margin-top: 36px;
+		margin-top: 26px;
 	}
 	.sec h2,
 	.sec .label {
 		font-size: 13px;
-		margin-bottom: 8px;
-	}
-	.sec h2::before,
-	.sec .label::before {
-		content: "";
+		margin-bottom: 6px;
 	}
 	.hero {
-		margin-top: 36px;
+		display: block;
+		margin-top: 18px;
 	}
-	.hero > #status {
-		margin-top: 40px;
+	.hero > #synopsis {
+		margin-top: 20px;
 	}
 	.name h1 {
-		font-size: 23px;
+		font-size: 20px;
 		line-height: 1.3;
 	}
 	.name .lede {
-		font-size: 14.5px;
-	}
-	.cmds {
-		margin-right: 0;
+		font-size: 13.5px;
+		margin-top: 8px;
 	}
 	.cmd {
-		padding: 9px 10px;
-		gap: 2px 2ch;
-	}
-	.cmd {
-		grid-template-columns: minmax(0, 1fr) auto;
-	}
-	.cmd code {
-		grid-column: 1 / -1;
+		padding: 10px 10px;
 		font-size: 12px;
 	}
-	/* A shell line continuation, so the address sits on a line of its own. */
-	.cmd .curl::after {
-		content: " \\";
-		color: var(--dim);
-	}
-	.cmd code a {
-		display: block;
-		padding-left: 2ch;
-	}
-	.cmd-note {
-		font-size: 12px;
-	}
-
-	#status .kv {
-		columns: 1;
-		font-size: 12.5px;
-	}
-	#status .kv > div {
-		padding: 2px 0;
-	}
-	.frac {
-		font-size: 11px;
-	}
-
-	/* On a phone the figures come right after the commands; STATUS follows them, and a glance
-	   at freshness and a jump list sit under the lede. */
-	main {
-		display: flex;
-		flex-direction: column;
-	}
-	main > * {
-		order: 10;
-	}
-	.hero {
-		display: contents;
-	}
-	.hero > .name {
-		order: 1;
-		margin-top: 30px;
-	}
-	.hero > #synopsis {
-		order: 2;
-	}
-	main > #data {
-		order: 3;
-	}
-	.hero > #status {
-		order: 4;
-	}
-	.glance {
-		display: block;
-		margin-top: 14px;
-		font-size: 12.5px;
-		color: var(--fg-2);
-	}
-	.gl-2 {
-		display: block;
-	}
-	.goto {
-		display: block;
-		margin-top: 6px;
+	.syn-note {
 		font-size: 13px;
-		color: var(--dim);
 	}
-	.h2-sub {
-		display: block;
-		margin: 2px 0 0;
+	#status {
+		margin-top: 20px;
+	}
+	#status .kv {
+		padding-top: 6px;
+	}
+	.kv {
 		font-size: 12.5px;
+		gap: 2px 3ch;
+	}
+
+	#data {
+		margin-top: 22px;
 	}
 	#data-h {
 		font-size: 15px;
+		gap: 2px 3ch;
+	}
+	/* The group list stays at the top of the screen while the figures scroll under it. */
+	#data-h {
+		position: sticky;
+		top: 0;
+		z-index: 2;
+		background: var(--bg);
+		padding: 8px 0 6px;
+		margin: 0 0 4px;
+		border-bottom: 1px solid var(--rule);
+	}
+	.h2-sub {
+		flex-basis: 100%;
+		font-size: 12px;
+	}
+	.jump {
+		gap: 0 1.6ch;
+	}
+	.key {
+		font-size: 12px;
+		gap: 2px 2.5ch;
+	}
+	.xt {
+		margin-left: 0;
 	}
 
 	.scroll {
 		overflow-x: visible;
+		margin-top: 6px;
 	}
 
-	/* The table becomes one block per benchmark: label, words, then a line per machine. */
+	/* The table becomes one block per benchmark: its label and unit, then a line per machine. */
 	.data,
 	.data tbody,
 	.data tr,
@@ -995,234 +800,141 @@ table {
 		display: none;
 	}
 	.data .sect th {
-		padding-top: 22px;
-	}
-	.data .desc th {
-		padding: 16px 0 6px;
-	}
-	.b-label {
-		display: block;
-		margin: 0;
-	}
-	.b-what {
-		display: block;
-	}
-	.b-shown {
-		font-size: 12px;
+		padding: 22px 0 4px;
+		scroll-margin-top: 48px;
 	}
 	.data .figs {
+		padding: 10px 0 10px;
 		border-bottom: 1px dashed var(--rule);
-		padding-bottom: 12px;
 	}
 	.data .figs th,
 	.data .figs td {
 		border: 0;
 		padding: 0;
 	}
-	.data .figs .unit {
-		padding: 2px 0 4px;
-		font-size: 12px;
-	}
-	.data .figs td {
-		display: grid;
-		grid-template-columns: 13ch 1fr;
+	.data .figs th.rl {
+		display: flex;
+		flex-wrap: wrap;
+		justify-content: space-between;
 		align-items: baseline;
-		padding: 1px 0;
+		gap: 0 2ch;
+		padding-bottom: 4px;
 	}
-	.data .figs td::before {
-		content: attr(data-m);
-		color: var(--fg-2);
+	.b-label {
+		display: inline;
 	}
-	.data .rehead {
-		display: none;
+	.u {
+		display: inline;
 	}
 	.data .figs td,
 	.data .exact td {
 		display: grid;
-		align-items: baseline;
 		grid-template-columns: 13ch minmax(0, 1fr);
-		column-gap: 0;
+		align-items: center;
+		padding: 2px 0;
 	}
 	.data .figs td::before,
 	.data .exact td::before {
-		grid-row: 1 / span 2;
+		content: attr(data-m);
+		color: var(--fg-2);
 	}
-	.data .figs td .fig {
-		grid-column: 2;
+	/* The figure column is one width for every row, so each row's drawings share one scale. */
+	.data .figs td {
+		grid-template-columns: 13ch 20ch minmax(0, 1fr);
 	}
-	.data .exact td > .digits {
-		padding-left: 2ch;
+	.spread {
+		margin: 0 0 0 1.5ch;
 	}
-	.rng {
-		grid-column: 2;
-		font-size: 11.5px;
-		padding-bottom: 3px;
-	}
-	.unit .u2 {
-		display: inline;
-		margin-left: 2ch;
-	}
-	.unit .u2::before {
-		content: "under each: ";
-	}
-	.bench:has(.more[open]) .exact {
+	#data:has(.xt[open]) .data .exact {
 		display: block;
 	}
 	.data .exact {
-		padding: 6px 8px;
 		background: var(--bg-2);
+		padding: 0 8px;
 	}
 	.data .exact th,
 	.data .exact td {
 		background: none;
-		padding: 1px 0;
-		border: 0;
+		padding: 0;
+		border: 0 !important;
+		text-align: left;
 	}
 	.data .exact th {
-		padding: 0 0 2px;
+		padding: 6px 0 0;
+		color: var(--acc);
 	}
-	.data .exact.sids td a {
-		padding-left: 2ch;
+	.data .exact.x-n {
+		margin-bottom: 8px;
+		padding-bottom: 6px;
 	}
 	.data .exact td::before {
-		content: attr(data-m);
 		color: var(--dim);
 	}
-	.exact .sid {
-		padding-left: 0;
+	.data .exact.x-p5 > td,
+	.data .exact.x-n > td {
+		padding: 0;
 	}
-	.data .figs .unit {
-		display: flex;
-		flex-wrap: wrap;
-		align-items: baseline;
-	}
-	.more {
-		margin: 0 0 0 auto;
-	}
-	.more summary {
-		padding: 4px 0 4px 2ch;
-	}
-	.data .exact.about td {
-		display: block;
-		padding: 6px 0 2px;
-		border: 0;
-		font-size: 12px;
-	}
-	.data .exact.about td::before {
-		content: none;
-	}
-	.data .exact.about th {
-		display: none;
-	}
-	.about .ab {
-		display: block;
-		margin: 0 0 2px;
-	}
-	.json {
-		font-size: 11.5px;
-		padding: 8px 10px;
-	}
-	.sect-note {
-		font-size: 12.5px;
-	}
-	.jump .legend {
-		margin: 6px 0 0;
-		flex-basis: 100%;
-		display: grid;
-		grid-template-columns: max-content max-content;
-		gap: 2px 3ch;
-	}
-	.jump .legend > .nb + .nb {
-		margin-left: 0;
-	}
-	.cmd-note {
-		font-size: 12px;
+	.data .exact td {
+		line-height: 1.45;
 	}
 
-	/* Each machine in three lines: type and price; vCPU, memory, clock; processor; storage and network. */
-	.machines {
-		min-width: 0;
-	}
+	/* MACHINES: type and price on a line, size and processor under it. */
 	.machines,
 	.machines tbody {
 		display: block;
-		width: auto;
 	}
 	.machines thead {
 		display: none;
 	}
 	.machines tr {
-		display: flex;
-		flex-wrap: wrap;
-		align-items: baseline;
+		display: grid;
+		grid-template-columns: auto auto 1fr auto;
 		column-gap: 1ch;
-		padding: 12px 0;
-		border-bottom: 1px dashed var(--rule);
+		align-items: baseline;
+		padding: 7px 0;
+		border-bottom: 1px solid var(--rule);
 	}
 	.machines th,
 	.machines td {
-		border: 0;
 		padding: 0;
+		border: 0;
 		white-space: normal;
-		font-size: 13px;
 	}
 	.machines tbody th {
-		flex: 1 1 auto;
-		order: 0;
-		font-size: 14px;
-		margin-bottom: 2px;
+		grid-column: 1 / 4;
 	}
 	.machines .price {
-		order: 1;
-		font-size: 14px;
+		grid-column: 4;
+		grid-row: 1;
 	}
-	.machines .price::after {
-		content: "/h";
-		color: var(--dim);
-		font-weight: 400;
-	}
-	.machines td[data-k="vcpu"] {
-		order: 2;
-		flex-basis: auto;
-	}
-	.machines tr::after {
-		content: "";
-		order: 1;
-		flex-basis: 100%;
-		height: 0;
-	}
-	.machines td[data-k="vcpu"]::after {
-		content: " vCPU ·";
-	}
-	.machines td[data-k="memory"] {
-		order: 3;
-	}
-	.machines td[data-k="memory"]::after {
-		content: " ·";
-	}
-	.machines td[data-k="clock"] {
-		order: 4;
-		flex: 1 1 auto;
-	}
-	.machines td[data-k="processor"] {
-		order: 5;
-		flex-basis: 100%;
-	}
-	.machines td[data-k="storage"] {
-		order: 6;
-	}
-	.machines td[data-k="storage"]::after {
-		content: " ·";
-	}
-	.machines td[data-k="network"] {
-		order: 7;
-	}
-	.machines .r {
+	.machines td.r:not(.price) {
 		text-align: left;
+		color: var(--dim);
+		font-size: 12.5px;
+	}
+	.machines td:nth-child(2)::after {
+		content: " vCPU";
+	}
+	.machines tr {
+		grid-template-columns: auto auto 1fr auto;
+	}
+	.machines .proc {
+		grid-column: 1 / -1;
+		color: var(--dim);
+		font-size: 12.5px;
+	}
+	.foot {
+		display: block;
+		margin-top: 0;
+	}
+	.foot > .sec {
+		margin-top: 30px;
 	}
 	.files > div {
 		grid-template-columns: 1fr;
-		gap: 0;
-		margin-bottom: 10px;
+		padding: 4px 0;
+	}
+	.files dt {
+		overflow-wrap: anywhere;
 	}
 }
