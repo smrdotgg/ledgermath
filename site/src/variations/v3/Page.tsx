@@ -1,8 +1,8 @@
-// Design v3, "Paper": LedgerMath's home page as a one-page data report, a research letter.
-// The figures are the page: a title, a byline of machines, one line of facts, one sentence of
-// abstract, the way in, Table 1 (every digit, a p5–p95 bar per cell), the machines, references.
-// Everything else (methods, definitions) is behind a reference. Every figure comes from
-// ../../data exactly as the snapshot holds it; nothing is rounded, ranked or computed.
+// Design v3, "Paper", spare form: LedgerMath's home page as the front page of a data report and
+// nothing else. A title, the machines as authors (each with its size and price), one line of
+// dates with their sources, the way in, and Table 1: every digit, a p5–p95 bar per cell. The rest
+// is behind a link. Every figure comes from ../../data exactly as the snapshot holds it; nothing is
+// rounded, ranked or computed.
 import "./page.css";
 import {
 	durationUnit,
@@ -142,36 +142,8 @@ function Arrow(props: { dir: "up" | "down" }) {
 // ---------------------------------------------------------------- facts of the snapshot
 
 const newest = formatMoment(snapshot.newestRunStartedAt);
-const oldest = formatMoment(snapshot.oldestRunStartedAt);
 const fetched = formatMoment(snapshot.pricesFetchedAt);
 const counted = formatCount(snapshot.countedRuns);
-const failed = formatCount(snapshot.failedRuns);
-const seriesCount = formatCount(snapshot.seriesCount);
-const series1 = snapshot.methods.find((m) => m.key === "series_v1")!;
-const schema = (name: string) => links.schemas.find((s) => s.name === name)!;
-const priceFileName = links.prices.replace(/^.*\/v1\//, "v1/");
-const short = (url: string) => url.replace(/^https:\/\//, "");
-
-// Listing 1: Table 1's first figure, as the Series list holds it, cut to the path that leads to it.
-const first = rows[0]!;
-const firstCell = first.cells[0]!;
-const firstSeries = first.row.cells[0]!.series;
-const v1 = firstSeries.derivations.series_v1;
-const bps = v1.percentiles.bytes_per_second!;
-const j = (x: unknown) => JSON.stringify(x);
-const listingMark = `"p50": ${j(bps.p50)}`;
-const excerptBefore = [
-	"{",
-	`  "id": ${j(firstSeries.id)},`,
-	`  "benchmark": ${j(firstSeries.benchmark)},`,
-	`  "instance_type": ${j(firstSeries.instance_type)},`,
-	`  "derivations": { "series_v1": {`,
-	`    "method": ${j(v1.method).replace(/,/g, ", ").replace(/:/g, ": ")},`,
-	`    "percentiles": { "bytes_per_second": {`,
-	`      "count": ${j(bps.count)}, "p5": ${j(bps.p5)},`,
-	"      ",
-].join("\n");
-const excerptAfter = [`, "p95": ${j(bps.p95)}`, "  … } } } }"].join("\n");
 
 /** An address with a place to break after "/v1/", so it wraps where it reads. */
 function Breakable(props: { url: string }) {
@@ -188,22 +160,6 @@ function Breakable(props: { url: string }) {
 	);
 }
 
-// The references: the API's files and the documentation, in the order the page cites them.
-const REFS = [
-	{ n: 1, file: "v1/index.json", url: links.index, what: "Contents; start here", schema: schema("index").url },
-	{ n: 2, file: "v1/series.json", url: links.seriesList, what: `All ${seriesCount.full} Series, figures, Methods`, schema: schema("series-list").url },
-	{ n: 3, file: "v1/series/<id>.json", url: firstCell.url, what: "One Series: each Run, its evidence", schema: schema("series").url },
-	{ n: 4, file: priceFileName, url: links.prices, what: "AWS On-Demand prices", schema: schema("prices").url },
-	{ n: 5, file: short(links.docs), url: links.docs, what: "Methods, benchmarks", schema: "" },
-] as const;
-function Cite(props: { n: number }) {
-	return (
-		<a class="cite" href={`#ref-${props.n}`} aria-label={`reference ${props.n}`}>
-			[{props.n}]
-		</a>
-	);
-}
-
 // ---------------------------------------------------------------- the page
 
 export default function Page() {
@@ -217,11 +173,8 @@ export default function Page() {
 					<a class="wordmark" href="./">
 						LedgerMath
 					</a>
-					<span class="rh-kind">Data report</span>
-					<nav class="rh-nav" aria-label="Sections">
-						<a href="#s1">Results</a>
-						<a href="#s2">Machines</a>
-						<a href="#refs">API</a>
+					<nav class="rh-nav" aria-label="Elsewhere">
+						<a href={links.index}>API</a>
 						<a href={links.docs}>Docs</a>
 					</nav>
 				</div>
@@ -233,123 +186,80 @@ export default function Page() {
 						<h1>
 							<span class="h1-name">LedgerMath:</span> {snapshot.benchmarkCount} benchmarks on {snapshot.machineCount} AWS machine types, measured 4&nbsp;times a&nbsp;day
 						</h1>
-						<p class="authors">
-							{machines.map((m, i) => (
-								<>
-									{i > 0 ? <span class="sep"> · </span> : ""}
-									<span class="author">{m.instanceType}</span>
-								</>
+						<ul class="authors" aria-label={`Machines: size and On-Demand price in ${snapshot.region}`}>
+							{machines.map((m) => (
+								<li class="author">
+									<span class="a-name">{m.instanceType}</span>
+									<span class="a-aff">
+										{m.vcpu} vCPU · {m.memory} ·{" "}
+										<a href={links.prices} title={`${m.price.description} · ${m.price.path.pointer}`}>
+											${formatUsd(m.price.usdPerHour).full}/h
+										</a>
+									</span>
+								</li>
 							))}
-						</p>
-						<p class="affil">
-							Amazon EC2 {snapshot.region} · booted 04:10, 10:10, 16:10, 22:10&nbsp;UTC
-						</p>
-						<dl class="dates">
-							<div>
-								<dt>First Run</dt>
-								<dd>
-									<time datetime={oldest.iso} title={oldest.full}>
-										{oldest.date} {oldest.minute}
+						</ul>
+						<p class="dates">
+							<span>
+								Latest Run{" "}
+								<a href={links.seriesList} title={newest.full}>
+									<time datetime={newest.iso}>
+										{newest.date} {newest.minute}
 									</time>
-								</dd>
-							</div>
-							<div>
-								<dt>Latest Run</dt>
-								<dd>
-									<a href={links.index} title={newest.full}>
-										<time datetime={newest.iso}>
-											{newest.date} {newest.minute}
-										</time>
-									</a>
-								</dd>
-							</div>
-							<div>
-								<dt>Prices copied</dt>
-								<dd>
-									<a href={links.prices} title={fetched.full}>
-										<time datetime={snapshot.pricesFetchedAt}>
-											{fetched.date} {fetched.minute}
-										</time>
-									</a>
-								</dd>
-							</div>
-							<div>
-								<dt>Runs</dt>
-								<dd>
-									<a href={links.seriesList}>
-										{counted.full} counted, {failed.full} failed
-									</a>
-								</dd>
-							</div>
-						</dl>
+								</a>
+							</span>
+							<span>
+								<a href={links.seriesList}>{counted.full}</a> Runs kept
+							</span>
+							<span>
+								AWS prices{" "}
+								<a href={links.prices} title={fetched.full}>
+									<time datetime={snapshot.pricesFetchedAt}>{fetched.date}</time>
+								</a>
+							</span>
+							<span>{snapshot.region}</span>
+						</p>
+						<pre class="code" data-copy={`curl ${links.index}`}>
+							<code>
+								<span class="prompt">$ </span>curl <Breakable url={links.index} />
+							</code>
+						</pre>
 					</div>
 
-					<div class="opening">
-						<section class="abstract" aria-labelledby="abstract">
-							<p>
-								<span class="runin" id="abstract" role="heading" aria-level={2}>
-									Abstract
-								</span>
-								Every Run is kept with its evidence, and every figure is derived by a published Method <Cite n={5} /> and served as JSON, so an AI agent can choose
-								infrastructure from measured numbers with a source for each.
-							</p>
-						</section>
-
-						<aside class="availability" aria-labelledby="availability">
-							<h2 id="availability">Data availability</h2>
-							<pre class="code" data-copy={`curl ${links.index}`}>
-								<code>
-									<span class="prompt">$ </span>curl <Breakable url={links.index} />
-								</code>
-							</pre>
-							<p class="files">
-								<strong>For agents and developers.</strong> Every figure links to its Series file. <a href="#refs">All files</a>
-							</p>
-						</aside>
-					</div>
-
-					{/* ---------------------------------------------------- 1 */}
-					<section class="sec results" aria-labelledby="s1">
-						<h2 id="s1">
-							<span class="num">1</span>Results
-						</h2>
-
+					<section class="sec results">
 						<div class="table-wrap t1-wrap" role="region" aria-labelledby="t1-cap" tabindex="0">
 							<table class="t1">
-								<caption id="t1-cap">
+								<caption>
 									<span class="cap">
-									<span class="cap-text">
-										<span class="tlabel">Table 1.</span> Median of counted Runs, every digit. <a href="#sA">Table S1</a>: p5, p95, <i>n</i>.
-									</span>
-									<span class="key" aria-hidden="true">
-										<span class="key-item">
-											<span class="bar key-bar">
-												<span class="bar-to" style="width:62%" />
-												<span class="bar-range" style="left:52%;width:22%" />
-												<span class="bar-tick" style="left:62%" />
+										<h2 class="cap-text" id="t1-cap">
+											<span class="tlabel">Table 1.</span> Median of counted Runs, every digit
+										</h2>
+										<span class="key" aria-hidden="true">
+											<span class="key-item">
+												<span class="bar key-bar">
+													<span class="bar-to" style="width:62%" />
+													<span class="bar-range" style="left:52%;width:22%" />
+													<span class="bar-tick" style="left:62%" />
+												</span>
+												<span class="key-l">median, p5–p95</span>
 											</span>
-											<span class="key-l">median, p5–p95; per row from 0</span>
+											<span class="key-item">
+												<span class="dir">↑</span> higher is faster
+											</span>
+											<span class="key-item">
+												<span class="dir">↓</span> lower is faster
+											</span>
 										</span>
-										<span class="key-item">
-											<span class="dir">↑</span> higher is faster
-										</span>
-										<span class="key-item">
-											<span class="dir">↓</span> lower is faster
-										</span>
-									</span>
 									</span>
 								</caption>
 								<thead>
 									<tr>
 										<th scope="col" class="c-op">
-											Benchmark
+											<span class="vh">Benchmark</span>
 										</th>
 										{machines.map((m) => (
 											<th scope="col" class="c-m">
 												<span class="m-name">{m.instanceType}</span>
-												<span class="m-spec">
-													{m.vcpu} vCPU · {m.memory}
-												</span>
 												<span class="m-price">${formatUsd(m.price.usdPerHour).full}/h</span>
 											</th>
 										))}
@@ -366,7 +276,6 @@ export default function Page() {
 										{s.rows.map((r) => (
 											<tr id={`t1-${r.letter}`}>
 												<th scope="row" class="c-op">
-													<span class="op-letter">{r.letter}</span>
 													<a class="op-label" href={r.row.choice.readme}>
 														{r.row.choice.label}
 													</a>
@@ -389,145 +298,12 @@ export default function Page() {
 							</table>
 						</div>
 					</section>
-
-					{/* ---------------------------------------------------- 2 */}
-					<section class="sec" aria-labelledby="s2">
-						<h2 id="s2">
-							<span class="num">2</span>Machines
-						</h2>
-						<div class="table-wrap" role="region" aria-labelledby="t2-cap" tabindex="0">
-							<table class="t2">
-								<caption id="t2-cap">
-									<span class="tlabel">Table 2.</span> On-Demand, Linux, {snapshot.region}, as AWS's price file gives it <Cite n={4} />.
-								</caption>
-								<thead>
-									<tr>
-										<th scope="col">Machine</th>
-										<th scope="col" class="num-col">
-											vCPU
-										</th>
-										<th scope="col" class="num-col">
-											Memory
-										</th>
-										<th scope="col">Processor</th>
-										<th scope="col">Storage</th>
-										<th scope="col" class="num-col">
-											USD/h
-										</th>
-									</tr>
-								</thead>
-								<tbody>
-									{machines.map((m) => (
-										<tr>
-											<th scope="row">{m.instanceType}</th>
-											<td class="num-col">{m.vcpu}</td>
-											<td class="num-col">{m.memory}</td>
-											<td class="proc">{m.processor}</td>
-											<td class="stor">{m.storage}</td>
-											<td class="num-col price">
-												<a href={links.prices} title={`${m.price.description} · ${m.price.path.pointer}`}>
-													{formatUsd(m.price.usdPerHour).full}
-												</a>
-											</td>
-										</tr>
-									))}
-								</tbody>
-							</table>
-						</div>
-					</section>
-
-					{/* ---------------------------------------------------- references: the API */}
-					<section class="sec refs" aria-labelledby="refs">
-						<h2 id="refs">References</h2>
-						<ol class="reflist">
-							{REFS.map((r) => (
-								<li id={`ref-${r.n}`}>
-									<span class="ref-n">[{r.n}]</span>
-									<a class="ref-file" href={r.url}>
-										{r.file}
-									</a>
-									<span class="ref-what">{r.what}</span>
-									{r.schema ? (
-										<a class="ref-schema" href={r.schema}>
-											schema
-										</a>
-									) : (
-										<span class="ref-schema" />
-									)}
-								</li>
-							))}
-						</ol>
-						<details class="fold listing">
-							<summary>
-								<span class="tlabel">Listing 1.</span> Table 1's first figure in [2]
-							</summary>
-							<pre class="code json" tabindex="0" aria-label="Listing 1">
-								<code>
-									{excerptBefore}
-									<mark>{listingMark}</mark>
-									{excerptAfter}
-								</code>
-							</pre>
-						</details>
-					</section>
-
-					{/* ---------------------------------------------------- appendix */}
-					<section class="sec appendix" aria-labelledby="sA">
-						<h2 id="sA">
-							<span class="num">A</span>Supplement
-						</h2>
-						<details class="fold s1-details">
-							<summary>
-								<span class="tlabel">Table S1.</span> p5, p50, p95 and <i>n</i> of each cell
-							</summary>
-							<div class="table-wrap s1-wrap" role="region" aria-label="Table S1" tabindex="0">
-								<table class="s1">
-									<thead>
-										<tr>
-											<th scope="col" class="s1-b">
-												<span class="vh">Benchmark</span>
-											</th>
-											{machines.map((m) => (
-												<th scope="col" class="s1-m">
-													{m.instanceType}
-												</th>
-											))}
-										</tr>
-									</thead>
-									<tbody>
-										{rows.map((r) => (
-											<tr>
-												<th scope="row" class="s1-b">
-													<span class="op-letter">{r.letter}</span>
-													{r.row.choice.label}
-													<span class="s1-unit">{r.unitLong}</span>
-												</th>
-												{r.cells.map((c) => (
-													<td class="s1-c">
-														<span class="s1-x">{si(c.p5.full)}</span>
-														<a class="s1-x s1-mid" href={c.url}>
-															{si(c.p50.full)}
-														</a>
-														<span class="s1-x">{si(c.p95.full)}</span>
-														<span class="s1-n">
-															<i>n</i> {c.n}
-														</span>
-													</td>
-												))}
-											</tr>
-										))}
-									</tbody>
-								</table>
-							</div>
-						</details>
-					</section>
 				</article>
 			</main>
 
 			<footer class="colophon">
 				<p>
-					<span class="wordmark-sm">LedgerMath</span> · snapshot of {newest.longDate} · Method <span class="sc">series</span> v{series1.version} ·{" "}
-					<a href={links.docs}>Docs</a> · <a href="third-party-notices.txt">Font licences</a>
+					<span class="wordmark-sm">LedgerMath</span> · <a href={links.docs}>Docs</a> · <a href="third-party-notices.txt">Font licences</a>
 				</p>
 			</footer>
 		</>
