@@ -27,7 +27,6 @@ import {
 	type SeriesRow,
 	type Shown,
 	perUnit,
-	shift,
 	snapshot,
 } from "../../data";
 
@@ -69,7 +68,7 @@ function cellTitle(choice: HeadlineChoice, row: SeriesRow, u: RowUnit): string {
 	const p5 = show(f.p5, u);
 	const p95 = show(f.p95, u);
 	const per = u.kind === "time" && u.per ? ` One repetition is ${formatCount(u.per.count).full} ${u.per.of}s.` : "";
-	return `${choice.label} on ${row.instance_type}: ${p50.full} ${p50.unit}, the median of ${f.count} counted Runs. 5th percentile ${p5.full}, 95th ${p95.full}.${per} As the snapshot holds it: ${p50.source}.`;
+	return `${choice.label} on ${row.instance_type}: ${p50.full} ${p50.unit}, the median of ${f.count} counted runs. 5th percentile ${p5.full}, 95th ${p95.full}.${per} As the snapshot holds it: ${p50.source}.`;
 }
 
 /**
@@ -176,36 +175,27 @@ function RangeStrip() {
 	);
 }
 
-/** Series file, one of its Runs, that Run's evidence: the trail, walked once. The two files are links; a Run has no address of its own. */
+/** The Series file, then one of its Runs' evidence: two links of one kind, joined by an arrow. A Run has no address of its own. */
 function Trail() {
 	const s = tracedCell.series;
 	const point = seriesFileContents.point.example;
 	// One of the Series' Runs, by id only: its own figure would read as a rival to the median above.
 	return (
-		<ol class="trail">
-			<li>
-				<a href={links.seriesFile(s)}>
-					<span class="tl-k">Series</span>
-					<span class="mono">{s.id}</span>
-				</a>
-			</li>
+		<p class="trail">
+			<a href={links.seriesFile(s)}>
+				Series <span class="mono">{s.id}</span>
+			</a>
 			{tracedIsSample ? (
 				<>
-					<li>
-						<span class="tl-run" title={point.run}>
-							<span class="tl-k">One Run</span>
-							<span class="mono">{point.run.slice(0, 8)}</span>
-						</span>
-					</li>
-					<li>
-						<a href={point.evidence} title={point.evidence}>
-							<span class="tl-k">Evidence</span>
-							<span class="mono">{point.run.slice(0, 8)}….json</span>
-						</a>
-					</li>
+					<span class="tl-arrow" aria-hidden="true">
+						→
+					</span>
+					<a href={point.evidence} title={`Run ${point.run}: ${point.evidence}`}>
+						Evidence of run <span class="mono">{point.run.slice(0, 8)}</span>
+					</a>
 				</>
 			) : null}
-		</ol>
+		</p>
 	);
 }
 
@@ -226,35 +216,23 @@ function TracedFigure() {
 			</p>
 			<p class="traced-unit">{unitWords(tracedU)}, median</p>
 			<RangeStrip />
-			<dl class="traced-facts">
-				<div>
-					<dt>Runs</dt>
-					<dd>
-						{formatCount(tracedDerivation.counted_runs).full} · {formatCount(tracedDerivation.failed_runs).full} failed
-					</dd>
-				</div>
-				<div>
-					<dt>Dates</dt>
-					<dd>
-						<time datetime={s.oldest_run_started_at}>{formatMoment(s.oldest_run_started_at).date}</time> –{" "}
-						<time datetime={s.newest_run_started_at}>{formatMoment(s.newest_run_started_at).date}</time>
-					</dd>
-				</div>
-				<div>
-					<dt>Method</dt>
-					<dd>
-						<a class="mono" href={links.docs}>
-							{tracedDerivation.method.name} v{tracedDerivation.method.version}
-						</a>
-					</dd>
-				</div>
-				<div>
-					<dt>Zone</dt>
-					<dd>
-						<span class="mono">{s.availability_zone_id}</span>
-					</dd>
-				</div>
-			</dl>
+			<p class="traced-facts">
+				<span>
+					{formatCount(tracedDerivation.counted_runs).full} runs, {formatCount(tracedDerivation.failed_runs).full} failed
+				</span>
+				<span>
+					<time datetime={s.oldest_run_started_at}>{formatMoment(s.oldest_run_started_at).date}</time> to{" "}
+					<time datetime={s.newest_run_started_at}>{formatMoment(s.newest_run_started_at).date}</time>
+				</span>
+				<span class="mono" title="Availability Zone ID">
+					{s.availability_zone_id}
+				</span>
+				<span>
+					<a class="mono" href={links.docs} title="The Method">
+						{tracedDerivation.method.name} v{tracedDerivation.method.version}
+					</a>
+				</span>
+			</p>
 			<Trail />
 		</figure>
 	);
@@ -334,21 +312,18 @@ function Hero() {
 			<div class="wrap hero-grid">
 				<div class="hero-top">
 					<p class="eyebrow">AWS server benchmarks as JSON, for agents</p>
-					<h1 id="claim">Server numbers you can trace to their Runs.</h1>
-					<p class="lede">
-						{formatCount(snapshot.machineCount).full} AWS machine types, booted four times a day; {formatCount(snapshot.benchmarkCount).full} benchmarks on each; every Run
-						kept with its evidence.
-					</p>
+					<h1 id="claim">Server numbers you can trace to their runs.</h1>
+					<p class="lede">AWS machines booted four times a day; every run kept with its evidence.</p>
 					<div class="fresh">
 						<p class="fresh-line">
 							<span>
-								Newest Run{" "}
+								Newest run{" "}
 								<time datetime={newest.iso} title={newest.full}>
 									{newest.date} {newest.minute} UTC
 								</time>
 							</span>
 							<span>
-								<a href={links.seriesList}>{runs.full} Runs</a>, {failed.full} failed
+								<a href={links.seriesList}>{runs.full} runs</a>, {failed.full} failed
 							</span>
 							<span>
 								<a href={links.prices}>prices {snapshot.priceDate}</a>
@@ -366,36 +341,12 @@ function Hero() {
 }
 
 /**
- * AWS's network words in one unit, for scanning: "Up to 15000 Megabit" reads "≤ 15 Gbit/s".
- * Only the decimal point moves (Megabit to Gigabit); AWS's own words are the cell's title.
+ * AWS's words as the price file gives them. Nothing is added: no unit, no symbol, no number. The one change is a
+ * word left out, a trailing "Processor", and then AWS's whole phrase is the cell's title.
  */
-function network(words: string): { value: string; upTo: boolean } | null {
-	const m = /^(Up to )?(\d+(?:\.\d+)?) (Gigabit|Megabit)$/i.exec(words.trim());
-	if (!m) return null;
-	return { value: m[3]!.toLowerCase() === "megabit" ? shift(m[2]!, -3) : m[2]!, upTo: Boolean(m[1]) };
-}
-
-function Network(props: { words: string }) {
-	const n = network(props.words);
-	if (!n) return <>{props.words}</>;
-	return (
-		<span class="net" title={`AWS: “${props.words}”`}>
-			{n.upTo ? "≤ " : ""}
-			{n.value} Gbit/s
-		</span>
-	);
-}
-
-/**
- * AWS's other words in one form per column: "Up to 4.5 GHz" reads "≤ 4.5 GHz", like the network; a trailing
- * "Processor" goes; a local disk's size gets the GB the price file's sizes are in. AWS's words are the title.
- */
-function Aws(props: { words: string; kind: "processor" | "clock" | "storage" }) {
+function Aws(props: { words: string }) {
 	const w = props.words.trim();
-	let shown = w;
-	if (props.kind === "processor") shown = w.replace(/ Processor$/, "");
-	if (props.kind === "clock") shown = w.replace(/^Up to /i, "≤ ");
-	if (props.kind === "storage") shown = w.replace(/^(\d+) x (\d+) /, "$1 × $2 GB ");
+	const shown = w.replace(/ Processor$/, "");
 	return shown === w ? <>{w}</> : <span title={`AWS: “${w}”`}>{shown}</span>;
 }
 
@@ -452,20 +403,17 @@ function Machines() {
 									<td class="spec-num spec-price" title={priceTitle(m)}>
 										<Price full={formatUsd(m.price.usdPerHour).full} />
 									</td>
-									<td data-l="vCPU">{m.vcpu}</td>
+									<td data-l="vCPU">
+										{m.vcpu}
+										<span class="spec-l"> vCPU</span>
+									</td>
 									<td data-l="Memory">{m.memory}</td>
 									<td data-l="Processor">
-										<Aws words={m.processor} kind="processor" />
+										<Aws words={m.processor} />
 									</td>
-									<td data-l="Clock">
-										<Aws words={m.clockSpeed} kind="clock" />
-									</td>
-									<td data-l="Network">
-										<Network words={m.network} />
-									</td>
-									<td data-l="Storage">
-										<Aws words={m.storage} kind="storage" />
-									</td>
+									<td data-l="Clock">{m.clockSpeed}</td>
+									<td data-l="Network">{m.network}</td>
+									<td data-l="Storage">{m.storage}</td>
 								</tr>
 							))}
 						</tbody>
@@ -504,11 +452,7 @@ function SpreadKey() {
 			</span>
 			<span class="key-item">scale per benchmark</span>
 			<span class="key-item">
-				<span class="kg-digits mono" aria-hidden="true">
-					<span class="x-head">{tracedDigits.head}</span>
-					<span class="x-tail">{tracedDigits.tail.slice(0, 2)}…</span>
-				</span>
-				same at p5, p95
+				<b class="kg-bold">bold</b> unchanged p5→p95
 			</span>
 		</p>
 	);
@@ -521,10 +465,12 @@ function NumbersTable() {
 	return (
 		<section class="numbers" id="numbers" aria-labelledby="numbers-title">
 			<div class="wrap">
-				<h2 id="numbers-title">
-					{formatCount(snapshot.benchmarkCount).full} benchmarks × {formatCount(snapshot.machineCount).full} machines
-				</h2>
-				<SpreadKey />
+				<div class="numbers-head">
+					<h2 id="numbers-title">
+						{formatCount(snapshot.benchmarkCount).full} benchmarks × {formatCount(snapshot.machineCount).full} machines
+					</h2>
+					<SpreadKey />
+				</div>
 				<nav class="jump" aria-label="Benchmark groups">
 					{SECTIONS.map((section) => (
 						<a href={`#${sectionId(section)}`}>{CHIP[section] ? <abbr title={section}>{CHIP[section]}</abbr> : section}</a>
@@ -580,34 +526,14 @@ function NumbersTable() {
 													const here = cell === tracedCell;
 													return (
 														<td class={here ? "is-traced" : undefined}>
-															<details class="cell">
-																<summary title={cellTitle(row.choice, cell.series, u)}>
-																	<span class="cell-m mono">{cell.machine.instanceType}</span>
-																	<span class="cell-v">
-																		<Exact full={s.full} p5={show(f.p5, u).full} p95={show(f.p95, u).full} />
-																		<Spread f={f} max={max} />
-																	</span>
-																</summary>
-																<div class="pop">
-																	<dl class="pop-pcts mono">
-																		<div>
-																			<dt>p95</dt>
-																			<dd>{show(f.p95, u).full}</dd>
-																		</div>
-																		<div class="pop-mid">
-																			<dt>p50</dt>
-																			<dd>{s.full}</dd>
-																		</div>
-																		<div>
-																			<dt>p5</dt>
-																			<dd>{show(f.p5, u).full}</dd>
-																		</div>
-																	</dl>
-																	<a class="pop-link" href={links.seriesFile(cell.series)}>
-																		{formatCount(f.count).full} Runs <span aria-hidden="true">→</span>
-																	</a>
-																</div>
-															</details>
+															{/* every figure leads to its own Series: its runs, its p5 and p95, its Method */}
+															<a class="cell" href={links.seriesFile(cell.series)} title={cellTitle(row.choice, cell.series, u)}>
+																<span class="cell-m mono">{cell.machine.instanceType}</span>
+																<span class="cell-v">
+																	<Exact full={s.full} p5={show(f.p5, u).full} p95={show(f.p95, u).full} />
+																	<Spread f={f} max={max} />
+																</span>
+															</a>
 														</td>
 													);
 												})}
@@ -620,7 +546,7 @@ function NumbersTable() {
 				</div>
 				<p class="table-foot">
 					<a href={links.seriesList}>
-						All {seriesCount.full} Series <span aria-hidden="true">→</span>
+						All {seriesCount.full} Series, every setting <span aria-hidden="true">→</span>
 					</a>
 				</p>
 			</div>
@@ -679,7 +605,8 @@ const API_HOST = "https://api.ledgermath.com";
 const ENDPOINTS: { url: string; schema: string; link: boolean }[] = [
 	{ url: links.index, schema: links.schema.index, link: true },
 	{ url: links.seriesList, schema: links.schema.seriesList, link: true },
-	{ url: links.seriesFilePattern, schema: links.schema.series, link: false },
+	// One Series' own file, the traced one, so the address shown is one that answers when copied.
+	{ url: links.seriesFile(tracedCell.series), schema: links.schema.series, link: true },
 	{ url: links.prices, schema: links.schema.prices, link: true },
 ];
 
@@ -690,6 +617,7 @@ function Api() {
 	const pcts = (p: { p5: number; p50: number; p95: number } | null | undefined) => (p ? { p5: p.p5, p50: p.p50, p95: p.p95 } : p);
 	const excerpt = {
 		id: s.id,
+		benchmark: s.benchmark,
 		instance_type: s.instance_type,
 		derivations: {
 			series_v1: {
