@@ -1,5 +1,5 @@
-// Adds a "copy" button to each command block, and folds Table S1 on a phone (it is open, and
-// the page complete, without this script).
+// Adds a "copy" button to each command block, and on a phone folds the passages marked
+// data-fold-on-phone (Table S1, the equations, the notes): open, and the page complete, without this script.
 for (const pre of document.querySelectorAll<HTMLPreElement>("pre[data-copy]")) {
 	const button = document.createElement("button");
 	button.type = "button";

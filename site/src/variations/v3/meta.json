@@ -1,4 +1,4 @@
 {
 	"name": "Paper",
-	"idea": "The home page as a journal data report: title, machines as authors, abstract, Table 1 in booktabs, a range-bar figure to scale, Methods with equations, notes, references, every digit in Table S1."
+	"idea": "The home page as a journal data report: machines as authors, abstract, Table 1 in booktabs with every digit and a p5–p95 bar to scale in each cell, Methods with equations, notes, references, Table S1."
 }

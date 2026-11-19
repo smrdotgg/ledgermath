@@ -1,7 +1,7 @@
 // Design v3, "Paper": LedgerMath's home page set as a data report in a scientific journal.
-// Every figure comes from ../../data exactly as the snapshot holds it. Table 1 and Figure 1 round
-// to four significant digits for reading and say so; every rounded figure opens to its exact form
-// where it stands (Table 1's card, Figure 1's rows), and Table S1 gives every digit.
+// Every figure comes from ../../data exactly as the snapshot holds it, and every figure is shown
+// with every digit: Table 1 sets the whole part and the first three decimals in full weight and
+// the rest in light type, so the table scans without a digit dropped. Table S1 gives the spread.
 import "./page.css";
 import {
 	durationUnit,
@@ -26,8 +26,8 @@ import {
 
 // ---------------------------------------------------------------- figures of one row
 
-type Cell = { p5: Shown; p50: Shown; p95: Shown; n: number; url: string; id: string; machine: string; draw: { p5: number; p50: number; p95: number } };
-type Row = { row: HeadlineRow; unit: string; unitLong: string; dir: "up" | "down"; cells: Cell[]; per?: string; letter: string; frac: number };
+type Cell = { p5: Shown; p50: Shown; p95: Shown; n: number; url: string; id: string; machine: string; price: string; draw: { p5: number; p50: number; p95: number } };
+type Row = { row: HeadlineRow; unit: string; unitLong: string; dir: "up" | "down"; cells: Cell[]; per?: string; letter: string; max: number };
 
 const BYTE_UNITS = ["B", "kB", "MB", "GB", "TB"] as const;
 function rateUnit(bytesPerSecond: number) {
@@ -36,10 +36,9 @@ function rateUnit(bytesPerSecond: number) {
 }
 
 const LETTERS = "abcdefghijklmn";
-/** The part of a decimal text after its point, with the point ("" when there is none). */
-const fracOf = (decimal: string) => (decimal.includes(".") ? decimal.slice(decimal.indexOf(".")) : "");
 
 // One unit per row, so a row reads across: the unit in which the row's smallest median is at least 1.
+// Every figure is exact (`full`); no `significant` is asked for anywhere on this page.
 const rows: Row[] = headline.map((row, index) => {
 	const figures = row.cells.map((cell) => ({ cell, f: leadFigure(row.choice, cell.series) }));
 	const least = Math.min(...figures.map(({ f }) => f.p50));
@@ -52,28 +51,24 @@ const rows: Row[] = headline.map((row, index) => {
 		unit = "ns";
 	} else if (row.choice.lead === "rate") {
 		const u = rateUnit(least);
-		show = (x) => formatRate(x, { unit: u, significant: 4 });
+		show = (x) => formatRate(x, { unit: u });
 		unit = `${u}/s`;
 	} else {
 		const u: DurationUnit = durationUnit(least);
-		show = (x) => formatDuration(x, { unit: u, significant: 4 });
+		show = (x) => formatDuration(x, { unit: u });
 		unit = u;
 	}
-	const cells = figures.map(({ cell, f }) => {
-		const p5 = show(f.p5);
-		const p50 = show(f.p50);
-		const p95 = show(f.p95);
-		return {
-			p5,
-			p50,
-			p95,
-			n: f.count,
-			url: links.seriesFile(cell.series),
-			id: cell.series.id,
-			machine: cell.machine.instanceType,
-			draw: { p5: Number(p5.full), p50: Number(p50.full), p95: Number(p95.full) },
-		};
-	});
+	const cells = figures.map(({ cell, f }) => ({
+		p5: show(f.p5),
+		p50: show(f.p50),
+		p95: show(f.p95),
+		n: f.count,
+		url: links.seriesFile(cell.series),
+		id: cell.series.id,
+		machine: cell.machine.instanceType,
+		price: formatUsd(cell.machine.price.usdPerHour).full,
+		draw: { p5: f.p5, p50: f.p50, p95: f.p95 },
+	}));
 	return {
 		row,
 		unit,
@@ -81,32 +76,58 @@ const rows: Row[] = headline.map((row, index) => {
 		dir: row.choice.lead === "rate" ? "up" : "down",
 		per: per?.of,
 		letter: LETTERS[index]!,
-		frac: Math.max(...cells.map((c) => fracOf(c.p50.short).length)),
+		// The row's one scale: zero to its largest p95 (the snapshot's own numbers, for drawing only).
+		max: Math.max(...cells.map((c) => c.draw.p95)),
 		cells,
 	};
 });
 
-/** One width for the part after the point in every cell of Table 1, so points line up down each column and across each row. */
-const FRAC = Math.max(...rows.map((r) => r.frac));
-
 const SECTIONS: Section[] = ["Memory", "Compute", "Operating system", "Disk", "Network"];
 const bySection = SECTIONS.map((section) => ({ section, rows: rows.filter((r) => r.row.choice.section === section) }));
 
-/** Digits in groups of three with thin spaces, both sides of the point (SI style). No digit changes. */
+/** Digits in groups of three with spaces, both sides of the point (SI style). No digit changes. */
 const si = (decimal: string) => group(decimal, " ", " ");
-const exact = (s: Shown) => `${s.full} ${s.unit}`;
 
-/** A rounded figure set so that its decimal point falls in the same place in every cell of its row. */
-function Aligned(props: { text: string; frac: number }) {
-	const f = fracOf(props.text);
-	const i = f ? props.text.slice(0, -f.length) : props.text;
+/** An exact figure in three parts: its whole part, its point and first three decimals, and every further digit. */
+function split(full: string) {
+	const g = si(full);
+	const dot = g.indexOf(".");
+	if (dot < 0) return { int: g, head: "", tail: "" };
+	return { int: g.slice(0, dot), head: g.slice(dot, dot + 4), tail: g.slice(dot + 4).replace(/^ /, "") };
+}
+/** Width in `ch` of a run of digits and thin spaces (a word space, generously, is 0.8 of a digit in STIX Two). */
+const chOf = (text: string) => [...text].reduce((w, c) => w + (c === " " ? 0.8 : 1), 0);
+const parts = rows.flatMap((r) => r.cells.map((c) => split(c.p50.full)));
+/** One width for the whole part and one for the tail across Table 1, so every decimal point lines up down a column. */
+const INT_CH = Math.max(...parts.map((p) => chOf(p.int)));
+const TAIL_CH = Math.max(...parts.map((p) => chOf(p.tail)));
+
+/** An exact figure, its decimal point in the same place in every cell: full weight to the third decimal, light after. */
+function Exact(props: { full: string }) {
+	const p = split(props.full);
 	return (
-		<>
-			<span class="int">{i}</span>
-			<span class="frac" style={`width:${props.frac}ch`}>
-				{f}
+		<span class="x">
+			<span class="x-int" style={`width:${INT_CH}ch`}>
+				{p.int}
 			</span>
-		</>
+			<span class="x-head">{p.head}</span>
+			<span class="x-tail" style={`width:${TAIL_CH}ch`}>
+				{p.tail ? ` ${p.tail}` : ""}
+			</span>
+		</span>
+	);
+}
+
+/** One cell's figure drawn to its row's scale, from zero: a line to the median, the p5–p95 range over it, and the median's tick. */
+function Bar(props: { c: Cell; max: number }) {
+	const at = (v: number) => `${((v / props.max) * 100).toFixed(2)}%`;
+	const d = props.c.draw;
+	return (
+		<span class="bar" aria-hidden="true">
+			<span class="bar-to" style={`width:${at(d.p50)}`} />
+			<span class="bar-range" style={`left:${at(d.p5)};width:${at(d.p95 - d.p5)}`} />
+			<span class="bar-tick" style={`left:${at(d.p50)}`} />
+		</span>
 	);
 }
 
@@ -137,7 +158,7 @@ const short = (url: string) => url.replace(/^https:\/\//, "");
 // The example in the abstract: Table 1's first cell, exactly.
 const first = rows[0]!;
 const firstCell = first.cells[0]!;
-const firstExact = formatRate(leadFigure(first.row.choice, first.row.cells[0]!.series).p50, { unit: first.unit.replace("/s", "") as "GB" });
+const firstSeries = first.row.cells[0]!.series;
 
 // Listing 1: that cell's Series, as v1/series.json lists it. Small objects on one line.
 function compact(value: unknown, indent = ""): string {
@@ -149,11 +170,34 @@ function compact(value: unknown, indent = ""): string {
 	if (entries.length <= 4 && entries.every(([, x]) => x === null || typeof x !== "object")) return `${open} ${entries.map(item).join(", ")} ${close}`;
 	return `${open}\n${entries.map((e) => `${indent}  ${item(e)}`).join(",\n")}\n${indent}${close}`;
 }
-const listing = compact(first.row.cells[0]!.series);
+const listing = compact(firstSeries);
 // The figure Table 1 shows, marked where it stands in the listing: bytes_per_second's p50.
-const listingMark = `"p50": ${JSON.stringify(first.row.cells[0]!.series.derivations.series_v1.percentiles.bytes_per_second!.p50)}`;
+const v1 = firstSeries.derivations.series_v1;
+const bps = v1.percentiles.bytes_per_second!;
+const listingMark = `"p50": ${JSON.stringify(bps.p50)}`;
 const listingAt = listing.lastIndexOf(listingMark);
 if (listingAt < 0) throw new Error("Listing 1 does not hold the figure it marks");
+// Its excerpt: the lines that lead from the Series to that figure, every value as the file holds it.
+const j = (x: unknown) => JSON.stringify(x);
+const excerptBefore = [
+	"{",
+	`  "id": ${j(firstSeries.id)},`,
+	`  "benchmark": ${j(firstSeries.benchmark)},`,
+	`  "instance_type": ${j(firstSeries.instance_type)},`,
+	"  …",
+	`  "derivations": {`,
+	`    "series_v1": {`,
+	`      "method": ${compact(v1.method)},`,
+	`      "counted_runs": ${j(v1.counted_runs)},`,
+	"      …",
+	`      "percentiles": {`,
+	"        …",
+	`        "bytes_per_second": {`,
+	`          "count": ${j(bps.count)},`,
+	`          "p5": ${j(bps.p5)},`,
+	"          ",
+].join("\n");
+const excerptAfter = ["", `          "p95": ${j(bps.p95)}`, "        }", "      }", "    }", "  }", "}"].join("\n");
 
 // The commands of §3, each with its own copy button.
 const COMMANDS = [
@@ -206,102 +250,23 @@ function Note(props: { n: number }) {
 	);
 }
 
-// ---------------------------------------------------------------- Figure 1: one panel
-
-function niceStep(raw: number) {
-	const p = 10 ** Math.floor(Math.log10(raw));
-	const m = raw / p;
-	return (m <= 1 ? 1 : m <= 2 ? 2 : m <= 2.5 ? 2.5 : m <= 5 ? 5 : 10) * p;
+/** A passage that is open everywhere, and folded on a phone by client.ts (open without it). */
+function Fold(props: { label: string; children: unknown }) {
+	return (
+		<details class="fold" open data-fold-on-phone>
+			<summary>{props.label}</summary>
+			{props.children}
+		</details>
+	);
 }
 
-function Panel(props: { r: Row }) {
-	const top = Math.max(...props.r.cells.map((c) => c.draw.p95));
-	const step = niceStep(top / 4);
-	const max = Math.ceil(top / step) * step;
-	const ticks = Array.from({ length: Math.round(max / step) + 1 }, (_, i) => i * step);
-	const decimals = Math.max(0, -Math.floor(Math.log10(step) + 1e-9) + (step % 1 === 0 ? 0 : 1));
-	const label = (t: number) => (t === 0 ? "0" : t.toFixed(Math.min(decimals, 2)).replace(/\.0+$/, ""));
-	const x = (v: number) => (v / max) * 1000;
-	const choice = props.r.row.choice;
-	const letter = props.r.letter;
+function Mark(props: { href: string; label: string; children: string }) {
 	return (
-		<figure class="panel" id={`fig1-${letter}`} aria-labelledby={`panel-${letter}`}>
-			<figcaption id={`panel-${letter}`}>
-				<span class="panel-letter">({letter})</span> {choice.label}
-				<span class="panel-unit">
-					, {props.r.unitLong} <Arrow dir={props.r.dir} />
-				</span>
-				<span class="panel-rep">
-					<span class="rep-k">Repetition</span> {choice.repetition}
-				</span>
-			</figcaption>
-			<div class="bars">
-				{props.r.cells.map((c) => (
-					<details class="bar">
-						<summary>
-							<span class="bar-name">{c.machine}</span>
-							<svg class="bar-plot" viewBox="0 0 1000 16" preserveAspectRatio="none" aria-hidden="true">
-								{ticks.map((t) => (
-									<line class="grid" x1={x(t)} x2={x(t)} y1="0" y2="16" vector-effect="non-scaling-stroke" />
-								))}
-								<rect class="range" x={x(c.draw.p5)} y="3.5" width={Math.max(0, x(c.draw.p95) - x(c.draw.p5))} height="9" />
-								<line class="median" x1={x(c.draw.p50)} x2={x(c.draw.p50)} y1="0.5" y2="15.5" vector-effect="non-scaling-stroke" />
-							</svg>
-							<span class="bar-figs">
-								<span class="lo">{c.p5.short}</span>
-								<b>{c.p50.short}</b>
-								<span class="hi">{c.p95.short}</span>
-								<span class="n">{c.n}</span>
-							</span>
-						</summary>
-						<dl class="bar-exact">
-							<div>
-								<dt>p5</dt>
-								<dd>{si(c.p5.full)}</dd>
-							</div>
-							<div class="mid">
-								<dt>p50</dt>
-								<dd>
-									{si(c.p50.full)} <span class="u">{props.r.unitLong}</span>
-								</dd>
-							</div>
-							<div>
-								<dt>p95</dt>
-								<dd>{si(c.p95.full)}</dd>
-							</div>
-							<div>
-								<dt>
-									<i>n</i>
-								</dt>
-								<dd>{c.n} counted Runs</dd>
-							</div>
-							<div class="sid">
-								<dt>Series</dt>
-								<dd>
-									<a href={c.url}>{c.url.replace(/^https:\/\/[^/]+\//, "")}</a>
-								</dd>
-							</div>
-						</dl>
-					</details>
-				))}
-				<div class="axis" aria-hidden="true">
-					<span class="bar-name" />
-					<span class="axis-ticks">
-						{ticks.map((t) => (
-							<span style={`left:${(t / max) * 100}%`}>{label(t)}</span>
-						))}
-					</span>
-					<span class="bar-figs axis-key">
-						<span class="lo">p5</span>
-						<b>p50</b>
-						<span class="hi">p95</span>
-						<span class="n">
-							<i>n</i>
-						</span>
-					</span>
-				</div>
-			</div>
-		</figure>
+		<sup class="tn">
+			<a href={props.href} aria-label={props.label}>
+				{props.children}
+			</a>
+		</sup>
 	);
 }
 
@@ -311,6 +276,7 @@ export default function Page() {
 	const mutex = rows.find((r) => r.per)!;
 	const mutexRow = mutex.row.cells[0]!;
 	const mutexLead = leadFigure(mutex.row.choice, mutexRow.series);
+	const iops = rows.find((r) => r.row.choice.section === "Disk" && r.row.choice.reason?.includes("IOPS"));
 	return (
 		<>
 			<p class="stamp" aria-hidden="true">
@@ -322,6 +288,13 @@ export default function Page() {
 						LedgerMath
 					</a>
 					<span class="rh-kind">Data report · data API v1</span>
+					<nav class="rh-nav" aria-label="Sections">
+						<a href="#s1">Results</a>
+						<a href="#s2">Machines</a>
+						<a href="#s3">API</a>
+						<a href="#s4">Methods</a>
+						<a href={links.docs}>Docs</a>
+					</nav>
 					<span class="rh-date">
 						Snapshot of <time datetime={newest.date}>{newest.longDate}</time>
 					</span>
@@ -331,32 +304,27 @@ export default function Page() {
 			<main id="paper">
 				<article>
 					<div class="front">
-						<p class="kicker">Data report · cloud server benchmarks</p>
 						<h1>
 							<span class="h1-name">LedgerMath:</span> fourteen benchmarks on five AWS machine types, measured four&nbsp;times a&nbsp;day
 						</h1>
 						<p class="deck">
 							Measured numbers for deciding on infrastructure, each with its source: a JSON data API for AI agents and the developers who build them.
 						</p>
+					</div>
 
-						<div class="byline">
-							<p class="authors">
-								{machines.map((m, i) => (
-									<>
-										{i > 0 ? <span class="sep"> · </span> : ""}
-										<span class="author">
-											{m.instanceType}
-											<sup>1</sup>
-										</span>
-									</>
-								))}
-							</p>
-							<p class="affil">
-								<sup>1</sup> Amazon EC2, {snapshot.region} (zone ID {zones.join(", ")}), booted fresh at 04:10, 10:10, 16:10 and 22:10 UTC; each boot runs all{" "}
-								{snapshot.benchmarkCount} benchmarks.
-							</p>
-						</div>
-
+					<div class="front-meta">
+						<p class="authors">
+							{machines.map((m, i) => (
+								<>
+									{i > 0 ? <span class="sep"> · </span> : ""}
+									<span class="author">{m.instanceType}</span>
+								</>
+							))}
+						</p>
+						<p class="affil">
+							Amazon EC2, {snapshot.region} (zone ID {zones.join(", ")}) · booted at 04:10, 10:10, 16:10 and 22:10 UTC · each boot runs all {snapshot.benchmarkCount}{" "}
+							benchmarks
+						</p>
 						<dl class="dates">
 							<div>
 								<dt>First Run</dt>
@@ -393,43 +361,36 @@ export default function Page() {
 
 					<div class="opening">
 						<section class="abstract" aria-labelledby="abstract">
-							<h2 id="abstract">Abstract</h2>
 							<p>
-								LedgerMath boots five AWS machine types in {snapshot.region} four times a day and runs {snapshot.benchmarkCount} small benchmarks on each, freshly booted. Every
-								execution is kept as a Run with its evidence, published Methods derive the figures from the counted Runs, and AWS's On-Demand prices are copied daily. This
-								snapshot rests on {runs.full} Runs in {seriesCount.full} Series.
-							</p>
-							<p class="example">
-								For example, <span class="mono">{firstCell.machine}</span> reads memory sequentially at a median of{" "}
+								<span class="runin" id="abstract" role="heading" aria-level={2}>
+									Abstract
+								</span>
+								LedgerMath boots five AWS machine types in {snapshot.region} four times a day, runs {snapshot.benchmarkCount} benchmarks on each freshly booted machine, keeps
+								every Run with its evidence and derives its figures by published Methods. For example, <span class="mono">{firstCell.machine}</span> reads memory
+								sequentially at a median of{" "}
 								<strong>
-									<a href={firstCell.url}>{si(firstExact.full)}&nbsp;GB/s</a>
+									<a href={firstCell.url}>{si(firstCell.p50.full)}&nbsp;GB/s</a>
 								</strong>{" "}
-								over {firstCell.n} counted Runs (Table 1a; Series <span class="mono">{firstCell.id}</span>).
+								over {firstCell.n} counted Runs (Table 1, row a; Series <span class="mono">{firstCell.id}</span>).
 							</p>
 						</section>
 
 						<aside class="availability" aria-labelledby="availability">
 							<h2 id="availability">Data availability</h2>
 							<p>
-								<strong>For agents and developers:</strong> every figure here is in a JSON file, with its Method and the Runs behind it <Cite n={REF.index} />.
+								<strong>For agents and developers:</strong> every figure here is in a JSON file, with its Method and its Runs <Cite n={REF.index} />. Start at the index:
 							</p>
-							<p class="code-label">JSON index</p>
 							<pre class="code" data-copy={`curl ${links.index}`}>
 								<code>
 									<span class="prompt">$ </span>curl <Breakable url={links.index} />
 								</code>
 							</pre>
-							<ol class="files">
-								<li>
-									<a href={links.seriesList}>series.json</a> <span>all {seriesCount.full} Series and their Methods</span>
-								</li>
-								<li>
-									<a href={links.prices}>{priceFileName.replace("v1/", "")}</a> <span>AWS's prices, as copied</span>
-								</li>
-								<li>
-									<a href="#s3">§3</a> <span>every address, and what a file holds</span>
-								</li>
-							</ol>
+							<p class="files">
+								<a href={links.seriesList} title={`all ${seriesCount.full} Series and their Methods`}>
+									series.json
+								</a>{" "}
+								· <a href={links.prices} title="AWS's prices, as copied">{priceFileName.replace("v1/", "")}</a> · <a href="#s3">every address, §3</a>
+							</p>
 						</aside>
 					</div>
 
@@ -439,21 +400,34 @@ export default function Page() {
 							<span class="num">1</span>Results
 						</h2>
 
+						<nav class="jump" aria-label="Benchmarks in Table 1">
+							<ul>
+								{bySection.map((s) => (
+									<li>
+										<span class="jump-s">{s.section}</span>
+										{s.rows.map((r) => (
+											<a href={`#t1-${r.letter}`}>
+												<i>{r.letter}</i> {r.row.choice.label}
+											</a>
+										))}
+									</li>
+								))}
+							</ul>
+						</nav>
+
 						<div class="table-wrap wide t1-wrap" role="region" aria-labelledby="t1-cap" tabindex="0">
 							<table class="t1">
 								<caption id="t1-cap">
-									<span class="tlabel">Table 1.</span> The median (p50) of each Series' counted Runs, one Series per cell, chosen by a written rule (settings measured on every
-									machine type, the static build, one thread where there is a choice). <em>Rounded to four significant digits</em>: point at or tab to a figure for every
-									digit, its spread and its Runs; follow it to its Series file <Cite n={REF.series} />. <Arrow dir="up" /> a rate (decimal: 1 GB/s is 10<sup>9</sup> B/s),
-									higher is faster; <Arrow dir="down" /> the time of one repetition, lower is faster.
+									<span class="tlabel">Table 1.</span> The median (p50) of each Series' counted Runs, one Series per cell, chosen by a written rule. <em>Every digit is shown</em>
+									, three decimals in full weight. Under each, drawn to one scale per row from zero: a line to the median, the 5th to 95th percentile over it
+									(hidden by the median's tick where it is narrower), and <i>n</i>, the count of Runs. Each figure links to its Series file{" "}
+									<Cite n={REF.series} />; the spread is in <a href="#sA">Table S1</a>. <Arrow dir="up" /> a rate (1 GB/s is 10<sup>9</sup> B/s), higher is faster;{" "}
+									<Arrow dir="down" /> the time of one repetition, lower is faster.
 								</caption>
 								<thead>
 									<tr>
 										<th scope="col" class="c-op">
 											Benchmark
-										</th>
-										<th scope="col" class="c-unit">
-											Unit
 										</th>
 										{machines.map((m) => (
 											<th scope="col" class="c-m">
@@ -471,45 +445,48 @@ export default function Page() {
 								{bySection.map((s) => (
 									<tbody>
 										<tr class="group">
-											<th scope="colgroup" colspan={2 + machines.length}>
+											<th scope="colgroup" colspan={1 + machines.length}>
 												{s.section}
+												{s.section === "Disk" ? (
+													<span class="group-note">
+														{" "}
+														· the root volume, an EBS gp3 volume of the same kind on every machine type, not storage of the machine's own
+														<Mark href="#tn-b" label="table note b">
+															b
+														</Mark>
+													</span>
+												) : (
+													""
+												)}
+												{s.section === "Network" ? (
+													<span class="group-note">
+														{" "}
+														· to S3 in the same Region, on a connection already open
+														<Mark href="#tn-c" label="table note c">
+															c
+														</Mark>
+													</span>
+												) : (
+													""
+												)}
 											</th>
 										</tr>
 										{s.rows.map((r) => (
-											<tr>
+											<tr id={`t1-${r.letter}`}>
 												<th scope="row" class="c-op">
 													<span class="op-label">
-														<a class="op-letter" href={`#fig1-${r.letter}`} aria-label={`${r.letter}, Figure 1${r.letter}`}>
-															{r.letter}
-														</a>
+														<span class="op-letter">{r.letter}</span>
 														{r.row.choice.label}
 														{r.per ? (
-															<sup class="tn">
-																<a href="#tn-a" aria-label="table note a">
-																	a
-																</a>
-															</sup>
+															<Mark href="#tn-a" label="table note a">
+																a
+															</Mark>
 														) : (
 															""
 														)}
-														{r.row.choice.section === "Disk" ? (
-															<sup class="tn">
-																<a href="#tn-b" aria-label="table note b">
-																	b
-																</a>
-															</sup>
-														) : (
-															""
-														)}
-														{r.row.choice.section === "Network" ? (
-															<sup class="tn">
-																<a href="#tn-c" aria-label="table note c">
-																	c
-																</a>
-															</sup>
-														) : (
-															""
-														)}
+														<span class="op-unit">
+															{r.unitLong} <Arrow dir={r.dir} />
+														</span>
 													</span>
 													<span class="op-what">
 														{r.row.choice.per
@@ -517,14 +494,17 @@ export default function Page() {
 															: r.row.choice.repetition}
 													</span>
 												</th>
-												<td class="c-unit">
-													{r.unit} <Arrow dir={r.dir} />
-												</td>
 												{r.cells.map((c) => (
-													<td class="c-fig">
+													<td class="c-fig" data-m={c.machine} data-price={`$${c.price}/h`}>
 														<a href={c.url} aria-describedby={`x-${r.letter}-${c.id}`}>
-															<Aligned text={c.p50.short} frac={FRAC} />
+															<Exact full={c.p50.full} />
 														</a>
+														<span class="foot">
+															<Bar c={c} max={r.max} />
+															<span class="n">
+																<i>n</i>&thinsp;{c.n}
+															</span>
+														</span>
 														<span class="card" id={`x-${r.letter}-${c.id}`}>
 															<span class="card-h">
 																{c.machine} · {r.row.choice.label}
@@ -555,39 +535,27 @@ export default function Page() {
 						</div>
 						<ol class="tnotes wide">
 							<li id="tn-a">
-								<span class="tn-mark">a</span> One repetition of mutex is {mutex.row.choice.per!.count.toLocaleString("en-US")} critical sections; Table 1 and Figure 1h give
-								one, by moving the decimal point four places. On {mutexRow.machine.instanceType} the median repetition is {formatDuration(mutexLead.p50, { unit: "µs" }).full} µs, so
-								one critical section is {mutex.cells[0]!.p50.full} ns.
+								<span class="tn-mark">a</span> One repetition of mutex is {mutex.row.choice.per!.count.toLocaleString("en-US")} critical sections; row h gives one, by moving the
+								decimal point four places. On {mutexRow.machine.instanceType} the median repetition is <span class="nw">{si(formatDuration(mutexLead.p50, { unit: "µs" }).full)} µs</span>, so one
+								critical section is <span class="nw">{si(mutex.cells[0]!.p50.full)} ns</span>.
 							</li>
 							<li id="tn-b">
-								<span class="tn-mark">b</span> The four disk benchmarks (rows and panels j–m) measure the root volume, an EBS gp3 volume, which is the same kind of volume on every machine type, not
-								storage the machine type has of its own. i4i.2xlarge's instance store is measured too, in Series of its own.
+								<span class="tn-mark">b</span> The four disk benchmarks (rows j–m) measure each machine's root volume, not the storage a machine type has of its own;
+								i4i.2xlarge's instance store is measured too, in Series of its own.
+								{iops ? (
+									<>
+										{" "}
+										In the headline rule's words, “{iops.row.choice.reason!.split(";")[0]}”; its throughput limit is what row j shows.
+									</>
+								) : (
+									""
+								)}
 							</li>
 							<li id="tn-c">
-								<span class="tn-mark">c</span> To S3 in the same Region, on a connection already open. Each request's phases are summarised separately by Method requests
-								v1 <Cite n={REF.method} />.
+								<span class="tn-mark">c</span> Each request's phases are summarised separately by Method <span class="sc">requests</span> v{requests1?.version ?? 1}{" "}
+								<Cite n={REF.method} />.
 							</li>
 						</ol>
-
-						<figure class="fig1 wide" aria-labelledby="f1-cap">
-							<figcaption id="f1-cap">
-								<span class="tlabel">Figure 1.</span> The spread of each headline Series across its counted Runs, one panel per benchmark.{" "}
-								<span class="key">
-									<svg viewBox="0 0 44 16" aria-hidden="true">
-										<rect class="range" x="2" y="3.5" width="40" height="9" />
-										<line class="median" x1="26" x2="26" y1="0.5" y2="15.5" />
-									</svg>
-									a bar runs from the 5th to the 95th percentile; the tick is the median.
-								</span>{" "}
-								Scales are linear and start at zero, one per panel. Figures are rounded to four significant digits;{" "}
-								<span class="tap">select a machine's row to open every digit, its count of Runs and its Series file.</span>
-							</figcaption>
-							<div class="panels">
-								{rows.map((r) => (
-									<Panel r={r} />
-								))}
-							</div>
-						</figure>
 					</section>
 
 					{/* ---------------------------------------------------- 2 */}
@@ -596,8 +564,9 @@ export default function Page() {
 							<span class="num">2</span>Machines and prices
 						</h2>
 						<p class="lede">
-							The five machine types in order of hourly price, as AWS's price list describes them, with the On-Demand price for Linux in {snapshot.region} from the price file
-							of {formatMoment(`${snapshot.priceDate}T00:00:00Z`).longDate} <Cite n={REF.prices} />. Each price is printed as the file gives it, beside AWS's own words.
+							The five machine types in order of hourly price, with the On-Demand price for Linux in {snapshot.region} from the price file of{" "}
+							{formatMoment(`${snapshot.priceDate}T00:00:00Z`).longDate} <Cite n={REF.prices} />. Each price is printed as the file gives it, and the file words each one the
+							same way: “{machines[0]!.price.description}”.
 						</p>
 						<div class="table-wrap wide" role="region" aria-labelledby="t2-cap" tabindex="0">
 							<table class="t2">
@@ -617,7 +586,6 @@ export default function Page() {
 										<th scope="col" class="num-col">
 											USD per hour
 										</th>
-										<th scope="col">AWS's description</th>
 									</tr>
 								</thead>
 								<tbody>
@@ -634,10 +602,9 @@ export default function Page() {
 											</td>
 											<td data-label="Network">{m.network}</td>
 											<td data-label="Storage">{m.storage}</td>
-											<td class="num-col price" title={`${m.price.usdPerHour} USD per hour, as the price file writes it`}>
+											<td class="num-col price" title={m.price.description}>
 												{formatUsd(m.price.usdPerHour).full}
 											</td>
-											<td class="desc">{m.price.description}</td>
 										</tr>
 									))}
 								</tbody>
@@ -655,7 +622,8 @@ export default function Page() {
 								<p>
 									The figures, the evidence behind them and AWS's prices are static JSON files at api.ledgermath.com. An agent that starts at the table of contents finds
 									every Series with its figures, the Method and version that derived them, and each file's JSON schema <Cite n={[REF.index, REF.schemas]} />: a number to
-									use, and a source to give for it. Each Series' own file holds each Run's figure and a link to its evidence.
+									use, and a source to give for it. Each Series' own file holds each Run's figure and a link to its evidence. The documentation is at{" "}
+									<a href={links.docs}>{short(links.docs)}</a> <Cite n={REF.docs} />.
 								</p>
 								<p class="api-words">
 									<span class="kw">The API, in its own words</span> “{snapshot.about.split(". ").slice(0, 2).join(". ")}.”
@@ -678,16 +646,27 @@ export default function Page() {
 						<figure class="listing">
 							<figcaption>
 								<span class="tlabel">Listing 1.</span> What an agent reads for Table 1's first figure: Series <span class="mono">{firstCell.id}</span> as{" "}
-								<a href={links.seriesList}>v1/series.json</a> lists it, exactly. The figure is <code>bytes_per_second.p50</code> under Method <span class="sc">series</span>{" "}
-								v{series1.version} (marked), from <code>count</code> counted Runs; its own file, with each Run and a link to its evidence, is at <code>url</code>.
+								<a href={links.seriesList}>v1/series.json</a> lists it, cut to the path from the Series to the figure (… marks what is left out). The figure is{" "}
+								<code>bytes_per_second.p50</code> under Method <span class="sc">series</span> v{series1.version}, in bytes a second: Table 1 moves its decimal point nine
+								places.
 							</figcaption>
-							<pre class="code json">
+							<pre class="code json excerpt" tabindex="0" aria-label="Listing 1, the excerpt">
 								<code>
-									{listing.slice(0, listingAt)}
-									<mark>{listingMark}</mark>
-									{listing.slice(listingAt + listingMark.length)}
+									{excerptBefore}
+									<mark>{listingMark}</mark>,<span class="c">{`  ← ${si(firstCell.p50.full)} GB/s`}</span>
+									{excerptAfter}
 								</code>
 							</pre>
+							<details class="whole">
+								<summary>The whole entry, every field as series.json holds it</summary>
+								<pre class="code json" tabindex="0" aria-label="Listing 1, the whole entry">
+									<code>
+										{listing.slice(0, listingAt)}
+										<mark>{listingMark}</mark>
+										{listing.slice(listingAt + listingMark.length)}
+									</code>
+								</pre>
+							</details>
 						</figure>
 
 						<div class="table-wrap wide" role="region" aria-labelledby="t3-cap" tabindex="0">
@@ -760,8 +739,8 @@ export default function Page() {
 								</h3>
 								<p>
 									Four times a day, at 04:10, 10:10, 16:10 and 22:10 UTC, a machine of each of the {snapshot.machineCount} types in Table 2 is booted in {snapshot.region},
-									and each of the {snapshot.benchmarkCount} benchmarks runs on it while it is freshly booted. The Runs in this snapshot started between {oldest.longDate} and{" "}
-									{newest.longDate}
+									and the {snapshot.benchmarkCount} benchmarks run on it, one Run after another, so each Run starts some time after its boot; every Run records its own start.
+									The Runs in this snapshot started between {oldest.longDate} and {newest.longDate}
 									<Note n={1} />.
 								</p>
 							</div>
@@ -781,9 +760,8 @@ export default function Page() {
 									<span class="num">4.3</span>Exactness and versions
 								</h3>
 								<p>
-									The API states: “{snapshot.figures.split(":")[0]}.” This page changes units, by moving the decimal point
-									<Note n={3} />, and, in Table 1 and Figure 1 only, rounds to four significant digits for reading, which their captions say. Every rounded figure opens to
-									its exact form where it stands; Table S1 and the API keep every digit. On versions: “{snapshot.versioning.split(". ")[0]}.”
+									The API states: “{snapshot.figures.split(":")[0]}.” This page shows every digit of every figure and changes only units, by moving the decimal point
+									<Note n={2} />; Table 1 sets the digits after the third decimal lighter, and drops none. On versions: “{snapshot.versioning.split(". ")[0]}.”
 								</p>
 							</div>
 							<div class="sub">
@@ -791,129 +769,138 @@ export default function Page() {
 									<span class="num">4.4</span>Figures
 								</h3>
 								<p>
-									The figures are Method <span class="sc">series</span> v{series1.version}'s. For each Run it takes the time of one repetition: the median, over the Run's
-									counted samples (warmup samples left out), of
+									The figures are Method <span class="sc">series</span> v{series1.version}'s. For each Run it takes the time of one repetition, the median over the Run's
+									counted samples (warmup samples left out); where the benchmark observes the bytes one repetition moves, a rate; and across the counted Runs of a Series,
+									the 5th, 50th and 95th percentiles of each.
 								</p>
-								<div class="eq" role="math" aria-label="t equals the sample's end minus its start, divided by its repetitions">
-									<span class="eq-body">
-										<i>t</i> = (<i>t</i>
-										<sub>end</sub> − <i>t</i>
-										<sub>start</sub>) / <i>r</i>
-									</span>
-									<span class="eq-n">(1)</span>
-								</div>
-								<p>
-									for a sample of <i>r</i> repetitions; and where the benchmark observes the bytes one repetition moves, <i>B</i>, a rate in bytes a second of
-								</p>
-								<div class="eq" role="math" aria-label="rate equals B times ten to the ninth, divided by t in nanoseconds">
-									<span class="eq-body">
-										<i>R</i> = <i>B</i> × 10<sup>9</sup> / <i>t</i>
-										<sub>ns</sub>
-									</span>
-									<span class="eq-n">(2)</span>
-								</div>
-								<p>
-									Across the counted Runs of a Series it takes the 5th, 50th and 95th percentiles by linear interpolation between closest ranks: with the <i>n</i> values
-									sorted, <i>x</i>
-									<sub>0</sub> ≤ … ≤ <i>x</i>
-									<sub>
-										<i>n</i>−1
-									</sub>
-									,
-								</p>
-								<div class="eq" role="math" aria-label="h equals n minus 1 times p over 100; the percentile is x at floor h plus the fraction of h times the next difference">
-									<span class="eq-body">
-										<span class="eq-line">
-											<i>h</i> = (<i>n</i> − 1) <i>p</i> / 100,
-										</span>{" "}
-										<span class="eq-line">
-											<i>Q</i>(<i>p</i>) = <i>x</i>
-											<sub>⌊h⌋</sub> + (<i>h</i> − ⌊<i>h</i>⌋)(<i>x</i>
-											<sub>⌊h⌋+1</sub> − <i>x</i>
-											<sub>⌊h⌋</sub>)
+								<Fold label="Equations (1)–(3)">
+									<p>In symbols, the time of one repetition is</p>
+									<div class="eq" role="math" aria-label="t equals the sample's end minus its start, divided by its repetitions">
+										<span class="eq-body">
+											<i>t</i> = (<i>t</i>
+											<sub>end</sub> − <i>t</i>
+											<sub>start</sub>) / <i>r</i>
 										</span>
-									</span>
-									<span class="eq-n">(3)</span>
-								</div>
-								<p>
-									Each number's percentiles are taken over that number's own values, so the percentiles of a rate are not those of the time inverted
-									<Note n={2} />.
-									{requests1 ? (
-										<>
-											{" "}
-											The GET from S3 is also summarised request by request, by Method <span class="sc">requests</span> v{requests1.version} <Cite n={REF.method} />.
-										</>
-									) : (
-										""
-									)}
-								</p>
+										<span class="eq-n">(1)</span>
+									</div>
+									<p>for a sample of <i>r</i> repetitions, and, where one repetition moves <i>B</i> bytes, a rate in bytes a second of</p>
+									<div class="eq" role="math" aria-label="rate equals B times ten to the ninth, divided by t in nanoseconds">
+										<span class="eq-body">
+											<i>R</i> = <i>B</i> × 10<sup>9</sup> / <i>t</i>
+											<sub>ns</sub>
+										</span>
+										<span class="eq-n">(2)</span>
+									</div>
+									<p>
+										The percentiles are taken by linear interpolation between closest ranks: with the <i>n</i> values sorted, <i>x</i>
+										<sub>0</sub> ≤ … ≤ <i>x</i>
+										<sub>
+											<i>n</i>−1
+										</sub>
+										,
+									</p>
+									<div class="eq" role="math" aria-label="h equals n minus 1 times p over 100; the percentile is x at floor h plus the fraction of h times the next difference">
+										<span class="eq-body">
+											<span class="eq-line">
+												<i>h</i> = (<i>n</i> − 1) <i>p</i> / 100,
+											</span>{" "}
+											<span class="eq-line">
+												<i>Q</i>(<i>p</i>) = <i>x</i>
+												<sub>⌊h⌋</sub> + (<i>h</i> − ⌊<i>h</i>⌋)(<i>x</i>
+												<sub>⌊h⌋+1</sub> − <i>x</i>
+												<sub>⌊h⌋</sub>)
+											</span>
+										</span>
+										<span class="eq-n">(3)</span>
+									</div>
+									<p>
+										Each number's percentiles are taken over that number's own values, so the percentiles of a rate are not those of the time inverted
+										<Note n={3} />.
+										{requests1 ? (
+											<>
+												{" "}
+												The GET from S3 is also summarised request by request, by Method <span class="sc">requests</span> v{requests1.version} <Cite n={REF.method} />.
+											</>
+										) : (
+											""
+										)}
+									</p>
+								</Fold>
 							</div>
 						</div>
 						<div class="sub counted">
 							<h3 id="s45">
 								<span class="num">4.5</span>Which Runs count
 							</h3>
-							<blockquote class="defn">
-								<p>“{series1.definitions.counted}”</p>
-								<footer>
-									Method <span class="sc">series</span> v{series1.version}, definition of <i>counted</i> <Cite n={REF.method} />
-								</footer>
-							</blockquote>
+							<p class="counted-sum">
+								A Run counts when its binary exited 0 and its output obeys the events schema and its order rules, with every sample it asked for; any other Run is failed, kept and shown with its reasons, and in
+								no percentile. The rule in full:
+							</p>
+							<Fold label="The rule, word for word">
+								<blockquote class="defn">
+									<p>“{series1.definitions.counted}”</p>
+									<footer>
+										Method <span class="sc">series</span> v{series1.version}, definition of <i>counted</i> <Cite n={REF.method} />
+									</footer>
+								</blockquote>
+							</Fold>
 						</div>
 					</section>
 
 					{/* ---------------------------------------------------- notes, references */}
 					<section class="sec notes" aria-labelledby="notes">
 						<h2 id="notes">Notes</h2>
-						<ol>
-							<li id="fn-1">
-								The oldest Run started at {oldest.full}, the newest at {newest.full}; AWS's prices were copied at {fetched.full}. Moments are in UTC, to the nanosecond, as
-								each Run records them; the front page gives them to the minute. <a href="#fnref-1" aria-label="back to note 1">↩</a>
-							</li>
-							<li id="fn-2">
-								So the median rate in Table 1 is not 1 divided by the median time. Method <span class="sc">series</span> v{series1.version}, definition of{" "}
-								<i>percentiles</i> <Cite n={REF.method} />. <a href="#fnref-2" aria-label="back to note 2">↩</a>
-							</li>
-							<li id="fn-3">
-								Nanoseconds to µs or ms, bytes a second to MB/s or GB/s, and one repetition of mutex to one critical section. Nothing on this page is averaged or computed
-								from the figures; machines are listed in order of hourly price, which is not a finding about them.{" "}
-								<a href="#fnref-3" aria-label="back to note 3">
-									↩
-								</a>
-							</li>
-						</ol>
+						<Fold label="Notes 1–3">
+							<ol>
+								<li id="fn-1">
+									The oldest Run started at {oldest.full}, the newest at {newest.full}; AWS's prices were copied at {fetched.full}. Moments are in UTC, to the nanosecond, as
+									each Run records them; the front page gives them to the minute. <a href="#fnref-1" aria-label="back to note 1">↩</a>
+								</li>
+								<li id="fn-2">
+									Nanoseconds to µs or ms and bytes a second to MB/s or GB/s; and, for mutex, one repetition to one of its 10,000 critical sections, by moving the point four
+									places. No figure is rounded, averaged or combined across machines. The bars in Table 1 draw each median and its 5th to 95th percentile to one scale per row; machines are listed in
+									order of hourly price, which is not a finding about them. <a href="#fnref-2" aria-label="back to note 2">↩</a>
+								</li>
+								<li id="fn-3">
+									So the median rate in Table 1 is not 1 divided by the median time. Method <span class="sc">series</span> v{series1.version}, definition of{" "}
+									<i>percentiles</i> <Cite n={REF.method} />. <a href="#fnref-3" aria-label="back to note 3">↩</a>
+								</li>
+							</ol>
+						</Fold>
 					</section>
 
 					<section class="sec refs" aria-labelledby="refs">
 						<h2 id="refs">References</h2>
-						<ol>
-							<li id="ref-1">
-								LedgerMath. <i>Data API v1: table of contents.</i> <a href={links.index}>{short(links.index)}</a>
-							</li>
-							<li id="ref-2">
-								LedgerMath. <i>Every Series, with its figures ({seriesCount.full} Series).</i> <a href={links.seriesList}>{short(links.seriesList)}</a>
-							</li>
-							<li id="ref-3">
-								Amazon Web Services. <i>On-Demand prices, {snapshot.region}</i>, copied {fetched.full}. <a href={links.prices}>{short(links.prices)}</a>
-							</li>
-							<li id="ref-4">
-								LedgerMath. <i>Methods {snapshot.methods.map((m) => `${m.name} v${m.version}`).join(" and ")}: definitions.</i> In series.json, under <code>methods</code>.{" "}
-								<a href={links.seriesList}>{short(links.seriesList)}</a>
-							</li>
-							<li id="ref-5">
-								LedgerMath. <i>JSON schemas</i>:{" "}
-								{links.schemas.map((s, i) => (
-									<>
-										{i > 0 ? ", " : ""}
-										<a href={s.url}>{s.name}</a> ({s.describes})
-									</>
-								))}
-								.
-							</li>
-							<li id="ref-6">
-								LedgerMath. <i>The data API: documentation.</i> <a href={links.docs}>{short(links.docs)}</a>
-							</li>
-						</ol>
+						<Fold label="References [1]–[6]">
+							<ol>
+								<li id="ref-1">
+									LedgerMath. <i>Data API v1: table of contents.</i> <a href={links.index}>{short(links.index)}</a>
+								</li>
+								<li id="ref-2">
+									LedgerMath. <i>Every Series, with its figures ({seriesCount.full} Series).</i> <a href={links.seriesList}>{short(links.seriesList)}</a>
+								</li>
+								<li id="ref-3">
+									Amazon Web Services. <i>On-Demand prices, {snapshot.region}</i>, copied {fetched.full}. <a href={links.prices}>{short(links.prices)}</a>
+								</li>
+								<li id="ref-4">
+									LedgerMath. <i>Methods {snapshot.methods.map((m) => `${m.name} v${m.version}`).join(" and ")}: definitions.</i> In series.json, under <code>methods</code>.{" "}
+									<a href={links.seriesList}>{short(links.seriesList)}</a>
+								</li>
+								<li id="ref-5">
+									LedgerMath. <i>JSON schemas</i>:{" "}
+									{links.schemas.map((s, i) => (
+										<>
+											{i > 0 ? ", " : ""}
+											<a href={s.url}>{s.name}</a> ({s.describes})
+										</>
+									))}
+									.
+								</li>
+								<li id="ref-6">
+									LedgerMath. <i>The data API: documentation.</i> <a href={links.docs}>{short(links.docs)}</a>
+								</li>
+							</ol>
+						</Fold>
 					</section>
 
 					{/* ---------------------------------------------------- appendix */}
@@ -923,11 +910,11 @@ export default function Page() {
 						</h2>
 						<details class="s1-details" open data-fold-on-phone>
 							<summary>
-								<span class="tlabel">Table S1.</span> Every digit of the {rows.length * machines.length} headline Series: their 5th, 50th and 95th percentiles, exactly
-								as the snapshot holds them, in the units of Table 1, and the number of counted Runs (<i>n</i>). Digits are grouped in threes; nothing is rounded. The last
-								column names each Series' file in the API.
+								<span class="tlabel">Table S1.</span> The spread of the {rows.length * machines.length} headline Series: their 5th, 50th and 95th percentiles, exactly as the
+								snapshot holds them, in the units of Table 1, and the number of counted Runs (<i>n</i>). Digits are grouped in threes; nothing is rounded. The last column
+								names each Series' file in the API.
 							</summary>
-							<div class="table-wrap s1-wrap" role="region" aria-label="Table S1, every digit" tabindex="0">
+							<div class="table-wrap s1-wrap" role="region" aria-label="Table S1, the spread" tabindex="0">
 								<table class="s1">
 									<thead>
 										<tr>
@@ -991,7 +978,8 @@ export default function Page() {
 			<footer class="colophon">
 				<p>
 					<span class="wordmark-sm">LedgerMath</span> · Data report, snapshot of {newest.longDate} · {runs.full} Runs, {seriesCount.full} Series, {snapshot.benchmarkCount}{" "}
-					benchmarks, {snapshot.machineCount} machine types · Set in STIX Two Text and IBM Plex Mono (<a href="third-party-notices.txt">licences</a>)
+					benchmarks, {snapshot.machineCount} machine types · <a href={links.docs}>Documentation</a> · Set in STIX Two Text and IBM Plex Mono (
+					<a href="third-party-notices.txt">licences</a>)
 				</p>
 			</footer>
 		</>
