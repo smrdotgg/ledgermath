@@ -1,61 +1,1062 @@
+/* Design v1, "Ledger": paper and ink, ruled rows, figures that line up on the decimal point. */
+
+@font-face {
+	font-family: "Ledger Serif";
+	src: url("./fonts/source-serif-4-latin-wght-normal.woff2") format("woff2");
+	font-weight: 200 900;
+	font-style: normal;
+	font-display: swap;
+}
+@font-face {
+	font-family: "Ledger Serif";
+	src: url("./fonts/source-serif-4-latin-wght-italic.woff2") format("woff2");
+	font-weight: 200 900;
+	font-style: italic;
+	font-display: swap;
+}
+@font-face {
+	font-family: "Ledger Mono";
+	src: url("./fonts/ibm-plex-mono-latin-400-normal.woff2") format("woff2");
+	font-weight: 400;
+	font-style: normal;
+	font-display: swap;
+}
+@font-face {
+	font-family: "Ledger Mono";
+	src: url("./fonts/ibm-plex-mono-latin-500-normal.woff2") format("woff2");
+	font-weight: 500;
+	font-style: normal;
+	font-display: swap;
+}
+
 :root {
-	color-scheme: light dark;
-	--fg: #1a1a1a;
-	--bg: #ffffff;
-	--muted: #555555;
-	--line: #d0d0d0;
-	--link: #0b57d0;
+	color-scheme: light;
+	--paper: #f4efe2;
+	--paper-2: #ebe4d1;
+	--ink: #1c2329;
+	--ink-2: #3b4248;
+	--pencil: #66665f;
+	--pencil-2: #5a5a53;
+	--rule: #c9d7d8;
+	--rule-2: #b3c6c9;
+	--rule-strong: #1c2329;
+	--red: #a3362b;
+	--red-rule: #c46a5e;
+	--link: #1f4e8c;
+	--hover: #e6dcc4;
+	--serif: "Ledger Serif", "Source Serif 4", Charter, "Iowan Old Style", Georgia, serif;
+	--mono: "Ledger Mono", "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+	--gutter: 2rem;
 }
 
 @media (prefers-color-scheme: dark) {
 	:root {
-		--fg: #e6e6e6;
-		--bg: #141414;
-		--muted: #a8a8a8;
-		--line: #3a3a3a;
-		--link: #8ab4f8;
+		color-scheme: dark;
+		--paper: #101417;
+		--paper-2: #171d21;
+		--ink: #ece5d3;
+		--ink-2: #c9c3b4;
+		--pencil: #969a94;
+		--pencil-2: #9fa39c;
+		--rule: #222c31;
+		--rule-2: #2e3a40;
+		--rule-strong: #c9c3b4;
+		--red: #e0806f;
+		--red-rule: #a95a4e;
+		--link: #9dbde6;
+		--hover: #1d252a;
 	}
+}
+
+* {
+	box-sizing: border-box;
+}
+
+html {
+	background: var(--paper);
+	-webkit-text-size-adjust: 100%;
+	text-size-adjust: 100%;
 }
 
 body {
 	margin: 0;
-	background: var(--bg);
-	color: var(--fg);
-	font: 1rem/1.5 system-ui, sans-serif;
-}
-
-main {
-	max-width: 72rem;
-	margin: 0 auto;
-	padding: 2rem 1rem 4rem;
+	background: var(--paper);
+	color: var(--ink);
+	font-family: var(--serif);
+	font-size: 1rem;
+	line-height: 1.5;
+	font-variant-numeric: lining-nums tabular-nums;
+	font-optical-sizing: auto;
+	-webkit-font-smoothing: antialiased;
 }
 
 a {
 	color: var(--link);
+	text-decoration-thickness: 1px;
+	text-underline-offset: 0.18em;
+}
+
+a:hover {
+	text-decoration-thickness: 2px;
+}
+
+:focus-visible {
+	outline: 2px solid var(--link);
+	outline-offset: 2px;
+}
+
+h1,
+h2 {
+	margin: 0;
+	font-weight: 600;
+}
+
+.mono {
+	font-family: var(--mono);
+	font-size: 0.875em;
+}
+
+.p {
+	color: var(--pencil);
+}
+
+.aside {
+	color: var(--pencil);
+	font-size: 0.875em;
+}
+
+.dim {
+	color: var(--pencil);
+	font-weight: 400;
+}
+
+.vh {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	overflow: hidden;
+	clip-path: inset(50%);
+	white-space: nowrap;
+}
+
+/* ------------------------------------------------------------------ masthead */
+
+.masthead,
+main,
+.colophon {
+	max-width: 90rem;
+	margin: 0 auto;
+	padding-inline: var(--gutter);
+}
+
+.masthead {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) minmax(0, 25rem);
+	gap: 1.25rem 4rem;
+	align-items: end;
+	padding-top: 2rem;
+	padding-bottom: 0.75rem;
+}
+
+.title {
+	display: grid;
+	grid-template-columns: auto minmax(0, 1fr);
+	gap: 0 3rem;
+	align-items: end;
+}
+
+.masthead::after {
+	content: "";
+	grid-column: 1 / -1;
+	height: 4px;
+	border-top: 1px solid var(--rule-strong);
+	border-bottom: 1px solid var(--rule-strong);
+	margin-top: 0.25rem;
+}
+
+h1 {
+	font-size: 3rem;
+	line-height: 1;
+	letter-spacing: -0.02em;
+	font-weight: 650;
+}
+
+h1 .sub {
+	display: block;
+	margin-top: 0.5rem;
+	font-size: 1.25rem;
+	line-height: 1.3;
+	letter-spacing: 0;
+	font-weight: 400;
+	font-style: italic;
+	color: var(--ink-2);
+}
+
+.lede {
+	max-width: 40rem;
+	margin: 0;
+	font-size: 1.0625rem;
+	line-height: 1.55;
+	color: var(--ink-2);
+}
+
+.folio {
+	margin: 0;
+	font-size: 0.9375rem;
+}
+
+.folio > div {
+	display: grid;
+	grid-template-columns: 6.5rem minmax(0, 1fr);
+	gap: 1rem;
+	padding: 0.22rem 0;
+	border-bottom: 1px solid var(--rule);
+}
+
+.folio > div:last-child {
+	border-bottom: 0;
+}
+
+.folio dt,
+.tally dt,
+.addr dt {
+	font-variant-caps: all-small-caps;
+	letter-spacing: 0.06em;
+	color: var(--pencil);
+	font-size: 1.0625em;
+}
+
+.folio dd {
+	margin: 0;
+	overflow-wrap: anywhere;
+}
+
+/* ------------------------------------------------------------------ the ledger */
+
+.ledger {
+	padding-top: 1.25rem;
+}
+
+.ledger-head {
+	display: grid;
+	grid-template-columns: minmax(0, auto) minmax(0, 1fr);
+	gap: 0.5rem 3rem;
+	align-items: baseline;
+	margin-bottom: 0.5rem;
+}
+
+.ledger-head h2 {
+	font-size: 1.375rem;
+	white-space: nowrap;
+}
+
+.reading {
+	margin: 0;
+	max-width: 52rem;
+	justify-self: end;
+	font-size: 0.875rem;
+	color: var(--ink-2);
+}
+
+.ink-key {
+	color: var(--ink);
+	font-weight: 600;
 }
 
 .scroll {
 	overflow-x: auto;
 }
 
-table {
+.scroll:focus-visible {
+	outline-offset: 4px;
+}
+
+.ledger table {
+	width: 100%;
+	table-layout: fixed;
 	border-collapse: collapse;
-	font-variant-numeric: tabular-nums;
+	border-bottom: 3px double var(--rule-strong);
 }
 
-th,
-td {
-	padding: 0.25rem 0.75rem;
-	border-bottom: 1px solid var(--line);
-	text-align: right;
-	white-space: nowrap;
-}
-
-th[scope="row"],
-thead th:first-child {
+.ledger th,
+.ledger td {
+	padding: 0.7rem 0.75rem;
+	vertical-align: top;
 	text-align: left;
 }
 
-li {
-	overflow-wrap: anywhere;
+.ledger thead th {
+	font-weight: 400;
+	vertical-align: bottom;
+	padding-top: 0.5rem;
+	padding-bottom: 0.6rem;
+	border-bottom: 3px double var(--rule-strong);
+	background: var(--paper);
+}
+
+.ledger thead th.no,
+.ledger thead th.what,
+.ledger thead th.unit,
+.ledger thead th.note {
+	font-variant-caps: all-small-caps;
+	letter-spacing: 0.06em;
+	color: var(--pencil);
+	font-size: 1.0625rem;
+}
+
+.ledger abbr {
+	text-decoration: none;
+}
+
+th.no,
+td.no {
+	width: 2rem;
+	padding-left: 0;
+	padding-right: 0.25rem;
+}
+
+td.no {
+	color: var(--pencil);
+	font-size: 0.875rem;
+	padding-top: 0.85rem;
+}
+
+th.what {
+	width: 19.5rem;
+}
+
+th.unit,
+td.unit {
+	width: 3.25rem;
+	border-right: 3px double var(--red-rule);
+}
+
+td.unit {
+	padding-top: 0.78rem;
+	font-size: 0.9375rem;
+	color: var(--ink-2);
+	white-space: nowrap;
+}
+
+th.mach,
+td.fig-cell {
+	border-left: 1px solid var(--rule);
+	white-space: nowrap;
+}
+
+th.unit + th.mach,
+td.unit + td.fig-cell {
+	border-left: 0;
+}
+
+th.mach {
+	padding-left: 0.75rem;
+}
+
+th.mach > span {
+	display: block;
+}
+
+.mach .it {
+	font-family: var(--mono);
+	font-weight: 500;
+	font-size: 0.9375rem;
+	color: var(--ink);
+}
+
+.mach .spec {
+	font-size: 0.875rem;
+	color: var(--pencil);
+}
+
+.mach .price {
+	margin-top: 0.15rem;
+	font-size: 1rem;
+	color: var(--ink);
+	font-weight: 600;
+}
+
+.mach .per {
+	font-weight: 400;
+	color: var(--pencil);
+	font-size: 0.875rem;
+}
+
+th.note,
+td.note {
+	width: 10.25rem;
+	border-left: 3px double var(--red-rule);
+}
+
+td.note {
+	padding-right: 0;
+	font-size: 0.8125rem;
+	line-height: 1.4;
+	color: var(--pencil);
+}
+
+td.note span {
+	display: block;
+}
+
+td.note .per-rep {
+	font-style: italic;
+	color: var(--ink-2);
+}
+
+/* section rows: the account headings */
+tr.sec th {
+	padding: 1.4rem 0 0.35rem;
+	border-bottom: 1px solid var(--rule-2);
+	font-weight: 600;
+	font-variant-caps: all-small-caps;
+	letter-spacing: 0.1em;
+	font-size: 1.125rem;
+	color: var(--red);
+}
+
+tr.sec .roman {
+	display: inline-block;
+	min-width: 2rem;
+	font-weight: 400;
+}
+
+tbody:first-of-type tr.sec th {
+	padding-top: 0.9rem;
+}
+
+tr.entry > * {
+	border-bottom: 1px solid var(--rule);
+}
+
+tbody tr.entry:last-child > * {
+	border-bottom: 0;
+}
+
+th.what {
+	font-weight: 400;
+}
+
+tr.entry th.what .label {
+	display: block;
+	font-weight: 600;
+	font-size: 1.0625rem;
+	line-height: 1.3;
+}
+
+tr.entry th.what .desc {
+	display: block;
+	margin-top: 0.2rem;
+	font-size: 0.875rem;
+	line-height: 1.4;
+	color: var(--pencil);
+}
+
+/* the figures */
+td.fig-cell {
+	padding-left: 0.75rem;
+	padding-right: 0.25rem;
+	padding-top: 0.72rem;
+}
+
+td.fig-cell a {
+	display: block;
+	color: var(--ink);
+	text-decoration: none;
+	margin: -0.2rem -0.35rem;
+	padding: 0.2rem 0.35rem;
+	border-radius: 2px;
+}
+
+td.fig-cell a:hover {
+	background: var(--hover);
+}
+
+td.fig-cell a:hover .fig .d,
+td.fig-cell a:hover .fig .w {
+	text-decoration: underline;
+	text-decoration-thickness: 1px;
+	text-underline-offset: 0.2em;
+}
+
+.fig {
+	white-space: nowrap;
+	font-size: 1rem;
+	font-variant-numeric: lining-nums tabular-nums;
+}
+
+.fig .w {
+	display: inline-block;
+	min-width: var(--whole, 3ch);
+	text-align: right;
+	font-weight: 600;
+}
+
+.fig .d {
+	font-weight: 600;
+}
+
+.fig .p {
+	font-size: 0.74em;
+	font-weight: 400;
+	color: var(--pencil);
+}
+
+.fig .p span {
+	margin-left: 0.18em;
+}
+
+.foot-note {
+	margin: 0.75rem 0 0;
+	max-width: 60rem;
+	font-size: 0.875rem;
+	color: var(--pencil);
+}
+
+/* on a wide screen the ledger needs no scroll box, and its column heads stay in view */
+@media (min-width: 1360px) {
+	.ledger .scroll {
+		overflow: visible;
+	}
+	.ledger thead th {
+		position: sticky;
+		top: 0;
+		z-index: 1;
+	}
+}
+
+/* ------------------------------------------------------------------ the back matter */
+
+.api + .back {
+	margin-top: 4rem;
+}
+
+.back {
+	display: grid;
+	grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
+	gap: 4rem;
+	margin-top: 4rem;
+	padding-top: 1.75rem;
+	border-top: 1px solid var(--rule-strong);
+}
+
+.back h2,
+.api h2 {
+	font-size: 1.375rem;
+}
+
+.section-lede {
+	margin: 0.5rem 0 1rem;
+	font-size: 0.9375rem;
+	color: var(--ink-2);
+	max-width: 44rem;
+}
+
+.mtable {
+	width: 100%;
+	border-collapse: collapse;
+	font-size: 0.9375rem;
+	border-bottom: 3px double var(--rule-strong);
+}
+
+.mtable th,
+.mtable td {
+	padding: 0.55rem 0.75rem;
+	text-align: left;
+	vertical-align: top;
+	border-bottom: 1px solid var(--rule);
+}
+
+.mtable th:first-child {
+	padding-left: 0;
+}
+
+.mtable thead th {
+	font-weight: 400;
+	font-variant-caps: all-small-caps;
+	letter-spacing: 0.06em;
+	color: var(--pencil);
+	font-size: 1.0625rem;
+	border-bottom: 3px double var(--rule-strong);
+	vertical-align: bottom;
+	white-space: nowrap;
+}
+
+.mtable tbody th {
+	font-weight: 500;
+	white-space: nowrap;
+}
+
+.mtable .r {
+	text-align: right;
+}
+
+.mtable .num {
+	white-space: nowrap;
+}
+
+.mtable td.num:last-child {
+	border-left: 3px double var(--red-rule);
+	padding-right: 0;
+	padding-left: 1rem;
+	text-align: left;
+	font-size: 1rem;
+	--whole: 1ch;
+}
+
+.mtable .clock {
+	display: block;
+	color: var(--pencil);
+	font-size: 0.8125rem;
+}
+
+.provenance .chain {
+	list-style: none;
+	margin: 0.75rem 0 1.25rem;
+	padding: 0;
+	counter-reset: step;
+}
+
+.chain li {
+	display: grid;
+	grid-template-columns: 5.5rem minmax(0, 1fr);
+	gap: 1rem;
+	padding: 0.55rem 0;
+	border-bottom: 1px solid var(--rule);
+	font-size: 0.9375rem;
+	color: var(--ink-2);
+}
+
+.chain li:first-child {
+	border-top: 3px double var(--rule-strong);
+}
+
+.chain .step {
+	font-weight: 600;
+	color: var(--ink);
+	font-variant-caps: all-small-caps;
+	letter-spacing: 0.08em;
+	font-size: 1.0625rem;
+}
+
+.tally {
+	display: grid;
+	grid-template-columns: repeat(4, minmax(0, 1fr));
+	gap: 0;
+	margin: 0;
+	border-bottom: 3px double var(--rule-strong);
+}
+
+.tally > div {
+	padding: 0.4rem 0.75rem 0.5rem 0;
+	border-bottom: 1px solid var(--rule);
+}
+
+.tally > div.wide {
+	grid-column: 1 / -1;
+	border-bottom: 0;
+	display: flex;
+	gap: 1rem;
+	align-items: baseline;
+}
+
+.tally dd {
+	margin: 0;
+	font-size: 1.375rem;
+	font-weight: 600;
+}
+
+.tally .wide dd {
+	font-size: 1rem;
+	font-weight: 400;
+}
+
+.quote {
+	margin: 1rem 0 0;
+	font-size: 0.875rem;
+	color: var(--pencil);
+	font-style: italic;
+}
+
+/* ------------------------------------------------------------------ for agents */
+
+.api {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr);
+	gap: 4rem;
+	margin-top: 4rem;
+	padding-top: 1.75rem;
+	border-top: 1px solid var(--rule-strong);
+}
+
+.api-text p {
+	margin: 0.6rem 0 0;
+	color: var(--ink-2);
+	font-size: 1rem;
+}
+
+.api-text p.small {
+	font-size: 0.875rem;
+	color: var(--pencil);
+	font-style: italic;
+}
+
+.cmd {
+	display: flex;
+	align-items: center;
+	gap: 0.75rem;
+	padding: 0.6rem 0.75rem 0.6rem 1rem;
+	background: var(--paper-2);
+	border-left: 3px double var(--red-rule);
+	margin-bottom: 0.5rem;
+}
+
+.cmd code {
+	flex: 1;
+	min-width: 0;
+	font-family: var(--mono);
+	font-size: 0.875rem;
+	color: var(--ink);
+	overflow-wrap: break-word;
+}
+
+
+.folio .jump {
+	display: block;
+	color: var(--link);
+	font-size: 0.8125rem;
+}
+
+.cmd .prompt {
+	color: var(--pencil-2);
+	user-select: none;
+}
+
+.copy {
+	flex: none;
+	font: 500 0.75rem/1 var(--mono);
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+	color: var(--ink);
+	background: transparent;
+	border: 1px solid var(--rule-2);
+	border-radius: 2px;
+	padding: 0.4rem 0.55rem;
+	cursor: pointer;
+}
+
+.copy:hover {
+	border-color: var(--ink);
+}
+
+.addr {
+	margin: 1.25rem 0 0;
+	border-top: 3px double var(--rule-strong);
+}
+
+.addr > div {
+	display: grid;
+	grid-template-columns: 11rem minmax(0, 1fr);
+	gap: 1rem;
+	padding: 0.4rem 0;
+	border-bottom: 1px solid var(--rule);
+	font-size: 0.875rem;
+}
+
+.addr dt {
+	font-size: 1rem;
+}
+
+.addr dt .aside {
+	font-variant-caps: normal;
+	letter-spacing: 0;
+	font-family: var(--mono);
+	font-size: 0.75rem;
+	display: block;
+}
+
+.addr dd {
+	margin: 0;
+	font-family: var(--mono);
+	font-size: 0.8125rem;
+	overflow-wrap: break-word;
+}
+
+.addr dd a {
+	color: var(--link);
+}
+
+.addr > div:last-child dd {
+	font-family: var(--serif);
+	font-size: 0.9375rem;
+}
+
+/* ------------------------------------------------------------------ colophon */
+
+.colophon {
+	margin-top: 4rem;
+	padding-top: 1rem;
+	padding-bottom: 3rem;
+	text-align: center;
+	font-size: 0.875rem;
+	color: var(--pencil);
+}
+
+.colophon::before {
+	content: "";
+	display: block;
+	height: 4px;
+	border-top: 1px solid var(--rule-strong);
+	border-bottom: 1px solid var(--rule-strong);
+	margin-bottom: 1.25rem;
+}
+
+.colophon p {
+	margin: 0.25rem 0;
+}
+
+/* ------------------------------------------------------------------ narrower screens */
+
+@media (max-width: 1100px) {
+	.masthead {
+		grid-template-columns: minmax(0, 1fr);
+		align-items: start;
+	}
+	.title {
+		grid-template-columns: minmax(0, 1fr);
+		gap: 0.75rem;
+	}
+	.ledger-head {
+		grid-template-columns: minmax(0, 1fr);
+	}
+	.reading {
+		justify-self: start;
+	}
+	.back,
+	.api {
+		grid-template-columns: minmax(0, 1fr);
+		gap: 3rem;
+	}
+	.ledger table {
+		min-width: 76rem;
+	}
+}
+
+/* a phone: each benchmark becomes an entry, the machines its lines */
+@media (max-width: 760px) {
+	:root {
+		--gutter: 1rem;
+	}
+
+	.masthead {
+		padding-top: 1.25rem;
+		gap: 0.9rem;
+	}
+
+	.title {
+		gap: 0.6rem;
+	}
+
+	h1 {
+		font-size: 2.125rem;
+	}
+
+	h1 .sub {
+		font-size: 1rem;
+		margin-top: 0.3rem;
+	}
+
+	.lede {
+		font-size: 0.9375rem;
+		line-height: 1.5;
+	}
+
+	.folio {
+		font-size: 0.8125rem;
+	}
+
+	.folio > div {
+		grid-template-columns: 4.75rem minmax(0, 1fr);
+		gap: 0.5rem;
+		padding: 0.12rem 0;
+	}
+
+	.ledger {
+		padding-top: 1.25rem;
+	}
+
+	.ledger-head h2 {
+		white-space: normal;
+		font-size: 1.25rem;
+	}
+
+	.ledger-head h2 .sep {
+		display: none;
+	}
+
+	.ledger-head h2 .dim {
+		display: block;
+		font-size: 0.875rem;
+		font-style: italic;
+	}
+
+	.reading {
+		font-size: 0.8125rem;
+		line-height: 1.45;
+	}
+
+	.ledger .scroll {
+		overflow: visible;
+	}
+
+	.ledger table,
+	.ledger tbody,
+	.ledger tr.sec,
+	.ledger tr.sec th {
+		display: block;
+		min-width: 0;
+	}
+
+	.ledger table {
+		border-top: 3px double var(--rule-strong);
+	}
+
+	.ledger thead {
+		position: absolute;
+		width: 1px;
+		height: 1px;
+		overflow: hidden;
+		clip-path: inset(50%);
+	}
+
+	tr.sec th {
+		padding-top: 1.25rem;
+	}
+
+	tbody:first-of-type tr.sec th {
+		padding-top: 0.75rem;
+	}
+
+	.ledger tr.entry {
+		display: grid;
+		grid-template-columns: 2rem minmax(0, 1fr) auto;
+		padding: 0.75rem 0 0.8rem;
+		border-bottom: 1px solid var(--rule-2);
+	}
+
+	tbody tr.entry:last-child {
+		border-bottom: 0;
+	}
+
+	.ledger tr.entry > * {
+		border: 0;
+		padding: 0;
+		width: auto;
+	}
+
+	.ledger td.no {
+		grid-column: 1;
+		grid-row: 1;
+		padding-top: 0.15rem;
+	}
+
+	.ledger th.what {
+		grid-column: 2;
+		grid-row: 1;
+		padding-right: 0.75rem;
+	}
+
+	.ledger td.unit {
+		grid-column: 3;
+		grid-row: 1;
+		padding-top: 0.1rem;
+		font-size: 0.875rem;
+		color: var(--pencil);
+	}
+
+	.ledger td.fig-cell {
+		grid-column: 2 / 4;
+		display: grid;
+		grid-template-columns: 7.25rem minmax(0, 1fr);
+		align-items: stretch;
+		padding: 0;
+		border-bottom: 1px solid var(--rule);
+	}
+
+	.ledger td.unit + td.fig-cell {
+		margin-top: 0.55rem;
+		border-top: 1px solid var(--rule-2);
+	}
+
+	.ledger td.fig-cell::before {
+		content: attr(data-m);
+		font-family: var(--mono);
+		font-size: 0.8125rem;
+		line-height: 1.5rem;
+		padding: 0.25rem 0 0.2rem;
+		color: var(--pencil);
+	}
+
+	.ledger td.fig-cell a {
+		margin: 0;
+		padding: 0.25rem 0 0.2rem 0.5rem;
+		line-height: 1.5rem;
+		border-left: 3px double var(--red-rule);
+		border-radius: 0;
+	}
+
+	.fig {
+		font-size: 1rem;
+	}
+
+	.ledger td.note {
+		grid-column: 2 / 4;
+		margin-top: 0.5rem;
+		font-size: 0.8125rem;
+	}
+
+	.ledger td.note span {
+		display: inline;
+	}
+
+	.ledger td.note .per-rep::after {
+		content: " ";
+	}
+
+	.back,
+	.api {
+		margin-top: 3rem;
+		gap: 2.5rem;
+	}
+
+	.mtable {
+		min-width: 40rem;
+	}
+
+	.tally {
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+	}
+
+	.tally > div.wide {
+		flex-direction: column;
+		gap: 0;
+	}
+
+	.chain li {
+		grid-template-columns: minmax(0, 1fr);
+		gap: 0.1rem;
+	}
+
+	.addr > div {
+		grid-template-columns: minmax(0, 1fr);
+		gap: 0.1rem;
+	}
+
+	.cmd {
+		padding-left: 0.75rem;
+	}
+
+	.cmd code {
+		font-size: 0.8125rem;
+	}
 }
