@@ -804,7 +804,29 @@ h1 {
 .better::before {
 	color: var(--accent-ink);
 	font-weight: 700;
-	margin-right: 4px;
+}
+.key .better {
+	margin: 0 2px 0 4px;
+}
+/* a machine's short name, for a phone's table, where each figure has a line of its own */
+.cell-code,
+.th-code {
+	display: none !important;
+}
+.fig-sub {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0 10px;
+	align-items: baseline;
+	margin-top: 4px;
+}
+.fig-sub .spread,
+.fig-sub .runs {
+	margin-top: 0;
+}
+.key-dir {
+	display: block;
+	margin-top: 4px;
 }
 .better.up::before {
 	content: "↑";
@@ -1439,6 +1461,30 @@ h1 {
 .method-list {
 	grid-column: 2;
 	grid-row: 1 / span 2;
+	list-style: none;
+	margin: 0;
+	padding: 0;
+}
+.method-list li {
+	display: flex;
+	justify-content: space-between;
+	align-items: baseline;
+	gap: 16px;
+	padding: 14px 0;
+	border-top: 1px solid var(--rule-2);
+}
+.method-list li:last-child {
+	border-bottom: 1px solid var(--rule-2);
+}
+.method-list li code {
+	font-size: 16px;
+	font-weight: 600;
+	color: var(--ink);
+}
+.method-list li span {
+	font-size: 13px;
+	color: var(--muted);
+	text-align: right;
 }
 .method-list details {
 	border-top: 1px solid var(--rule-2);
@@ -1496,14 +1542,26 @@ summary::-webkit-details-marker {
 	padding-top: 14px;
 	border-top: 1px solid var(--rule);
 }
+.about p {
+	margin-top: 6px;
+}
 .about-label {
 	display: block;
+	cursor: pointer;
+	list-style: none;
 	font-family: var(--mono);
 	font-size: 11.5px;
 	letter-spacing: 0.06em;
 	text-transform: uppercase;
 	color: var(--muted);
 	margin-bottom: 4px;
+}
+.about-label::before {
+	content: "+ ";
+	color: var(--accent);
+}
+.about[open] .about-label::before {
+	content: "− ";
 }
 
 /* ------------------------------------------------------------ footer */
@@ -1838,11 +1896,134 @@ summary::-webkit-details-marker {
 		grid-column: 1;
 		grid-row: auto;
 	}
-	.table-box {
+	/* the table: one block per benchmark, a line per machine */
+	.headline,
+	.headline thead,
+	.headline tbody,
+	.headline tr,
+	.headline th,
+	.headline td {
+		display: block;
+		min-width: 0;
+	}
+	.headline colgroup,
+	.headline thead .th-bench {
 		display: none;
 	}
-	.cards {
+	.headline thead tr {
+		padding: 14px 0 6px;
+	}
+	.headline thead th {
+		position: static;
+		border: 0;
+		padding: 3px 0;
+	}
+	.th-machine {
+		display: grid !important;
+		grid-template-columns: 3em minmax(0, 1fr) auto auto;
+		align-items: baseline;
+		column-gap: 10px;
+	}
+	.th-machine > span {
 		display: block;
+	}
+	.th-code {
+		display: block !important;
+		font-family: var(--mono);
+		font-size: 12.5px;
+		font-weight: 650;
+		color: var(--ink);
+	}
+	.th-machine.is-asked .th-code {
+		color: var(--accent-ink);
+	}
+	.th-type {
+		font-size: 13px;
+		font-weight: 400;
+		color: var(--ink-2);
+	}
+	.th-spec,
+	.th-price {
+		margin: 0;
+	}
+	.th-price {
+		min-width: 6.5em;
+		text-align: right;
+	}
+	.headline tbody {
+		scroll-margin-top: 56px;
+	}
+	.section-row > * {
+		padding: 28px 0 8px;
+	}
+	.group-note td {
+		padding: 12px 0;
+	}
+	.headline tbody tr.row {
+		padding: 16px 0 10px;
+		border-bottom: 1px solid var(--rule-2);
+	}
+	.headline tbody tr.row > * {
+		border: 0;
+	}
+	.headline tbody tr:not(.section-row):hover > * {
+		background: none;
+	}
+	.bench {
+		padding: 0 0 8px;
+	}
+	.bench-label {
+		font-size: 17px;
+	}
+	.fig-cell {
+		padding: 0;
+		white-space: normal;
+	}
+	.fig-in {
+		display: grid;
+		grid-template-columns: 3em 11.5em minmax(36px, 1fr);
+		grid-template-areas: "code num bar" ". sub sub";
+		align-items: center;
+		column-gap: 10px;
+		padding: 5px 8px;
+		margin: 0 -8px;
+		border-top: 1px solid var(--rule);
+	}
+	.fig-cell.is-asked .fig-in {
+		border-top-color: transparent;
+	}
+	.cell-code {
+		display: block !important;
+		grid-area: code;
+		font-family: var(--mono);
+		font-size: 12px;
+		color: var(--muted);
+	}
+	.is-asked .cell-code {
+		color: var(--accent-ink);
+		font-weight: 650;
+	}
+	.fig-num {
+		grid-area: num;
+	}
+	.fig-in .bar {
+		grid-area: bar;
+		margin-top: 0;
+	}
+	.fig-sub {
+		grid-area: sub;
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0 12px;
+		align-items: baseline;
+	}
+	.fig-sub .spread,
+	.fig-sub .runs {
+		margin-top: 0;
+		font-size: 11px;
+	}
+	.x {
+		font-size: 13.5px;
 	}
 	.facts {
 		grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2083,12 +2264,6 @@ summary::-webkit-details-marker {
 		border: 1px solid var(--rule-2);
 		border-radius: 999px;
 		background: var(--card);
-	}
-	.card-first {
-		scroll-margin-top: 56px;
-	}
-	.newest-label {
-		display: none;
 	}
 	.newest-caption {
 		display: block;
