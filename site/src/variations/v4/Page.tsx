@@ -226,7 +226,6 @@ export default function Page() {
 	// The index is the hero's command; here, the route from one board figure to its evidence first.
 	const api: { note: string; href: string; schema?: string }[] = [
 		{ note: `${sampleCode} · ${sample.instanceType}`, href: sample.url, schema: links.schema.series },
-		{ note: `${sampleCode} · one Run's evidence`, href: point.evidence },
 		{ note: `all ${seriesCount} Series`, href: links.seriesList, schema: links.schema.seriesList },
 	];
 	// The divisor of the worked example, in the row's own words: "10,000 critical sections".
@@ -291,14 +290,13 @@ export default function Page() {
 
 							<div class="rounds">
 								<span class="p-label" id="rounds-label">
-									Rounds
+									Daily, UTC
 								</span>
+								{/* the schedule; the round the newest Run belongs to is lit, and the clock above gives its exact minute */}
 								<ol class="round-list" aria-labelledby="rounds-label">
 									{ROUNDS.map((t, i) => (
 										<li class={i === roundOfNewest ? "round on" : "round"} aria-current={i === roundOfNewest ? "true" : undefined}>
 											{t}
-											{/* the lit round names the Run the clock shows, so the two times read as one fact */}
-											{i === roundOfNewest && <span class="round-at">{newest.minute}</span>}
 										</li>
 									))}
 								</ol>
@@ -468,7 +466,7 @@ export default function Page() {
 						<div class="api-side">
 							<p class="fold-l">
 								<code>
-									<span class="badge">{sampleCode}</span> · <a href={sample.url}>{sample.instanceType}</a> · one Run
+									<span class="badge">{sampleCode}</span> {sampleRow?.choice.label} · <a href={sample.url}>{sample.instanceType}</a>
 								</code>
 							</p>
 							<pre class="resp" tabindex="0">
