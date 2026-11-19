@@ -106,6 +106,39 @@ describe("the runs workflow", () => {
 		expect(steps.indexOf(alarm)).toBeGreaterThan(steps.indexOf(page));
 	});
 
+	test("builds the data API's files after the page when both Methods succeeded, checks them, and keeps only a checked tree, as the artifact api, uploading nothing else", () => {
+		const derive = steps.find((step) => step.id === "derive") as Step;
+		const pageUpload = steps.find((step) => step.uses?.startsWith("actions/upload-artifact@") && step.with?.name === "page") as Step;
+		const build = steps.find((step) => step.run?.includes("scripts/build-api.ts")) as Step;
+		const check = steps.find((step) => step.run?.includes("scripts/check-api.ts")) as Step;
+		const upload = steps.find((step) => step.uses?.startsWith("actions/upload-artifact@") && step.with?.name === "api") as Step;
+		const alarm = steps.find((step) => step.run?.includes("scripts/alarm.ts")) as Step;
+		for (const script of ["build-api", "check-api"]) expect(existsSync(join(ROOT, "scripts", `${script}.ts`))).toBe(true);
+		const order = [derive, pageUpload, build, check, upload, alarm].map((step) => steps.indexOf(step));
+		expect(order.every((position) => position >= 0)).toBe(true);
+		expect([...order].sort((a, b) => a - b)).toEqual(order);
+
+		const command = (step: Step): string => (step.run as string).replace(/\s+/g, " ").trim();
+		expect(command(build)).toBe(
+			"bun scripts/build-api.ts --derivations page/derivations.json --requests-derivations page/requests-derivations.json --runs ledgermath-runs --out api",
+		);
+		expect(command(check)).toBe(
+			"bun scripts/check-api.ts --tree api --derivations page/derivations.json --requests-derivations page/requests-derivations.json --runs ledgermath-runs",
+		);
+		expect(build.id).toBe("api");
+		expect(build.if).toBe("${{ !cancelled() && steps.derive.outcome == 'success' }}");
+		expect(check.id).toBe("api-check");
+		expect(check.if).toBe("${{ !cancelled() && steps.api.outcome == 'success' }}");
+		expect(upload.if).toBe("${{ !cancelled() && steps.api-check.outcome == 'success' }}");
+		expect(upload.with).toEqual({ name: "api", path: "api/", "if-no-files-found": "error" });
+		// The same pinned action as the page's artifact.
+		expect(upload.uses).toBe(pageUpload.uses as string);
+		// Nothing is served or published from this workflow: no copy to a bucket, no deploy, no new permission.
+		const text = readFileSync(join(ROOT, ".github", "workflows", "runs.yml"), "utf8");
+		expect(text).not.toMatch(/aws s3 (cp|sync)|s3:\/\/|sst deploy|vercel/i);
+		expect(workflow.permissions).toEqual({ contents: "read", "id-token": "write", issues: "write" });
+	});
+
 	test("tells the alarm whether this pass's copy and push succeeded", () => {
 		expect(steps.find((step) => step.run?.includes("scripts/copy-runs.ts"))?.id).toBe("copy");
 		expect(steps.find((step) => step.run?.includes("git push"))?.id).toBe("push");

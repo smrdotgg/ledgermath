@@ -2,7 +2,8 @@
 # from the scheduled -runs stage's bucket into smrdotgg/ledgermath-runs and pushes them,
 # derives every Series with Method series v1 and every Series of requests with
 # Method requests v1, builds the page, keeps the page and both files of
-# Derivations as an artifact, and opens (or comments on) one issue when a
+# Derivations as an artifact, builds and checks the data API's static files
+# and keeps them as a second artifact, and opens (or comments on) one issue when a
 # watched Series has had no Run for 48 hours, or the newest price file
 # (prices.yml) is more than 48 hours old.
 #
@@ -33,7 +34,7 @@ concurrency:
 
 jobs:
   runs:
-    name: copy the Runs, derive, build the page, check for stale Series
+    name: copy the Runs, derive, build the page and the data API, check for stale Series
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
@@ -124,6 +125,35 @@ jobs:
         with:
           name: page
           path: page/
+          if-no-files-found: error
+
+      # The data API's tree of static files (ADR-0030), cut from both files of
+      # Derivations and the Runs repository's price files, laid out as it will
+      # be served. Only when both Methods succeeded, so the tree never lacks a
+      # Method's part. The check reads back what was written: every file
+      # against its schema, every link, every Series both ways, every Run file
+      # a point cites with its sha256. Only a checked tree is kept, as the
+      # artifact api; nothing is uploaded anywhere else.
+      - name: Build the data API's files
+        id: api
+        if: ${{ !cancelled() && steps.derive.outcome == 'success' }}
+        run: >-
+          bun scripts/build-api.ts --derivations page/derivations.json
+          --requests-derivations page/requests-derivations.json --runs ledgermath-runs --out api
+
+      - name: Check the data API's files
+        id: api-check
+        if: ${{ !cancelled() && steps.api.outcome == 'success' }}
+        run: >-
+          bun scripts/check-api.ts --tree api --derivations page/derivations.json
+          --requests-derivations page/requests-derivations.json --runs ledgermath-runs
+
+      - name: Keep the data API's files
+        if: ${{ !cancelled() && steps.api-check.outcome == 'success' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: api
+          path: api/
           if-no-files-found: error
 
       # Even when the copy, the Method or the page failed. When the copy or

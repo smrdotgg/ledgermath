@@ -1,0 +1,156 @@
+{
+  "schema": "ledgermath.api.series-list/1",
+  "schema_url": "https://api.ledgermath.com/v1/schemas/series-list.schema.json",
+  "index": "https://api.ledgermath.com/v1/index.json",
+  "url": "https://api.ledgermath.com/v1/series.json",
+  "count": 2,
+  "newest_run_started_at": "2026-11-15T04:12:00.000000000Z",
+  "methods": {
+    "series_v1": {
+      "method": {
+        "name": "series",
+        "version": 1
+      },
+      "definitions": {
+        "bytes_per_second": "Per Run, where the benchmark observed bytes_per_repetition: bytes_per_repetition × 10^9 / the Run's time per repetition in nanoseconds.",
+        "counted": "A Run counts when its binary exited 0, every stdout line is an event that matches the events schema, and the stream obeys every order rule scripts/check-events.py checks: started first and once (not a --quick stream), finished last and once, samples numbered from 0, each closed by its own sample_ended before the next starts and never ending before it starts, observed keys once, exactly one verified, and as many counted samples as the Run asked for. Any other Run is failed: shown, with the reasons, and in no percentile.",
+        "differed": "For each pair of consecutive Runs in a Series, every split fact and every dump section of the before-dump whose hash changed, split on or not, with the top-level keys that changed for the sections that are read. Each changed section is marked: it splits, its change lies only in what is left out, or it is not split on.",
+        "groups": "Within a Series, the Runs whose split facts are all equal make one group. Groups are lettered in the order each first appears, and may interleave in time. A dump section is compared whole, apart from the per-boot values listed as left out; a fact read from such a section is canonical-json-sha256:<hex>, the sha256 of what remains as JSON with keys sorted and no whitespace (lscpu's output is re-written that way too).",
+        "percentiles": "5th, 50th and 95th percentiles across the counted Runs of a Series, and of each group, by linear interpolation between closest ranks (R type 7): with n values sorted, h = (n − 1) × p / 100 and the percentile is x[⌊h⌋] + (h − ⌊h⌋) × (x[⌊h⌋+1] − x[⌊h⌋]). Each number's percentiles are taken over that number's values, so the bytes-per-second percentiles are not the time percentiles inverted.",
+        "series": "The Runs that share a benchmark, params, build, instance type and zone ID.",
+        "time_per_repetition": "Per Run: for each counted sample (warmup samples left out), sample_ended.t minus sample_started.t, divided by the sample's repetitions; the Run's number is the median of those (the mean of the two middle values when there is an even number of samples)."
+      },
+      "split_on": [
+        {"fact":"binary","what":"binary.blob: the bytes that ran"},
+        {"fact":"runner","what":"runner: the manifest of runner/ that launched the binary"},
+        {"fact":"samples","what":"samples: LM_SAMPLES"},
+        {"fact":"image","what":"provider.image_id"},
+        {"fact":"cpuid","what":"dump section cpuid: the raw cpuid leaves of every CPU, without what is left out","section":"cpuid"},
+        {"fact":"lscpu","what":"dump section lscpu, without what is left out","section":"lscpu"},
+        {"fact":"sys_cpu","what":"dump section sys_cpu: topology, caches, vulnerabilities, microcode, cpufreq, cpuidle","section":"sys_cpu"},
+        {"fact":"kernel","what":"dump section kernel, without what is left out","section":"kernel"},
+        {"fact":"process","what":"dump section process: limits, cgroup, allowed CPUs","section":"process"},
+        {"fact":"packages","what":"dump section packages: every installed package and version","section":"packages"}
+      ],
+      "left_out": [
+        {"section":"cpuid","what":"the lines of hypervisor leaf 0x40000010, one per CPU","why":"its eax is the TSC frequency in kHz as calibrated for the boot: 2,899,996 (0x002c401c) on the c6i.8xlarge boot of 2026-11-10 23:36 UTC, 2,899,978 (0x002c400a) on the one of 2026-11-11 00:23 UTC; the other 2,208 lines of the two dumps are identical"},
+        {"section":"lscpu","what":"the BogoMIPS field","why":"the kernel's delay-loop calibration at boot, from the same TSC frequency: 5799.99 and 5799.95 on those two boots"},
+        {"section":"kernel","what":"the \"$ uname -a\" entry","why":"it holds the host name, which comes from the private address and is new on every launch"}
+      ],
+      "not_split_on": [
+        {"fact":"source_commit, source","what":"they change with every commit, whether or not the benchmark did"},
+        {"fact":"cpuinfo","what":"changes on every read (each CPU's current MHz)"},
+        {"fact":"memory","what":"changes on every read (meminfo, loadavg, uptime, pressure)"},
+        {"fact":"block_stat","what":"changes on every read (each block device's I/O counters, /sys/block/*/stat)"},
+        {"fact":"nvme_stats","what":"changes on every read (each Amazon NVMe disk's I/O counters and latency histograms, nvme amzn stats)"},
+        {"fact":"net_counters","what":"changes on every read (the default route's interface's own statistics, ethtool -S, with ENA's allowance-exceeded counters; /proc/net/dev, /proc/net/snmp, /proc/net/netstat)"},
+        {"fact":"network","what":"the routes, MTUs, TCP and socket settings, resolver files and network driver; added for the Service benchmarks after version 1's facts were chosen, and left to the Method that reads their requests"},
+        {"fact":"devices","what":"holds the root volume's serial, which is new on every launch"},
+        {"fact":"provider","what":"holds the instance ID, private address and launch time, new on every launch; its instance type and zone ID make the Series, and its image is split on"},
+        {"fact":"provision","what":"the box script's record of preparing the disks at boot: every command with its start and end times, new on every boot, and what it printed, which names the disks by serial"},
+        {"fact":"ec2_instance_type","what":"the EC2 API's catalog record of the instance type, taken once per boot: the instance type already makes the Series, AWS may revise the record without the machine changing, and a failed call records its error instead"},
+        {"fact":"ec2_volumes","what":"names the instance's volumes and holds their creation times and status, new on every launch"},
+        {"fact":"ec2_instance","what":"names the instance and holds its addresses and launch time, new on every launch"},
+        {"fact":"ec2_route_tables, ec2_vpc_endpoints","what":"the EC2 API's record of the path out of the box's subnet, taken once per boot: the route tables and the VPC's endpoints, shared by every box of the stage; a failed call records its error instead"}
+      ],
+      "runs_read": 7,
+      "unreadable": [
+        {"id":"not-a-run","path":"runs/2026/11/14/not-a-run.json","sha256":"d47e8fb15cb902d721f325555ccae430bb1580a5c6a92a4f5046a3919fc27347","reason":"/ must have required property 'events'; / must have required property 'stdout_bytes'; / must have required property 'stdout_lines'; / must match exactly one schema in oneOf; / must have required property 'boot'; / must have required property 'started_at'; / must have required property 'ended_at'; / must have required property 'benchmark'; / must have required property 'params'; / must have required property 'samples'; / must have required property 'source_commit'; / must have required property 'source'; / must have required property 'binary'; / must have required property 'provider'; / must have required property 'environment'; / must have required property 'runner'; / must have required property 'exit'; / must have required property 'stdout'; / must have required property 'stderr'; /id must match pattern \"^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$\"","evidence":"https://api.ledgermath.com/runs/2026/11/14/not-a-run.json"}
+      ],
+      "sections": [
+        {"section":"cpuid","runs":6,"changed_within_run":0,"boot_pairs":2,"changed_within_boot":0,"series_pairs":4,"changed_between_runs":2,"split_on":"cpuid"},
+        {"section":"cpuinfo","runs":6,"changed_within_run":6,"boot_pairs":2,"changed_within_boot":2,"series_pairs":4,"changed_between_runs":4,"split_on":null},
+        {"section":"devices","runs":6,"changed_within_run":0,"boot_pairs":2,"changed_within_boot":0,"series_pairs":4,"changed_between_runs":4,"split_on":null},
+        {"section":"ec2_route_tables","runs":2,"changed_within_run":0,"boot_pairs":2,"changed_within_boot":2,"series_pairs":1,"changed_between_runs":0,"split_on":null},
+        {"section":"ec2_vpc_endpoints","runs":2,"changed_within_run":0,"boot_pairs":2,"changed_within_boot":2,"series_pairs":1,"changed_between_runs":0,"split_on":null},
+        {"section":"kernel","runs":6,"changed_within_run":0,"boot_pairs":2,"changed_within_boot":0,"series_pairs":4,"changed_between_runs":4,"split_on":"kernel"},
+        {"section":"lscpu","runs":6,"changed_within_run":0,"boot_pairs":2,"changed_within_boot":0,"series_pairs":4,"changed_between_runs":2,"split_on":"lscpu"},
+        {"section":"memory","runs":6,"changed_within_run":6,"boot_pairs":2,"changed_within_boot":2,"series_pairs":4,"changed_between_runs":4,"split_on":null},
+        {"section":"net_counters","runs":2,"changed_within_run":2,"boot_pairs":2,"changed_within_boot":2,"series_pairs":1,"changed_between_runs":1,"split_on":null},
+        {"section":"network","runs":2,"changed_within_run":0,"boot_pairs":2,"changed_within_boot":2,"series_pairs":1,"changed_between_runs":0,"split_on":null},
+        {"section":"packages","runs":6,"changed_within_run":0,"boot_pairs":2,"changed_within_boot":0,"series_pairs":4,"changed_between_runs":0,"split_on":"packages"},
+        {"section":"process","runs":6,"changed_within_run":0,"boot_pairs":2,"changed_within_boot":0,"series_pairs":4,"changed_between_runs":0,"split_on":"process"},
+        {"section":"provider","runs":6,"changed_within_run":0,"boot_pairs":2,"changed_within_boot":0,"series_pairs":4,"changed_between_runs":4,"split_on":null},
+        {"section":"sys_cpu","runs":6,"changed_within_run":0,"boot_pairs":2,"changed_within_boot":0,"series_pairs":4,"changed_between_runs":2,"split_on":"sys_cpu"}
+      ]
+    },
+    "requests_v1": {
+      "method": {
+        "name": "requests",
+        "version": 1
+      },
+      "definitions": {
+        "breakdown": "The pooled figures again for the requests that had each value of a fact each request records of its connection or of itself (see request_facts), for every fact that took more than one value among the pool's succeeded requests.",
+        "counted": "A Run counts when its binary exited 0 or 4 (4: the Run completed and holds at least one failed request), every stdout line is an event that matches the events schema and the stream obeys every order rule of scripts/check-events.py, the stream has as many counted samples as the Run asked for (fewer: the Run was cut short), every timestamp is a whole number a JavaScript number holds exactly (at most 2^53 − 1), every request in it reads as the binary's README says (every event naming a request names its sample's; a complete response's events in their order on one open connection, each phase at least 0, sample_ended at the clock read that ended the request; a failed request's events, before its request_failed, the start of that order up to where its phase says it got), and an exit 0 has no failed request, no failed warmup request and no failed setup of a kept connection. Any other Run is failed: shown, with the reasons, and in no figure. A counted Run's failed requests are counted; its succeeded requests are in the figures.",
+        "failed": "A counted request that holds a request_failed (counted by its phase and error) or whose status is not 2xx (phase response, kind status_<code>), or one of whose lines the binary withheld (phase record, kind line_withheld_<event>). Counted per Run and pooled; never in a time. The warmup request's failure and failed reused-connection setups (connection_failed, outside any sample) are counted apart.",
+        "groups": "Method series v1's groups: within a Series, the Runs whose split facts are all equal, lettered in the order each first appears; the same letters series v1 gives the same Runs.",
+        "histogram": "Each phase's times are tallied in fixed bins, the same for every Run, so tallies add: below 128 ns every nanosecond is a bin of its own; from 128 ns each doubling [2^e, 2^(e+1)) is cut into 64 bins of width 2^(e−6): bin = 64 × (e − 5) + ⌊ns / 2^(e−6)⌋ − 64, with e = ⌊log2 ns⌋. A bin is at most 1/64 as wide as the least time in it.",
+        "per_run": "For each phase of a counted Run: the count of its succeeded requests, the least and greatest time, and each percentile the count supports, exactly, by linear interpolation between closest ranks (R type 7): with n times sorted and h = (n − 1) × q / 1000 for the q-th per mille, x[⌊h⌋] + (h − ⌊h⌋) × (x[⌊h⌋+1] − x[⌊h⌋]).",
+        "pooled": "Across the counted Runs of a Series, and of each group: the Runs' tallies summed. The count, least and greatest time are exact; each percentile is read from the sum by the same rule as per Run, with each ranked time taken as the middle of its bin (the time itself in a bin of width 1), held between the least and greatest, so it is within 0.78% of the exact percentile of the same requests. A Series with one Run therefore pools to figures within that of the Run's own.",
+        "recorded": "What a Series' Runs record beside their requests, for a reader: the box's Region (provider.region), the Service each Run names and its inputs that are not secret, as delivered (Run.service), and in each pool every value each request fact took. Words, not figures, and nothing about the path between the box and the server, which each Run's environment dumps record (network, ec2_route_tables, ec2_vpc_endpoints).",
+        "request": "One counted sample of the stream (warmup false): the events from its sample_started to its sample_ended. Its phases are differences of event timestamps, in nanoseconds of the Run's clock (see phases). A request over a reused connection has only send, first_byte, headers, body and total.",
+        "series": "Method series v1's Series: the Runs that share a benchmark, params, build, instance type and zone ID. A Series is this Method's when any of its Runs' streams holds a request (a response_ended or request_failed event carrying `request`); every Run of it is then shown, counted or not.",
+        "succeeded": "A request whose response status (response_headers.status) is 2xx and whose body matched the Fixture and S3's checksum (response_ended.fixture and .s3_checksum both \"match\"). Only succeeded requests are in a time.",
+        "support": "The q-th per-mille percentile of n requests is reported only when n × (1000 − q) ≥ 1000: at least one request is expected above it. So the 50th needs 2, 90th needs 10, 95th needs 20, 99th needs 100, 99.9th needs 1000 requests. Beside each percentile reported, at_or_above is how many requests are ranked at or above it: n − ⌈h⌉ (ties counted by rank). For a 99th percentile of 200 requests that is 2.",
+        "through": "On each Run of a Series, the pooled figures (without histograms) of the counted Runs that started at or before it, in the Series' time order; and of its group's, when the Series has more than one group. A citation of the Series as of a Run's start is checked against these."
+      },
+      "phases": [
+        {"phase":"dns","name":"name lookup","interval":"name_resolved.t − sample_started.t (new connection only)"},
+        {"phase":"connect","name":"connect (TCP)","interval":"connection_opened.t − name_resolved.t (new connection only)"},
+        {"phase":"tls","name":"TLS handshake","interval":"connection_secured.t − connection_opened.t (new connection only)"},
+        {"phase":"send","name":"send the request","interval":"request_sent.t − connection_secured.t; over a reused connection, request_sent.t − sample_started.t"},
+        {"phase":"first_byte","name":"wait for the first byte","interval":"first_byte.t − request_sent.t"},
+        {"phase":"headers","name":"headers","interval":"response_headers.t − first_byte.t"},
+        {"phase":"body","name":"body","interval":"response_ended.t − response_headers.t"},
+        {"phase":"total","name":"whole request","interval":"sample_ended.t − sample_started.t"}
+      ],
+      "percentiles": [
+        {"name":"p50","per_mille":500,"least_requests":2},
+        {"name":"p90","per_mille":900,"least_requests":10},
+        {"name":"p95","per_mille":950,"least_requests":20},
+        {"name":"p99","per_mille":990,"least_requests":100},
+        {"name":"p99.9","per_mille":999,"least_requests":1000}
+      ],
+      "histogram": {
+        "bins_per_doubling": 64,
+        "exact_below_ns": 128,
+        "precision": 0.0078125,
+        "definition": "Each phase's times are tallied in fixed bins, the same for every Run, so tallies add: below 128 ns every nanosecond is a bin of its own; from 128 ns each doubling [2^e, 2^(e+1)) is cut into 64 bins of width 2^(e−6): bin = 64 × (e − 5) + ⌊ns / 2^(e−6)⌋ − 64, with e = ⌊log2 ns⌋. A bin is at most 1/64 as wide as the least time in it."
+      },
+      "request_facts": [
+        {"fact":"address_block","what":"the server's address block: the /16 of the IPv4 address connected to (connection_opened.address), written a.b.0.0/16; any other address whole"},
+        {"fact":"cipher","what":"the TLS cipher suite negotiated (connection_secured.cipher)"},
+        {"fact":"tls_version","what":"the TLS version negotiated (connection_secured.tls)"},
+        {"fact":"tls_group","what":"the key-exchange group negotiated (connection_secured.group)"},
+        {"fact":"method","what":"the request's method, as sent (request_sent.method)"},
+        {"fact":"target","what":"the request's target, as sent (request_sent.target)"},
+        {"fact":"signing","what":"how the request was signed, as sent: request_sent.signing.algorithm, or unsigned when the request carries no signing"}
+      ],
+      "split_on": [
+        {"fact":"binary","what":"binary.blob: the bytes that ran"},
+        {"fact":"runner","what":"runner: the manifest of runner/ that launched the binary"},
+        {"fact":"samples","what":"samples: LM_SAMPLES"},
+        {"fact":"image","what":"provider.image_id"},
+        {"fact":"cpuid","what":"dump section cpuid: the raw cpuid leaves of every CPU, without what is left out","section":"cpuid"},
+        {"fact":"lscpu","what":"dump section lscpu, without what is left out","section":"lscpu"},
+        {"fact":"sys_cpu","what":"dump section sys_cpu: topology, caches, vulnerabilities, microcode, cpufreq, cpuidle","section":"sys_cpu"},
+        {"fact":"kernel","what":"dump section kernel, without what is left out","section":"kernel"},
+        {"fact":"process","what":"dump section process: limits, cgroup, allowed CPUs","section":"process"},
+        {"fact":"packages","what":"dump section packages: every installed package and version","section":"packages"}
+      ],
+      "left_out": [
+        {"section":"cpuid","what":"the lines of hypervisor leaf 0x40000010, one per CPU","why":"its eax is the TSC frequency in kHz as calibrated for the boot: 2,899,996 (0x002c401c) on the c6i.8xlarge boot of 2026-11-10 23:36 UTC, 2,899,978 (0x002c400a) on the one of 2026-11-11 00:23 UTC; the other 2,208 lines of the two dumps are identical"},
+        {"section":"lscpu","what":"the BogoMIPS field","why":"the kernel's delay-loop calibration at boot, from the same TSC frequency: 5799.99 and 5799.95 on those two boots"},
+        {"section":"kernel","what":"the \"$ uname -a\" entry","why":"it holds the host name, which comes from the private address and is new on every launch"}
+      ],
+      "runs_read": 7,
+      "unreadable": [
+        {"id":"not-a-run","path":"runs/2026/11/14/not-a-run.json","sha256":"d47e8fb15cb902d721f325555ccae430bb1580a5c6a92a4f5046a3919fc27347","reason":"/ must have required property 'events'; / must have required property 'stdout_bytes'; / must have required property 'stdout_lines'; / must match exactly one schema in oneOf; / must have required property 'boot'; / must have required property 'started_at'; / must have required property 'ended_at'; / must have required property 'benchmark'; / must have required property 'params'; / must have required property 'samples'; / must have required property 'source_commit'; / must have required property 'source'; / must have required property 'binary'; / must have required property 'provider'; / must have required property 'environment'; / must have required property 'runner'; / must have required property 'exit'; / must have required property 'stdout'; / must have required property 'stderr'; /id must match pattern \"^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$\"","evidence":"https://api.ledgermath.com/runs/2026/11/14/not-a-run.json"}
+      ]
+    }
+  },
+  "series": [
+    {"id":"b9f4e4d9ea21","url":"https://api.ledgermath.com/v1/series/b9f4e4d9ea21.json","benchmark":"http_get","params":{"auth":"sigv4","budget_seconds":240,"ca_file":"/etc/pki/tls/certs/ca-bundle.crt","connection":"new","gap_mean_ms":200,"key":"http_get/v1/4096","object_bytes":4096,"resolv_conf":"/etc/resolv.conf","timeout_ms":10000},"build":"static","instance_type":"c6i.8xlarge","availability_zone_id":"use2-az3","runs":2,"oldest_run_started_at":"2026-11-12T22:20:00.000000000Z","newest_run_started_at":"2026-11-13T04:20:00.000000000Z","derivations":{"series_v1":{"method":{"name":"series","version":1},"counted_runs":1,"failed_runs":1,"groups":1,"percentiles":{"time_per_repetition_ns":{"count":1,"p5":20075000,"p50":20075000,"p95":20075000},"bytes_per_second":null}},"requests_v1":{"method":{"name":"requests","version":1},"counted_runs":2,"failed_runs":0,"groups":1,"pool":{"runs":2,"requests":7,"failed":1,"phases":{"dns":{"count":7,"min":200000,"max":200000,"p50":200000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":4}},"connect":{"count":7,"min":900000,"max":900000,"p50":900000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":4}},"tls":{"count":7,"min":2200000,"max":2200000,"p50":2200000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":4}},"send":{"count":7,"min":10000,"max":10000,"p50":10000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":4}},"first_byte":{"count":7,"min":16670000,"max":17750000,"p50":16908288,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":4}},"headers":{"count":7,"min":8000,"max":8000,"p50":8000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":4}},"body":{"count":7,"min":12000,"max":12000,"p50":12000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":4}},"total":{"count":7,"min":20000000,"max":21080000,"p50":20054016,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":4}}}}}}},
+    {"id":"0cacb5fd6fae","url":"https://api.ledgermath.com/v1/series/0cacb5fd6fae.json","benchmark":"memory_read","params":{"path":"scalar","size_bytes":1073741824,"threads":1},"build":"static","instance_type":"c6i.8xlarge","availability_zone_id":"use2-az3","runs":4,"oldest_run_started_at":"2026-11-12T04:12:00.000000000Z","newest_run_started_at":"2026-11-15T04:12:00.000000000Z","derivations":{"series_v1":{"method":{"name":"series","version":1},"counted_runs":3,"failed_runs":1,"groups":2,"percentiles":{"time_per_repetition_ns":{"count":3,"p5":71010,"p50":80010,"p95":89010},"bytes_per_second":{"count":3,"p5":12078234854883.78,"p50":13420095288088.988,"p95":15145289654505.227}}}}}
+  ]
+}

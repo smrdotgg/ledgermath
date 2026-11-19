@@ -21,7 +21,7 @@ as the base the build started from (last section).
 | `benchmarks/<name>/` | One benchmark on the stream: its source, a `README.md` (what it measures, its parameters and observed values, how it differs from July's), and a `Makefile` (`make BUILD=static`, `BUILD=dynamic`, `make -s compiler`, `make -s resolved`). All thirteen: `memory_read`, `compressed_memory_read`, `memory_read_random`, `memory_write`, `syscall`, `hash`, `sort`, `tcp_echo`, `mutex`, `disk_read_random`, `disk_read_io_uring`, `disk_read_sequential`, `disk_write` |
 | `schedule.json` | The targets (instance types, their zone, the times of day each boots) and what a box runs: benchmarks, builds, samples, timeout, parameter sets, and the instance types an entry is for. Checked by `infra/runs/schedule.ts` |
 | `runner/` | The box side: `box.sh` (user-data), `provision.py` (prepares the disks at boot and records it), `fixture.c` (writes a disk Fixture), `aws-lc-archive.sh` (fetches and checks the TLS library's source for `http_get`'s build), `run.py` (builds, runs, dumps, gives a Service's inputs to the entries that name it, writes Runs), `cpuid.c` |
-| `schemas/` | `run.schema.json` (the Run), `events.schema.json` (one line of the stream) and `prices.schema.json` (a price file) |
+| `schemas/` | `run.schema.json` (the Run), `events.schema.json` (one line of the stream) and `prices.schema.json` (a price file); `api/v1/`, the data API's files (section "The data API") |
 | `scripts/check-events.py` | Checks a stream's order; needs only Python 3 |
 | `scripts/check-runs.ts` | Checks a directory laid out like the bucket: schemas, every hash, every stream read from its stdout blob, runner manifests |
 | `scripts/check-disk-runs.ts` | Checks that every disk Run in such a directory found the disk it declares, that its evidence adds up, and that its dump bears it out |
@@ -32,8 +32,9 @@ as the base the build started from (last section).
 | `scripts/copy-runs.ts` | The copy job: the bucket's Run files and boot summaries into the Runs repository |
 | `scripts/copy-bucket.ts` | Copies one `-runs` bucket into another, across two accounts, only ever adding, and checks the copy (`scripts/lib/bucket-copy.ts`): the move to the production account |
 | `scripts/derive.ts`, `scripts/build-page.ts` | Run the Methods over the Runs; turn their Derivations into the page |
+| `scripts/build-api.ts`, `scripts/check-api.ts` | Cut the Derivations and the price files into the data API's static files, laid out as they will be served; check what was written against its schemas, its links, the Derivations and the Runs repository (`scripts/lib/api.ts`, `scripts/lib/api-check.ts`; section "The data API") |
 | `scripts/alarm.ts` | Opens, or comments on, one issue when a watched Series has had no Run for 48 hours, or the newest price file is more than 48 hours old |
-| `.github/workflows/runs.yml` | All four on a schedule: copy, push, derive, page, alarm |
+| `.github/workflows/runs.yml` | On a schedule: copy, push, derive, page, the data API's files, alarm |
 | `scripts/fetch-prices.ts`, `scripts/check-prices.ts` | Make the day's price file from AWS's public price lists; check a price file by downloading its sources again and cutting them again |
 | `scripts/lib/price-rules.ts` | The selection rules, versioned: which of AWS's price records a price file keeps |
 | `scripts/lib/offer-file.ts`, `scripts/lib/prices.ts`, `scripts/lib/price-file-check.ts` | Reading AWS's offer files without holding them in memory; the cut, the download and the price file; whether a price file holds together |
@@ -47,7 +48,7 @@ as the base the build started from (last section).
 | `third-party/` | glibc 2.34's `COPYING.LIB` and `LICENSES`, and `sources.lock.json`, the third-party source packages kept in the bucket beside the binaries |
 | `scripts/publish-third-party-source.ts` | Puts the source packages `third-party/sources.lock.json` names into the bucket, create-only, and reads every one back to check its bytes (`scripts/lib/s3-create.ts` sends its conditional PUT, which `scripts/lib/sigv4.ts` signs) |
 | `docs/runs-repository/` | The Runs repository's `README.md` and `LICENSE` (CC BY 4.0), kept here and copied there |
-| `tests/` | `bun test`: the schemas against sample Runs, the Run checker, the schedule's check, the runner's timeout and stop races and its instance-type filtering, the dump's sections, the disk provisioning's decisions, the disk Fixture and the binaries' checks of it, the launch schedules, which account each stage deploys to and which one is scheduled, that SST stops before acting on another account, launch and reap logic, the box's and the workflow's roles, the Method (and that the move to the production account starts no group), the copy job, the bucket copy against a stand-in for S3, the page, the alarm and the workflows, and the price fetch, cut, schema and recompute check on excerpts of AWS's files (`tests/samples/prices/`) |
+| `tests/` | `bun test`: the schemas against sample Runs, the Run checker, the schedule's check, the runner's timeout and stop races and its instance-type filtering, the dump's sections, the disk provisioning's decisions, the disk Fixture and the binaries' checks of it, the launch schedules, which account each stage deploys to and which one is scheduled, that SST stops before acting on another account, launch and reap logic, the box's and the workflow's roles, the Method (and that the move to the production account starts no group), the copy job, the bucket copy against a stand-in for S3, the page, the data API's files and their check, the alarm and the workflows, and the price fetch, cut, schema and recompute check on excerpts of AWS's files (`tests/samples/prices/`) |
 
 ## A benchmark, locally
 
@@ -2026,6 +2027,83 @@ the cited figure, in its unit, passes whatever the words around it call it, so a
 block described as the Series', passes as long as the value and the citation agree. Every
 value the lookup tool prints reads back, under the checker's rule, as the value its
 citation names (a value exactly halfway at six digits is printed with a digit more).
+
+## The data API
+
+Issue #64, ADR-0030. LedgerMath's numbers, for agents first, as a tree of small static JSON
+files, each kind with a JSON schema. `scripts/build-api.ts` cuts it from the two files of
+Derivations and the Runs repository's price files, laid out exactly as it will be served
+from `https://api.ledgermath.com`. Nothing is served yet: the `runs` workflow builds the
+tree, checks it and keeps it as the artifact `api`, beside `page`. Serving it is the next
+step, and it goes public only on the maintainer's go.
+
+| Path | Holds |
+|------|-------|
+| `v1/index.json` | The table of contents: the list's address, every price file held with the newest marked, the schemas, the docs, and the template of a blob's address |
+| `v1/series.json` | One row per Series, each on a line of its own: what it is, how many Runs, its oldest and newest Run, a summary of each Method's Derivation under `derivations.<method>_v<version>`, and the `url` of its file. Above the rows, each Method's own words, with the Run files it could not read (`methods.<method>_v<version>.unreadable`) |
+| `v1/series/<id>.json` | One Series in full: each Method's Derivation of it at the Derivations' own paths, with the Method's definitions. Every point gives its Run file's `sha256`, `evidence` (the Run file's address) and `boot_summary` (its boot's, or null when the Runs repository has none) |
+| `v1/prices/<yyyy-mm-dd>.json` | That day's price file, byte for byte |
+| `v1/schemas/<name>.schema.json` | `index`, `series-list`, `series` (kept in `schemas/api/v1/`) and `prices` |
+
+The evidence is linked, never copied: Run files, boot summaries and blobs, at the bucket's
+own keys under the same address (`/runs/…`, `/boots/…`, `/blobs/sha256/<hex>`). The base
+address is `--base`, so a private or test address can stand in.
+
+- **A re-cut, not a Method.** Every number is a Derivation's, written exactly as the
+  Derivation holds it, never rounded. The only figures added are taken from a Series'
+  points: its Runs, how many each Method counts and does not, its groups, and when its
+  oldest and newest Run started.
+- **Each Method's part is labelled.** The 25 `http_get` Series carry both `series_v1` and
+  `requests_v1`, each with its `method`; the others carry `series_v1` only.
+- **`v1` only ever gains fields.** The API's own schemas forbid no member they do not list, so
+  a field added later fails no older reader; a change that would break one is a `v2` beside
+  `v1`. The price files are the exception: each is the Runs repository's, byte for byte, and
+  follows its own closed schema, `ledgermath.prices/1`. The schemas admit everything the
+  Methods can emit, not only what today's data show (a percentile of bytes per second is null
+  when it comes from a counted Run of 0 ns per repetition, and one of time per repetition when
+  it comes from a counted Run whose time per repetition overflows a double).
+- **The same inputs give the same bytes**, whatever order they come in, the members of their
+  objects included (known fields in their schema's order, the keys of params, facts,
+  definitions and a Service's inputs in JavaScript's default string order, by UTF-16 code
+  unit, which is byte order for the ASCII names in use), and no clock is read.
+  `tests/api-golden/` holds every file the build writes from the tests' small fixture, so any
+  change to the bytes, a reordered schema included, shows in review as a diff of those files;
+  `LEDGERMATH_WRITE_GOLDEN=1 bun test tests/api-golden.test.ts` writes them anew on purpose.
+  A Series file depends only on its own Runs, its Methods' words and the base, so a Series
+  that gained no Run keeps its file byte for byte. The data's own moment, the start of the
+  newest Run, is in `v1/index.json` and `v1/series.json`; no file says when it was made.
+- **What a Method left out is shown.** A failed Run is a point with `counted: false` and its
+  `failure`, counted in the row as `failed_runs`. A Run file no Method could read is listed
+  under its Method's `unreadable` in `v1/series.json`, with why and its `evidence`.
+
+```bash
+# From the two files of Derivations and the clone of the Runs repository made in "The Runs repository, the Method and the page", "Locally".
+bun scripts/build-api.ts --derivations /tmp/page/derivations.json \
+  --requests-derivations /tmp/page/requests-derivations.json --runs /tmp/ledgermath-runs --out /tmp/api
+bun scripts/check-api.ts --tree /tmp/api --derivations /tmp/page/derivations.json \
+  --requests-derivations /tmp/page/requests-derivations.json --runs /tmp/ledgermath-runs
+```
+
+The build writes only into a new or empty directory. The check reads back what was written and
+compares it, by its own reading of the design and never by calling the build, with the
+Derivations, the Runs repository and this repository's schemas. A passing check establishes
+that every file of the tree is strict JSON (UTF-8 with no byte-order mark, no object holding a
+member name twice), that the tree holds exactly the files it should, each matching this
+repository's schema of its kind (the API's own closed, so an undescribed field fails), with the
+schemas byte for byte this repository's; that every Series file holds each Method's Derivation
+of its Series value for value, apart from what each point adds; that each point's Run file is
+in the Runs repository with the point's Run id, boot and sha256, at the point's evidence, and
+its boot_summary is that boot's summary or null when there is none; that each row agrees with
+its Series file and links it, the table of contents lists exactly the price files and schemas
+the tree holds and counts the Series right, and gives the docs as an absolute https address
+with a host; and that every link field, in its place, names a file of the tree or of the Runs
+repository (`scripts/lib/api-check.ts` lists it all).
+
+On the data of 2026-11-19 (187 Series, 6,335 Runs, 9 price files) the tree is 202 files and
+38.6 MB: `v1/index.json` 4 KB, `v1/series.json` 193 KB (31 KB compressed), a Series file 124 to
+146 KB (median 133 KB) or, for `http_get`, 344 to 791 KB (median 705 KB), a price file 39 KB.
+The build takes about 0.7 s and the check about 1.05 s on the dev machine. The lookup tool and
+the agent skill still read the files of Derivations.
 
 ## The website (`site/`)
 
