@@ -58,6 +58,7 @@ interface Case {
 		worker_alive_after: boolean;
 		mount_point_exists: boolean;
 	} | null;
+	held: { pid: number; held_seconds: number; passed_on: string[] } | null;
 }
 
 const scratch = mkdtempSync(join(tmpdir(), "provision-stops-"));
@@ -76,6 +77,15 @@ const fixtureStep = (c: Case): Step | undefined => c.record?.steps.find((step) =
 function leavesNothingRunning(c: Case, roles: string[]): void {
 	expect(c.known_processes).toEqual([...roles].sort());
 	expect(c.survivors).toEqual({});
+}
+
+// What killing a tool that outlives SIGTERM records, however slow the machine:
+// one SIGTERM, then one or more SIGKILL, and nothing else. provision.py sends
+// SIGKILL once the grace is out, then again at every poll while any process of
+// the group is not yet a zombie, which one already killed can still be, busy
+// exiting (slow-to-die makes that certain).
+function termThenKill(signals: string[] | undefined): void {
+	expect(signals?.join(" ")).toMatch(/^SIGTERM( SIGKILL)+$/);
 }
 
 function leavesNoHalfDoneRootVolume(c: Case): void {
@@ -101,7 +111,9 @@ describe("a step that runs past its time", () => {
 
 	test("that ignores SIGTERM is killed after the grace", () => {
 		const c = get("ignores-term");
-		expect(fixtureStep(c)?.killed).toEqual({ signals: ["SIGTERM", "SIGKILL"], survivors: [] });
+		const killed = fixtureStep(c)?.killed;
+		expect(killed).toEqual({ signals: expect.any(Array), survivors: [] });
+		termThenKill(killed?.signals);
 		leavesNothingRunning(c, ["tool"]);
 		leavesNoHalfDoneRootVolume(c);
 	});
@@ -109,8 +121,20 @@ describe("a step that runs past its time", () => {
 	test("takes its grandchildren with it, even one that ignores SIGTERM", () => {
 		const c = get("grandchild");
 		expect(fixtureStep(c)?.state).toBe("timed out");
-		expect(fixtureStep(c)?.killed?.signals).toContain("SIGKILL");
+		termThenKill(fixtureStep(c)?.killed?.signals);
 		leavesNothingRunning(c, ["grandchild", "tool"]);
+	});
+
+	test("whose process is slow to die after SIGKILL is sent SIGKILL again until it is gone, and the record has each one", () => {
+		const c = get("slow-to-die");
+		expect(fixtureStep(c)?.state).toBe("timed out");
+		const killed = fixtureStep(c)?.killed;
+		expect(killed).toEqual({ signals: expect.any(Array), survivors: [] });
+		termThenKill(killed?.signals);
+		expect(killed?.signals.filter((signal) => signal === "SIGKILL").length).toBeGreaterThan(1);
+		expect(c.held?.passed_on).toEqual(["SIGTERM"]);
+		leavesNothingRunning(c, ["grandchild", "tool"]);
+		leavesNoHalfDoneRootVolume(c);
 	});
 });
 
@@ -119,7 +143,7 @@ describe("a step that exits", () => {
 		const c = get("leftover");
 		expect(c.status).toBe(0);
 		expect(fixtureStep(c)).toMatchObject({ state: "ended", exit: 0, leftovers: { survivors: [] } });
-		expect(fixtureStep(c)?.leftovers?.signals).toContain("SIGKILL");
+		termThenKill(fixtureStep(c)?.leftovers?.signals);
 		leavesNothingRunning(c, ["grandchild", "tool"]);
 	});
 });
@@ -131,7 +155,7 @@ describe("provisioning told to stop, or out of time", () => {
 		expect(c.status).toBe(143);
 		expect(c.record).toMatchObject({ state: "stopped", stopped_by: "told to stop by SIGTERM", exit: 143 });
 		expect(fixtureStep(c)).toMatchObject({ state: "stopped", stopped_by: "SIGTERM", stdout: "started\n" });
-		expect(fixtureStep(c)?.killed?.signals).toEqual(["SIGTERM", "SIGKILL"]);
+		termThenKill(fixtureStep(c)?.killed?.signals);
 		expect(c.record?.root_volume?.state).toBe("stopped");
 		leavesNothingRunning(c, ["tool"]);
 		leavesNoHalfDoneRootVolume(c);
