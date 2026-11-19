@@ -145,7 +145,7 @@ const oldest = formatMoment(snapshot.oldestRunStartedAt);
 const fetched = formatMoment(snapshot.pricesFetchedAt);
 const runs = formatCount(snapshot.runCount);
 const failed = formatCount(snapshot.failedRuns);
-const series1 = snapshot.methods.find((m) => m.key === "series_v1")!;
+const series = formatCount(snapshot.seriesCount);
 const schema = (name: string) => links.schemas.find((s) => s.name === name)!;
 
 // Listing 1: Table 1's first figure, as the Series list holds it, cut to the path that leads to it.
@@ -164,10 +164,12 @@ const excerptBefore = [
 	`  "derivations": { "series_v1": {`,
 	`    "method": ${j(v1.method).replace(/,/g, ", ").replace(/:/g, ": ")},`,
 	`    "percentiles": { "bytes_per_second": {`,
-	`      "count": ${j(bps.count)}, "p5": ${j(bps.p5)},`,
+	`      "count": ${j(bps.count)},`,
+	`      "p5": ${j(bps.p5)},`,
 	"      ",
 ].join("\n");
-const excerptAfter = [`, "p95": ${j(bps.p95)}`, "  … } } } }"].join("\n");
+// One percentile to a line, so the excerpt is whole at a phone's width.
+const excerptAfter = [",", `      "p95": ${j(bps.p95)}`, "  … } } } }"].join("\n");
 
 /** AWS's processor name, words left out so each fits one line of its column: the trailing "Processor", and "Scalable". */
 const processor = (name: string) => name.replace(/ Processor$/, "").replace(/ Scalable\b/, "");
@@ -190,7 +192,8 @@ function Address(props: { url: string }) {
 const REFS = [
 	{ n: 1, file: links.index, url: links.index, what: "Contents; start here", schema: schema("index").url },
 	{ n: 2, file: links.seriesList, url: links.seriesList, what: "Every Series: figures, Methods", schema: schema("series-list").url },
-	{ n: 3, file: links.seriesFilePattern, url: firstCell.url, what: "One Series: each Run, its evidence", schema: schema("series").url },
+	// Listing 1's own Series, a real address to follow, not a pattern to fill in.
+	{ n: 3, file: firstCell.url, url: firstCell.url, what: "One Series: each Run, its evidence", schema: schema("series").url },
 	{ n: 4, file: links.prices, url: links.prices, what: "AWS On-Demand prices", schema: schema("prices").url },
 	{ n: 5, file: links.docs, url: links.docs, what: "Methods, benchmarks", schema: "" },
 ] as const;
@@ -207,16 +210,6 @@ function Cite(props: { n: number }) {
 export default function Page() {
 	return (
 		<>
-			<header class="runninghead">
-				<div class="rh-inner">
-					<nav class="rh-nav" aria-label="Sections">
-						<a href="#s1">Results</a>
-						<a href="#refs">API</a>
-						<a href={links.docs}>Docs</a>
-					</nav>
-				</div>
-			</header>
-
 			<main id="paper">
 				<article>
 					<div class="front">
@@ -259,7 +252,7 @@ export default function Page() {
 								<dt>Runs</dt>
 								<dd>
 									<a href={links.seriesList}>
-										{runs.full}, {failed.full} failed
+										{runs.full} in {series.full} Series, {failed.full} failed
 									</a>
 								</dd>
 							</div>
@@ -272,7 +265,7 @@ export default function Page() {
 								<span class="runin" id="abstract" role="heading" aria-level={2}>
 									Abstract
 								</span>
-								Every benchmark result is served as JSON with its Runs, evidence and Method <Cite n={5} />, so an AI agent can choose infrastructure from measured numbers.
+								Measured figures for AI agents choosing infrastructure, served as JSON <Cite n={2} /> with each Run's evidence <Cite n={3} />.
 							</p>
 						</section>
 
@@ -289,10 +282,12 @@ export default function Page() {
 					{/* ---------------------------------------------------- Table 1, with the machines in its head */}
 					<section class="sec results" aria-labelledby="s1">
 						<h2 id="s1" class="t-title">
-							<span class="tlabel">Table 1.</span> Median of counted Runs <Cite n={2} />
+							<span class="tlabel">Table 1.</span> Medians of Runs <Cite n={2} />
 						</h2>
 						<details class="fold s1-details" id="sA">
-							<summary>p5, p95 and Run count</summary>
+							<summary>
+								p5, p95, <i>n</i>
+							</summary>
 							<div class="table-wrap s1-wrap" role="region" aria-label="p5, p50, p95 and n per figure" tabindex="0">
 								<table class="s1">
 									<thead>
@@ -453,8 +448,7 @@ export default function Page() {
 
 			<footer class="colophon">
 				<p>
-					<span class="wordmark-sm">LedgerMath</span> · snapshot of {newest.longDate} · Method series v{series1.version} ·{" "}
-					<a href={links.docs}>Docs</a> · <a href="third-party-notices.txt">Font licences</a>
+					<span class="wordmark-sm">LedgerMath</span> · <a href={links.docs}>Docs</a>
 				</p>
 			</footer>
 		</>
