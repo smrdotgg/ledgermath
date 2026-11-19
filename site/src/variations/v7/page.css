@@ -28,18 +28,17 @@
 	--card: #fbfaf6;
 	--ink: #1b1a17;
 	--ink-2: #3d3a34;
-	--muted: #5f5b52;
+	--muted: #4f4b43;
 	--faint: #615c54;
 	--rule: #d9d4c8;
 	--rule-2: #c9c3b5;
+	--underline: #b3ac9c;
 	--accent: #b23a1c;
 	--accent-ink: #9c3116;
 	--accent-wash: #f5dfd4;
 	--accent-line: #e2a891;
 	--band: rgb(178 58 28 / 0.42);
-	--bar: #a8a296;
-	--bar-tick: #5f5b52;
-	--hover: #ece8de;
+	--bar: #9d978a;
 	--link: #1b1a17;
 	--term-edge: transparent;
 	--term-bg: #1d1c19;
@@ -64,10 +63,9 @@
 		--accent-ink: #f5a088;
 		--accent-wash: #3a2018;
 		--accent-line: #7c3a28;
+		--underline: #57534b;
 		--band: rgb(240 132 101 / 0.5);
-		--bar: #5c5850;
-		--bar-tick: #9a9488;
-		--hover: #201f1b;
+		--bar: #67625a;
 		--link: #eeeae1;
 		--term-edge: #4a463f;
 		--term-bg: #070706;
@@ -102,7 +100,7 @@ body {
 
 a {
 	color: var(--link);
-	text-decoration-color: var(--rule-2);
+	text-decoration-color: var(--underline);
 	text-underline-offset: 0.18em;
 	text-decoration-thickness: 1px;
 }
@@ -212,8 +210,8 @@ h2 {
 		"facts facts";
 	column-gap: 56px;
 	align-items: start;
-	padding-top: 48px;
-	padding-bottom: 56px;
+	padding-top: 40px;
+	padding-bottom: 28px;
 }
 .hero-text {
 	grid-area: text;
@@ -301,8 +299,8 @@ h1 {
 	grid-template-columns: repeat(5, auto);
 	justify-content: space-between;
 	gap: 10px 28px;
-	margin: 40px 0 0;
-	padding-top: 14px;
+	margin: 28px 0 0;
+	padding-top: 12px;
 	border-top: 1px solid var(--rule-2);
 	scroll-margin-top: 16px;
 }
@@ -317,14 +315,22 @@ h1 {
 	text-transform: uppercase;
 	color: var(--muted);
 }
+/* Its values are figures and citations, so they wear the figures' mono and the figures' link. */
 .facts-line dd {
-	margin: 2px 0 0;
-	font-family: var(--serif);
-	font-size: 21px;
-	line-height: 1.2;
+	margin: 3px 0 0;
+	font-family: var(--mono);
+	font-size: 15px;
+	font-weight: 600;
+	line-height: 1.3;
 }
 .facts-line dd a {
-	text-decoration-color: var(--rule-2);
+	color: var(--ink);
+	text-decoration-color: var(--underline);
+	text-decoration-thickness: 1px;
+	text-underline-offset: 0.28em;
+}
+.facts-line dd a:hover {
+	text-decoration-color: var(--accent);
 }
 
 /* ------------------------------------------------------------ the exchange */
@@ -624,36 +630,18 @@ blockquote {
 	align-items: baseline;
 	white-space: nowrap;
 }
-/* Every figure is a link to its Series' own file: each Run's figure and evidence. No underline:
-   the whole cell is the link, and shows it on hover. */
+/* Every figure is a link to its Series' own file: each Run's figure and evidence. The same quiet
+   underline as every other citation on the page, so the card's file-and-field pattern visibly
+   holds for all seventy figures. */
 .fig-link {
 	color: var(--ink);
-	text-decoration: none;
+	text-decoration: underline;
+	text-decoration-color: var(--underline);
+	text-decoration-thickness: 1px;
+	text-underline-offset: 0.28em;
 }
-.fig-link::after {
-	content: "";
-	position: absolute;
-	z-index: -1;
-	inset: 0;
-	border-radius: 3px;
-}
-.fig-cell {
-	isolation: isolate;
-}
-.fig-cell .bar,
-.cell-code {
-	pointer-events: none;
-}
-.fig-link:hover::after {
-	background: var(--hover);
-	box-shadow: inset 0 0 0 1px var(--rule-2);
-}
-.fig-link:focus-visible {
-	outline: none;
-}
-.fig-link:focus-visible::after {
-	outline: 2px solid var(--accent);
-	outline-offset: -2px;
+.fig-link:hover {
+	text-decoration-color: var(--accent);
 }
 .x {
 	font-family: var(--mono);
@@ -694,14 +682,16 @@ blockquote {
 	height: 2px;
 	background: var(--bar);
 }
+/* The median tick: full ink, opaque, and taller than the band so it never melts into it. */
 .bar-p50::after {
 	content: "";
 	position: absolute;
-	right: -1px;
-	top: -4px;
-	width: 2px;
-	height: 10px;
-	background: var(--bar-tick);
+	right: -1.5px;
+	top: -6px;
+	width: 3px;
+	height: 14px;
+	border-radius: 1px;
+	background: var(--ink);
 }
 .bar-span {
 	position: absolute;
@@ -834,7 +824,7 @@ blockquote {
 		margin-top: 28px;
 	}
 	.facts-line dd {
-		font-size: 18px;
+		font-size: 14px;
 	}
 	.exchange {
 		padding: 18px 16px 0;

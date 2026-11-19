@@ -87,6 +87,7 @@ const askedSeries = series.find((row) => row.id === seriesFileContents.sample.id
 const askedRow = headline.find((row) => row.cells.some((cell) => cell.series.id === askedSeries.id));
 if (!askedRow) throw new Error(`the sample Series ${askedSeries.id} is not a headline figure`);
 const askedMethod = askedRow.choice.readme;
+const askedRepetition = askedRow.choice.repetition;
 const ASKED_MACHINE = askedSeries.instance_type;
 const askedIndex = askedRow.cells.findIndex((cell) => cell.series.id === askedSeries.id);
 const askedFig = rowFigures(askedRow)[askedIndex]!;
@@ -239,8 +240,8 @@ export default function Page() {
 							<span class="h1-line">Measured AWS server benchmarks, for AI agents to cite.</span>
 						</h1>
 						<p class="lede">
-							{formatCount(snapshot.benchmarkCount).full} benchmarks on {formatCount(snapshot.machineCount).full} freshly booted machine types in {snapshot.region}, at {BOOTS.slice(0, -1).join(", ")} and {BOOTS.at(-1)}&nbsp;UTC.
-							Every Run kept, with its evidence.
+							{formatCount(snapshot.benchmarkCount).full} benchmarks on {formatCount(snapshot.machineCount).full} freshly booted machine types in {snapshot.region},{" "}
+							<span title={`Boots at ${BOOTS.join(", ")} UTC`}>four times a day</span>. Every Run kept, with its evidence.
 						</p>
 						<div class="way-in" id="api">
 							<div class="way-row" data-copy-block="the index command">
@@ -267,7 +268,7 @@ export default function Page() {
 					    states it, and each count says what it counts. */}
 					<dl class="facts-line" id="provenance" aria-label="Provenance">
 						<div>
-							<dt>Newest Run</dt>
+							<dt>Newest Run start</dt>
 							<dd>
 								<a href={links.index} title={`index.json: newest_run_started_at, ${newest.full}`}>
 									<time datetime={newest.iso}>
@@ -277,7 +278,7 @@ export default function Page() {
 							</dd>
 						</div>
 						<div>
-							<dt>Oldest Run</dt>
+							<dt>Oldest Run start</dt>
 							<dd>
 								<a href={links.seriesList} title={`series.json: the least oldest_run_started_at, ${oldest.full}`}>
 									<time datetime={oldest.iso}>
@@ -287,9 +288,9 @@ export default function Page() {
 							</dd>
 						</div>
 						<div>
-							<dt>Runs, all {formatCount(snapshot.seriesCount).full} Series</dt>
+							<dt>Runs kept</dt>
 							<dd>
-								<a href={links.seriesList} title="series.json: the sum of every Series' runs">
+								<a href={links.seriesList} title={`series.json: the sum of runs over all ${formatCount(snapshot.seriesCount).full} Series`}>
 									{formatCount(snapshot.runCount).full}
 								</a>
 							</dd>
@@ -322,7 +323,7 @@ export default function Page() {
 							</span>
 							<blockquote class="question">
 								<p>
-									What do one uncontended mutex critical section and one hour of <span class="nowrap">{ASKED_MACHINE}</span> cost?
+									On <span class="nowrap">{ASKED_MACHINE}</span>, how long is one uncontended mutex critical section, and the hourly price?
 								</p>
 							</blockquote>
 						</div>
@@ -335,7 +336,9 @@ export default function Page() {
 									<strong class="fig">
 										{askedFig.shown.full}&nbsp;{askedFig.shown.unit}
 									</strong>{" "}
-									<span class="nowrap">per {askedPer.of}</span>
+									<span class="nowrap" title={askedRepetition}>
+										per {askedPer.of}
+									</span>
 								</p>
 								<p class="answer-sub">
 									Median of {formatCount(askedFig.count).full} Runs, <time datetime={askedOldest.iso}>{askedOldest.date}</time> to{" "}
@@ -359,7 +362,7 @@ export default function Page() {
 							</Source>
 							<Source href={askedSeries.url} field="points[0].evidence" path="/derivations/series_v1/points/0/evidence">
 								<a href={askedRun.evidence} title={`Run ${askedRun.run}, ${askedRunAt.full}`}>
-									Run {askedRunAt.date}
+									Example Run {askedRunAt.date}
 								</a>
 							</Source>
 							<Source href={links.prices} field={`${askedMachine.price.path.sku} › … › USD`} path={askedMachine.price.path.pointer}>
