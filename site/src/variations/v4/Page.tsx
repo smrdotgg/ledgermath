@@ -71,6 +71,19 @@ function Flaps(props: { text: string }) {
 	);
 }
 
+/** A number of the worked example in two cells, the whole part and the rest, so a column of them stands on the point. */
+function Num(props: { text: string; mark?: boolean }) {
+	const dot = props.text.indexOf(".");
+	const w = dot < 0 ? props.text : props.text.slice(0, dot);
+	const rest = dot < 0 ? "" : props.text.slice(dot);
+	return (
+		<>
+			<td class="sum-w">{props.mark ? <mark>{w}</mark> : w}</td>
+			<td class="sum-f">{props.mark ? <mark>{rest}</mark> : rest}</td>
+		</>
+	);
+}
+
 function sectionsInOrder() {
 	const out: { section: Section; rows: HeadlineRow[] }[] = [];
 	for (const row of headline) {
@@ -217,8 +230,9 @@ export default function Page() {
 		{ note: `${sampleCode} · ${sample.instanceType}`, href: sample.url, schema: links.schema.series },
 		{ note: `${sampleCode} · one Run's evidence`, href: point.evidence },
 		{ note: `all ${seriesCount} Series`, href: links.seriesList, schema: links.schema.seriesList },
-		{ note: `prices · ${snapshot.priceDate}`, href: links.prices, schema: links.schema.prices },
 	];
+	// The divisor of the worked example, in the row's own words: "10,000 critical sections".
+	const perWords = sampleRow?.choice.per ? sampleRow.choice.repetition.split(", ")[0]! : "";
 
 	return (
 		<>
@@ -292,6 +306,12 @@ export default function Page() {
 
 							<dl class="tally">
 								<div>
+									<dt>Series</dt>
+									<dd>
+										<a href={links.seriesList}>{seriesCount}</a>
+									</dd>
+								</div>
+								<div>
 									<dt>Runs</dt>
 									<dd>{runs}</dd>
 								</div>
@@ -313,7 +333,7 @@ export default function Page() {
 					<div class="sec-head">
 						<h2 id="board-title">The board</h2>
 						<div class="key">
-							<span class="key-strip" aria-hidden="true">
+							<a class="key-strip" href={links.seriesList} title={seriesV1.definitions.percentiles}>
 								<span class="key-end key-0">0</span>
 								<i class="strip-span" style={{ left: "36%", width: "36%" }} />
 								<i class="strip-post" style={{ left: "52%" }} />
@@ -327,7 +347,7 @@ export default function Page() {
 									p95
 								</span>
 								<span class="key-end key-max">benchmark max</span>
-							</span>
+							</a>
 							<span class="key-marks">
 								<span class="key-mark">
 									<b>n</b> = Runs
@@ -347,6 +367,7 @@ export default function Page() {
 									<a href={links.prices} title={`AWS On-Demand, copied ${fetched.full}`}>
 										AWS On-Demand · {snapshot.priceDate}
 									</a>
+									<span class="corner-n">n</span>
 								</th>
 								{machines.map((m, j) => {
 									const price = formatUsd(m.price.usdPerHour, { per: "hour" });
@@ -360,7 +381,10 @@ export default function Page() {
 											<span class="col-m-spec">
 												<span>{m.vcpu} vCPU</span> <span>{m.memory}</span>
 											</span>
-											<span class="col-m-n">n={formatCount(columnN[j]!).full}</span>
+											<span class="col-m-n">
+												<span class="n-eq">n=</span>
+												{formatCount(columnN[j]!).full}
+											</span>
 										</th>
 									);
 								})}
@@ -386,15 +410,15 @@ export default function Page() {
 										return (
 											<tr class="row">
 												<th scope="row" class="what">
-													<span class="what-meta">
-														<span class="badge">{n}</span>
-														<span class="what-unit" title={unitTitle}>
-															{p.unit} <b class={up ? "up" : "down"}>{up ? "↑" : "↓"}</b>
-														</span>
-													</span>
+													<span class="what-in">
+													<span class="badge">{n}</span>
 													<a class="what-label" href={c.readme} title={`${c.what} ${c.setting}.`}>
 														{c.label}
 													</a>
+													<span class="what-unit" title={unitTitle}>
+														{p.unit} <b class={up ? "up" : "down"}>{up ? "↑" : "↓"}</b>
+													</span>
+													</span>
 												</th>
 												{p.cells.map(({ cell, f, p50, p5, p95, head, headMore, tail, at }, j) => {
 													const t = formatMoment(cell.series.newest_run_started_at);
@@ -450,33 +474,51 @@ export default function Page() {
 						<div class="api-side">
 							<p class="fold-l">
 								<code>
-									{sampleCode} · v1/series/{sample.id}.json · one Run
+									<span class="badge">{sampleCode}</span> · <a href={sample.url}>{sample.instanceType}</a> · one Run
 								</code>
 							</p>
-							<pre class="resp">
+							<pre class="resp" tabindex="0">
 								<code>
 									<span class="j-k">"run"</span>: <span class="j-s">{J(point.run)}</span>,{"\n"}
-									<span class="j-k">"started_at"</span>: <span class="j-s">{J(point.started_at)}</span>,{"\n"}
 									<span class="j-k">"counted"</span>: <span class="j-n">{J(point.counted)}</span>,{"\n"}
 									<span class="j-k">"time_per_repetition_ns"</span>: <mark class="j-n">{J(point.time_per_repetition_ns)}</mark>,{"\n"}
 									<span class="j-k">"evidence"</span>: <a href={point.evidence}>{J(point.evidence)}</a>
 								</code>
 							</pre>
-							{samplePrepared && (
-								<dl class="ptr">
-									<div>
-										<dt>This Run{sampleRow?.choice.per ? ` ÷ ${formatCount(sampleRow.choice.per.count).full}` : ""}</dt>
-										<dd>
-											{group(pointTime.full, ",", " ")} {pointTime.unit}
-										</dd>
-									</div>
-									<div>
-										<dt>Board median</dt>
-										<dd>
-											{group(samplePrepared.p50.full, ",", " ")} {samplePrepared.p50.unit}
-										</dd>
-									</div>
-								</dl>
+							{/* the sum, set like a ledger: the highlighted field, the divisor with its source, this Run, the board's median */}
+							{samplePrepared && sampleRow && (
+								<table class="sum" role="presentation">
+									<tbody>
+										<tr>
+											<td class="sum-l" />
+											<Num text={J(point.time_per_repetition_ns)} mark />
+											<td>ns</td>
+										</tr>
+										{sampleRow.choice.per && (
+											<tr>
+												<td class="sum-l">÷</td>
+												<Num text={formatCount(sampleRow.choice.per.count).full} />
+												<td>
+													<a href={sampleRow.choice.readme}>{perWords.replace(/^[\d,]+ /, "")}</a>
+												</td>
+											</tr>
+										)}
+										<tr class="sum-eq">
+											<td class="sum-l">This Run</td>
+											<Num text={group(pointTime.full, ",", " ")} />
+											<td>{pointTime.unit}</td>
+										</tr>
+										<tr>
+											<td class="sum-l">
+												<a href={sample.url}>Median</a>
+											</td>
+											<Num text={group(samplePrepared.p50.full, ",", " ")} />
+											<td>
+												{samplePrepared.p50.unit} <span class="sum-n">n={formatCount(samplePrepared.f.count).full}</span>
+											</td>
+										</tr>
+									</tbody>
+								</table>
 							)}
 						</div>
 					</div>
