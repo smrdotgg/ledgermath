@@ -473,7 +473,7 @@ h1 {
 	gap: 0.4rem;
 }
 .round {
-	padding: 0.35rem 0 0.3rem;
+	padding: 0.35rem 0 0.65rem;
 	text-align: center;
 	background: #1f2124;
 	border-radius: 4px;
@@ -483,34 +483,38 @@ h1 {
 	color: var(--p-dim);
 }
 .round.on {
+	position: relative;
 	border-top-color: var(--p-accent);
 	color: var(--p-accent);
 }
-.day {
-	grid-column: 2;
-	position: relative;
-	height: 6px;
-	background: repeating-linear-gradient(to right, rgb(255 255 255 / 0.16) 0 calc(100% / 24 - 2px), transparent calc(100% / 24 - 2px) calc(100% / 24));
-}
-.day-round {
+/* the lit round's six hours, filled up to the newest Run, which sits at the dot */
+.round-now {
 	position: absolute;
-	top: -4px;
-	width: 3px;
-	height: 14px;
-	margin-left: -1.5px;
-	background: var(--p-accent);
-	border-radius: 1px;
+	left: 6px;
+	right: 6px;
+	bottom: 4px;
+	height: 3px;
+	background: rgb(255 255 255 / 0.14);
+	border-radius: 2px;
 }
-.day-newest {
+.round-now i {
 	position: absolute;
-	top: -6px;
-	width: 18px;
-	height: 18px;
-	margin-left: -9px;
+	left: 0;
+	top: 0;
+	bottom: 0;
+	background: var(--p-live);
+	border-radius: 2px;
+}
+.round-now i::after {
+	content: "";
+	position: absolute;
+	right: -4px;
+	top: -2.5px;
+	width: 8px;
+	height: 8px;
 	border-radius: 50%;
 	background: var(--p-live);
-	border: 4px solid var(--p-bg);
-	box-shadow: 0 0 0 2px var(--p-live);
+	box-shadow: 0 0 0 2px #1f2124;
 }
 
 .tally {
@@ -580,46 +584,41 @@ h2 {
 	font: 900 2.9rem/1 var(--display);
 	text-transform: uppercase;
 }
-.h2-code {
-	display: inline-grid;
-	place-items: center;
-	width: 2.6rem;
-	height: 2.6rem;
-	background: var(--signal);
-	color: var(--signal-ink);
-	border-radius: 3px;
-	font: 700 1.05rem/1 var(--mono);
-}
-.sec-sub {
-	margin: 0;
-	max-width: 34rem;
-	font-size: 1.05rem;
-	color: var(--ink-2);
-}
-
-/* the key: one strip, labelled */
+/* the key: one strip, labelled at both ends, then the three marks the board uses */
 .key {
-	flex: 1 1 18rem;
-	max-width: 22rem;
-	padding: 1.25rem 0 0.2rem;
+	flex: 1 1 32rem;
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 0.9rem 2rem;
+	padding-top: 1.1rem;
 }
 .key-strip {
 	position: relative;
 	display: block;
+	flex: 0 1 17rem;
+	min-width: 12rem;
 	height: 8px;
-	margin-left: 1rem;
+	margin: 0 4.4rem 0 1rem;
 	background: var(--track);
 	border-radius: 1px;
 	--sec: var(--ink-2);
 }
-.key-0 {
+.key-end {
 	position: absolute;
-	right: 100%;
 	top: 50%;
 	transform: translateY(-50%);
-	padding-right: 0.4rem;
 	font: 600 0.78rem/1 var(--mono);
 	color: var(--ink-3);
+	white-space: nowrap;
+}
+.key-0 {
+	right: 100%;
+	padding-right: 0.4rem;
+}
+.key-max {
+	left: 100%;
+	padding-left: 0.4rem;
 }
 .key-l {
 	position: absolute;
@@ -629,13 +628,22 @@ h2 {
 	color: var(--ink-2);
 	white-space: nowrap;
 }
-
-.jump {
+.key-marks {
 	display: flex;
-	gap: 0.4rem;
+	flex-wrap: wrap;
+	gap: 0.5rem 1.4rem;
 	margin-left: auto;
+	font: 600 0.8rem/1 var(--mono);
+	color: var(--ink-2);
 }
-.jump a,
+.key-mark b {
+	color: var(--ink);
+	font-weight: 800;
+}
+a.key-mark {
+	color: var(--link);
+}
+
 .badge {
 	display: inline-block;
 	white-space: nowrap;
@@ -645,9 +653,6 @@ h2 {
 	font: 700 0.78rem/1 var(--mono);
 	letter-spacing: 0.06em;
 	text-decoration: none;
-}
-.jump a {
-	padding: 0.45rem 0.6rem;
 }
 .badge {
 	padding: 0.25rem 0.4rem 0.22rem;
@@ -684,6 +689,7 @@ h2 {
 
 .board {
 	width: 100%;
+	table-layout: fixed;
 	border-collapse: separate;
 	border-spacing: 0;
 	background: var(--panel);
@@ -706,6 +712,7 @@ h2 {
 	border-left: 0;
 }
 .corner {
+	width: 21%;
 	vertical-align: bottom !important;
 	font: 700 0.75rem/1 var(--mono);
 	letter-spacing: 0.12em;
@@ -736,25 +743,45 @@ h2 {
 	color: #c4c0b5;
 }
 
-.sec-row th {
+/* the section band repeats the board's heading in small: each column's machine, and its Runs */
+.sec-row > * {
 	text-align: left;
-	padding: 0.55rem 1rem;
+	vertical-align: middle;
+	padding: 0.5rem 1rem;
 	background: color-mix(in srgb, var(--sec) 11%, var(--panel));
 	border-top: 2px solid var(--rule-strong);
+}
+.sec-what {
 	font: 800 1.05rem/1 var(--display);
 	letter-spacing: 0.08em;
 	text-transform: uppercase;
+	box-shadow: inset 4px 0 0 var(--sec);
 }
 .sec-row .badge {
 	margin-right: 0.6rem;
 	vertical-align: 0.1em;
 }
 .sec-note {
-	margin-left: 1rem;
-	font: 500 0.85rem/1 var(--sans);
+	display: block;
+	margin-top: 0.35rem;
+	font: 500 0.8rem/1.2 var(--sans);
 	letter-spacing: 0;
 	text-transform: none;
 	color: var(--ink-2);
+}
+.sec-m {
+	border-left: 1px solid color-mix(in srgb, var(--sec) 18%, var(--rule));
+	font: 600 0.78rem/1.2 var(--mono);
+	color: var(--ink-2);
+	white-space: nowrap;
+}
+.sec-m-name {
+	font: 800 0.95rem/1 var(--display);
+	letter-spacing: 0.02em;
+	color: var(--ink);
+}
+.sec-m-n {
+	margin-left: 0.35rem;
 }
 
 .row > * {
@@ -762,7 +789,6 @@ h2 {
 	vertical-align: top;
 }
 .what {
-	width: 27%;
 	text-align: left;
 	padding: 0.85rem 1rem 0.8rem 1.1rem;
 	box-shadow: inset 4px 0 0 var(--sec);
@@ -785,25 +811,16 @@ h2 {
 .what-label:hover {
 	text-decoration: underline;
 }
-.what-unit,
-.what-dir {
-	font: 600 0.8rem/1 var(--mono);
-	white-space: nowrap;
-}
 .what-unit {
 	padding: 0.2rem 0.35rem;
 	border: 1px solid var(--ink-3);
 	border-radius: 2px;
 	color: var(--ink);
+	font: 600 0.8rem/1 var(--mono);
+	white-space: nowrap;
 }
-.what-per {
-	font-weight: 500;
-}
-.what-dir {
-	margin-left: auto;
-	color: var(--ink-2);
-}
-.what-dir span {
+.what-unit b {
+	margin-left: 0.15rem;
 	font-weight: 800;
 	color: var(--sec);
 }
@@ -814,33 +831,47 @@ h2 {
 }
 .fig a {
 	display: block;
-	padding: 0.8rem 1rem 0.85rem;
+	padding: 0.9rem 0.75rem 0.85rem;
 	color: var(--fig);
 	text-decoration: none;
 }
 .fig a:hover {
 	background: color-mix(in srgb, var(--signal) 14%, transparent);
 }
-.fig a:hover .fig-n {
-	text-decoration: underline;
+/* one exact figure in one run of type: the head large, every further digit small beside it */
+.fig-v {
+	display: block;
+	font-family: var(--mono);
+	line-height: 1.1;
+}
+.fig-h {
+	font-size: 1.3rem;
+	font-weight: 700;
+	letter-spacing: -0.02em;
+	text-decoration: underline dotted color-mix(in srgb, var(--fig) 35%, transparent);
+	text-decoration-thickness: 1.5px;
+	text-underline-offset: 0.2em;
+}
+.fig a:hover .fig-h {
+	text-decoration: underline solid var(--fig);
 	text-decoration-thickness: 2px;
 }
-.fig-n {
-	display: block;
-	font: 700 1.55rem/1.05 var(--mono);
-	letter-spacing: -0.01em;
-}
-.fig-full,
-.fig-per {
-	display: block;
-	margin-top: 0.2rem;
-	font: 500 0.8rem/1.2 var(--mono);
+.fig-t {
+	font-size: 0.74rem;
+	font-weight: 500;
+	letter-spacing: -0.02em;
 	color: var(--ink-3);
-	white-space: nowrap;
 }
-.fig-per {
+/* a Run count that differs from the band's sits in the cell's own corner, taking no line */
+.fig a {
+	position: relative;
+}
+.fig-n {
+	position: absolute;
+	right: 0.75rem;
+	bottom: 0.15rem;
+	font: 600 0.68rem/1 var(--mono);
 	color: var(--ink-2);
-	font-weight: 600;
 }
 .strip {
 	position: relative;
@@ -885,6 +916,7 @@ h2 {
 	padding: 1.1rem 1.25rem;
 	display: grid;
 	gap: 1rem;
+	counter-reset: none;
 	background: var(--term);
 	color: var(--term-ink);
 	border-radius: 6px;
@@ -901,42 +933,35 @@ h2 {
 	align-items: end;
 	column-gap: 1rem;
 }
+.term li + li {
+	padding-top: 1rem;
+	border-top: 1px solid rgb(255 255 255 / 0.1);
+}
 .term-c {
 	grid-column: 1 / -1;
+	display: flex;
+	justify-content: space-between;
+	gap: 1rem;
+	margin-bottom: 0.2rem;
 	color: var(--term-dim);
 	font-size: 0.85rem;
+}
+.term-c a {
+	color: var(--term-accent);
 }
 .term code {
 	grid-column: 1;
 }
-
-.files {
-	width: 100%;
-	border-collapse: collapse;
-	background: var(--panel);
-	border: 2px solid var(--rule-strong);
-	font-size: 0.95rem;
-}
-.files th,
-.files td {
-	text-align: left;
-	padding: 0.55rem 0.9rem;
-	border-top: 1px solid var(--rule);
-	font-weight: 400;
-}
-.files thead th {
-	background: color-mix(in srgb, var(--signal) 30%, var(--panel));
-	font: 700 0.75rem/1 var(--mono);
-	letter-spacing: 0.1em;
-	text-transform: uppercase;
-	border-top: 0;
-}
-.files code {
+.term .term-tpl {
+	padding-left: 1.15em;
+	color: var(--term-dim);
 	overflow-wrap: anywhere;
+}
+.term .term-tpl::before {
+	content: none;
 }
 
 .fold {
-	margin-top: 1rem;
 	border-top: 1px solid var(--rule-strong);
 	padding-top: 0.75rem;
 }
@@ -1163,24 +1188,29 @@ mark.j-n {
 		font-size: 2.1rem;
 		gap: 0.6rem;
 	}
-	.h2-code {
-		width: 2rem;
-		height: 2rem;
-		font-size: 0.85rem;
-	}
 	.sec-head {
 		gap: 0.75rem 1.5rem;
 		padding-bottom: 0.75rem;
 		margin-bottom: 0.75rem;
 	}
 	.key {
-		order: 3;
 		flex: 1 1 100%;
-		max-width: none;
-		padding-top: 1.1rem;
+		gap: 0.75rem;
+		padding-top: 0.9rem;
 	}
-	.jump a {
-		padding: 0.4rem 0.45rem;
+	.key-strip {
+		flex: 1 1 auto;
+		min-width: 0;
+		margin: 0 3.6rem 0 0.9rem;
+	}
+	.key-end,
+	.key-l {
+		font-size: 0.72rem;
+	}
+	.key-marks {
+		flex: 1 1 100%;
+		margin-left: 0;
+		gap: 0.4rem 1.1rem;
 		font-size: 0.72rem;
 	}
 
@@ -1211,7 +1241,7 @@ mark.j-n {
 		display: none;
 	}
 	.board thead th {
-		padding: 0.5rem 0.2rem 0.45rem 0.35rem;
+		padding: 0.5rem 0.2rem 0.45rem 0.3rem;
 		border-left-color: rgb(255 255 255 / 0.08);
 	}
 	.col-m-name {
@@ -1237,21 +1267,55 @@ mark.j-n {
 	.col-m-spec span {
 		display: block;
 	}
-	.sec-row th {
+	/* the band names the five columns again, so a screen of rows far from the heading still says which is which */
+	.sec-row {
+		box-shadow: inset 4px 0 0 var(--sec);
+		background: color-mix(in srgb, var(--sec) 11%, var(--panel));
+		border-top: 2px solid var(--rule-strong);
+	}
+	.sec-row > * {
+		border-top: 0;
+		background: none;
+	}
+	.sec-what {
 		grid-column: 1 / -1;
-		padding: 0.5rem 0.6rem;
+		padding: 0.5rem 0.6rem 0.2rem 0.75rem;
 		font-size: 0.95rem;
+		box-shadow: none;
 	}
 	.sec-note {
+		margin: 0.3rem 0 0;
+		font-size: 0.78rem;
+	}
+	.sec-m {
+		padding: 0.2rem 0.2rem 0.4rem 0.4rem;
+		border-left: 0;
+		font-size: 0.62rem;
+		line-height: 1.15;
+		white-space: normal;
+	}
+	.sec-m {
+		padding-left: 0.3rem;
+	}
+	.sec-what {
+		padding-left: 0.35rem;
+	}
+	.sec-m-name {
 		display: block;
-		margin: 0.35rem 0 0;
-		font-size: 0.8rem;
+		font-size: 0.74rem;
+		letter-spacing: 0;
+		white-space: nowrap;
+		overflow: hidden;
+	}
+	.sec-m-n {
+		display: block;
+		margin: 0.1rem 0 0;
 	}
 	.what {
 		grid-column: 1 / -1;
 		width: auto;
 		display: block;
-		padding: 0.6rem 0.6rem 0.2rem 0.75rem;
+		padding: 0.6rem 0.6rem 0.2rem 0.35rem;
 		border-top: 1px solid var(--rule);
 	}
 	.what .badge {
@@ -1260,8 +1324,7 @@ mark.j-n {
 	.what-label {
 		font-size: 1.1rem;
 	}
-	.what-unit,
-	.what-dir {
+	.what-unit {
 		font-size: 0.75rem;
 	}
 	.what-meta {
@@ -1277,29 +1340,35 @@ mark.j-n {
 	.fig {
 		box-shadow: none;
 	}
-	.row > .fig:first-of-type a {
-		padding-left: 0.75rem;
+	.board tr {
+		padding-left: 0.4rem;
 	}
 	.fig a {
-		padding: 0.25rem 0.3rem 0.7rem 0.4rem;
+		padding: 0.25rem 0.35rem 0.75rem 0.3rem;
+	}
+	/* the head on a line of its own, every further digit beneath it, wrapping between groups */
+	.fig-h {
+		display: block;
+		font-size: 0.84rem;
+		letter-spacing: -0.05em;
+	}
+	.fig-t {
+		display: block;
+		margin-top: 0.15rem;
+		font-size: 0.62rem;
+		line-height: 1.2;
+		letter-spacing: -0.03em;
 	}
 	.fig-n {
-		font-size: 0.88rem;
-		letter-spacing: -0.04em;
+		right: 0.35rem;
+		bottom: 0.05rem;
+		font-size: 0.6rem;
 	}
 	.row {
 		box-shadow: inset 4px 0 0 var(--sec);
 	}
 	.what {
 		box-shadow: none;
-	}
-	.fig-full {
-		display: none;
-	}
-	.fig-per {
-		font-size: 0.66rem;
-		white-space: normal;
-		letter-spacing: -0.02em;
 	}
 	.strip {
 		height: 6px;
