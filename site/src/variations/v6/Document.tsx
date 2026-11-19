@@ -11,7 +11,7 @@ export default function Document(props: { children?: JSX.Element }) {
 				<meta charset="utf-8" />
 				<meta name="viewport" content="width=device-width, initial-scale=1" />
 				<meta name="color-scheme" content="light dark" />
-				<title>LedgerMath: AWS server benchmarks, measured four times a day</title>
+				<title>LedgerMath: AWS server benchmarks</title>
 				<meta
 					name="description"
 					content="Fourteen benchmarks on five AWS machine types in us-east-2, run four times a day on freshly booted machines. Every figure drawn to scale, with its Runs, its evidence and its Method, and a static JSON API for agents."

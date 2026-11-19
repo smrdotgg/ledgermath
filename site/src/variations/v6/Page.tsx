@@ -64,21 +64,6 @@ function Strip(props: { inst: Instrument; zoom: Scale }) {
 	);
 }
 
-/** An address that may break only after a slash, never inside a name or a hash; the text is unchanged. */
-function Url(props: { text: string }) {
-	const parts = props.text.split(/(?<=[^:/]\/)/);
-	return (
-		<>
-			{parts.map((p, i) => (
-				<>
-					{p}
-					{i < parts.length - 1 ? <wbr /> : null}
-				</>
-			))}
-		</>
-	);
-}
-
 const pad = (i: number) => String(i + 1).padStart(2, "0");
 
 /** Every digit of a figure, the first four significant ones in full ink and the rest lighter. */
@@ -120,7 +105,7 @@ function Card(props: { inst: Instrument; index: number }) {
 				</h3>
 				<span class="meta">
 					<span class="dir" title={c.lead === "rate" ? "More is faster" : "Less is faster"}>
-						{c.lead === "rate" ? "faster →" : "← faster"}
+						{c.lead === "rate" ? "→" : "←"}
 					</span>
 					<span class="unit">{unit}</span>
 				</span>
@@ -129,9 +114,6 @@ function Card(props: { inst: Instrument; index: number }) {
 				<Plot inst={inst} scale={scale} />
 				{inst.marks.map((m, i) => (
 					<>
-						<span class="m" style={`grid-row:${i + 1}`}>
-							{m.instanceType}
-						</span>
 						<a
 							class="v"
 							href={m.url}
@@ -208,42 +190,27 @@ function Clock() {
 	);
 }
 
+/** The charts in three panels, each beside one column of machine names: the machines and four, then five and five. */
+const BANDS = [
+	[0, 1, 2, 3],
+	[4, 5, 6, 7, 8],
+	[9, 10, 11, 12, 13],
+] as const;
+
 export default function Page() {
 	const instruments = headline.map(instrument);
+	// One column of names serves every chart in a panel, so every chart must list the machines in the same order.
+	const order = machines.map((m) => m.instanceType).join(" ");
+	for (const inst of instruments) {
+		if (inst.marks.map((m) => m.instanceType).join(" ") !== order) throw new Error(`${inst.row.choice.benchmark}: marks not in the machines' order`);
+	}
+	if (BANDS.flat().length !== instruments.length) throw new Error("BANDS must place every chart once");
 	const newest = formatMoment(snapshot.newestRunStartedAt);
 	const runs = formatCount(snapshot.runCount).full;
 	const failed = formatCount(snapshot.failedRuns).full;
 	const shown = headline.length * machines.length;
 	const prices = machines.map((m) => formatUsd(m.price.usdPerHour, { per: "hour" }));
 	const priceScale = zeroScale(Math.max(...prices.map((p) => p.value)), 3);
-
-	// The API example: the first chart's c8i.2xlarge Series, its row of series.json, a few fields kept.
-	const hero = instruments[0]!;
-	const ex = hero.marks.findIndex((m) => m.instanceType === "c8i.2xlarge");
-	const exMark = hero.marks[ex < 0 ? 0 : ex]!;
-	const row = hero.row.cells[ex < 0 ? 0 : ex]!.series;
-	const d = row.derivations.series_v1;
-	const excerpt = JSON.stringify(
-		{
-			benchmark: row.benchmark,
-			instance_type: row.instance_type,
-			runs: row.runs,
-			derivations: { series_v1: { counted_runs: d.counted_runs, percentiles: { bytes_per_second: d.percentiles.bytes_per_second } } },
-		},
-		null,
-		2,
-	).replace(/\{\n\s+([^{}]*?)\n\s*\}/g, (whole: string, body: string) => {
-		const line = `{ ${body.split(/,\n\s*/).join(", ")} }`;
-		return line.length <= 60 ? line : whole;
-	})
-		// Closing braces share a line, so the excerpt stays short.
-		.replace(/\n\s*\}(?:\n\s*\})+/g, (run: string) => ` ${run.replace(/\s+/g, " ").trim()}`);
-	const tokens = [...excerpt.matchAll(/("(?:[^"\\]|\\.)*")(?=\s*:)|("(?:[^"\\]|\\.)*")|(-?\d[\d.eE+-]*)|([^"\d-]+|-)/g)].map(([text, key, str, num]) => ({
-		kind: key ? "k" : str ? "s" : num ? "n" : "",
-		text,
-	}));
-
-	const agentPrompt = `LedgerMath measures ${machines.length} AWS EC2 machine types in ${snapshot.region}, ${headline.length} benchmarks each, four times a day, and publishes the figures with AWS's On-Demand prices as static JSON. Start at ${links.index}. ${links.seriesList} lists every Series with its p5, p50 and p95. Prices: ${links.prices}. Cite each figure's Series file (${links.seriesFilePattern}), which lists every Run behind it with a link to its evidence. Do not state a figure the API does not give.`;
 
 	return (
 		<>
@@ -253,80 +220,45 @@ export default function Page() {
 						<Mark />
 						<span>LedgerMath</span>
 					</a>
-					<nav aria-label="On this page">
-						<a href="#charts">Charts</a>
-						<a href="#machines">Machines</a>
-						<a href="#api">API</a>
-					</nav>
 				</div>
 			</header>
 
 			<main id="top">
 				<section class="hero wrap" aria-labelledby="h1">
-					<h1 id="h1">Five AWS machines, measured four times a day, every figure with its evidence.</h1>
+					<h1 id="h1">Server benchmarks: five AWS machines, measured four times a day.</h1>
 					<div class="hero-r">
-						<p class="lede">{headline.length} benchmarks on each freshly booted machine, published with AWS's prices as a static JSON API for AI agents.</p>
 						<div class="cmd">
 							<span class="prompt" aria-hidden="true">$</span>
 							<code data-copy tabindex="0">curl {links.index}</code>
 						</div>
-						<a href="#agent" class="btn">
-							Prompt for your agent
-						</a>
+						<p class="note">Static JSON. Every figure links to its Runs and their evidence.</p>
 					</div>
 				</section>
 
 				<section class="facts" aria-labelledby="h-fresh">
-					<div class="wrap">
+					<div class="wrap line">
 						<h2 id="h-fresh" class="vh">Freshness and provenance</h2>
-						<dl class="ro">
-							<div>
-								<dt>Newest Run</dt>
-								<dd>
-									<time datetime={newest.iso} title={newest.full}>
-										<b>{newest.minute}</b> UTC {newest.date}
-									</time>
-								</dd>
-							</div>
-							<div class="boots">
-								<Clock />
-								<dt>Boots, UTC</dt>
-								<dd>{BOOTS.join(" ")}</dd>
-							</div>
-							<div>
-								<dt>Runs kept</dt>
-								<dd>
-									<b>{runs}</b> {failed} failed
-								</dd>
-							</div>
-							<div>
-								<dt>Series</dt>
-								<dd>
-									<a href={links.seriesList}>
-										<b>{formatCount(snapshot.seriesCount).full}</b>
-									</a>
-								</dd>
-							</div>
-							<div>
-								<dt>Prices</dt>
-								<dd>
-									<a href={links.prices}>{snapshot.priceDate}</a>
-								</dd>
-							</div>
-							<div>
-								<dt>Methods</dt>
-								<dd>
-									{snapshot.methods.map((m, i) => (
-										<>
-											{i > 0 ? " " : ""}
-											<a href={links.docs}>
-												{m.name} v{m.version}
-											</a>
-										</>
-									))}
-								</dd>
-							</div>
-						</dl>
+						<Clock />
+						<p>
+							<span>
+								Newest Run{" "}
+								<time datetime={newest.iso} title={`${newest.full}; boots at ${BOOTS.join(", ")} UTC`}>
+									<b>{newest.minute}</b> UTC {newest.date}
+								</time>
+							</span>
+							<span>
+								<a href={links.seriesList}>
+									<b>{runs}</b> Runs
+								</a>
+								, {failed} failed
+							</span>
+							<span>
+								Prices <a href={links.prices}>{snapshot.priceDate}</a>
+							</span>
+							<span>
+								<a href={links.docs}>Docs</a>
+							</span>
+						</p>
 					</div>
 				</section>
 
@@ -351,6 +283,10 @@ export default function Page() {
 								p5–p95
 							</span>
 							<span>
+								<span class="dir" aria-hidden="true">← →</span>
+								faster
+							</span>
+							<span>
 								<svg width="16" height="12" aria-hidden="true">
 									<path class="break" d="M 3 11 l 3 -9 m 3 9 l 3 -9" />
 								</svg>
@@ -358,54 +294,52 @@ export default function Page() {
 							</span>
 						</p>
 					</div>
-					<div class="grid">
-						<article class="card price" id="machines" aria-labelledby="h-machines">
-							<header class="card-h">
-								<span class="idx">$</span>
-								<h3 id="h-machines">
-									<a href={links.prices}>Machines, On-Demand</a>
-								</h3>
-							</header>
-							<table class="mt">
-								<thead>
-									<tr>
-										<th scope="col">
-											<span class="vh">Machine</span>
-										</th>
-										<th scope="col">vCPU</th>
-										<th scope="col">GiB</th>
-										<th scope="col" class="pc">
-											$ / hour
-										</th>
-									</tr>
-								</thead>
-								<tbody>
-									{machines.map((m, i) => (
-										<tr>
-											<th scope="row" title={m.processor}>
-												{m.instanceType}
-											</th>
-											<td>{m.vcpu}</td>
-											<td>{m.memory.replace(/ GiB$/, "")}</td>
-											<td class="pc">
+					{BANDS.map((band, k) => (
+						<div class="mx" role="region" tabindex="0" aria-label={`Benchmarks ${pad(band[0]!)} to ${pad(band[band.length - 1]!)}`}>
+							<div class="rail">
+								<ul aria-label="Machines, in the order every chart beside them lists them">
+									{machines.map((m) => (
+										<li title={m.processor}>{m.instanceType}</li>
+									))}
+								</ul>
+							</div>
+							{k === 0 ? (
+								<article class="card price" id="machines" aria-labelledby="h-machines">
+									<header class="card-h">
+										<span class="idx">$</span>
+										<h3 id="h-machines">
+											<a href={links.prices}>On-Demand</a>
+										</h3>
+									</header>
+									<div class="pt">
+										{machines.map((m, i) => (
+											<span class="pr" style={`grid-row:${i + 1}`} title={`${m.instanceType}: ${m.vcpu} vCPU, ${m.memory}, ${m.price.description}; ${m.price.path.pointer}`}>
+												<span>{m.vcpu}</span>
+												<span>{m.memory.replace(/ GiB$/, "")}</span>
 												<svg class="pbar" aria-hidden="true" width="100%" height="10">
 													<rect class="bar" x="0" y="2" width={width(priceScale, 0, prices[i]!.value)} height="6" />
 												</svg>
-												<span title={`${m.price.description} · ${m.price.path.pointer}`}>${prices[i]!.full}</span>
-											</td>
-										</tr>
-									))}
-								</tbody>
-							</table>
-						</article>
-						{instruments.map((inst, i) => (
-							<Card inst={inst} index={i} />
-						))}
-					</div>
+												<b>${prices[i]!.full}</b>
+											</span>
+										))}
+										<span class="pr ph">
+											<span>vCPU</span>
+											<span>GiB</span>
+											<span />
+											<span>$ / hour</span>
+										</span>
+									</div>
+								</article>
+							) : null}
+							{band.map((i) => (
+								<Card inst={instruments[i]!} index={i} />
+							))}
+						</div>
+					))}
 
 					<details class="every" id="digits">
 						<summary>
-							Every digit <span class="dim">· {shown} medians with p5 and p95</span>
+							Every digit <span class="dim">· {shown} × p5 · median · p95</span>
 						</summary>
 						<div class="scroll" tabindex="0" role="region" aria-label="Every digit">
 							<table class="digits">
@@ -450,54 +384,6 @@ export default function Page() {
 					</details>
 				</section>
 
-				<section class="band" id="api" aria-labelledby="h-api">
-					<div class="wrap api">
-						<div class="api-l">
-							<h2 id="h-api">The API</h2>
-							<p>Static JSON. Each figure links to its Series file: every Run, with its evidence.</p>
-							<p class="schemas">
-								<span class="lbl">Schemas</span>
-								{links.schemas.map((s) => (
-									<a href={s.url}>
-										<code>{s.name}</code>
-									</a>
-								))}
-								<a href={links.docs}>Docs</a>
-							</p>
-							<details class="agent" id="agent">
-								<summary>Prompt for your agent</summary>
-								<p data-copy tabindex="0">
-									{agentPrompt}
-								</p>
-							</details>
-						</div>
-						<div class="term" role="group" aria-label="Commands">
-							<ul class="cmds">
-								<li>
-									<p class="c"># every Series, with p5, p50, p95</p>
-									<code data-copy tabindex="0">
-										curl <Url text={links.seriesList} />
-									</code>
-									<pre tabindex="0" role="region" aria-label="One row of series.json, some fields left out">
-										<code>{tokens.map((t) => (t.kind === "" ? t.text : <span class={t.kind}>{t.text}</span>))}</code>
-									</pre>
-								</li>
-								<li>
-									<p class="c"># that Series: each Run, its evidence</p>
-									<code data-copy tabindex="0">
-										curl <Url text={exMark.url} />
-									</code>
-								</li>
-								<li>
-									<p class="c"># prices, {snapshot.priceDate}</p>
-									<code data-copy tabindex="0">
-										curl <Url text={links.prices} />
-									</code>
-								</li>
-							</ul>
-						</div>
-					</div>
-				</section>
 			</main>
 
 			<footer class="foot">
@@ -507,7 +393,7 @@ export default function Page() {
 						<span>LedgerMath</span>
 					</span>
 					<p>
-						<a href={links.index}>api.ledgermath.com</a> · <a href={links.docs}>Docs</a> · <a href="third-party-notices.txt">Notices</a>
+						<a href={links.index}>api.ledgermath.com</a> · <a href="third-party-notices.txt">Notices</a>
 					</p>
 				</div>
 			</footer>
