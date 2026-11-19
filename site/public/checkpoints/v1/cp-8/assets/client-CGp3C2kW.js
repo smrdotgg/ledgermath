@@ -1,0 +1,1 @@
+for(let e of document.querySelectorAll(`button[data-copy]`))navigator.clipboard&&(e.hidden=!1,e.addEventListener(`click`,async()=>{try{await navigator.clipboard.writeText(e.dataset.copy??``),e.textContent=`Copied`}catch{e.textContent=`Select it`}setTimeout(()=>e.textContent=`Copy`,1600)}));
