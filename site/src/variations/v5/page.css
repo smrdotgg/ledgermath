@@ -1,0 +1,61 @@
+:root {
+	color-scheme: light dark;
+	--fg: #1a1a1a;
+	--bg: #ffffff;
+	--muted: #555555;
+	--line: #d0d0d0;
+	--link: #0b57d0;
+}
+
+@media (prefers-color-scheme: dark) {
+	:root {
+		--fg: #e6e6e6;
+		--bg: #141414;
+		--muted: #a8a8a8;
+		--line: #3a3a3a;
+		--link: #8ab4f8;
+	}
+}
+
+body {
+	margin: 0;
+	background: var(--bg);
+	color: var(--fg);
+	font: 1rem/1.5 system-ui, sans-serif;
+}
+
+main {
+	max-width: 72rem;
+	margin: 0 auto;
+	padding: 2rem 1rem 4rem;
+}
+
+a {
+	color: var(--link);
+}
+
+.scroll {
+	overflow-x: auto;
+}
+
+table {
+	border-collapse: collapse;
+	font-variant-numeric: tabular-nums;
+}
+
+th,
+td {
+	padding: 0.25rem 0.75rem;
+	border-bottom: 1px solid var(--line);
+	text-align: right;
+	white-space: nowrap;
+}
+
+th[scope="row"],
+thead th:first-child {
+	text-align: left;
+}
+
+li {
+	overflow-wrap: anywhere;
+}

@@ -1,0 +1,74 @@
+{
+	"$schema": "https://json-schema.org/draft/2020-12/schema",
+	"$id": "https://github.com/smrdotgg/ledgermath/blob/home-variations/site/scripts/variations-judgement.schema.json",
+	"title": "One judge's scores for one round of the home-page variations",
+	"description": "One file per judge per round, named <judge>.json, in the directory given to scripts/variations-publish.ts as --judging. Every subject the judge saw gets a score from 1 to 10, in steps of 0.5, in each of the eight categories, and notes.",
+	"type": "object",
+	"required": ["schema", "judge", "round", "subjects"],
+	"additionalProperties": false,
+	"properties": {
+		"schema": { "const": "ledgermath.home-variations.judgement/1" },
+		"judge": {
+			"description": "Who judged, as a short name that stays the same from round to round, e.g. opus-5.5 or astra-6.2.",
+			"type": "string",
+			"pattern": "^[a-z0-9][a-z0-9.-]{0,39}$"
+		},
+		"round": { "description": "The round being judged.", "type": "integer", "minimum": 1 },
+		"subjects": {
+			"description": "One entry per subject judged, each subject once.",
+			"type": "array",
+			"minItems": 1,
+			"items": { "$ref": "#/$defs/subject" }
+		}
+	},
+	"$defs": {
+		"score": { "type": "number", "minimum": 1, "maximum": 10, "multipleOf": 0.5 },
+		"subject": {
+			"type": "object",
+			"required": ["subject", "scores", "notes"],
+			"additionalProperties": false,
+			"properties": {
+				"subject": {
+					"description": "A design, v1 to v8, or a reference site as ref:<host>, e.g. ref:vercel.com.",
+					"type": "string",
+					"pattern": "^(v[1-8]|ref:[a-z0-9][a-z0-9.-]*)$"
+				},
+				"scores": {
+					"type": "object",
+					"additionalProperties": false,
+					"required": [
+						"first_ten_seconds",
+						"numbers",
+						"trust_and_provenance",
+						"agents_and_developers",
+						"typography_and_hierarchy",
+						"colour_and_contrast",
+						"phone_layout",
+						"craft_and_distinctiveness"
+					],
+					"properties": {
+						"first_ten_seconds": {
+							"description": "First ten seconds: does a newcomer know what this is, who it is for and why to trust it?",
+							"$ref": "#/$defs/score"
+						},
+						"numbers": { "description": "The numbers: can exact figures be read, scanned and compared?", "$ref": "#/$defs/score" },
+						"trust_and_provenance": {
+							"description": "Trust and provenance: are freshness, Run counts, method and evidence visible without clutter?",
+							"$ref": "#/$defs/score"
+						},
+						"agents_and_developers": { "description": "The way in for agents and developers.", "$ref": "#/$defs/score" },
+						"typography_and_hierarchy": { "description": "Typography and hierarchy.", "$ref": "#/$defs/score" },
+						"colour_and_contrast": { "description": "Colour and contrast, in light and in dark.", "$ref": "#/$defs/score" },
+						"phone_layout": { "description": "Phone layout.", "$ref": "#/$defs/score" },
+						"craft_and_distinctiveness": { "description": "Craft and distinctiveness.", "$ref": "#/$defs/score" }
+					}
+				},
+				"notes": {
+					"description": "Free text: what works, what does not, what to change first. Read by the worker who improves the design.",
+					"type": "string",
+					"minLength": 1
+				}
+			}
+		}
+	}
+}

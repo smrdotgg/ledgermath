@@ -1,0 +1,97 @@
+:root {
+	color-scheme: light dark;
+	--fg: #1a1a1a;
+	--bg: #ffffff;
+	--muted: #555555;
+	--line: #d0d0d0;
+	--link: #0b57d0;
+	--bad: #b3261e;
+}
+
+@media (prefers-color-scheme: dark) {
+	:root {
+		--fg: #e6e6e6;
+		--bg: #141414;
+		--muted: #a8a8a8;
+		--line: #3a3a3a;
+		--link: #8ab4f8;
+		--bad: #f2b8b5;
+	}
+}
+
+body {
+	margin: 0;
+	background: var(--bg);
+	color: var(--fg);
+	font: 1rem/1.5 system-ui, sans-serif;
+}
+
+main {
+	max-width: 72rem;
+	margin: 0 auto;
+	padding: 2rem 1rem 4rem;
+}
+
+a {
+	color: var(--link);
+}
+
+.muted {
+	color: var(--muted);
+}
+
+.bad {
+	color: var(--bad);
+}
+
+.designs {
+	padding: 0;
+	list-style: none;
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr));
+	gap: 1rem;
+}
+
+.designs li {
+	border: 1px solid var(--line);
+	padding: 0 1rem;
+}
+
+.designs h3 {
+	margin: 0.75rem 0 0;
+	font-size: 1.125rem;
+}
+
+pre {
+	overflow-x: auto;
+	font-size: 0.8rem;
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
+
+.scroll {
+	overflow-x: auto;
+}
+
+table {
+	border-collapse: collapse;
+	font-variant-numeric: tabular-nums;
+	font-size: 0.875rem;
+}
+
+th,
+td {
+	padding: 0.25rem 0.5rem;
+	border-bottom: 1px solid var(--line);
+	text-align: center;
+	white-space: nowrap;
+}
+
+th[scope="row"],
+thead th:first-child {
+	text-align: left;
+}
+
+li {
+	overflow-wrap: anywhere;
+}

@@ -1,0 +1,86 @@
+{
+	"$schema": "https://json-schema.org/draft/2020-12/schema",
+	"$id": "https://github.com/smrdotgg/ledgermath/blob/home-variations/site/scripts/variations-scores.schema.json",
+	"title": "Every round's scores and checkpoints of the home-page variations (site/variations/scores.json)",
+	"description": "Written only by scripts/variations-publish.ts; read by the picker page.",
+	"type": "object",
+	"required": ["schema", "categories", "levels", "rounds", "checkpoints"],
+	"additionalProperties": false,
+	"properties": {
+		"schema": { "const": "ledgermath.home-variations.scores/1" },
+		"categories": {
+			"description": "The eight categories, in order: their keys in a judgement and their names on the picker.",
+			"type": "array",
+			"items": {
+				"type": "object",
+				"required": ["key", "name"],
+				"additionalProperties": false,
+				"properties": { "key": { "type": "string" }, "name": { "type": "string" } }
+			}
+		},
+		"levels": {
+			"description": "The checkpoints a design can reach: T is reached when every judge of a round gives it at least T in every category.",
+			"type": "array",
+			"items": { "type": "number" }
+		},
+		"rounds": {
+			"type": "array",
+			"items": {
+				"type": "object",
+				"required": ["round", "judges", "judgements", "merged", "new_checkpoints"],
+				"additionalProperties": false,
+				"properties": {
+					"round": { "type": "integer", "minimum": 1 },
+					"judges": { "type": "array", "items": { "type": "string" } },
+					"judgements": {
+						"description": "judge -> subject -> the judge's scores and notes, as the judgement file gave them.",
+						"type": "object",
+						"additionalProperties": {
+							"type": "object",
+							"additionalProperties": {
+								"type": "object",
+								"required": ["scores", "notes"],
+								"additionalProperties": false,
+								"properties": {
+									"scores": { "type": "object", "additionalProperties": { "type": "number" } },
+									"notes": { "type": "string" }
+								}
+							}
+						}
+					},
+					"merged": {
+						"description": "design -> the commit of home-v<n> merged this round, or null when nothing was merged for it.",
+						"type": "object",
+						"additionalProperties": { "type": ["string", "null"] }
+					},
+					"new_checkpoints": {
+						"type": "array",
+						"items": {
+							"type": "object",
+							"required": ["design", "level"],
+							"additionalProperties": false,
+							"properties": { "design": { "type": "string" }, "level": { "type": "number" } }
+						}
+					}
+				}
+			}
+		},
+		"checkpoints": {
+			"description": "Every checkpoint reached, each once: the round, the design's commit, its tag and where its frozen copy is served.",
+			"type": "array",
+			"items": {
+				"type": "object",
+				"required": ["design", "level", "round", "commit", "tag", "path"],
+				"additionalProperties": false,
+				"properties": {
+					"design": { "type": "string", "pattern": "^v[1-8]$" },
+					"level": { "type": "number" },
+					"round": { "type": "integer" },
+					"commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+					"tag": { "type": "string" },
+					"path": { "type": "string" }
+				}
+			}
+		}
+	}
+}

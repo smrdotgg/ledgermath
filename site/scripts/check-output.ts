@@ -29,7 +29,9 @@
 
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, extname, join, relative, resolve, sep } from "node:path";
-import { PAGE_TEXT } from "../src/App.text";
+// On the branch home-variations the page at / is the picker of the eight designs, so its lines
+// are the ones checked here (main checks the placeholder's, src/App.text.ts).
+import { PICKER_TEXT as PAGE_TEXT } from "../src/picker/picker.text";
 
 export type Result = { problems: string[]; checked: number };
 
@@ -211,7 +213,7 @@ if (import.meta.main) {
 	if (problems.length > 0) {
 		for (const problem of problems) console.error(problem);
 		if (problems.some((problem) => problem.startsWith("index.html does not hold"))) {
-			console.error("The page's text is listed in site/src/App.text.ts; change it there with the page (site/src/App.tsx).");
+			console.error("The picker's text is listed in site/src/picker/picker.text.ts; change it there with the page (site/src/picker/Page.tsx).");
 		}
 		process.exit(1);
 	}

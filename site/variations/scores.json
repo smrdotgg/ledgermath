@@ -1,0 +1,16 @@
+{
+	"schema": "ledgermath.home-variations.scores/1",
+	"categories": [
+		{ "key": "first_ten_seconds", "name": "First ten seconds" },
+		{ "key": "numbers", "name": "The numbers" },
+		{ "key": "trust_and_provenance", "name": "Trust and provenance" },
+		{ "key": "agents_and_developers", "name": "Agents and developers" },
+		{ "key": "typography_and_hierarchy", "name": "Typography and hierarchy" },
+		{ "key": "colour_and_contrast", "name": "Colour and contrast" },
+		{ "key": "phone_layout", "name": "Phone layout" },
+		{ "key": "craft_and_distinctiveness", "name": "Craft and distinctiveness" }
+	],
+	"levels": [7, 8, 8.5, 9, 9.5, 10],
+	"rounds": [],
+	"checkpoints": []
+}
