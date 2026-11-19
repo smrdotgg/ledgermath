@@ -16,3 +16,8 @@ for (const el of document.querySelectorAll<HTMLElement>("[data-copy]")) {
 	});
 	el.after(button);
 }
+// A link to a folded section (the agent prompt) opens it.
+for (const a of document.querySelectorAll<HTMLAnchorElement>('a[href^="#"]')) {
+	const target = document.getElementById(a.hash.slice(1));
+	if (target instanceof HTMLDetailsElement) a.addEventListener("click", () => (target.open = true));
+}
