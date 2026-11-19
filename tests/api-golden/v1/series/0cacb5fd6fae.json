@@ -18,8 +18,8 @@
   "newest_run_started_at": "2026-12-01T04:12:00.000000000Z",
   "newest_runs": 12,
   "months": [
-    {"month":"2026-11","url":"https://api.ledgermath.com/v1/series/0cacb5fd6fae/2026-11.json","runs":4,"oldest_run_started_at":"2026-11-12T04:12:00.000000000Z","newest_run_started_at":"2026-11-15T04:12:00.000000000Z"},
-    {"month":"2026-12","url":"https://api.ledgermath.com/v1/series/0cacb5fd6fae/2026-12.json","runs":1,"oldest_run_started_at":"2026-12-01T04:12:00.000000000Z","newest_run_started_at":"2026-12-01T04:12:00.000000000Z"}
+    {"month":"2026-11","url":"https://api.ledgermath.com/v1/series/0cacb5fd6fae/2026-11.json","runs":4,"oldest_run_started_at":"2026-11-12T04:12:00.000000000Z","newest_run_started_at":"2026-11-15T04:12:00.000000000Z","sha256":"667f55b6424d2bf1caeac34d3e6c7de260af9c3b8a6600d37afbb15515f83ed1","bytes":5819},
+    {"month":"2026-12","url":"https://api.ledgermath.com/v1/series/0cacb5fd6fae/2026-12.json","runs":1,"oldest_run_started_at":"2026-12-01T04:12:00.000000000Z","newest_run_started_at":"2026-12-01T04:12:00.000000000Z","sha256":"f26d9c77937905ca6446e1e67d90e7feaf04607fe9f03468066c2a4d71b94564","bytes":2156}
   ],
   "derivations": {
     "series_v1": {

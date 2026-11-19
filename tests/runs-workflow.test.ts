@@ -38,8 +38,8 @@ describe("the runs workflow", () => {
 		expect(Object.keys(workflow.jobs).length).toBe(1);
 	});
 
-	test("asks for an OIDC token and issues, and may read this repository's contents only", () => {
-		expect(workflow.permissions).toEqual({ contents: "read", "id-token": "write", issues: "write" });
+	test("asks for an OIDC token and issues, and may read this repository's contents and its Actions only (the data API's files the last run kept)", () => {
+		expect(workflow.permissions).toEqual({ contents: "read", "id-token": "write", issues: "write", actions: "read" });
 	});
 
 	test("takes AWS credentials through OIDC from the role in RUNS_AWS_ROLE_ARN, and the bucket from RUNS_BUCKET", () => {
@@ -106,15 +106,16 @@ describe("the runs workflow", () => {
 		expect(steps.indexOf(alarm)).toBeGreaterThan(steps.indexOf(page));
 	});
 
-	test("builds the data API's files after the page when both Methods succeeded, checks them, and keeps only a checked tree, as the artifact api, uploading nothing else", () => {
+	test("builds the data API's files after the page when both Methods succeeded, checks them against the tree the last successful run kept, and keeps only a checked tree, as the artifact api, for a week, uploading nothing else", () => {
 		const derive = steps.find((step) => step.id === "derive") as Step;
 		const pageUpload = steps.find((step) => step.uses?.startsWith("actions/upload-artifact@") && step.with?.name === "page") as Step;
 		const build = steps.find((step) => step.run?.includes("scripts/build-api.ts")) as Step;
+		const previous = steps.find((step) => step.run?.includes("scripts/previous-api.ts")) as Step;
 		const check = steps.find((step) => step.run?.includes("scripts/check-api.ts")) as Step;
 		const upload = steps.find((step) => step.uses?.startsWith("actions/upload-artifact@") && step.with?.name === "api") as Step;
 		const alarm = steps.find((step) => step.run?.includes("scripts/alarm.ts")) as Step;
-		for (const script of ["build-api", "check-api"]) expect(existsSync(join(ROOT, "scripts", `${script}.ts`))).toBe(true);
-		const order = [derive, pageUpload, build, check, upload, alarm].map((step) => steps.indexOf(step));
+		for (const script of ["build-api", "previous-api", "check-api"]) expect(existsSync(join(ROOT, "scripts", `${script}.ts`))).toBe(true);
+		const order = [derive, pageUpload, build, previous, check, upload, alarm].map((step) => steps.indexOf(step));
 		expect(order.every((position) => position >= 0)).toBe(true);
 		expect([...order].sort((a, b) => a - b)).toEqual(order);
 
@@ -122,21 +123,29 @@ describe("the runs workflow", () => {
 		expect(command(build)).toBe(
 			"bun scripts/build-api.ts --derivations page/derivations.json --requests-derivations page/requests-derivations.json --runs ledgermath-runs --out api",
 		);
+		// The previous tree: the artifact api of the last successful run on main, with this run's token; said to be comparable or not as the step's output.
+		expect(command(previous)).toBe('bun scripts/previous-api.ts --repository "$GITHUB_REPOSITORY" --workflow runs.yml --branch main --run-id "$GITHUB_RUN_ID" --tree api --out api-previous');
+		expect(previous.id).toBe("api-previous");
+		expect(previous.if).toBe("${{ !cancelled() && steps.api.outcome == 'success' }}");
+		expect(previous.env).toEqual({ GH_TOKEN: "${{ github.token }}" });
+		// The check compares with it, and is told there may be none only when the fetch said so: a fetch that failed stops the check.
 		expect(command(check)).toBe(
-			"bun scripts/check-api.ts --tree api --derivations page/derivations.json --requests-derivations page/requests-derivations.json --runs ledgermath-runs",
+			"bun scripts/check-api.ts --tree api --derivations page/derivations.json --requests-derivations page/requests-derivations.json --runs ledgermath-runs " +
+				"--previous api-previous ${{ steps.api-previous.outputs.comparable == 'false' && '--allow-no-previous' || '' }}",
 		);
 		expect(build.id).toBe("api");
 		expect(build.if).toBe("${{ !cancelled() && steps.derive.outcome == 'success' }}");
 		expect(check.id).toBe("api-check");
-		expect(check.if).toBe("${{ !cancelled() && steps.api.outcome == 'success' }}");
+		expect(check.if).toBe("${{ !cancelled() && steps.api.outcome == 'success' && steps.api-previous.outcome == 'success' }}");
 		expect(upload.if).toBe("${{ !cancelled() && steps.api-check.outcome == 'success' }}");
-		expect(upload.with).toEqual({ name: "api", path: "api/", "if-no-files-found": "error" });
+		// Only the latest is needed, by the next run's check; the tree grows by about 1.8 GB a year.
+		expect(upload.with).toEqual({ name: "api", path: "api/", "if-no-files-found": "error", "retention-days": 7 as unknown as string });
 		// The same pinned action as the page's artifact.
 		expect(upload.uses).toBe(pageUpload.uses as string);
 		// Nothing is served or published from this workflow: no copy to a bucket, no deploy, no new permission.
 		const text = readFileSync(join(ROOT, ".github", "workflows", "runs.yml"), "utf8");
 		expect(text).not.toMatch(/aws s3 (cp|sync)|s3:\/\/|sst deploy|vercel/i);
-		expect(workflow.permissions).toEqual({ contents: "read", "id-token": "write", issues: "write" });
+		expect(workflow.permissions).toEqual({ contents: "read", "id-token": "write", issues: "write", actions: "read" });
 	});
 
 	test("tells the alarm whether this pass's copy and push succeeded", () => {

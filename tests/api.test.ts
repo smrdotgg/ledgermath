@@ -1,4 +1,5 @@
 import { beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
+import { createHash } from "node:crypto";
 import { cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -214,8 +215,9 @@ describe("the same inputs give the same bytes", () => {
 describe("a Series", () => {
 	/** A point as the Derivation holds it: the API's point without what it adds. */
 	const asDerived = (point: Json): Json => {
-		const { sha256: _sha256, evidence: _evidence, boot_summary: _bootSummary, ...rest } = point;
-		return rest;
+		const { sha256: _sha256, evidence: _evidence, boot_summary: _bootSummary, group_through_as_of_run: asOfRun, ...rest } = point;
+		// The fixture's Series of requests has one group: there the Derivation's group_through is the tree's group_through_as_of_run, null.
+		return asOfRun === undefined ? rest : { ...rest, group_through: asOfRun };
 	};
 
 	test("of both Methods carries each one's summary in its Series file and each one's points in its month file, labelled with its name and version, and its row each one's summary", () => {
@@ -377,6 +379,23 @@ describe("the check fails loudly", () => {
 		const value = JSON.parse(readFileSync(join(copy, path), "utf8"));
 		change(value);
 		writeFileSync(join(copy, path), apiJson(value));
+		keepEntry(copy, path);
+	};
+	/**
+	 * A changed month file's entry in its Series file made to give its new
+	 * sha256 and size, so that a test of another rule sees only that rule's
+	 * problems (tests/api-months.test.ts tests the entry itself).
+	 */
+	const keepEntry = (copy: string, path: string): void => {
+		const month = /^v1\/series\/([^/]+)\/([^/]+)\.json$/.exec(path);
+		if (month === null) return;
+		const at = join(copy, seriesPath(month[1] as string));
+		const series = JSON.parse(readFileSync(at, "utf8"));
+		const entry = (series.months as Json[]).find((one) => one.month === month[2]) as Json;
+		const bytes = readFileSync(join(copy, path));
+		entry.sha256 = createHash("sha256").update(bytes).digest("hex");
+		entry.bytes = bytes.length;
+		writeFileSync(at, apiJson(series));
 	};
 
 	test("when a file does not match its schema: a field the schema does not describe, or one of the wrong type", () => {
@@ -410,12 +429,14 @@ describe("the check fails loudly", () => {
 		const nested = check((copy) => {
 			const path = join(copy, november(fixture.memory));
 			writeFileSync(path, readFileSync(path, "utf8").replace('{"run":', '{"run":"x","\\u0072un":'));
+			keepEntry(copy, november(fixture.memory));
 		});
 		expect(nested).toEqual([`${november(fixture.memory)} is not strict JSON: the object at /derivations/series_v1/points/0 holds the member "run" twice`]);
 		// A number a double does not hold exactly: a reader's parse would change it.
 		const digits = check((copy) => {
 			const path = join(copy, november(fixture.memory));
 			writeFileSync(path, readFileSync(path, "utf8").replace('"sample":1,', '"sample":9007199254740993,'));
+			keepEntry(copy, november(fixture.memory));
 		});
 		expect(digits).toEqual([
 			`${november(fixture.memory)} is not strict JSON: the number at /derivations/series_v1/points/0/samples/0/sample is 9007199254740993, which a double does not hold exactly: it would be written 9007199254740992, another value`,

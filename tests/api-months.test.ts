@@ -7,6 +7,7 @@
  */
 
 import { beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
+import { createHash } from "node:crypto";
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -15,8 +16,26 @@ import Ajv2020 from "ajv/dist/2020";
 
 import type { DerivationsFile as RequestsFile } from "../methods/requests/v1/output";
 import type { DerivationsFile as SeriesFile } from "../methods/v1/output";
-import { type ApiSources, apiJson, buildApi, DEFAULT_BASE, monthPath, NEWEST_RUNS, readApiSchemas, readBootSummaries, readDerivations, readPriceFiles, seriesPath } from "../scripts/lib/api";
-import { CEILINGS, checkApi, checkStability } from "../scripts/lib/api-check";
+import {
+	type ApiSources,
+	apiJson,
+	buildApi,
+	DEFAULT_BASE,
+	ABOUT,
+	EVIDENCE,
+	FIGURES,
+	MONTH_CONTRACT,
+	MONTHS,
+	monthPath,
+	NEWEST_RUNS,
+	readApiSchemas,
+	readBootSummaries,
+	readDerivations,
+	readPriceFiles,
+	seriesPath,
+	VERSIONING,
+} from "../scripts/lib/api";
+import { CEILINGS, checkApi, checkStability, laidOut } from "../scripts/lib/api-check";
 import { type ApiFixture, type LongFixture, makeApiFixture, makeLongFixture } from "./api-fixtures";
 
 setDefaultTimeout(120_000);
@@ -68,9 +87,13 @@ beforeAll(async () => {
 describe("a Series split by month", () => {
 	test("has one file per month a Run of it started in, listed in its Series file, oldest first, with its address, Runs and first and last start", () => {
 		const file = json(tree, seriesPath(fixture.memory));
+		const hashOf = (month: string): { sha256: string; bytes: number } => {
+			const bytes = tree.get(monthPath(fixture.memory, month)) as Uint8Array;
+			return { sha256: createHash("sha256").update(bytes).digest("hex"), bytes: bytes.length };
+		};
 		expect(file.months).toEqual([
-			{ month: "2026-11", url: `${DEFAULT_BASE}/${monthPath(fixture.memory, "2026-11")}`, runs: 4, oldest_run_started_at: "2026-11-12T04:12:00.000000000Z", newest_run_started_at: "2026-11-15T04:12:00.000000000Z" },
-			{ month: "2026-12", url: `${DEFAULT_BASE}/${monthPath(fixture.memory, "2026-12")}`, runs: 1, oldest_run_started_at: "2026-12-01T04:12:00.000000000Z", newest_run_started_at: "2026-12-01T04:12:00.000000000Z" },
+			{ month: "2026-11", url: `${DEFAULT_BASE}/${monthPath(fixture.memory, "2026-11")}`, runs: 4, oldest_run_started_at: "2026-11-12T04:12:00.000000000Z", newest_run_started_at: "2026-11-15T04:12:00.000000000Z", ...hashOf("2026-11") },
+			{ month: "2026-12", url: `${DEFAULT_BASE}/${monthPath(fixture.memory, "2026-12")}`, runs: 1, oldest_run_started_at: "2026-12-01T04:12:00.000000000Z", newest_run_started_at: "2026-12-01T04:12:00.000000000Z", ...hashOf("2026-12") },
 		]);
 		expect([...tree.keys()].filter((path) => path.startsWith(`v1/series/${fixture.memory}`))).toEqual([seriesPath(fixture.memory), monthPath(fixture.memory, "2026-11"), monthPath(fixture.memory, "2026-12")]);
 		// The syscall Series had no Run in December: one month.
@@ -135,84 +158,351 @@ describe("a Series split by month", () => {
 	});
 });
 
-describe("a month file does not change once its month has passed", () => {
-	test("a Run in a later month leaves every earlier month file of every Series byte for byte, even one that splits a Series into groups", () => {
-		const earlier = [...beforeTree.keys()].filter((path) => /^v1\/series\/[^/]+\/[^/]+\.json$/.test(path));
+describe("a month file's bytes change only for the four causes", () => {
+	const MONTH = /^v1\/series\/[^/]+\/[^/]+\.json$/;
+	/** The month files two trees both hold whose bytes differ, in path order. */
+	const changed = (a: Map<string, Uint8Array>, b: Map<string, Uint8Array>): string[] =>
+		[...a.keys()].filter((path) => MONTH.test(path) && b.has(path) && text(a, path) !== text(b, path)).sort();
+	/** The members of each published point that differ in `b`, by Run id, for one Method's block of a month file. */
+	const pointChanges = (a: Json, b: Json, key: string): Record<string, string[]> => {
+		const after = new Map((b.derivations[key].points as Json[]).map((point) => [point.run, point]));
+		const out: Record<string, string[]> = {};
+		for (const point of a.derivations[key].points as Json[]) {
+			const other = after.get(point.run) as Json;
+			const members = Object.keys(point).filter((member) => JSON.stringify(point[member]) !== JSON.stringify(other[member]));
+			if (members.length > 0) out[point.run] = members;
+		}
+		return out;
+	};
+	const runsOf = (file: Json, key = "series_v1"): string[] => (file.derivations[key].points as Json[]).map((point) => point.run);
+
+	test("the contract is published word for word in the table of contents, both Series schemas, ADR-0030 and the README", () => {
+		const flat = (value: string): string => value.replace(/\s+/g, " ");
+		const contract = flat(MONTH_CONTRACT);
+		expect(contract).toContain("(a) a Run that started in that month is added, (b) a boot summary that was missing arrives, (c) a Run arrives late");
+		expect(contract).toContain("or (d) a Method first applies to the Series; otherwise they do not change.");
+		const index = json(tree, "v1/index.json");
+		expect(index.months).toBe(MONTHS);
+		expect(index.months).toContain(MONTH_CONTRACT);
+		expect(index.about).not.toMatch(/does not change|never changes|stays the same/);
+		const schema = (name: string): Json => JSON.parse(readFileSync(join(ROOT, "schemas", "api", "v1", `${name}.schema.json`), "utf8"));
+		expect(schema("series-month").description).toContain(MONTH_CONTRACT);
+		expect(schema("series").properties.months.description).toContain(MONTH_CONTRACT);
+		expect(schema("index").properties.months.description).toContain("four causes");
+		expect(flat(readFileSync(join(ROOT, "docs", "adr", "0030-the-data-api-is-static-files-cut-from-the-derivations.md"), "utf8"))).toContain(contract);
+		expect(flat(readFileSync(join(ROOT, "README.md"), "utf8"))).toContain(contract);
+		// And no published words still say a past month never changes.
+		for (const name of ["index", "series-list", "series", "series-month"]) expect([name, JSON.stringify(schema(name))]).not.toEqual([name, expect.stringMatching(/once a month has passed|stays the same|does not change once/)]);
+	});
+
+	test("a Series file's months give each month file's sha256 and size, as the tree holds it; a month file that does not change keeps its entry byte for byte", () => {
+		for (const id of [fixture.memory, fixture.http, fixture.syscall]) {
+			for (const entry of json(tree, seriesPath(id)).months as Json[]) {
+				const bytes = tree.get(monthPath(id, entry.month)) as Uint8Array;
+				expect([entry.sha256, entry.bytes]).toEqual([createHash("sha256").update(bytes).digest("hex"), bytes.length]);
+			}
+		}
+		const entryLine = (t: Map<string, Uint8Array>, id: string, month: string): string | undefined =>
+			text(t, seriesPath(id))
+				.split("\n")
+				.find((line) => line.includes(`"month":"${month}"`))
+				?.replace(/,$/, "");
+		expect(entryLine(tree, fixture.memory, "2026-11")).toBe(entryLine(beforeTree, fixture.memory, "2026-11"));
+		expect(text(tree, seriesPath(fixture.memory))).not.toBe(text(beforeTree, seriesPath(fixture.memory)));
+	});
+
+	test("a strictly later Run in a later month, for Series both Methods already derive, changes no earlier month: even one that splits a Series into groups", () => {
+		const earlier = [...beforeTree.keys()].filter((path) => MONTH.test(path));
 		expect(earlier.length).toBe(3);
-		for (const path of earlier) expect(text(tree, path)).toBe(text(beforeTree, path));
+		expect(changed(beforeTree, tree)).toEqual([]);
+		expect(json(tree, seriesPath(fixture.http)).derivations.requests_v1.groups.map((group: Json) => group.id)).toEqual(["A", "B"]);
 		// The Series files of the two Series that gained a Run change; the third's does not.
 		expect(text(tree, seriesPath(fixture.memory))).not.toBe(text(beforeTree, seriesPath(fixture.memory)));
 		expect(text(tree, seriesPath(fixture.http))).not.toBe(text(beforeTree, seriesPath(fixture.http)));
 		expect(text(tree, seriesPath(fixture.syscall))).toBe(text(beforeTree, seriesPath(fixture.syscall)));
+		const result = checkStability(writeTree(beforeTree), directory);
+		expect([result.problems, result.compared, result.inBoth, result.unchanged, result.added, result.explained]).toEqual([[], true, 3, 3, 2, []]);
 	});
 
-	test("requests v1's group_through is written as it stood through each Run: the Derivation's changes on November's points when December's Run splits the Series, the tree's does not", () => {
-		const was = requestsOf(before.requests, before.http);
-		const now = requestsOf(fixture.requests, fixture.http);
-		expect(was.groups.length).toBe(1);
-		expect(now.groups.map((group) => group.id)).toEqual(["A", "B"]);
-		// The Derivation: null on November's points while the Series had one group; their through once it has two.
-		expect(was.points.map((point) => point.group_through)).toEqual([null, null]);
-		expect(now.points.slice(0, 2).map((point) => point.group_through)).toEqual(now.points.slice(0, 2).map((point) => point.through));
-		expect(now.points[2]?.group).toBe("B");
-		expect(now.points[2]?.group_through).not.toBeNull();
-		// The tree: null on November's points either way, and December's as the Derivation has it.
-		const november = json(tree, monthPath(fixture.http, "2026-11")).derivations.requests_v1.points as Json[];
-		expect(november.map((point) => point.group_through)).toEqual([null, null]);
-		expect(json(tree, monthPath(fixture.http, "2026-12")).derivations.requests_v1.points[0].group_through).toEqual(now.points[2]?.group_through);
-		expect(json(tree, seriesPath(fixture.http)).derivations.requests_v1.newest_points.map((point: Json) => point.group_through)).toEqual([null, null, now.points[2]?.group_through]);
+	test("(a) a Run that started in a month, after every Run of its Series, changes that month's file and nothing else: its point, its pair entry, its count and newest start", async () => {
+		const more = await makeApiFixture({ nextMonth: true, extraSyscallRun: true });
+		const after = buildApi(sourcesOf(more));
+		const nov = monthPath(fixture.syscall, "2026-11");
+		expect(changed(tree, after)).toEqual([nov]);
+		const was = json(tree, nov);
+		const is = json(after, nov);
+		const run = seriesOf(more.series, fixture.syscall).points[1]?.run as string;
+		expect(runsOf(is)).toEqual([...runsOf(was), run]);
+		expect(pointChanges(was, is, "series_v1")).toEqual({});
+		expect(is.derivations.series_v1.differed.slice(0, -1)).toEqual(was.derivations.series_v1.differed);
+		const { derivations: _a, runs: _b, newest_run_started_at: _c, ...wasHead } = was;
+		const { derivations: _d, runs: _e, newest_run_started_at: _f, ...isHead } = is;
+		expect(isHead).toEqual(wasHead);
+		expect([is.runs, is.newest_run_started_at]).toEqual([2, "2026-11-16T04:13:00.000000000Z"]);
+		const result = checkStability(directory, writeTree(after));
+		expect(result.problems).toEqual([]);
+		expect(result.explained).toEqual([{ path: nov, causes: [{ cause: "a", detail: `Run ${run}` }] }]);
 	});
 
-	test("its one other change: a boot summary that arrives turns its points' boot_summary from null into its address, and nothing else", () => {
+	test("(b) a boot summary that was missing arriving turns its points' boot_summary from null into its address, and changes nothing else", () => {
 		const boots = new Map(readBootSummaries(fixture.runs));
 		boots.set("boot-2026-11-13", "boots/2026/11/13/boot-2026-11-13.json");
 		const later = buildApi(sourcesOf(fixture, boots));
-		const path = monthPath(fixture.memory, "2026-11");
-		expect(text(later, path)).not.toBe(text(tree, path));
-		const a = json(tree, path);
-		const b = json(later, path);
-		b.derivations.series_v1.points = b.derivations.series_v1.points.map((point: Json) => (point.boot === "boot-2026-11-13" ? { ...point, boot_summary: null } : point));
-		expect(b).toEqual(a);
-		expect(text(later, monthPath(fixture.memory, "2026-12"))).toBe(text(tree, monthPath(fixture.memory, "2026-12")));
+		const runsOfBoot = (id: string, key = "series_v1"): string[] => (json(tree, monthPath(id, "2026-11")).derivations[key].points as Json[]).filter((point) => point.boot === "boot-2026-11-13").map((point) => point.run);
+		expect(changed(tree, later)).toEqual([monthPath(fixture.memory, "2026-11"), monthPath(fixture.http, "2026-11")].sort());
+		for (const id of [fixture.memory, fixture.http]) {
+			const path = monthPath(id, "2026-11");
+			for (const key of id === fixture.http ? ["series_v1", "requests_v1"] : ["series_v1"]) {
+				expect(pointChanges(json(tree, path), json(later, path), key)).toEqual(Object.fromEntries(runsOfBoot(id, key).map((run) => [run, ["boot_summary"]])));
+			}
+			const b = json(later, path);
+			for (const key of Object.keys(b.derivations)) b.derivations[key].points = b.derivations[key].points.map((point: Json) => (point.boot === "boot-2026-11-13" ? { ...point, boot_summary: null } : point));
+			expect(b).toEqual(json(tree, path));
+		}
+		const result = checkStability(directory, writeTree(later));
+		expect(result.problems).toEqual([]);
+		expect(result.explained.map((file) => [file.path, file.causes.map((one) => one.cause)])).toEqual([monthPath(fixture.memory, "2026-11"), monthPath(fixture.http, "2026-11")].sort().map((path) => [path, ["b"]]));
+	});
+
+	test("(c) a Run that arrives late changes its own month, and in later months only what a late Run can change: a later point's group, through and group_through_as_of_run, and the pair entry of the Run after it", async () => {
+		const late = await makeApiFixture({ nextMonth: true, lateRun: true, lateRequestsRun: true });
+		const after = buildApi(sourcesOf(late));
+		const [memoryNov, memoryDec, httpNov, httpDec] = [monthPath(fixture.memory, "2026-11"), monthPath(fixture.memory, "2026-12"), monthPath(fixture.http, "2026-11"), monthPath(fixture.http, "2026-12")];
+		expect(changed(tree, after)).toEqual([memoryNov, memoryDec, httpNov, httpDec].sort());
+		// Its own month: its point, after every published point of that month, which is unchanged.
+		const lateHttp = requestsOf(late.requests, fixture.http).points.find((point) => point.started_at.startsWith("2026-11-20"))?.run as string;
+		expect(runsOf(json(after, httpNov), "requests_v1")).toEqual([...runsOf(json(tree, httpNov), "requests_v1"), lateHttp]);
+		expect(pointChanges(json(tree, httpNov), json(after, httpNov), "requests_v1")).toEqual({});
+		// December's Run, after it, took the letter C and new pooled figures; nothing else of it changed.
+		const decRun = runsOf(json(tree, httpDec))[0] as string;
+		expect(pointChanges(json(tree, httpDec), json(after, httpDec), "series_v1")).toEqual({ [decRun]: ["group"] });
+		expect(pointChanges(json(tree, httpDec), json(after, httpDec), "requests_v1")).toEqual({ [decRun]: ["group", "through"] });
+		expect([json(tree, httpDec).derivations.requests_v1.points[0].group, json(after, httpDec).derivations.requests_v1.points[0].group]).toEqual(["B", "C"]);
+		// And its pair entry now comes from the late Run.
+		expect(json(after, httpDec).derivations.series_v1.differed.map((entry: Json) => [entry.from, entry.to])).toEqual([[lateHttp, decRun]]);
+		expect(pointChanges(json(tree, memoryDec), json(after, memoryDec), "series_v1")).toEqual({});
+		const result = checkStability(directory, writeTree(after));
+		expect(result.problems).toEqual([]);
+		expect(result.explained.map((file) => [file.path, file.causes.map((one) => one.cause)])).toEqual([memoryNov, memoryDec, httpNov, httpDec].sort().map((path) => [path, ["c"]]));
+		expect(result.explained.find((file) => file.path === httpDec)?.causes[0]?.detail.split("; ").sort()).toEqual(
+			[
+				`requests_v1 Run ${decRun}'s group, after a Run added late`,
+				`requests_v1 Run ${decRun}'s through, after a Run added late`,
+				`series_v1 Run ${decRun}'s group, after a Run added late`,
+				`the pair entry of Run ${decRun}, now from Run ${lateHttp}, added late`,
+			].sort(),
+		);
+	});
+
+	test("(d) a Method that first applies to a Series adds its block to every month file of the Series, and changes nothing else in them", async () => {
+		const without = await makeApiFixture({ nextMonth: true, methodLater: true });
+		const withRun = await makeApiFixture({ nextMonth: true, methodLater: true, methodLaterRun: true });
+		const id = without.methodLater as string;
+		expect(withRun.methodLater).toBe(id);
+		const a = buildApi(sourcesOf(without));
+		const b = buildApi(sourcesOf(withRun));
+		const nov = monthPath(id, "2026-11");
+		// November held only series v1: the Run failed before its stream held a request.
+		expect(Object.keys(json(a, nov).derivations)).toEqual(["series_v1"]);
+		expect(Object.keys(json(b, nov).derivations)).toEqual(["series_v1", "requests_v1"]);
+		expect(changed(a, b)).toEqual([nov]);
+		const { requests_v1: added, ...rest } = json(b, nov).derivations;
+		const withoutIt: Json = { ...json(b, nov), derivations: rest };
+		expect(withoutIt).toEqual(json(a, nov));
+		expect(runsOf(json(b, nov), "requests_v1")).toEqual(runsOf(json(a, nov)));
+		expect(added.points[0].counted).toBe(false);
+		const result = checkStability(writeTree(a), writeTree(b));
+		expect(result.problems).toEqual([]);
+		expect(result.explained).toEqual([{ path: nov, causes: [{ cause: "d", detail: "requests_v1 first derives the Series" }] }]);
 	});
 });
 
-describe("the check against the tree readers were last served (--previous)", () => {
-	test("passes a tree whose past months changed only by a Run of theirs or a boot summary that arrived", async () => {
-		expect(checkStability(writeTree(beforeTree), directory)).toEqual([]);
-		const sameMonth = buildApi(sourcesOf(await makeApiFixture({ nextMonth: true, extraSyscallRun: true })));
-		expect(checkStability(directory, writeTree(sameMonth))).toEqual([]);
+describe("requests v1's group_through_as_of_run", () => {
+	/**
+	 * The Derivation's group_through, recovered by the rule the schemas give:
+	 * through, for the points before the first point whose group differs from
+	 * the first point's, in a Series whose requests v1 groups number more than
+	 * one; this field as it is for every other point.
+	 */
+	const recover = (t: Map<string, Uint8Array>, id: string): unknown[] => {
+		const file = json(t, seriesPath(id));
+		const points = (file.months as Json[]).flatMap((entry) => json(t, monthPath(id, entry.month)).derivations.requests_v1.points as Json[]);
+		const first = points.findIndex((point) => point.group !== points[0]?.group);
+		const split = file.derivations.requests_v1.groups.length > 1;
+		return points.map((point, i) => (split && i < first ? point.through : point.group_through_as_of_run));
+	};
+
+	test("is the group's figures as they stood through the Run; the Derivation's group_through is recovered from it exactly, by the rule the schemas give, for every point", async () => {
+		const trap = await makeApiFixture({ nextMonth: true, failedSecondGroup: true, lateRequestsRun: true });
+		const t = buildApi(sourcesOf(trap));
+		for (const derivation of trap.requests.derivations) expect([derivation.series.id, recover(t, derivation.series.id)]).toEqual([derivation.series.id, derivation.points.map((point) => point.group_through)]);
+		expect(trap.requests.derivations.length).toBe(2);
+		for (const path of t.keys()) expect(text(t, path)).not.toContain('"group_through"');
+		expect(checkApi({ tree: writeTree(t), runs: trap.runs, base: DEFAULT_BASE, series: trap.series, requests: trap.requests }).problems).toEqual([]);
+	});
+
+	test("is null for a group with no counted Run yet, although through holds the other groups' figures: a reader writing group_through_as_of_run ?? through would be wrong", async () => {
+		const trap = await makeApiFixture({ failedSecondGroup: true });
+		const id = trap.failedSecondGroup as string;
+		const t = buildApi(sourcesOf(trap));
+		const points = json(t, monthPath(id, "2026-11")).derivations.requests_v1.points as Json[];
+		expect(points.map((point) => [point.group, point.counted, point.through?.runs ?? null, point.group_through_as_of_run])).toEqual([
+			["A", true, 1, null],
+			["B", false, 1, null],
+		]);
+		const derivation = requestsOf(trap.requests, id);
+		// The Derivation: A's figures on A's point (the Series split later), null on B's.
+		expect(derivation.points.map((point) => point.group_through?.runs ?? null)).toEqual([1, null]);
+		expect(recover(t, id)).toEqual(derivation.points.map((point) => point.group_through));
+		const naive = points.map((point) => point.group_through_as_of_run ?? point.through);
+		expect(naive[1]).not.toEqual(derivation.points[1]?.group_through);
+		// And the check, comparing with the Derivations by the same rule, finds nothing wrong.
+		expect(checkApi({ tree: writeTree(t), runs: trap.runs, base: DEFAULT_BASE, series: trap.series, requests: trap.requests }).problems).toEqual([]);
+	});
+
+	test("is described in both Series schemas with both reasons it is null and the rule that recovers the Derivation's group_through", () => {
+		for (const name of ["series", "series-month"]) {
+			const schema = JSON.parse(readFileSync(join(ROOT, "schemas", "api", "v1", `${name}.schema.json`), "utf8"));
+			const point = schema.$defs.requests_point;
+			expect(point.required).toContain("group_through_as_of_run");
+			expect(point.required).not.toContain("group_through");
+			const words = point.properties.group_through_as_of_run.description as string;
+			expect(words).toContain("the Series had had Runs of one group only, up to and including this Run");
+			expect(words).toContain("its group had had no counted Run by this Run");
+			expect(words).toContain("take through for exactly those points: the points before the first point whose group differs from the first point's, in a Series whose requests_v1 groups number more than one");
+			expect(words).toContain("Never substitute through for a null otherwise");
+		}
+	});
+});
+
+describe("the check against the tree before (--previous)", () => {
+	const copyOf = (from: string): string => {
+		const copy = mkdtempSync(join(tmpdir(), "api-previous-"));
+		cpSync(from, copy, { recursive: true });
+		return copy;
+	};
+	const edited = (from: string, path: string, change: (value: Json) => void): string => {
+		const copy = copyOf(from);
+		const value = JSON.parse(readFileSync(join(copy, path), "utf8"));
+		change(value);
+		// Laid out as the build lays it out, members in the order they were read: only what `change` did differs.
+		writeFileSync(join(copy, path), laidOut(value));
+		return copy;
+	};
+	const unexplained = (path: string, what: string): string => `${path} changed since the previous tree in a way none of the four causes explains: ${what}`;
+
+	test("is an error when the previous tree is missing, empty, or of another layout (other schemas, another base), unless there may explicitly be none", () => {
+		const missing = join(tmpdir(), "api-no-such-tree");
+		const empty = mkdtempSync(join(tmpdir(), "api-empty-"));
+		const notTree = mkdtempSync(join(tmpdir(), "api-not-tree-"));
+		writeFileSync(join(notTree, "hello.txt"), "hello\n");
+		const schemas = copyOf(directory);
+		writeFileSync(join(schemas, "v1/schemas/series-month.schema.json"), `${readFileSync(join(schemas, "v1/schemas/series-month.schema.json"), "utf8")} `);
+		const elsewhere = writeTree(buildApi({ ...sourcesOf(fixture), base: "https://staging.example.test" }));
+		const cases: Array<[string, string]> = [
+			[missing, `${missing} does not exist`],
+			[empty, `${empty} is empty`],
+			[notTree, `${notTree} holds no v1/index.json, so it is not a tree of the data API`],
+			[schemas, `${schemas} is a tree of another layout: its schemas are not this tree's (v1/schemas/series-month.schema.json differ)`],
+			[elsewhere, `${elsewhere} is a tree of another layout: it was built for https://staging.example.test/v1/index.json, this tree for "${DEFAULT_BASE}/v1/index.json"`],
+		];
+		for (const [previous, why] of cases) {
+			const refused = checkStability(previous, directory);
+			expect([refused.compared, refused.none, refused.problems]).toEqual([false, why, [`no previous tree to compare this one with: ${why}; a build without one must say so explicitly, and is right only for the first build of a layout`]]);
+			const allowed = checkStability(previous, directory, { mayBeNone: true });
+			expect([allowed.compared, allowed.none, allowed.problems]).toEqual([false, why, []]);
+		}
+		// Allowed to be none, a comparable tree is compared all the same.
+		expect(checkStability(writeTree(beforeTree), directory, { mayBeNone: true }).compared).toBe(true);
+	});
+
+	test("fails a month file whose bytes changed with no value: one space appended, alone or beside a boot summary that arrived", () => {
+		const nov = monthPath(fixture.syscall, "2026-11");
+		const spaced = copyOf(directory);
+		writeFileSync(join(spaced, nov), `${readFileSync(join(spaced, nov), "utf8")} `);
+		const size = (tree.get(nov) as Uint8Array).length;
+		expect(checkStability(directory, spaced).problems).toEqual([unexplained(nov, `this file: its bytes are not the layout of its value: they first differ at byte ${size} (line ${text(tree, nov).split("\n").length}), " " where the layout has ""`)]);
 		const boots = new Map(readBootSummaries(fixture.runs));
 		boots.set("boot-2026-11-13", "boots/2026/11/13/boot-2026-11-13.json");
-		expect(checkStability(directory, writeTree(buildApi(sourcesOf(fixture, boots))))).toEqual([]);
+		const arrived = writeTree(buildApi(sourcesOf(fixture, boots)));
+		const memory = monthPath(fixture.memory, "2026-11");
+		expect(checkStability(directory, arrived).problems).toEqual([]);
+		writeFileSync(join(arrived, memory), readFileSync(join(arrived, memory), "utf8").replace('"boot_summary":null', '"boot_summary": null'));
+		expect(checkStability(directory, arrived).problems).toEqual([expect.stringMatching(new RegExp(`^${memory} changed since the previous tree in a way none of the four causes explains: this file: its bytes are not the layout of its value`))]);
 	});
 
-	test("reports a past month that changed otherwise: a Run that arrived after a later Run of its Series, a figure edited, a month gone", async () => {
-		const late = await makeApiFixture({ nextMonth: true, lateRun: true });
-		const lateTree = buildApi(sourcesOf(late));
-		const december = monthPath(fixture.memory, "2026-12");
-		const from = seriesOf(late.series, fixture.memory).differed[4]?.from;
-		expect(checkStability(directory, writeTree(lateTree))).toEqual([
-			`${december} changed since the previous tree although no Run of its month was added: /derivations/series_v1/differed/0/from is ${JSON.stringify(from)}, not ${JSON.stringify(seriesOf(fixture.series, fixture.memory).differed[3]?.from)}`,
-		]);
-		const edited = mkdtempSync(join(tmpdir(), "api-edited-"));
-		cpSync(directory, edited, { recursive: true });
-		const path = monthPath(fixture.syscall, "2026-11");
-		const value = json(tree, path);
-		value.derivations.series_v1.points[0].time_per_repetition_ns += 1;
-		writeFileSync(join(edited, path), apiJson(value));
-		expect(checkStability(directory, edited)).toEqual([expect.stringMatching(new RegExp(`^${path} changed since the previous tree although no Run of its month was added: /derivations/series_v1/points/0/time_per_repetition_ns is `))]);
-		expect(checkStability(directory, writeTree(beforeTree))).toEqual([monthPath(fixture.http, "2026-12"), december].sort().map((gone) => `${gone} was in the previous tree and is not in this one: a month file, once written, stays`));
+	test("fails what none of the causes explains: a figure edited, a boot summary gone, a head field, a block gone, a published Run gone, a month gone", async () => {
+		const syscallNov = monthPath(fixture.syscall, "2026-11");
+		const figure = edited(directory, syscallNov, (value) => (value.derivations.series_v1.points[0].time_per_repetition_ns += 1));
+		const ns = json(tree, syscallNov).derivations.series_v1.points[0].time_per_repetition_ns;
+		const run = json(tree, syscallNov).derivations.series_v1.points[0].run;
+		expect(checkStability(directory, figure).problems).toEqual([unexplained(syscallNov, `/derivations/series_v1: the point of Run ${run}: time_per_repetition_ns is ${ns + 1}, where it was ${ns}`)]);
+		// A boot summary that goes back to null.
+		const memoryNov = monthPath(fixture.memory, "2026-11");
+		const first = json(tree, memoryNov).derivations.series_v1.points[0];
+		expect(first.boot_summary).not.toBeNull();
+		const gone = edited(directory, memoryNov, (value) => (value.derivations.series_v1.points[0].boot_summary = null));
+		expect(checkStability(directory, gone).problems).toEqual([unexplained(memoryNov, `/derivations/series_v1: the point of Run ${first.run}: boot_summary is null, where it was ${JSON.stringify(first.boot_summary)}`)]);
+		const head = edited(directory, syscallNov, (value) => (value.build = "dynamic"));
+		expect(checkStability(directory, head).problems).toEqual([unexplained(syscallNov, '/build is "dynamic", where it was "static"')]);
+		// A Run added to a month does not let its head change but for its count and span.
+		const more = writeTree(buildApi(sourcesOf(await makeApiFixture({ nextMonth: true, extraSyscallRun: true }))));
+		const headToo = edited(more, syscallNov, (value) => (value.series_url = `${DEFAULT_BASE}/elsewhere.json`));
+		expect(checkStability(directory, headToo).problems).toEqual([unexplained(syscallNov, `/series_url is "${DEFAULT_BASE}/elsewhere.json", where it was "${DEFAULT_BASE}/${seriesPath(fixture.syscall)}"`)]);
+		// A late Run does not let an earlier point, nor any other member of a later one, change.
+		const late = writeTree(buildApi(sourcesOf(await makeApiFixture({ nextMonth: true, lateRequestsRun: true }))));
+		const httpNov = monthPath(fixture.http, "2026-11");
+		const httpDec = monthPath(fixture.http, "2026-12");
+		const earlierRun = json(tree, httpNov).derivations.requests_v1.points[0].run;
+		const earlier = edited(late, httpNov, (value) => (value.derivations.requests_v1.points[0].group = "Z"));
+		expect(checkStability(directory, earlier).problems).toEqual([unexplained(httpNov, `/derivations/requests_v1: the point of Run ${earlierRun}: group is "Z", where it was "A"`)]);
+		const decRun = json(tree, httpDec).derivations.requests_v1.points[0].run;
+		const other = edited(late, httpDec, (value) => (value.derivations.requests_v1.points[0].exit_code = 7));
+		expect(checkStability(directory, other).problems).toEqual([unexplained(httpDec, `/derivations/requests_v1: the point of Run ${decRun}: exit_code is 7, where it was 0`)]);
+		// A Method's block that goes; and one that comes to a month although the Series was already derived by it.
+		const withRun = await makeApiFixture({ nextMonth: true, methodLater: true, methodLaterRun: true });
+		const both = writeTree(buildApi(sourcesOf(withRun)));
+		const without = writeTree(buildApi(sourcesOf(await makeApiFixture({ nextMonth: true, methodLater: true }))));
+		const nov = monthPath(withRun.methodLater as string, "2026-11");
+		expect(checkStability(both, without).problems).toContain(unexplained(nov, "/derivations/requests_v1 is gone: a Method that derives a Series goes on deriving it"));
+		const partial = edited(both, nov, (value) => delete value.derivations.requests_v1);
+		expect(checkStability(partial, both).problems).toEqual([unexplained(nov, `/derivations/requests_v1 is new to this month file, but the previous tree's Series ${withRun.methodLater} was already derived by it`)]);
+		// A published Run that is gone, and a month file that is gone.
+		const lateMemory = writeTree(buildApi(sourcesOf(await makeApiFixture({ nextMonth: true, lateRun: true }))));
+		const lateRun = seriesOf((await makeApiFixture({ nextMonth: true, lateRun: true })).series, fixture.memory).points.find((point) => point.started_at.startsWith("2026-11-20"))?.run;
+		expect(checkStability(lateMemory, directory).problems).toContain(unexplained(memoryNov, `/derivations/series_v1: Run ${lateRun}, published in this month file, is no longer in it: a published Run never disappears`));
+		expect(checkStability(directory, writeTree(beforeTree)).problems).toEqual(
+			[monthPath(fixture.http, "2026-12"), monthPath(fixture.memory, "2026-12")].sort().map((path) => `${path} was in the previous tree and is not in this one: a month file, once written, stays`),
+		);
 	});
 
-	test("is the command's --previous", () => {
+	test("is the command's --previous, which lists each changed month file by cause, and --allow-no-previous, which says plainly that nothing was compared", async () => {
 		const args = ["scripts/check-api.ts", "--tree", directory, "--derivations", fixture.derivationsPath, "--requests-derivations", fixture.requestsPath, "--runs", fixture.runs];
 		const passed = Bun.spawnSync([process.execPath, ...args, "--previous", writeTree(beforeTree)], { cwd: ROOT });
 		expect(passed.stderr.toString()).toBe("");
+		expect(passed.exitCode).toBe(0);
+		expect(passed.stdout.toString()).toContain("3 month files in both, 3 the same byte for byte, 0 changed for a cause, 2 new");
 		expect(passed.stdout.toString()).toContain("no past month changed since");
+		// A tree whose November gained a Run: listed under (a).
+		const more = await makeApiFixture({ nextMonth: true, extraSyscallRun: true });
+		const moreTree = writeTree(buildApi(sourcesOf(more)));
+		const moreArgs = ["scripts/check-api.ts", "--tree", moreTree, "--derivations", more.derivationsPath, "--requests-derivations", more.requestsPath, "--runs", more.runs];
+		const listed = Bun.spawnSync([process.execPath, ...moreArgs, "--previous", directory], { cwd: ROOT });
+		expect(listed.exitCode).toBe(0);
+		expect(listed.stdout.toString()).toContain(`  (a) a Run that started in its month was added: 1 month file\n      ${monthPath(fixture.syscall, "2026-11")}: Run `);
 		const failed = Bun.spawnSync([process.execPath, ...args.map((arg) => (arg === directory ? writeTree(beforeTree) : arg)), "--previous", directory], { cwd: ROOT });
 		expect(failed.exitCode).toBe(1);
 		expect(failed.stderr.toString()).toContain("was in the previous tree and is not in this one");
+		const missing = join(tmpdir(), "api-no-such-tree");
+		const refused = Bun.spawnSync([process.execPath, ...args, "--previous", missing], { cwd: ROOT });
+		expect(refused.exitCode).toBe(1);
+		expect(refused.stderr.toString()).toContain(`no previous tree to compare this one with: ${missing} does not exist`);
+		const allowed = Bun.spawnSync([process.execPath, ...args, "--previous", missing, "--allow-no-previous"], { cwd: ROOT });
+		expect(allowed.exitCode).toBe(0);
+		expect(allowed.stdout.toString()).toContain(`past months: not compared, there being no previous tree of this layout (${missing} does not exist)`);
+		expect(allowed.stdout.toString()).toContain("past months not compared (no previous tree of this layout, which --allow-no-previous allowed)");
+		const alone = Bun.spawnSync([process.execPath, ...args, "--allow-no-previous"], { cwd: ROOT });
+		expect(alone.exitCode).toBe(2);
 	});
 });
 
@@ -253,7 +543,12 @@ describe("a Series file does not grow with its Runs", () => {
 			const first = files[0] as (typeof files)[number];
 			for (const file of files.slice(1)) expect(Math.abs(outside(file) - outside(first))).toBeLessThanOrEqual(2 * numbers(withoutMonths(first.json)));
 			// And a month's entry is one line of the same length, whatever the month.
-			const entries = files.flatMap((file) => file.text.split("\n").filter((line) => line.startsWith('    {"month":')).map((line) => line.replace(/,$/, "").replace(/"runs":[0-9]+/, '"runs":0').length));
+			const entries = files.flatMap((file) =>
+				file.text
+					.split("\n")
+					.filter((line) => line.startsWith('    {"month":'))
+					.map((line) => line.replace(/,$/, "").replace(/"runs":[0-9]+/, '"runs":0').replace(/"bytes":[0-9]+/, '"bytes":0').length),
+			);
 			expect(new Set(entries).size).toBe(1);
 			// The month files carry the growth.
 			const last = built[2] as (typeof built)[number];
@@ -369,7 +664,11 @@ describe("the check keeps up with the months", () => {
 		const missing = check((copy) => writeFileSync(join(copy, dec(fixture.memory)), "")); // emptied: not JSON
 		expect(missing[0]).toStartWith(`${dec(fixture.memory)} is not strict JSON: it is not JSON`);
 		const head = check(edit(dec(fixture.http), (file) => (file.series_url = `${DEFAULT_BASE}/${seriesPath(fixture.memory)}`)));
-		expect(head).toEqual([`${dec(fixture.http)}: /series_url is "${DEFAULT_BASE}/${seriesPath(fixture.memory)}", not "${DEFAULT_BASE}/${seriesPath(fixture.http)}", as its Derivations and the base make it`]);
+		expect(head).toEqual([
+			`${dec(fixture.http)}: /series_url is "${DEFAULT_BASE}/${seriesPath(fixture.memory)}", not "${DEFAULT_BASE}/${seriesPath(fixture.http)}", as its Derivations and the base make it`,
+			// Its bytes changed, so its entry in the Series file no longer gives them.
+			expect.stringMatching(new RegExp(`^${seriesPath(fixture.http)}: /months/1/sha256 is "${json(tree, seriesPath(fixture.http)).months[1].sha256}", not "[0-9a-f]{64}", as its Derivations and the base make it$`)),
+		]);
 		const count = check(edit(seriesPath(fixture.http), (file) => (file.months[1].runs = 2)));
 		expect(count).toEqual([`${seriesPath(fixture.http)}: /months/1/runs is 2, not 1, as its Derivations and the base make it`]);
 	});
@@ -394,6 +693,19 @@ describe("the check keeps up with the months", () => {
 		]);
 	});
 
+	test("when a point's start, which files it under its month, is not its Run file's own", () => {
+		// The Derivation's point moved from November 12 to October 31, its Run file and sha256 intact: the build files it under October.
+		const series = structuredClone(fixture.series);
+		const point = seriesOf(series, fixture.memory).points[0] as Json;
+		expect(point.started_at).toBe("2026-11-12T04:12:00.000000000Z");
+		point.started_at = "2026-10-31T04:12:00.000000000Z";
+		const moved = buildApi({ ...sourcesOf(fixture), series });
+		expect(json(moved, seriesPath(fixture.memory)).months.map((entry: Json) => entry.month)).toEqual(["2026-10", "2026-11", "2026-12"]);
+		const problems = checkApi({ tree: writeTree(moved), runs: fixture.runs, base: DEFAULT_BASE, series, requests: fixture.requests }).problems;
+		const wrong = `the Run file ${point.path} in the checkout started at 2026-11-12T04:12:00.000000000Z, not 2026-10-31T04:12:00.000000000Z: the point's month must be its Run's own`;
+		expect(problems).toEqual([`${monthPath(fixture.memory, "2026-10")}: series_v1's point ${point.run}: ${wrong}`, `${seriesPath(fixture.memory)}: series_v1: newest_points's point ${point.run}: ${wrong}`]);
+	});
+
 	test("when a file is over its kind's ceiling, saying what to do", () => {
 		expect(CEILINGS.map((ceiling) => [ceiling.kind, ceiling.bytes])).toEqual([
 			["the table of contents", 100_000],
@@ -409,11 +721,64 @@ describe("the check keeps up with the months", () => {
 		const size = (tree.get("v1/index.json") as Uint8Array).length + 100_000;
 		expect(index).toEqual([`v1/index.json is ${size} bytes, over the ceiling of 100000 for the table of contents: ${CEILINGS[0]?.whenHit}`]);
 		const series = check(pad(seriesPath(fixture.memory), 1_000_000));
-		expect(series).toEqual([expect.stringMatching(new RegExp(`^${seriesPath(fixture.memory)} is [0-9]+ bytes, over the ceiling of 1000000 for a Series file: it does not grow with its Runs`))]);
+		expect(series).toEqual([expect.stringMatching(new RegExp(`^${seriesPath(fixture.memory)} is [0-9]+ bytes, over the ceiling of 1000000 for a Series file: the number of points in it is bounded \\(newest_runs\\)`))]);
 		const month = check(pad(dec(fixture.http), 5_000_000));
-		expect(month).toEqual([expect.stringMatching(new RegExp(`^${dec(fixture.http)} is [0-9]+ bytes, over the ceiling of 5000000 for a month file: `))]);
+		expect(month).toEqual([
+			expect.stringMatching(new RegExp(`^${dec(fixture.http)} is [0-9]+ bytes, over the ceiling of 5000000 for a month file: `)),
+			// Padded, its bytes are no longer those its Series file gives.
+			expect.stringMatching(new RegExp(`^${seriesPath(fixture.http)}: /months/1/sha256 is `)),
+		]);
 		// Every file of the tree is of a kind with a ceiling.
 		for (const path of tree.keys()) expect(CEILINGS.filter((ceiling) => ceiling.path.test(path)).length).toBe(1);
+	});
+});
+
+describe("the published words name only what a reader can fetch", () => {
+	/** An internal name: the Runs repository, the bucket, GitHub, a script's path, an issue's number. */
+	const INTERNAL = /Runs repository|bucket|github|scripts\/|[A-Za-z0-9_-]+\.(?:ts|py)\b|#[0-9]+/i;
+	const strings = (value: unknown, out: string[] = []): string[] => {
+		if (typeof value === "string") out.push(value);
+		else if (Array.isArray(value)) for (const item of value) strings(item, out);
+		else if (typeof value === "object" && value !== null) {
+			for (const [key, item] of Object.entries(value)) {
+				out.push(key);
+				strings(item, out);
+			}
+		}
+		return out;
+	};
+
+	test("no description or title in a published schema names one", () => {
+		const found: string[] = [];
+		const walk = (node: unknown, at: string): void => {
+			if (Array.isArray(node)) node.forEach((item, i) => walk(item, `${at}/${i}`));
+			else if (typeof node === "object" && node !== null) {
+				for (const [key, item] of Object.entries(node)) {
+					if ((key === "description" || key === "title") && typeof item === "string" && INTERNAL.test(item)) found.push(`${at}/${key}: ${item.match(INTERNAL)?.[0]}`);
+					walk(item, `${at}/${key}`);
+				}
+			}
+		};
+		for (const source of ["schemas/api/v1/index.schema.json", "schemas/api/v1/series-list.schema.json", "schemas/api/v1/series.schema.json", "schemas/api/v1/series-month.schema.json", "schemas/prices.schema.json"]) {
+			walk(JSON.parse(readFileSync(join(ROOT, source), "utf8")), source);
+		}
+		expect(found).toEqual([]);
+	});
+
+	test("no string the build writes names one: only what it copies from the Methods' Derivations, and the docs address it is given, are left to them", async () => {
+		const edges = await makeApiFixture({ nextMonth: true, edges: true });
+		const t = buildApi(sourcesOf(edges));
+		const copied = new Set([...strings(edges.series), ...strings(edges.requests), "https://example.test/docs"]);
+		const found: string[] = [];
+		for (const [path, bytes] of t) {
+			if (path.startsWith("v1/prices/") || path.startsWith("v1/schemas/")) continue;
+			for (const value of strings(JSON.parse(new TextDecoder().decode(bytes)))) if (!copied.has(value) && INTERNAL.test(value)) found.push(`${path}: ${value.slice(0, 120)}`);
+		}
+		expect(found).toEqual([]);
+		for (const words of [ABOUT, VERSIONING, FIGURES, MONTHS, EVIDENCE]) expect(words).not.toMatch(INTERNAL);
+		// What it would have caught before: the words as they were.
+		expect("served at the keys of LedgerMath's bucket of Runs").toMatch(INTERNAL);
+		expect("each is a price file of the Runs repository, byte for byte").toMatch(INTERNAL);
 	});
 });
 

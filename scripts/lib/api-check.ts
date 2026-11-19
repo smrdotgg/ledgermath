@@ -31,16 +31,18 @@
  * - Each month file holds every point of its month's Runs, each equal to
  *   the Derivations' (each Method's, under its key) with what the design
  *   adds (its Run file's sha256, evidence and boot_summary) and, for
- *   requests v1, group_through as it stood through the Run (null before the
- *   Series' first Run of a second group, where the Derivation's is the
- *   point's through); and every one of series v1's entries for a pair of
+ *   requests v1, the Derivation's group_through as it stood through the Run,
+ *   as group_through_as_of_run (null before the Series' first Run of a
+ *   second group, where the Derivation's is the point's through; the
+ *   Derivation's everywhere else); and every one of series v1's entries for a pair of
  *   consecutive Runs whose later Run started that month. Each Run of a Series
  *   is in exactly one month file, that of the month it started in; each
  *   entry for a pair is filed under the month of its later Run.
  * - Each Series file equals what the Derivations hold for its Series: its
  *   identity, its count of Runs and the starts of its oldest and newest Run;
  *   newest_runs, the design's 12; its months, exactly the month files of the
- *   tree, each with its address, count of Runs and oldest and newest start;
+ *   tree, each with its address, count of Runs, oldest and newest start, and
+ *   the sha256 and size of the month file as the tree holds it;
  *   under derivations, one key per Method that derives the Series, and under
  *   each the Method's words and its summary, value for value (the
  *   percentiles and groups without their lists of Runs; counted and failed
@@ -51,7 +53,8 @@
  *   the group), with a bytes_per_repetition for bytes per second; a group's
  *   Runs are the points of its letter, under either Method.
  * - Each point's evidence is that point's: the Run file at its path is in
- *   the checkout, has the point's Run id and boot, and hashes to its sha256;
+ *   the checkout, has the point's Run id, boot and start (so the month a
+ *   point is filed under is its Run's own), and hashes to its sha256;
  *   evidence is that path's address; boot_summary is the address of the one
  *   boot summary in the checkout that names that boot, or null when none
  *   does. Each Run file the list gives as unreadable is in the checkout with
@@ -72,6 +75,10 @@
  *   be exactly the base and /blobs/sha256/{hex}. Strings elsewhere, such as a
  *   Run's parameters, are data and are not read as links.
  * - Each price file is byte for byte the checkout's.
+ *
+ * checkStability() holds a tree, besides, to what its month files promise
+ * against the tree before it: that a month file's bytes change only for the
+ * four causes ADR-0030 gives (rule 9).
  */
 
 import { createHash } from "node:crypto";
@@ -151,7 +158,7 @@ export const CEILINGS: ReadonlyArray<{ kind: string; path: RegExp; bytes: number
 		path: /^v1\/index\.json$/,
 		bytes: 100_000,
 		whenHit:
-			"it was 4.9 KB with 9 price files on 2026-11-19, and each day's price file adds 124 bytes to its list, which brings it here about two years on; listing the price files by month, as the Series are, changes v1's shape (v2), so decide that with the maintainer",
+			"it was 6.3 KB with 9 price files on 2026-11-19, and each day's price file adds 124 bytes to its list, which brings it here about two years on; listing the price files by month, as the Series are, changes v1's shape (v2), so decide that with the maintainer",
 	},
 	{
 		kind: "the list of Series",
@@ -165,7 +172,7 @@ export const CEILINGS: ReadonlyArray<{ kind: string; path: RegExp; bytes: number
 		path: SERIES_PATH,
 		bytes: 1_000_000,
 		whenHit:
-			"it does not grow with its Runs (302 KB at most, for http_get, on 2026-11-19), so its newest points or its summary grew: more samples or requests per Run, more groups, more values of a request fact; find which, and lower newest_runs or move the part that grew to the month files before raising this",
+			"the number of points in it is bounded (newest_runs), and it was 302 KB at most, for http_get, on 2026-11-19, so its newest points or its summaries grew: more samples or requests per Run, more groups (one per change of the machine's split facts), more distinct values of a request fact, or many years of month entries; find which, and lower newest_runs or move the part that grew to the month files before raising this",
 	},
 	{
 		kind: "a month file",
@@ -178,13 +185,13 @@ export const CEILINGS: ReadonlyArray<{ kind: string; path: RegExp; bytes: number
 		kind: "a price file",
 		path: TREE_PRICE,
 		bytes: 1_000_000,
-		whenHit: "it is the Runs repository's price file, byte for byte (39 KB on 2026-11-19): the price rules (scripts/lib/price-rules.ts) now keep far more records; look there first",
+		whenHit: "it is LedgerMath's price file of the day, byte for byte (39 KB on 2026-11-19): the price rules (scripts/lib/price-rules.ts) now keep far more records; look there first",
 	},
 	{
 		kind: "a schema",
 		path: SCHEMA_PATH,
 		bytes: 256_000,
-		whenHit: "the largest is 32 KB: a schema this large is past what a reader takes in; split what it describes into $defs it shares, or ask why it grew",
+		whenHit: "a schema this large is past what a reader takes in at once: split what it describes into $defs it shares, or ask why it grew",
 	},
 ];
 
@@ -521,9 +528,9 @@ export function checkApi(sources: CheckSources): CheckResult {
 		return paths.length === 0 ? null : address(paths[0] as string);
 	};
 
-	/** A point's evidence is its own: its Run file's id, boot and sha256, the address of its path, and its boot's summary. */
+	/** A point's evidence is its own: its Run file's id, boot, start and sha256, the address of its path, and its boot's summary. */
 	const checkEvidence = (where: string, point: Json): void => {
-		const { run, path, sha256, evidence, boot, boot_summary: bootSummary } = point;
+		const { run, path, sha256, evidence, boot, boot_summary: bootSummary, started_at: startedAt } = point;
 		if (typeof path !== "string" || typeof run !== "string") return; // the schema says so
 		if (evidence !== address(path)) problems.push(`${where}: evidence is ${named(evidence)}, not ${address(path)}, the address of its path`);
 		const file = openRun(path);
@@ -536,6 +543,8 @@ export function checkApi(sources: CheckSources): CheckResult {
 		const record = isObject(file.record) ? file.record : {};
 		if (record.id !== run) problems.push(`${where}: the Run file ${path} in the checkout is Run ${named(record.id)}, not ${run}`);
 		if (record.boot !== boot) problems.push(`${where}: the Run file ${path} in the checkout is of boot ${named(record.boot)}, not ${named(boot)}`);
+		// The point's start, which files it under its month, is its Run file's own, not only the Derivation's copy of it.
+		if (record.started_at !== startedAt) problems.push(`${where}: the Run file ${path} in the checkout started at ${named(record.started_at)}, not ${named(startedAt)}: the point's month must be its Run's own`);
 		checkSummary(where, typeof record.boot === "string" ? record.boot : boot, bootSummary);
 	};
 	/** A point's boot_summary is the address of its boot's one summary in the checkout, or null when there is none. */
@@ -622,7 +631,15 @@ export function checkApi(sources: CheckSources): CheckResult {
 		}
 	}
 
-	/** A Derivation's point as the tree writes it: with its Run file's sha256 after its path, without evidence and boot_summary (checkEvidence sees to those), and requests v1's group_through as it stood through the Run. */
+	/**
+	 * A Derivation's point as the tree writes it: with its Run file's sha256
+	 * after its path, without evidence and boot_summary (checkEvidence sees to
+	 * those), and requests v1's group_through as it stood through the Run, as
+	 * group_through_as_of_run. The two differ only on the points before the
+	 * first point whose group differs from the first point's, in a Series of
+	 * more than one group: the Derivation's is that point's through there, and
+	 * the tree's null. Everywhere else they are the same, null included.
+	 */
 	const expectedPoints = (id: string, name: string, method: SeriesDerivation | RequestsDerivation): Array<Json | undefined> => {
 		const first = method.points.findIndex((point) => point.group !== method.points[0]?.group);
 		return method.points.map((derived: AnyPoint, i) => {
@@ -631,15 +648,14 @@ export function checkApi(sources: CheckSources): CheckResult {
 				problems.push(`${name}'s Derivation of Series ${id} cites another Run at ${i} than its point ${i}`);
 				return undefined;
 			}
-			const point: Json = { ...derived, sha256: cited.sha256 };
-			if ("group_through" in derived && first >= 0 && i < first) {
-				// Before the Series' first Run of a second group the tree writes null: the Derivation's value must then be its through, or the tree would lose it.
-				if (canonical(derived.group_through) !== canonical(derived.through)) {
-					problems.push(`${name}'s Derivation of Series ${id} holds, at point ${i}, before the Series' first Run of a second group, a group_through other than its through: the tree's null would lose it`);
-				}
-				point.group_through = null;
+			if (!("group_through" in derived)) return { ...derived, sha256: cited.sha256 };
+			const { group_through: groupThrough, ...rest } = derived;
+			const beforeSplit = first >= 0 && i < first;
+			// Before the Series' first Run of a second group the tree writes null: the Derivation's value must then be its through, or the tree would lose it.
+			if (beforeSplit && canonical(groupThrough) !== canonical(derived.through)) {
+				problems.push(`${name}'s Derivation of Series ${id} holds, at point ${i}, before the Series' first Run of a second group, a group_through other than its through: the tree's null would lose it`);
 			}
-			return point;
+			return { ...rest, sha256: cited.sha256, group_through_as_of_run: beforeSplit ? null : groupThrough };
 		});
 	};
 	/** Points read from the tree against the points expected of them, each compared without evidence and boot_summary; and each point's evidence. */
@@ -837,7 +853,14 @@ export function checkApi(sources: CheckSources): CheckResult {
 		const times = span.get(id);
 		const monthEntries = [...months].map(([month, indexes]) => {
 			const starts = indexes.map((i) => (derivation.points[i] as AnyPoint).started_at).sort(byText);
-			return { month, url: address(monthFile(id, month)), runs: indexes.length, oldest_run_started_at: starts[0], newest_run_started_at: starts[starts.length - 1] };
+			const entry: Json = { month, url: address(monthFile(id, month)), runs: indexes.length, oldest_run_started_at: starts[0], newest_run_started_at: starts[starts.length - 1] };
+			// The month file's sha256 and size, as the tree holds it: what a reader's copy is compared with.
+			if (held.has(monthFile(id, month))) {
+				const bytes = read(monthFile(id, month));
+				entry.sha256 = createHash("sha256").update(bytes).digest("hex");
+				entry.bytes = bytes.length;
+			}
+			return entry;
 		});
 		compare(
 			path,
@@ -1104,59 +1127,341 @@ function rowOf(file: Json): Json {
 }
 
 /**
- * Whether a tree keeps the promise its month files make (ADR-0030): once
- * written, a month file changes only when a Run of its month is added, or
- * when a point's boot summary arrives (boot_summary turns from null into an
- * address), and is never removed. Compares every month file of the tree a
- * reader was last served (`previous`) with the same file of this one; a file
- * of this tree that `previous` lacks is new, and passes. A problem for every
- * month file that changed otherwise: chiefly a Run that arrived after a later
- * Run of its Series, which changes its own month and the cumulative figures
- * (through, group_through, a group's letter) and pair entries of every later
- * month, as it changes the Derivations.
+ * A value laid out as the API writes its files (ADR-0030, rule 7): an object
+ * one member per line, indented two spaces; an array of objects one object
+ * per line, each whole on its line; any other array on one line; every value
+ * written on one line as JSON.stringify writes it; and a final newline. The
+ * members in the order the value holds them. A file whose bytes are exactly
+ * the layout of its value has no other freedom: no white space, spelling of a
+ * number or escape of a string but the one, so two such files differ in bytes
+ * only where their values, or the order of their members, differ.
  */
-export function checkStability(previous: string, tree: string): string[] {
-	const problems: string[] = [];
-	const months = (directory: string): string[] => listFiles(directory).filter((path) => MONTH_PATH.test(path));
-	const now = new Set(months(tree));
-	const read = (directory: string, path: string): unknown => {
+export function laidOut(value: unknown): string {
+	const write = (item: unknown, indent: string): string => {
+		if (Array.isArray(item)) {
+			if (item.length > 0 && item.every(isObject)) return `[\n${item.map((one) => `${indent}  ${JSON.stringify(one)}`).join(",\n")}\n${indent}]`;
+			return JSON.stringify(item);
+		}
+		if (isObject(item)) {
+			const keys = Object.keys(item);
+			if (keys.length === 0) return "{}";
+			return `{\n${keys.map((key) => `${indent}  ${JSON.stringify(key)}: ${write(item[key], `${indent}  `)}`).join(",\n")}\n${indent}}`;
+		}
+		return JSON.stringify(item);
+	};
+	return `${write(value, "")}\n`;
+}
+
+/** Where a text first differs from the layout of its value; null when it is exactly that. */
+function layoutProblem(text: string, value: unknown): string | null {
+	const want = laidOut(value);
+	if (want === text) return null;
+	let at = 0;
+	while (at < text.length && at < want.length && text.charCodeAt(at) === want.charCodeAt(at)) at++;
+	const line = text.slice(0, at).split("\n").length;
+	return `its bytes are not the layout of its value: they first differ at byte ${at} (line ${line}), ${show(text.slice(at, at + 40))} where the layout has ${show(want.slice(at, at + 40))}`;
+}
+
+/**
+ * Null when `previous` is a tree of the data API laid out as `tree` is, so
+ * the two can be compared month file by month file; otherwise why it is not.
+ * The layout is the schemas, byte for byte (they fix every file's fields and
+ * the order of their members, so their bytes), and the base address: a tree
+ * of other schemas, or built for another address, differs in every file.
+ */
+export function layoutDifference(previous: string, tree: string): string | null {
+	if (!existsSync(previous)) return `${previous} does not exist`;
+	if (!statSync(previous).isDirectory()) return `${previous} is not a directory`;
+	const files = listFiles(previous);
+	if (files.length === 0) return `${previous} is empty`;
+	if (!files.includes(INDEX)) return `${previous} holds no ${INDEX}, so it is not a tree of the data API`;
+	const schemasOf = (directory: string): string[] => listFiles(directory).filter((path) => SCHEMA_PATH.test(path));
+	const was = schemasOf(previous);
+	const is = schemasOf(tree);
+	const differing = [...new Set([...was, ...is])]
+		.sort(byText)
+		.filter((path) => !was.includes(path) || !is.includes(path) || !readFileSync(join(previous, ...path.split("/"))).equals(readFileSync(join(tree, ...path.split("/")))));
+	if (differing.length > 0) return `${previous} is a tree of another layout: its schemas are not this tree's (${differing.join(", ")} differ)`;
+	const addressOf = (directory: string): unknown => {
 		try {
-			return parseStrictJson(readFileSync(join(directory, ...path.split("/"))), { exactNumbers: true });
-		} catch (error) {
-			problems.push(`${path} of ${directory} is not strict JSON: ${error instanceof Error ? error.message : String(error)}`);
+			const index = parseStrictJson(readFileSync(join(directory, ...INDEX.split("/"))));
+			return isObject(index) ? index.url : undefined;
+		} catch {
 			return undefined;
 		}
 	};
-	/** Each Method's points of a month file, by key. */
-	const pointsOf = (file: unknown): Map<string, Json[]> => {
-		const derivations = isObject(file) && isObject(file.derivations) ? file.derivations : {};
-		return new Map(Object.entries(derivations).map(([key, block]) => [key, (isObject(block) && Array.isArray(block.points) ? block.points : []).filter(isObject)] as const));
-	};
-	for (const path of months(previous)) {
-		if (!now.has(path)) {
-			problems.push(`${path} was in the previous tree and is not in this one: a month file, once written, stays`);
-			continue;
-		}
-		const before = readFileSync(join(previous, ...path.split("/")));
-		if (before.equals(readFileSync(join(tree, ...path.split("/"))))) continue;
-		const was = read(previous, path);
-		const is = read(tree, path);
-		if (was === undefined || is === undefined) continue;
-		const wasPoints = pointsOf(was);
-		const isPoints = pointsOf(is);
-		const added = [...isPoints].some(([key, points]) => {
-			const known = new Set((wasPoints.get(key) ?? []).map((point) => point.run));
-			return points.some((point) => !known.has(point.run));
-		});
-		if (added) continue;
-		// No Run of its month was added: the one change allowed is a boot summary that arrived.
-		const arrived = structuredClone(is) as Json;
-		for (const [key, points] of pointsOf(arrived)) {
-			const wasByRun = new Map((wasPoints.get(key) ?? []).map((point) => [point.run, point] as const));
-			for (const point of points) if (wasByRun.get(point.run)?.boot_summary === null && typeof point.boot_summary === "string") point.boot_summary = null;
-		}
-		const found = difference(arrived, was);
-		if (found !== null) problems.push(`${path} changed since the previous tree although no Run of its month was added: ${found}`);
+	const wasAddress = addressOf(previous);
+	if (typeof wasAddress !== "string") return `${previous}'s ${INDEX} cannot be read for its address`;
+	if (wasAddress !== addressOf(tree)) return `${previous} is a tree of another layout: it was built for ${wasAddress}, this tree for ${show(addressOf(tree))}`;
+	return null;
+}
+
+/** One of the four causes for which a month file's bytes may change (ADR-0030, rule 9). */
+export type Cause = "a" | "b" | "c" | "d";
+
+export const CAUSES: Readonly<Record<Cause, string>> = {
+	a: "a Run that started in its month was added",
+	b: "a boot summary that was missing arrived",
+	c: "a Run arrived late, before a Run of its Series already in the files, in its month or an earlier one",
+	d: "a Method first applies to its Series",
+};
+
+export interface StabilityResult {
+	/** False only when there was no previous tree of this layout to compare with; `none` then says why. */
+	compared: boolean;
+	none?: string;
+	problems: string[];
+	/** Month files in both trees, and how many of them are byte for byte the same. */
+	inBoth: number;
+	unchanged: number;
+	/** Month files of this tree the previous one did not have. */
+	added: number;
+	/** Each month file that changed, with each cause that explains it and what it changed. */
+	explained: Array<{ path: string; causes: Array<{ cause: Cause; detail: string }> }>;
+}
+
+/** A point's place in its Series: by start, then Run id, as both Methods order them. */
+const placeOf = (point: Json): string => `${String(point.started_at)}\u0000${String(point.run)}`;
+
+/**
+ * Holds a tree to the promise its month files make (ADR-0030, rule 9),
+ * against the tree before it (`previous`, the tree readers were last served):
+ * a month file's bytes change only when (a) a Run that started in that month
+ * is added, (b) a boot summary that was missing arrives, (c) a Run arrives
+ * late, having started before a Run of the Series already in the files, in
+ * that month or an earlier one, or (d) a Method first applies to the Series.
+ *
+ * `previous` must be a tree of the same layout (layoutDifference()): one that
+ * is missing, empty or of another layout is a problem, unless `mayBeNone`
+ * says there may be none, for the first build of a layout; nothing is then
+ * compared, and `none` says why.
+ *
+ * Every month file of `previous` must be in this tree. One whose bytes are
+ * the same passes. One that changed passes only when both its files are
+ * exactly the layout of their values (laidOut()), so that no byte changed
+ * but where a value did, and every value that changed is explained, from the
+ * two trees, by one of the four causes:
+ *
+ * - (a) and (c): a point of a Run this tree's Series holds and the previous
+ *   one's did not, filed under its own month; late, (c), when it is placed
+ *   (by start, then Run id) before a Run of the Series the previous tree
+ *   held. It brings its pair entry and the month's runs and span. A late Run
+ *   may also change, in its month and every later one, what a late Run can
+ *   change and nothing else: on a point placed after it, its group, and
+ *   requests v1's through and group_through_as_of_run; and the pair entry of
+ *   the Run right after it, which then comes from the late Run.
+ * - (b): a point's boot_summary that turned from null into an address, and
+ *   nothing else of that point.
+ * - (d): a Method's block, present under its key in this tree's month file
+ *   and in no month file nor the Series file of that Series in `previous`.
+ *
+ * Anything else is a problem: a figure, a fact or a field that changed, a
+ * boot summary that went or changed, a block that went, a published Run that
+ * is no longer in its month file, a byte that changed with no value. Month
+ * files only this tree holds are new and pass (the check against the
+ * Derivations sees to them).
+ */
+export function checkStability(previous: string, tree: string, options: { mayBeNone?: boolean } = {}): StabilityResult {
+	const problems: string[] = [];
+	const result: StabilityResult = { compared: false, problems, inBoth: 0, unchanged: 0, added: 0, explained: [] };
+	const none = layoutDifference(previous, tree);
+	if (none !== null) {
+		result.none = none;
+		if (options.mayBeNone !== true) problems.push(`no previous tree to compare this one with: ${none}; a build without one must say so explicitly, and is right only for the first build of a layout`);
+		return result;
 	}
-	return problems;
+	result.compared = true;
+	const months = (directory: string): string[] => listFiles(directory).filter((path) => MONTH_PATH.test(path));
+	const wasMonths = months(previous);
+	const isMonths = months(tree);
+	const now = new Set(isMonths);
+	const before = new Set(wasMonths);
+	result.added = isMonths.filter((path) => !before.has(path)).length;
+	const decoder = new TextDecoder("utf-8", { fatal: true });
+	/** A file's bytes, text and value; the value is undefined, and a problem, when it is not strict JSON. */
+	const open = (directory: string, which: string, path: string): { bytes: Buffer; text: string; value: unknown } | undefined => {
+		const bytes = readFileSync(join(directory, ...path.split("/")));
+		try {
+			const value = parseStrictJson(bytes);
+			return { bytes, text: decoder.decode(bytes), value };
+		} catch (error) {
+			problems.push(`${path} of the ${which} tree is not strict JSON: ${error instanceof Error ? error.message : String(error)}`);
+			return undefined;
+		}
+	};
+	const blocksOf = (value: unknown): Json => (isObject(value) && isObject(value.derivations) ? value.derivations : {});
+	const pointsOf = (block: unknown): Json[] => (isObject(block) && Array.isArray(block.points) ? block.points.filter(isObject) : []);
+
+	const bySeries = new Map<string, { was: string[]; is: string[] }>();
+	for (const [list, side] of [[wasMonths, "was"], [isMonths, "is"]] as const) {
+		for (const path of list) {
+			const id = (MONTH_PATH.exec(path) as RegExpExecArray)[1] as string;
+			const entry = bySeries.get(id) ?? { was: [], is: [] };
+			entry[side].push(path);
+			bySeries.set(id, entry);
+		}
+	}
+	for (const path of wasMonths) if (!now.has(path)) problems.push(`${path} was in the previous tree and is not in this one: a month file, once written, stays`);
+
+	for (const [id, paths] of [...bySeries].sort(([a], [b]) => byText(a, b))) {
+		const was = new Map(paths.was.map((path) => [path, open(previous, "previous", path)] as const));
+		const is = new Map(paths.is.map((path) => [path, open(tree, "this", path)] as const));
+		// The Series as each tree holds it: its Runs (series v1 derives every Series) and the Methods that derive it.
+		const runsOf = (files: Map<string, { value: unknown } | undefined>): Map<string, Json> => {
+			const runs = new Map<string, Json>();
+			for (const file of files.values()) for (const point of pointsOf(blocksOf(file?.value).series_v1)) runs.set(String(point.run), point);
+			return runs;
+		};
+		const wasRuns = runsOf(was);
+		const isRuns = runsOf(is);
+		const added = new Set([...isRuns.keys()].filter((run) => !wasRuns.has(run)));
+		const lastPublished = [...wasRuns.values()].map(placeOf).sort(byText).pop();
+		const isLate = (run: string): boolean => {
+			const point = isRuns.get(run);
+			return added.has(run) && point !== undefined && lastPublished !== undefined && byText(placeOf(point), lastPublished) < 0;
+		};
+		const earliestAdded = [...added].map((run) => placeOf(isRuns.get(run) as Json)).sort(byText)[0];
+		/** Whether a Run added in this tree is placed before this point: then a late Run may have changed it. */
+		const afterAdded = (point: Json): boolean => earliestAdded !== undefined && byText(earliestAdded, placeOf(point)) < 0;
+		const wasMethods = new Set<string>();
+		for (const file of was.values()) for (const key of Object.keys(blocksOf(file?.value))) wasMethods.add(key);
+		const seriesPath = seriesFile(id);
+		if (existsSync(join(previous, ...seriesPath.split("/")))) {
+			try {
+				for (const key of Object.keys(blocksOf(parseStrictJson(readFileSync(join(previous, ...seriesPath.split("/"))))))) wasMethods.add(key);
+			} catch {
+				problems.push(`${seriesPath} of the previous tree is not strict JSON, so which Methods derived Series ${id} is not known from it`);
+			}
+		}
+
+		for (const path of paths.was) {
+			const old = was.get(path);
+			if (!now.has(path)) continue;
+			result.inBoth++;
+			const current = is.get(path);
+			if (old === undefined || current === undefined) continue;
+			if (old.bytes.equals(current.bytes)) {
+				result.unchanged++;
+				continue;
+			}
+			const unexplained = (what: string): void => {
+				problems.push(`${path} changed since the previous tree in a way none of the four causes explains: ${what}`);
+			};
+			const oldLayout = layoutProblem(old.text, old.value);
+			const newLayout = layoutProblem(current.text, current.value);
+			if (oldLayout !== null) unexplained(`the previous file: ${oldLayout}`);
+			if (newLayout !== null) unexplained(`this file: ${newLayout}`);
+			if (oldLayout !== null || newLayout !== null || !isObject(old.value) || !isObject(current.value)) continue;
+			const causes = new Map<Cause, string[]>();
+			const because = (cause: Cause, detail: string): void => {
+				causes.set(cause, [...(causes.get(cause) ?? []), detail]);
+			};
+			const problemsBefore = problems.length;
+			const month = (MONTH_PATH.exec(path) as RegExpExecArray)[2] as string;
+			const same = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.stringify(b);
+			const order = (a: Json, b: Json): boolean => same(Object.keys(a), Object.keys(b));
+
+			const wasBlocks = blocksOf(old.value);
+			const isBlocks = blocksOf(current.value);
+			// The Runs this month gained: each a Run its Series did not have, filed under the month it started in.
+			const gained = pointsOf(isBlocks.series_v1).filter((point) => !pointsOf(wasBlocks.series_v1).some((other) => other.run === point.run));
+			if (!order(old.value, current.value)) unexplained(`its members are ${show(Object.keys(current.value))}, where they were ${show(Object.keys(old.value))}`);
+			for (const key of Object.keys(old.value)) {
+				if (key === "derivations" || same(old.value[key], current.value[key])) continue;
+				if (["runs", "oldest_run_started_at", "newest_run_started_at"].includes(key) && gained.length > 0) continue;
+				unexplained(`/${key} is ${show(current.value[key])}, where it was ${show(old.value[key])}`);
+			}
+			const wasKeys = Object.keys(wasBlocks);
+			const isKeys = Object.keys(isBlocks);
+			for (const key of wasKeys) if (!isKeys.includes(key)) unexplained(`/derivations/${key} is gone: a Method that derives a Series goes on deriving it`);
+			if (!same(isKeys.filter((key) => wasKeys.includes(key)), wasKeys.filter((key) => isKeys.includes(key)))) unexplained(`/derivations holds its Methods in another order: ${show(isKeys)}, where it was ${show(wasKeys)}`);
+			for (const key of isKeys) {
+				if (wasKeys.includes(key)) continue;
+				if (wasMethods.has(key)) unexplained(`/derivations/${key} is new to this month file, but the previous tree's Series ${id} was already derived by it`);
+				else because("d", `${key} first derives the Series`);
+			}
+
+			for (const key of wasKeys.filter((name) => isKeys.includes(name))) {
+				const wasBlock = wasBlocks[key];
+				const isBlock = isBlocks[key];
+				const at = `/derivations/${key}`;
+				if (!isObject(wasBlock) || !isObject(isBlock)) {
+					if (!same(wasBlock, isBlock)) unexplained(`${at} is ${show(isBlock)}, where it was ${show(wasBlock)}`);
+					continue;
+				}
+				if (!order(wasBlock, isBlock)) unexplained(`${at}'s members are ${show(Object.keys(isBlock))}, where they were ${show(Object.keys(wasBlock))}`);
+				for (const member of Object.keys(wasBlock)) {
+					if (member === "points" || member === "differed" || same(wasBlock[member], isBlock[member])) continue;
+					unexplained(`${at}/${member} is ${show(isBlock[member])}, where it was ${show(wasBlock[member])}`);
+				}
+				// The points: every published one still here, in the same order, each the same but for what a cause changes.
+				const wasPoints = pointsOf(wasBlock);
+				const isPoints = pointsOf(isBlock);
+				const wasIds = wasPoints.map((point) => String(point.run));
+				const isById = new Map(isPoints.map((point) => [String(point.run), point] as const));
+				for (const run of wasIds) if (!isById.has(run)) unexplained(`${at}: Run ${run}, published in this month file, is no longer in it: a published Run never disappears`);
+				if (!same(isPoints.map((point) => String(point.run)).filter((run) => wasIds.includes(run)), wasIds.filter((run) => isById.has(run)))) unexplained(`${at}: the published points are in another order`);
+				for (const point of isPoints) {
+					const run = String(point.run);
+					if (wasIds.includes(run)) continue;
+					if (!added.has(run)) unexplained(`${at}: Run ${run} is new to this month file, but the previous tree already held it in another`);
+					else if (typeof point.started_at !== "string" || point.started_at.slice(0, 7) !== month) unexplained(`${at}: Run ${run}, added, started at ${show(point.started_at)}, not in ${month}`);
+					else if (key === "series_v1" || !isBlocks.series_v1) because(isLate(run) ? "c" : "a", isLate(run) ? `Run ${run}, added late` : `Run ${run}`);
+				}
+				const allowed = key === "requests_v1" ? ["group", "through", "group_through_as_of_run"] : ["group"];
+				for (const was of wasPoints) {
+					const run = String(was.run);
+					const point = isById.get(run);
+					if (point === undefined || same(was, point)) continue;
+					if (!order(was, point)) {
+						unexplained(`${at}: the point of Run ${run} holds its members in another order`);
+						continue;
+					}
+					for (const member of Object.keys(was)) {
+						if (same(was[member], point[member])) continue;
+						if (member === "boot_summary" && was[member] === null && typeof point[member] === "string") because("b", `Run ${run}'s boot_summary arrived`);
+						else if (allowed.includes(member) && afterAdded(was)) because("c", `${key} Run ${run}'s ${member}, after a Run added late`);
+						else unexplained(`${at}: the point of Run ${run}: ${member} is ${show(point[member])}, where it was ${show(was[member])}`);
+					}
+				}
+				// The pair entries: each the same, or the entry of the Run right after a late Run, now from it.
+				if (!("differed" in wasBlock)) continue;
+				const wasEntries = (Array.isArray(wasBlock.differed) ? wasBlock.differed : []).filter(isObject);
+				const isEntries = (Array.isArray(isBlock.differed) ? isBlock.differed : []).filter(isObject);
+				const wasByTo = new Map(wasEntries.map((entry) => [String(entry.to), entry] as const));
+				const isTo = isEntries.map((entry) => String(entry.to));
+				for (const entry of wasEntries) if (!isTo.includes(String(entry.to))) unexplained(`${at}: the pair entry from ${named(entry.from)} to ${named(entry.to)} is gone`);
+				if (!same(isTo.filter((to) => wasByTo.has(to)), wasEntries.map((entry) => String(entry.to)).filter((to) => isTo.includes(to)))) unexplained(`${at}: the published pair entries are in another order`);
+				for (const entry of isEntries) {
+					const to = String(entry.to);
+					const from = String(entry.from);
+					const was = wasByTo.get(to);
+					if (was !== undefined && same(was, entry)) continue;
+					if (was === undefined && added.has(to)) continue; // the added Run's own entry: (a) or (c), above
+					if (isLate(from) && (was === undefined || (from !== String(was.from) && order(was, entry)))) because("c", `the pair entry of Run ${to}, now from Run ${from}, added late`);
+					else unexplained(`${at}: the pair entry to ${to} is ${show(entry)}, where it was ${show(was)}`);
+				}
+			}
+			if (problems.length === problemsBefore && causes.size === 0) unexplained("its bytes changed, but no value in it did");
+			if (problems.length === problemsBefore) {
+				result.explained.push({ path, causes: [...causes].sort(([a], [b]) => byText(a, b)).map(([cause, details]) => ({ cause, detail: details.join("; ") })) });
+			}
+		}
+	}
+	return result;
+}
+
+/** What a stability check found, for a human: the comparison made, then each month file that changed, by cause. */
+export function describeStability(result: StabilityResult, previous: string): string[] {
+	if (!result.compared) return [`past months: not compared, there being no previous tree of this layout (${result.none ?? "none given"})`];
+	const lines = [
+		`past months: compared with ${previous}: ${result.inBoth} month files in both, ${result.unchanged} the same byte for byte, ${result.explained.length} changed for a cause, ${result.added} new`,
+	];
+	for (const cause of ["a", "b", "c", "d"] as const) {
+		const files = result.explained.filter((file) => file.causes.some((one) => one.cause === cause));
+		if (files.length === 0) continue;
+		lines.push(`  (${cause}) ${CAUSES[cause]}: ${files.length} month file${files.length === 1 ? "" : "s"}`);
+		for (const file of files) lines.push(`      ${file.path}: ${file.causes.find((one) => one.cause === cause)?.detail}`);
+	}
+	return lines;
 }

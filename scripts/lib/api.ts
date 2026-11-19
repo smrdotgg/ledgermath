@@ -11,31 +11,36 @@
  *     v1/schemas/<name>.schema.json    the schema of each kind of file
  *
  * It is a re-cut, not a Method: every number is the Derivations' own, written
- * as they hold it, and nothing is computed but counts of points and the times
- * of a Series' (and a month's) oldest and newest Run. Every address a reader
- * needs is written in the files, under one base address; the evidence (Run
- * files, boot summaries, blobs) is linked at the bucket's own keys under the
- * same base, never copied.
+ * as they hold it, and nothing is computed but counts of points, the times of
+ * a Series' (and a month's) oldest and newest Run, and each month file's
+ * sha256 and size. Every address a reader needs is written in the files, under
+ * one base address; the evidence (Run files, boot summaries, blobs) is linked
+ * under the same base, never copied.
  *
  * What grows with a Series' Runs is in its month files, never in its Series
  * file: each Method's points and the entries of a pair of consecutive Runs
  * (series v1's differed), filed under the month of the later Run. The Series
- * file holds what does not: each Method's summary, its fixed words, the
- * points of its newest NEWEST_RUNS Runs (again) and the list of its months.
- * The lists of Run ids behind a percentile and in a group are left out: each
- * is the points of the month files that the Method's rule picks, and the build
- * refuses Derivations where it is not (recoverable()).
+ * file holds the rest: each Method's summary, its fixed words, the points of
+ * its newest NEWEST_RUNS Runs (again) and the list of its months, each with
+ * its month file's sha256 and size. The lists of Run ids behind a percentile
+ * and in a group are left out: each is the points of the month files that the
+ * Method's rule picks, and the build refuses Derivations where it is not
+ * (recoverable()).
  *
  * The same inputs give the same bytes, file for file, whatever order the
  * Series, price files or boot summaries come in, and whatever order the
  * members of their objects come in (apiJson), and no clock is read. A month
- * file depends only on its own Runs, the Runs before them in its Series and
- * the base address: a Run added after every Run of its Series leaves every
- * earlier month's file the same bytes (requests v1's group_through is written
- * as it stood through each Run for that: asOfRun()). The one other change to a
- * month file is a point's boot_summary, when its boot's summary arrives.
+ * file's bytes change only for the four causes MONTH_CONTRACT names: a Run
+ * of its month added, a missing boot summary arriving, a Run arriving late
+ * (before a Run of its Series already in the files) in its month or an
+ * earlier one, a Method first applying to its Series. requests v1's
+ * group_through is written as it stood through each Run, as
+ * group_through_as_of_run (asOfRun()), so that a Run that splits a Series is
+ * none of them. scripts/check-api.ts --previous holds a tree to that against
+ * the tree before it.
  */
 
+import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, relative, resolve, sep } from "node:path";
 
@@ -101,21 +106,42 @@ export function monthOf(startedAt: string): string {
 export const VERSIONING =
 	"Version 1 only ever gains fields. A field, once in a v1 file, keeps its name, its type and its meaning, and a reader ignores any field it does not know: " +
 	"that is why no object in the schemas index, series-list, series and series-month forbids members it does not list. A new Method, or a new version of one, is a new key beside the old ones. " +
-	"A change that would break a reader is published as v2, beside v1. The price files are the exception: each is a price file of the Runs repository, byte for byte, " +
+	"A change that would break a reader is published as v2, beside v1. The price files are the exception: each is the day's price file as LedgerMath keeps it, byte for byte, " +
 	"and follows its own schema, ledgermath.prices/1, whose root and LedgerMath's own objects are closed (AWS's objects within it are open).";
 export const FIGURES =
 	"Every number is exactly as the Methods' Derivations hold it: nothing is rounded, and nothing is computed that the Derivations do not hold, " +
-	"apart from counts of a Series' Runs (in all, in a month, counted and not) and the start times of its oldest and newest Run (in all, in a month), taken from its points. " +
+	"apart from counts of a Series' Runs (in all, in a month, counted and not), the start times of its oldest and newest Run (in all, in a month), taken from its points, " +
+	"and each month file's sha256 and size in bytes. " +
 	"A duration is in nanoseconds of the Run's clock unless its field's name says otherwise; a moment is a UTC time, to the nanosecond, as the Run records it.";
 export const ABOUT =
 	"LedgerMath runs small benchmarks on real AWS machines several times a day and keeps every execution as a Run. A Series is the Runs of one benchmark, " +
 	"parameter set, build, instance type and Availability Zone ID; a versioned Method turns its Runs into a Derivation. This is version 1 of the data API: " +
 	"static JSON files cut from the Derivations and the daily price files, each kind with a JSON schema. A Series' file holds each Method's summary and its newest Runs; " +
-	"every Run's point is in the file of the month it started in, and a month's file, once its month has passed, does not change.";
+	"every Run's point is in the file of the month it started in, and months says when such a file changes.";
+/**
+ * When a month file's bytes change, in the API's own words: stated, word for
+ * word, in v1/index.json (months), the schemas series and series-month,
+ * ADR-0030 and the README, and held to by scripts/check-api.ts --previous.
+ */
+export const MONTH_CONTRACT =
+	"A month file's bytes change only when (a) a Run that started in that month is added, (b) a boot summary that was missing arrives, " +
+	"(c) a Run arrives late, having started before a Run of the Series already in the files, in that month or an earlier one, " +
+	"or (d) a Method first applies to the Series; otherwise they do not change. " +
+	"A past month is therefore not immutable: each entry of the Series file's months gives its month file's sha256 and size in bytes, " +
+	"so a reader holding a copy can tell whether it is current, and fetches the file again only when the sha256 differs.";
+export const MONTHS =
+	"Each Series is split by month: every Run's point is in the file of the month the Run started in (UTC, by the Run's start), " +
+	"with series v1's entry for each pair of consecutive Runs under the month of the later Run, and the Series' file lists its months. " +
+	MONTH_CONTRACT +
+	" What each cause changes: (a) the month gains the Run's point, its pair entry and its count and span; " +
+	"(b) the point's boot_summary turns from null into the summary's address, and nothing else; " +
+	"(c) as (a), and in that month and every later one the points after the late Run may change their group, and requests v1's through and group_through_as_of_run, " +
+	"and the pair entry of the Run right after it changes; " +
+	"(d) the Method's block appears, under its key, in every month file of the Series.";
 export const EVIDENCE =
-	"The evidence is served at the keys of LedgerMath's bucket of Runs, under the same address as the API: each point links its Run file " +
-	"(evidence) and its boot's summary (boot_summary). A Run file names its binary, streams and dumps by hash, sha256:<hex>; each is a blob at " +
-	"blob_url_template with {hex} replaced by the 64 hex digits.";
+	"The evidence is served under the same address as the API: each point links its Run file (evidence), at runs/<yyyy>/<mm>/<dd>/<id>.json, " +
+	"and its boot's summary (boot_summary), at boots/<yyyy>/<mm>/<dd>/<boot>.json. A Run file names its binary, streams and dumps by hash, sha256:<hex>; " +
+	"each is a blob at blob_url_template with {hex} replaced by the 64 hex digits.";
 
 export interface PriceSource {
 	/** prices/<yyyy>/<mm>/<dd>/aws.json */
@@ -266,18 +292,26 @@ interface Linked {
 }
 
 type ApiSeriesPoint = Pick<SeriesPoint, "run" | "path"> & Linked & Omit<SeriesPoint, "run" | "path">;
-type ApiRequestsPoint = Pick<RequestsPoint, "run" | "path"> & Linked & Omit<RequestsPoint, "run" | "path">;
+/**
+ * A point of requests v1 as the tree writes it: group_through, which a later
+ * Run can change, is written as it stood through the point's own Run, under
+ * its own name (asOfRun()).
+ */
+type AsOfRunPoint = Omit<RequestsPoint, "group_through"> & { group_through_as_of_run: RequestsPoint["group_through"] };
+type ApiRequestsPoint = Pick<AsOfRunPoint, "run" | "path"> & Linked & Omit<AsOfRunPoint, "run" | "path">;
 
 /** A list of Runs with what failed, as each Method writes it, with the address of each Run file. */
 type Unreadable = SeriesFile["unreadable"][number] & { evidence: string };
 
-/** One entry of a Series file's list of months. */
+/** One entry of a Series file's list of months: with its month file's sha256 and size, so a reader can tell whether its copy is current. */
 interface MonthEntry {
 	month: string;
 	url: string;
 	runs: number;
 	oldest_run_started_at: string;
 	newest_run_started_at: string;
+	sha256: string;
+	bytes: number;
 }
 
 /**
@@ -292,6 +326,7 @@ interface MonthEntry {
 export function buildApi(sources: ApiSources): Map<string, Uint8Array> {
 	const base = normalizeBase(sources.base);
 	const at = (path: string): string => `${base}/${path}`;
+	const encoder = new TextEncoder();
 	const files = new Map<string, string | Uint8Array>();
 	/** Each of the API's own schemas, parsed: it fixes the order of the members of its files' objects (apiJson). */
 	const shape = (name: Exclude<SchemaName, "prices">): Json => {
@@ -334,7 +369,7 @@ export function buildApi(sources: ApiSources): Map<string, Uint8Array> {
 		return path === undefined ? null : at(path);
 	};
 	/** A point with the Run file's sha256 and its evidence's addresses after its path. */
-	const link = <P extends SeriesPoint | RequestsPoint>(id: string, cited: SeriesDerivation["runs"], points: readonly P[]) =>
+	const link = <P extends SeriesPoint | AsOfRunPoint>(id: string, cited: SeriesDerivation["runs"], points: readonly P[]) =>
 		points.map((point, i) => {
 			const run = cited[i];
 			if (run === undefined || run.id !== point.run || run.path !== point.path) throw new Error(`Series ${id}: point ${i} is not the Run cited at ${i}`);
@@ -401,14 +436,12 @@ export function buildApi(sources: ApiSources): Map<string, Uint8Array> {
 		});
 
 		const seriesPoints = link<SeriesPoint>(id, derivation.runs, points) satisfies ApiSeriesPoint[];
-		const requestsPoints = ofRequests === undefined ? undefined : (link<RequestsPoint>(id, ofRequests.runs, asOfRun(id, ofRequests)) satisfies ApiRequestsPoint[]);
+		const requestsPoints = ofRequests === undefined ? undefined : (link<AsOfRunPoint>(id, ofRequests.runs, asOfRun(id, ofRequests)) satisfies ApiRequestsPoint[]);
 		const entries: MonthEntry[] = [];
 		for (const { month, from, to } of months) {
 			const url = at(monthPath(id, month));
 			const span = { runs: to - from, oldest_run_started_at: (points[from] as SeriesPoint).started_at, newest_run_started_at: (points[to - 1] as SeriesPoint).started_at };
-			entries.push({ month, url, ...span });
-			files.set(
-				monthPath(id, month),
+			const bytes = encoder.encode(
 				apiJson(
 					{
 						schema: SCHEMA_IDS["series-month"],
@@ -429,6 +462,8 @@ export function buildApi(sources: ApiSources): Map<string, Uint8Array> {
 					shapes["series-month"],
 				),
 			);
+			files.set(monthPath(id, month), bytes);
+			entries.push({ month, url, ...span, sha256: createHash("sha256").update(bytes).digest("hex"), bytes: bytes.length });
 		}
 
 		const seriesV1 = {
@@ -545,6 +580,7 @@ export function buildApi(sources: ApiSources): Map<string, Uint8Array> {
 			about: ABOUT,
 			versioning: VERSIONING,
 			figures: FIGURES,
+			months: MONTHS,
 			docs: sources.docs,
 			newest_run_started_at: newest,
 			series: {
@@ -564,7 +600,6 @@ export function buildApi(sources: ApiSources): Map<string, Uint8Array> {
 		}, shapes.index),
 	);
 
-	const encoder = new TextEncoder();
 	return new Map(
 		[...files.entries()].sort(([a], [b]) => compareText(a, b)).map(([path, content]) => [path, typeof content === "string" ? encoder.encode(content) : content] as const),
 	);
@@ -633,29 +668,30 @@ function recoverable(id: string, derivation: SeriesDerivation, ofRequests: Reque
 
 /**
  * Requests v1's points as the tree writes them: each point's group_through as
- * it stood through that point's Run. The Method writes a point's group's
- * pooled figures only when the Series has more than one group, so when a
- * later Run first brings a second group, every earlier point's group_through
- * turns from null into its group's figures, and would change the month files
- * of every earlier month. Before that first Run of a second group, though,
- * every Run is of the first group, and its group's figures are the Series'
- * own: through. The tree writes null there, whatever came later, and a reader
- * recovers the Derivation's value as through when the Series has more than one
- * group. Throws when the Derivation holds anything else there.
+ * it stood through that point's Run, named group_through_as_of_run, since it
+ * is not always the Derivation's group_through. The Method writes a point's
+ * group's pooled figures only when the Series has more than one group, so
+ * when a later Run first brings a second group, every earlier point's
+ * group_through turns from null into its group's figures, and would change
+ * the month files of every earlier month. Before that first Run of a second
+ * group, though, every Run is of the first group, and its group's figures are
+ * the Series' own: through. The tree writes null there, whatever came later,
+ * and a reader recovers the Derivation's value as through, for those points
+ * only, when the Series has more than one group. Everywhere else the two are
+ * the same, null included: null for a point of a group that has had no
+ * counted Run yet, although through, the other groups' figures, is not.
+ * Throws when the Derivation holds anything else.
  */
-function asOfRun(id: string, derivation: RequestsDerivation): RequestsPoint[] {
+function asOfRun(id: string, derivation: RequestsDerivation): AsOfRunPoint[] {
 	const points = derivation.points;
 	const first = points.findIndex((point) => point.group !== points[0]?.group);
 	return points.map((point, i) => {
-		if (first < 0) {
-			if (point.group_through !== null) throw new Error(`Series ${id}: requests v1's point ${i} holds a group_through in a Series of one group`);
-			return point;
-		}
-		if (i >= first) return point;
-		if (canonicalJson(point.group_through) !== canonicalJson(point.through)) {
+		const { group_through: groupThrough, ...rest } = point;
+		if (first < 0 && groupThrough !== null) throw new Error(`Series ${id}: requests v1's point ${i} holds a group_through in a Series of one group`);
+		if (first >= 0 && i < first && canonicalJson(groupThrough) !== canonicalJson(point.through)) {
 			throw new Error(`Series ${id}: requests v1's point ${i}, before the Series' first Run of a second group, holds a group_through other than its through`);
 		}
-		return { ...point, group_through: null };
+		return { ...rest, group_through_as_of_run: first >= 0 && i < first ? null : groupThrough };
 	});
 }
 
