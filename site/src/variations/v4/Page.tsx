@@ -58,7 +58,7 @@ function exactTitle(shown: Shown): string {
  * "v1/…" on a line of its own instead of breaking inside it. The text copies exactly.
  */
 function Curl(props: { href: string }) {
-	const cut = props.href.indexOf("/v1/") + 1;
+	const cut = props.href.indexOf("/", "https://".length) + 1;
 	return (
 		<>
 			<span class="u-host">curl {props.href.slice(0, cut)}</span>
@@ -139,6 +139,48 @@ function prepareRow(row: HeadlineRow) {
 	};
 }
 
+type PreparedCell = ReturnType<typeof prepareRow>["cells"][number];
+
+/**
+ * The key: one real cell of the board (its first), each line labelled. Drawn twice, in the
+ * board's corner on wide screens and above the cards on a phone; the board's footnote says the
+ * same in prose, so the key itself is hidden from screen readers.
+ */
+function Key(props: { cell: PreparedCell; code: string; class: string }) {
+	const k = props.cell;
+	const t = formatMoment(k.cell.series.newest_run_started_at);
+	return (
+		<span class={`key ${props.class}`} aria-hidden="true">
+			<span class="key-title">
+				Reading a cell <span class="key-src">{props.code}, {k.cell.machine.instanceType}</span>
+			</span>
+			<span class="key-grid">
+				<span class="key-s key-n">
+					<b>{k.p50.short}</b> {k.p50.unit}
+				</span>
+				<span class="key-l">median, rounded to tell its row apart</span>
+				<span class="key-s key-full">{group(k.p50.full, ",", " ")}</span>
+				<span class="key-l">every digit the API holds</span>
+				<span class="key-s">
+					<span class="key-bar">
+						<i class="fig-fill" style={{ width: `${k.at(k.f.p50)}%` }} />
+						<i class="fig-whisk" style={{ left: `${k.at(k.f.p5)}%`, width: `${k.at(k.f.p95) - k.at(k.f.p5)}%` }} />
+					</span>
+				</span>
+				<span class="key-l">drawn to its row's scale</span>
+				<span class="key-s key-range">
+					p5–p95 {k.p5.short}–{k.p95.short}
+				</span>
+				<span class="key-l">5th to 95th percentile of its Runs</span>
+				<span class="key-s key-meta">
+					{formatCount(k.cell.series.runs).full} Runs · newest {t.minute}
+				</span>
+				<span class="key-l">Runs; newest Run's start, UTC</span>
+			</span>
+		</span>
+	);
+}
+
 export default function Page() {
 	const newest = formatMoment(snapshot.newestRunStartedAt);
 	const oldest = formatMoment(snapshot.oldestRunStartedAt);
@@ -167,6 +209,7 @@ export default function Page() {
 	const J = (v: unknown) => JSON.stringify(v);
 	// The key under the board's head shows the board's own first cell.
 	const keyCell = prepareRow(headline[0]!).cells[0]!;
+	const keyCode = `${SECTION_CODE[headline[0]!.choice.section]} 01`;
 	const rowCode = (benchmark: string) => {
 		const i = headline.findIndex((r) => r.choice.benchmark === benchmark);
 		return `${SECTION_CODE[headline[i]!.choice.section]} ${String(i + 1).padStart(2, "0")}`;
@@ -212,9 +255,16 @@ export default function Page() {
 								<span class="h1-a">Fresh AWS machines,</span> <span class="h1-hi">measured four times a day.</span>
 							</h1>
 							<p class="fresh-line">
-								<span class="dot" aria-hidden="true" />
-								<span>
-									Newest Run <b>{newest.minute} UTC</b>, {newest.longDate}
+								<span class="fresh-label">Newest Run started</span>
+								<time datetime={newest.iso} class="fresh-time">
+									<Flaps text={newest.minute} class="flaps-sm" />
+									<span class="fresh-utc">UTC</span>
+									<span class="sr">
+										{newest.minute} UTC, {newest.longDate}
+									</span>
+								</time>
+								<span class="fresh-meta" aria-hidden="true">
+									{`${newest.longDate} · AWS ${snapshot.region}`}
 								</span>
 							</p>
 							<p class="lede">
@@ -227,40 +277,17 @@ export default function Page() {
 									<Curl href={links.index} />
 								</code>
 							</div>
-							<dl class="tally">
-								<div>
-									<dt>Runs kept</dt>
-									<dd>{runs}</dd>
-								</div>
-								<div>
-									<dt>Failed Runs</dt>
-									<dd>{failed}</dd>
-								</div>
-								<div>
-									<dt>Series in the API</dt>
-									<dd>
-										{seriesCount}
-										<small>{onBoard} on the board</small>
-									</dd>
-								</div>
-								<div>
-									<dt>Oldest Run</dt>
-									<dd class="tally-date" title={oldest.full}>
-										{oldest.date}
-									</dd>
-								</div>
-							</dl>
 						</div>
 
 						<div class="panel">
 							<div class="clock" role="group" aria-labelledby="clock-label">
-								<p class="panel-row">
-									<span class="panel-label" id="clock-label">
+								<p class="panel-row clock-head">
+									<span class="clock-label" id="clock-label">
 										Newest Run started
 									</span>
 									<span class="panel-status">
 										<span class="dot" aria-hidden="true" />
-										{newest.longDate}
+										{`${newest.longDate} · AWS ${snapshot.region}`}
 									</span>
 								</p>
 								<p class="clock-time">
@@ -273,8 +300,11 @@ export default function Page() {
 									<span class="clock-utc" aria-hidden="true">
 										UTC
 									</span>
+									<span class="clock-full">
+										<span class="clock-full-l">to the nanosecond</span>
+										{newest.full}
+									</span>
 								</p>
-								<p class="clock-full">{newest.full}</p>
 							</div>
 
 							<div class="rounds" role="group" aria-labelledby="rounds-label">
@@ -297,19 +327,31 @@ export default function Page() {
 										{ROUNDS.map((t) => (
 											<span class="strip-round" style={{ left: `${dayPercent(t)}%` }} />
 										))}
-										<span class="strip-newest" style={{ left: `${dayPercent(newest.minute)}%` }}>
-											<span class="strip-flag">Newest Run {newest.second}</span>
-										</span>
-									</div>
-									<div class="strip-scale">
-										<span>00:00</span>
-										<span>06:00</span>
-										<span>12:00</span>
-										<span>18:00</span>
-										<span>24:00</span>
+										<span class="strip-newest" style={{ left: `${dayPercent(newest.minute)}%` }} />
 									</div>
 								</div>
 							</div>
+
+							<dl class="tally">
+								<div>
+									<dt>Runs kept</dt>
+									<dd>{runs}</dd>
+								</div>
+								<div>
+									<dt>Failed Runs</dt>
+									<dd>{failed}</dd>
+								</div>
+								<div>
+									<dt>Series in the API</dt>
+									<dd>{seriesCount}</dd>
+								</div>
+								<div>
+									<dt>Oldest Run</dt>
+									<dd class="tally-date" title={oldest.full}>
+										{oldest.date}
+									</dd>
+								</div>
+							</dl>
 
 							<p class="panel-prices">
 								<span class="panel-label">Prices</span>
@@ -323,7 +365,6 @@ export default function Page() {
 						</div>
 					</div>
 				</section>
-
 				{/* ------------------------------------------------ the board */}
 				<section class="board-sec" id="board" aria-labelledby="board-title">
 					<div class="sec-head">
@@ -331,8 +372,9 @@ export default function Page() {
 							<span class="h2-code">01</span> The board
 						</h2>
 						<p class="sec-sub">
-							{benchmarksN} benchmarks × {machinesN} machine types, {onBoard} of the API's {seriesCount} Series. Each figure is the median (p50) of
-							one Series' counted Runs, in one unit per row. Each links to its Series' file, with the Runs behind it.
+							{benchmarksN} benchmarks × {machinesN} machine types: {onBoard} of the API's {seriesCount} Series, one setting per benchmark by a written
+							rule. The rest are the same benchmarks at other settings: thread counts, object sizes, builds, the instance-store disk. Each figure is the
+							median of one Series' counted Runs and links to its file.
 						</p>
 					</div>
 
@@ -345,21 +387,8 @@ export default function Page() {
 								</a>
 							))}
 						</nav>
-
 					</div>
-					<div class="key" aria-hidden="true">
-							<span class="key-fig">
-								<b>{keyCell.p50.short}</b> {keyCell.p50.unit}
-							</span>
-							<span class="key-txt">enough digits to tell the row apart</span>
-							<span class="key-fig key-exact">{group(keyCell.p50.full, ",", "\u2009")}</span>
-							<span class="key-txt">every digit the API holds</span>
-							<span class="key-bar">
-								<i class="key-fill" />
-								<i class="key-whisk" />
-							</span>
-							<span class="key-txt">median, and the 5th–95th percentile of its Runs</span>
-						</div>
+					<Key cell={keyCell} code={keyCode} class="key-phone" />
 
 					<div class="board-wrap" role="region" aria-label="The board: headline figures" tabindex="0">
 						<table class="board">
@@ -370,10 +399,8 @@ export default function Page() {
 							<thead>
 								<tr>
 									<th scope="col" class="col-what">
-										<span class="col-what-in">
-											<span>Measured</span>
-											<span class="col-what-hint">Machines cheapest first · hourly On-Demand price</span>
-										</span>
+										<span class="sr">Benchmark</span>
+										<Key cell={keyCell} code={keyCode} class="key-head" />
 									</th>
 									{machines.map((m) => {
 										const price = formatUsd(m.price.usdPerHour, { per: "hour" });
@@ -459,7 +486,7 @@ export default function Page() {
 																</span>
 																<span class="fig-full">
 																	<span class="sr">exactly </span>
-																	{group(p50.full, ",", " ")}
+																	{group(p50.full, ",", " ")}
 																</span>
 																{per && (
 																	<span class="fig-per" title={`${per.full} ${per.unit} per ${per.per.of}, exactly`}>
@@ -471,16 +498,22 @@ export default function Page() {
 																	<i class="fig-whisk" style={{ left: `${at(f.p5)}%`, width: `${at(f.p95) - at(f.p5)}%` }} />
 																</span>
 																<span class="fig-range" title={`5th percentile ${p5.full} ${p5.unit}, 95th ${p95.full} ${p95.unit}, exactly`}>
+																	<span class="fig-range-l" aria-hidden="true">
+																		p5–p95{" "}
+																	</span>
 																	<span class="sr">5th to 95th percentile: </span>
 																	{p5.short}–{p95.short}
 																</span>
 																<span class="fig-meta">
+																	{formatCount(cell.series.runs).full} Runs<span aria-hidden="true"> · </span>
+																	<span class="sr">, the newest started at </span>
+																	<span class="fig-meta-l" aria-hidden="true">
+																		newest{" "}
+																	</span>
 																	<time datetime={t.iso} title={t.full}>
 																		{t.minute}
 																	</time>
-																	<span class="sr"> UTC newest Run, </span>
-																	<span aria-hidden="true"> · </span>
-																	{formatCount(cell.series.runs).full} Runs
+																	<span class="sr"> UTC</span>
 																</span>
 															</a>
 														</td>
@@ -494,8 +527,9 @@ export default function Page() {
 						</table>
 					</div>
 					<p class="board-foot">
-						Times: when each Series' newest Run started, {newest.date}, UTC. The bar under a figure is that figure drawn to the row's scale; its thin
-						line spans the 5th to the 95th percentile of the Series' counted Runs, printed beneath it. Hover or focus a figure for every digit.
+						Each bar is its figure drawn to its own row's scale, which ends at the row's largest 95th percentile; rows are not drawn to one scale. The
+						thin line spans the 5th to the 95th percentile of the Series' counted Runs, printed beneath it. “Newest” is the start of the Series' newest
+						Run, {newest.date}, UTC.
 					</p>
 				</section>
 
@@ -555,8 +589,55 @@ export default function Page() {
 							);
 						})}
 					</ol>
+					<ul class="fleet">
+						{machines.map((m, i) => {
+							const price = formatUsd(m.price.usdPerHour, { per: "hour" });
+							return (
+								<li>
+									<details>
+										<summary>
+											<span class="fleet-n" aria-hidden="true">
+												{String.fromCharCode(65 + i)}
+											</span>
+											<span class="fleet-name">{m.instanceType}</span>
+											<span class="fleet-spec">
+												{m.vcpu} vCPU · {m.memory}
+											</span>
+											<span class="fleet-usd" title={price.source}>
+												${price.full}
+												<small> per hour</small>
+											</span>
+										</summary>
+										<dl class="gate-spec fleet-more">
+											<div>
+												<dt>Processor</dt>
+												<dd>{m.processor}</dd>
+											</div>
+											<div>
+												<dt>Storage</dt>
+												<dd>{m.storage}</dd>
+											</div>
+											<div>
+												<dt>Network</dt>
+												<dd>{m.network}</dd>
+											</div>
+										</dl>
+										<p class="gate-aws">
+											AWS's words: “{m.price.description}”
+											<span class="gate-ptr">
+												SKU <code>{m.price.sku}</code> · rate code <code>{m.price.rateCode.split(".").pop()}</code>
+											</span>
+											<span class="gate-ptr">
+												JSON Pointer <code>{m.price.path.pointer}</code>
+											</span>
+										</p>
+									</details>
+								</li>
+							);
+						})}
+					</ul>
 					<p class="board-foot">
-						Price file: <a href={links.prices}>{links.prices}</a> · each card names the SKU and rate code its price is read from (hover for the full JSON Pointer).
+						Price file: <a href={links.prices}>{links.prices}</a> · each machine names the SKU and rate code its price is read from.
 					</p>
 				</section>
 
@@ -650,16 +731,29 @@ export default function Page() {
 									</code>
 								</pre>
 								<p class="resp-foot">
-									This Run started {pointStart.full} and took <b>{pointTime.short} {pointTime.unit}</b> per repetition ({pointTime.full} {pointTime.unit} exactly).
+									This Run started {pointStart.full} and took <b>{group(pointTime.full, ",", " ")} {pointTime.unit}</b> per repetition.
 									{samplePrepared && (
 										<>
 											{" "}
-											Its Series is the {sample.instanceType} figure in row {sampleCode} of the board, <b>{samplePrepared.p50.short} {samplePrepared.p50.unit}</b>:
-											the median of its counted Runs.
+											Its Series' figure, the {sample.instanceType} cell of row {sampleCode} on the board, is{" "}
+											<b>
+												{group(samplePrepared.p50.full, ",", " ")} {samplePrepared.p50.unit}
+											</b>
+											: the median of all its counted Runs, not this one Run's time.
 										</>
-									)}{" "}
-									The <code>evidence</code> address is the Run file itself.
+									)}
 								</p>
+								<div class="ev">
+									<p class="ev-l">
+										Follow it down: the <code>evidence</code> address is this Run's own file.{" "}
+										<a href={point.evidence}>Open the Run file</a>
+									</p>
+									<div class="cmd cmd-ev" data-copy-wrap>
+										<code data-copy>
+											<Curl href={point.evidence} />
+										</code>
+									</div>
+								</div>
 							</figure>
 						</div>
 
