@@ -1,0 +1,291 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light dark"><title>LedgerMath: AWS machines, measured four times a day</title><meta name="description" content="Fourteen benchmarks on five AWS machine types in us-east-2, run four times a day. Every Run kept with its evidence; the figures and AWS's On-Demand prices as a static JSON API."><link rel="preload" href="/checkpoints/v5/cp-8/assets/inter-latin-wght-Dx4kXJAl.woff2" as="font" type="font/woff2" crossorigin="anonymous"><link rel="stylesheet" href="/checkpoints/v5/cp-8/assets/style-FHQKsmcQ.css"><script type="module" src="/checkpoints/v5/cp-8/assets/client-CTUDiiRh.js"></script></head><body><header class="mast grid"><div class="mast-name"><a href="#top">LedgerMath</a></div><p class="mast-cell"><span class="mast-k">Boots</span> <span class="mast-t">04:10 10:10 16:10 22:10</span> UTC</p><nav class="mast-nav" aria-label="On this page"><a href="#figures">Figures</a><a href="#api">API</a></nav></header><main><section class="poster grid" aria-labelledby="top"><h1 id="top" class="headline">AWS machines, measured four times a&nbsp;day.</h1><div class="intro"><p>14 benchmarks on 5 freshly booted machine types in <span class="nowrap">us-east-2</span>. Every Run kept with its evidence, published as JSON for agents.</p><div class="cmd" data-copy="curl https://api.ledgermath.com/v1/index.json"><code tabindex="0"><span class="prompt" aria-hidden="true">$ </span>curl <span class="cmd-url">https://api.ledgermath.com/v1/index.json</span></code></div><dl class="facts"><div><dt>Newest Run started</dt><dd><time datetime="2026-11-19T17:07:23.182448102Z" title="2026-11-19 17:07:23.182448102 UTC">2026-11-19 17:07 UTC</time></dd></div><div><dt>Runs kept</dt><dd><a href="https://api.ledgermath.com/v1/series.json">6,335</a></dd></div><div><dt>Methods</dt><dd><a href="https://ledgermath.com/docs/">series v1, requests v1</a></dd></div><div><dt>AWS prices</dt><dd><a href="https://api.ledgermath.com/v1/prices/2026-11-19.json"><time datetime="2026-11-19T03:23:19.099Z" title="2026-11-19 03:23:19.099 UTC">2026-11-19</time></a></dd></div></dl></div><div class="hero" role="group" aria-labelledby="hero-k"><p id="hero-k" class="hero-kicker"><a class="hero-kicker-b" href="#b-mutex">Lock and unlock a mutex</a><span class="hero-kicker-sep" aria-hidden="true"> / </span><span>c8i.2xlarge</span><span class="hero-kicker-sep" aria-hidden="true"> / </span><span class="hero-kicker-m">p50 of 33 Runs</span><span class="hero-kicker-sep" aria-hidden="true"> / </span><a class="hero-kicker-m" href="#trail">to its evidence &#8595;</a></p><p class="hero-figure"><span class="sr">13.637057904052734 ns</span><span class="hero-head" aria-hidden="true">13.63</span><span class="hero-tail" aria-hidden="true">7057904052734</span><span class="hero-unit" aria-hidden="true">ns per critical section</span></p></div></section><section id="figures" class="figures" aria-labelledby="figures-h"><div class="sec-head grid"><p class="sec-no" aria-hidden="true">01</p><h2 id="figures-h">The figures</h2><div class="sec-side"><p class="key"><span class="key-i"><span class="km km-f" aria-hidden="true"></span>0 to p50</span><span class="key-i"><span class="km km-s" aria-hidden="true"></span>p5 to p95</span></p><nav class="jump" aria-label="Sections of the figures"><a href="#s-memory">Memory</a><a href="#s-compute">Compute</a><a href="#s-operating-system">Operating system</a><a href="#s-disk">Disk</a><a href="#s-network">Network</a></nav></div></div><div class="table-box" role="region" aria-label="The figures, 14 benchmarks by 5 machine types"><table style="--wt:13ch"><thead><tr><th scope="col" class="corner"><span class="corner-runs">Runs per figure</span><span class="corner-price">On-Demand, cheapest first</span></th><th scope="col" class="mach"><span class="mach-name">m5.large</span><span class="mach-spec">2 vCPU · 8 GiB</span><span class="mach-proc">Intel Xeon Platinum 8175</span><span class="mach-runs">34–36</span><a class="mach-price" href="https://api.ledgermath.com/v1/prices/2026-11-19.json" title="$0.096 an hour: /sources/0/terms/OnDemand/8D49XP354UEYTHGM/8D49XP354UEYTHGM.JRTCKXETXF/priceDimensions/8D49XP354UEYTHGM.JRTCKXETXF.6YS6EN2CT7/pricePerUnit/USD">$0.096/h</a></th><th scope="col" class="mach"><span class="mach-name">c8i.2xlarge</span><span class="mach-spec">8 vCPU · 16 GiB</span><span class="mach-proc">Intel Xeon (Granite Rapids)</span><span class="mach-runs">32–33</span><a class="mach-price" href="https://api.ledgermath.com/v1/prices/2026-11-19.json" title="$0.37484 an hour: /sources/0/terms/OnDemand/AWAUVC8BN4PM4V42/AWAUVC8BN4PM4V42.JRTCKXETXF/priceDimensions/AWAUVC8BN4PM4V42.JRTCKXETXF.6YS6EN2CT7/pricePerUnit/USD">$0.37484/h</a></th><th scope="col" class="mach"><span class="mach-name">c8a.2xlarge</span><span class="mach-spec">8 vCPU · 16 GiB</span><span class="mach-proc">AMD EPYC 9R45</span><span class="mach-runs">33–34</span><a class="mach-price" href="https://api.ledgermath.com/v1/prices/2026-11-19.json" title="$0.43108 an hour: /sources/0/terms/OnDemand/WKW5NUYTBWN4S8VU/WKW5NUYTBWN4S8VU.JRTCKXETXF/priceDimensions/WKW5NUYTBWN4S8VU.JRTCKXETXF.6YS6EN2CT7/pricePerUnit/USD">$0.43108/h</a></th><th scope="col" class="mach"><span class="mach-name">i4i.2xlarge</span><span class="mach-spec">8 vCPU · 64 GiB</span><span class="mach-proc">Intel Xeon 8375C (Ice Lake)</span><span class="mach-runs">32–34</span><a class="mach-price" href="https://api.ledgermath.com/v1/prices/2026-11-19.json" title="$0.686 an hour: /sources/0/terms/OnDemand/8ESS9QXCJT48TMPH/8ESS9QXCJT48TMPH.JRTCKXETXF/priceDimensions/8ESS9QXCJT48TMPH.JRTCKXETXF.6YS6EN2CT7/pricePerUnit/USD">$0.686/h</a></th><th scope="col" class="mach"><span class="mach-name">c6i.8xlarge</span><span class="mach-spec">32 vCPU · 64 GiB</span><span class="mach-proc">Intel Xeon 8375C (Ice Lake)</span><span class="mach-runs">32–35</span><a class="mach-price" href="https://api.ledgermath.com/v1/prices/2026-11-19.json" title="$1.36 an hour: /sources/0/terms/OnDemand/NKB8DU47ZKKBXW65/NKB8DU47ZKKBXW65.JRTCKXETXF/priceDimensions/NKB8DU47ZKKBXW65.JRTCKXETXF.6YS6EN2CT7/pricePerUnit/USD">$1.36/h</a></th></tr></thead><tbody><tr class="group" id="s-memory"><th scope="rowgroup" colspan="6" class="group-h">Memory</th></tr><tr class="row" id="b-memory-read" style="--wi:2ch"><th scope="row"><a class="row-label" href="https://ledgermath.com/docs/benchmarks/memory_read">Read memory sequentially</a><span class="row-fig"><span class="row-unit">GB/s</span><span class="row-dir">↑ faster</span></span></th><td><span class="cm">m5.large</span><a class="fig" href="https://api.ledgermath.com/v1/series/a0faf4326dd7.json" title="m5.large, GB/s
+p50 12.502615200030773
+p5 12.066213043186394
+p95 12.660574801789217
+36 Runs"><span class="fi">12</span><span class="fh">.50</span><span class="ft">2615200030773</span></a><span class="bar" aria-hidden="true"><span class="bar-f" style="width:26.422%"></span><span class="bar-s" style="left:25.500%;right:calc(100% - 26.756%)"></span></span></td><td><span class="cm">c8i.2xlarge</span><a class="fig" href="https://api.ledgermath.com/v1/series/50454c4ad4d9.json" title="c8i.2xlarge, GB/s
+p50 19.581876183050716
+p5 17.19425128062641
+p95 21.069538703550484
+33 Runs"><span class="fi">19</span><span class="fh">.58</span><span class="ft">1876183050716</span></a><span class="bar" aria-hidden="true"><span class="bar-f" style="width:41.383%"></span><span class="bar-s" style="left:36.337%;right:calc(100% - 44.527%)"></span></span></td><td><span class="cm">c8a.2xlarge</span><a class="fig" href="https://api.ledgermath.com/v1/series/6c2d103db5b2.json" title="c8a.2xlarge, GB/s
+p50 46.14203486531752
+p5 45.13831177450762
+p95 47.31845044107937
+34 Runs"><span class="fi">46</span><span class="fh">.14</span><span class="ft">203486531752</span></a><span class="bar" aria-hidden="true"><span class="bar-f" style="width:97.514%"></span><span class="bar-s" style="left:95.393%;right:calc(100% - 100.000%)"></span></span></td><td><span class="cm">i4i.2xlarge</span><a class="fig" href="https://api.ledgermath.com/v1/series/462f71b45144.json" title="i4i.2xlarge, GB/s
+p50 13.68491628609496
+p5 12.55505138722493
+p95 14.251264860844772
+34 Runs"><span class="fi">13</span><span class="fh">.68</span><span class="ft">491628609496</span></a><span class="bar" aria-hidden="true"><span class="bar-f" style="width:28.921%"></span><span class="bar-s" style="left:26.533%;right:calc(100% - 30.118%)"></span></span></td><td><span class="cm">c6i.8xlarge</span><a class="fig" href="https://api.ledgermath.com/v1/series/c96b6f40c007.json" title="c6i.8xlarge, GB/s
+p50 13.921692455697594
+p5 12.989491974514793
+p95 14.483288951503136
+35 Runs"><span class="fi">13</span><span class="fh">.92</span><span class="ft">1692455697594</span></a><span class="bar" aria-hidden="true"><span class="bar-f" style="width:29.421%"></span><span class="bar-s" style="left:27.451%;right:calc(100% - 30.608%)"></span></span></td></tr><tr class="row" id="b-memory-read-random" style="--wi:2ch"><th scope="row"><a class="row-label" href="https://ledgermath.com/docs/benchmarks/memory_read_random">Read memory in random order</a><span class="row-fig"><span class="row-unit">GB/s</span><span class="row-dir">↑ faster</span></span></th><td><span class="cm">m5.large</span><a class="fig" href="https://api.ledgermath.com/v1/series/2eb51a74c037.json" title="m5.large, GB/s
+p50 3.4814097979860163
+p5 3.3955165185381217
+p95 3.5263990509867883
+36 Runs"><span class="fi">3</span><span class="fh">.481</span><span class="ft">4097979860163</span></a><span class="bar" aria-hidden="true"><span class="bar-f" style="width:23.568%"></span><span class="bar-s" style="left:22.986%;right:calc(100% - 23.872%)"></span></span></td><td><span class="cm">c8i.2xlarge</span><a class="fig" href="https://api.ledgermath.com/v1/series/14573cf7edbc.json" title="c8i.2xlarge, GB/s
+p50 4.99688782381912
+p5 4.852111553120747
+p95 5.218357998460389
+33 Runs"><span class="fi">4</span><span class="fh">.996</span><span class="ft">88782381912</span></a><span class="bar" aria-hidden="true"><span class="bar-f" style="width:33.827%"></span><span class="bar-s" style="left:32.847%;right:calc(100% - 35.326%)"></span></span></td><td><span class="cm">c8a.2xlarge</span><a class="fig" href="https://api.ledgermath.com/v1/series/f95f580e8206.json" title="c8a.2xlarge, GB/s
+p50 14.428173668216423
+p5 13.88989076162913
+p95 14.772071005940683
+34 Runs"><span class="fi">14</span><span class="fh">.428</span><span class="ft">173668216423</span></a><span class="bar" aria-hidden="true"><span class="bar-f" style="width:97.672%"></span><span class="bar-s" style="left:94.028%;right:calc(100% - 100.000%)"></span></span></td><td><span class="cm">i4i.2xlarge</span><a class="fig" href="https://api.ledgermath.com/v1/series/fe90715162c5.json" title="i4i.2xlarge, GB/s
+p50 3.889786508164446
+p5 3.732304313960816
+p95 4.028180321109561
+34 Runs"><span class="fi">3</span><span class="fh">.889</span><span class="ft">786508164446</span></a><span class="bar" aria-hidden="true"><span class="bar-f" style="width:26.332%"></span><span class="bar-s" style="left:25.266%;right:calc(100% - 27.269%)"></span></span></td><td><span class="cm">c6i.8xlarge</span><a class="fig" href="https://api.ledgermath.com/v1/series/2ab8550abd50.json" title="c6i.8xlarge, GB/s
+p50 3.8835935219823127
+p5 3.769100316931245
+p95 4.039970495000766
+33 Runs"><span class="fi">3</span><span class="fh">.883</span><span class="ft">5935219823127</span></a><span class="bar" aria-hidden="true"><span class="bar-f" style="width:26.290%"></span><span class="bar-s" style="left:25.515%;right:calc(100% - 27.349%)"></span></span></td></tr><tr class="row" id="b-memory-write" style="--wi:2ch"><th scope="row"><a class="row-label" href="https://ledgermath.com/docs/benchmarks/memory_write">Write memory sequentially</a><span class="row-fig"><span class="row-unit">GB/s</span><span class="row-dir">↑ faster</span></span></th><td><span class="cm">m5.large</span><a class="fig" href="https://api.ledgermath.com/v1/series/9fb0e688da5d.json" title="m5.large, GB/s
+p50 10.000637970311108
+p5 9.535235211803661
+p95 10.293997249311628
+36 Runs"><span class="fi">10</span><span class="fh">.00</span><span class="ft">0637970311108</span></a><span class="bar" aria-hidden="true"><span class="bar-f" style="width:29.893%"></span><span class="bar-s" style="left:28.502%;right:calc(100% - 30.770%)"></span></span></td><td><span class="cm">c8i.2xlarge</span><a class="fig" href="https://api.ledgermath.com/v1/series/faa9d248a40f.json" title="c8i.2xlarge, GB/s
+p50 17.309783004477222
+p5 15.444291782915361
+p95 18.71872486000185
+33 Runs"><span class="fi">17</span><span class="fh">.30</span><span class="ft">9783004477222</span></a><span class="bar" aria-hidden="true"><span class="bar-f" style="width:51.741%"></span><span class="bar-s" style="left:46.165%;right:calc(100% - 55.953%)"></span></span></td><td><span class="cm">c8a.2xlarge</span><a class="fig" href="https://api.ledgermath.com/v1/series/1367b754f214.json" title="c8a.2xlarge, GB/s
+p50 33.15754975399144
+p5 32.720968027217396
+p95 33.454589634052948
+34 Runs"><span class="fi">33</span><span class="fh">.15</span><span class="ft">754975399144</span></a><span class="bar" aria-hidden="true"><span class="bar-f" style="width:99.112%"></span><span class="bar-s" style="left:97.807%;right:calc(100% - 100.000%)"></span></span></td><td><span class="cm">i4i.2xlarge</span><a class="fig" href="https://api.ledgermath.com/v1/series/d50d05356a93.json" title="i4i.2xlarge, GB/s
+p50 11.501364644857063
+p5 10.831084542229227
+p95 11.791454078355825
+34 Runs"><span class="fi">11</span><span class="fh">.50</span><span class="ft">1364644857063</span></a><span class="bar" aria-hidden="true"><span class="bar-f" style="width:34.379%"></span><span class="bar-s" style="left:32.375%;right:calc(100% - 35.246%)"></span></span></td><td><span class="cm">c6i.8xlarge</span><a class="fig" href="https://api.ledgermath.com/v1/series/c9f91509bbfe.json" title="c6i.8xlarge, GB/s
+p50 11.488065864410336
+p5 10.875601169320446
+p95 11.91141747205037
+33 Runs"><span class="fi">11</span><span class="fh">.48</span><span class="ft">8065864410336</span></a><span class="bar" aria-hidden="true"><span class="bar-f" style="width:34.339%"></span><span class="bar-s" style="left:32.509%;right:calc(100% - 35.605%)"></span></span></td></tr><tr class="row" id="b-compressed-memory-read" style="--wi:2ch"><th scope="row"><a class="row-label" href="https://ledgermath.com/docs/benchmarks/compressed_memory_read">Unpack 8-bit integers</a><span class="row-fig"><span class="row-unit">GB/s</span><span class="row-dir">↑ faster</span></span></th><td><span class="cm">m5.large</span><a class="fig" href="https://api.ledgermath.com/v1/series/4aaac5b9e3b2.json" title="m5.large, GB/s
+p50 17.29780909468452
+p5 17.095956220515488
+p95 17.44055927837441
+36 Runs"><span class="fi">17</span><span class="fh">.29</span><span class="ft">780909468452</span></a><span class="bar" aria-hidden="true"><span class="bar-f" style="width:33.253%"></span><span class="bar-s" style="left:32.865%;right:calc(100% - 33.528%)"></span></span></td><td><span class="cm">c8i.2xlarge</span><a class="fig" href="https://api.ledgermath.com/v1/series/a0b51bd08370.json" title="c8i.2xlarge, GB/s
+p50 42.858734266345375
+p5 34.750057148726234
+p95 44.20939218953204
+33 Runs"><span class="fi">42</span><span class="fh">.85</span><span class="ft">8734266345375</span></a><span class="bar" aria-hidden="true"><span class="bar-f" style="width:82.392%"></span><span class="bar-s" style="left:66.803%;right:calc(100% - 84.988%)"></span></span></td><td><span class="cm">c8a.2xlarge</span><a class="fig" href="https://api.ledgermath.com/v1/series/01597f231b94.json" title="c8a.2xlarge, GB/s
+p50 51.67840431203998
+p5 49.81448116440958
+p95 52.01832198925596
+34 Runs"><span class="fi">51</span><span class="fh">.67</span><span class="ft">840431203998</span></a><span class="bar" aria-hidden="true"><span class="bar-f" style="width:99.347%"></span><span class="bar-s" style="left:95.763%;right:calc(100% - 100.000%)"></span></span></td><td><span class="cm">i4i.2xlarge</span><a class="fig" href="https://api.ledgermath.com/v1/series/a40e4fc05609.json" title="i4i.2xlarge, GB/s
+p50 19.790936072737823
+p5 19.457109745423374
+p95 19.918707454545307
+34 Runs"><span class="fi">19</span><span class="fh">.79</span><span class="ft">0936072737823</span></a><span class="bar" aria-hidden="true"><span class="bar-f" style="width:38.046%"></span><span class="bar-s" style="left:37.404%;right:calc(100% - 38.292%)"></span></span></td><td><span class="cm">c6i.8xlarge</span><a class="fig" href="https://api.ledgermath.com/v1/series/b433e2d4c4b0.json" title="c6i.8xlarge, GB/s
+p50 19.868635157971607
+p5 19.60250149690218
+p95 19.99143838625219
+33 Runs"><span class="fi">19</span><span class="fh">.86</span><span class="ft">8635157971607</span></a><span class="bar" aria-hidden="true"><span class="bar-f" style="width:38.195%"></span><span class="bar-s" style="left:37.684%;right:calc(100% - 38.432%)"></span></span></td></tr></tbody><tbody><tr class="group" id="s-compute"><th scope="rowgroup" colspan="6" class="group-h">Compute</th></tr><tr class="row" id="b-hash" style="--wi:3ch"><th scope="row"><a class="row-label" href="https://ledgermath.com/docs/benchmarks/hash">Hash 64 bytes with SHA-256</a><span class="row-fig"><span class="row-unit">ns</span><span class="row-dir">↓ faster</span></span></th><td><span class="cm">m5.large</span><a class="fig" href="https://api.ledgermath.com/v1/series/52b88e519398.json" title="m5.large, ns
+p50 571.4299035072327
+p5 553.8696349263191
+p95 573.7116091251373
+36 Runs"><span class="fi">571</span><span class="fh">.42</span><span class="ft">99035072327</span></a><span class="bar" aria-hidden="true"><span class="bar-f" style="width:99.602%"></span><span class="bar-s" style="left:96.541%;right:calc(100% - 100.000%)"></span></span></td><td><span class="cm">c8i.2xlarge</span><a class="fig" href="https://api.ledgermath.com/v1/series/7bb332583a88.json" title="c8i.2xlarge, ns
+p50 76.6826958656311
+p5 76.64136103987694
+p95 77.18171999454498
+33 Runs"><span class="fi">76</span><span class="fh">.68</span><span class="ft">26958656311</span></a><span class="bar" aria-hidden="true"><span class="bar-f" style="width:13.366%"></span><span class="bar-s" style="left:13.359%;right:calc(100% - 13.453%)"></span></span></td><td><span class="cm">c8a.2xlarge</span><a class="fig" href="https://api.ledgermath.com/v1/series/72b71c87a055.json" title="c8a.2xlarge, ns
+p50 58.78080067038536
+p5 58.548968439549206
+p95 60.35888333171606
+34 Runs"><span class="fi">58</span><span class="fh">.78</span><span class="ft">080067038536</span></a><span class="bar" aria-hidden="true"><span class="bar-f" style="width:10.246%"></span><span class="bar-s" style="left:10.205%;right:calc(100% - 10.521%)"></span></span></td><td><span class="cm">i4i.2xlarge</span><a class="fig" href="https://api.ledgermath.com/v1/series/94e5f606544d.json" title="i4i.2xlarge, ns
+p50 101.17231135070324
+p5 101.10978355556726
+p95 101.44067134261131
+34 Runs"><span class="fi">101</span><span class="fh">.17</span><span class="ft">231135070324</span></a><span class="bar" aria-hidden="true"><span class="bar-f" style="width:17.635%"></span><span class="bar-s" style="left:17.624%;right:calc(100% - 17.681%)"></span></span></td><td><span class="cm">c6i.8xlarge</span><a class="fig" href="https://api.ledgermath.com/v1/series/eebd8c0c8ae5.json" title="c6i.8xlarge, ns
+p50 101.15115785598755
+p5 101.108174431324
+p95 101.21258933544159
+33 Runs"><span class="fi">101</span><span class="fh">.15</span><span class="ft">115785598755</span></a><span class="bar" aria-hidden="true"><span class="bar-f" style="width:17.631%"></span><span class="bar-s" style="left:17.624%;right:calc(100% - 17.642%)"></span></span></td></tr><tr class="row" id="b-sort" style="--wi:1ch"><th scope="row"><a class="row-label" href="https://ledgermath.com/docs/benchmarks/sort">Sort 1 MiB of 64-bit keys</a><span class="row-fig"><span class="row-unit">ms</span><span class="row-dir">↓ faster</span></span></th><td><span class="cm">m5.large</span><a class="fig" href="https://api.ledgermath.com/v1/series/73d9884eeb4c.json" title="m5.large, ms
+p50 3.2967123413085938
+p5 3.224870807373047
+p95 3.3698481254882812
+36 Runs"><span class="fi">3</span><span class="fh">.2967</span><span class="ft">123413085938</span></a><span class="bar" aria-hidden="true"><span class="bar-f" style="width:97.830%"></span><span class="bar-s" style="left:95.698%;right:calc(100% - 100.000%)"></span></span></td><td><span class="cm">c8i.2xlarge</span><a class="fig" href="https://api.ledgermath.com/v1/series/ebebae36473b.json" title="c8i.2xlarge, ms
+p50 1.6888001059570312
+p5 1.6351562159179687
+p95 1.73014833828125
+33 Runs"><span class="fi">1</span><span class="fh">.6888</span><span class="ft">001059570312</span></a><span class="bar" aria-hidden="true"><span class="bar-f" style="width:50.115%"></span><span class="bar-s" style="left:48.523%;right:calc(100% - 51.342%)"></span></span></td><td><span class="cm">c8a.2xlarge</span><a class="fig" href="https://api.ledgermath.com/v1/series/771d591ff49e.json" title="c8a.2xlarge, ms
+p50 0.8584353094482422
+p5 0.8479674222412109
+p95 0.8920654683959961
+34 Runs"><span class="fi">0</span><span class="fh">.8584</span><span class="ft">353094482422</span></a><span class="bar" aria-hidden="true"><span class="bar-f" style="width:25.474%"></span><span class="bar-s" style="left:25.163%;right:calc(100% - 26.472%)"></span></span></td><td><span class="cm">i4i.2xlarge</span><a class="fig" href="https://api.ledgermath.com/v1/series/81a9c662186d.json" title="i4i.2xlarge, ms
+p50 2.8301294672851562
+p5 2.7539088989746096
+p95 2.984217551074219
+34 Runs"><span class="fi">2</span><span class="fh">.8301</span><span class="ft">294672851562</span></a><span class="bar" aria-hidden="true"><span class="bar-f" style="width:83.984%"></span><span class="bar-s" style="left:81.722%;right:calc(100% - 88.556%)"></span></span></td><td><span class="cm">c6i.8xlarge</span><a class="fig" href="https://api.ledgermath.com/v1/series/8219b7d4b463.json" title="c6i.8xlarge, ms
+p50 2.8614193525390625
+p5 2.76705009453125
+p95 2.93514615234375
+33 Runs"><span class="fi">2</span><span class="fh">.8614</span><span class="ft">193525390625</span></a><span class="bar" aria-hidden="true"><span class="bar-f" style="width:84.912%"></span><span class="bar-s" style="left:82.112%;right:calc(100% - 87.100%)"></span></span></td></tr></tbody><tbody><tr class="group" id="s-operating-system"><th scope="rowgroup" colspan="6" class="group-h">Operating system</th></tr><tr class="row" id="b-syscall" style="--wi:3ch"><th scope="row"><a class="row-label" href="https://ledgermath.com/docs/benchmarks/syscall">Make a system call</a><span class="row-fig"><span class="row-unit">ns</span><span class="row-dir">↓ faster</span></span></th><td><span class="cm">m5.large</span><a class="fig" href="https://api.ledgermath.com/v1/series/7606177c6113.json" title="m5.large, ns
+p50 423.96634060144424
+p5 419.4403267502785
+p95 432.5043433010578
+36 Runs"><span class="fi">423</span><span class="fh">.96</span><span class="ft">634060144424</span></a><span class="bar" aria-hidden="true"><span class="bar-f" style="width:98.026%"></span><span class="bar-s" style="left:96.979%;right:calc(100% - 100.000%)"></span></span></td><td><span class="cm">c8i.2xlarge</span><a class="fig" href="https://api.ledgermath.com/v1/series/18c2bee7597f.json" title="c8i.2xlarge, ns
+p50 60.95127719640732
+p5 60.836141055822374
+p95 61.39173409342766
+33 Runs"><span class="fi">60</span><span class="fh">.95</span><span class="ft">127719640732</span></a><span class="bar" aria-hidden="true"><span class="bar-f" style="width:14.093%"></span><span class="bar-s" style="left:14.066%;right:calc(100% - 14.194%)"></span></span></td><td><span class="cm">c8a.2xlarge</span><a class="fig" href="https://api.ledgermath.com/v1/series/d66f9333dd2e.json" title="c8a.2xlarge, ns
+p50 39.82064563781023
+p5 39.05212002322078
+p95 43.14216740727424
+34 Runs"><span class="fi">39</span><span class="fh">.82</span><span class="ft">064563781023</span></a><span class="bar" aria-hidden="true"><span class="bar-f" style="width:9.207%"></span><span class="bar-s" style="left:9.029%;right:calc(100% - 9.975%)"></span></span></td><td><span class="cm">i4i.2xlarge</span><a class="fig" href="https://api.ledgermath.com/v1/series/f10fb42cbede.json" title="i4i.2xlarge, ns
+p50 93.24108190834522
+p5 93.16384350210429
+p95 93.30934041589498
+34 Runs"><span class="fi">93</span><span class="fh">.24</span><span class="ft">108190834522</span></a><span class="bar" aria-hidden="true"><span class="bar-f" style="width:21.558%"></span><span class="bar-s" style="left:21.541%;right:calc(100% - 21.574%)"></span></span></td><td><span class="cm">c6i.8xlarge</span><a class="fig" href="https://api.ledgermath.com/v1/series/ee0275533a8c.json" title="c6i.8xlarge, ns
+p50 93.24263682961464
+p5 93.13982474207879
+p95 93.32614746689796
+33 Runs"><span class="fi">93</span><span class="fh">.24</span><span class="ft">263682961464</span></a><span class="bar" aria-hidden="true"><span class="bar-f" style="width:21.559%"></span><span class="bar-s" style="left:21.535%;right:calc(100% - 21.578%)"></span></span></td></tr><tr class="row" id="b-mutex" style="--wi:2ch"><th scope="row"><a class="row-label" href="https://ledgermath.com/docs/benchmarks/mutex">Lock and unlock a mutex</a><span class="row-fig"><span class="row-unit">ns per critical section</span><span class="row-dir">↓ faster</span></span></th><td><span class="cm">m5.large</span><a class="fig" href="https://api.ledgermath.com/v1/series/b78f1f6c9493.json" title="m5.large, ns per critical section
+p50 17.50357981262207
+p5 17.084468000793457
+p95 17.658415058898926
+36 Runs"><span class="fi">17</span><span class="fh">.50</span><span class="ft">357981262207</span></a><span class="bar" aria-hidden="true"><span class="bar-f" style="width:95.123%"></span><span class="bar-s" style="left:92.845%;right:calc(100% - 95.965%)"></span></span></td><td class="hero-cell"><span class="cm">c8i.2xlarge</span><a class="fig" href="https://api.ledgermath.com/v1/series/c2d748916b19.json" title="c8i.2xlarge, ns per critical section
+p50 13.637057904052734
+p5 13.630604848632813
+p95 13.735563184814452
+33 Runs"><span class="fi">13</span><span class="fh">.63</span><span class="ft">7057904052734</span></a><span class="bar" aria-hidden="true"><span class="bar-f" style="width:74.110%"></span><span class="bar-s" style="left:74.075%;right:calc(100% - 74.646%)"></span></span></td><td><span class="cm">c8a.2xlarge</span><a class="fig" href="https://api.ledgermath.com/v1/series/256a1edb7f49.json" title="c8a.2xlarge, ns per critical section
+p50 10.204072651672363
+p5 10.152223308258057
+p95 10.546078035888672
+34 Runs"><span class="fi">10</span><span class="fh">.20</span><span class="ft">4072651672363</span></a><span class="bar" aria-hidden="true"><span class="bar-f" style="width:55.454%"></span><span class="bar-s" style="left:55.172%;right:calc(100% - 57.313%)"></span></span></td><td><span class="cm">i4i.2xlarge</span><a class="fig" href="https://api.ledgermath.com/v1/series/3b88b8d15a6f.json" title="i4i.2xlarge, ns per critical section
+p50 18.386835549926758
+p5 16.887793291015626
+p95 18.392892365112304
+34 Runs"><span class="fi">18</span><span class="fh">.38</span><span class="ft">6835549926758</span></a><span class="bar" aria-hidden="true"><span class="bar-f" style="width:99.923%"></span><span class="bar-s" style="left:91.777%;right:calc(100% - 99.956%)"></span></span></td><td><span class="cm">c6i.8xlarge</span><a class="fig" href="https://api.ledgermath.com/v1/series/cb731cf1b6d5.json" title="c6i.8xlarge, ns per critical section
+p50 18.383885809326172
+p5 14.103207332763672
+p95 18.400983352050782
+33 Runs"><span class="fi">18</span><span class="fh">.38</span><span class="ft">3885809326172</span></a><span class="bar" aria-hidden="true"><span class="bar-f" style="width:99.907%"></span><span class="bar-s" style="left:76.644%;right:calc(100% - 100.000%)"></span></span></td></tr><tr class="row" id="b-tcp-echo" style="--wi:2ch"><th scope="row"><a class="row-label" href="https://ledgermath.com/docs/benchmarks/tcp_echo">Echo 32 KiB over loopback TCP</a><span class="row-fig"><span class="row-unit">µs</span><span class="row-dir">↓ faster</span></span></th><td><span class="cm">m5.large</span><a class="fig" href="https://api.ledgermath.com/v1/series/020d14b913c7.json" title="m5.large, µs
+p50 26.39156694793701
+p5 25.707084747314453
+p95 26.82491291809082
+36 Runs"><span class="fi">26</span><span class="fh">.391</span><span class="ft">56694793701</span></a><span class="bar" aria-hidden="true"><span class="bar-f" style="width:55.673%"></span><span class="bar-s" style="left:54.229%;right:calc(100% - 56.587%)"></span></span></td><td><span class="cm">c8i.2xlarge</span><a class="fig" href="https://api.ledgermath.com/v1/series/638052513999.json" title="c8i.2xlarge, µs
+p50 46.249853912353516
+p5 39.53689373779297
+p95 47.40472012939453
+33 Runs"><span class="fi">46</span><span class="fh">.249</span><span class="ft">853912353516</span></a><span class="bar" aria-hidden="true"><span class="bar-f" style="width:97.564%"></span><span class="bar-s" style="left:83.403%;right:calc(100% - 100.000%)"></span></span></td><td><span class="cm">c8a.2xlarge</span><a class="fig" href="https://api.ledgermath.com/v1/series/362db5e881fc.json" title="c8a.2xlarge, µs
+p50 6.851112865447998
+p5 6.7803380410194395
+p95 7.028320043373108
+34 Runs"><span class="fi">6</span><span class="fh">.851</span><span class="ft">112865447998</span></a><span class="bar" aria-hidden="true"><span class="bar-f" style="width:14.452%"></span><span class="bar-s" style="left:14.303%;right:calc(100% - 14.826%)"></span></span></td><td><span class="cm">i4i.2xlarge</span><a class="fig" href="https://api.ledgermath.com/v1/series/8a7ee87fe79b.json" title="i4i.2xlarge, µs
+p50 24.909502033233643
+p5 24.472998864746092
+p95 26.07641933441162
+34 Runs"><span class="fi">24</span><span class="fh">.909</span><span class="ft">502033233643</span></a><span class="bar" aria-hidden="true"><span class="bar-f" style="width:52.546%"></span><span class="bar-s" style="left:51.626%;right:calc(100% - 55.008%)"></span></span></td><td><span class="cm">c6i.8xlarge</span><a class="fig" href="https://api.ledgermath.com/v1/series/d58cd285010e.json" title="c6i.8xlarge, µs
+p50 24.615954460144043
+p5 24.163858348083497
+p95 25.46837863006592
+33 Runs"><span class="fi">24</span><span class="fh">.615</span><span class="ft">954460144043</span></a><span class="bar" aria-hidden="true"><span class="bar-f" style="width:51.927%"></span><span class="bar-s" style="left:50.974%;right:calc(100% - 53.725%)"></span></span></td></tr></tbody><tbody><tr class="group" id="s-disk"><th scope="rowgroup" colspan="6" class="group-h">Disk<span class="group-note"> · root EBS gp3 volume</span></th></tr><tr class="row" id="b-disk-read-sequential" style="--wi:3ch"><th scope="row"><a class="row-label" href="https://ledgermath.com/docs/benchmarks/disk_read_sequential">Read a file sequentially</a><span class="row-fig"><span class="row-unit">MB/s</span><span class="row-dir">↑ faster</span></span></th><td><span class="cm">m5.large</span><a class="fig" href="https://api.ledgermath.com/v1/series/4b7c617e6eb1.json" title="m5.large, MB/s
+p50 131.28402678402665
+p5 131.2704928592574
+p95 131.32840032724987
+36 Runs"><span class="fi">131</span><span class="fh">.2</span><span class="ft">8402678402665</span></a><span class="bar" aria-hidden="true"><span class="bar-f" style="width:99.966%"></span><span class="bar-s" style="left:99.956%;right:calc(100% - 100.000%)"></span></span></td><td><span class="cm">c8i.2xlarge</span><a class="fig" href="https://api.ledgermath.com/v1/series/694b5c7bcf41.json" title="c8i.2xlarge, MB/s
+p50 131.09484897442675
+p5 131.0784265741568
+p95 131.1217806177638
+33 Runs"><span class="fi">131</span><span class="fh">.0</span><span class="ft">9484897442675</span></a><span class="bar" aria-hidden="true"><span class="bar-f" style="width:99.822%"></span><span class="bar-s" style="left:99.810%;right:calc(100% - 99.843%)"></span></span></td><td><span class="cm">c8a.2xlarge</span><a class="fig" href="https://api.ledgermath.com/v1/series/c90a86dbd6f6.json" title="c8a.2xlarge, MB/s
+p50 131.08873951368451
+p5 131.0828906394524
+p95 131.13462358858004
+34 Runs"><span class="fi">131</span><span class="fh">.0</span><span class="ft">8873951368451</span></a><span class="bar" aria-hidden="true"><span class="bar-f" style="width:99.818%"></span><span class="bar-s" style="left:99.813%;right:calc(100% - 99.852%)"></span></span></td><td><span class="cm">i4i.2xlarge</span><a class="fig" href="https://api.ledgermath.com/v1/series/49b6c98b8b33.json" title="i4i.2xlarge, MB/s
+p50 131.10889668793876
+p5 131.10237091473815
+p95 131.13603960767755
+34 Runs"><span class="fi">131</span><span class="fh">.1</span><span class="ft">0889668793876</span></a><span class="bar" aria-hidden="true"><span class="bar-f" style="width:99.833%"></span><span class="bar-s" style="left:99.828%;right:calc(100% - 99.854%)"></span></span></td><td><span class="cm">c6i.8xlarge</span><a class="fig" href="https://api.ledgermath.com/v1/series/2ff870335755.json" title="c6i.8xlarge, MB/s
+p50 131.11155183542529
+p5 131.10080875195792
+p95 131.16780456980537
+33 Runs"><span class="fi">131</span><span class="fh">.1</span><span class="ft">1155183542529</span></a><span class="bar" aria-hidden="true"><span class="bar-f" style="width:99.835%"></span><span class="bar-s" style="left:99.827%;right:calc(100% - 99.878%)"></span></span></td></tr><tr class="row" id="b-disk-read-random" style="--wi:3ch"><th scope="row"><a class="row-label" href="https://ledgermath.com/docs/benchmarks/disk_read_random">Read 8 KiB from disk</a><span class="row-fig"><span class="row-unit">µs</span><span class="row-dir">↓ faster</span></span></th><td><span class="cm">m5.large</span><a class="fig" href="https://api.ledgermath.com/v1/series/15808a62321b.json" title="m5.large, µs
+p50 582.9497937011719
+p5 582.2922416381836
+p95 583.4815042724609
+36 Runs"><span class="fi">582</span><span class="fh">.9</span><span class="ft">497937011719</span></a><span class="bar" aria-hidden="true"><span class="bar-f" style="width:83.210%"></span><span class="bar-s" style="left:83.116%;right:calc(100% - 83.286%)"></span></span></td><td><span class="cm">c8i.2xlarge</span><a class="fig" href="https://api.ledgermath.com/v1/series/a7b764652236.json" title="c8i.2xlarge, µs
+p50 658.4395202636719
+p5 584.9860045410156
+p95 700.578647265625
+33 Runs"><span class="fi">658</span><span class="fh">.4</span><span class="ft">395202636719</span></a><span class="bar" aria-hidden="true"><span class="bar-f" style="width:93.985%"></span><span class="bar-s" style="left:83.500%;right:calc(100% - 100.000%)"></span></span></td><td><span class="cm">c8a.2xlarge</span><a class="fig" href="https://api.ledgermath.com/v1/series/e810e8da1d72.json" title="c8a.2xlarge, µs
+p50 576.8651685791016
+p5 573.8196877319335
+p95 578.7147219848633
+34 Runs"><span class="fi">576</span><span class="fh">.8</span><span class="ft">651685791016</span></a><span class="bar" aria-hidden="true"><span class="bar-f" style="width:82.341%"></span><span class="bar-s" style="left:81.907%;right:calc(100% - 82.605%)"></span></span></td><td><span class="cm">i4i.2xlarge</span><a class="fig" href="https://api.ledgermath.com/v1/series/22c0e1adccf9.json" title="i4i.2xlarge, µs
+p50 586.4096589355469
+p5 581.9875968139649
+p95 588.1773200927734
+34 Runs"><span class="fi">586</span><span class="fh">.4</span><span class="ft">096589355469</span></a><span class="bar" aria-hidden="true"><span class="bar-f" style="width:83.704%"></span><span class="bar-s" style="left:83.072%;right:calc(100% - 83.956%)"></span></span></td><td><span class="cm">c6i.8xlarge</span><a class="fig" href="https://api.ledgermath.com/v1/series/57cfc5c0bf0b.json" title="c6i.8xlarge, µs
+p50 587.401541015625
+p5 582.3220577148438
+p95 588.031470703125
+33 Runs"><span class="fi">587</span><span class="fh">.4</span><span class="ft">01541015625</span></a><span class="bar" aria-hidden="true"><span class="bar-f" style="width:83.845%"></span><span class="bar-s" style="left:83.120%;right:calc(100% - 83.935%)"></span></span></td></tr><tr class="row" id="b-disk-read-io-uring" style="--wi:3ch"><th scope="row"><a class="row-label" href="https://ledgermath.com/docs/benchmarks/disk_read_io_uring">Random 4 KiB reads, 64 submitted</a><span class="row-fig"><span class="row-unit">µs</span><span class="row-dir">↓ faster</span></span></th><td><span class="cm">m5.large</span><a class="fig" href="https://api.ledgermath.com/v1/series/b2b437e29b44.json" title="m5.large, µs
+p50 333.39927783203125
+p5 333.2882007141113
+p95 333.48933529663086
+36 Runs"><span class="fi">333</span><span class="fh">.3</span><span class="ft">9927783203125</span></a><span class="bar" aria-hidden="true"><span class="bar-f" style="width:99.947%"></span><span class="bar-s" style="left:99.914%;right:calc(100% - 99.974%)"></span></span></td><td><span class="cm">c8i.2xlarge</span><a class="fig" href="https://api.ledgermath.com/v1/series/4f383cf986cd.json" title="c8i.2xlarge, µs
+p50 333.4028790283203
+p5 333.29816909179685
+p95 333.57450947265624
+33 Runs"><span class="fi">333</span><span class="fh">.4</span><span class="ft">028790283203</span></a><span class="bar" aria-hidden="true"><span class="bar-f" style="width:99.949%"></span><span class="bar-s" style="left:99.917%;right:calc(100% - 100.000%)"></span></span></td><td><span class="cm">c8a.2xlarge</span><a class="fig" href="https://api.ledgermath.com/v1/series/1f0e06f4ec9c.json" title="c8a.2xlarge, µs
+p50 333.2898233642578
+p5 333.2497039794922
+p95 333.5483848388672
+34 Runs"><span class="fi">333</span><span class="fh">.2</span><span class="ft">898233642578</span></a><span class="bar" aria-hidden="true"><span class="bar-f" style="width:99.915%"></span><span class="bar-s" style="left:99.903%;right:calc(100% - 99.992%)"></span></span></td><td><span class="cm">i4i.2xlarge</span><a class="fig" href="https://api.ledgermath.com/v1/series/20eed077d65c.json" title="i4i.2xlarge, µs
+p50 333.32683459472656
+p5 333.26123557739257
+p95 333.47683217773435
+34 Runs"><span class="fi">333</span><span class="fh">.3</span><span class="ft">2683459472656</span></a><span class="bar" aria-hidden="true"><span class="bar-f" style="width:99.926%"></span><span class="bar-s" style="left:99.906%;right:calc(100% - 99.971%)"></span></span></td><td><span class="cm">c6i.8xlarge</span><a class="fig" href="https://api.ledgermath.com/v1/series/1fd63db97e9d.json" title="c6i.8xlarge, µs
+p50 333.30269274902344
+p5 333.26030581054685
+p95 333.51336149902345
+33 Runs"><span class="fi">333</span><span class="fh">.3</span><span class="ft">0269274902344</span></a><span class="bar" aria-hidden="true"><span class="bar-f" style="width:99.919%"></span><span class="bar-s" style="left:99.906%;right:calc(100% - 99.982%)"></span></span></td></tr><tr class="row" id="b-disk-write" style="--wi:3ch"><th scope="row"><a class="row-label" href="https://ledgermath.com/docs/benchmarks/disk_write">Write 8 KiB durably</a><span class="row-fig"><span class="row-unit">µs</span><span class="row-dir">↓ faster</span></span></th><td><span class="cm">m5.large</span><a class="fig" href="https://api.ledgermath.com/v1/series/9f5d174363ad.json" title="m5.large, µs
+p50 910.4675368652344
+p5 909.6365388183594
+p95 912.0641025390625
+36 Runs"><span class="fi">910</span><span class="fh">.4</span><span class="ft">675368652344</span></a><span class="bar" aria-hidden="true"><span class="bar-f" style="width:84.844%"></span><span class="bar-s" style="left:84.766%;right:calc(100% - 84.993%)"></span></span></td><td><span class="cm">c8i.2xlarge</span><a class="fig" href="https://api.ledgermath.com/v1/series/26fc202ec6ac.json" title="c8i.2xlarge, µs
+p50 979.4358208007812
+p5 908.5257261230468
+p95 1073.10874296875
+33 Runs"><span class="fi">979</span><span class="fh">.4</span><span class="ft">358208007812</span></a><span class="bar" aria-hidden="true"><span class="bar-f" style="width:91.271%"></span><span class="bar-s" style="left:84.663%;right:calc(100% - 100.000%)"></span></span></td><td><span class="cm">c8a.2xlarge</span><a class="fig" href="https://api.ledgermath.com/v1/series/46dfcfed84ee.json" title="c8a.2xlarge, µs
+p50 900.1090301513672
+p5 896.5231184692383
+p95 901.7451162109375
+34 Runs"><span class="fi">900</span><span class="fh">.1</span><span class="ft">090301513672</span></a><span class="bar" aria-hidden="true"><span class="bar-f" style="width:83.879%"></span><span class="bar-s" style="left:83.544%;right:calc(100% - 84.031%)"></span></span></td><td><span class="cm">i4i.2xlarge</span><a class="fig" href="https://api.ledgermath.com/v1/series/5691f4e7ef2d.json" title="i4i.2xlarge, µs
+p50 912.2050375976562
+p5 907.066453869629
+p95 914.3991018310547
+34 Runs"><span class="fi">912</span><span class="fh">.2</span><span class="ft">050375976562</span></a><span class="bar" aria-hidden="true"><span class="bar-f" style="width:85.006%"></span><span class="bar-s" style="left:84.527%;right:calc(100% - 85.210%)"></span></span></td><td><span class="cm">c6i.8xlarge</span><a class="fig" href="https://api.ledgermath.com/v1/series/f3514458ce39.json" title="c6i.8xlarge, µs
+p50 911.8995166015625
+p5 906.6473136230469
+p95 913.3127637207031
+33 Runs"><span class="fi">911</span><span class="fh">.8</span><span class="ft">995166015625</span></a><span class="bar" aria-hidden="true"><span class="bar-f" style="width:84.977%"></span><span class="bar-s" style="left:84.488%;right:calc(100% - 85.109%)"></span></span></td></tr></tbody><tbody><tr class="group" id="s-network"><th scope="rowgroup" colspan="6" class="group-h">Network</th></tr><tr class="row" id="b-http-get" style="--wi:2ch"><th scope="row"><a class="row-label" href="https://ledgermath.com/docs/benchmarks/http_get">GET 4 KiB from S3</a><span class="row-fig"><span class="row-unit">ms</span><span class="row-dir">↓ faster</span></span></th><td><span class="cm">m5.large</span><a class="fig" href="https://api.ledgermath.com/v1/series/69b7897cbdc3.json" title="m5.large, ms
+p50 22.92701625
+p5 22.32118475
+p95 23.618102875
+34 Runs"><span class="fi">22</span><span class="fh">.92</span><span class="ft">701625</span></a><span class="bar" aria-hidden="true"><span class="bar-f" style="width:96.297%"></span><span class="bar-s" style="left:93.752%;right:calc(100% - 99.199%)"></span></span></td><td><span class="cm">c8i.2xlarge</span><a class="fig" href="https://api.ledgermath.com/v1/series/44fca136cc74.json" title="c8i.2xlarge, ms
+p50 22.93996425
+p5 22.133639175
+p95 23.80874275
+32 Runs"><span class="fi">22</span><span class="fh">.93</span><span class="ft">996425</span></a><span class="bar" aria-hidden="true"><span class="bar-f" style="width:96.351%"></span><span class="bar-s" style="left:92.964%;right:calc(100% - 100.000%)"></span></span></td><td><span class="cm">c8a.2xlarge</span><a class="fig" href="https://api.ledgermath.com/v1/series/60185d243276.json" title="c8a.2xlarge, ms
+p50 22.854877
+p5 22.1289702
+p95 23.5938998
+33 Runs"><span class="fi">22</span><span class="fh">.85</span><span class="ft">4877</span></a><span class="bar" aria-hidden="true"><span class="bar-f" style="width:95.994%"></span><span class="bar-s" style="left:92.945%;right:calc(100% - 99.098%)"></span></span></td><td><span class="cm">i4i.2xlarge</span><a class="fig" href="https://api.ledgermath.com/v1/series/6e1a7be4153b.json" title="i4i.2xlarge, ms
+p50 22.5967455
+p5 22.00734445
+p95 23.216386275
+32 Runs"><span class="fi">22</span><span class="fh">.59</span><span class="ft">67455</span></a><span class="bar" aria-hidden="true"><span class="bar-f" style="width:94.909%"></span><span class="bar-s" style="left:92.434%;right:calc(100% - 97.512%)"></span></span></td><td><span class="cm">c6i.8xlarge</span><a class="fig" href="https://api.ledgermath.com/v1/series/dc61f65bf4f5.json" title="c6i.8xlarge, ms
+p50 22.707329
+p5 21.86186875
+p95 23.5592624
+32 Runs"><span class="fi">22</span><span class="fh">.70</span><span class="ft">7329</span></a><span class="bar" aria-hidden="true"><span class="bar-f" style="width:95.374%"></span><span class="bar-s" style="left:91.823%;right:calc(100% - 98.952%)"></span></span></td></tr></tbody></table></div></section><section id="api" class="api" aria-labelledby="api-h"><div class="sec-head grid"><p class="sec-no" aria-hidden="true">02</p><h2 id="api-h">The API</h2></div><div class="grid"><div class="api-main"><p class="api-lede">Static JSON, version 1. It only gains fields.</p><div class="addr"><p class="addr-base">https://api.ledgermath.com/v1/</p><ul class="addr-files"><li><a href="https://api.ledgermath.com/v1/index.json">index.json</a><span class="addr-what">contents</span></li><li><a href="https://api.ledgermath.com/v1/series.json">series.json</a><span class="addr-what">every Series</span></li><li><a href="https://api.ledgermath.com/v1/prices/2026-11-19.json">prices/2026-11-19.json</a><span class="addr-what">AWS prices</span></li></ul></div><dl class="api-side"><div><dt>Schemas</dt><dd class="api-links"><a href="https://api.ledgermath.com/v1/schemas/index.schema.json">index</a><a href="https://api.ledgermath.com/v1/schemas/series-list.schema.json">series-list</a><a href="https://api.ledgermath.com/v1/schemas/series.schema.json">series</a><a href="https://api.ledgermath.com/v1/schemas/prices.schema.json">prices</a></dd></div><div><dt>Docs</dt><dd><a href="https://ledgermath.com/docs/">ledgermath.com/docs/</a></dd></div></dl></div><div class="api-walk" id="trail"><h3 class="walk-h"><a href="#b-mutex">Lock and unlock a mutex, c8i.2xlarge</a><span class="walk-sep" aria-hidden="true"> / </span><a class="mono" href="https://api.ledgermath.com/v1/series/c2d748916b19.json">series/c2d748916b19.json</a></h3><pre class="json" role="region" tabindex="0" aria-label="An excerpt of series/c2d748916b19.json"><code>{ "id": "c2d748916b19",
+  "instance_type": "c8i.2xlarge",
+  "derivations": { "series_v1": {
+   "percentiles": {
+    "time_per_repetition_ns": {
+     "count": 33,
+     "p5": 136306.04848632813,
+     "p50": <b class="json-hit">136370.57904052734</b>,<span class="json-note">÷ 10,000 critical sections <span class="nowrap">= <b>13.637057904052734</b> ns</span></span>     "p95": 137355.63184814452 } },
+   "points": [ {
+     "time_per_repetition_ns": 136389.47576904297,
+     "evidence":<a class="json-url" href="https://api.ledgermath.com/runs/2026/11/11/01a1cb79-a718-78a6-bbfb-2bb80c349c8e.json">"https://api.ledgermath.com/runs/<wbr>2026/11/11/<wbr>01a1cb79-a718-78a6-bbfb-2bb80c349c8e.json"</a>   }, &#8230; ] } } }</code></pre></div></div></section></main><footer class="foot grid"><div class="foot-name">LedgerMath</div><a class="foot-lic" href="third-party-notices.txt">Licences</a></footer></body></html>
