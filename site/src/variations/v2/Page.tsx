@@ -21,6 +21,7 @@ import {
 	machines,
 	perUnit,
 	type Section,
+	seriesFileContents,
 	type Shown,
 	snapshot,
 } from "../../data";
@@ -32,6 +33,11 @@ const SCHEDULE = ["04:10", "10:10", "16:10", "22:10"];
 
 /** The address without its scheme and host. */
 const path = (url: string) => decodeURI(new URL(url).pathname);
+
+/** One real Run file, the first point of the sample Series: the evidence a figure stands on. */
+const example = seriesFileContents.point.example;
+/** Its address, the Run's id cut to its first eight digits; the whole address is the link. */
+const runFile = path(example.evidence).replace(/([0-9a-f]{8})-[0-9a-f-]+\.json$/, "$1….json");
 
 // ---------------------------------------------------------------- figures
 
@@ -112,8 +118,30 @@ const SECTION_TAG: Partial<Record<Section, string>> = { Disk: "root EBS gp3 volu
 
 // ---------------------------------------------------------------- pieces
 
-/** A processor's name without the word "Processor" that some of AWS's names end with. */
-const cpu = (name: string) => name.replace(/\s+Processor$/i, "");
+/**
+ * A processor's name short enough for one line: without the vendor, "Platinum", "Scalable" and a
+ * trailing "Processor", and without the code name where a model number is left. AWS's whole name
+ * is in the title.
+ */
+function cpu(name: string): string {
+	let s = name
+		.replace(/\s+Processor$/i, "")
+		.replace(/^(Intel|AMD)\s+/, "")
+		.replace(/\b(Platinum|Scalable)\s+/g, "");
+	if (/\d/.test(s.replace(/\(.*\)/, ""))) s = s.replace(/\s*\(.*\)$/, "");
+	return s;
+}
+
+/** A machine's hourly price, linked to the place in the day's price file it was read from. */
+function Price(props: { m: (typeof machines)[number]; unit?: string }) {
+	const m = props.m;
+	return (
+		<a href={m.price.path.file} class="price" title={`${m.price.description}. Read from ${m.price.path.pointer} (as the file writes it: ${m.price.usdPerHour})`}>
+			${formatUsd(m.price.usdPerHour).full}
+			{props.unit ?? ""}
+		</a>
+	);
+}
 
 function Section(props: { id: string; title: string; sub?: unknown; children?: unknown }) {
 	return (
@@ -153,13 +181,27 @@ function Status() {
 			</a>,
 		],
 		[
-			"runs",
+			"Runs kept",
+			<span>
+				<span class="nb">
+					<span class="hi">{formatCount(snapshot.runCount).full}</span> in{" "}
+					<a href={links.seriesList}>{formatCount(snapshot.seriesCount).full} Series</a>
+				</span>{" "}
+				<span class="nb">
+					since{" "}
+					<time datetime={oldest.iso} title={oldest.full}>
+						{oldest.date}
+					</time>
+					, {formatCount(snapshot.failedRuns).full} failed
+				</span>
+			</span>,
+		],
+		[
+			"evidence",
 			<span class="nb">
-				<span class="hi">{formatCount(snapshot.runCount).full}</span> since{" "}
-				<time datetime={oldest.iso} title={oldest.full}>
-					{oldest.date}
-				</time>
-				, {formatCount(snapshot.failedRuns).full} failed
+				<a href={example.evidence} title={links.evidenceAbout}>
+					{runFile}
+				</a>
 			</span>,
 		],
 		[
@@ -173,8 +215,8 @@ function Status() {
 			<>
 				{snapshot.methods.map((m, i) => (
 					<>
-						{i ? " " : ""}
-						<a href={links.seriesList} class="nb">
+						{i ? <span class="sep"> · </span> : ""}
+						<a href={links.seriesList} class="nb" title={`Method ${m.name} v${m.version}: its definitions are in series.json`}>
 							{m.name} v{m.version}
 						</a>
 					</>
@@ -216,11 +258,11 @@ function DataTable() {
 								<span class="m-spec">
 									{m.vcpu} vCPU {m.memory}
 								</span>
-								<span class="m-price" title={`${m.price.description} (as the price file writes it: ${m.price.usdPerHour})`}>
-									${formatUsd(m.price.usdPerHour).full}/h
-								</span>
 								<span class="m-cpu" title={m.processor}>
 									{cpu(m.processor)}
+								</span>
+								<span class="m-price">
+									<Price m={m} unit="/h" />
 								</span>
 							</th>
 						))}
@@ -258,7 +300,7 @@ function DataTable() {
 										<a href={c.readme} class="b-label" title={c.what}>
 											{c.label}
 										</a>
-										<span class="u">
+										<span class="u" title={`${c.lead === "rate" ? "Bytes per second" : "Time of one repetition"}. One repetition: ${c.repetition}`}>
 											{unit}
 											{each}{" "}
 											<span class="dir" role="img" aria-label={up ? "higher is better" : "lower is better"}>
@@ -310,8 +352,8 @@ function Machines() {
 			{machines.map((m) => (
 				<li>
 					<span class="mc-name">{m.instanceType}</span>
-					<span class="mc-price" title={`${m.price.description} (as the price file writes it: ${m.price.usdPerHour})`}>
-						${formatUsd(m.price.usdPerHour).full}
+					<span class="mc-price">
+						<Price m={m} unit="/h" />
 					</span>
 					<span class="mc-spec">
 						{m.vcpu} vCPU {m.memory} · <span title={m.processor}>{cpu(m.processor)}</span>
@@ -336,7 +378,9 @@ export default function Page() {
 		<div class="term">
 			<header class="manhead">
 				<span>{title}</span>
-				<span>{title}</span>
+				<span>
+					<Moment m={newest} />
+				</span>
 			</header>
 
 			<main>
@@ -377,6 +421,11 @@ export default function Page() {
 					</Section>
 				</div>
 
+				{/* On a wide screen the table's head holds every machine fact, so this list is for the phone. */}
+				<Section id="machines" title="MACHINES">
+					<Machines />
+				</Section>
+
 				<Section
 					id="data"
 					title="DATA"
@@ -389,12 +438,6 @@ export default function Page() {
 					}
 				>
 					<div class="key">
-						<span class="nb">
-							<span class="dir">↑</span> higher is better
-						</span>
-						<span class="nb">
-							<span class="dir">↓</span> lower
-						</span>
 						<span class="key-glyph" role="img" aria-label="The drawing: a tick at p50, a band from p5 to p95, on a scale from 0 shared by the row">
 							<span class="key-sp" aria-hidden="true">
 								<span class="sp-b" />
@@ -406,16 +449,17 @@ export default function Page() {
 							<span class="kl kl-50">p50</span>
 							<span class="kl kl-95">p95</span>
 						</span>
+						<span class="nb">
+							<span class="dir">↑</span> higher is better <span class="dir">↓</span> lower
+						</span>
+						<span class="nb">
+							<span class="key-fig">figure</span> <span class="dir">→</span> its Runs
+						</span>
 						<details class="xt">
 							<summary>exact p5, p95, counted runs</summary>
 						</details>
 					</div>
 					<DataTable />
-				</Section>
-
-				{/* On a wide screen the table's head holds every machine fact, so this list is for the phone. */}
-				<Section id="machines" title="MACHINES" sub="$/hour">
-					<Machines />
 				</Section>
 
 				<Section id="files" title="FILES" sub={<span class="nb">https://{API_HOST}</span>}>
