@@ -145,7 +145,6 @@ const oldest = formatMoment(snapshot.oldestRunStartedAt);
 const fetched = formatMoment(snapshot.pricesFetchedAt);
 const runs = formatCount(snapshot.runCount);
 const failed = formatCount(snapshot.failedRuns);
-const series = formatCount(snapshot.seriesCount);
 const schema = (name: string) => links.schemas.find((s) => s.name === name)!;
 
 // Listing 1: Table 1's first figure, as the Series list holds it, cut to the path that leads to it.
@@ -156,7 +155,9 @@ const v1 = firstSeries.derivations.series_v1;
 const bps = v1.percentiles.bytes_per_second!;
 const j = (x: unknown) => JSON.stringify(x);
 const listingMark = `"p50": ${j(bps.p50)}`;
-const excerptBefore = [
+// The Runs behind Table 1's first figure, marked like its median: the count is in the file beside the figure.
+const countMark = `"count": ${j(bps.count)}`;
+const excerptHead = [
 	"{",
 	`  "id": ${j(firstSeries.id)},`,
 	`  "benchmark": ${j(firstSeries.benchmark)},`,
@@ -164,10 +165,9 @@ const excerptBefore = [
 	`  "derivations": { "series_v1": {`,
 	`    "method": ${j(v1.method).replace(/,/g, ", ").replace(/:/g, ": ")},`,
 	`    "percentiles": { "bytes_per_second": {`,
-	`      "count": ${j(bps.count)},`,
-	`      "p5": ${j(bps.p5)},`,
 	"      ",
 ].join("\n");
+const excerptBefore = [",", `      "p5": ${j(bps.p5)},`, "      "].join("\n");
 // One percentile to a line, so the excerpt is whole at a phone's width.
 const excerptAfter = [",", `      "p95": ${j(bps.p95)}`, "  … } } } }"].join("\n");
 
@@ -252,7 +252,7 @@ export default function Page() {
 								<dt>Runs</dt>
 								<dd>
 									<a href={links.seriesList}>
-										{runs.full} in {series.full} Series, {failed.full} failed
+										{runs.full} · {failed.full} failed
 									</a>
 								</dd>
 							</div>
@@ -286,9 +286,9 @@ export default function Page() {
 						</h2>
 						<details class="fold s1-details" id="sA">
 							<summary>
-								p5, p95, <i>n</i>
+								p5, p95, Runs
 							</summary>
-							<div class="table-wrap s1-wrap" role="region" aria-label="p5, p50, p95 and n per figure" tabindex="0">
+							<div class="table-wrap s1-wrap" role="region" aria-label="p5, p50, p95 and Runs per figure" tabindex="0">
 								<table class="s1">
 									<thead>
 										<tr>
@@ -317,7 +317,7 @@ export default function Page() {
 														</a>
 														<span class="s1-x">{si(c.p95.full)}</span>
 														<span class="s1-n">
-															<i>n</i> {c.n}
+															{c.n}
 														</span>
 													</td>
 												))}
@@ -386,7 +386,7 @@ export default function Page() {
 												{r.cells.map((c) => (
 													<td class="c-fig">
 														<span class="c-mlab">{c.machine}</span>
-														<a href={c.url} title={`p5 ${si(c.p5.full)} · p95 ${si(c.p95.full)} ${r.unitLong} · n ${c.n} · Series ${c.id}`}>
+														<a href={c.url} title={`p5 ${si(c.p5.full)} · p95 ${si(c.p95.full)} ${r.unitLong} · ${c.n} Runs · Series ${c.id}`}>
 															<Exact full={c.p50.full} />
 														</a>
 														<Bar c={c} max={r.max} />
@@ -431,10 +431,12 @@ export default function Page() {
 							</div>
 							<figure class="listing" aria-labelledby="listing-1">
 								<figcaption id="listing-1">
-									<span class="tlabel">Listing 1.</span> Table 1's first figure, in <Cite n={2} />
+									<span class="tlabel">Listing 1.</span> {firstCell.machine} · {first.row.choice.label}, in <Cite n={2} />
 								</figcaption>
 								<pre class="code json" tabindex="0">
 									<code>
+										{excerptHead}
+										<mark>{countMark}</mark>
 										{excerptBefore}
 										<mark>{listingMark}</mark>
 										{excerptAfter}
@@ -448,7 +450,7 @@ export default function Page() {
 
 			<footer class="colophon">
 				<p>
-					<span class="wordmark-sm">LedgerMath</span> · <a href={links.docs}>Docs</a>
+					<span class="wordmark-sm">LedgerMath</span> · <a href={links.docs}>Docs</a> · <a href="third-party-notices.txt">Licences</a>
 				</p>
 			</footer>
 		</>

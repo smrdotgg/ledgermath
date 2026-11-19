@@ -31,13 +31,14 @@
 	--hair: #d8d3c8;
 	--rule: #1d1c1a;
 	--accent: #9a2b1b;
-	/* the p5–p95 range: a lighter shade of the bar's own ink, part of the bar, never a flag */
-	--range: #aaa397;
+	/* the bar's three tones: the line from zero lightest, the p5–p95 error bar darker, the median's tick darkest */
+	--to: #9a9488;
+	--range: #45423c;
 	--median: #1d1c1a;
-	--to: #4a4741;
 	/* the digits past the third decimal: smaller than the lead, near its ink */
 	--tail: #3b3833;
-	--track: #e6e1d6;
+	/* the axis: a hairline, fainter than every mark on it */
+	--track: #d6d0c4;
 	--grid: #ddd7ca;
 	--tint: #f3efe6;
 	--code-bg: #f3efe6;
@@ -55,12 +56,12 @@
 		--hair: #3a3833;
 		--rule: #ebe6db;
 		--accent: #f08e74;
-		/* the range a darker shade of the bar's ink, between the line and the track */
-		--range: #8d877c;
+		/* the same three tones, light on dark: line from zero dimmest, error bar brighter, tick brightest */
+		--to: #8a8479;
+		--range: #d2ccbf;
 		--median: #fff4e6;
-		--to: #c9c2b4;
 		--tail: #dcd6ca;
-		--track: #4e4b45;
+		--track: #4a4741;
 		--grid: #45423c;
 		--tint: #1c1b19;
 		--code-bg: #1f1e1b;
@@ -478,14 +479,7 @@ td {
 	font-size: 1.12rem;
 	font-weight: 600;
 }
-/* the figure is the way to its Series: a hairline under its lead digits, firm on hover and focus */
-.t1 td.c-fig > a .x-int,
-.t1 td.c-fig > a .x-head {
-	text-decoration: underline;
-	text-decoration-thickness: 1px;
-	text-decoration-color: color-mix(in srgb, currentColor 28%, transparent);
-	text-underline-offset: 0.2em;
-}
+/* the figure is the way to its Series: no rule at rest (seventy of them would be a field of lines), red and underlined on hover and focus */
 .x-tail {
 	display: inline-block;
 	text-align: left;
@@ -496,33 +490,34 @@ td {
 .t1 td.c-fig > a:hover .x-tail {
 	color: inherit;
 }
-/* the median to scale within its row: a line from zero, the p5–p95 range, the median's tick */
+/* the median to scale within its row, as a figure in a paper draws it: a bar from zero on a hairline axis,
+   p5–p95 as an error bar (a line with end caps), and the median's tick, the tallest and darkest mark */
 .bar {
 	display: block;
-	height: 9px;
+	height: 11px;
 	margin-top: 0.15rem;
 	position: relative;
-	background: linear-gradient(var(--track), var(--track)) 0 50% / 100% 3px no-repeat;
+	background: linear-gradient(var(--track), var(--track)) 0 50% / 100% 1px no-repeat;
 }
 .bar-to {
 	position: absolute;
 	left: 0;
-	top: 3px;
+	top: 4px;
 	height: 3px;
 	background: var(--to);
 }
 .bar-range {
 	position: absolute;
-	top: 1px;
+	top: 2px;
 	height: 7px;
-	min-width: 1px;
-	background: var(--range);
+	border-inline: 1px solid var(--range);
+	background: linear-gradient(var(--range), var(--range)) 0 50% / 100% 1px no-repeat;
 }
 .bar-tick {
 	position: absolute;
 	top: 0;
 	width: 2px;
-	height: 9px;
+	height: 11px;
 	margin-left: -1px;
 	background: var(--median);
 }
