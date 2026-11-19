@@ -1,9 +1,11 @@
 // Design v1, "Ledger": the home page as a book of record. One ruled table is the page: one
 // column per machine type, one entry per benchmark, every figure written out to its last digit
 // (the first three decimal places in ink, the rest in pencil) and decimal-aligned down its column.
-// Under each figure a pencil rule spanning the row's lowest p5 to highest p95, each figure's p5–p95
-// in ink and its median a notch. On a phone the machines' key follows the entries. Few words: the
-// figures are the page, and everything else is a link. No best, no ranking, no ties.
+// Under each figure a pencil rule drawn from zero, on one scale per row, with the figure's p5–p95 in
+// ink and its median a notch: a drawing that never makes 0.2% look like more. Each column head holds
+// its machine's usual count of Runs; a cell names its own only where it differs. On a phone the
+// machines' key follows the entries. Few words: the figures are the page, and everything else is a
+// link. No best, no ranking, no ties.
 import "./page.css";
 import {
 	durationUnit,
@@ -74,12 +76,15 @@ function Written(props: { full: string; inkPlaces?: number }) {
 	);
 }
 
-/** The pencil rule under a figure: the row's scale as a hairline, the 5th to 95th percentile in ink, the median a notch in it. */
-function Rule(props: { x: Cell; scale: Scale }) {
-	const { lo, hi } = props.scale;
-	const pct = (v: number) => `${(hi > lo ? ((v - lo) / (hi - lo)) * 100 : 50).toFixed(3)}%`;
+/**
+ * The pencil rule under a figure, drawn from zero so that figures 0.2% apart look 0.2% apart: a zero
+ * tick, a pencil line from zero to the median, the 5th to 95th percentile in ink on it, the median a red notch.
+ */
+function Rule(props: { x: Cell; hi: number }) {
+	const pct = (v: number) => `${(props.hi > 0 ? (v / props.hi) * 100 : 0).toFixed(3)}%`;
 	return (
 		<span class="bar" aria-hidden="true" style={{ "--to": pct(props.x.p50.value), "--lo": pct(props.x.p5.value), "--hi": pct(props.x.p95.value) }}>
+			<span class="bar-zero" />
 			<span class="bar-len" />
 			<span class="bar-rng" />
 			<span class="bar-mid" />
@@ -87,9 +92,16 @@ function Rule(props: { x: Cell; scale: Scale }) {
 	);
 }
 
-/** The rule's scale: from the row's lowest 5th percentile to its highest 95th (a choice of scale for drawing, not a statistic). */
-type Scale = { lo: number; hi: number };
-const rowScale = (xs: Cell[]): Scale => ({ lo: Math.min(...xs.map((x) => x.p5.value)), hi: Math.max(...xs.map((x) => x.p95.value)) });
+/** The rule's scale runs from zero to the row's highest 95th percentile (a choice of scale for drawing, not a statistic). */
+const rowTop = (xs: Cell[]) => Math.max(...xs.map((x) => x.p95.value));
+
+/** Each machine's usual count of counted Runs, written once in its column head; a cell names its count only where it differs. */
+const usualCount = machines.map((_, k) => {
+	const counts = cells.map((xs) => xs[k]!.count);
+	const tally = new Map<number, number>();
+	for (const c of counts) tally.set(c, (tally.get(c) ?? 0) + 1);
+	return [...tally.entries()].sort((a, b) => b[1] - a[1])[0]![0];
+});
 
 // ------------------------------------------------------------------ the page
 
@@ -140,13 +152,12 @@ const schemaOf = (name: string) => links.schemas.find((s) => s.name === name)!.u
 const ADDRESSES: { label: string; href: string; shown: string; schema?: string }[] = [
 	{ label: "Index", href: links.index, shown: rel(links.index), schema: schemaOf("index") },
 	{ label: "All Series", href: links.seriesList, shown: rel(links.seriesList), schema: schemaOf("series-list") },
-	{ label: "One Series", href: seriesFileContents.sample.url, shown: rel(links.seriesFilePattern), schema: schemaOf("series") },
+	{ label: "One Series", href: seriesFileContents.sample.url, shown: rel(seriesFileContents.sample.url), schema: schemaOf("series") },
 	{ label: "Prices", href: links.prices, shown: rel(links.priceFilePattern), schema: schemaOf("prices") },
 	{ label: "Evidence", href: links.evidenceBlobTemplate, shown: rel(links.evidenceBlobTemplate) },
 ];
 
 export default function Page() {
-	let entryNo = 0;
 	return (
 		<>
 			<header class="masthead">
@@ -189,10 +200,10 @@ export default function Page() {
 						</dd>
 					</div>
 					<div>
-						<dt>Evidence</dt>
+						<dt>One Run</dt>
 						<dd>
 							<a href={sampleRun.evidence ?? links.evidenceBlobTemplate} title={`Run ${sampleRun.run}: its binary, streams and dumps by sha256`}>
-								Run file
+								evidence
 							</a>
 							<span class="aside"> · </span>
 							<a href={sampleRun.boot_summary ?? links.evidenceBlobTemplate}>boot summary</a>
@@ -244,7 +255,7 @@ export default function Page() {
 									<span class="lg-rng" />
 									<span class="lg-mid" />
 								</span>
-								p5–p95, scale per benchmark
+								0 to median, p5–p95
 							</span>
 							<span class="lg-item">
 								<span class="n" aria-hidden="true">
@@ -258,16 +269,13 @@ export default function Page() {
 						<table>
 							<thead id="machines">
 								<tr>
-									<th scope="col" class="no">
-										<abbr title="Entry number">No.</abbr>
-									</th>
 									<th scope="col" class="what">
 										Benchmark
 									</th>
 									<th scope="col" class="unit">
 										Unit
 									</th>
-									{machines.map((m) => (
+									{machines.map((m, k) => (
 										<th scope="col" class="mach">
 											<span class="it" title={`${m.processor}, ${m.clockSpeed}; network ${m.network}`}>
 												{m.instanceType}
@@ -275,10 +283,15 @@ export default function Page() {
 											<span class="spec">
 												{m.vcpu} vCPU · {m.memory}
 											</span>
-											<a class="price" href={links.prices} title={`${m.price.description}; SKU ${m.price.sku}; at ${m.price.path.pointer}`}>
-												{price(m.price.usdPerHour)}
-												<span class="per">/h</span>
-											</a>
+											<span class="mrow">
+												<a class="price" href={links.prices} title={`${m.price.description}; SKU ${m.price.sku}; at ${m.price.path.pointer}`}>
+													{price(m.price.usdPerHour)}
+													<span class="per">/h</span>
+												</a>
+												<span title={`${usualCount[k]} counted Runs behind each figure in this column, unless its cell says otherwise`}>
+													<Tally count={usualCount[k]!} />
+												</span>
+											</span>
 										</th>
 									))}
 								</tr>
@@ -288,20 +301,19 @@ export default function Page() {
 								return (
 									<tbody id={sectionId(section)} class="acct">
 										<tr class="sec">
-											<th scope="colgroup" colspan={3 + machines.length}>
+											<th scope="colgroup" colspan={2 + machines.length}>
 												<span class="roman">{ROMAN[s]}.</span> {section}
+												{section === "Disk" ? <span class="sec-note"> · root EBS gp3 volume</span> : ""}
 											</th>
 										</tr>
 										{rows.map(({ row, i }) => {
-											entryNo += 1;
 											const c = row.choice;
 											const xs = cells[i]!;
 											const unit = xs[0]!.p50.unit;
-											const scale = rowScale(xs);
+											const top = rowTop(xs);
 											const higher = c.lead === "rate";
 											return (
 												<tr class="entry">
-													<td class="no">{String(entryNo).padStart(2, "0")}</td>
 													<th scope="row" class="what">
 														<a href={c.readme} title={`${c.what} ${c.setting}.`}>
 															{c.label}
@@ -326,8 +338,8 @@ export default function Page() {
 																>
 																	<Written full={x.p50.full} />
 																	<span class="line">
-																		<Rule x={x} scale={scale} />
-																		<Tally count={x.count} />
+																		<Rule x={x} hi={top} />
+																		{x.count !== usualCount[k] ? <Tally count={x.count} /> : ""}
 																	</span>
 																</a>
 															</td>
