@@ -13,7 +13,6 @@ import {
 	leadFigure,
 	links,
 	machines,
-	seriesFileContents,
 	snapshot,
 	type DurationUnit,
 	type HeadlineRow,
@@ -78,6 +77,9 @@ function rowWidths(row: HeadlineRow, places: number): { int: number; tail: numbe
 	return { int: Math.max(...parts.map((p) => p.int.length)), tail: Math.max(...parts.map((p) => p.tail.length)) };
 }
 
+/** The widest tail in the whole table: one slot for every tail, so every head ends on one line per column. */
+const TAIL = Math.max(...headline.map((row) => rowWidths(row, rowPlaces(row)).tail));
+
 /** The largest p95 of a row: the end of its zero-based scale, so every bracket fits. */
 function rowMax(row: HeadlineRow): number {
 	return Math.max(...row.cells.map((cell) => leadFigure(row.choice, cell.series).p95));
@@ -86,6 +88,11 @@ function rowMax(row: HeadlineRow): number {
 const pct = (v: number, max: number) => `${((v / max) * 100).toFixed(3)}%`;
 
 const SECTIONS: Section[] = ["Memory", "Compute", "Operating system", "Disk", "Network"];
+
+/** What a section measured where its name alone does not say (the headline rule's own words). */
+const SECTION_NOTE: Partial<Record<Section, string>> = { Disk: "root EBS gp3 volume" };
+
+const sectionId = (s: Section) => `s-${s.toLowerCase().replaceAll(" ", "-")}`;
 
 const anchor = (row: HeadlineRow) => `b-${row.choice.benchmark.replaceAll("_", "-")}`;
 
@@ -167,6 +174,7 @@ function Poster() {
 						curl <span class="cmd-url">{links.index}</span>
 					</code>
 				</div>
+				<Facts />
 			</div>
 
 			<div class="hero" role="group" aria-labelledby="hero-k">
@@ -187,7 +195,7 @@ function Poster() {
 						p50 of {formatCount(heroLead.count).full} Runs
 					</a>
 				</p>
-				{/* The table's own form, set enormous: the compared digits, then every other digit. */}
+				{/* The table's own form, set enormous: the compared digits, every other digit on the same baseline, the unit. */}
 				<p class="hero-figure">
 					<span class="sr">
 						{heroShown.full} {heroShown.unit}
@@ -196,14 +204,22 @@ function Poster() {
 						{heroSplit.int}
 						{heroSplit.head}
 					</span>
-					<span class="hero-side" aria-hidden="true">
-						<span class="hero-tail">{heroSplit.tail}</span>
-						<span class="hero-unit">{heroShown.unit}</span>
+					<span class="hero-tail" aria-hidden="true">
+						{heroSplit.tail}
+					</span>
+					<span class="hero-unit" aria-hidden="true">
+						{heroShown.unit}
 					</span>
 				</p>
 			</div>
+		</section>
+	);
+}
 
-			<dl class="facts">
+/** Freshness and provenance, beside the headline: each fact a link to its file where it has one. */
+function Facts() {
+	return (
+		<dl class="facts">
 				<div>
 					<dt>Boots, UTC</dt>
 					<dd>04:10 10:10 16:10 22:10</dd>
@@ -219,7 +235,7 @@ function Poster() {
 				<div>
 					<dt>Runs kept</dt>
 					<dd>
-						{formatCount(snapshot.runCount).full} <span class="facts-s">· {formatCount(snapshot.failedRuns).full} failed</span>
+						{formatCount(snapshot.runCount).full} <span class="facts-s">· {formatCount(snapshot.seriesCount).full} Series</span>
 					</dd>
 				</div>
 				<div>
@@ -239,7 +255,6 @@ function Poster() {
 					</dd>
 				</div>
 			</dl>
-		</section>
 	);
 }
 
@@ -267,13 +282,17 @@ function FigureTable() {
 				</p>
 				<h2 id="figures-h">The figures</h2>
 				<div class="sec-side">
-					<p class="sec-lede">Median of each Series' Runs, every digit.</p>
 					<Key />
+					<nav class="jump" aria-label="Sections of the figures">
+						{SECTIONS.map((s) => (
+							<a href={`#${sectionId(s)}`}>{s}</a>
+						))}
+					</nav>
 				</div>
 			</div>
 
 			<div class="table-box" role="region" aria-label="The figures, 14 benchmarks by 5 machine types">
-				<table>
+				<table style={{ "--wt": `${TAIL}ch` }}>
 					<thead>
 						<tr>
 							<th scope="col" class="corner">
@@ -295,9 +314,10 @@ function FigureTable() {
 					</thead>
 					{SECTIONS.map((section) => (
 						<tbody>
-							<tr class="group">
+							<tr class="group" id={sectionId(section)}>
 								<th scope="rowgroup" class="group-h">
 									{section}
+									{SECTION_NOTE[section] && <span class="group-note"> · {SECTION_NOTE[section]}</span>}
 								</th>
 								{machines.map((m) => (
 									<td class="group-m" aria-hidden="true">
@@ -312,7 +332,7 @@ function FigureTable() {
 									const w = rowWidths(row, places);
 									const max = rowMax(row);
 									return (
-										<tr class="row" id={anchor(row)} style={{ "--wi": `${w.int}ch`, "--wt": `${w.tail}ch` }}>
+										<tr class="row" id={anchor(row)} style={{ "--wi": `${w.int}ch` }}>
 											<th scope="row">
 												<a class="row-label" href={row.choice.readme}>
 													{row.choice.label}
@@ -351,24 +371,22 @@ function FigureTable() {
 	);
 }
 
-// The worked example: the Series the snapshot keeps a file of (a cell of the table), as series.json lists it.
+// The worked example: the poster's own Series, as series.json lists it, cut to valid JSON. Its p50 is the
+// poster's figure in bytes per second, the same digits; its count is the poster's count of Runs.
 const J = (v: unknown) => JSON.stringify(v);
-const walkRow = headline.find((row) => row.cells.some((cell) => cell.series.id === seriesFileContents.sample.id))!;
-const walkCell = walkRow.cells.find((cell) => cell.series.id === seriesFileContents.sample.id)!;
-const walkKey = walkRow.choice.lead === "rate" ? "bytes_per_second" : "time_per_repetition_ns";
-const walkP = walkCell.series.derivations.series_v1.percentiles[walkKey]!;
-const seriesExcerpt = [
-	`{ "id": ${J(walkCell.series.id)},`,
-	`  "url": ${J(walkCell.series.url)},`,
-	`  "instance_type": ${J(walkCell.series.instance_type)},`,
-	`  "derivations": {`,
-	`    "series_v1": { "percentiles": {`,
-	`      ${J(walkKey)}: {`,
-	`        "count": ${J(walkP.count)},`,
-	`        "p5": ${J(walkP.p5)},`,
-	`        "p50": ${J(walkP.p50)},`,
-	`        "p95": ${J(walkP.p95)} } … } } } }`,
+const walkKey = heroRow.choice.lead === "rate" ? "bytes_per_second" : "time_per_repetition_ns";
+const walkP = heroCell.series.derivations.series_v1.percentiles[walkKey]!;
+const excerptHead = [
+	`{ "id": ${J(heroCell.series.id)},`,
+	`  "instance_type": ${J(heroCell.series.instance_type)},`,
+	`  "derivations": { "series_v1": { "percentiles": {`,
+	`    ${J(walkKey)}: {`,
+	`      "count": ${J(walkP.count)},`,
+	`      "p5": ${J(walkP.p5)},`,
+	`      "p50": `,
 ].join("\n");
+const excerptP50 = J(walkP.p50);
+const excerptTail = [`,`, `      "p95": ${J(walkP.p95)} } } } } }`].join("\n");
 
 /** The API's three files under its one base address. */
 const BASE = links.index.slice(0, links.index.lastIndexOf("/") + 1);
@@ -404,17 +422,16 @@ function Api() {
 					</div>
 
 					<h3 class="walk-h">
-						<a href={`#${anchor(walkRow)}`}>
-							{walkRow.choice.label}, {walkCell.machine.instanceType}
+						<a href={`#${anchor(heroRow)}`}>
+							{heroRow.choice.label}, {heroCell.machine.instanceType}
 						</a>
 						, in series.json
 					</h3>
 					<pre class="json" role="region" tabindex="0" aria-label="An excerpt of series.json">
-						{/* A break opportunity inside the Series' address, so a narrow screen wraps it at a slash. */}
 						<code>
-							{seriesExcerpt.slice(0, seriesExcerpt.indexOf("/series/") + 8)}
-							<wbr />
-							{seriesExcerpt.slice(seriesExcerpt.indexOf("/series/") + 8)}
+							{excerptHead}
+							<b class="json-hit">{excerptP50}</b>
+							{excerptTail}
 						</code>
 					</pre>
 				</div>

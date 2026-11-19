@@ -176,7 +176,7 @@ pre {
 /* ---------------------------------------------------------------- poster */
 
 .poster {
-	padding-top: 72px;
+	padding-top: 56px;
 	align-items: start;
 }
 
@@ -252,7 +252,7 @@ pre {
 
 .hero {
 	grid-column: 1 / -1;
-	margin-top: 72px;
+	margin-top: 48px;
 }
 
 .hero-kicker {
@@ -262,7 +262,7 @@ pre {
 	line-height: 1.2;
 	border-top: 4px solid var(--red);
 	padding-top: 12px;
-	margin-bottom: 28px;
+	margin-bottom: 20px;
 }
 
 .hero-kicker-b {
@@ -284,15 +284,16 @@ pre {
 	white-space: nowrap;
 }
 
-/* The poster's figure, in the table's own form: compared digits enormous, every other digit beside them. */
+/*
+ * The poster's figure, in the table's own form, on one baseline: the compared digits enormous, every
+ * other digit touching them, smaller and lighter, then the unit.
+ */
 .hero-figure {
 	display: flex;
-	align-items: flex-end;
-	align-items: last baseline;
-	gap: 0.07em;
+	align-items: baseline;
 	color: var(--red);
 	white-space: nowrap;
-	font-size: clamp(7rem, 19.5vw, 18rem);
+	font-size: clamp(7rem, 16vw, 15rem);
 	line-height: 0.74;
 }
 
@@ -303,43 +304,39 @@ pre {
 	font-variant-numeric: tabular-nums;
 }
 
-/* The unit above, the remaining digits on the giant figure's baseline. */
-.hero-side {
-	display: grid;
-	justify-items: start;
+.hero-tail {
+	font-size: 0.17em;
+	font-weight: 430;
+	letter-spacing: -0.01em;
+	line-height: 1;
+	margin-left: 0.04em;
+	font-variant-numeric: tabular-nums;
 }
 
 .hero-unit {
-	grid-row: 1;
 	font-size: 0.3em;
 	font-weight: 760;
 	letter-spacing: -0.05em;
 	line-height: 1;
 	color: var(--ink);
-	margin-bottom: 0.12em;
+	margin-left: 0.3em;
 }
 
-.hero-tail {
-	grid-row: 2;
-	font-size: 0.16em;
-	font-weight: 460;
-	letter-spacing: -0.01em;
-	line-height: 0.74;
-	font-variant-numeric: tabular-nums;
-}
-
-/* Freshness and provenance: one line of facts, each a link to its file. */
+/* Freshness and provenance: a small grid of facts under the command, each a link to its file. */
 .facts {
-	grid-column: 1 / -1;
 	display: grid;
-	grid-template-columns: repeat(5, minmax(0, 1fr));
-	column-gap: var(--g);
-	margin-top: 64px;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 12px var(--g);
+	margin-top: 8px;
 }
 
 .facts > div {
 	border-top: 2px solid var(--ink);
-	padding-top: 8px;
+	padding-top: 6px;
+}
+
+.facts > div:first-child {
+	grid-column: 1 / -1;
 }
 
 .facts dt {
@@ -349,8 +346,8 @@ pre {
 }
 
 .facts dd {
-	margin-top: 2px;
-	font-size: 20px;
+	margin-top: 1px;
+	font-size: 17px;
 	font-weight: 680;
 	letter-spacing: -0.02em;
 	line-height: 1.2;
@@ -368,10 +365,15 @@ section + section {
 	margin-top: 128px;
 }
 
+/* The table follows the poster's facts closely, so the first screen shows the grid begin. */
+.poster + section {
+	margin-top: 56px;
+}
+
 .sec-head {
 	align-items: end;
 	row-gap: 0;
-	margin-bottom: 28px;
+	margin-bottom: 16px;
 }
 
 .sec-head::before {
@@ -426,6 +428,11 @@ section + section {
 	display: inline-flex;
 	align-items: center;
 	gap: 8px;
+}
+
+/* Jump links to the five sections: on a phone only, where the table is long. */
+.jump {
+	display: none;
 }
 
 .km {
@@ -555,6 +562,12 @@ tr.group td {
 	font-size: 15px;
 	font-weight: 750;
 	letter-spacing: -0.01em;
+	white-space: nowrap;
+}
+
+.group-note {
+	font-weight: 500;
+	color: var(--muted);
 }
 
 /* The machine names again at every group, so a column never loses its name. */
@@ -785,6 +798,12 @@ td.hero-cell {
 	overflow-x: auto;
 }
 
+/* The p50: the poster's figure, the same digits in bytes per second. */
+.json-hit {
+	font-weight: 700;
+	color: var(--red);
+}
+
 .api-side {
 	grid-column: 9 / span 4;
 	display: grid;
@@ -852,11 +871,6 @@ td.hero-cell {
 	.intro {
 		grid-column: 1 / span 8;
 		margin-top: 32px;
-	}
-
-	.facts {
-		grid-template-columns: repeat(3, minmax(0, 1fr));
-		row-gap: 20px;
 	}
 
 	.sec-head h2 {
@@ -963,21 +977,25 @@ td.hero-cell {
 	}
 
 	.hero-figure {
-		font-size: 24vw;
+		font-size: 18.5vw;
 	}
 
-	.hero-tail {
-		font-size: 0.14em;
+	.jump {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 6px 10px;
+		margin-top: 14px;
+		font-size: 13px;
+		font-weight: 600;
+		letter-spacing: -0.01em;
+	}
+
+	.poster + section {
+		margin-top: 36px;
 	}
 
 	.facts {
-		grid-template-columns: repeat(2, minmax(0, 1fr));
-		margin-top: 36px;
-		row-gap: 14px;
-	}
-
-	.facts > div:first-child {
-		grid-column: 1 / -1;
+		margin-top: 6px;
 	}
 
 	.facts dd {
