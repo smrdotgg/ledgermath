@@ -1,5 +1,4 @@
-// Copy buttons for the shell commands and the prompt, and, on a phone, the answer's two
-// audit trails folded so the numbers come sooner. The page reads the same without any of it.
+// Copy buttons for the shell commands and the prompt. The page reads the same without them.
 for (const block of document.querySelectorAll<HTMLElement>("[data-copy-block]")) {
 	if (!navigator.clipboard) break;
 	const source = block.querySelector<HTMLElement>("[data-copy]") ?? block;
@@ -22,6 +21,9 @@ for (const block of document.querySelectorAll<HTMLElement>("[data-copy-block]"))
 	block.append(button);
 }
 
-if (window.matchMedia("(max-width: 600px)").matches) {
-	for (const fold of document.querySelectorAll<HTMLDetailsElement>("details.fold")) fold.open = false;
+// On a phone the answer's sources start folded so the figures come sooner; a citation opens them.
+const sources = document.querySelector<HTMLDetailsElement>("details.sources");
+if (sources && window.matchMedia("(max-width: 760px)").matches) {
+	sources.open = false;
+	for (const cite of document.querySelectorAll<HTMLAnchorElement>("a.cite")) cite.addEventListener("click", () => (sources.open = true));
 }
