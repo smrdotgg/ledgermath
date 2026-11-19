@@ -275,7 +275,7 @@ time {
 /* ------------------------------------------------------------- hero */
 
 .hero {
-	padding: 4.5rem 0 4.5rem;
+	padding: 3.5rem 0 3rem;
 	background:
 		radial-gradient(ellipse 60% 70% at 85% 30%, color-mix(in srgb, var(--accent) 7%, transparent), transparent 70%),
 		var(--paper);
@@ -378,25 +378,13 @@ h1 {
 	color: var(--ink-2);
 }
 
-/* the traced figure */
-.way-in {
-	margin-top: 2.25rem;
-	max-width: 36rem;
-	font-size: 1rem;
-	color: var(--ink-2);
-	margin-bottom: 0.6rem;
-}
-.way-in .mono {
-	color: var(--ink);
-	font-weight: 500;
-}
+/* the one command */
 .hero-rest .cmd {
 	max-width: 36rem;
-}
-.hero-rest .btn {
-	margin-top: 1.5rem;
+	margin-top: 2.25rem;
 }
 
+/* the traced figure */
 .traced {
 	position: relative;
 	background: var(--card);
@@ -811,18 +799,20 @@ table.spec {
 .spec-num {
 	text-align: right !important;
 }
-.spec .usd {
-	font-size: 1.5rem;
-}
 .net {
 	white-space: nowrap;
 	font-variant-numeric: tabular-nums;
 }
+/* prices in the table's mono, the decimal points in one column */
 .usd {
-	font: 600 2rem/1 var(--serif);
+	display: inline-flex;
+	font: 500 0.9375rem/1.3 var(--mono);
 	letter-spacing: -0.02em;
-	font-variant-numeric: lining-nums tabular-nums;
 	color: var(--ink);
+	white-space: nowrap;
+}
+.usd .x-frac {
+	text-align: left;
 }
 
 /* numbers */
@@ -832,7 +822,7 @@ table.spec {
 	--bar: color-mix(in srgb, var(--ink) 32%, var(--card));
 }
 .numbers {
-	padding: 4rem 0 5.5rem;
+	padding: 2.5rem 0 5.5rem;
 }
 .numbers .key {
 	margin-bottom: 0.9rem;
@@ -1018,6 +1008,17 @@ table.ht {
 	color: var(--tail);
 	font-weight: 450;
 }
+/* a hairline under the leading digits: the figure opens onto its percentiles and its Series */
+.cell .x-head {
+	text-decoration: underline;
+	text-decoration-thickness: 1px;
+	text-underline-offset: 0.28em;
+	text-decoration-color: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+.cell > summary:hover .x-head,
+.cell[open] .x-head {
+	text-decoration-color: var(--accent);
+}
 .x-frac {
 	display: inline-block;
 	min-width: var(--fw, 1ch);
@@ -1137,6 +1138,7 @@ td.is-traced .cell > summary::before {
 	padding: 6rem 0;
 	background: var(--band);
 	color: var(--band-ink);
+	border-block: 1px solid var(--band-rule);
 }
 .api-grid {
 	display: grid;
@@ -1153,20 +1155,74 @@ td.is-traced .cell > summary::before {
 	font-size: 1.0625rem;
 	max-width: 34em;
 }
-/* the commands: one block, a Copy per line */
+/* the addresses: the host once, then one path a line, its schema and a Copy beside it */
+.ep-host {
+	display: flex;
+	flex-wrap: wrap;
+	justify-content: space-between;
+	align-items: baseline;
+	gap: 0.25rem 1rem;
+	margin-top: 2rem;
+	font-size: 0.875rem;
+	color: var(--band-ink-2);
+}
+.ep-host a {
+	color: var(--band-ink);
+	font-weight: 500;
+}
+.ep-seg {
+	white-space: nowrap;
+}
 .endpoints {
-	margin-top: 2.25rem;
+	margin-top: 0.6rem;
 	background: var(--band-2);
 	border: 1px solid var(--band-rule);
 	border-radius: 10px;
 }
+.endpoints > li {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) auto auto;
+	align-items: center;
+	gap: 0.9rem;
+	padding: 0.6rem 0.75rem 0.6rem 0.95rem;
+}
 .endpoints > li + li {
 	border-top: 1px solid var(--band-rule);
 }
-.endpoints .cmd {
-	background: transparent;
-	border: 0;
-	border-radius: 0;
+.ep-path {
+	font-size: 0.875rem;
+	font-weight: 500;
+	color: var(--band-ink);
+	overflow-wrap: anywhere;
+}
+a.ep-path {
+	text-decoration-color: color-mix(in srgb, var(--band-ink) 30%, transparent);
+}
+.ep-schema {
+	font-size: 0.8125rem;
+	color: var(--band-ink-2);
+}
+/* under the JSON: the division that turns the file's p50 into the figure traced at the top */
+.j-join {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: baseline;
+	gap: 0.2rem 0.6rem;
+	padding: 0.8rem 1.2rem 0.9rem;
+	border-top: 1px solid var(--band-rule);
+	font-size: 0.8125rem;
+	color: var(--band-accent);
+}
+.j-join .trace-mark {
+	align-self: center;
+	background: var(--band-accent);
+}
+.j-k {
+	color: #9fc7ff;
+}
+.j-u {
+	font-family: var(--sans);
+	color: var(--band-ink-2);
 }
 .endpoints > li,
 .api-copy,
@@ -1248,23 +1304,10 @@ td.is-traced .cell > summary::before {
 .code-head .mono {
 	overflow-wrap: anywhere;
 }
-/* the line that joins the file's figure to the page's: figures only, in the trace's colour */
-.j-note {
-	color: var(--band-accent);
-	font-weight: 500;
-}
-.j-note .trace-mark {
-	display: inline-block;
-	width: 0.45rem;
-	height: 0.45rem;
-	margin-right: 0.2rem;
-	vertical-align: 0.08em;
-	background: var(--band-accent);
-}
 .jl {
 	display: block;
 	white-space: pre-wrap;
-	overflow-wrap: anywhere;
+	overflow-wrap: break-word;
 	padding-left: calc(var(--d) + 2ch);
 	text-indent: calc(-1 * (var(--d) + 2ch));
 }
@@ -1330,7 +1373,7 @@ pre {
 	.api-code {
 		position: static;
 	}
-	.way-in {
+	.hero-rest .cmd {
 		margin-top: 0;
 	}
 }
@@ -1366,11 +1409,6 @@ pre {
 	}
 	.hero-grid {
 		row-gap: 1.75rem;
-	}
-	.hero-rest .btn {
-		display: flex;
-		justify-content: center;
-		margin-top: 1rem;
 	}
 	.traced {
 		padding: 1.2rem 1.1rem 1.15rem;
@@ -1501,18 +1539,22 @@ pre {
 		right: 0.95rem;
 	}
 	.spec .usd {
-		font-size: 1.375rem;
+		font-size: 1rem;
+	}
+	/* the facts wrap between fields, never inside one */
+	.spec tr {
+		display: flex;
+		flex-wrap: wrap;
+		column-gap: 0.85rem;
+	}
+	.spec .spec-type {
+		flex-basis: 100%;
 	}
 	.spec td[data-l] {
 		white-space: nowrap;
 	}
 	.spec td[data-l="vCPU"]::after {
 		content: " vCPU";
-	}
-	.spec td[data-l] + td[data-l]::before {
-		content: "·";
-		margin: 0 0.4rem;
-		color: var(--ink-3);
 	}
 	.key {
 		gap: 0.35rem 1rem;
@@ -1655,6 +1697,13 @@ pre {
 	.api pre {
 		font-size: 0.75rem;
 		padding: 1rem;
+	}
+	.endpoints > li {
+		gap: 0.6rem;
+		padding: 0.5rem 0.6rem 0.5rem 0.8rem;
+	}
+	.ep-path {
+		font-size: 0.8125rem;
 	}
 	.foot-row {
 		flex-direction: column;
