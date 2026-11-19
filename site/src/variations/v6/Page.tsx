@@ -48,17 +48,34 @@ function Plot(props: { inst: Instrument; scale: Scale }) {
 	);
 }
 
-/** From zero, where the zoomed window sits: the whole scale, the window as a box, the five medians as dots. */
+/**
+ * From zero, where the zoomed window sits: the whole scale, the window as a box (never thinner than
+ * the eye can see), the five medians as dots, and two lines opening from the box to the ends of the
+ * zoomed axis above, so the strip reads as the chart's magnifier without a caption.
+ */
 function Strip(props: { inst: Instrument; zoom: Scale }) {
 	const z = props.inst.zero;
+	const lo = at(z, props.zoom.lo);
+	const hi = at(z, props.zoom.hi);
+	const mid = at(z, (props.zoom.lo + props.zoom.hi) / 2);
+	const thin = (props.zoom.hi - props.zoom.lo) / (z.hi - z.lo) < 0.03;
+	const Y = 22;
 	return (
-		<svg class="strip" aria-hidden="true" width="100%" height="14">
-			<line class="axis" x1="0" x2="100%" y1="7.5" y2="7.5" />
-			<line class="axis" x1="0.5" x2="0.5" y1="3" y2="12" />
-			<line class="axis" x1="100%" x2="100%" y1="3" y2="12" />
-			<rect class="window" x={at(z, props.zoom.lo)} width={width(z, props.zoom.lo, props.zoom.hi)} y="1" height="13" />
+		<svg class="strip" aria-hidden="true" width="100%" height={Y + 8}>
+			<line class="lens" x1="0" x2={thin ? mid : lo} y1="0" y2={Y - 6} />
+			<line class="lens" x1="100%" x2={thin ? mid : hi} y1="0" y2={Y - 6} />
+			<line class="axis" x1="0" x2="100%" y1={Y + 0.5} y2={Y + 0.5} />
+			<line class="axis" x1="0.5" x2="0.5" y1={Y - 4} y2={Y + 5} />
+			<line class="axis" x1="100%" x2="100%" y1={Y - 4} y2={Y + 5} />
+			{thin ? (
+				<svg x={mid} y={Y - 6} width="1" height="13" overflow="visible">
+					<rect class="window" x="-5" width="10" y="0" height="13" />
+				</svg>
+			) : (
+				<rect class="window" x={lo} width={width(z, props.zoom.lo, props.zoom.hi)} y={Y - 6} height="13" />
+			)}
 			{props.inst.marks.map((m) => (
-				<circle class="median small" cx={at(z, m.p50.value)} cy="7.5" r="2" />
+				<circle class="median small" cx={at(z, m.p50.value)} cy={Y + 0.5} r="2" />
 			))}
 		</svg>
 	);
@@ -118,11 +135,9 @@ function Card(props: { inst: Instrument; index: number }) {
 						{c.label}
 					</a>
 				</h3>
-				{limit ? (
-					<a class="lim" href={c.readme} title={limit}>
-						gp3 limit
-					</a>
-				) : null}
+				<span class="unit" title={unit}>
+					{inst.unit}
+				</span>
 			</header>
 			<div class="chart" style={`--n:${inst.marks.length}`}>
 				<Plot inst={inst} scale={scale} />
@@ -144,17 +159,19 @@ function Card(props: { inst: Instrument; index: number }) {
 				<span class="dir" title={c.lead === "rate" ? "More is faster" : "Less is faster"}>
 					{c.lead === "rate" ? "faster →" : "← faster"}
 				</span>
-				<span class="unit" title={unit}>
-					{inst.unit}
-				</span>
+				{limit ? (
+					<a class="lim" href={c.readme} title={limit}>
+						gp3 limit
+					</a>
+				) : null}
+				{zoom ? (
+					<span class="zoom" title={`The axis starts at ${zoom.ticks[0]!.label} ${inst.unit}. From zero, all five sit inside the box.`}>
+						<span class="z0">0</span>
+						<Strip inst={inst} zoom={zoom} />
+						<span class="zmax">{inst.zero.ticks[inst.zero.ticks.length - 1]!.label}</span>
+					</span>
+				) : null}
 			</div>
-			{zoom ? (
-				<p class="zoom" title={`The axis starts at ${zoom.ticks[0]!.label} ${inst.unit}. From zero, all five sit inside the box.`}>
-					<span class="z0">0</span>
-					<Strip inst={inst} zoom={zoom} />
-					<span class="zmax">{inst.zero.ticks[inst.zero.ticks.length - 1]!.label}</span>
-				</p>
-			) : null}
 		</article>
 	);
 }
@@ -164,7 +181,7 @@ function Every(props: { instruments: Instrument[] }) {
 	return (
 		<details class="every" id="digits">
 			<summary>
-				Exact figures <span class="dim">p5 · median · p95 · Runs</span>
+				Percentiles and Run counts <span class="dim">every digit</span>
 			</summary>
 			<div class="scroll" tabindex="0" role="region" aria-label="Exact figures">
 				<table class="digits">
@@ -295,7 +312,7 @@ export default function Page() {
 
 			<main id="top">
 				<section class="hero wrap" aria-labelledby="h1">
-					<h1 id="h1">Five AWS machines, measured four times a day, every figure with its evidence.</h1>
+					<h1 id="h1">Five AWS machine types, measured four times a day, every figure with its evidence.</h1>
 					<div class="hero-r">
 						<p class="lede">{headline.length} benchmarks on each freshly booted machine, published with AWS's prices as a static JSON API for AI agents.</p>
 						<div class="cmd">
@@ -325,7 +342,7 @@ export default function Page() {
 								<dd>{BOOTS.join(" ")}</dd>
 							</div>
 							<div>
-								<dt>Runs kept</dt>
+								<dt>Runs kept, all Series</dt>
 								<dd>
 									<b>{runs}</b> {failed} failed
 								</dd>
@@ -440,7 +457,10 @@ export default function Page() {
 				<section class="band" id="api" aria-labelledby="h-api">
 					<div class="wrap api">
 						<div class="api-l">
-							<h2 id="h-api">The API</h2>
+							<div class="api-h">
+								<h2 id="h-api">The API</h2>
+								<a href={links.docs}>Docs</a>
+							</div>
 							<p>Static JSON. Each figure links to its Series file: every Run, with its evidence.</p>
 							<p class="schemas">
 								<span class="lbl">Schemas</span>
@@ -449,7 +469,6 @@ export default function Page() {
 										<code>{s.name}</code>
 									</a>
 								))}
-								<a href={links.docs}>Docs</a>
 							</p>
 							<details class="agent" id="agent">
 								<summary>Prompt for your agent</summary>
