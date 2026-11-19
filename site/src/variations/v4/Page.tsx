@@ -27,13 +27,6 @@ import {
 
 const ROUNDS = ["04:10", "10:10", "16:10", "22:10"] as const;
 
-const SECTION_CODE: Record<Section, string> = {
-	Memory: "MEM",
-	Compute: "CPU",
-	"Operating system": "OS",
-	Disk: "DSK",
-	Network: "NET",
-};
 const SECTION_CLASS: Record<Section, string> = {
 	Memory: "s-mem",
 	Compute: "s-cpu",
@@ -102,15 +95,24 @@ function cut(full: string, places: number) {
 	return { head: `${grouped.slice(0, dot + 1)}${frac[0]}`, headMore: frac.slice(1, keep), tail: frac.slice(keep) };
 }
 
+/** The whole part of a cut figure (before the point), the part the row aligns on. */
+const whole = (head: string) => (head.includes(".") ? head.slice(0, head.indexOf(".")) : head);
+
 /**
  * One exact figure as one unbroken run of digits: no space in the text (it copies as one number),
  * the groups of three set apart by a sliver of margin, the head bold and every further digit lighter.
+ * The whole part is set right-aligned in a box as wide as the row's widest, so the row's five
+ * decimal points stand at one place in their cells (and in one column on the phone).
  */
-function Figure(props: { head: string; headMore: string[]; tail: string[] }) {
+function Figure(props: { head: string; headMore: string[]; tail: string[]; wholeWidth: number }) {
+	const w = whole(props.head);
 	return (
 		<span class="fig-v">
 			<span class="fig-h">
-				{props.head}
+				<span class="fig-w" style={{ "--w": props.wholeWidth }}>
+					{w}
+				</span>
+				{props.head.slice(w.length)}
 				{props.headMore.map((g) => (
 					<span class="g">{g}</span>
 				))}
@@ -158,6 +160,7 @@ function prepareRow(row: HeadlineRow) {
 	}
 	return {
 		unit: fmt(largest.p50).unit,
+		wholeWidth: Math.max(...fulls.map((full) => whole(cut(full, places).head).length)),
 		cells: row.cells.map((cell, i) => {
 			const f = figs[i]!;
 			return { cell, f, p50: fmt(f.p50), p5: fmt(f.p5), p95: fmt(f.p95), ...cut(fulls[i]!, places), at: (n: number) => (n / scaleEnd) * 100 };
@@ -204,16 +207,16 @@ export default function Page() {
 	const point = seriesFileContents.point.example;
 	const sampleRowIndex = headline.findIndex((r) => r.cells.some((cell) => cell.series.id === sample.id));
 	const sampleRow = headline[sampleRowIndex];
-	const sampleCode = sampleRow ? `${SECTION_CODE[sampleRow.choice.section]} ${String(sampleRowIndex + 1).padStart(2, "0")}` : "";
+	const sampleCode = sampleRow ? String(sampleRowIndex + 1).padStart(2, "0") : "";
 	const samplePrepared = sampleRow ? prepareRow(sampleRow).cells.find((p) => p.cell.series.id === sample.id) : undefined;
 	const pointTime = sampleRow?.choice.per ? formatDurationPerUnit(point.time_per_repetition_ns!, sampleRow.choice.per, { unit: samplePrepared?.p50.unit as DurationUnit }) : formatDuration(point.time_per_repetition_ns!);
 	const J = (v: unknown) => JSON.stringify(v);
 
+	// The index is the hero's command; here, the route from one board figure to its evidence first.
 	const api: { note: string; href: string; schema?: string }[] = [
-		{ note: "index", href: links.index, schema: links.schema.index },
-		{ note: `all ${seriesCount} Series`, href: links.seriesList, schema: links.schema.seriesList },
 		{ note: `${sampleCode} · ${sample.instanceType}`, href: sample.url, schema: links.schema.series },
 		{ note: `${sampleCode} · one Run's evidence`, href: point.evidence },
+		{ note: `all ${seriesCount} Series`, href: links.seriesList, schema: links.schema.seriesList },
 		{ note: `prices · ${snapshot.priceDate}`, href: links.prices, schema: links.schema.prices },
 	];
 
@@ -249,8 +252,7 @@ export default function Page() {
 								<span class="h1-a">Fresh AWS machines,</span> <span class="h1-hi">measured four times a day.</span>
 							</h1>
 							<p class="lede">
-								{benchmarksN} benchmarks on {machinesN} freshly booted machine types. Every Run kept with its evidence; every figure in JSON, for AI agents
-								to cite.
+								{benchmarksN} benchmarks on {machinesN} freshly booted machine types. Every Run kept with its evidence, in JSON for AI agents.
 							</p>
 							<div class="cmd" data-copy-wrap>
 								<code data-copy>
@@ -294,10 +296,6 @@ export default function Page() {
 									<dd>{runs}</dd>
 								</div>
 								<div>
-									<dt>Series</dt>
-									<dd>{seriesCount}</dd>
-								</div>
-								<div>
 									<dt>Failed</dt>
 									<dd>{failed}</dd>
 								</div>
@@ -328,7 +326,7 @@ export default function Page() {
 								<span class="key-l" style={{ left: "72%" }}>
 									p95
 								</span>
-								<span class="key-end key-max">row max</span>
+								<span class="key-end key-max">benchmark max</span>
 							</span>
 							<span class="key-marks">
 								<span class="key-mark">
@@ -337,9 +335,6 @@ export default function Page() {
 								<span class="key-mark">
 									<b>↑↓</b> faster
 								</span>
-								<a class="key-mark" href={links.seriesList}>
-									Method series v{seriesV1.version}
-								</a>
 							</span>
 						</div>
 					</div>
@@ -377,7 +372,6 @@ export default function Page() {
 								<tbody class={SECTION_CLASS[g.section]} id={`b-${SECTION_CLASS[g.section]}`}>
 									<tr class="sec-row">
 										<th scope="rowgroup" colspan={machines.length + 1} class="sec-what">
-											<span class="badge">{SECTION_CODE[g.section]}</span>
 											<span class="sec-name">{g.section}</span>
 											{g.section === "Disk" && <span class="sec-note">root EBS gp3 volume on all five</span>}
 										</th>
@@ -393,9 +387,7 @@ export default function Page() {
 											<tr class="row">
 												<th scope="row" class="what">
 													<span class="what-meta">
-														<span class="badge">
-															{SECTION_CODE[c.section]} {n}
-														</span>
+														<span class="badge">{n}</span>
 														<span class="what-unit" title={unitTitle}>
 															{p.unit} <b class={up ? "up" : "down"}>{up ? "↑" : "↓"}</b>
 														</span>
@@ -411,10 +403,11 @@ export default function Page() {
 														<td class="fig">
 															<a
 																href={links.seriesFile(cell.series)}
-																data-m={m}
 																title={`${m}: median ${p50.full} ${p50.unit} · p5 ${p5.full} · p95 ${p95.full} · ${formatCount(f.count).full} Runs, newest ${t.full} · ${cell.series.id}.json`}
 															>
-																<Figure head={head} headMore={headMore} tail={tail} />
+																{/* the machine, the column heading's twin: shown only on the phone, where the columns become lines */}
+																<span class="fig-m">{m}</span>
+																<Figure head={head} headMore={headMore} tail={tail} wholeWidth={p.wholeWidth} />
 																<Strip from={at(f.p5)} to={at(f.p95)} at={at(f.p50)} />
 																{f.count !== columnN[j] && <span class="fig-n">n={formatCount(f.count).full}</span>}
 															</a>
@@ -455,41 +448,36 @@ export default function Page() {
 						</ol>
 
 						<div class="api-side">
-							<details class="fold">
-								<summary>
-									{sampleCode} · one Run's JSON
-								</summary>
-								<p class="fold-l">
-									<code>v1/series/{sample.id}.json</code>
-								</p>
-								<pre class="resp">
-									<code>
-										<span class="j-k">"benchmark"</span>: <span class="j-s">{J(sample.benchmark)}</span>,{"\n"}
-										<span class="j-k">"instance_type"</span>: <span class="j-s">{J(sample.instanceType)}</span>,{"\n"}
-										<span class="j-k">"run"</span>: <span class="j-s">{J(point.run)}</span>,{"\n"}
-										<span class="j-k">"started_at"</span>: <span class="j-s">{J(point.started_at)}</span>,{"\n"}
-										<span class="j-k">"counted"</span>: <span class="j-n">{J(point.counted)}</span>,{"\n"}
-										<span class="j-k">"time_per_repetition_ns"</span>: <mark class="j-n">{J(point.time_per_repetition_ns)}</mark>,{"\n"}
-										<span class="j-k">"evidence"</span>: <a href={point.evidence}>{J(point.evidence)}</a>
-									</code>
-								</pre>
-								{samplePrepared && (
-									<dl class="ptr">
-										<div>
-											<dt>This Run{sampleRow?.choice.per ? ` ÷ ${formatCount(sampleRow.choice.per.count).full}` : ""}</dt>
-											<dd>
-												{group(pointTime.full, ",", " ")} {pointTime.unit}
-											</dd>
-										</div>
-										<div>
-											<dt>Board median</dt>
-											<dd>
-												{group(samplePrepared.p50.full, ",", " ")} {samplePrepared.p50.unit}
-											</dd>
-										</div>
-									</dl>
-								)}
-							</details>
+							<p class="fold-l">
+								<code>
+									{sampleCode} · v1/series/{sample.id}.json · one Run
+								</code>
+							</p>
+							<pre class="resp">
+								<code>
+									<span class="j-k">"run"</span>: <span class="j-s">{J(point.run)}</span>,{"\n"}
+									<span class="j-k">"started_at"</span>: <span class="j-s">{J(point.started_at)}</span>,{"\n"}
+									<span class="j-k">"counted"</span>: <span class="j-n">{J(point.counted)}</span>,{"\n"}
+									<span class="j-k">"time_per_repetition_ns"</span>: <mark class="j-n">{J(point.time_per_repetition_ns)}</mark>,{"\n"}
+									<span class="j-k">"evidence"</span>: <a href={point.evidence}>{J(point.evidence)}</a>
+								</code>
+							</pre>
+							{samplePrepared && (
+								<dl class="ptr">
+									<div>
+										<dt>This Run{sampleRow?.choice.per ? ` ÷ ${formatCount(sampleRow.choice.per.count).full}` : ""}</dt>
+										<dd>
+											{group(pointTime.full, ",", " ")} {pointTime.unit}
+										</dd>
+									</div>
+									<div>
+										<dt>Board median</dt>
+										<dd>
+											{group(samplePrepared.p50.full, ",", " ")} {samplePrepared.p50.unit}
+										</dd>
+									</div>
+								</dl>
+							)}
 						</div>
 					</div>
 				</section>

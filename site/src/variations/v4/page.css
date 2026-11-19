@@ -568,20 +568,20 @@ h2 {
 }
 /* the key: one strip, labelled at both ends, then the three marks the board uses */
 .key {
-	flex: 1 1 32rem;
+	flex: 0 1 auto;
 	display: flex;
 	align-items: center;
-	flex-wrap: wrap;
-	gap: 0.9rem 2rem;
+	flex-wrap: nowrap;
+	gap: 0.9rem 1.6rem;
 	padding-top: 1.1rem;
 }
 .key-strip {
 	position: relative;
 	display: block;
-	flex: 0 1 17rem;
+	flex: 0 0 15rem;
 	min-width: 12rem;
 	height: 8px;
-	margin: 0 4.4rem 0 1rem;
+	margin: 0 7.4rem 0 1rem;
 	background: var(--track);
 	border-radius: 1px;
 	--sec: var(--ink-2);
@@ -613,8 +613,9 @@ h2 {
 .key-marks {
 	display: flex;
 	flex-wrap: wrap;
+	flex: none;
 	gap: 0.5rem 1.4rem;
-	margin-left: auto;
+	white-space: nowrap;
 	font: 600 0.8rem/1 var(--mono);
 	color: var(--ink-2);
 }
@@ -626,18 +627,14 @@ a.key-mark {
 	color: var(--link);
 }
 
+/* the row's number: in its section's colour, no fill (the band and the rule already carry the section) */
 .badge {
 	display: inline-block;
 	white-space: nowrap;
-	border-radius: 3px;
-	background: var(--sec);
-	color: var(--badge-ink);
-	font: 700 0.78rem/1 var(--mono);
-	letter-spacing: 0.06em;
+	color: var(--sec);
+	font: 800 0.95rem/1 var(--mono);
+	letter-spacing: 0.02em;
 	text-decoration: none;
-}
-.badge {
-	padding: 0.25rem 0.4rem 0.22rem;
 }
 .s-mem {
 	--sec: var(--s-mem);
@@ -661,14 +658,14 @@ a.key-mark {
 	--track: #dcd8cb;
 	--head: #121315;
 	--head-ink: #f5f1e6;
-	--tail: #4a4944;
+	--tail: #383733;
 	--tint: 11%;
 }
 @media (prefers-color-scheme: dark) {
 	:root {
 		--track: #2a2d33;
 		--head: #000;
-		--tail: #c2bdb0;
+		--tail: #dcd7ca;
 		--tint: 8%;
 	}
 }
@@ -839,11 +836,11 @@ a.key-mark {
 	line-height: 1.1;
 	white-space: nowrap;
 	letter-spacing: -0.03em;
-	text-decoration: underline dotted color-mix(in srgb, var(--fig) 35%, transparent);
-	text-decoration-thickness: 1.5px;
 	text-underline-offset: 0.25em;
 }
-.fig a:hover .fig-v {
+/* the figure links to its Series: no texture at rest, a rule under it on hover and focus */
+.fig a:hover .fig-v,
+.fig a:focus-visible .fig-v {
 	text-decoration: underline solid var(--fig);
 	text-decoration-thickness: 2px;
 }
@@ -854,10 +851,19 @@ a.key-mark {
 	font-size: 1.2rem;
 	font-weight: 700;
 }
+/* the whole part, right-aligned in a box as wide as the row's widest: the points line up */
+.fig-w {
+	display: inline-block;
+	width: calc(var(--w) * (1ch - 0.03em));
+	text-align: right;
+}
 .fig-t {
 	font-size: 0.86rem;
 	font-weight: 500;
 	color: var(--tail);
+}
+.fig-m {
+	display: none;
 }
 /* a Run count that differs from the band's sits in the cell's own corner, taking no line */
 .fig a {
@@ -906,9 +912,9 @@ a.key-mark {
 }
 .api-grid {
 	display: grid;
-	grid-template-columns: minmax(0, 1fr);
-	gap: 1.25rem;
-	max-width: 56rem;
+	grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
+	align-items: start;
+	gap: 1.5rem;
 }
 .term {
 	list-style: none;
@@ -972,13 +978,18 @@ a.key-mark {
 	text-transform: uppercase;
 }
 .fold-l {
-	margin: 0.75rem 0 0;
-	font-size: 0.9rem;
-	color: var(--ink-2);
+	margin: 0;
+	padding-bottom: 0.6rem;
+	border-bottom: 3px solid var(--rule-strong);
+	font: 700 0.85rem/1.4 var(--mono);
+	color: var(--ink);
 	overflow-wrap: anywhere;
 }
+.fold-l code {
+	font-size: inherit;
+}
 .resp {
-	margin: 0.6rem 0 0;
+	margin: 0.75rem 0 0;
 	padding: 0.9rem 1rem;
 	background: var(--panel);
 	border: 1px solid var(--rule);
@@ -1101,8 +1112,8 @@ mark.j-n {
 		font-size: clamp(1.7rem, 7.4vw, 3.4rem);
 	}
 	.lede {
-		margin: 0.6rem 0 0.8rem;
-		font-size: 0.96rem;
+		margin: 0.5rem 0 0.75rem;
+		font-size: 0.9rem;
 		line-height: 1.4;
 	}
 	.cmd {
@@ -1160,12 +1171,16 @@ mark.j-n {
 		padding: 0.3rem 0 0.25rem;
 		font-size: 1.05rem;
 	}
+	/* the tally on one line: each label beside its count */
 	.tally {
 		padding-top: 0.5rem;
-		grid-template-columns: repeat(4, auto);
+		grid-template-columns: repeat(3, auto);
 		justify-content: space-between;
 	}
 	.tally > div {
+		display: flex;
+		align-items: baseline;
+		gap: 0.4rem;
 		margin-right: 0;
 		padding-right: 0;
 		border-right: 0;
@@ -1174,7 +1189,7 @@ mark.j-n {
 		font-size: 1.2rem;
 	}
 	.tally dt {
-		margin-bottom: 0.25rem;
+		margin: 0;
 		font-size: 0.66rem;
 	}
 	.panel-prices {
@@ -1183,7 +1198,7 @@ mark.j-n {
 	}
 
 	.board-sec {
-		padding-top: 1.1rem;
+		padding-top: 0.9rem;
 	}
 	.api-sec {
 		padding-top: 2rem;
@@ -1197,23 +1212,29 @@ mark.j-n {
 		padding-bottom: 0.6rem;
 		margin-bottom: 0.6rem;
 	}
+	/* the board's heading and its two marks on one line, the strip of the key beneath */
+	.board-sec .sec-head {
+		position: relative;
+	}
 	.key {
 		flex: 1 1 100%;
+		flex-wrap: wrap;
 		gap: 0.6rem;
 		padding-top: 0.85rem;
 	}
 	.key-strip {
 		flex: 1 1 auto;
 		min-width: 0;
-		margin: 0 3.6rem 0 0.9rem;
+		margin: 0 6.6rem 0 0.9rem;
 	}
 	.key-end,
 	.key-l {
 		font-size: 0.72rem;
 	}
 	.key-marks {
-		flex: 1 1 100%;
-		margin-left: 0;
+		position: absolute;
+		top: 0.55rem;
+		right: 0;
 		gap: 0.4rem 1.1rem;
 		font-size: 0.72rem;
 	}
@@ -1308,7 +1329,7 @@ mark.j-n {
 		display: contents;
 	}
 	.what .badge {
-		font-size: 0.66rem;
+		font-size: 0.85rem;
 	}
 	.what-unit {
 		order: 3;
@@ -1322,7 +1343,7 @@ mark.j-n {
 		display: block;
 		border-left: 0;
 	}
-	/* a departure: the machine (drawn from the link's own data, the column heading's twin), the figure, the strip */
+	/* a departure: the machine (the column heading's twin), the figure, the strip */
 	.fig a {
 		display: grid;
 		grid-template-columns: var(--name-w) minmax(0, 1fr) 4.1rem;
@@ -1330,8 +1351,8 @@ mark.j-n {
 		column-gap: 0.5rem;
 		padding: 0.2rem 0.75rem 0.2rem 0.9rem;
 	}
-	.fig a::before {
-		content: attr(data-m);
+	.fig-m {
+		display: block;
 		font: 700 0.95rem/1 var(--display);
 		color: var(--ink-2);
 		white-space: nowrap;
