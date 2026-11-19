@@ -1,19 +1,28 @@
-// Design v4, "Departure board": the home page as a station board. Freshness first (the newest
-// Run, the four daily rounds), then the board itself: fourteen rows, five machine types, every
-// figure exact. Rendered once at build time; client.ts only adds copy buttons.
+// Design v4, "Departure board": the home page as a station board. What it is first, then the
+// clock (the newest Run, the four daily rounds, the day's price file), then the board itself:
+// fourteen rows, five machine types, every figure exact, each with its spread drawn like a
+// platform strip. Rendered once at build time; client.ts only adds copy buttons.
 import "./page.css";
 import {
+	type ByteUnit,
+	type DurationUnit,
+	type HeadlineRow,
 	type Section,
 	type Shown,
 	formatCount,
 	formatDuration,
+	formatDurationPerUnit,
 	formatMoment,
 	formatRate,
 	formatUsd,
+	group,
 	headline,
+	headlineSeries,
 	leadFigure,
 	links,
 	machines,
+	roundSignificant,
+	seriesFileContents,
 	snapshot,
 } from "../../data";
 
@@ -44,23 +53,16 @@ function exactTitle(shown: Shown): string {
 	return `${shown.full} ${shown.unit} exactly (as the API holds it: ${shown.source})`;
 }
 
-/** A URL with break opportunities after its slashes, so it wraps at a path boundary, never inside a word. */
-function Url(props: { href: string }) {
-	const [scheme, rest] = props.href.split("://");
-	const parts = rest!.split("/");
+/**
+ * A curl command whose only break is between the host and the path, so a narrow screen puts
+ * "v1/…" on a line of its own instead of breaking inside it. The text copies exactly.
+ */
+function Curl(props: { href: string }) {
+	const cut = props.href.indexOf("/v1/") + 1;
 	return (
 		<>
-			{scheme}://
-			{parts.map((part, i) => (
-				<>
-					{i > 0 && (
-						<>
-							/<wbr />
-						</>
-					)}
-					{part}
-				</>
-			))}
+			<span class="u-host">curl {props.href.slice(0, cut)}</span>
+			<span class="u-path">{props.href.slice(cut)}</span>
 		</>
 	);
 }
@@ -83,7 +85,7 @@ function Flaps(props: { text: string; class?: string }) {
 }
 
 function sectionsInOrder() {
-	const out: { section: Section; rows: (typeof headline)[number][] }[] = [];
+	const out: { section: Section; rows: HeadlineRow[] }[] = [];
 	for (const row of headline) {
 		const last = out[out.length - 1];
 		if (last && last.section === row.choice.section) last.rows.push(row);
@@ -92,12 +94,58 @@ function sectionsInOrder() {
 	return out;
 }
 
+/**
+ * One board row, prepared for printing: one unit for the whole row (the one its largest figure
+ * reads in, so no cell switches unit), and as many significant digits as it takes to tell the
+ * row's five figures apart (at least four). Bar lengths are the figures themselves, drawn on a
+ * scale that ends at the row's largest 95th percentile: a drawing, not a statistic.
+ */
+function prepareRow(row: HeadlineRow) {
+	const c = row.choice;
+	const figs = row.cells.map((cell) => leadFigure(c, cell.series));
+	const largest = figs.reduce((a, b) => (b.p50 > a.p50 ? b : a));
+	const scaleEnd = Math.max(...figs.map((f) => f.p95));
+	const fmt =
+		c.lead === "rate"
+			? (() => {
+					const unit = formatRate(largest.p50).unit.replace("/s", "") as ByteUnit;
+					return (n: number, significant = 4) => formatRate(n, { unit, significant });
+				})()
+			: (() => {
+					const unit: DurationUnit = formatDuration(largest.p50).unit as DurationUnit;
+					return (n: number, significant = 4) => formatDuration(n, { unit, significant });
+				})();
+	const fulls = figs.map((f) => fmt(f.p50).full);
+	let digits = 4;
+	for (; digits < 9; digits++) {
+		const shorts = fulls.map((full) => roundSignificant(full, digits));
+		const clash = shorts.some((s, i) => shorts.some((t, j) => j > i && s === t && fulls[i] !== fulls[j]));
+		if (!clash) break;
+	}
+	return {
+		unit: fmt(largest.p50).unit,
+		digits,
+		cells: row.cells.map((cell, i) => {
+			const f = figs[i]!;
+			return {
+				cell,
+				f,
+				p50: fmt(f.p50, digits),
+				p5: fmt(f.p5, digits),
+				p95: fmt(f.p95, digits),
+				at: (n: number) => (n / scaleEnd) * 100,
+			};
+		}),
+	};
+}
+
 export default function Page() {
 	const newest = formatMoment(snapshot.newestRunStartedAt);
 	const oldest = formatMoment(snapshot.oldestRunStartedAt);
 	const fetched = formatMoment(snapshot.pricesFetchedAt);
 	const runs = formatCount(snapshot.runCount).full;
 	const seriesCount = formatCount(snapshot.seriesCount).full;
+	const onBoard = formatCount(headlineSeries.length).full;
 	const counted = formatCount(snapshot.countedRuns).full;
 	const failed = formatCount(snapshot.failedRuns).full;
 	const benchmarksN = formatCount(snapshot.benchmarkCount).full;
@@ -106,6 +154,23 @@ export default function Page() {
 	const requestsV1 = snapshot.methods.find((m) => m.key === "requests_v1");
 	const sections = sectionsInOrder();
 	let rowNumber = 0;
+
+	// The sample Series file the snapshot keeps: which board row and machine it is.
+	const sample = seriesFileContents.sample;
+	const point = seriesFileContents.point.example;
+	const sampleRowIndex = headline.findIndex((r) => r.cells.some((cell) => cell.series.id === sample.id));
+	const sampleRow = headline[sampleRowIndex];
+	const sampleCode = sampleRow ? `${SECTION_CODE[sampleRow.choice.section]} ${String(sampleRowIndex + 1).padStart(2, "0")}` : "";
+	const samplePrepared = sampleRow ? prepareRow(sampleRow).cells.find((p) => p.cell.series.id === sample.id) : undefined;
+	const pointStart = formatMoment(point.started_at);
+	const pointTime = formatDuration(point.time_per_repetition_ns!);
+	const J = (v: unknown) => JSON.stringify(v);
+	// The key under the board's head shows the board's own first cell.
+	const keyCell = prepareRow(headline[0]!).cells[0]!;
+	const rowCode = (benchmark: string) => {
+		const i = headline.findIndex((r) => r.choice.benchmark === benchmark);
+		return `${SECTION_CODE[headline[i]!.choice.section]} ${String(i + 1).padStart(2, "0")}`;
+	};
 
 	return (
 		<>
@@ -135,25 +200,31 @@ export default function Page() {
 			</header>
 
 			<main id="top">
-				{/* ------------------------------------------------ the board's head: name, clock, rounds */}
+				{/* ------------------------------------------------ the board's head: what this is, then the clock */}
 				<section class="head" aria-labelledby="title">
 					<div class="head-in">
 						<div class="head-id">
 							<p class="kicker">
 								<span class="dot" aria-hidden="true" />
-								Server benchmarks · measured on AWS
+								LedgerMath · server benchmarks on AWS
 							</p>
-							<h1 id="title">LedgerMath</h1>
+							<h1 id="title">
+								<span class="h1-a">Fresh AWS machines,</span> <span class="h1-hi">measured four times a day.</span>
+							</h1>
+							<p class="fresh-line">
+								<span class="dot" aria-hidden="true" />
+								<span>
+									Newest Run <b>{newest.minute} UTC</b>, {newest.longDate}
+								</span>
+							</p>
 							<p class="lede">
-								Four times a day, fresh AWS machines are booted and put through {benchmarksN} benchmarks. Every Run is kept with its evidence, every
-								figure is derived by a published Method, and all of it is a static JSON API that AI agents can read and cite.
+								LedgerMath runs {benchmarksN} benchmarks on {machinesN} freshly booted machine types at every round, keeps every Run with its evidence,
+								and derives each figure by a published Method. A static JSON API serves it all beside AWS's On-Demand prices, so AI agents can choose
+								infrastructure from measured numbers, with a source for each.
 							</p>
 							<div class="cmd" data-copy-wrap>
-								<span class="cmd-prompt" aria-hidden="true">
-									$
-								</span>
 								<code data-copy>
-									curl <Url href={links.index} />
+									<Curl href={links.index} />
 								</code>
 							</div>
 							<dl class="tally">
@@ -162,12 +233,15 @@ export default function Page() {
 									<dd>{runs}</dd>
 								</div>
 								<div>
-									<dt>Series</dt>
-									<dd>{seriesCount}</dd>
-								</div>
-								<div>
 									<dt>Failed Runs</dt>
 									<dd>{failed}</dd>
+								</div>
+								<div>
+									<dt>Series in the API</dt>
+									<dd>
+										{seriesCount}
+										<small>{onBoard} on the board</small>
+									</dd>
 								</div>
 								<div>
 									<dt>Oldest Run</dt>
@@ -179,7 +253,7 @@ export default function Page() {
 						</div>
 
 						<div class="panel">
-							<div class="clock" aria-labelledby="clock-label">
+							<div class="clock" role="group" aria-labelledby="clock-label">
 								<p class="panel-row">
 									<span class="panel-label" id="clock-label">
 										Newest Run started
@@ -203,7 +277,7 @@ export default function Page() {
 								<p class="clock-full">{newest.full}</p>
 							</div>
 
-							<div class="rounds" aria-labelledby="rounds-label">
+							<div class="rounds" role="group" aria-labelledby="rounds-label">
 								<p class="panel-row">
 									<span class="panel-label" id="rounds-label">
 										Daily rounds, UTC
@@ -236,6 +310,16 @@ export default function Page() {
 									</div>
 								</div>
 							</div>
+
+							<p class="panel-prices">
+								<span class="panel-label">Prices</span>
+								<span>
+									AWS On-Demand, copied {snapshot.priceDate} {fetched.minute} UTC:{" "}
+									<a href={links.prices} title={fetched.full}>
+										prices/{snapshot.priceDate}.json
+									</a>
+								</span>
+							</p>
 						</div>
 					</div>
 				</section>
@@ -247,24 +331,48 @@ export default function Page() {
 							<span class="h2-code">01</span> The board
 						</h2>
 						<p class="sec-sub">
-							{benchmarksN} benchmarks × {machinesN} machine types. Each figure is the median (p50) of one Series' counted Runs: the rate where the
-							benchmark moves bytes, otherwise the time of one repetition. The large figure is rounded; the line under it has every digit. Each figure
-							links to its Series' file, with the Runs behind it.
+							{benchmarksN} benchmarks × {machinesN} machine types, {onBoard} of the API's {seriesCount} Series. Each figure is the median (p50) of
+							one Series' counted Runs, in one unit per row. Each links to its Series' file, with the Runs behind it.
 						</p>
 					</div>
+
+					<div class="board-tools">
+						<nav class="jump" aria-label="Board sections">
+							{sections.map((g) => (
+								<a href={`#b-${SECTION_CLASS[g.section]}`} class={SECTION_CLASS[g.section]}>
+									<span class="badge">{SECTION_CODE[g.section]}</span>
+									<span class="jump-name">{g.section}</span>
+								</a>
+							))}
+						</nav>
+
+					</div>
+					<div class="key" aria-hidden="true">
+							<span class="key-fig">
+								<b>{keyCell.p50.short}</b> {keyCell.p50.unit}
+							</span>
+							<span class="key-txt">enough digits to tell the row apart</span>
+							<span class="key-fig key-exact">{group(keyCell.p50.full, ",", "\u2009")}</span>
+							<span class="key-txt">every digit the API holds</span>
+							<span class="key-bar">
+								<i class="key-fill" />
+								<i class="key-whisk" />
+							</span>
+							<span class="key-txt">median, and the 5th–95th percentile of its Runs</span>
+						</div>
 
 					<div class="board-wrap" role="region" aria-label="The board: headline figures" tabindex="0">
 						<table class="board">
 							<caption class="sr">
-								Headline figures: {benchmarksN} benchmarks on {machinesN} AWS machine types, the median of each Series' counted Runs, with the time each
-								Series' newest Run started and how many Runs it has.
+								Headline figures: {benchmarksN} benchmarks on {machinesN} AWS machine types, the median of each Series' counted Runs with its 5th and
+								95th percentiles, the time each Series' newest Run started and how many Runs it has.
 							</caption>
 							<thead>
 								<tr>
 									<th scope="col" class="col-what">
 										<span class="col-what-in">
 											<span>Measured</span>
-											<span class="col-what-hint">Median · newest Run · Runs</span>
+											<span class="col-what-hint">Machines cheapest first · hourly On-Demand price</span>
 										</span>
 									</th>
 									{machines.map((m) => {
@@ -284,18 +392,33 @@ export default function Page() {
 									})}
 								</tr>
 							</thead>
-							{sections.map((group) => (
-								<tbody class={SECTION_CLASS[group.section]}>
+							{sections.map((g) => (
+								<tbody class={SECTION_CLASS[g.section]} id={`b-${SECTION_CLASS[g.section]}`}>
 									<tr class="sec-row">
-										<th scope="colgroup" colspan={machines.length + 1}>
-											<span class="badge">{SECTION_CODE[group.section]}</span>
-											{group.section}
+										<th scope="colgroup" colspan={1}>
+											<span class="badge">{SECTION_CODE[g.section]}</span>
+											{g.section}
 										</th>
+										{machines.map((m) => (
+											<td class="sec-m" aria-hidden="true">
+												{m.instanceType}
+											</td>
+										))}
 									</tr>
-									{group.rows.map((row) => {
+									{g.section === "Disk" && (
+										<tr class="sec-note">
+											<td colspan={machines.length + 1}>
+												<b>These rows measure the volume as much as the machine.</b> Every disk row uses each machine's root EBS gp3 volume, the same kind of volume on
+												all five. Random 4 KiB reads ({rowCode("disk_read_io_uring")}) reach the volume's IOPS limit; its throughput limit is what{" "}
+												{rowCode("disk_read_sequential")} shows.
+											</td>
+										</tr>
+									)}
+									{g.rows.map((row) => {
 										rowNumber += 1;
 										const n = String(rowNumber).padStart(2, "0");
 										const c = row.choice;
+										const p = prepareRow(row);
 										return (
 											<tr class="row">
 												<th scope="row" class="what">
@@ -303,34 +426,53 @@ export default function Page() {
 														<span class="badge">
 															{SECTION_CODE[c.section]} {n}
 														</span>
-														<span class="what-kind">{c.lead === "rate" ? "Median rate" : "Median time"}</span>
+														<span class="what-kind">
+															{c.lead === "rate" ? "Median rate" : "Median time"} · <span class="what-unit">{p.unit}</span>
+														</span>
+														<span class={`what-dir ${c.lead === "rate" ? "up" : "down"}`}>
+															{c.lead === "rate" ? "higher is faster" : "lower is faster"}
+														</span>
 													</span>
 													<span class="what-label">{c.label}</span>
 													<span class="what-desc">{c.what}</span>
-													{c.lead === "time" && (
-														<span class="what-rep">
-															<b>One repetition:</b> {c.repetition}
-														</span>
-													)}
-													<span class="what-set">{c.setting}</span>
+													<span class="what-set">
+														{c.lead === "time" && (
+															<>
+																<b>One repetition:</b> {c.repetition.replace(/\.$/, "")} ·{" "}
+															</>
+														)}
+														{c.setting}
+													</span>
 												</th>
-												{row.cells.map((cell) => {
-													const f = leadFigure(c, cell.series);
-													const shown = f.kind === "rate" ? formatRate(f.p50) : formatDuration(f.p50);
+												{p.cells.map(({ cell, f, p50, p5, p95, at }) => {
 													const t = formatMoment(cell.series.newest_run_started_at);
+													const per = c.per && f.kind === "time" ? formatDurationPerUnit(f.p50, c.per) : undefined;
 													return (
 														<td class="fig">
-															<a href={links.seriesFile(cell.series)} title={exactTitle(shown)}>
+															<a href={links.seriesFile(cell.series)} title={exactTitle(p50)}>
 																<span class="fig-m" aria-hidden="true">
 																	{cell.machine.instanceType}
 																</span>
 																<span class="fig-main">
-																	<span class="fig-n">{shown.short}</span>
-																	<span class="fig-u">{shown.unit}</span>
+																	<span class="fig-n">{p50.short}</span>
+																	<span class="fig-u">{p50.unit}</span>
 																</span>
 																<span class="fig-full">
 																	<span class="sr">exactly </span>
-																	{shown.full}
+																	{group(p50.full, ",", " ")}
+																</span>
+																{per && (
+																	<span class="fig-per" title={`${per.full} ${per.unit} per ${per.per.of}, exactly`}>
+																		{per.short} {per.unit} / section
+																	</span>
+																)}
+																<span class="fig-bar" aria-hidden="true">
+																	<i class="fig-fill" style={{ width: `${at(f.p50)}%` }} />
+																	<i class="fig-whisk" style={{ left: `${at(f.p5)}%`, width: `${at(f.p95) - at(f.p5)}%` }} />
+																</span>
+																<span class="fig-range" title={`5th percentile ${p5.full} ${p5.unit}, 95th ${p95.full} ${p95.unit}, exactly`}>
+																	<span class="sr">5th to 95th percentile: </span>
+																	{p5.short}–{p95.short}
 																</span>
 																<span class="fig-meta">
 																	<time datetime={t.iso} title={t.full}>
@@ -352,8 +494,8 @@ export default function Page() {
 						</table>
 					</div>
 					<p class="board-foot">
-						Times under each figure: when that Series' newest Run started, {newest.date}, UTC. Hover or focus a figure for the value exactly as the API
-						holds it.
+						Times: when each Series' newest Run started, {newest.date}, UTC. The bar under a figure is that figure drawn to the row's scale; its thin
+						line spans the 5th to the 95th percentile of the Series' counted Runs, printed beneath it. Hover or focus a figure for every digit.
 					</p>
 				</section>
 
@@ -403,13 +545,18 @@ export default function Page() {
 											<dd>{m.network}</dd>
 										</div>
 									</dl>
-									<p class="gate-aws">“{m.price.description}”</p>
+									<p class="gate-aws">
+										AWS's words: “{m.price.description}”
+										<span class="gate-ptr" title={`In ${links.prices}, at the JSON Pointer ${m.price.path.pointer}`}>
+											SKU <code>{m.price.sku}</code> · rate code <code>{m.price.rateCode.split(".").pop()}</code>
+										</span>
+									</p>
 								</li>
 							);
 						})}
 					</ol>
 					<p class="board-foot">
-						Price file: <a href={links.prices}>{links.prices}</a>
+						Price file: <a href={links.prices}>{links.prices}</a> · each card names the SKU and rate code its price is read from (hover for the full JSON Pointer).
 					</p>
 				</section>
 
@@ -421,41 +568,99 @@ export default function Page() {
 						</h2>
 						<p class="sec-sub">
 							Everything on this page is a static JSON file at <b>api.ledgermath.com</b>, made for AI agents that make infrastructure decisions. An
-							agent reads the table of contents, takes the Series it needs, and can cite every figure by its Series' address, beside the day's AWS
-							prices.
+							agent reads the table of contents, takes the Series it needs, and cites each figure by its Series' address, beside the day's AWS prices.
 						</p>
 					</div>
 
 					<div class="api-grid">
-						<div class="term">
-							<p class="term-bar" aria-hidden="true">
-								<i />
-								<i />
-								<i />
-								<span>shell</span>
-							</p>
-							<ol class="term-lines">
-								<li data-copy-wrap>
-									<span class="term-c"># the table of contents: newest Run, Series, prices, schemas</span>
-									<code data-copy>
-									curl <Url href={links.index} />
-								</code>
-								</li>
-								<li data-copy-wrap>
-									<span class="term-c">
-										# every Series ({seriesCount}): percentiles, Run counts, its own file
+						<div class="api-main">
+							<div class="term">
+								<p class="term-bar" aria-hidden="true">
+									<i />
+									<i />
+									<i />
+									<span>shell</span>
+								</p>
+								<ol class="term-lines">
+									<li data-copy-wrap>
+										<span class="term-c"># the table of contents: newest Run, Series, prices, schemas</span>
+										<code data-copy>
+											<Curl href={links.index} />
+										</code>
+									</li>
+									<li data-copy-wrap>
+										<span class="term-c"># every Series ({seriesCount}): percentiles, Run counts, its own file</span>
+										<code data-copy>
+											<Curl href={links.seriesList} />
+										</code>
+									</li>
+									<li data-copy-wrap>
+										<span class="term-c">
+											# one Series: {sampleCode} on {sample.instanceType}, each Run's figure and a link to its evidence
+										</span>
+										<code data-copy>
+											<Curl href={sample.url} />
+										</code>
+									</li>
+									<li data-copy-wrap>
+										<span class="term-c"># AWS On-Demand prices, copied {snapshot.priceDate}</span>
+										<code data-copy>
+											<Curl href={links.prices} />
+										</code>
+									</li>
+								</ol>
+							</div>
+
+							<figure class="resp">
+								<figcaption class="resp-head">
+									<span class="resp-file">
+										<code>v1/series/{sample.id}.json</code>
 									</span>
-									<code data-copy>
-									curl <Url href={links.seriesList} />
-								</code>
-								</li>
-								<li data-copy-wrap>
-									<span class="term-c"># AWS On-Demand prices, copied {snapshot.priceDate}</span>
-									<code data-copy>
-									curl <Url href={links.prices} />
-								</code>
-								</li>
-							</ol>
+									<span class="resp-what">
+										One of its {formatCount(sample.points).full} Runs, an excerpt of the file as it is
+									</span>
+								</figcaption>
+								<pre class="resp-body">
+									<code>
+										<span class="j-d">{"{"}</span>
+										{"\n  "}
+										<span class="j-k">"id"</span>: <span class="j-s">{J(sample.id)}</span>,{"\n  "}
+										<span class="j-k">"benchmark"</span>: <span class="j-s">{J(sample.benchmark)}</span>,{"\n  "}
+										<span class="j-k">"instance_type"</span>: <span class="j-s">{J(sample.instanceType)}</span>,{"\n  "}
+										<span class="j-d">…</span>
+										{"\n  "}
+										<span class="j-k">"derivations"</span>: {"{ "}
+										<span class="j-k">"series_v1"</span>: {"{ "}
+										<span class="j-k">"points"</span>: {"[ {"}
+										{"\n    "}
+										<span class="j-k">"run"</span>: <span class="j-s">{J(point.run)}</span>,{"\n    "}
+										<span class="j-k">"started_at"</span>: <span class="j-s">{J(point.started_at)}</span>,{"\n    "}
+										<span class="j-k">"group"</span>: <span class="j-s">{J(point.group)}</span>,{"\n    "}
+										<span class="j-k">"counted"</span>: <span class="j-n">{J(point.counted)}</span>,{"\n    "}
+										<span class="j-k">"samples"</span>: [<span class="j-d"> … </span>],{"\n    "}
+										<span class="j-k">"time_per_repetition_ns"</span>: <mark class="j-n">{J(point.time_per_repetition_ns)}</mark>,{"\n    "}
+										<span class="j-k">"evidence"</span>: <span class="j-s">{J(point.evidence)}</span>,{"\n    "}
+										<span class="j-k">"boot_summary"</span>: <span class="j-s">{J(point.boot_summary)}</span>
+										{"\n  "}
+										{"}, "}
+										<span class="j-d">…</span>
+										{" ] } }"}
+										{"\n"}
+										{"}"}
+									</code>
+								</pre>
+								<p class="resp-foot">
+									This Run started {pointStart.full} and took <b>{pointTime.short} {pointTime.unit}</b> per repetition ({pointTime.full} {pointTime.unit} exactly).
+									{samplePrepared && (
+										<>
+											{" "}
+											Its Series is the {sample.instanceType} figure in row {sampleCode} of the board, <b>{samplePrepared.p50.short} {samplePrepared.p50.unit}</b>:
+											the median of its counted Runs.
+										</>
+									)}{" "}
+									The <code>evidence</code> address is the Run file itself.
+								</p>
+							</figure>
 						</div>
 
 						<div class="api-side">
@@ -480,10 +685,24 @@ export default function Page() {
 									))}
 								</tbody>
 							</table>
-							<blockquote class="quote">
-								<p>{snapshot.versioning.split(":")[0]}.</p>
-								<p class="quote-src">The API, on versioning</p>
-							</blockquote>
+							<dl class="api-facts">
+								<div>
+									<dt>Versioning</dt>
+									<dd>{snapshot.versioning.split(":")[0]}.</dd>
+								</div>
+								<div>
+									<dt>Evidence</dt>
+									<dd>
+										Each Run file names its binary, streams and dumps by hash; each is a blob at <code>{links.evidenceBlobTemplate}</code>.
+									</dd>
+								</div>
+								<div>
+									<dt>Price files</dt>
+									<dd>
+										One a day, {formatCount(links.priceFiles.length).full} so far, at <code>{links.priceFilePattern.replace("https://api.ledgermath.com/", "")}</code>.
+									</dd>
+								</div>
+							</dl>
 							<p class="api-docs">
 								<a href={links.docs}>Read the data API's documentation →</a>
 							</p>
@@ -557,9 +776,10 @@ export default function Page() {
 						<p class="defs-more">
 							Every definition of both Methods, word for word, is in <a href={links.seriesList}>series.json</a> under <code>methods</code>.
 						</p>
-						<blockquote class="defs-figures">
-							<p>“{snapshot.figures.split(":")[0]}.”</p>
-						</blockquote>
+						<p class="defs-figures">
+							<b>Rounding.</b> In the API nothing is rounded: every number is as the Methods' Derivations hold it. On the board, the large figure is
+							shortened for reading, to as many digits as tell its row apart; the line beneath it, and its title, keep every digit.
+						</p>
 					</div>
 				</section>
 			</main>
