@@ -9,6 +9,10 @@
  * parsed values, member by member and number by number, never bytes the
  * generator wrote. A passing check establishes all of this:
  *
+ * - Every JSON file of the tree is strict JSON, as the strictest reader
+ *   would read it (strict-json.ts): UTF-8, with no byte-order mark, and no
+ *   object holding a member name twice, so no two readers can read one file
+ *   as two values.
  * - The tree holds exactly the files it should: the table of contents, the
  *   list, the four schemas, one file per Series of either file of
  *   Derivations and one per price file in the checkout; nothing else.
@@ -39,7 +43,8 @@
  *   and agrees with that file on every field they share.
  * - The table of contents lists exactly the price files and the schemas the
  *   tree holds, with the newest price file marked, counts the Series right,
- *   and gives every address as the base and the file's path.
+ *   gives every address as the base and the file's path, and gives the docs
+ *   as an absolute https address with a host.
  * - Every link field, in its place in the files, names a file under the
  *   base: under v1/ a file of the tree, under runs/ or boots/ a file of the
  *   checkout. Only the blob address template is not a file; it is checked to
@@ -57,6 +62,7 @@ import Ajv2020, { type ValidateFunction } from "ajv/dist/2020";
 import type { DerivationsFile as RequestsFile } from "../../methods/requests/v1/output";
 import type { DerivationsFile as SeriesFile } from "../../methods/v1/output";
 import { PRICE_FILE_PATH } from "./prices";
+import { parseStrictJson } from "./strict-json";
 
 export interface CheckSources {
 	/** The directory the tree was written to: it holds v1/. */
@@ -120,7 +126,7 @@ function isObject(value: unknown): value is Json {
 
 const byText = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 
-/** JSON with every object's keys in byte order: one text for one value, whatever order its members came in. */
+/** JSON with every object's keys in JavaScript's default string order, by UTF-16 code unit: one text for one value, whatever order its members came in. */
 function canonical(value: unknown): string {
 	if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
 	if (isObject(value)) {
@@ -130,6 +136,13 @@ function canonical(value: unknown): string {
 			.join(",")}}`;
 	}
 	return JSON.stringify(value);
+}
+
+/** An absolute https address with a host and no user name or password, as WHATWG's URL parser reads it. */
+export function isHttpsAddress(value: unknown): boolean {
+	if (typeof value !== "string" || !URL.canParse(value)) return false;
+	const url = new URL(value);
+	return url.protocol === "https:" && url.hostname !== "" && url.username === "" && url.password === "" && value.toLowerCase().startsWith(`https://${url.host}`);
 }
 
 /** A value as a problem shows it: its JSON, cut short. */
@@ -209,11 +222,12 @@ export function checkApi(sources: CheckSources): CheckResult {
 	const files = listFiles(sources.tree);
 	const held = new Set(files);
 	const read = (path: string): Buffer => readFileSync(join(sources.tree, ...path.split("/")));
+	/** A file of the tree, read as strictly as its strictest reader would (strict-json.ts); undefined, and a problem, when it cannot be. */
 	const parse = (path: string): unknown => {
 		try {
-			return JSON.parse(read(path).toString("utf8"));
+			return parseStrictJson(read(path));
 		} catch (error) {
-			problems.push(`${path} is not JSON: ${error instanceof Error ? error.message : String(error)}`);
+			problems.push(`${path} is not strict JSON: ${error instanceof Error ? error.message : String(error)}`);
 			return undefined;
 		}
 	};
@@ -293,8 +307,11 @@ export function checkApi(sources: CheckSources): CheckResult {
 	const validators = new Map<SchemaName, ValidateFunction>();
 	for (const { name, source, closed } of SCHEMAS) {
 		const bytes = readFileSync(join(ROOT, source));
-		if (held.has(schemaFile(name)) && !read(schemaFile(name)).equals(bytes)) problems.push(`${schemaFile(name)} is not byte for byte ${source} of this repository`);
-		const schema: unknown = JSON.parse(bytes.toString("utf8"));
+		if (held.has(schemaFile(name))) {
+			if (!read(schemaFile(name)).equals(bytes)) problems.push(`${schemaFile(name)} is not byte for byte ${source} of this repository`);
+			parse(schemaFile(name));
+		}
+		const schema: unknown = parseStrictJson(bytes);
 		validators.set(name, ajv.compile((closed ? closeSchema(schema) : schema) as object));
 	}
 	const validate = (path: string, value: unknown, name: SchemaName): void => {
@@ -441,6 +458,8 @@ export function checkApi(sources: CheckSources): CheckResult {
 			if (isObject(ofPrices.newest)) link(INDEX, ofPrices.newest.url);
 			for (const entry of Array.isArray(ofPrices.files) ? ofPrices.files : []) if (isObject(entry)) link(INDEX, entry.url);
 			for (const entry of Array.isArray(value.schemas) ? value.schemas : []) if (isObject(entry)) link(INDEX, entry.url);
+			// The schema's pattern says what an address for the docs is written as; WHATWG's URL parser must read it as https with a host too.
+			if (!isHttpsAddress(value.docs)) problems.push(`${INDEX}: docs is ${show(value.docs)}, not an absolute https address with a host`);
 			link(INDEX, value.docs, { mustBeUnderBase: false });
 		}
 	}

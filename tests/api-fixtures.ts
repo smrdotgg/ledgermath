@@ -16,7 +16,12 @@
  * - boots/2026/11/12/boot-2026-11-12.json: the summary of the first day's boot
  *   only, so some points link a boot summary and the others none.
  *
- * With `edges`, two Series more, each of what a Method can emit and today's
+ * With `small`, no syscall Series, and the other Runs with three counted
+ * samples each where they had ten, and four requests and three where they had
+ * forty and thirty-nine: the tree tests/api-golden.test.ts keeps a copy of,
+ * small enough to read in review, with every kind of object of both Methods.
+ *
+ * With `edges`, three Series more, each of what a Method can emit and today's
  * data do not show:
  * - memory_write: one Run whose one counted sample took 0 ns, with bytes per
  *   repetition. It counts, its time per repetition is 0, and its bytes per
@@ -24,6 +29,11 @@
  *   in every percentile of bytes per second.
  * - tcp_echo: one Run whose parameter destination is a string under the API's
  *   own address, which is data, not a link.
+ * - memory_copy: one Run of two counted samples of one repetition each, with
+ *   clock intervals [0, x] and [x, Number.MAX_VALUE], x = 1.5 × 2^971. The
+ *   Run's time per repetition is the mean of the two, whose sum overflows: it
+ *   is infinite, which the Derivation writes as null, in its point and in
+ *   every percentile of time per repetition; its bytes per second is 0.
  */
 
 import { copyFileSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
@@ -47,36 +57,66 @@ export interface ApiFixture {
 	series: SeriesFile;
 	requests: RequestsFile;
 	memory: string;
+	/** The syscall Series; empty with `small`, which has none. */
 	syscall: string;
 	http: string;
 	/** The unreadable Run file's path. */
 	unreadable: string;
-	/** With `edges`: the Series with a Run of 0 ns per repetition, and the one whose parameter is an address. */
+	/** With `edges`: the Series with a Run of 0 ns per repetition, the one whose parameter is an address, and the one whose Run's time per repetition overflows. */
 	zeroTime?: string;
 	addressParam?: string;
+	overflowTime?: string;
 }
 
 /** The parameter of the tcp_echo Series made with `edges`: an address under the API's own base, that names no file. */
 export const ADDRESS_PARAM = "https://api.ledgermath.com/connection-test";
 
-const samples = (ns: number): number[] => Array.from({ length: 10 }, (_, i) => ns + i * 1000);
+/** x of the memory_copy edge: its two samples are [0, x] and [x, Number.MAX_VALUE] on the Run's clock. */
+export const OVERFLOW_X = 1.5 * 2 ** 971;
 
-export async function makeApiFixture(options: { extraSyscallRun?: boolean; edges?: boolean } = {}): Promise<ApiFixture> {
+/** The memory_copy edge's stream: the clock starts at 0 and ends at the largest double, which is a whole number. */
+function overflowStream(): string {
+	const events = [
+		{ event: "started", t: 0, schema: "ledgermath.events/1", wall_utc: "2026-11-13T04:16:00.000000000Z", clock: "CLOCK_MONOTONIC_RAW", clock_read_ns: 20, quick: false },
+		{ event: "observed", t: 0, values: { bytes_per_repetition: 4096, threads_used: 1, path_taken: "scalar" } },
+		{ event: "sample_started", t: 0, sample: 0, warmup: false, repetitions: 1 },
+		{ event: "sample_ended", t: OVERFLOW_X, sample: 0 },
+		{ event: "sample_started", t: OVERFLOW_X, sample: 1, warmup: false, repetitions: 1 },
+		{ event: "sample_ended", t: Number.MAX_VALUE, sample: 1 },
+		{ event: "verified", t: Number.MAX_VALUE, checksum: "0x0000000000000001" },
+		{ event: "finished", t: Number.MAX_VALUE },
+	];
+	return `${events.map((event) => JSON.stringify(event)).join("\n")}\n`;
+}
+
+export async function makeApiFixture(options: { extraSyscallRun?: boolean; edges?: boolean; small?: boolean } = {}): Promise<ApiFixture> {
+	const samples = (ns: number): number[] => Array.from({ length: options.small ? 3 : 10 }, (_, i) => ns + i * 1000);
+	const requestsOf = (n: number): number => (options.small ? n - 36 : n);
 	const made = new HandMade();
 	made.run({ startedAt: "2026-11-12T04:12:00Z", samplesNs: samples(7e6) });
 	made.run({ startedAt: "2026-11-13T04:12:00Z", samplesNs: samples(8e6) });
 	made.run({ startedAt: "2026-11-14T04:12:00Z", samplesNs: samples(9e6), processor: "Intel(R) Xeon(R) Platinum 8259CL" });
 	made.run({ startedAt: "2026-11-15T04:12:00Z", samplesNs: samples(8e6), crashAfter: 3 });
-	made.run({ startedAt: "2026-11-12T04:13:00Z", benchmark: "syscall", binary: "syscall", params: { call: "getpid" }, samplesNs: samples(94.7), bytesPerRepetition: null });
-	requestRun(made, { startedAt: "2026-11-12T22:20:00Z", stream: { connection: "new", requests: rampRequests(40, 20_000_000, 50_000) } });
+	if (!options.small) made.run({ startedAt: "2026-11-12T04:13:00Z", benchmark: "syscall", binary: "syscall", params: { call: "getpid" }, samplesNs: samples(94.7), bytesPerRepetition: null });
+	requestRun(made, { startedAt: "2026-11-12T22:20:00Z", stream: { connection: "new", requests: rampRequests(requestsOf(40), 20_000_000, 50_000) } });
 	requestRun(made, {
 		startedAt: "2026-11-13T04:20:00Z",
 		exit: { code: 4 },
-		stream: { connection: "new", requests: [...rampRequests(39, 21_000_000, 40_000), { fail: { phase: "first_byte", error: "timeout" } }] },
+		stream: { connection: "new", requests: [...rampRequests(requestsOf(39), 21_000_000, 40_000), { fail: { phase: "first_byte", error: "timeout" } }] },
 	});
 	if (options.edges) {
 		made.run({ startedAt: "2026-11-13T04:14:00Z", benchmark: "memory_write", binary: "memory_write", params: { size_bytes: 4096 }, samplesNs: [0], repetitions: 1, bytesPerRepetition: 4096 });
 		made.run({ startedAt: "2026-11-13T04:15:00Z", benchmark: "tcp_echo", binary: "tcp_echo", params: { destination: ADDRESS_PARAM }, samplesNs: samples(5e4), bytesPerRepetition: null });
+		made.run({
+			startedAt: "2026-11-13T04:16:00Z",
+			benchmark: "memory_copy",
+			binary: "memory_copy",
+			params: { size_bytes: 4096 },
+			samplesNs: [OVERFLOW_X, Number.MAX_VALUE - OVERFLOW_X],
+			repetitions: 1,
+			bytesPerRepetition: 4096,
+			stdout: overflowStream(),
+		});
 	}
 	if (options.extraSyscallRun) {
 		made.run({ startedAt: "2026-11-16T04:13:00Z", benchmark: "syscall", binary: "syscall", params: { call: "getpid" }, samplesNs: samples(95.1), bytesPerRepetition: null });
@@ -122,9 +162,9 @@ export async function makeApiFixture(options: { extraSyscallRun?: boolean; edges
 		series: JSON.parse(series.serialize(seriesFile)) as SeriesFile,
 		requests: JSON.parse(requests.serialize(requestsFile)) as RequestsFile,
 		memory: id("memory_read"),
-		syscall: id("syscall"),
+		syscall: options.small ? "" : id("syscall"),
 		http: id("http_get"),
 		unreadable: unreadablePath,
-		...(options.edges ? { zeroTime: id("memory_write"), addressParam: id("tcp_echo") } : {}),
+		...(options.edges ? { zeroTime: id("memory_write"), addressParam: id("tcp_echo"), overflowTime: id("memory_copy") } : {}),
 	};
 }

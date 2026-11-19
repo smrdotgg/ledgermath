@@ -249,6 +249,10 @@ export function buildApi(sources: ApiSources): Map<string, Uint8Array> {
 		return schema;
 	};
 	const shapes = { index: shape("index"), "series-list": shape("series-list"), series: shape("series") };
+	// The docs' address is the one link the build is given whole: refuse it unless it is what the index schema allows.
+	const docsPattern = ((shapes.index.properties as Json | undefined)?.docs as Json | undefined)?.pattern;
+	if (typeof docsPattern !== "string") throw new Error("the schema index gives no pattern for docs");
+	if (!new RegExp(docsPattern, "u").test(sources.docs)) throw new Error(`${sources.docs} is not an address for the docs: an absolute https address with a host`);
 
 	const series = new Map<string, SeriesDerivation>();
 	for (const derivation of sources.series.derivations) {
@@ -507,8 +511,11 @@ function seriesOrder(a: SeriesDerivation, b: SeriesDerivation): number {
  * held them in: the members its schema lists come first, in the schema's
  * order (the order the files were designed in), and any other member, such as
  * a key of a free-form object (parameters, a group's facts, the Methods'
- * definitions, a Service's inputs), after them, in byte order. Without a
- * schema every object's members are in byte order.
+ * definitions, a Service's inputs), after them, in JavaScript's default
+ * string order, by UTF-16 code unit (byte order for the ASCII names in use).
+ * Without a schema every object's members are in that order. The order of
+ * the schemas' properties thus fixes the files' bytes: tests/api-golden.test.ts
+ * shows any change to it.
  */
 export function apiJson(value: unknown, schema?: unknown): string {
 	const root = isJson(schema) ? schema : {};

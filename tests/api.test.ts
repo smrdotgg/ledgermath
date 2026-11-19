@@ -16,7 +16,7 @@ import {
 	seriesPath,
 } from "../scripts/lib/api";
 import { checkApi, closeSchema, difference } from "../scripts/lib/api-check";
-import { ADDRESS_PARAM, type ApiFixture, makeApiFixture } from "./api-fixtures";
+import { ADDRESS_PARAM, type ApiFixture, makeApiFixture, OVERFLOW_X } from "./api-fixtures";
 
 // Deriving the hand-made Runs, and reading a whole tree back, can take longer than bun's five-second default on a loaded machine.
 setDefaultTimeout(60_000);
@@ -161,7 +161,7 @@ describe("the same inputs give the same bytes", () => {
 		}
 	});
 
-	test("whatever order the members of any object of the Derivations come in, the free-form ones (params, facts, definitions, a Service's inputs) written in byte order", () => {
+	test("whatever order the members of any object of the Derivations come in, the free-form ones (params, facts, definitions, a Service's inputs) written by UTF-16 code unit", () => {
 		const sources = sourcesOf(fixture);
 		sources.series = reversedKeys(sources.series);
 		sources.requests = reversedKeys(sources.requests);
@@ -172,7 +172,7 @@ describe("the same inputs give the same bytes", () => {
 		const params = sourcesOf(fixture);
 		for (const derivation of [...params.series.derivations, ...params.requests.derivations]) derivation.series.params = reversedKeys(derivation.series.params);
 		for (const [path, bytes] of buildApi(params)) expect(new TextDecoder().decode(bytes)).toBe(text(tree, path));
-		// Free-form objects in byte order; known fields in the order of their schema.
+		// Free-form objects by UTF-16 code unit (JavaScript's default string order); known fields in the order of their schema.
 		const memory = text(tree, seriesPath(fixture.memory));
 		expect(memory).toContain('"params": {\n    "path": "scalar",\n    "size_bytes": 1073741824,\n    "threads": 1\n  },');
 		const facts = Object.keys(json(tree, seriesPath(fixture.memory)).derivations.series_v1.groups[0].facts);
@@ -303,7 +303,7 @@ describe("Run files that could not be read", () => {
 });
 
 describe("the build refuses Derivations that do not hold together", () => {
-	test("two Methods citing different Runs for one Series, a Series of requests series v1 lacks, an id that is not one", () => {
+	test("two Methods citing different Runs for one Series, a Series of requests series v1 lacks, an id that is not one, docs that are no https address", () => {
 		const differ = sourcesOf(fixture);
 		(differ.requests.derivations[0] as Json).runs = (differ.requests.derivations[0] as Json).runs.slice(1);
 		expect(() => buildApi(differ)).toThrow("cite different Runs");
@@ -313,6 +313,7 @@ describe("the build refuses Derivations that do not hold together", () => {
 		const unsafe = sourcesOf(fixture);
 		(unsafe.series.derivations[0] as Json).series.id = "../../etc";
 		expect(() => buildApi(unsafe)).toThrow("not 12 hex digits");
+		for (const docs of ["https://", "http://example.test/docs", "https://example.test/a b"]) expect(() => buildApi({ ...sourcesOf(fixture), docs })).toThrow("is not an address for the docs");
 	});
 });
 
@@ -347,6 +348,43 @@ describe("the check fails loudly", () => {
 		const index = check(edit("v1/index.json", (value) => delete value.prices));
 		expect(index[0]).toContain("v1/index.json does not match v1/schemas/index.schema.json: / must have required property 'prices'");
 		expect(index.filter((problem) => problem.startsWith("v1/index.json: prices: /")).map((problem) => problem.split(" ")[2])).toEqual(["/schema_url", "/files", "/newest"]);
+	});
+
+	test("when a file is not strict JSON: a member twice in one object, a byte that is not UTF-8, a byte-order mark", () => {
+		const count = check((copy) => {
+			const path = join(copy, "v1/series.json");
+			const value = readFileSync(path, "utf8");
+			const [line] = value.match(/^  "count": [0-9]+,$/m) ?? [];
+			expect(line).toBeDefined();
+			writeFileSync(path, value.replace(line as string, `  "count": 999,\n${line}`));
+		});
+		expect(count).toEqual(['v1/series.json is not strict JSON: the object at / holds the member "count" twice']);
+		const nested = check((copy) => {
+			const path = join(copy, seriesPath(fixture.memory));
+			writeFileSync(path, readFileSync(path, "utf8").replace('{"run":', '{"run":"x","\\u0072un":'));
+		});
+		expect(nested).toEqual([`${seriesPath(fixture.memory)} is not strict JSON: the object at /derivations/series_v1/points/0 holds the member "run" twice`]);
+		const byte = check((copy) => {
+			const path = join(copy, "v1/index.json");
+			const value = readFileSync(path);
+			const at = value.indexOf('"about": "') + 12;
+			writeFileSync(path, Buffer.concat([value.subarray(0, at), Buffer.from([0xff]), value.subarray(at)]));
+		});
+		expect(byte).toEqual([expect.stringMatching(/^v1\/index\.json is not strict JSON: it is not UTF-8: byte [0-9]+ is 0xff$/)]);
+		const mark = check((copy) => {
+			const path = join(copy, seriesPath(fixture.syscall));
+			writeFileSync(path, Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), readFileSync(path)]));
+		});
+		expect(mark).toEqual([`${seriesPath(fixture.syscall)} is not strict JSON: it begins with a byte-order mark`]);
+	});
+
+	test("when the docs are not an absolute https address with a host", () => {
+		for (const docs of ["https://", "https:///README.md", "http://example.test/docs", "https://user@example.test/docs", "example.test/docs"]) {
+			const problems = check(edit("v1/index.json", (value) => (value.docs = docs)));
+			expect(problems).toContain(`v1/index.json: docs is ${JSON.stringify(docs)}, not an absolute https address with a host`);
+			expect(problems).toContain('v1/index.json does not match v1/schemas/index.schema.json: /docs must match pattern "' + JSON.parse(readFileSync(join(ROOT, "schemas/api/v1/index.schema.json"), "utf8")).properties.docs.pattern + '"');
+		}
+		expect(check(edit("v1/index.json", (value) => (value.docs = "https://Example.test:8443/a/b?c=d#e")))).toEqual([]);
 	});
 
 	test("when a link in the list or the table of contents names a file the tree lacks", () => {
@@ -538,7 +576,7 @@ describe("what a Method can emit and today's data do not show", () => {
 	test("matches the schemas, and the check finds no problem", () => {
 		const result = checkApi({ tree: edgeDirectory, runs: edges.runs, base: DEFAULT_BASE, series: edges.series, requests: edges.requests });
 		expect(result.problems).toEqual([]);
-		expect(result.series).toBe(5);
+		expect(result.series).toBe(6);
 	});
 
 	test("a counted Run of 0 ns per repetition, with bytes per repetition: its bytes per second, and every percentile of it, is null", () => {
@@ -552,6 +590,21 @@ describe("what a Method can emit and today's data do not show", () => {
 		expect(file.derivations.series_v1.percentiles.time_per_repetition_ns).toEqual({ count: 1, runs: [point.run], p5: 0, p50: 0, p95: 0 });
 		const row = json(edgeTree, "v1/series.json").series.find((r: Json) => r.id === id);
 		expect(row.derivations.series_v1.percentiles.bytes_per_second).toEqual({ count: 1, p5: null, p50: null, p95: null });
+		expect(row.derivations.series_v1.counted_runs).toBe(1);
+	});
+
+	test("a counted Run whose time per repetition overflows a double: its time, and every percentile of time, is null; its bytes per second is 0", () => {
+		const id = edges.overflowTime as string;
+		const file = json(edgeTree, seriesPath(id));
+		const [point] = file.derivations.series_v1.points;
+		expect(point.samples.map((sample: Json) => sample.ns)).toEqual([OVERFLOW_X, Number.MAX_VALUE - OVERFLOW_X]);
+		expect([point.counted, point.time_per_repetition_ns, point.bytes_per_repetition, point.bytes_per_second]).toEqual([true, null, 4096, 0]);
+		const time = { count: 1, runs: [point.run], p5: null, p50: null, p95: null };
+		expect(file.derivations.series_v1.percentiles.time_per_repetition_ns).toEqual(time);
+		expect(file.derivations.series_v1.groups[0].percentiles.time_per_repetition_ns).toEqual(time);
+		expect(file.derivations.series_v1.percentiles.bytes_per_second).toEqual({ count: 1, runs: [point.run], p5: 0, p50: 0, p95: 0 });
+		const row = json(edgeTree, "v1/series.json").series.find((r: Json) => r.id === id);
+		expect(row.derivations.series_v1.percentiles.time_per_repetition_ns).toEqual({ count: 1, p5: null, p50: null, p95: null });
 		expect(row.derivations.series_v1.counted_runs).toBe(1);
 	});
 

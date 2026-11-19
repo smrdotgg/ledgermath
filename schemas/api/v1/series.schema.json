@@ -124,7 +124,7 @@
             }
           }
         },
-        "time_per_repetition_ns": { "description": "The median of its samples' ns_per_repetition: the Run's one number, 0 or more. Null when it is not counted.", "$ref": "#/$defs/number_or_null" },
+        "time_per_repetition_ns": { "description": "The median of its samples' ns_per_repetition: the Run's one number, 0 or more. Null when it is not counted; and null when it is infinite, past a double's range, which JSON cannot hold: when it is the mean of its two middle samples' ns_per_repetition and their sum overflows (both near the top of a double's range; no real clock comes near). Such a Run is still counted, and still among the Runs of its Series' and group's time_per_repetition_ns percentiles.", "$ref": "#/$defs/number_or_null" },
         "bytes_per_repetition": { "description": "As the benchmark observed it, a positive number. Null when it is not counted, or when the benchmark observed no bytes per repetition.", "$ref": "#/$defs/number_or_null" },
         "bytes_per_second": {
           "description": "bytes_per_repetition × 10^9 / time_per_repetition_ns. Null when either is null; and null when the quotient is infinite, past a double's range, which JSON cannot hold: chiefly a counted Run that observed bytes per repetition and whose time per repetition is 0 (its median sample ended at the clock read it started at). Such a Run is still counted, and still among the Runs of its Series' and group's bytes_per_second percentiles.",
@@ -133,15 +133,15 @@
       }
     },
     "stat": {
-      "description": "Percentiles of time per repetition across counted Runs, and the Runs they come from. Every counted Run has a time per repetition, and each percentile is a number.",
+      "description": "Percentiles of time per repetition across counted Runs, and the Runs they come from. Every counted Run has a time per repetition. A counted Run's time per repetition is infinite, past a double's range, when it is the mean of its two middle samples' ns_per_repetition and their sum overflows (both near the top of a double's range; no real clock comes near): JSON cannot hold it, so its point shows null, and it is counted here all the same; a percentile taken from it, or interpolated towards it, is null.",
       "type": "object",
       "required": ["count", "runs", "p5", "p50", "p95"],
       "properties": {
         "count": { "description": "Counted Runs.", "type": "integer", "minimum": 1 },
         "runs": { "$ref": "#/$defs/run_ids" },
-        "p5": { "type": "number" },
-        "p50": { "type": "number" },
-        "p95": { "type": "number" }
+        "p5": { "description": "Null when it is infinite or undefined: taken from, or interpolated towards, an infinite time per repetition.", "$ref": "#/$defs/number_or_null" },
+        "p50": { "description": "Null when it is infinite or undefined: taken from, or interpolated towards, an infinite time per repetition.", "$ref": "#/$defs/number_or_null" },
+        "p95": { "description": "Null when it is infinite or undefined: taken from, or interpolated towards, an infinite time per repetition.", "$ref": "#/$defs/number_or_null" }
       }
     },
     "bytes_per_second_stat": {

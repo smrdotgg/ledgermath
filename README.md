@@ -2060,10 +2060,15 @@ address is `--base`, so a private or test address can stand in.
   `v1`. The price files are the exception: each is the Runs repository's, byte for byte, and
   follows its own closed schema, `ledgermath.prices/1`. The schemas admit everything the
   Methods can emit, not only what today's data show (a percentile of bytes per second is null
-  when it comes from a counted Run of 0 ns per repetition).
+  when it comes from a counted Run of 0 ns per repetition, and one of time per repetition when
+  it comes from a counted Run whose time per repetition overflows a double).
 - **The same inputs give the same bytes**, whatever order they come in, the members of their
   objects included (known fields in their schema's order, the keys of params, facts,
-  definitions and a Service's inputs in byte order), and no clock is read.
+  definitions and a Service's inputs in JavaScript's default string order, by UTF-16 code
+  unit, which is byte order for the ASCII names in use), and no clock is read.
+  `tests/api-golden/` holds every file the build writes from the tests' small fixture, so any
+  change to the bytes, a reordered schema included, shows in review as a diff of those files;
+  `LEDGERMATH_WRITE_GOLDEN=1 bun test tests/api-golden.test.ts` writes them anew on purpose.
   A Series file depends only on its own Runs, its Methods' words and the base, so a Series
   that gained no Run keeps its file byte for byte. The data's own moment, the start of the
   newest Run, is in `v1/index.json` and `v1/series.json`; no file says when it was made.
@@ -2079,24 +2084,26 @@ bun scripts/check-api.ts --tree /tmp/api --derivations /tmp/page/derivations.jso
   --requests-derivations /tmp/page/requests-derivations.json --runs /tmp/ledgermath-runs
 ```
 
-The build writes only into a new or empty directory. The check reads back what was written
-and compares it, by its own reading of the design and never by calling the build, with the
+The build writes only into a new or empty directory. The check reads back what was written and
+compares it, by its own reading of the design and never by calling the build, with the
 Derivations, the Runs repository and this repository's schemas. A passing check establishes
-that the tree holds exactly the files it should, each matching this repository's schema of its
-kind (the API's own closed, so an undescribed field fails), with the schemas byte for byte this
-repository's; that every Series file holds each Method's Derivation of its Series value for
-value, apart from what each point adds; that each point's Run file is in the Runs repository
-with the point's Run id, boot and sha256, at the point's evidence, and its boot_summary is
-that boot's summary or null when there is none; that each row agrees with its Series file and
-links it, the table of contents lists exactly the price files and schemas the tree holds and
-counts the Series right; and that every link field, in its place, names a file of the tree or
-of the Runs repository (`scripts/lib/api-check.ts` lists it all).
+that every file of the tree is strict JSON (UTF-8 with no byte-order mark, no object holding a
+member name twice), that the tree holds exactly the files it should, each matching this
+repository's schema of its kind (the API's own closed, so an undescribed field fails), with the
+schemas byte for byte this repository's; that every Series file holds each Method's Derivation
+of its Series value for value, apart from what each point adds; that each point's Run file is
+in the Runs repository with the point's Run id, boot and sha256, at the point's evidence, and
+its boot_summary is that boot's summary or null when there is none; that each row agrees with
+its Series file and links it, the table of contents lists exactly the price files and schemas
+the tree holds and counts the Series right, and gives the docs as an absolute https address
+with a host; and that every link field, in its place, names a file of the tree or of the Runs
+repository (`scripts/lib/api-check.ts` lists it all).
 
 On the data of 2026-11-19 (187 Series, 6,335 Runs, 9 price files) the tree is 202 files and
-38.6 MB: `v1/index.json` 4 KB, `v1/series.json` 193 KB (31 KB compressed), a Series file
-124 to 146 KB (median 133 KB) or, for `http_get`, 344 to 791 KB (median 705 KB), a price
-file 39 KB. The build takes 0.65 s and the check 0.95 s on the dev machine. The lookup tool
-and the agent skill still read the files of Derivations.
+38.6 MB: `v1/index.json` 4 KB, `v1/series.json` 193 KB (31 KB compressed), a Series file 124 to
+146 KB (median 133 KB) or, for `http_get`, 344 to 791 KB (median 705 KB), a price file 39 KB.
+The build takes about 0.7 s and the check about 1.05 s on the dev machine. The lookup tool and
+the agent skill still read the files of Derivations.
 
 ## The website (`site/`)
 

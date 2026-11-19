@@ -152,14 +152,14 @@
       "additionalProperties": { "anyOf": [{ "type": "string" }, { "type": "number" }, { "type": "boolean" }] }
     },
     "stat_summary": {
-      "description": "Percentiles of time per repetition across the Series' counted Runs. Every counted Run has a time per repetition, and each percentile is a number. The Series' file lists the Runs behind them.",
+      "description": "Percentiles of time per repetition across the Series' counted Runs. Every counted Run has a time per repetition. A counted Run's time per repetition is infinite, past a double's range, when it is the mean of its two middle samples' ns_per_repetition and their sum overflows (both near the top of a double's range; no real clock comes near): JSON cannot hold it, so its point shows null, and it is counted here all the same; a percentile taken from it, or interpolated towards it, is null. The Series' file lists the Runs behind them.",
       "type": "object",
       "required": ["count", "p5", "p50", "p95"],
       "properties": {
         "count": { "description": "Counted Runs.", "type": "integer", "minimum": 1 },
-        "p5": { "type": "number" },
-        "p50": { "type": "number" },
-        "p95": { "type": "number" }
+        "p5": { "description": "Null when it is infinite or undefined: taken from, or interpolated towards, an infinite time per repetition.", "$ref": "#/$defs/number_or_null" },
+        "p50": { "description": "Null when it is infinite or undefined: taken from, or interpolated towards, an infinite time per repetition.", "$ref": "#/$defs/number_or_null" },
+        "p95": { "description": "Null when it is infinite or undefined: taken from, or interpolated towards, an infinite time per repetition.", "$ref": "#/$defs/number_or_null" }
       }
     },
     "bytes_per_second_summary": {

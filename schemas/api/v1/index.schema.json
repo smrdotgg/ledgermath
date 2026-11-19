@@ -12,7 +12,11 @@
     "about": { "description": "What LedgerMath and this API are, in words.", "type": "string" },
     "versioning": { "description": "The rule the API's own v1 files keep, in words: v1 only ever gains fields; and its exception, the price files, which follow their own schema, closed.", "type": "string" },
     "figures": { "description": "How the numbers are written, in words: exactly as the Derivations hold them, never rounded.", "type": "string" },
-    "docs": { "description": "Where the API is described in words.", "$ref": "#/$defs/url" },
+    "docs": {
+      "description": "Where the API is described in words: an absolute https address with a host, and a path, query or fragment if any, written with the characters RFC 3986 allows.",
+      "type": "string",
+      "pattern": "^https://[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)*(?::[0-9]{1,5})?(?:[/?#](?:[A-Za-z0-9._~:/?#\\[\\]@!$&'()*+,;=-]|%[0-9A-Fa-f]{2})*)?$"
+    },
     "newest_run_started_at": {
       "description": "When the newest Run of any Series started (UTC, to the nanosecond, as the Run records it): how far the data reach. Null when there is no Series. No file of the API carries the time it was made; the same data give the same bytes.",
       "anyOf": [{ "$ref": "#/$defs/time" }, { "type": "null" }]
