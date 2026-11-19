@@ -1,4 +1,4 @@
-// Design v5, "Swiss poster": one grotesque, one strict grid, one accent colour, few words.
+// Design v5, "Swiss poster": one grotesque, one strict grid, one accent colour, and in this spare form almost no words.
 // Every figure comes from ../../data exactly as the snapshot holds it (see ../README.md).
 import "./page.css";
 import {
@@ -14,7 +14,6 @@ import {
 	links,
 	machines,
 	roundPlaces,
-	seriesFileContents,
 	snapshot,
 	type DurationUnit,
 	type HeadlineRow,
@@ -111,15 +110,7 @@ function price(m: (typeof machines)[number]): Shown {
 	return formatUsd(m.price.usdPerHour, { per: "hour" });
 }
 
-/** "11–19 Nov 2026" for two moments in one month; otherwise "30 Oct–19 Nov 2026". */
-function span(a: ReturnType<typeof formatMoment>, b: ReturnType<typeof formatMoment>): string {
-	const [ad, am, ay] = a.longDate.split(" ");
-	const [bd, bm, by] = b.longDate.split(" ");
-	if (am === bm && ay === by) return `${ad}–${bd} ${bm!.slice(0, 3)} ${by}`;
-	return `${ad} ${am!.slice(0, 3)}–${bd} ${bm!.slice(0, 3)} ${by}`;
-}
-
-const faster = (row: HeadlineRow) => (row.choice.lead === "rate" ? "↑ faster" : "↓ faster");
+const faster = (row: HeadlineRow) => (row.choice.lead === "rate" ? "Higher is faster" : "Lower is faster");
 
 // ---------------------------------------------------------------- parts
 
@@ -129,15 +120,8 @@ function Masthead() {
 			<div class="mast-name">
 				<a href="#top">LedgerMath</a>
 			</div>
-			<p class="mast-cell">
-				Newest Run{" "}
-				<time datetime={newest.iso} title={newest.full}>
-					{newest.longDate}, {newest.minute} UTC
-				</time>
-			</p>
 			<nav class="mast-nav" aria-label="On this page">
 				<a href="#figures">Figures</a>
-				<a href="#api">API</a>
 				<a href="#machines">Machines</a>
 			</nav>
 		</header>
@@ -180,10 +164,7 @@ function Poster() {
 				AWS machines, measured four times a&nbsp;day.
 			</h1>
 			<div class="intro">
-				<p>
-					{formatCount(snapshot.benchmarkCount).full} benchmarks on {formatCount(snapshot.machineCount).full} freshly booted machine types in{" "}
-					<span class="nowrap">{snapshot.region}</span> at 04:10, 10:10, 16:10 and 22:10 UTC. Every Run kept with its evidence, published as JSON for agents.
-				</p>
+				<p class="intro-k">Every Run, as JSON</p>
 				<div class="intro-curl" data-copy={`curl ${links.index}`}>
 					<code tabindex="0">
 						<span class="prompt" aria-hidden="true">
@@ -226,22 +207,17 @@ function Poster() {
 
 			<dl class="facts">
 				<div>
-					<dt>Runs started</dt>
+					<dt>Newest Run</dt>
 					<dd>
-						<time datetime={oldest.iso} title={`${oldest.full} to ${newest.full}`}>
-							{span(oldest, newest)}
+						<time datetime={newest.iso} title={`${newest.full}; the oldest ${oldest.full}`}>
+							{newest.longDate.replace(/ (\w{3})\w+ /, " $1 ")}, {newest.minute}
 						</time>
 					</dd>
 				</div>
 				<div>
-					<dt>Runs kept</dt>
+					<dt>Runs · Series</dt>
 					<dd>
-						{formatCount(snapshot.runCount).full} <span class="facts-s">· {formatCount(snapshot.failedRuns).full} failed</span>
-					</dd>
-				</div>
-				<div>
-					<dt>Series</dt>
-					<dd>
+						<span title={`${formatCount(snapshot.failedRuns).full} failed`}>{formatCount(snapshot.runCount).full}</span> <span class="facts-s">·</span>{" "}
 						<a href={links.seriesList}>{formatCount(snapshot.seriesCount).full}</a>
 					</dd>
 				</div>
@@ -279,6 +255,7 @@ function Key() {
 				<span class="km km-s" aria-hidden="true" />
 				p5 to p95
 			</span>
+			<span class="key-i">↑↓ faster</span>
 		</p>
 	);
 }
@@ -292,7 +269,7 @@ function FigureTable() {
 				</p>
 				<h2 id="figures-h">The figures</h2>
 				<div class="sec-side">
-					<p class="sec-lede">Median of each Series' counted Runs, every digit.</p>
+					<p class="sec-lede">p50 of counted Runs, every digit.</p>
 					<Key />
 				</div>
 			</div>
@@ -307,12 +284,6 @@ function FigureTable() {
 							{machines.map((m) => (
 								<th scope="col" class="mach">
 									<span class="mach-name">{m.instanceType}</span>
-									<span class="mach-spec">
-										{m.vcpu} vCPU · {m.memory}
-									</span>
-									<span class="mach-price" title={`$${price(m).full} an hour, On-Demand`}>
-										${price(m).full}/h
-									</span>
 								</th>
 							))}
 						</tr>
@@ -320,14 +291,9 @@ function FigureTable() {
 					{SECTIONS.map((section) => (
 						<tbody>
 							<tr class="group">
-								<th scope="rowgroup" class="group-h">
+								<th scope="rowgroup" class="group-h" colspan={machines.length + 1}>
 									{section}
 								</th>
-								{machines.map((m) => (
-									<td class="group-m" aria-hidden="true">
-										{m.instanceType}
-									</td>
-								))}
 							</tr>
 							{headline
 								.filter((row) => row.choice.section === section)
@@ -344,7 +310,9 @@ function FigureTable() {
 												</a>
 												<span class="row-fig">
 													<span class="row-unit">{row.choice.per ? `${unit} per ${formatCount(row.choice.per.count).full}` : unit}</span>
-													<span class="row-dir">{faster(row)}</span>
+													<span class="row-dir" title={faster(row)}>
+														{row.choice.lead === "rate" ? "↑" : "↓"}
+													</span>
 												</span>
 											</th>
 											{row.cells.map((cell) => {
@@ -383,107 +351,16 @@ function FigureTable() {
 	);
 }
 
-// The worked example: the Series the snapshot keeps a file of (a cell of the table), as series.json lists it.
-const J = (v: unknown) => JSON.stringify(v);
-const walkRow = headline.find((row) => row.cells.some((cell) => cell.series.id === seriesFileContents.sample.id))!;
-const walkCell = walkRow.cells.find((cell) => cell.series.id === seriesFileContents.sample.id)!;
-const walkKey = walkRow.choice.lead === "rate" ? "bytes_per_second" : "time_per_repetition_ns";
-const walkP = walkCell.series.derivations.series_v1.percentiles[walkKey]!;
-const seriesExcerpt = [
-	`{ "id": ${J(walkCell.series.id)},`,
-	`  "url": ${J(walkCell.series.url)},`,
-	`  "instance_type": ${J(walkCell.series.instance_type)},`,
-	`  "derivations": { "series_v1": { "percentiles": {`,
-	`    ${J(walkKey)}: { "count": ${J(walkP.count)},`,
-	`      "p5": ${J(walkP.p5)},`,
-	`      "p50": ${J(walkP.p50)},`,
-	`      "p95": ${J(walkP.p95)} } … } } } }`,
-].join("\n");
-
-function Api() {
-	const lines = [
-		{ url: links.index, what: "Contents" },
-		{ url: links.seriesList, what: "Every Series" },
-		{ url: links.prices, what: "Prices" },
-	];
-	return (
-		<section id="api" class="api" aria-labelledby="api-h">
-			<div class="sec-head grid">
-				<p class="sec-no" aria-hidden="true">
-					02
-				</p>
-				<h2 id="api-h">The API</h2>
-				<p class="sec-lede">Static JSON, version 1. It only gains fields.</p>
-			</div>
-
-			<div class="grid">
-				<div class="api-main">
-					<ul class="curls">
-						{lines.map((line) => (
-							<li>
-								<span class="curl-what">{line.what}</span>
-								<pre class="curl" data-copy={`curl ${line.url}`}>
-									<code tabindex="0">
-										<span class="prompt" aria-hidden="true">
-											${" "}
-										</span>
-										curl {line.url}
-									</code>
-								</pre>
-							</li>
-						))}
-					</ul>
-
-					<h3 class="walk-h">
-						<a href={`#${anchor(walkRow)}`}>
-							{walkRow.choice.label}, {walkCell.machine.instanceType}
-						</a>
-						, in series.json
-					</h3>
-					<pre class="json" role="region" tabindex="0" aria-label="An excerpt of series.json">
-						<code>{seriesExcerpt}</code>
-					</pre>
-				</div>
-
-				<dl class="api-side">
-					<div>
-						<dt>Schemas</dt>
-						<dd class="api-links">
-							{links.schemas.map((s) => (
-								<a href={s.url}>{s.name}</a>
-							))}
-						</dd>
-					</div>
-					<div>
-						<dt>Evidence</dt>
-						<dd class="mono">
-							{links.evidenceBlobTemplate.split("blobs/")[0]}
-							<wbr />
-							blobs/{links.evidenceBlobTemplate.split("blobs/")[1]}
-						</dd>
-					</div>
-					<div>
-						<dt>Docs</dt>
-						<dd>
-							<a href={links.docs}>{links.docs.replace("https://", "")}</a>
-						</dd>
-					</div>
-				</dl>
-			</div>
-		</section>
-	);
-}
-
 function Machines() {
 	return (
 		<section id="machines" class="machines" aria-labelledby="machines-h">
 			<div class="sec-head grid">
 				<p class="sec-no" aria-hidden="true">
-					03
+					02
 				</p>
 				<h2 id="machines-h">The machines</h2>
 				<p class="sec-lede">
-					On-Demand Linux, {snapshot.region}, <a href={links.prices}>{snapshot.priceDate}</a>.
+					On-Demand, {snapshot.region}, <a href={links.prices}>{snapshot.priceDate}</a>
 				</p>
 			</div>
 
@@ -498,9 +375,6 @@ function Machines() {
 							<th scope="col" class="num">
 								Memory
 							</th>
-							<th scope="col" class="m-proc">
-								Processor
-							</th>
 							<th scope="col" class="num">
 								$/hour
 							</th>
@@ -509,10 +383,11 @@ function Machines() {
 					<tbody>
 						{machines.map((m) => (
 							<tr>
-								<th scope="row">{m.instanceType}</th>
+								<th scope="row" title={m.processor}>
+									{m.instanceType}
+								</th>
 								<td class="num">{m.vcpu}</td>
 								<td class="num">{m.memory}</td>
-								<td class="m-proc">{m.processor}</td>
 								<td class="num m-usd" title={m.price.path.pointer}>
 									{price(m).full}
 								</td>
@@ -530,7 +405,8 @@ function Footer() {
 		<footer class="foot grid">
 			<div class="foot-name">LedgerMath</div>
 			<p class="foot-cell">
-				<a href={links.index}>index.json</a> · <a href={links.seriesList}>series.json</a> · <a href={links.prices}>prices</a> · <a href={links.docs}>docs</a>
+				<a href={links.index}>index.json</a> · <a href={links.seriesList}>series.json</a> · <a href={links.prices}>prices</a> ·{" "}
+				<a href={links.schema.index}>schemas</a> · <a href={links.docs}>docs</a>
 			</p>
 		</footer>
 	);
@@ -543,7 +419,6 @@ export default function Page() {
 			<main>
 				<Poster />
 				<FigureTable />
-				<Api />
 				<Machines />
 			</main>
 			<Footer />

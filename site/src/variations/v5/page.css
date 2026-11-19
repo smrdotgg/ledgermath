@@ -194,6 +194,13 @@ pre {
 	gap: 16px;
 }
 
+.intro-k {
+	font-size: 13px;
+	font-weight: 700;
+	color: var(--muted);
+	margin-bottom: -8px;
+}
+
 .intro-curl {
 	position: relative;
 	background: var(--code-bg);
@@ -395,7 +402,7 @@ pre {
 .facts {
 	grid-column: 1 / -1;
 	display: grid;
-	grid-template-columns: repeat(5, minmax(0, 1fr));
+	grid-template-columns: repeat(4, minmax(0, 1fr));
 	column-gap: var(--g);
 	margin-top: 56px;
 }
@@ -888,17 +895,17 @@ td.hero-cell .bar-f {
 }
 
 .mtable .num {
-	width: 10%;
+	width: 11%;
 	text-align: right;
 	padding-left: 16px;
 }
 
 .mtable thead th:first-child {
-	width: 24%;
+	width: 50%;
 }
 
 .mtable thead th:last-child {
-	width: 16%;
+	width: 28%;
 }
 
 .mtable .m-proc {
@@ -969,7 +976,7 @@ td.hero-cell .bar-f {
 	}
 
 	.facts {
-		grid-template-columns: repeat(3, minmax(0, 1fr));
+		grid-template-columns: repeat(2, minmax(0, 1fr));
 		row-gap: 20px;
 	}
 
@@ -1065,8 +1072,14 @@ td.hero-cell .bar-f {
 		margin-right: 0;
 	}
 
+	/* Copy sits on the line of the command's label. */
+	.intro-k {
+		line-height: 26px;
+		margin-bottom: -6px;
+	}
+
 	.intro-curl.has-copy {
-		margin-top: 22px;
+		margin-top: 0;
 	}
 
 	.curl-what {
