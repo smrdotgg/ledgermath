@@ -20,10 +20,11 @@
  *     that commit is in the branch merged and its design had no uncommitted changes; otherwise
  *     the tip of home-v<n> (or, with no such branch, the last commit that changed the design).
  *  4. Builds everything (`bun run build`: a design or form that does not build is shown as such;
- *     the command stops only if the picker fails; the forms are origin's form tags, fetched in
- *     step 1, built afresh and not committed), commits scores.json and the checkpoints, and
- *     pushes home-variations and the new tags in one push, so the round makes one preview
- *     deployment.
+ *     the command stops only if the picker fails; the forms are this repository's form tags
+ *     home/v<n>/form-<name>, built afresh and not committed), commits scores.json and the
+ *     checkpoints, and pushes home-variations, the new checkpoint tags and every form tag
+ *     (forced: a form's tag may move) in one push, so the round makes one preview deployment
+ *     and the preview, built from origin's tags, has the forms the local build had.
  *  5. Prints each subject's lowest and mean score per judge, and the new checkpoints.
  *
  * --no-push does everything but the push. --dry-run reads and checks the judgements, says what
@@ -36,7 +37,7 @@ import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import judgementSchema from "./variations-judgement.schema.json";
 import scoresSchema from "./variations-scores.schema.json";
-import { freezeDesign } from "./variations/frozen";
+import { formTags, freezeDesign } from "./variations/frozen";
 import { parseArgs, SITE, SLOTS, type Slot } from "./variations/lib";
 
 const REPO = resolve(SITE, "..");
@@ -236,6 +237,9 @@ async function buildFrozen(checkpoint: NewCheckpoint): Promise<void> {
 	if (!frozen.builds) fail(`${checkpoint.design} at ${checkpoint.commit} does not build, so checkpoint ${checkpoint.level} cannot be frozen:\n${frozen.error}`);
 }
 
+// Every form tag in this repository: design workers tag here and may not push their tags.
+const { forms, ignored: formsIgnored } = formTags();
+
 if (!dryRun) {
 	for (const checkpoint of newCheckpoints) {
 		await buildFrozen(checkpoint);
@@ -271,7 +275,13 @@ if (!dryRun) {
 	]);
 
 	if (push) {
-		const refs = [`refs/heads/${BRANCH}:refs/heads/${BRANCH}`, ...newCheckpoints.filter((c) => c.tagged === "tagged").map((c) => `refs/tags/${c.tag}`)];
+		// The form tags go too, forced (a form's tag moves when its worker changes it), so the
+		// preview, built from origin's tags, has the forms the local build had.
+		const refs = [
+			`refs/heads/${BRANCH}:refs/heads/${BRANCH}`,
+			...newCheckpoints.filter((c) => c.tagged === "tagged").map((c) => `refs/tags/${c.tag}`),
+			...forms.map((f) => `+refs/tags/${f.tag}:refs/tags/${f.tag}`),
+		];
 		const pushed = git(["push", "--atomic", "origin", ...refs], { allowFail: true });
 		if (!pushed.ok) fail(`the push failed; everything is committed and tagged locally:\n${pushed.err}`);
 	}
@@ -312,4 +322,6 @@ if (newCheckpoints.length) {
 } else {
 	console.log("\nNo new checkpoint.");
 }
-if (!dryRun) console.log(push ? `\nPushed ${BRANCH}${newCheckpoints.length ? " and the new tags" : ""} to origin in one push.` : "\nCommitted locally; not pushed (--no-push).");
+console.log(forms.length ? `\nForm tags${push ? " pushed" : dryRun ? " that would be pushed" : " (not pushed)"}: ${forms.map((f) => `${f.tag} at ${f.commit.slice(0, 12)}`).join(", ")}` : "\nNo form tag.");
+for (const why of formsIgnored) console.log(`  not a form: ${why}`);
+if (!dryRun) console.log(push ? `\nPushed ${BRANCH}${newCheckpoints.length || forms.length ? " and the tags" : ""} to origin in one push.` : "\nCommitted locally; not pushed (--no-push).");

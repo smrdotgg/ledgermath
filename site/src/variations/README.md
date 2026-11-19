@@ -152,7 +152,8 @@ To change a form, move its tag (`git tag -f …`, then `git push -f origin home/
 Every build of the preview (`bun run build`, and so every deployment of `home-variations`) builds
 each form tag from its own commit, with that commit's own build, into a frozen copy served at
 **`/forms/v<n>/<name>/`**. The commit need not be merged into `home-variations`; it only has to be
-on origin, under its tag. A form whose commit does not build is shown on the picker as "Does not
+on origin, under its tag. The publish script pushes every form tag of the repository it runs in
+(forced, so a moved tag moves on origin too) with each round's push; push yours yourself to be sure. A form whose commit does not build is shown on the picker as "Does not
 build", with the error, and breaks nothing else. A form appears in the preview at the next
 deployment of `home-variations` (about every half hour); until then, `bun run build` in your
 checkout after `git fetch origin --tags` shows it at `http://127.0.0.1:4173/forms/v<n>/<name>/`
