@@ -124,30 +124,45 @@
             }
           }
         },
-        "time_per_repetition_ns": { "description": "The median of its samples' ns_per_repetition: the Run's one number. Null when it is not counted.", "$ref": "#/$defs/number_or_null" },
-        "bytes_per_repetition": { "description": "As the benchmark observed it, when it did and the Run counts.", "$ref": "#/$defs/number_or_null" },
-        "bytes_per_second": { "description": "bytes_per_repetition × 10^9 / time_per_repetition_ns.", "$ref": "#/$defs/number_or_null" }
+        "time_per_repetition_ns": { "description": "The median of its samples' ns_per_repetition: the Run's one number, 0 or more. Null when it is not counted.", "$ref": "#/$defs/number_or_null" },
+        "bytes_per_repetition": { "description": "As the benchmark observed it, a positive number. Null when it is not counted, or when the benchmark observed no bytes per repetition.", "$ref": "#/$defs/number_or_null" },
+        "bytes_per_second": {
+          "description": "bytes_per_repetition × 10^9 / time_per_repetition_ns. Null when either is null; and null when the quotient is infinite, past a double's range, which JSON cannot hold: chiefly a counted Run that observed bytes per repetition and whose time per repetition is 0 (its median sample ended at the clock read it started at). Such a Run is still counted, and still among the Runs of its Series' and group's bytes_per_second percentiles.",
+          "$ref": "#/$defs/number_or_null"
+        }
       }
     },
     "stat": {
-      "description": "Percentiles of one number across counted Runs, and the Runs they come from.",
+      "description": "Percentiles of time per repetition across counted Runs, and the Runs they come from. Every counted Run has a time per repetition, and each percentile is a number.",
       "type": "object",
       "required": ["count", "runs", "p5", "p50", "p95"],
       "properties": {
-        "count": { "type": "integer", "minimum": 1 },
+        "count": { "description": "Counted Runs.", "type": "integer", "minimum": 1 },
         "runs": { "$ref": "#/$defs/run_ids" },
         "p5": { "type": "number" },
         "p50": { "type": "number" },
         "p95": { "type": "number" }
       }
     },
+    "bytes_per_second_stat": {
+      "description": "Percentiles of bytes per second across the counted Runs that observed bytes per repetition, and the Runs they come from. A Run among them whose bytes per second is infinite, past a double's range (chiefly one whose time per repetition is 0), cannot have it written in JSON: its point shows null, it is counted here all the same, and a percentile taken from it, or interpolated towards it, is null.",
+      "type": "object",
+      "required": ["count", "runs", "p5", "p50", "p95"],
+      "properties": {
+        "count": { "description": "Counted Runs that observed bytes per repetition, a Run with an infinite bytes per second included.", "type": "integer", "minimum": 1 },
+        "runs": { "$ref": "#/$defs/run_ids" },
+        "p5": { "description": "Null when it is infinite or undefined: taken from, or interpolated towards, an infinite bytes per second.", "$ref": "#/$defs/number_or_null" },
+        "p50": { "description": "Null when it is infinite or undefined: taken from, or interpolated towards, an infinite bytes per second.", "$ref": "#/$defs/number_or_null" },
+        "p95": { "description": "Null when it is infinite or undefined: taken from, or interpolated towards, an infinite bytes per second.", "$ref": "#/$defs/number_or_null" }
+      }
+    },
     "series_percentiles": {
-      "description": "Null when no Run counts, or for bytes_per_second when the benchmark observes no bytes per repetition.",
+      "description": "time_per_repetition_ns is null when no Run counts; bytes_per_second is null when no counted Run observed bytes per repetition.",
       "type": "object",
       "required": ["time_per_repetition_ns", "bytes_per_second"],
       "properties": {
         "time_per_repetition_ns": { "description": "Nanoseconds per repetition.", "anyOf": [{ "$ref": "#/$defs/stat" }, { "type": "null" }] },
-        "bytes_per_second": { "description": "Bytes per second.", "anyOf": [{ "$ref": "#/$defs/stat" }, { "type": "null" }] }
+        "bytes_per_second": { "description": "Bytes per second.", "anyOf": [{ "$ref": "#/$defs/bytes_per_second_stat" }, { "type": "null" }] }
       }
     },
     "series_group": {
@@ -191,10 +206,10 @@
       "required": ["section", "runs", "changed_within_run", "pairs", "changed_between_runs", "split_on"],
       "properties": {
         "section": { "type": "string" },
-        "runs": { "description": "Runs whose dumps hold the section.", "type": "integer", "minimum": 0 },
-        "changed_within_run": { "description": "Of those, the Runs whose before-dump and after-dump hold different hashes for it.", "type": "integer", "minimum": 0 },
-        "pairs": { "description": "Pairs of consecutive Runs in the Series.", "type": "integer", "minimum": 0 },
-        "changed_between_runs": { "description": "Of those, the pairs whose before-dumps hold different hashes for it.", "type": "integer", "minimum": 0 },
+        "runs": { "description": "Runs whose before-dump or after-dump holds the section.", "type": "integer", "minimum": 0 },
+        "changed_within_run": { "description": "Of those, the Runs whose before-dump and after-dump hold different hashes for it, or only one of which holds it.", "type": "integer", "minimum": 0 },
+        "pairs": { "description": "Pairs of consecutive Runs in the Series at least one of whose before-dumps holds the section. A pair neither of whose before-dumps holds it is not counted for it, so the count can differ from section to section.", "type": "integer", "minimum": 0 },
+        "changed_between_runs": { "description": "Of those, the pairs whose before-dumps hold different hashes for it, or only one of which holds it.", "type": "integer", "minimum": 0 },
         "split_on": { "description": "The split fact read from it, or null.", "$ref": "#/$defs/string_or_null" }
       }
     },

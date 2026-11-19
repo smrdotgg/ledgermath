@@ -17,9 +17,10 @@
  * never copied.
  *
  * The same inputs give the same bytes, file for file, whatever order the
- * Series, price files or boot summaries come in, and no clock is read: a
- * Series file depends only on its own Runs, the Methods' fixed words and the
- * base address, so one whose Series gained no Run is the same bytes as before.
+ * Series, price files or boot summaries come in, and whatever order the
+ * members of their objects come in (apiJson), and no clock is read: a Series
+ * file depends only on its own Runs, the Methods' fixed words and the base
+ * address, so one whose Series gained no Run is the same bytes as before.
  */
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";
@@ -66,8 +67,9 @@ export const BOOT_PATH = /^boots\/([0-9]{4})\/([0-9]{2})\/([0-9]{2})\/([A-Za-z0-
 
 export const VERSIONING =
 	"Version 1 only ever gains fields. A field, once in a v1 file, keeps its name, its type and its meaning, and a reader ignores any field it does not know: " +
-	"that is why no object in a v1 schema forbids members it does not list. A new Method, or a new version of one, is a new key beside the old ones. " +
-	"A change that would break a reader is published as v2, beside v1.";
+	"that is why no object in the schemas index, series-list and series forbids members it does not list. A new Method, or a new version of one, is a new key beside the old ones. " +
+	"A change that would break a reader is published as v2, beside v1. The price files are the exception: each is a price file of the Runs repository, byte for byte, " +
+	"and follows its own schema, ledgermath.prices/1, whose root and LedgerMath's own objects are closed (AWS's objects within it are open).";
 export const FIGURES =
 	"Every number is exactly as the Methods' Derivations hold it: nothing is rounded, and nothing is computed that the Derivations do not hold, " +
 	"apart from counts of a Series' Runs and the start times of its oldest and newest Run, taken from its points. A duration is in nanoseconds of the Run's clock " +
@@ -172,12 +174,17 @@ export function readDerivations<T extends SeriesFile | RequestsFile>(path: strin
 // The shapes the tree's files take. schemas/api/v1/ says the same in JSON
 // Schema, field by field, for readers.
 
-/** A Series' percentiles in its row: the Derivation's, without the list of Runs behind them. */
+/**
+ * A Series' percentiles in its row: the Derivation's, without the list of Runs
+ * behind them. A percentile of bytes per second that is infinite, from a
+ * counted Run of 0 ns per repetition, is null in the Derivations' JSON, and so
+ * here, although the Method's type says number.
+ */
 interface StatSummary {
 	count: number;
-	p5: number;
-	p50: number;
-	p95: number;
+	p5: number | null;
+	p50: number | null;
+	p95: number | null;
 }
 
 interface RowSeriesV1 {
@@ -233,6 +240,15 @@ export function buildApi(sources: ApiSources): Map<string, Uint8Array> {
 	const base = normalizeBase(sources.base);
 	const at = (path: string): string => `${base}/${path}`;
 	const files = new Map<string, string | Uint8Array>();
+	/** Each of the API's own schemas, parsed: it fixes the order of the members of its files' objects (apiJson). */
+	const shape = (name: Exclude<SchemaName, "prices">): Json => {
+		const bytes = sources.schemas.get(name);
+		if (bytes === undefined) throw new Error(`no schema ${name}`);
+		const schema: unknown = JSON.parse(new TextDecoder().decode(bytes));
+		if (!isJson(schema)) throw new Error(`the schema ${name} is not a JSON object`);
+		return schema;
+	};
+	const shapes = { index: shape("index"), "series-list": shape("series-list"), series: shape("series") };
 
 	const series = new Map<string, SeriesDerivation>();
 	for (const derivation of sources.series.derivations) {
@@ -362,7 +378,7 @@ export function buildApi(sources: ApiSources): Map<string, Uint8Array> {
 				index: at(INDEX_PATH),
 				...head,
 				derivations: { series_v1: seriesV1, ...(requestsV1 === undefined ? {} : { requests_v1: requestsV1 }) },
-			}),
+			}, shapes.series),
 		);
 	}
 
@@ -402,7 +418,7 @@ export function buildApi(sources: ApiSources): Map<string, Uint8Array> {
 				},
 			},
 			series: rows,
-		}),
+		}, shapes["series-list"]),
 	);
 
 	const prices = [...sources.prices].sort((a, b) => compareText(a.path, b.path));
@@ -444,7 +460,7 @@ export function buildApi(sources: ApiSources): Map<string, Uint8Array> {
 			},
 			schemas: API_SCHEMAS.map(({ name, describes }) => ({ name, describes, url: at(schemaPath(name)) })),
 			evidence: { about: EVIDENCE, blob_url_template: `${base}/blobs/sha256/{hex}` },
-		}),
+		}, shapes.index),
 	);
 
 	const encoder = new TextEncoder();
@@ -486,22 +502,185 @@ function seriesOrder(a: SeriesDerivation, b: SeriesDerivation): number {
  * other array is written on one line. Numbers are written as JSON.stringify
  * writes them, as the Derivations were, so each reads back as the same
  * number, digit for digit.
+ *
+ * The order of every object's members is fixed, whatever order the input
+ * held them in: the members its schema lists come first, in the schema's
+ * order (the order the files were designed in), and any other member, such as
+ * a key of a free-form object (parameters, a group's facts, the Methods'
+ * definitions, a Service's inputs), after them, in byte order. Without a
+ * schema every object's members are in byte order.
  */
-export function apiJson(value: unknown): string {
-	return `${write(value, "")}\n`;
+export function apiJson(value: unknown, schema?: unknown): string {
+	const root = isJson(schema) ? schema : {};
+	return `${write(value, "", schema, root)}\n`;
 }
 
-function write(value: unknown, indent: string): string {
+type Json = Record<string, unknown>;
+
+function isJson(value: unknown): value is Json {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** A schema with its $ref followed, within the same document. */
+function follow(node: unknown, root: Json): Json | undefined {
+	let current = node;
+	for (let depth = 0; depth < 64; depth++) {
+		if (!isJson(current)) return undefined;
+		if (typeof current.$ref !== "string") return current;
+		const ref = current.$ref;
+		if (!ref.startsWith("#")) throw new Error(`a schema refers to ${ref}, outside itself`);
+		current = ref
+			.slice(1)
+			.split("/")
+			.filter((part) => part !== "")
+			.map((part) => part.replaceAll("~1", "/").replaceAll("~0", "~"))
+			.reduce<unknown>((at, part) => (isJson(at) ? at[part] : undefined), root);
+	}
+	throw new Error("a schema's $ref goes round in a circle");
+}
+
+/** branch()'s answers, by kind and schema node: a file has many objects of one schema. */
+const branches = new Map<(schema: Json) => boolean, WeakMap<Json, Json | null>>();
+
+/** The first schema among node and its anyOf or oneOf branches that is of the given kind. */
+function branch(node: unknown, root: Json, kind: (schema: Json) => boolean): Json | undefined {
+	if (!isJson(node)) return undefined;
+	let known = branches.get(kind);
+	if (known === undefined) {
+		known = new WeakMap();
+		branches.set(kind, known);
+	}
+	const cached = known.get(node);
+	if (cached !== undefined) return cached ?? undefined;
+	const found = findBranch(node, root, kind);
+	known.set(node, found ?? null);
+	return found;
+}
+
+function findBranch(node: unknown, root: Json, kind: (schema: Json) => boolean): Json | undefined {
+	const schema = follow(node, root);
+	if (schema === undefined) return undefined;
+	if (kind(schema)) return schema;
+	for (const key of ["anyOf", "oneOf"] as const) {
+		const branches = schema[key];
+		if (!Array.isArray(branches)) continue;
+		for (const item of branches) {
+			const found = branch(item, root, kind);
+			if (found !== undefined) return found;
+		}
+	}
+	return undefined;
+}
+
+const describesObject = (schema: Json): boolean => schema.type === "object" || isJson(schema.properties) || "additionalProperties" in schema;
+const describesArray = (schema: Json): boolean => schema.type === "array" || "items" in schema || "prefixItems" in schema;
+
+/** Where an object's members go: the members its schema lists, in order, with their schemas; and the schema of any other member. */
+interface Layout {
+	listed: string[];
+	/** Each listed member's name as JSON. */
+	quoted: string[];
+	schemas: unknown[];
+	isListed: ReadonlySet<string>;
+	others: unknown;
+}
+
+const NO_SCHEMA: Layout = { listed: [], quoted: [], schemas: [], isListed: new Set(), others: undefined };
+const layouts = new WeakMap<Json, Layout>();
+
+function layoutOf(node: unknown, root: Json): Layout {
+	const schema = branch(node, root, describesObject);
+	if (schema === undefined) return NO_SCHEMA;
+	let layout = layouts.get(schema);
+	if (layout === undefined) {
+		const properties = isJson(schema.properties) ? schema.properties : {};
+		const listed = Object.keys(properties);
+		layout = {
+			listed,
+			quoted: listed.map((key) => JSON.stringify(key)),
+			schemas: listed.map((key) => properties[key]),
+			isListed: new Set(listed),
+			others: schema.additionalProperties,
+		};
+		layouts.set(schema, layout);
+	}
+	return layout;
+}
+
+/** An object's members in their written order, each with the schema it is written by. */
+function members(value: Json, node: unknown, root: Json): Array<[string, unknown, unknown]> {
+	const { listed, schemas, isListed, others } = layoutOf(node, root);
+	const out: Array<[string, unknown, unknown]> = [];
+	for (let i = 0; i < listed.length; i++) {
+		const key = listed[i] as string;
+		if (Object.hasOwn(value, key) && value[key] !== undefined) out.push([key, value[key], schemas[i]]);
+	}
+	const keys = Object.keys(value);
+	if (keys.length === out.length) return out;
+	const rest = keys.filter((key) => !isListed.has(key) && value[key] !== undefined).sort(compareText);
+	for (const key of rest) out.push([key, value[key], others]);
+	return out;
+}
+
+/** The schema of an array's item at index. */
+function itemSchema(node: unknown, root: Json, index: number): unknown {
+	const schema = branch(node, root, describesArray);
+	if (schema === undefined) return undefined;
+	if (Array.isArray(schema.prefixItems) && index < schema.prefixItems.length) return schema.prefixItems[index];
+	return schema.items;
+}
+
+function write(value: unknown, indent: string, schema: unknown, root: Json): string {
 	if (value === undefined) throw new Error("undefined has no JSON");
 	if (value === null || typeof value !== "object") return JSON.stringify(value);
 	const inner = `${indent}  `;
 	if (Array.isArray(value)) {
-		if (value.length > 0 && value.every((item) => typeof item === "object" && item !== null && !Array.isArray(item))) {
-			return `[\n${value.map((item) => `${inner}${JSON.stringify(item)}`).join(",\n")}\n${indent}]`;
+		if (value.length > 0 && value.every(isJson)) {
+			return `[\n${value.map((item, i) => `${inner}${line(item, itemSchema(schema, root, i), root)}`).join(",\n")}\n${indent}]`;
 		}
+		return line(value, schema, root);
+	}
+	const entries = members(value as Json, schema, root);
+	if (entries.length === 0) return "{}";
+	return `{\n${entries.map(([key, item, itemSchema]) => `${inner}${JSON.stringify(key)}: ${write(item, inner, itemSchema, root)}`).join(",\n")}\n${indent}}`;
+}
+
+/** A value on one line, as JSON.stringify writes it, with every object's members in their written order. */
+function line(value: unknown, schema: unknown, root: Json): string {
+	if (value === null || typeof value !== "object") {
+		if (value === undefined) throw new Error("undefined has no JSON");
 		return JSON.stringify(value);
 	}
-	const entries = Object.entries(value as Record<string, unknown>).filter(([, item]) => item !== undefined);
-	if (entries.length === 0) return "{}";
-	return `{\n${entries.map(([key, item]) => `${inner}${JSON.stringify(key)}: ${write(item, inner)}`).join(",\n")}\n${indent}}`;
+	if (Array.isArray(value)) {
+		const array = branch(schema, root, describesArray);
+		const prefix = array !== undefined && Array.isArray(array.prefixItems) ? array.prefixItems : [];
+		const items = array?.items;
+		let out = "[";
+		for (let i = 0; i < value.length; i++) {
+			if (i > 0) out += ",";
+			out += line(value[i], i < prefix.length ? prefix[i] : items, root);
+		}
+		return `${out}]`;
+	}
+	const object = value as Json;
+	const { listed, quoted, schemas, isListed, others } = layoutOf(schema, root);
+	let out = "{";
+	let present = 0;
+	for (let i = 0; i < listed.length; i++) {
+		const key = listed[i] as string;
+		if (!Object.hasOwn(object, key)) continue;
+		present++;
+		const item = object[key];
+		if (item === undefined) continue;
+		out += `${out.length > 1 ? "," : ""}${quoted[i]}:${line(item, schemas[i], root)}`;
+	}
+	const keys = Object.keys(object);
+	if (keys.length > present) {
+		for (const key of keys.filter((name) => !isListed.has(name)).sort(compareText)) {
+			const item = object[key];
+			if (item === undefined) continue;
+			out += `${out.length > 1 ? "," : ""}${JSON.stringify(key)}:${line(item, others, root)}`;
+		}
+	}
+	return `${out}}`;
 }

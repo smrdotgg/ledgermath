@@ -40,12 +40,12 @@
                 "required": ["section", "runs", "changed_within_run", "boot_pairs", "changed_within_boot", "series_pairs", "changed_between_runs", "split_on"],
                 "properties": {
                   "section": { "type": "string" },
-                  "runs": { "description": "Runs whose dumps hold the section.", "type": "integer", "minimum": 0 },
-                  "changed_within_run": { "description": "Of those, the Runs whose before-dump and after-dump hold different hashes for it.", "type": "integer", "minimum": 0 },
-                  "boot_pairs": { "description": "Pairs of consecutive Runs of one boot, whatever their Series.", "type": "integer", "minimum": 0 },
-                  "changed_within_boot": { "description": "Of those, the pairs whose before-dumps hold different hashes for it.", "type": "integer", "minimum": 0 },
-                  "series_pairs": { "description": "Pairs of consecutive Runs of one Series, summed over every Series.", "type": "integer", "minimum": 0 },
-                  "changed_between_runs": { "description": "Of those, the pairs whose before-dumps hold different hashes for it.", "type": "integer", "minimum": 0 },
+                  "runs": { "description": "Runs whose before-dump or after-dump holds the section.", "type": "integer", "minimum": 0 },
+                  "changed_within_run": { "description": "Of those, the Runs whose before-dump and after-dump hold different hashes for it, or only one of which holds it.", "type": "integer", "minimum": 0 },
+                  "boot_pairs": { "description": "Pairs of consecutive Runs of one boot, whatever their Series, at least one of whose before-dumps holds the section. A pair neither of whose before-dumps holds it is not counted for it, so the count can differ from section to section.", "type": "integer", "minimum": 0 },
+                  "changed_within_boot": { "description": "Of those, the pairs whose before-dumps hold different hashes for it, or only one of which holds it.", "type": "integer", "minimum": 0 },
+                  "series_pairs": { "description": "Pairs of consecutive Runs of one Series, summed over every Series, at least one of whose before-dumps holds the section. A pair neither of whose before-dumps holds it is not counted for it: a section the dumps began to hold later is counted only from the pair where it first appears, so the count can differ from section to section.", "type": "integer", "minimum": 0 },
+                  "changed_between_runs": { "description": "Of those, the pairs whose before-dumps hold different hashes for it, or only one of which holds it.", "type": "integer", "minimum": 0 },
                   "split_on": { "description": "The split fact read from the section, or null.", "anyOf": [{ "type": "string" }, { "type": "null" }] }
                 }
               }
@@ -152,7 +152,7 @@
       "additionalProperties": { "anyOf": [{ "type": "string" }, { "type": "number" }, { "type": "boolean" }] }
     },
     "stat_summary": {
-      "description": "Percentiles of one number across the Series' counted Runs. The Series' file lists the Runs behind them.",
+      "description": "Percentiles of time per repetition across the Series' counted Runs. Every counted Run has a time per repetition, and each percentile is a number. The Series' file lists the Runs behind them.",
       "type": "object",
       "required": ["count", "p5", "p50", "p95"],
       "properties": {
@@ -160,6 +160,17 @@
         "p5": { "type": "number" },
         "p50": { "type": "number" },
         "p95": { "type": "number" }
+      }
+    },
+    "bytes_per_second_summary": {
+      "description": "Percentiles of bytes per second across the Series' counted Runs that observed bytes per repetition. A Run among them whose bytes per second is infinite, past a double's range (chiefly one whose time per repetition is 0), cannot have it written in JSON: it is counted here all the same, and a percentile taken from it, or interpolated towards it, is null. The Series' file lists the Runs behind them.",
+      "type": "object",
+      "required": ["count", "p5", "p50", "p95"],
+      "properties": {
+        "count": { "description": "Counted Runs that observed bytes per repetition, a Run with an infinite bytes per second included.", "type": "integer", "minimum": 1 },
+        "p5": { "description": "Null when it is infinite or undefined: taken from, or interpolated towards, an infinite bytes per second.", "$ref": "#/$defs/number_or_null" },
+        "p50": { "description": "Null when it is infinite or undefined: taken from, or interpolated towards, an infinite bytes per second.", "$ref": "#/$defs/number_or_null" },
+        "p95": { "description": "Null when it is infinite or undefined: taken from, or interpolated towards, an infinite bytes per second.", "$ref": "#/$defs/number_or_null" }
       }
     },
     "request_stats": {
@@ -231,12 +242,12 @@
                 "failed_runs": { "description": "Runs it does not count: shown in the Series' file with why, in no percentile.", "type": "integer", "minimum": 0 },
                 "groups": { "description": "How many groups its split facts make of the Series' Runs.", "type": "integer", "minimum": 1 },
                 "percentiles": {
-                  "description": "Across every counted Run of the Series, whatever its group. Null when no Run counts, or for bytes_per_second when the benchmark observes no bytes per repetition.",
+                  "description": "Across every counted Run of the Series, whatever its group. time_per_repetition_ns is null when no Run counts; bytes_per_second is null when no counted Run observed bytes per repetition.",
                   "type": "object",
                   "required": ["time_per_repetition_ns", "bytes_per_second"],
                   "properties": {
                     "time_per_repetition_ns": { "description": "Nanoseconds per repetition: each Run's median over its counted samples.", "anyOf": [{ "$ref": "#/$defs/stat_summary" }, { "type": "null" }] },
-                    "bytes_per_second": { "description": "Bytes per second: each Run's bytes per repetition × 10^9 / its time per repetition in nanoseconds.", "anyOf": [{ "$ref": "#/$defs/stat_summary" }, { "type": "null" }] }
+                    "bytes_per_second": { "description": "Bytes per second: each Run's bytes per repetition × 10^9 / its time per repetition in nanoseconds.", "anyOf": [{ "$ref": "#/$defs/bytes_per_second_summary" }, { "type": "null" }] }
                   }
                 }
               }
