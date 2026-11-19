@@ -154,16 +154,54 @@ export function instrument(row: HeadlineRow): Instrument {
 	const zero = zeroScale(max);
 	const crowded = (max - min) / zero.hi < CROWDED;
 	const zoom = crowded ? zoomScale(min, max) : null;
-	const significant = crowded ? 6 : 4;
 
+	// Every digit first; then one count of decimals for the whole chart, so its figures line up on the point.
 	const marks: Mark[] = raw.map((r) => ({
 		instanceType: r.cell.machine.instanceType,
 		url: r.cell.series.url,
 		runs: r.f.count,
-		p5: fig(r.f.p5, significant),
-		p50: fig(r.f.p50, significant),
-		p95: fig(r.f.p95, significant),
+		p5: fig(r.f.p5, EVERY),
+		p50: fig(r.f.p50, EVERY),
+		p95: fig(r.f.p95, EVERY),
 	}));
-	for (const m of marks) for (const f of [m.p5, m.p50, m.p95]) f.value = Number(f.full);
+	const decimalsShown = placesFor(
+		marks.map((m) => m.p50.full),
+		crowded ? 6 : 4,
+	);
+	for (const m of marks)
+		for (const f of [m.p5, m.p50, m.p95]) {
+			f.short = roundSignificant(f.full, significantFor(f.full, decimalsShown));
+			f.value = Number(f.full);
+		}
 	return { row, unit, quantity, marks, zero, zoom };
+}
+
+/** More significant digits than any figure holds: `short` is `full`. */
+const EVERY = 40;
+
+/** Digits before the point, or minus the zeros that open the fraction when there are none ("0.0175" gives -1). */
+function magnitude(full: string): number {
+	const [whole = "", fraction = ""] = full.replace(/^-/, "").split(".");
+	const digits = whole.replace(/^0+/, "").length;
+	return digits > 0 ? digits : -(fraction.match(/^0*/)?.[0].length ?? 0);
+}
+
+/** The significant digits that leave `full` with `places` decimals (never fewer than one). */
+function significantFor(full: string, places: number): number {
+	return Math.max(1, magnitude(full) + places);
+}
+
+/**
+ * One count of decimals for a chart: enough for its largest median to show `significant` digits, and
+ * up to two more while two medians that differ would print the same.
+ */
+function placesFor(fulls: string[], significant: number): number {
+	const largest = Math.max(...fulls.map(magnitude));
+	const base = Math.max(0, significant - largest);
+	for (let places = base; places < base + 2; places++) {
+		const shown = fulls.map((f) => roundSignificant(f, significantFor(f, places)));
+		const clash = shown.some((s, i) => shown.some((t, j) => j > i && s === t && fulls[i] !== fulls[j]));
+		if (!clash) return places;
+	}
+	return base + 2;
 }
