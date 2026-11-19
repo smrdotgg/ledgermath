@@ -104,6 +104,7 @@ function Spread(props: { p5: number; p50: number; p95: number; max: number }) {
 		<span class="spread" aria-hidden="true">
 			<span class="sp-b" style={{ width: at(props.p50) }} />
 			<span class="sp-r" style={{ left: at(props.p5), width: at(props.p95 - props.p5) }} />
+			<span class="sp-t" style={{ left: at(props.p50) }} />
 		</span>
 	);
 }
@@ -170,7 +171,7 @@ function Status() {
 	const oldest = formatMoment(snapshot.oldestRunStartedAt);
 	const rows: [string, unknown][] = [
 		["latest Run", <Moment m={newest} bright />],
-		["fresh boots", <span class="nb">{SCHEDULE.join(" ")} UTC</span>],
+		["schedule", <span class="nb">{SCHEDULE.join(" ")} UTC</span>],
 		[
 			"Runs kept",
 			<a
@@ -195,7 +196,16 @@ function Status() {
 			</a>,
 		],
 		[
-			"methods",
+			"sample Run",
+			<span class="nb ev">
+				<span class="xk">sha256</span>{" "}
+				<a href={example.evidence} title={`Run ${example.run}, started ${example.started_at}: its file, sha256 ${example.sha256}, the hash its Series cites`}>
+					{example.sha256.slice(0, 16)}…
+				</a>
+			</span>,
+		],
+		[
+			"derived by",
 			<>
 				{snapshot.methods.map((m, i) => (
 					<>
@@ -227,12 +237,11 @@ function Status() {
 function Key() {
 	return (
 		<>
-			<span class="key" title="Every figure is a p50. The drawing: a bar from 0 to the p50 and a band from p5 to p95, on one scale per row">
-				<span class="key-sw sw-b" aria-hidden="true" />
+			<span class="key" title="Every figure is a p50. The drawing, on one scale per row from 0: a bar to the p50, a tick at it, a whisker from p5 to p95">
+				<span class="key-sw sw-t" aria-hidden="true" />
 				p50
 				<span class="key-sw sw-r" aria-hidden="true" />
 				p5–p95
-				<span class="key-row">0 → row max</span>
 			</span>
 			<details class="xt">
 				<summary title="Show each figure's exact p5 and p95, and n, the Runs it counts">ranges, Runs</summary>
@@ -483,10 +492,8 @@ export default function Page() {
 			</main>
 
 			<footer class="manfoot">
-				<span>api v1</span>
-				<time datetime={newest.iso} title={newest.full}>
-					{newest.date}
-				</time>
+				<a href="third-party-notices.txt">licences</a>
+				<span>{title}</span>
 			</footer>
 		</div>
 	);

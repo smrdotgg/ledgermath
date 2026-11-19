@@ -382,33 +382,44 @@ main {
 	white-space: nowrap;
 }
 .key-sw {
+	position: relative;
 	display: inline-block;
 	vertical-align: middle;
 	margin: -2px 0.8ch 0 0;
 }
 .sw-r {
-	margin-left: 1.5ch;
-}
-.key-row {
-	display: block;
-	color: var(--dim);
+	margin-left: 2ch;
 }
 .sep {
 	color: var(--dim);
 }
+/* The switch for the exact lines, a button like the copy button. */
 .xt summary {
+	display: inline-block;
+	margin-top: 8px;
+	padding: 0 8px;
+	line-height: 1.7;
 	cursor: pointer;
 	list-style: none;
+	color: var(--fg-2);
+	border: 1px solid var(--dim);
+}
+.xt summary:hover {
+	color: var(--fg);
+	border-color: var(--fg-2);
+}
+.xt[open] summary {
 	color: var(--acc);
+	border-color: var(--acc);
 }
 .xt summary::-webkit-details-marker {
 	display: none;
 }
 .xt summary::before {
-	content: "[+] ";
+	content: "+ ";
 }
 .xt[open] summary::before {
-	content: "[−] ";
+	content: "− ";
 }
 .xt summary:focus-visible {
 	outline: 2px solid var(--acc);
@@ -557,6 +568,18 @@ table {
 .digits {
 	white-space: pre;
 }
+@media (min-width: 761px) {
+	.data .fig {
+		font-size: 14px;
+	}
+}
+.ev .xk {
+	width: auto;
+	color: var(--dim);
+}
+.manfoot a {
+	color: var(--dim);
+}
 .digits .lead {
 	color: var(--fg);
 	font-weight: 600;
@@ -565,39 +588,53 @@ table {
 	color: var(--dim);
 }
 
-/* The drawing: a track the row's full scale long (0 to its largest p95), a bar from zero to the
-   p50, and the p5 to p95 band in the accent laid over the bar's end, taller than the bar. */
+/* The drawing: a track the row's full scale long (0 to its largest p95), a quiet bar from zero to
+   the p50, the p50 itself as the one strong mark, a tick, and the p5 to p95 spread as a thin
+   whisker with end caps, in a quieter tone: a wide spread draws a longer hairline, not a louder block. */
 .spread {
 	position: relative;
 	display: block;
-	height: 11px;
+	height: 13px;
 	margin: 6px 2ch 0 0;
-	background: linear-gradient(var(--track), var(--track)) 0 50% / 100% 5px no-repeat;
+	background: linear-gradient(var(--track), var(--track)) 0 50% / 100% 3px no-repeat;
 }
 .sp-b,
-.sp-r {
+.sp-r,
+.sp-t {
 	position: absolute;
 	display: block;
 }
-.sp-b,
-.sw-b {
-	top: 3px;
+.sp-b {
+	top: 5px;
 	left: 0;
-	height: 5px;
+	height: 3px;
 	background: var(--band);
-}
-.sw-b {
-	width: 2.5ch;
 }
 .sp-r,
 .sw-r {
-	top: 0;
-	min-width: 2px;
-	height: 11px;
-	background: var(--acc);
+	top: 3px;
+	height: 7px;
+	box-sizing: border-box;
+	border-left: 1px solid var(--fg-2);
+	border-right: 1px solid var(--fg-2);
+	background: linear-gradient(var(--fg-2), var(--fg-2)) 0 50% / 100% 1px no-repeat;
+}
+.sp-r {
+	min-width: 1px;
 }
 .sw-r {
-	width: 2px;
+	width: 2.5ch;
+}
+.sp-t,
+.sw-t {
+	top: 0;
+	width: 3px;
+	height: 13px;
+	margin-left: -1px;
+	background: var(--acc);
+}
+.sw-t {
+	margin-left: 0;
 }
 
 /* The machine's name in a cell is for the phone, where the columns become lines. */
@@ -845,9 +882,8 @@ table {
 	.data thead th.corner {
 		align-items: baseline;
 	}
-	.key-row {
-		display: inline;
-		margin-left: 1.5ch;
+	.xt summary {
+		margin-top: 0;
 	}
 	.data .sect th {
 		padding: 22px 0 4px;
