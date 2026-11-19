@@ -14,7 +14,6 @@ function Plot(props: { inst: Instrument; scale: Scale }) {
 	const s = props.scale;
 	const n = props.inst.marks.length;
 	const base = n * ROW;
-	const last = s.ticks.length - 1;
 	return (
 		<svg class="plot" aria-hidden="true" width="100%" height={base + AXIS}>
 			{s.ticks.map((t) => (
@@ -36,9 +35,10 @@ function Plot(props: { inst: Instrument; scale: Scale }) {
 			{s.ticks.map((t) => (
 				<line class="tick" x1={at(s, t.value)} x2={at(s, t.value)} y1={base} y2={base + 4} />
 			))}
-			{s.ticks.map((t, i) =>
+			{/* Every label centred on its own tick, the end ones included: the plot lets them overhang its edges. */}
+			{s.ticks.map((t) =>
 				t.label === "" ? null : (
-					<text class={i === 0 ? "tl first" : "tl"} x={at(s, t.value)} y={base + 16} text-anchor={i === 0 ? "start" : i === last ? "end" : "middle"}>
+					<text class="tl" x={at(s, t.value)} y={base + 16} text-anchor="middle">
 						{t.label}
 					</text>
 				),
@@ -135,6 +135,11 @@ function Card(props: { inst: Instrument; index: number }) {
 						{c.label}
 					</a>
 				</h3>
+				{limit ? (
+					<a class="lim" href={c.readme} title={limit}>
+						gp3 limit
+					</a>
+				) : null}
 				<span class="unit" title={unit}>
 					{inst.unit}
 				</span>
@@ -159,11 +164,6 @@ function Card(props: { inst: Instrument; index: number }) {
 				<span class="dir" title={c.lead === "rate" ? "More is faster" : "Less is faster"}>
 					{c.lead === "rate" ? "faster →" : "← faster"}
 				</span>
-				{limit ? (
-					<a class="lim" href={c.readme} title={limit}>
-						gp3 limit
-					</a>
-				) : null}
 				{zoom ? (
 					<span class="zoom" title={`The axis starts at ${zoom.ticks[0]!.label} ${inst.unit}. From zero, all five sit inside the box.`}>
 						<span class="z0">0</span>
@@ -181,8 +181,7 @@ function Every(props: { instruments: Instrument[] }) {
 	return (
 		<details class="every" id="digits">
 			<summary>
-				Percentiles and Run counts <span class="dim">every digit</span>
-			</summary>
+Exact percentiles and Run counts</summary>
 			<div class="scroll" tabindex="0" role="region" aria-label="Exact figures">
 				<table class="digits">
 					<thead>
@@ -246,30 +245,6 @@ function Mark() {
 
 /** The four boots a day, UTC. */
 const BOOTS = ["04:10", "10:10", "16:10", "22:10"] as const;
-
-/** A 24-hour dial with the four boots marked. */
-function Clock() {
-	const r = 20;
-	const pos = (hhmm: string, radius: number) => {
-		const [h, m] = hhmm.split(":").map(Number) as [number, number];
-		const a = ((h + m / 60) / 24) * 2 * Math.PI - Math.PI / 2;
-		return { x: 24 + radius * Math.cos(a), y: 24 + radius * Math.sin(a) };
-	};
-	return (
-		<svg class="clock" viewBox="0 0 48 48" width="44" height="44" aria-hidden="true">
-			<circle cx="24" cy="24" r={r} class="clock-ring" />
-			{Array.from({ length: 24 }, (_, h) => {
-				const a = (h / 24) * 2 * Math.PI - Math.PI / 2;
-				const len = h % 6 === 0 ? 4 : 2;
-				return <line class="clock-tick" x1={24 + r * Math.cos(a)} y1={24 + r * Math.sin(a)} x2={24 + (r - len) * Math.cos(a)} y2={24 + (r - len) * Math.sin(a)} />;
-			})}
-			{BOOTS.map((t) => {
-				const p = pos(t, r);
-				return <circle cx={p.x} cy={p.y} r="3" class="median" />;
-			})}
-		</svg>
-	);
-}
 
 export default function Page() {
 	const instruments = headline.map(instrument);
@@ -337,14 +312,16 @@ export default function Page() {
 								</dd>
 							</div>
 							<div class="boots">
-								<Clock />
 								<dt>Boots, UTC</dt>
 								<dd>{BOOTS.join(" ")}</dd>
 							</div>
 							<div>
-								<dt>Runs kept, all Series</dt>
+								<dt>Runs</dt>
 								<dd>
-									<b>{runs}</b> {failed} failed
+									<a href={links.seriesList} title="Every Series, each listing its Runs">
+										<b>{runs}</b>
+									</a>{" "}
+									{failed} failed
 								</dd>
 							</div>
 							<div>
@@ -436,7 +413,7 @@ export default function Page() {
 											<td>{m.vcpu}</td>
 											<td>{m.memory.replace(/ GiB$/, "")}</td>
 											<td class="pc" title={`${m.price.description} · ${m.price.path.pointer}`}>
-												${prices[i]!.full}
+												<span style={padFor(prices[i]!.full, prices.map((p) => p.full))}>${prices[i]!.full}</span>
 											</td>
 											<td class="pb">
 												<svg class="pbar" aria-hidden="true" width="100%" height="10">
@@ -486,12 +463,21 @@ export default function Page() {
 											curl <Url text={links.seriesList} />
 										</code>
 									</div>
-									<pre tabindex="0" role="region" aria-label={`From series.json: ${row.benchmark} on ${row.instance_type}`}>
-										<code>{tokens.map((t) => (t.kind === "" ? t.text : <span class={t.kind}>{t.text}</span>))}</code>
-									</pre>
+									<figure class="sample">
+										<figcaption>
+											<a href={`#b-${hero.row.choice.benchmark}`}>
+												{pad(0)} {exMark.instanceType} <b>{exMark.p50.short}</b> {hero.unit}
+											</a>
+										</figcaption>
+										<pre tabindex="0" role="region" aria-label={`From series.json: ${row.benchmark} on ${row.instance_type}`}>
+											<code>{tokens.map((t) => (t.kind === "" ? t.text : <span class={t.kind}>{t.text}</span>))}</code>
+										</pre>
+									</figure>
 								</li>
 								<li>
-									<p class="c"># that Series: each Run, its evidence</p>
+									<p class="c">
+										# {pad(0)} {exMark.instanceType}: each Run, its evidence
+									</p>
 									<div class="line">
 										<code data-copy tabindex="0">
 											curl <Url text={exMark.url} />
