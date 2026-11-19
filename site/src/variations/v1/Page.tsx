@@ -1,7 +1,8 @@
 // Design v1, "Ledger": the home page as a book of record. One ruled table is the page: one
 // column per machine type, one entry per benchmark, every figure written out to its last digit
 // (the first three decimal places in ink, the rest in pencil) and decimal-aligned down its column.
-// Under each figure a pencil rule drawn to the row's scale, its p5–p95 in ink. Few words: the
+// Under each figure a pencil rule spanning the row's lowest p5 to highest p95, each figure's p5–p95
+// in ink and its median a notch. On a phone the machines' key follows the entries. Few words: the
 // figures are the page, and everything else is a link. No best, no ranking, no ties.
 import "./page.css";
 import {
@@ -73,19 +74,22 @@ function Written(props: { full: string; inkPlaces?: number }) {
 	);
 }
 
-/** The pencil rule under a figure: 0 to the median on the row's scale, the 5th to 95th percentile in ink. */
-function Rule(props: { x: Cell; scale: number }) {
-	const pct = (v: number) => `${((v / props.scale) * 100).toFixed(3)}%`;
+/** The pencil rule under a figure: the row's scale as a hairline, the 5th to 95th percentile in ink, the median a notch in it. */
+function Rule(props: { x: Cell; scale: Scale }) {
+	const { lo, hi } = props.scale;
+	const pct = (v: number) => `${(hi > lo ? ((v - lo) / (hi - lo)) * 100 : 50).toFixed(3)}%`;
 	return (
 		<span class="bar" aria-hidden="true" style={{ "--to": pct(props.x.p50.value), "--lo": pct(props.x.p5.value), "--hi": pct(props.x.p95.value) }}>
 			<span class="bar-len" />
 			<span class="bar-rng" />
+			<span class="bar-mid" />
 		</span>
 	);
 }
 
-/** The rule's scale: the row's largest 95th percentile (a choice of scale for drawing, not a statistic). */
-const rowScale = (xs: Cell[]) => Math.max(...xs.map((x) => x.p95.value));
+/** The rule's scale: from the row's lowest 5th percentile to its highest 95th (a choice of scale for drawing, not a statistic). */
+type Scale = { lo: number; hi: number };
+const rowScale = (xs: Cell[]): Scale => ({ lo: Math.min(...xs.map((x) => x.p5.value)), hi: Math.max(...xs.map((x) => x.p95.value)) });
 
 // ------------------------------------------------------------------ the page
 
@@ -156,11 +160,13 @@ export default function Page() {
 					</p>
 					<div class="start">
 						<span class="start-h">Point an agent at it</span>
+						<button type="button" class="copy" data-copy={`curl ${links.index}`} aria-label="Copy the command" hidden>
+							Copy
+						</button>
 						<div class="cmd">
-							<code tabindex="0">curl {links.index}</code>
-							<button type="button" class="copy" data-copy={`curl ${links.index}`} aria-label="Copy the command" hidden>
-								Copy
-							</button>
+							<code tabindex="0">
+								curl <Url href={links.index} />
+							</code>
 						</div>
 					</div>
 				</div>
@@ -176,9 +182,10 @@ export default function Page() {
 					<div>
 						<dt>Runs</dt>
 						<dd>
-							<span title={`Since ${oldest.full}; boots at ${RUN_TIMES.join(", ")} UTC`}>{runs}</span> <span class="aside">in</span>{" "}
-							<a href={links.seriesList}>{seriesCount} Series</a>
-							<span class="aside">, {formatCount(snapshot.failedRuns).full} failed</span>
+							<a href={links.seriesList} title={`${seriesCount} Series since ${oldest.full}; boots at ${RUN_TIMES.join(", ")} UTC`}>
+								{runs}
+							</a>
+							<span class="aside"> · {formatCount(snapshot.failedRuns).full} failed</span>
 						</dd>
 					</div>
 					<div>
@@ -227,7 +234,7 @@ export default function Page() {
 						<h2 id="ledger-h">
 							The ledger{" "}
 							<span class="dim">
-								{formatCount(headline.length).full} benchmarks × {formatCount(machines.length).full} machines
+								{formatCount(headline.length).full} benchmarks × <a href="#machines">{formatCount(machines.length).full} machines</a>
 							</span>
 						</h2>
 						<p class="legend">
@@ -235,20 +242,21 @@ export default function Page() {
 								<span class="lg-rule" aria-hidden="true">
 									<span class="lg-len" />
 									<span class="lg-rng" />
+									<span class="lg-mid" />
 								</span>
-								p5–p95 · scale per row
+								p5–p95, scale per benchmark
 							</span>
 							<span class="lg-item">
 								<span class="n" aria-hidden="true">
 									<i>n</i>
 								</span>
-								counted Runs · links to its Series
+								counted Runs
 							</span>
 						</p>
 					</div>
 					<div class="scroll" tabindex="0" role="region" aria-label="The ledger, scrollable" style={{ "--whole": `${wholeDigits}ch` }}>
 						<table>
-							<thead>
+							<thead id="machines">
 								<tr>
 									<th scope="col" class="no">
 										<abbr title="Entry number">No.</abbr>
@@ -339,7 +347,7 @@ export default function Page() {
 					<section class="api" aria-labelledby="api-h">
 						<h2 id="api-h">For agents and developers</h2>
 						<p class="api-lede">
-							Static JSON at <span class="mono">{API}</span>, a schema for each file.
+							Static JSON at <span class="mono">{API}</span>
 						</p>
 						<table class="addr">
 							<tbody>
@@ -368,7 +376,7 @@ export default function Page() {
 
 			<footer class="colophon">
 				<p>
-					LedgerMath · entries to {newest.longDate}, {newest.second} UTC · <a href="third-party-notices.txt">Notices</a>
+					LedgerMath · <a href="third-party-notices.txt">Notices</a>
 				</p>
 			</footer>
 		</>
