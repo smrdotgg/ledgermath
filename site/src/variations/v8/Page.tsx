@@ -4,6 +4,8 @@
 // proofs strip are gone, because the traced figure already shows both.
 // Round 5: one command in the hero and no button; the API band is a list of addresses, each beside its schema,
 // and the JSON shows the file as it is, the division that joins it to the traced figure set under it.
+// Round 6: a figure's dark digits are the ones its p5 and p95 share, so the emphasis says how settled it is; the
+// day ruler, the cell underline and the card's caption are gone; whiskers are drawn darker than the bars.
 import "./page.css";
 import {
 	type DurationUnit,
@@ -35,7 +37,6 @@ const newest = formatMoment(snapshot.newestRunStartedAt);
 const runs = formatCount(snapshot.runCount);
 const seriesCount = formatCount(snapshot.seriesCount);
 const failed = formatCount(snapshot.failedRuns);
-const SCHEDULE = ["04:10", "10:10", "16:10", "22:10"];
 const SECTIONS: Section[] = ["Memory", "Compute", "Operating system", "Disk", "Network"];
 
 /** The unit a row is shown in: the one its smallest figure reads at least 1 in, so a row compares digit for digit. */
@@ -72,31 +73,31 @@ function cellTitle(choice: HeadlineChoice, row: SeriesRow, u: RowUnit): string {
 }
 
 /**
- * Every digit of an exact decimal, the first `lead` significant ones set apart from the rest.
- * Nothing is dropped or rounded: the text is `full`, split in two for the eye.
+ * Every digit of the median, split where it stops agreeing with p5 and p95: the three written in one unit and
+ * aligned on the decimal point, the head is the digits all three share. Nothing is dropped, rounded or computed:
+ * the text is `full`, compared character by character with the other two and split in two for the eye.
  */
-function splitDigits(full: string, lead = 4): { head: string; tail: string } {
-	let seen = 0;
-	let started = false;
-	for (let i = 0; i < full.length; i++) {
-		const c = full[i]!;
-		if (c >= "1" && c <= "9") started = true;
-		if (started && c >= "0" && c <= "9") seen++;
-		if (seen === lead) return { head: full.slice(0, i + 1), tail: full.slice(i + 1) };
-	}
-	return { head: full, tail: "" };
+function splitDigits(p50: string, p5: string, p95: string): { head: string; tail: string } {
+	const intLen = (s: string) => s.split(".")[0]!.length;
+	const width = Math.max(intLen(p5), intLen(p50), intLen(p95));
+	const pad = (s: string) => " ".repeat(width - intLen(s)) + s;
+	const [a, b, c] = [pad(p5), pad(p50), pad(p95)];
+	let n = 0;
+	while (n < b.length && a[n] === b[n] && c[n] === b[n]) n++;
+	let len = Math.max(0, n - (width - intLen(p50)));
+	if (p50[len - 1] === ".") len--;
+	return { head: p50.slice(0, len), tail: p50.slice(len) };
 }
 
 /** An exact figure for the table: integer part right-aligned in the row's width, so every decimal point in a row sits in one place. */
-function Exact(props: { full: string }) {
+function Exact(props: { full: string; p5: string; p95: string }) {
 	const [int = "", frac] = props.full.split(".");
-	const { head, tail } = splitDigits(props.full);
+	const { head, tail } = splitDigits(props.full, props.p5, props.p95);
 	const headInt = head.slice(0, int.length);
 	const tailInt = int.slice(headInt.length);
 	const fracText = frac === undefined ? "" : `.${frac}`;
 	const headFrac = head.length > int.length ? head.slice(int.length) : "";
 	const tailFrac = fracText.slice(headFrac.length);
-	// The leading digits carry a hairline: every figure opens onto its percentiles and its Series.
 	return (
 		<span class="exact">
 			<span class="x-int">
@@ -146,8 +147,7 @@ const tracedP50 = show(tracedLead.p50, tracedU);
 const tracedP5 = show(tracedLead.p5, tracedU);
 const tracedP95 = show(tracedLead.p95, tracedU);
 const tracedDerivation = tracedCell.series.derivations.series_v1;
-const tracedDigits = splitDigits(tracedP50.full);
-const tracedPrice = formatUsd(tracedCell.machine.price.usdPerHour);
+const tracedDigits = splitDigits(tracedP50.full, tracedP5.full, tracedP95.full);
 const tracedIsSample = tracedCell.series.id === seriesFileContents.sample.id;
 
 /** The traced figure's p5 to p95 on a zoomed scale (p5 and p95 a quarter in from each end): positions for drawing only. */
@@ -213,11 +213,8 @@ function TracedFigure() {
 	const s = tracedCell.series;
 	return (
 		<figure class="traced" aria-labelledby="traced-caption">
-			<p class="eyebrow traced-eyebrow" id="traced-caption">
+			<p class="traced-what" id="traced-caption">
 				<span class="trace-mark" aria-hidden="true" />
-				One figure, traced
-			</p>
-			<p class="traced-what">
 				<a href={tracedRow.choice.readme} title={tracedRow.choice.setting}>
 					{tracedRow.choice.label}
 				</a>{" "}
@@ -254,45 +251,12 @@ function TracedFigure() {
 				<div>
 					<dt>Zone</dt>
 					<dd>
-						<span class="mono">{s.availability_zone_id}</span> · ${tracedPrice.full}/h
+						<span class="mono">{s.availability_zone_id}</span>
 					</dd>
 				</div>
 			</dl>
 			<Trail />
 		</figure>
-	);
-}
-
-// ------------------------------------------------------------------ the day, as a ruler
-
-function ScheduleLine() {
-	// One UTC day: the four scheduled boots, labelled with their times, and where the newest Run started.
-	const x = (hhmm: string) => {
-		const [h, m] = hhmm.split(":").map(Number) as [number, number];
-		return 6 + ((h + m / 60) / 24) * 300;
-	};
-	const now = x(newest.minute);
-	return (
-		<svg class="dayline" viewBox="0 0 340 46" role="img" aria-label={`Boots at ${SCHEDULE.join(", ")} UTC; the newest Run started at ${newest.minute}`}>
-			<line x1="6" x2="306" y1="22" y2="22" class="dl-axis" />
-			{Array.from({ length: 25 }, (_, h) => (
-				<line x1={x(`${h}:00`)} x2={x(`${h}:00`)} y1={h % 6 === 0 ? 16 : 19} y2="22" class="dl-hour" />
-			))}
-			{SCHEDULE.map((t) => (
-				<>
-					<circle cx={x(t)} cy="22" r="4" class="dl-boot" />
-					<text x={x(t)} y="41" text-anchor="middle" class="dl-label">
-						{t}
-					</text>
-				</>
-			))}
-			<text x="314" y="25.5" class="dl-utc">
-				UTC
-			</text>
-			<line x1={now} x2={now} y1="11" y2="22" class="dl-now-line" />
-			<circle cx={now} cy="22" r="7" class="dl-now-ring" />
-			<circle cx={now} cy="22" r="3.5" class="dl-now" />
-		</svg>
 	);
 }
 
@@ -319,7 +283,7 @@ function Header() {
 				</a>
 				<nav aria-label="Sections">
 					<ul class="nav">
-						<li>
+						<li class="nav-keep">
 							<a href="#numbers">Numbers</a>
 						</li>
 						<li>
@@ -376,7 +340,6 @@ function Hero() {
 						kept with its evidence.
 					</p>
 					<div class="fresh">
-						<ScheduleLine />
 						<p class="fresh-line">
 							<span>
 								Newest Run{" "}
@@ -421,6 +384,19 @@ function Network(props: { words: string }) {
 			{n.value} Gbit/s
 		</span>
 	);
+}
+
+/**
+ * AWS's other words in one form per column: "Up to 4.5 GHz" reads "≤ 4.5 GHz", like the network; a trailing
+ * "Processor" goes; a local disk's size gets the GB the price file's sizes are in. AWS's words are the title.
+ */
+function Aws(props: { words: string; kind: "processor" | "clock" | "storage" }) {
+	const w = props.words.trim();
+	let shown = w;
+	if (props.kind === "processor") shown = w.replace(/ Processor$/, "");
+	if (props.kind === "clock") shown = w.replace(/^Up to /i, "≤ ");
+	if (props.kind === "storage") shown = w.replace(/^(\d+) x (\d+) /, "$1 × $2 GB ");
+	return shown === w ? <>{w}</> : <span title={`AWS: “${w}”`}>{shown}</span>;
 }
 
 function priceTitle(m: (typeof machines)[number]): string {
@@ -478,12 +454,18 @@ function Machines() {
 									</td>
 									<td data-l="vCPU">{m.vcpu}</td>
 									<td data-l="Memory">{m.memory}</td>
-									<td data-l="Processor">{m.processor}</td>
-									<td data-l="Clock">{m.clockSpeed}</td>
+									<td data-l="Processor">
+										<Aws words={m.processor} kind="processor" />
+									</td>
+									<td data-l="Clock">
+										<Aws words={m.clockSpeed} kind="clock" />
+									</td>
 									<td data-l="Network">
 										<Network words={m.network} />
 									</td>
-									<td data-l="Storage">{m.storage}</td>
+									<td data-l="Storage">
+										<Aws words={m.storage} kind="storage" />
+									</td>
 								</tr>
 							))}
 						</tbody>
@@ -520,22 +502,32 @@ function SpreadKey() {
 				<span class="kg kg-whisk" aria-hidden="true" />
 				p5–p95
 			</span>
-			<span class="key-item">scale per row</span>
+			<span class="key-item">scale per benchmark</span>
+			<span class="key-item">
+				<span class="kg-digits mono" aria-hidden="true">
+					<span class="x-head">{tracedDigits.head}</span>
+					<span class="x-tail">{tracedDigits.tail.slice(0, 2)}…</span>
+				</span>
+				same at p5, p95
+			</span>
 		</p>
 	);
 }
+
+/** A group's name for the jump chips: the long one shortened, its full name kept. */
+const CHIP: Partial<Record<Section, string>> = { "Operating system": "OS" };
 
 function NumbersTable() {
 	return (
 		<section class="numbers" id="numbers" aria-labelledby="numbers-title">
 			<div class="wrap">
 				<h2 id="numbers-title">
-					{formatCount(snapshot.benchmarkCount).full} benchmarks × {formatCount(snapshot.machineCount).full} machines, every digit
+					{formatCount(snapshot.benchmarkCount).full} benchmarks × {formatCount(snapshot.machineCount).full} machines
 				</h2>
 				<SpreadKey />
 				<nav class="jump" aria-label="Benchmark groups">
 					{SECTIONS.map((section) => (
-						<a href={`#${sectionId(section)}`}>{section}</a>
+						<a href={`#${sectionId(section)}`}>{CHIP[section] ? <abbr title={section}>{CHIP[section]}</abbr> : section}</a>
 					))}
 				</nav>
 
@@ -575,7 +567,8 @@ function NumbersTable() {
 											<tr style={{ "--iw": `${intWidth}ch`, "--fw": `${fracWidth}ch` }}>
 												<th scope="row" class="row-head">
 													<a class="row-label" href={row.choice.readme} title={row.choice.what}>
-														{row.choice.label}
+														{/* a name never breaks at its hyphen: "SHA-256" stays whole */}
+														{row.choice.label.replaceAll("-", "‑")}
 													</a>
 													<span class="row-unit">
 														{unitWords(u)} <Direction u={u} />
@@ -591,7 +584,7 @@ function NumbersTable() {
 																<summary title={cellTitle(row.choice, cell.series, u)}>
 																	<span class="cell-m mono">{cell.machine.instanceType}</span>
 																	<span class="cell-v">
-																		<Exact full={s.full} />
+																		<Exact full={s.full} p5={show(f.p5, u).full} p95={show(f.p95, u).full} />
 																		<Spread f={f} max={max} />
 																	</span>
 																</summary>
@@ -654,9 +647,17 @@ function JsonLine(props: { text: string }) {
 	return <>{parts.map((p) => (typeof p === "string" ? p : <span class={p.cls}>{p.cls === "j-str" ? slashes(p.t) : p.t}</span>))}</>;
 }
 
-/** JSON as text, one block per line, each indented by its depth so a long line wraps under itself, not under the margin. */
+/**
+ * JSON as text, one block per line, each indented by its depth so a long line wraps under itself, not under the margin.
+ * A run of closing braces shares one line, so the nesting costs no height.
+ */
 function Json(props: { value: unknown }) {
-	const lines = JSON.stringify(props.value, null, 2).split("\n");
+	const lines: string[] = [];
+	for (const line of JSON.stringify(props.value, null, 2).split("\n")) {
+		const prev = lines[lines.length - 1];
+		if (prev !== undefined && /^\s*[}\]]/.test(line) && /^\s*[}\]][\s}\]]*$/.test(prev)) lines[lines.length - 1] = `${prev} ${line.trim()}`;
+		else lines.push(line);
+	}
 	return (
 		<>
 			{lines.map((line) => {
@@ -685,14 +686,15 @@ const ENDPOINTS: { url: string; schema: string; link: boolean }[] = [
 function Api() {
 	const s = tracedCell.series;
 	const d = s.derivations.series_v1;
+	// The entry cut to what ties it to the traced figure: whose it is, how many Runs, the three percentiles.
+	const pcts = (p: { p5: number; p50: number; p95: number } | null | undefined) => (p ? { p5: p.p5, p50: p.p50, p95: p.p95 } : p);
 	const excerpt = {
 		id: s.id,
-		url: s.url,
 		instance_type: s.instance_type,
 		derivations: {
 			series_v1: {
 				counted_runs: d.counted_runs,
-				percentiles: tracedRow.choice.lead === "rate" ? { bytes_per_second: d.percentiles.bytes_per_second } : { time_per_repetition_ns: d.percentiles.time_per_repetition_ns },
+				percentiles: tracedRow.choice.lead === "rate" ? { bytes_per_second: pcts(d.percentiles.bytes_per_second) } : { time_per_repetition_ns: pcts(d.percentiles.time_per_repetition_ns) },
 			},
 		},
 	};
@@ -705,9 +707,9 @@ function Api() {
 			<p class="j-join mono" title={`One repetition is ${formatCount(per.count).full} ${per.of}s: ${p50} ns ÷ ${formatCount(per.count).full}, the figure traced at the top`}>
 				<span class="trace-mark" aria-hidden="true" />
 				<span>
-					<span class="j-k">p50</span> ÷ {formatCount(per.count).full} = {perUnit(p50, per.count)}
+					<span class="j-k">p50</span> ÷ {formatCount(per.count).full} <span class="j-u">{per.of}s</span> = {perUnit(p50, per.count)}{" "}
+					<span class="j-u">{tracedU.unit}</span>
 				</span>
-				<span class="j-u">{unitWords(tracedU)}</span>
 			</p>
 		) : null;
 	return (
