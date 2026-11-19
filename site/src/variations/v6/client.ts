@@ -1,18 +1,20 @@
-// Copy buttons beside each command (their words come from the stylesheet, so the page's text is the same with or without them). Without JavaScript the commands read the same and can be selected.
+// Copy buttons beside each command, their label as text in the button. Without JavaScript there are none; the commands read the same and can be selected.
+const LABEL = { copy: "copy", copied: "copied", failed: "select it" } as const;
 for (const el of document.querySelectorAll<HTMLElement>("[data-copy]")) {
 	const button = document.createElement("button");
 	button.type = "button";
 	button.className = "copy";
-	button.dataset.state = "copy";
+	const show = (state: keyof typeof LABEL) => (button.textContent = LABEL[state]);
+	show("copy");
 	button.setAttribute("aria-label", `Copy: ${el.textContent ?? ""}`);
 	button.addEventListener("click", async () => {
 		try {
 			await navigator.clipboard.writeText(el.textContent ?? "");
-			button.dataset.state = "copied";
+			show("copied");
 		} catch {
-			button.dataset.state = "failed";
+			show("failed");
 		}
-		setTimeout(() => (button.dataset.state = "copy"), 1600);
+		setTimeout(() => show("copy"), 1600);
 	});
 	el.after(button);
 }

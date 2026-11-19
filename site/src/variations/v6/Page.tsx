@@ -59,20 +59,21 @@ function Strip(props: { inst: Instrument; zoom: Scale }) {
 	const hi = at(z, props.zoom.hi);
 	const mid = at(z, (props.zoom.lo + props.zoom.hi) / 2);
 	const thin = (props.zoom.hi - props.zoom.lo) / (z.hi - z.lo) < 0.03;
-	const Y = 22;
+	const Y = 14;
 	return (
 		<svg class="strip" aria-hidden="true" width="100%" height={Y + 8}>
-			<line class="lens" x1="0" x2={thin ? mid : lo} y1="0" y2={Y - 6} />
-			<line class="lens" x1="100%" x2={thin ? mid : hi} y1="0" y2={Y - 6} />
+			<line class="lens" x1="0" x2={thin ? mid : lo} y1="0" y2={Y - 5} />
+			<line class="lens" x1="100%" x2={thin ? mid : hi} y1="0" y2={Y - 5} />
 			<line class="axis" x1="0" x2="100%" y1={Y + 0.5} y2={Y + 0.5} />
-			<line class="axis" x1="0.5" x2="0.5" y1={Y - 4} y2={Y + 5} />
-			<line class="axis" x1="100%" x2="100%" y1={Y - 4} y2={Y + 5} />
+			<line class="axis" x1="0.5" x2="0.5" y1={Y - 3} y2={Y + 4} />
+			<line class="axis" x1="100%" x2="100%" y1={Y - 3} y2={Y + 4} />
 			{thin ? (
-				<svg x={mid} y={Y - 6} width="1" height="13" overflow="visible">
-					<rect class="window" x="-5" width="10" y="0" height="13" />
+				// A window narrower than a pixel or two is drawn as a narrow tick, not a box that would widen it.
+				<svg x={mid} y={Y - 5} width="1" height="11" overflow="visible">
+					<rect class="window thin" x="-1" width="2" y="0" height="11" />
 				</svg>
 			) : (
-				<rect class="window" x={lo} width={width(z, props.zoom.lo, props.zoom.hi)} y={Y - 6} height="13" />
+				<rect class="window" x={lo} width={width(z, props.zoom.lo, props.zoom.hi)} y={Y - 5} height="11" />
 			)}
 			{props.inst.marks.map((m) => (
 				<circle class="median small" cx={at(z, m.p50.value)} cy={Y + 0.5} r="2" />
@@ -81,19 +82,9 @@ function Strip(props: { inst: Instrument; zoom: Scale }) {
 	);
 }
 
-/** An address that may break only after a slash, never inside a name or a hash; the text is unchanged. */
+/** A command, whole on one line: never broken inside an address (it scrolls sideways where it is longer than its box). */
 function Url(props: { text: string }) {
-	const parts = props.text.split(/(?<=[^:/]\/)/);
-	return (
-		<>
-			{parts.map((p, i) => (
-				<>
-					{p}
-					{i < parts.length - 1 ? <wbr /> : null}
-				</>
-			))}
-		</>
-	);
+	return <>{props.text}</>;
 }
 
 const pad = (i: number) => String(i + 1).padStart(2, "0");
@@ -109,12 +100,16 @@ function Digits(props: { text: string }) {
 	);
 }
 
-/** Where a row measures the volume rather than the machine, as the data module's reason for disk_read_io_uring's settings says. */
-function limitOf(benchmark: string): string | null {
+/**
+ * Where a row measures the volume rather than the machine, as the data module's reason for
+ * disk_read_io_uring's settings says: its tag, in the data's own words (the volume is "gp3" in each
+ * choice's `what`), and the reason in full for its title.
+ */
+function limitOf(benchmark: string): { tag: string; title: string } | null {
 	const reason = headline.find((r) => r.choice.benchmark === "disk_read_io_uring")?.choice.reason ?? "";
 	if (!/IOPS limit/.test(reason) || !/throughput limit is what disk_read_sequential/.test(reason)) return null;
-	if (benchmark === "disk_read_io_uring") return "The root gp3 volume's IOPS limit: this chart measures the volume, the same kind on all five.";
-	if (benchmark === "disk_read_sequential") return "The root gp3 volume's throughput limit: this chart measures the volume, the same kind on all five.";
+	if (benchmark === "disk_read_io_uring") return { tag: "gp3 IOPS", title: reason };
+	if (benchmark === "disk_read_sequential") return { tag: "gp3 throughput", title: reason };
 	return null;
 }
 
@@ -136,8 +131,8 @@ function Card(props: { inst: Instrument; index: number }) {
 					</a>
 				</h3>
 				{limit ? (
-					<a class="lim" href={c.readme} title={limit}>
-						gp3 limit
+					<a class="lim" href={c.readme} title={limit.title}>
+						{limit.tag}
 					</a>
 				) : null}
 				<span class="unit" title={unit}>
@@ -251,6 +246,7 @@ export default function Page() {
 	const newest = formatMoment(snapshot.newestRunStartedAt);
 	const runs = formatCount(snapshot.runCount).full;
 	const failed = formatCount(snapshot.failedRuns).full;
+	const seriesCount = formatCount(snapshot.seriesCount).full;
 	const prices = machines.map((m) => formatUsd(m.price.usdPerHour, { per: "hour" }));
 	const priceScale = zeroScale(Math.max(...prices.map((p) => p.value)), 3);
 
@@ -325,6 +321,14 @@ export default function Page() {
 								</dd>
 							</div>
 							<div>
+								<dt>Series</dt>
+								<dd>
+									<a href={links.seriesList}>
+										<b>{seriesCount}</b>
+									</a>
+								</dd>
+							</div>
+							<div>
 								<dt>Region</dt>
 								<dd>
 									<b>{snapshot.region}</b>
@@ -334,19 +338,6 @@ export default function Page() {
 								<dt>Prices</dt>
 								<dd>
 									<a href={links.prices}>{snapshot.priceDate}</a>
-								</dd>
-							</div>
-							<div>
-								<dt>Methods</dt>
-								<dd>
-									{snapshot.methods.map((m, i) => (
-										<>
-											{i > 0 ? " " : ""}
-											<a href={links.docs}>
-												{m.name} v{m.version}
-											</a>
-										</>
-									))}
 								</dd>
 							</div>
 						</dl>
@@ -381,7 +372,6 @@ export default function Page() {
 							</span>
 						</p>
 					</div>
-					<Every instruments={instruments} />
 					<div class="grid">
 						<article class="card price" id="machines" aria-labelledby="h-machines">
 							<header class="card-h">
@@ -429,6 +419,7 @@ export default function Page() {
 							<Card inst={inst} index={i} />
 						))}
 					</div>
+					<Every instruments={instruments} />
 				</section>
 
 				<section class="band" id="api" aria-labelledby="h-api">
@@ -438,12 +429,21 @@ export default function Page() {
 								<h2 id="h-api">The API</h2>
 								<a href={links.docs}>Docs</a>
 							</div>
-							<p>Static JSON. Each figure links to its Series file: every Run, with its evidence.</p>
 							<p class="schemas">
 								<span class="lbl">Schemas</span>
 								{links.schemas.map((s) => (
 									<a href={s.url}>
 										<code>{s.name}</code>
+									</a>
+								))}
+							</p>
+							<p class="schemas">
+								<span class="lbl">Methods</span>
+								{snapshot.methods.map((m) => (
+									<a href={links.docs}>
+										<code>
+											{m.name} v{m.version}
+										</code>
 									</a>
 								))}
 							</p>
@@ -466,7 +466,7 @@ export default function Page() {
 									<figure class="sample">
 										<figcaption>
 											<a href={`#b-${hero.row.choice.benchmark}`}>
-												{pad(0)} {exMark.instanceType} <b>{exMark.p50.short}</b> {hero.unit}
+												{pad(0)} {exMark.instanceType} <b>{exMark.p50.full}</b> {hero.unit}
 											</a>
 										</figcaption>
 										<pre tabindex="0" role="region" aria-label={`From series.json: ${row.benchmark} on ${row.instance_type}`}>
@@ -476,7 +476,7 @@ export default function Page() {
 								</li>
 								<li>
 									<p class="c">
-										# {pad(0)} {exMark.instanceType}: each Run, its evidence
+										# {pad(0)} {exMark.instanceType}: Runs, evidence
 									</p>
 									<div class="line">
 										<code data-copy tabindex="0">
