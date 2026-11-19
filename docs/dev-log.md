@@ -1070,4 +1070,21 @@ A migrated benchmark is done only when **all** of these hold:
   `boot_summary` linked when the Runs repository holds it; blob addresses as a template in
   the table of contents, since Run files name blobs by hash. The lookup tool and the skill
   still read the files of Derivations.
+- **2026-11-19** — The data API, split by month before it goes public (#64, ADR-0030
+  rules 3 and 9 to 11). Each Series' points, and series v1's pair entries (filed under the
+  later Run's month), moved to `v1/series/<id>/<yyyy-mm>.json`; the Series file keeps the
+  summary, the newest 12 points (`newest_runs`) and the list of its months. Left out of it,
+  as recoverable from the month files and refused by the build when not: the Runs behind each
+  percentile (the counted points) and in each group (the points of its letter). Found while
+  building: requests v1's `group_through` turns from null into the group's figures on every
+  earlier point the day a Run first splits a Series, which would rewrite every past month; it
+  is written as it stood through each Run, null before the split, where the Derivation's is
+  the point's `through`. Also: a ceiling of bytes per kind of file in the check; the build
+  refuses a number in the Derivations a double does not hold exactly (`-0` passes as 0); the
+  check reads the tree's numbers the same way, finds every file reachable from the index,
+  every schema valid and listed, and with `--previous DIR` reports any past month that
+  changed but by a Run of its own or an arriving boot summary. On the data of 2026-11-19 a
+  Series file is 29 to 31 KB (138 to 302 KB for `http_get`, from 124 to 791 KB), a month file
+  grows by up to 4.5 KB a Run (22 KB), and the build and check take 1.0 s and 1.8 s. The
+  index's list of price files still grows (124 bytes a day), and is left as it is.
 - _(agents: append your entry here, one per merged benchmark)_
