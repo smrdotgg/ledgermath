@@ -486,8 +486,12 @@ h1 {
 		column-gap: 2.75rem;
 		column-rule: 1px solid var(--hair);
 	}
-	.cols > :not(ol) {
+	.cols > :not(ol),
+	.cols > .sub {
 		break-inside: avoid;
+	}
+	.cols > .sub:first-child h3 {
+		margin-top: 0;
 	}
 	.cols li {
 		break-inside: avoid;
@@ -903,7 +907,7 @@ td {
 	padding-top: 0.75rem;
 }
 .access-code .code {
-	font-size: 0.76rem;
+	font-size: 0.8rem;
 	line-height: 1.55;
 	padding: 0.9rem 1rem;
 }
@@ -947,6 +951,10 @@ td {
 }
 .refs li {
 	counter-increment: ref;
+}
+.refs li::before {
+	content: "[" counter(ref) "]";
+	color: var(--accent);
 }
 .refs li {
 	overflow-wrap: anywhere;
@@ -1121,8 +1129,12 @@ li:target {
 		display: none;
 	}
 	.front {
-		padding-top: 2rem;
+		padding-top: 1.5rem;
 		text-align: left;
+	}
+	.kicker {
+		margin-bottom: 0.8rem;
+		font-size: 0.95rem;
 	}
 	h1 {
 		font-size: 1.85rem;
@@ -1271,4 +1283,196 @@ li:target {
 .availability strong {
 	color: var(--ink);
 	font-weight: 600;
+}
+
+.counted {
+	margin-top: 0.5rem;
+	padding-top: 0.25rem;
+	border-top: 1px solid var(--hair);
+}
+.counted .defn {
+	max-width: 52rem;
+	font-size: 0.88rem;
+}
+.eq-line {
+	white-space: nowrap;
+}
+.eq-body {
+	white-space: normal;
+}
+.t2 thead th {
+	white-space: nowrap;
+}
+
+@media (max-width: 640px) {
+	.t2 {
+		min-width: 0;
+		display: block;
+		font-size: 0.92rem;
+	}
+	.table-wrap:has(.t2) {
+		overflow: visible;
+	}
+	.t2 caption {
+		display: block;
+	}
+	.t2 thead {
+		display: none;
+	}
+	.t2 tbody {
+		display: block;
+	}
+	.t2 tbody tr {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) auto;
+		gap: 0.1rem 0.75rem;
+		padding: 0.7rem 0;
+	}
+	.t2 tbody tr + tr > * {
+		border-top: 0;
+	}
+	.t2 tbody tr + tr {
+		border-top: 1px solid var(--hair);
+	}
+	.t2 th,
+	.t2 td {
+		display: block;
+		padding: 0;
+		text-align: left;
+	}
+	.t2 tbody th {
+		grid-column: 1;
+		grid-row: 1;
+		padding-top: 0.15rem !important;
+		font-size: 0.9rem !important;
+	}
+	.t2 td.price {
+		grid-column: 2;
+		grid-row: 1;
+		text-align: right;
+	}
+	.t2 td.price::after {
+		content: " USD/h";
+		font-size: 0.75rem;
+		font-weight: 400;
+		color: var(--ink-2);
+	}
+	.t2 td[data-label],
+	.t2 td.proc,
+	.t2 td.desc {
+		grid-column: 1 / -1;
+	}
+	.t2 td[data-label] {
+		display: flex;
+		gap: 0.5rem;
+	}
+	.t2 td[data-label]::before {
+		content: attr(data-label);
+		min-width: 4.5rem;
+		font-style: italic;
+		color: var(--ink-2);
+	}
+	.t2 td.num-col[data-label] {
+		text-align: left;
+	}
+	.t2 td.proc {
+		order: -1;
+		margin: 0.15rem 0 0.2rem;
+	}
+	.t2 td.proc .clock {
+		display: inline;
+		margin-left: 0.4rem;
+	}
+	.t2 td.desc {
+		max-width: none;
+		margin-top: 0.2rem;
+	}
+}
+
+/* Table 3 */
+.t3 {
+	min-width: 44rem;
+	font-size: 0.94rem;
+	border-top: 2px solid var(--rule);
+	border-bottom: 2px solid var(--rule);
+}
+.t3 thead th {
+	border-bottom: 1px solid var(--rule);
+	font-weight: 600;
+}
+.t3 tbody tr + tr > * {
+	border-top: 1px solid var(--grid);
+}
+.t3 th:first-child {
+	padding-left: 0;
+	white-space: nowrap;
+	width: 14rem;
+}
+.t3 tbody th a,
+.t3 td:last-child a {
+	font-family: var(--mono);
+	font-size: 0.8rem;
+	font-weight: 400;
+}
+.t3 td:last-child {
+	padding-right: 0;
+	white-space: nowrap;
+}
+.t3 td {
+	color: var(--ink-2);
+}
+
+@media (max-width: 640px) {
+	.table-wrap:has(.t3) {
+		overflow: visible;
+	}
+	.t3 {
+		min-width: 0;
+		display: block;
+	}
+	.t3 caption {
+		display: block;
+	}
+	.t3 thead {
+		display: none;
+	}
+	.t3 tbody,
+	.t3 tr,
+	.t3 th,
+	.t3 td {
+		display: block;
+		width: auto;
+		padding: 0;
+	}
+	.t3 tbody tr {
+		padding: 0.6rem 0;
+	}
+	.t3 tbody tr + tr {
+		border-top: 1px solid var(--hair);
+	}
+	.t3 tbody tr + tr > * {
+		border-top: 0;
+	}
+	.t3 td:last-child::before {
+		content: "Schema: ";
+		font-style: italic;
+	}
+	.t3 td + td {
+		margin-top: 0.2rem;
+	}
+
+	.t2 tbody tr {
+		grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+	}
+	.t2 td[data-label] {
+		grid-column: auto;
+		gap: 0.4rem;
+	}
+	.t2 td[data-label]::before {
+		min-width: 0;
+	}
+	.t2 td[data-label="Network"],
+	.t2 td[data-label="Storage"] {
+		grid-column: 1 / -1;
+	}
 }

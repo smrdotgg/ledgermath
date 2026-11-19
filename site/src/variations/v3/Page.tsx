@@ -336,11 +336,11 @@ export default function Page() {
 								</li>
 								<li>
 									<em>It keeps every Run.</em> A Run is kept with its evidence, whether it counted or failed; a failed Run is shown with its reasons and is in no figure
-									(§4.2).
+									(§4.2, §4.5).
 								</li>
 								<li>
 									<em>It derives by published Methods.</em> A figure is what a named, versioned Method computes from the counted Runs of one Series, and the Method's
-									definitions are published beside the figures <Cite n={[REF.series, REF.method]} /> (§4.3).
+									definitions are published beside the figures <Cite n={[REF.series, REF.method]} /> (§4.4).
 								</li>
 							</ol>
 							<p>
@@ -475,7 +475,7 @@ export default function Page() {
 								<span class="tlabel">Figure 1.</span> The spread of each headline Series across its counted Runs. Each bar runs from the 5th to the 95th percentile and the
 								tick marks the median; the three are printed on the right, to four significant digits (on a narrow screen, the median only; every digit is in Table S1). Scales are linear and start at zero, one
 								per panel, so a bar's length and position are to exact scale within its panel. A very short bar is a Series whose Runs agreed closely. Percentiles are by
-								linear interpolation between closest ranks, Eq. (1).
+								linear interpolation between closest ranks, Eq. (3).
 							</figcaption>
 						</figure>
 					</section>
@@ -515,14 +515,16 @@ export default function Page() {
 									{machines.map((m) => (
 										<tr>
 											<th scope="row">{m.instanceType}</th>
-											<td class="num-col">{m.vcpu}</td>
-											<td>{m.memory}</td>
-											<td>
+											<td class="num-col" data-label="vCPU">
+												{m.vcpu}
+											</td>
+											<td data-label="Memory">{m.memory}</td>
+											<td class="proc">
 												{m.processor}
 												<span class="clock">{m.clockSpeed}</span>
 											</td>
-											<td>{m.network}</td>
-											<td>{m.storage}</td>
+											<td data-label="Network">{m.network}</td>
+											<td data-label="Storage">{m.storage}</td>
 											<td class="num-col price" title={`${m.price.usdPerHour} USD per hour, as the price file writes it`}>
 												{formatUsd(m.price.usdPerHour).full}
 											</td>
@@ -540,72 +542,102 @@ export default function Page() {
 							<span class="num">4</span>Methods
 						</h2>
 						<div class="cols methods">
-							<h3 id="s41">
-								<span class="num">4.1</span>Schedule and machines
-							</h3>
-							<p>
-								Four times a day, at 04:10, 10:10, 16:10 and 22:10 UTC, a machine of each of the {snapshot.machineCount} types in Table 2 is booted in {snapshot.region}, and
-								each of the {snapshot.benchmarkCount} benchmarks runs on it while it is freshly booted. The oldest Run in this snapshot started at {oldest.full}, the newest at{" "}
-								{newest.full}
-								<Note n={1} />.
-							</p>
-							<h3 id="s42">
-								<span class="num">4.2</span>Runs, Series and evidence
-							</h3>
-							<p>
-								Every execution of a benchmark is kept as a Run, with its evidence: what the benchmark printed, and what was recorded about the machine. In the Method's
-								words, a Series is “{series1.definitions.series!.replace(/\.$/, "")}”; this snapshot holds {seriesCount.full} of them and {runs.full} Runs. A Run either counts
-								or fails, by the rule below; a failed Run is kept and shown, with its reasons, and is in no figure <Cite n={REF.method} />.
-							</p>
-							<h3 id="s43">
-								<span class="num">4.3</span>Figures
-							</h3>
-							<p>
-								The figures are Method <span class="sc">series</span> v{series1.version}'s. For each Run it takes the time of one repetition, the median over the Run's counted
-								samples, warmup samples left out, of
-							</p>
-							<div class="eq" role="math" aria-label="t equals the sample's end minus its start, divided by its repetitions">
-								<span class="eq-body">
-									<i>t</i> = (<i>t</i>
-									<sub>end</sub> − <i>t</i>
-									<sub>start</sub>) / <i>r</i>
-								</span>
-								<span class="eq-n">(2)</span>
+							<div class="sub">
+								<h3 id="s41">
+									<span class="num">4.1</span>Schedule and machines
+								</h3>
+								<p>
+									Four times a day, at 04:10, 10:10, 16:10 and 22:10 UTC, a machine of each of the {snapshot.machineCount} types in Table 2 is booted in{" "}
+									{snapshot.region}, and each of the {snapshot.benchmarkCount} benchmarks runs on it while it is freshly booted. The Runs in this snapshot started between{" "}
+									{oldest.longDate} and {newest.longDate}
+									<Note n={1} />.
+								</p>
 							</div>
-							<p>
-								for each sample of <i>r</i> repetitions, and, where the benchmark observes the bytes a repetition moves, <i>B</i>, a rate of
-							</p>
-							<div class="eq" role="math" aria-label="rate equals B times ten to the ninth, divided by t in nanoseconds">
-								<span class="eq-body">
-									<i>R</i> = <i>B</i> × 10<sup>9</sup> / <i>t</i>
-									<sub>ns</sub>
-								</span>
-								<span class="eq-n">(3)</span>
+							<div class="sub">
+								<h3 id="s42">
+									<span class="num">4.2</span>Runs, Series and evidence
+								</h3>
+								<p>
+									Every execution of a benchmark is kept as a Run, with its evidence: what the benchmark printed, and what was recorded about the machine. In the Method's
+									words, a Series is “{series1.definitions.series!.replace(/\.$/, "")}”. This snapshot holds {seriesCount.full} Series and {runs.full} Runs. A Run either
+									counts or fails, by the rule in §4.5; a failed Run is kept and shown, with its reasons, and is in no figure <Cite n={REF.method} />.
+								</p>
 							</div>
-							<p>
-								bytes a second. Across the counted Runs of a Series it then takes the 5th, 50th and 95th percentiles, by linear interpolation between closest ranks (type 7):
-								with the <i>n</i> values sorted, <i>x</i>
-								<sub>0</sub> ≤ … ≤ <i>x</i>
-								<sub>
-									<i>n</i>−1
-								</sub>
-								,
-							</p>
-							<div class="eq" role="math" aria-label="h equals n minus 1 times p over 100; the percentile is x at floor h plus the fraction of h times the next difference">
-								<span class="eq-body">
-									<i>h</i> = (<i>n</i> − 1) <i>p</i> / 100,&emsp;<i>Q</i>(<i>p</i>) = <i>x</i>
-									<sub>⌊h⌋</sub> + (<i>h</i> − ⌊<i>h</i>⌋)(<i>x</i>
-									<sub>⌊h⌋+1</sub> − <i>x</i>
-									<sub>⌊h⌋</sub>)
-								</span>
-								<span class="eq-n">(1)</span>
+							<div class="sub">
+								<h3 id="s43">
+									<span class="num">4.3</span>Exactness and versions
+								</h3>
+								<p>
+									The API states: “{snapshot.figures.split(":")[0]}.” This page changes only units, by moving the decimal point
+									<Note n={3} />. On versions: “{snapshot.versioning.split(". ")[0]}.”
+								</p>
 							</div>
-							<p>
-								Each number's percentiles are taken over that number's own values, so the percentiles of a rate are not those of the time inverted
-								<Note n={2} />.
-							</p>
-							<h3 id="s44">
-								<span class="num">4.4</span>Which Runs count
+							<div class="sub">
+								<h3 id="s44">
+									<span class="num">4.4</span>Figures
+								</h3>
+								<p>
+									The figures are Method <span class="sc">series</span> v{series1.version}'s. For each Run it takes the time of one repetition: the median, over the Run's
+									counted samples (warmup samples left out), of
+								</p>
+								<div class="eq" role="math" aria-label="t equals the sample's end minus its start, divided by its repetitions">
+									<span class="eq-body">
+										<i>t</i> = (<i>t</i>
+										<sub>end</sub> − <i>t</i>
+										<sub>start</sub>) / <i>r</i>
+									</span>
+									<span class="eq-n">(1)</span>
+								</div>
+								<p>
+									for a sample of <i>r</i> repetitions; and where the benchmark observes the bytes one repetition moves, <i>B</i>, a rate in bytes a second of
+								</p>
+								<div class="eq" role="math" aria-label="rate equals B times ten to the ninth, divided by t in nanoseconds">
+									<span class="eq-body">
+										<i>R</i> = <i>B</i> × 10<sup>9</sup> / <i>t</i>
+										<sub>ns</sub>
+									</span>
+									<span class="eq-n">(2)</span>
+								</div>
+								<p>
+									Across the counted Runs of a Series it takes the 5th, 50th and 95th percentiles by linear interpolation between closest ranks: with the <i>n</i> values
+									sorted, <i>x</i>
+									<sub>0</sub> ≤ … ≤ <i>x</i>
+									<sub>
+										<i>n</i>−1
+									</sub>
+									,
+								</p>
+								<div class="eq" role="math" aria-label="h equals n minus 1 times p over 100; the percentile is x at floor h plus the fraction of h times the next difference">
+									<span class="eq-body">
+										<span class="eq-line">
+											<i>h</i> = (<i>n</i> − 1) <i>p</i> / 100,
+										</span>{" "}
+										<span class="eq-line">
+											<i>Q</i>(<i>p</i>) = <i>x</i>
+											<sub>⌊h⌋</sub> + (<i>h</i> − ⌊<i>h</i>⌋)(<i>x</i>
+											<sub>⌊h⌋+1</sub> − <i>x</i>
+											<sub>⌊h⌋</sub>)
+										</span>
+									</span>
+									<span class="eq-n">(3)</span>
+								</div>
+								<p>
+									Each number's percentiles are taken over that number's own values, so the percentiles of a rate are not those of the time inverted
+									<Note n={2} />.
+									{requests1 ? (
+										<>
+											{" "}
+											The GET from S3 is also summarised request by request, by Method <span class="sc">requests</span> v{requests1.version} <Cite n={REF.method} />.
+										</>
+									) : (
+										""
+									)}
+								</p>
+							</div>
+						</div>
+						<div class="sub counted">
+							<h3 id="s45">
+								<span class="num">4.5</span>Which Runs count
 							</h3>
 							<blockquote class="defn">
 								<p>“{series1.definitions.counted}”</p>
@@ -613,21 +645,6 @@ export default function Page() {
 									Method <span class="sc">series</span> v{series1.version}, definition of <i>counted</i> <Cite n={REF.method} />
 								</footer>
 							</blockquote>
-							<h3 id="s45">
-								<span class="num">4.5</span>Exactness and versions
-							</h3>
-							<p>
-								The API states: “{snapshot.figures.split(":")[0]}.” This page changes only units, by moving the decimal point
-								<Note n={3} />. On versions: “{snapshot.versioning.split(". ")[0]}.”
-								{requests1 ? (
-									<>
-										{" "}
-										The GET from S3 is also summarised request by request by Method <span class="sc">requests</span> v{requests1.version} <Cite n={REF.method} />.
-									</>
-								) : (
-									""
-								)}
-							</p>
 						</div>
 					</section>
 
@@ -669,6 +686,62 @@ export default function Page() {
 								</pre>
 							</div>
 						</div>
+						<div class="table-wrap wide" role="region" aria-labelledby="t3-cap" tabindex="0">
+							<table class="t3">
+								<caption id="t3-cap">
+									<span class="tlabel">Table 3.</span> The files of the data API, version 1. Each kind of file has a JSON schema; version 1 only ever gains fields{" "}
+									<Cite n={[REF.index, REF.schemas]} />.
+								</caption>
+								<thead>
+									<tr>
+										<th scope="col">File</th>
+										<th scope="col">What an agent finds there</th>
+										<th scope="col">Schema</th>
+									</tr>
+								</thead>
+								<tbody>
+									<tr>
+										<th scope="row">
+											<a href={links.index}>v1/index.json</a>
+										</th>
+										<td>The table of contents: what LedgerMath is, how versions work, the newest Run, and the address of every other file.</td>
+										<td>
+											<a href={schema("index").url}>index.schema.json</a>
+										</td>
+									</tr>
+									<tr>
+										<th scope="row">
+											<a href={links.seriesList}>v1/series.json</a>
+										</th>
+										<td>
+											All {seriesCount.full} Series, each with its benchmark, settings, machine type and zone, its counts of Runs, and the figures of Method{" "}
+											<span class="sc">series</span> v{series1.version}; the Methods' definitions.
+										</td>
+										<td>
+											<a href={schema("series-list").url}>series-list.schema.json</a>
+										</td>
+									</tr>
+									<tr>
+										<th scope="row">
+											<a href={rows[0]!.cells[0]!.url}>v1/series/&lt;id&gt;.json</a>
+										</th>
+										<td>One Series in full: every figure in Table 1 links to its own.</td>
+										<td>
+											<a href={schema("series").url}>series.schema.json</a>
+										</td>
+									</tr>
+									<tr>
+										<th scope="row">
+											<a href={links.prices}>v1/prices/&lt;date&gt;.json</a>
+										</th>
+										<td>AWS's public On-Demand prices for the machine types measured, copied once a day; the newest is of {snapshot.priceDate}.</td>
+										<td>
+											<a href={schema("prices").url}>prices.schema.json</a>
+										</td>
+									</tr>
+								</tbody>
+							</table>
+						</div>
 					</section>
 
 					{/* ---------------------------------------------------- notes, references */}
@@ -676,7 +749,10 @@ export default function Page() {
 						<h2 id="notes">Notes</h2>
 						<ol>
 							<li id="fn-1">
-								Moments are in UTC, to the nanosecond, as each Run records them. <a href="#fnref-1" aria-label="back to note 1">↩</a>
+								The oldest Run started at {oldest.full}, the newest at {newest.full}. Moments are in UTC, to the nanosecond, as each Run records them.{" "}
+								<a href="#fnref-1" aria-label="back to note 1">
+									↩
+								</a>
 							</li>
 							<li id="fn-2">
 								So the median rate in Table 1 is not 1 divided by the median time. Method <span class="sc">series</span> v{series1.version}, definition of{" "}
