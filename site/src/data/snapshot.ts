@@ -12,6 +12,10 @@ import indexJson from "../../data/snapshot/v1/index.json";
 // snapshot is replaced, change this date with it; a test checks the two agree.
 import pricesJson from "../../data/snapshot/v1/prices/2026-11-19.json";
 import seriesJson from "../../data/snapshot/v1/series.json";
+// One Series' own file, kept as a sample of what v1/series/<id>.json holds, and the
+// schema that describes it (its words are the ones the module quotes).
+import seriesFileJson from "../../data/snapshot/v1/series/c2d748916b19.json";
+import seriesSchemaJson from "../../data/snapshot/v1/schemas/series.schema.json";
 
 /** Percentiles of one number across a Series' counted Runs (Method `series` v1). */
 export type Percentiles = { count: number; p5: number; p50: number; p95: number };
@@ -106,7 +110,7 @@ export type ApiIndex = {
 		files: { date: string; path: string; url: string }[];
 	};
 	schemas: { name: string; describes: string; url: string }[];
-	evidence: { about: string; [more: string]: unknown };
+	evidence: { about: string; blob_url_template: string; [more: string]: unknown };
 	[more: string]: unknown;
 };
 
@@ -137,6 +141,49 @@ export type PriceFile = {
 		terms: { OnDemand: Record<string, Record<string, PriceTerm>> };
 	}[];
 };
+
+/** One Run on a Series' chart, in v1/series/<id>.json at derivations.series_v1.points (Method `series` v1). */
+export type SeriesPoint = {
+	run: string;
+	path: string;
+	sha256: string;
+	evidence: string;
+	boot_summary: string | null;
+	started_at: string;
+	boot: string;
+	group: string;
+	counted: boolean;
+	failure: unknown;
+	samples: { sample: number; ns: number; repetitions: number; ns_per_repetition: number }[];
+	time_per_repetition_ns: number | null;
+	bytes_per_repetition: number | null;
+	bytes_per_second: number | null;
+};
+
+/** v1/series/<id>.json: one Series in full. Only the parts the module reads are typed. */
+export type SeriesFile = {
+	[part: string]: unknown;
+	id: string;
+	url: string;
+	benchmark: string;
+	instance_type: string;
+	runs: number;
+	derivations: { [key: string]: Record<string, unknown> | undefined; series_v1: Record<string, unknown> & { points: SeriesPoint[] } };
+};
+
+/** A JSON schema, as far as the module reads one: descriptions, properties and $refs. */
+export type JsonSchemaNode = {
+	description?: string;
+	$ref?: string;
+	properties?: Record<string, JsonSchemaNode>;
+	[more: string]: unknown;
+};
+export type JsonSchema = JsonSchemaNode & { $defs: Record<string, JsonSchemaNode> };
+
+export const seriesFileSample = seriesFileJson as unknown as SeriesFile;
+export const seriesSchema = seriesSchemaJson as unknown as JsonSchema;
+/** The sample Series file's id, as its file name gives it. */
+export const SERIES_FILE_SAMPLE_ID = "c2d748916b19";
 
 export const apiIndex = indexJson as unknown as ApiIndex;
 export const seriesList = seriesJson as unknown as SeriesList;

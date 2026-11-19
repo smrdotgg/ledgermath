@@ -42,18 +42,50 @@ Read the header of `src/data/index.ts`; in short:
 1. **Every figure comes from the module, exactly as the snapshot holds it.** Never invent,
    estimate or compute a statistic: no averages across machines, no ratios ("price per GB/s",
    "3× faster"), no trends, no "typical" values. The only arithmetic allowed is a change of unit,
-   and the helpers do it exactly.
-2. **Exact figures.** `formatRate`, `formatDuration`, `formatBytes`, `formatUsd`, `formatCount`
-   and `formatMoment` return `full` (every digit) and `short` (rounded, with `rounded: true`).
-   If you show `short`, give `full` too: a `title` attribute, a second line, a footnote.
-3. **The home table is the headline selection**: `headline`, 14 rows (one per benchmark) × 5
+   and the helpers do it exactly, including the one division in rule 3.
+2. **Exact figures.** `formatRate`, `formatDuration`, `formatBytes`, `formatUsd`, `formatCount`,
+   `formatDurationPerUnit` and `formatMoment` return `full` (every digit) and `short` (rounded,
+   with `rounded: true`). If you show `short`, give `full` too: a `title` attribute, a second
+   line, a footnote.
+3. **One division, and only one.** Where a headline choice has `per` (mutex: one repetition is
+   `per.count` = 10,000 critical sections), show the time of one with
+   `formatDurationPerUnit(ns, choice.per)` (a `Shown`, plus `per`), or `perUnit(figure, count)`
+   for the bare decimal text. They divide exactly, by moving the decimal point, and throw unless
+   the count is a power of ten. Do not move the point by hand, and divide by nothing else.
+4. **The home table is the headline selection**: `headline`, 14 rows (one per benchmark) × 5
    machine types, chosen by the written rule in `src/data/headline.ts`. Each row has its
    `choice` (label, what it measures, what one repetition is, the settings) and `leadFigure()`
    names the figure that leads it. You may show more Series (`series`, `benchmarks[i].settings`),
    never other figures for the headline rows.
-4. **Links** go to the snapshot's own addresses: `links.index`, `links.seriesList`,
-   `links.prices`, `links.docs`, `links.schemas`, and each Series' `url`. They do not answer yet:
-   link them, never fetch them.
+5. **Links** come from `links`, and none of them answers yet: link them, never fetch them.
+   - The API's addresses, the snapshot's own: `links.index`, `links.seriesList`, `links.prices`
+     (the newest price file), each Series' `url` (`links.seriesFile(row)`).
+   - Every daily price file the index lists: `links.priceFiles`, `{date, url, newest}`, oldest
+     first, the newest marked.
+   - Each schema's address by name: `links.schema.index`, `.seriesList`, `.series` (a Series'
+     own file), `.prices`; and `links.schemas`, the index's list of them.
+   - Addresses to show as text: `links.seriesFilePattern`
+     (`https://api.ledgermath.com/v1/series/<id>.json`) and `links.priceFilePattern`.
+   - The evidence: `links.evidenceBlobTemplate` (`https://api.ledgermath.com/blobs/sha256/{hex}`),
+     `links.evidenceBlob(sha256)` for one blob, and `links.evidenceAbout`, the index's own words.
+   - The documentation, at planned public addresses: `links.docs` (`https://ledgermath.com/docs/`)
+     and `links.benchmarkDocs(name)` (`https://ledgermath.com/docs/benchmarks/<name>`), the same as
+     each headline choice's `readme`.
+
+   **Never link to, name or describe the source repository or GitHub**: it is private.
+6. **A Series' own file** (`v1/series/<id>.json`): describe it with `seriesFileContents`, built
+   from one real file the snapshot keeps as a sample. It gives the file's top-level `parts`, its
+   `derivations` and their parts, and what a `point` (one Run) carries: every field with the
+   schema's own words (`point.fields`), the ones a page is most likely to name (`point.key`: Run
+   id, start, group, counted, the figure, the `evidence` and `boot_summary` addresses), and one
+   real point (`point.example`). The file's layout will change (it is to be split by month), so
+   say what it holds in general terms ("each Run's figure and a link to its evidence"), and do
+   not promise a layout.
+7. **Where a price comes from.** Each machine's `price.path` is the place in the day's price file
+   (`price.path.file`, which is `links.prices`) that the module read its hourly price from: the
+   source (`source`, `offerCode`), the SKU, the On-Demand term, the rate code and the field
+   (`pricePerUnit.USD`), and the whole path as a JSON Pointer (`pointer`), ready to cite.
+   `productPointer` points at the product's entry, where its vCPU and memory are.
 
 Also there: `machines` (five types, cheapest first, with vCPU, memory, processor and the hourly
 On-Demand price), `benchmarks`, and `snapshot` (newest and oldest Run, counts of Series and

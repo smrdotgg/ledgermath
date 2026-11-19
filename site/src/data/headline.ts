@@ -50,16 +50,25 @@ export type HeadlineChoice = {
 	lead: "rate" | "time";
 	/**
 	 * When one repetition is a fixed count of something smaller (mutex: 10,000 critical sections),
-	 * that count and its name, so a page can show the time of one by moving the decimal point.
+	 * that count and its name, so a page can show the time of one with formatDurationPerUnit (or
+	 * perUnit), which divides exactly and only by a power of ten. Never move the point by hand.
 	 */
 	per?: { count: number; of: string };
 	/** Why these settings, where step 4 of the rule chose between several. */
 	reason?: string;
-	/** Where the benchmark is described in full. */
+	/**
+	 * The benchmark's page in LedgerMath's documentation, where it is described in full:
+	 * https://ledgermath.com/docs/benchmarks/<benchmark>. A planned public address that does
+	 * not answer yet, like the API's: link it, never fetch it.
+	 */
 	readme: string;
 };
 
-const README = (name: string) => `https://github.com/smrdotgg/ledgermath/blob/main/benchmarks/${name}/README.md`;
+/** The documentation's address, planned and public; not served yet. */
+export const DOCS_URL = "https://ledgermath.com/docs/";
+/** A benchmark's page in the documentation, planned and public; not served yet. */
+export const benchmarkDocsUrl = (benchmark: string) => `${DOCS_URL}benchmarks/${benchmark}`;
+const README = benchmarkDocsUrl;
 const ROOT_VOLUME = { disk: "root_volume", dir: "/var/tmp/ledgermath/disk" } as const;
 
 /** The rows, in the order the home table lists them. */
@@ -75,7 +84,7 @@ export const HEADLINE_CHOICES: readonly HeadlineChoice[] = [
 		params: { size_bytes: 1073741824, threads: 1, path: "avx2" },
 		lead: "rate",
 		reason: "The AVX2 path (four 32-byte loads at a time) is the one an optimised copy or scan loop takes; the scalar path reads 8 bytes at a time.",
-		readme: "https://github.com/smrdotgg/ledgermath/blob/main/benchmarks/c/bench_memory_read.c",
+		readme: README("memory_read"),
 	},
 	{
 		benchmark: "memory_read_random",

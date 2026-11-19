@@ -12,7 +12,8 @@
  *
  * The only arithmetic is a change of unit: a power of ten (ns to ms, B/s to
  * GB/s), a power of two (bytes to GiB), or a count the benchmark fixes (one
- * repetition of mutex is 10,000 critical sections). Nothing here computes a
+ * repetition of mutex is 10,000 critical sections; see perUnit and
+ * formatDurationPerUnit, the only division allowed). Nothing here computes a
  * new statistic.
  *
  * A number's text is JavaScript's shortest round-trip form, String(n), which
@@ -171,6 +172,49 @@ export function formatDuration(nanoseconds: number, options: { unit?: DurationUn
 	const unit = options.unit ?? durationUnit(nanoseconds);
 	const text = plain(nanoseconds);
 	return shown(shift(text, DURATION_UNITS[unit]), unit, options.significant ?? 4, `${text} ns`, nanoseconds);
+}
+
+// ---------------------------------------------------------------- one repetition's parts
+
+/**
+ * The power of ten `count` is (10,000 is 4), or a thrown error when it is not one. A repetition
+ * of a count that is not a power of ten cannot be divided exactly in decimal, so it is refused.
+ */
+export function powerOfTen(count: number): number {
+	if (!Number.isSafeInteger(count) || count < 1) throw new Error(`a repetition's count must be a whole number from 1: ${count}`);
+	const text = String(count);
+	if (!/^10*$/.test(text)) throw new Error(`${count} is not a power of ten, so a figure cannot be divided by it exactly`);
+	return text.length - 1;
+}
+
+/**
+ * A figure of one repetition, divided by the count of smaller things one repetition is, exactly:
+ * perUnit("765134.14", 10000) is "76.513414". The count must be a power of ten (a headline
+ * choice's `per.count`); anything else throws. With the decimal point moved and nothing dropped,
+ * this is a change of unit, and it is the only division a page may make.
+ */
+export function perUnit(figure: number | string, count: number): string {
+	const text = typeof figure === "number" ? plain(figure) : figure;
+	return shift(text, -powerOfTen(count));
+}
+
+/**
+ * A time of one repetition (nanoseconds, as the snapshot gives it) as the time of one of the
+ * `per.count` smaller things a repetition is (mutex: one critical section of 10,000), in ns, µs,
+ * ms or s, chosen by the size of the result unless `unit` is given. `full` keeps every digit;
+ * `short` is rounded to `significant` digits (default 4) and says so (`rounded`). `source` is the
+ * snapshot's figure, per repetition; `per` says what the result is per.
+ */
+export function formatDurationPerUnit(
+	nanoseconds: number,
+	per: { count: number; of: string },
+	options: { unit?: DurationUnit; significant?: number } = {},
+): Shown & { per: { count: number; of: string } } {
+	const text = plain(nanoseconds);
+	const each = perUnit(text, per.count);
+	const value = Number(each);
+	const unit = options.unit ?? durationUnit(value);
+	return { ...shown(shift(each, DURATION_UNITS[unit]), unit, options.significant ?? 4, `${text} ns`, value), per: { count: per.count, of: per.of } };
 }
 
 // ---------------------------------------------------------------- bytes and rates

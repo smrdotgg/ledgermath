@@ -6,6 +6,7 @@ import {
 	formatBytes,
 	formatCount,
 	formatDuration,
+	formatDurationPerUnit,
 	formatMoment,
 	formatRate,
 	formatUsd,
@@ -16,14 +17,18 @@ import {
 	leadFigure,
 	links,
 	machines,
+	perUnit,
 	plain,
+	powerOfTen,
 	roundPlaces,
 	roundSignificant,
 	series,
+	seriesFileContents,
 	shift,
 	snapshot,
 } from ".";
-import { apiIndex, PRICE_FILE_DATE } from "./snapshot";
+import { HEADLINE_CHOICES } from "./headline";
+import { apiIndex, PRICE_FILE_DATE, priceFile, SERIES_FILE_SAMPLE_ID } from "./snapshot";
 
 const SNAPSHOT = join(import.meta.dir, "..", "..", "data", "snapshot", "v1");
 
@@ -52,6 +57,61 @@ describe("the snapshot", () => {
 		expect(links.seriesList).toBe("https://api.ledgermath.com/v1/series.json");
 		expect(links.prices).toBe("https://api.ledgermath.com/v1/prices/2026-11-19.json");
 		for (const row of series) expect(links.seriesFile(row)).toBe(`https://api.ledgermath.com/v1/series/${row.id}.json`);
+		expect(links.seriesFilePattern).toBe("https://api.ledgermath.com/v1/series/<id>.json");
+		expect(links.priceFilePattern).toBe("https://api.ledgermath.com/v1/prices/<yyyy-mm-dd>.json");
+	});
+
+	test("no link goes to GitHub; the documentation's are the planned public addresses", () => {
+		expect(apiIndex.docs).toStartWith("https://github.com/"); // the snapshot is left as the generator wrote it
+		expect(links.docs).toBe("https://ledgermath.com/docs/");
+		expect(links.benchmarkDocs("mutex")).toBe("https://ledgermath.com/docs/benchmarks/mutex");
+		for (const choice of HEADLINE_CHOICES) expect(choice.readme).toBe(`https://ledgermath.com/docs/benchmarks/${choice.benchmark}`);
+		const everyLink = JSON.stringify({ links, choices: HEADLINE_CHOICES, contents: seriesFileContents, machines: machines.map((m) => m.price) });
+		expect(everyLink).not.toContain("github");
+	});
+
+	test("each schema's address by name, and the evidence's blob template", () => {
+		expect(links.schema).toEqual({
+			index: "https://api.ledgermath.com/v1/schemas/index.schema.json",
+			seriesList: "https://api.ledgermath.com/v1/schemas/series-list.schema.json",
+			series: "https://api.ledgermath.com/v1/schemas/series.schema.json",
+			prices: "https://api.ledgermath.com/v1/schemas/prices.schema.json",
+		});
+		expect(links.evidenceBlobTemplate).toBe("https://api.ledgermath.com/blobs/sha256/{hex}");
+		const hex = "d4212e3c975d1270958c35bea3f4d80179eac1278e6091e8235e9db25a766473";
+		expect(links.evidenceBlob(hex)).toBe(`https://api.ledgermath.com/blobs/sha256/${hex}`);
+		expect(links.evidenceBlob(`sha256:${hex}`)).toBe(`https://api.ledgermath.com/blobs/sha256/${hex}`);
+		expect(() => links.evidenceBlob("sha256:abc")).toThrow();
+	});
+
+	test("the daily price files, as the index lists them, the newest marked once", () => {
+		expect(links.priceFiles.length).toBe(apiIndex.prices.files.length);
+		expect(links.priceFiles[0]).toEqual({ date: "2026-11-11", url: "https://api.ledgermath.com/v1/prices/2026-11-11.json", newest: false });
+		expect(links.priceFiles.filter((f) => f.newest)).toEqual([{ date: "2026-11-19", url: links.prices, newest: true }]);
+	});
+});
+
+describe("what a Series' own file holds", () => {
+	const raw = readFileSync(join(SNAPSHOT, "series", `${SERIES_FILE_SAMPLE_ID}.json`), "utf8");
+	const file = JSON.parse(raw) as Record<string, unknown>;
+
+	test("the sample is a headline Series' file, and its parts are the file's own, in order", () => {
+		expect(headlineSeries.some((row) => row.id === SERIES_FILE_SAMPLE_ID)).toBe(true);
+		expect(seriesFileContents.sample).toMatchObject({ id: SERIES_FILE_SAMPLE_ID, benchmark: "mutex", instanceType: "c8i.2xlarge", runs: 33, points: 33 });
+		expect(seriesFileContents.parts.map((p) => p.name)).toEqual(Object.keys(file));
+		expect(seriesFileContents.parts.filter((p) => p.from === "module").map((p) => p.name)).toEqual(["benchmark"]);
+		expect(seriesFileContents.derivations.map((d) => d.key)).toEqual(["series_v1"]);
+		expect(seriesFileContents.pattern).toBe(links.seriesFilePattern);
+		expect(seriesFileContents.schemaUrl).toBe(links.schema.series);
+	});
+
+	test("a point carries the Run, its start, group, counted, figure and evidence addresses; the example is real", () => {
+		const point = seriesFileContents.point;
+		expect(point.key).toEqual(["run", "started_at", "group", "counted", "time_per_repetition_ns", "bytes_per_second", "evidence", "boot_summary"]);
+		for (const name of point.key) expect(point.fields.some((f) => f.name === name && f.from === "schema")).toBe(true);
+		expect(raw.includes(JSON.stringify(point.example))).toBe(true);
+		expect(point.example.evidence).toBe(`https://api.ledgermath.com/${point.example.path}`);
+		expect(point.fields.find((f) => f.name === "evidence")?.what).toBe("The Run file's address.");
 	});
 });
 
@@ -66,6 +126,25 @@ describe("machines", () => {
 			expect(m.price.unit).toBe("Hrs");
 			expect(m.series.length).toBeGreaterThan(0);
 			expect(m.region).toBe("us-east-2");
+		}
+	});
+
+	test("each price's path into the price file leads to the price the module read", () => {
+		expect(machines[0]!.price.path.pointer).toBe(
+			"/sources/0/terms/OnDemand/8D49XP354UEYTHGM/8D49XP354UEYTHGM.JRTCKXETXF/priceDimensions/8D49XP354UEYTHGM.JRTCKXETXF.6YS6EN2CT7/pricePerUnit/USD",
+		);
+		for (const m of machines) {
+			const path = m.price.path;
+			expect(path.file).toBe(links.prices);
+			expect(path.sku).toBe(m.price.sku);
+			expect(path.rateCode).toBe(m.price.rateCode);
+			// Follow the JSON Pointer through the file itself.
+			let at: unknown = priceFile;
+			for (const key of path.pointer.slice(1).split("/")) at = (at as Record<string, unknown>)[key.replaceAll("~1", "/").replaceAll("~0", "~")];
+			expect(at).toBe(m.price.usdPerHour);
+			let product: unknown = priceFile;
+			for (const key of path.productPointer.slice(1).split("/")) product = (product as Record<string, unknown>)[key];
+			expect((product as { attributes: { instanceType: string } }).attributes.instanceType).toBe(m.instanceType);
 		}
 	});
 });
@@ -153,6 +232,31 @@ describe("exact figures", () => {
 		expect(formatBytes(1073741824, { system: "si" })).toMatchObject({ full: "1.073741824", unit: "GB" });
 		expect(formatCount(6335)).toMatchObject({ full: "6,335", rounded: false });
 		expect(formatUsd("0.6860000000", { per: "hour" })).toMatchObject({ full: "0.686", unit: "USD/hour", source: "0.6860000000 USD/hour", rounded: false });
+	});
+
+	test("a figure per one of a repetition's parts: an exact division by a power of ten, nothing else", () => {
+		expect(powerOfTen(1)).toBe(0);
+		expect(powerOfTen(10000)).toBe(4);
+		expect(() => powerOfTen(2048)).toThrow();
+		expect(() => powerOfTen(0)).toThrow();
+		expect(() => powerOfTen(10.5)).toThrow();
+		expect(perUnit(175035.7981262207, 10000)).toBe("17.50357981262207");
+		expect(perUnit("765134.14", 10000)).toBe("76.513414");
+		expect(perUnit(3, 1000)).toBe("0.003");
+		expect(() => perUnit(100, 3)).toThrow();
+		const each = formatDurationPerUnit(175035.7981262207, { count: 10000, of: "critical section" });
+		expect(each).toMatchObject({ full: "17.50357981262207", short: "17.50", unit: "ns", rounded: true, source: "175035.7981262207 ns", per: { count: 10000, of: "critical section" } });
+		expect(formatDurationPerUnit(25000000, { count: 1000, of: "x" })).toMatchObject({ full: "25", unit: "µs", rounded: false });
+		expect(formatDurationPerUnit(175035.7981262207, { count: 10000, of: "critical section" }, { unit: "µs", significant: 3 })).toMatchObject({ full: "0.01750357981262207", short: "0.0175" });
+		// Every headline choice with a `per` divides exactly.
+		for (const row of headline) {
+			const per = row.choice.per;
+			if (!per) continue;
+			for (const cell of row.cells) {
+				const p50 = leadFigure(row.choice, cell.series).p50;
+				expect(formatDurationPerUnit(p50, per).full).toBe(shift(shift(plain(p50), -powerOfTen(per.count)), 0));
+			}
+		}
 	});
 
 	test("moments keep their nanoseconds", () => {
