@@ -32,16 +32,18 @@
 	--rule: #1d1c1a;
 	--accent: #9a2b1b;
 	/* the p5–p95 range: a quiet warm grey-rose, read as extent, not as alarm */
-	--range: #cf9f8c;
+	--range: #c88a73;
 	--median: #1d1c1a;
 	--to: #4a4741;
+	/* the digits past the third decimal: lighter than the lead, darker than a caption */
+	--tail: #57534b;
 	--track: #e6e1d6;
 	--grid: #ddd7ca;
 	--tint: #f3efe6;
 	--code-bg: #f3efe6;
 	--serif: "STIX Two Text", Charter, "Bitstream Charter", Georgia, "Times New Roman", serif;
 	--mono: "Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
-	--wide: 74rem;
+	--wide: 80rem;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -56,6 +58,7 @@
 		--range: #a3725f;
 		--median: #fff4e6;
 		--to: #b3ada0;
+		--tail: #bfb9ac;
 		--track: #3b3935;
 		--grid: #45423c;
 		--tint: #1c1b19;
@@ -220,7 +223,11 @@ h1 {
 	grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
 	gap: 2.5rem;
 	padding: 0.95rem 0 0;
-	align-items: center;
+	align-items: start;
+}
+/* the command's first line level with the Abstract's */
+.availability {
+	margin-top: -0.25rem;
 }
 .abstract p {
 	margin: 0;
@@ -350,7 +357,7 @@ td {
 	padding-bottom: 0.45rem;
 }
 .t1 .c-op {
-	width: 22%;
+	width: 21%;
 	padding-left: 0;
 }
 /* the stub of the head: how to read a cell, and where the prices come from */
@@ -358,7 +365,7 @@ td {
 	padding-left: 0;
 	text-indent: 0;
 	font-weight: 400;
-	font-size: 0.78rem;
+	font-size: 0.84rem;
 	line-height: 1.35;
 	color: var(--ink-2);
 }
@@ -377,10 +384,10 @@ td {
 }
 /* level with the machines' prices, the second line of each head */
 .key-price {
-	padding-top: 1.05rem;
-	margin-bottom: 0.55rem;
+	padding-top: 1.2rem;
+	margin-bottom: 0.7rem;
 	font-style: italic;
-	font-size: 0.82rem;
+	font-size: 0.88rem;
 	line-height: 1.25;
 }
 /* each machine's head, flush left over its bars' zero */
@@ -394,14 +401,13 @@ td {
 .m-name {
 	display: block;
 	font-family: var(--mono);
-	font-size: 0.84rem;
+	font-size: 0.95rem;
 	color: var(--ink);
 }
 .m-spec,
-.m-proc,
-.m-stor {
+.m-proc {
 	display: block;
-	font-size: 0.76rem;
+	font-size: 0.84rem;
 	color: var(--ink-2);
 }
 .m-proc {
@@ -412,7 +418,7 @@ td {
 	width: fit-content;
 	margin-bottom: 0.1rem;
 	font-weight: 700;
-	font-size: 0.84rem;
+	font-size: 0.98rem;
 	line-height: 1.25;
 	color: var(--ink);
 	text-decoration: none;
@@ -424,7 +430,7 @@ td {
 	padding: 0.5rem 0 0.1rem;
 	font-weight: 600;
 	font-style: italic;
-	font-size: 0.86rem;
+	font-size: 0.94rem;
 	color: var(--ink);
 	border-bottom: 1px solid var(--hair);
 }
@@ -445,19 +451,10 @@ td {
 .t1 th.c-op {
 	font-weight: 400;
 	line-height: 1.25;
-	padding-left: 1.1rem;
-	text-indent: -1.1rem;
-}
-.op-letter {
-	display: inline-block;
-	width: 1.1rem;
-	text-indent: 0;
-	font-style: italic;
-	color: var(--ink-3);
 }
 .op-label {
 	font-weight: 600;
-	font-size: 0.95rem;
+	font-size: 1.02rem;
 	text-decoration: none;
 }
 .op-label:hover {
@@ -465,10 +462,13 @@ td {
 }
 .op-unit {
 	display: block;
-	text-indent: 0;
-	font-size: 0.8rem;
+	font-size: 0.88rem;
 	color: var(--ink-2);
 	white-space: nowrap;
+}
+/* a cell's machine, written out where the cell stands alone (the phone); the column head says it on a desk */
+.c-mlab {
+	display: none;
 }
 .dir {
 	font-weight: 600;
@@ -500,20 +500,27 @@ td {
 .x-int {
 	display: inline-block;
 	text-align: right;
-	font-size: 1.04rem;
+	font-size: 1.12rem;
 	font-weight: 600;
 }
 .x-head {
-	font-size: 1.04rem;
+	font-size: 1.12rem;
 	font-weight: 600;
+}
+/* the figure is the way to its Series: a hairline under the lead digits says so without a word */
+.x-int,
+.x-head {
+	text-decoration: underline;
+	text-decoration-thickness: 1px;
+	text-decoration-color: color-mix(in srgb, currentColor 22%, transparent);
+	text-underline-offset: 0.22em;
 }
 .x-tail {
 	display: inline-block;
 	text-align: left;
-	padding-left: 0.1em;
-	font-size: 0.86rem;
-	color: var(--ink-3);
-	letter-spacing: -0.01em;
+	padding-left: 0.12em;
+	font-size: 0.95rem;
+	color: var(--tail);
 }
 .t1 td.c-fig > a:hover .x-tail {
 	color: inherit;
@@ -754,6 +761,7 @@ td {
 	.availability {
 		display: flex;
 		align-items: stretch;
+		margin-top: 0;
 	}
 	.availability .code {
 		flex: 1;
@@ -827,7 +835,6 @@ td {
 		padding-top: 0;
 		margin-bottom: 0;
 		font-size: 0.76rem;
-		flex-basis: 100%;
 		order: 3;
 	}
 	/* one line per machine; the processor stays on the desktop head */
@@ -836,7 +843,7 @@ td {
 		grid-template-columns: 6.9rem minmax(0, 1fr) auto;
 		column-gap: 0.5rem;
 		align-items: baseline;
-		padding: 0.18rem 0;
+		padding: 0.12rem 0;
 		border-bottom: 1px solid var(--grid);
 	}
 	.t1 thead th.c-m:last-child {
@@ -851,8 +858,7 @@ td {
 		grid-column: 2;
 		grid-row: 1;
 	}
-	.m-proc,
-	.m-stor {
+	.m-proc {
 		display: none;
 	}
 	.m-price {
@@ -881,7 +887,13 @@ td {
 		background: none;
 	}
 	.t1 tbody tr:not(.group) > th.c-op {
-		padding: 0 0 0.2rem 1.1rem;
+		padding: 0 0 0.2rem;
+	}
+	.op-label {
+		font-size: 1rem;
+	}
+	.op-unit {
+		font-size: 0.82rem;
 	}
 	.op-unit {
 		display: inline;
@@ -892,14 +904,15 @@ td {
 		grid-template-columns: 5.3rem minmax(0, 1fr) auto;
 		align-items: center;
 		column-gap: 0.5rem;
-		padding: 0.12rem 0;
+		padding: 0.04rem 0;
 	}
-	.t1 td.c-fig::before {
-		content: attr(data-m);
+	.c-mlab {
+		display: block;
+		grid-column: 1;
+		grid-row: 1;
 		font-family: var(--mono);
 		font-size: 0.72rem;
 		color: var(--ink-2);
-		text-align: left;
 	}
 	.t1 td.c-fig > a {
 		grid-column: 3;
@@ -915,7 +928,7 @@ td {
 		font-size: 1rem;
 	}
 	.x-tail {
-		font-size: 0.76rem;
+		font-size: 0.82rem;
 	}
 
 	.reflist li {

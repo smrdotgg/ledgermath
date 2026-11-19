@@ -27,7 +27,7 @@ import {
 // ---------------------------------------------------------------- figures of one row
 
 type Cell = { p5: Shown; p50: Shown; p95: Shown; n: number; url: string; id: string; machine: string; draw: { p5: number; p50: number; p95: number } };
-type Row = { row: HeadlineRow; unit: string; unitLong: string; dir: "up" | "down"; cells: Cell[]; letter: string; max: number };
+type Row = { row: HeadlineRow; unit: string; unitLong: string; dir: "up" | "down"; cells: Cell[]; max: number };
 
 const BYTE_UNITS = ["B", "kB", "MB", "GB", "TB"] as const;
 function rateUnit(bytesPerSecond: number) {
@@ -35,11 +35,9 @@ function rateUnit(bytesPerSecond: number) {
 	return BYTE_UNITS[i]!;
 }
 
-const LETTERS = "abcdefghijklmn";
-
 // One unit per row, so a row reads across: the unit in which the row's smallest median is at least 1.
 // Every figure is exact (`full`); no `significant` is asked for anywhere on this page.
-const rows: Row[] = headline.map((row, index) => {
+const rows: Row[] = headline.map((row) => {
 	const figures = row.cells.map((cell) => ({ cell, f: leadFigure(row.choice, cell.series) }));
 	const least = Math.min(...figures.map(({ f }) => f.p50));
 	const per = row.choice.per;
@@ -73,7 +71,6 @@ const rows: Row[] = headline.map((row, index) => {
 		unit,
 		unitLong: per ? `${unit} per ${per.of}` : unit,
 		dir: row.choice.lead === "rate" ? "up" : "down",
-		letter: LETTERS[index]!,
 		// The row's one scale: zero to its largest p95 (the snapshot's own numbers, for drawing only).
 		max: Math.max(...cells.map((c) => c.draw.p95)),
 		cells,
@@ -85,18 +82,20 @@ const SECTIONS: Section[] = ["Memory", "Compute", "Operating system", "Disk", "N
 const GROUP_NOTE: Partial<Record<Section, string>> = { Disk: "root volume, EBS gp3", Network: "S3, same Region" };
 const bySection = SECTIONS.map((section) => ({ section, rows: rows.filter((r) => r.row.choice.section === section) }));
 
-/** Digits in groups of three with spaces, both sides of the point (SI style). No digit changes. */
-const si = (decimal: string) => group(decimal, " ", " ");
+/** A narrow no-break space: SI's thin gap between groups of three, so a group never stands apart from its run. */
+const NNBSP = " ";
+/** Digits in groups of three with thin spaces, both sides of the point (SI style). No digit changes. */
+const si = (decimal: string) => group(decimal, NNBSP, NNBSP);
 
 /** An exact figure in three parts: its whole part, its point and first three decimals, and every further digit. */
 function split(full: string) {
 	const g = si(full);
 	const dot = g.indexOf(".");
 	if (dot < 0) return { int: g, head: "", tail: "" };
-	return { int: g.slice(0, dot), head: g.slice(dot, dot + 4), tail: g.slice(dot + 4).replace(/^ /, "") };
+	return { int: g.slice(0, dot), head: g.slice(dot, dot + 4), tail: g.slice(dot + 4).replace(/^ /, "") };
 }
-/** Width in `ch` of a run of digits and spaces (a word space is about 0.8 of a digit in STIX Two). */
-const chOf = (text: string) => [...text].reduce((w, c) => w + (c === " " ? 0.8 : 1), 0);
+/** Width in `ch` of a run of digits and thin spaces (generous for the space, so a box never overflows and the points stay in line). */
+const chOf = (text: string) => [...text].reduce((w, c) => w + (c === NNBSP ? 0.5 : 1), 0);
 const parts = rows.flatMap((r) => r.cells.map((c) => split(c.p50.full)));
 /** One width for the whole part and one for the tail across Table 1, so every decimal point lines up down a column. */
 const INT_CH = Math.max(...parts.map((p) => chOf(p.int)));
@@ -172,10 +171,8 @@ const excerptBefore = [
 ].join("\n");
 const excerptAfter = [`, "p95": ${j(bps.p95)}`, "  … } } } }"].join("\n");
 
-/** AWS's processor name without its trailing word "Processor". */
+/** AWS's processor name without its trailing word "Processor". Instance storage is left out: Table 1 measures the EBS root volume. */
 const processor = (name: string) => name.replace(/ Processor$/, "");
-/** AWS's instance-storage words exactly as the price file gives them ("1 x 1875 NVMe SSD"); none where it says "EBS only", since Table 1's disk rows name the volume measured. */
-const storage = (text: string) => (text === "EBS only" ? "" : text);
 
 // The references: the API's files and the documentation, in the order the page cites them.
 const REFS = [
@@ -283,12 +280,10 @@ export default function Page() {
 					{/* ---------------------------------------------------- Table 1, with the machines in its head */}
 					<section class="sec results" aria-labelledby="s1">
 						<h2 id="s1" class="t-title">
-							<span class="tlabel">Table 1.</span> Median of counted Runs, every digit as in <Cite n={2} />
+							<span class="tlabel">Table 1.</span> Median of counted Runs <Cite n={2} />
 						</h2>
 						<details class="fold s1-details" id="sA">
-							<summary>
-								p5, p95 and <i>n</i> per figure
-							</summary>
+							<summary>p5, p95 and Run count</summary>
 							<div class="table-wrap s1-wrap" role="region" aria-label="p5, p50, p95 and n per figure" tabindex="0">
 								<table class="s1">
 									<thead>
@@ -307,7 +302,6 @@ export default function Page() {
 										{rows.map((r) => (
 											<tr>
 												<th scope="row" class="s1-b">
-													<span class="op-letter">{r.letter}</span>
 													{r.row.choice.label}
 													<span class="s1-unit">{r.unitLong}</span>
 												</th>
@@ -335,16 +329,14 @@ export default function Page() {
 								<thead>
 									<tr>
 										<th scope="col" class="c-op stub">
-											<span class="key-item key-price">
-												$/h: Linux, On-Demand <Cite n={4} />
-											</span>
+											<span class="key-item key-price">$/h, Linux On-Demand</span>
 											<span class="key-item">
 												<span class="bar key-bar" aria-hidden="true">
 													<span class="bar-to" style="width:62%" />
 													<span class="bar-range" style="left:50%;width:24%" />
 													<span class="bar-tick" style="left:62%" />
 												</span>
-												<span>median, p5–p95; scale per benchmark, from 0</span>
+												<span>median, p5–p95; each row from 0</span>
 											</span>
 											<span class="key-item">
 												<span class="dir">↑↓</span> higher/lower is faster
@@ -360,7 +352,6 @@ export default function Page() {
 													{m.vcpu} vCPU · {m.memory}
 												</span>
 												<span class="m-proc">{processor(m.processor)}</span>
-												{storage(m.storage) ? <span class="m-stor">{storage(m.storage)}</span> : ""}
 											</th>
 										))}
 									</tr>
@@ -374,9 +365,8 @@ export default function Page() {
 											</th>
 										</tr>
 										{s.rows.map((r) => (
-											<tr id={`t1-${r.letter}`}>
+											<tr id={`t1-${r.row.choice.benchmark}`}>
 												<th scope="row" class="c-op">
-													<span class="op-letter">{r.letter}</span>
 													<a class="op-label" href={r.row.choice.readme}>
 														{r.row.choice.label}
 													</a>
@@ -385,7 +375,8 @@ export default function Page() {
 													</span>
 												</th>
 												{r.cells.map((c) => (
-													<td class="c-fig" data-m={c.machine}>
+													<td class="c-fig">
+														<span class="c-mlab">{c.machine}</span>
 														<a href={c.url} title={`p5 ${si(c.p5.full)} · p95 ${si(c.p95.full)} ${r.unitLong} · n ${c.n} · Series ${c.id}`}>
 															<Exact full={c.p50.full} />
 														</a>
@@ -423,7 +414,7 @@ export default function Page() {
 						</ol>
 						<details class="fold listing">
 							<summary>
-								<span class="tlabel">Listing 1.</span> Table 1's first figure in [2]
+								<span class="tlabel">Listing 1.</span> Example JSON from [2]
 							</summary>
 							<pre class="code json" tabindex="0" aria-label="Listing 1">
 								<code>
