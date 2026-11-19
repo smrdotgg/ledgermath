@@ -348,9 +348,6 @@ h2 .x {
 	row-gap: 0;
 	align-content: start;
 }
-.card > .tags {
-	align-self: start;
-}
 .card-h {
 	display: flex;
 	align-items: baseline;
@@ -380,22 +377,33 @@ h3 a:hover {
 .card-h h3 {
 	flex: 1 1 auto;
 	min-width: 0;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
 }
-.meta {
-	margin-left: auto;
-	display: inline-flex;
-	gap: 12px;
+.lim {
 	flex: none;
+	font: 500 0.68rem/1 var(--mono);
+	color: var(--muted);
+	text-decoration-style: dotted;
+	text-decoration-color: var(--faint);
 }
 .dir,
 .unit {
+	grid-row: -2 / -1;
+	align-self: start;
+	padding-top: 6px;
 	font: 500 0.68rem/1 var(--mono);
 	color: var(--muted);
 	white-space: nowrap;
 }
+.dir {
+	grid-column: 1;
+}
 .unit {
-	color: var(--ink-2);
-	min-width: 4.2em;
+	grid-column: 3;
+	color: var(--ink);
+	font-weight: 600;
 	text-align: right;
 }
 .chart {
@@ -427,12 +435,14 @@ h3 a:hover {
 	font-weight: 600;
 	font-size: 0.8rem;
 	font-variant-numeric: tabular-nums;
-	text-decoration: none;
 	color: var(--ink);
+	text-decoration: underline dotted color-mix(in srgb, var(--faint) 60%, transparent);
+	text-decoration-thickness: 1px;
+	text-underline-offset: 4px;
 }
 a.v:hover {
 	color: var(--accent-ink);
-	text-decoration: underline;
+	text-decoration: underline solid var(--accent);
 }
 
 .plot line {
@@ -472,12 +482,9 @@ a.v:hover {
 	stroke: var(--ink-2);
 }
 .tl {
-	font: 500 0.66rem var(--mono);
-	fill: var(--muted);
-	font-variant-numeric: tabular-nums;
-}
-.tl.first {
+	font: 500 0.7rem var(--mono);
 	fill: var(--ink-2);
+	font-variant-numeric: tabular-nums;
 }
 .break {
 	stroke: var(--accent);
@@ -488,41 +495,21 @@ a.v:hover {
 	stroke: var(--line);
 }
 
-.tags {
-	display: flex;
-	flex-wrap: wrap;
-	align-items: center;
-	gap: 8px 14px;
-	margin: 8px 0 0;
-	font: 500 0.68rem/1 var(--mono);
-}
 .zoom {
 	display: grid;
 	grid-template-columns: 6.2em minmax(0, 1fr) minmax(4.2em, max-content);
 	column-gap: 12px;
 	align-items: center;
-	flex: 1 1 100%;
-	color: var(--muted);
+	margin: 6px 0 0;
+	align-self: start;
+	font: 500 0.7rem/1 var(--mono);
+	color: var(--ink-2);
+}
+.zoom .z0 {
+	text-align: right;
 }
 .zoom .zmax {
 	text-align: right;
-}
-.tag {
-	justify-self: start;
-	padding: 3px 6px;
-	border-radius: 4px;
-	color: var(--accent-ink);
-	background: var(--window);
-	letter-spacing: 0.02em;
-	text-decoration: none;
-}
-.tag.lim {
-	color: var(--panel);
-	background: var(--ink-2);
-}
-.tag.lim:hover {
-	color: var(--panel);
-	background: var(--ink);
 }
 .strip {
 	display: block;
@@ -568,15 +555,12 @@ a.v:hover {
 	color: var(--ink);
 }
 .mt td.pc {
-	display: grid;
-	grid-template-columns: minmax(0, 1fr) 4.8em;
-	align-items: center;
-	column-gap: 12px;
 	font-weight: 600;
 	font-size: 0.8rem;
 }
-.mt th.pc {
-	width: 52%;
+.mt .pb {
+	width: 40%;
+	padding-left: 14px;
 }
 .pbar {
 	display: block;
@@ -585,19 +569,24 @@ a.v:hover {
 /* every digit */
 
 .every {
-	margin-top: 14px;
+	margin-bottom: 12px;
 	border: 1px solid var(--line);
 	border-radius: 12px;
 	background: var(--panel);
 }
 .every summary {
 	cursor: pointer;
-	padding: 13px 18px;
+	padding: 10px 18px;
 	font-weight: 600;
-	font-size: 0.92rem;
+	font-size: 0.9rem;
 }
 .every summary .dim {
-	font: 0.8rem var(--mono);
+	margin-left: 10px;
+	font: 0.76rem var(--mono);
+}
+.digits .n {
+	font-size: 0.66rem;
+	color: var(--faint);
 }
 .scroll {
 	overflow-x: auto;
@@ -732,6 +721,19 @@ a.v:hover {
 }
 .cmds code {
 	font-size: inherit;
+}
+.line {
+	display: flex;
+	align-items: flex-start;
+	gap: 10px;
+}
+.line code {
+	min-width: 0;
+	overflow-wrap: anywhere;
+}
+.line .copy {
+	flex: none;
+	margin: 2px 0 0 auto;
 }
 .cmds pre {
 	margin: 10px 0 0;
@@ -909,26 +911,18 @@ a.v:hover {
 		width: 34px;
 		height: 34px;
 	}
-	/* The first chart before the machines on a phone, so the first screen reaches a chart. */
-	.grid > .card {
-		order: 2;
-	}
-	.grid > .card:nth-child(2) {
-		order: 0;
-	}
-	.grid > .card.price {
-		order: 1;
-	}
-	.card-h {
-		flex-wrap: wrap;
-		row-gap: 4px;
+	.cmd code {
+		white-space: normal;
 	}
 	.every {
-		margin-left: -16px;
-		margin-right: -16px;
+		margin: 0 -16px;
 		border-radius: 0;
 		border-left: 0;
 		border-right: 0;
+		border-bottom: 0;
+	}
+	.ro > div {
+		padding: 8px 0;
 	}
 	.every summary {
 		padding: 13px 16px;
