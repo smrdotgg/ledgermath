@@ -88,6 +88,26 @@ function rowFigures(row: HeadlineRow): Fig[] {
 	return figures.map((f) => ({ shown: formatDuration(f.p50, { unit }), p5: formatDuration(f.p5, { unit }), p95: formatDuration(f.p95, { unit }), count: f.count }));
 }
 
+/** A figure's 5th to 95th percentile span, low to high. */
+function spread(fig: Fig): [Shown, Shown] {
+	return fig.p5.value <= fig.p95.value ? [fig.p5, fig.p95] : [fig.p95, fig.p5];
+}
+
+/** The span as text, rounded to four digits, with every digit in its title. */
+function Spread(props: { fig: Fig }) {
+	const [lo, hi] = spread(props.fig);
+	return (
+		<span class="spread" title={`5th to 95th percentile: ${lo.full} to ${hi.full} ${lo.unit}`}>
+			{lo.short}–{hi.short}
+		</span>
+	);
+}
+
+/** The widest integer part in a row, so its figures' decimal points line up across the row. */
+function intWidth(figs: Fig[]): string {
+	return `--int: ${Math.max(...figs.map((f) => f.shown.full.split(".")[0]!.length))}ch`;
+}
+
 /** A sentence's first word in lower case, unless it is a name or a figure ("SHA-256", "10,000"). */
 function lowerFirst(text: string): string {
 	return /^[A-Z][a-z]/.test(text) ? text[0]!.toLowerCase() + text.slice(1) : text;
@@ -110,8 +130,14 @@ const WHAT: Record<string, string> = {
 
 /** A few words on a group of rows whose figures come from something the machines share. */
 const GROUP_NOTE: Partial<Record<Section, string>> = {
-	Disk: "All four rows measure the root EBS gp3 volume each machine booted from, not the machine type's own disks. Where the volume's limits set the pace (in the benchmarks' own words, random 4 KiB reads reach the volume's IOPS limit, and the sequential read shows its throughput limit), the five machine types can read alike.",
-	Network: "One request to S3 in the same Region. Its time runs through AWS's network and S3 as well as the machine, so the five machine types can read alike.",
+	Disk: "All four rows measure the root EBS gp3 volume each machine booted from, not the machine type's own disks. In the benchmarks' own words, random 4 KiB reads reach the volume's IOPS limit, and the sequential read shows its throughput limit.",
+	Network: "One request to S3 in the same Region. Its time runs through AWS's network and S3 as well as the machine.",
+};
+
+/** What each Method is for, in a few words drawn from its own definitions. */
+const METHOD_WORDS: Record<string, string> = {
+	series: "time per repetition, bytes per second, percentiles · ",
+	requests: "Series whose Runs record requests: each request's phases · ",
 };
 
 const SECTIONS: Section[] = ["Memory", "Compute", "Operating system", "Disk", "Network"];
@@ -144,11 +170,11 @@ function Exact(props: { full: string }) {
 		<span class="x">
 			<span class="x-int">
 				<b>{intHeavy}</b>
-				{intLight}
+				{intLight ? <span class="x-t">{intLight}</span> : null}
 			</span>
 			<span class="x-frac">
-				<b>{fracHeavy}</b>
-				{fracLight}
+				{fracHeavy ? <b>{fracHeavy}</b> : null}
+				{fracLight ? <span class="x-t">{fracLight}</span> : null}
 			</span>
 		</span>
 	);
@@ -157,10 +183,11 @@ function Exact(props: { full: string }) {
 /** A figure's median and its 5th to 95th percentile span, drawn to the row's scale from zero. */
 function Bar(props: { fig: Fig; max: number }) {
 	const at = (s: Shown) => `${((s.value / props.max) * 100).toFixed(2)}%`;
+	const [lo, hi] = spread(props.fig);
 	return (
 		<span class="bar" aria-hidden="true">
-			<span class="bar-span" style={{ left: at(props.fig.p5), width: `calc(${at(props.fig.p95)} - ${at(props.fig.p5)})` }} />
 			<span class="bar-p50" style={{ width: at(props.fig.shown) }} />
+			<span class="bar-span" style={{ left: at(lo), width: `calc(${at(hi)} - ${at(lo)})` }} />
 		</span>
 	);
 }
@@ -199,6 +226,9 @@ function Url(props: { href: string }) {
 }
 
 // ---------------------------------------------------------------- the page
+
+// the key under the table shows a real figure: the first row's, on the first machine
+const keyFigure = rowFigures(headline[0]!)[0]!.shown;
 
 export default function Page() {
 	return (
@@ -275,10 +305,12 @@ export default function Page() {
 								<span class="strip-small">an hour On-Demand, AWS's prices of <span class="nowrap">{snapshot.priceDate}</span></span>
 							</a>
 						</li>
-						<li class="strip-api">
-							<a href="#api">
-								<span class="strip-big strip-mono">GET v1/index.json</span>
-								<span class="strip-small">the way in, for agents</span>
+						<li class="strip-api" data-copy-block="the index address">
+							<span class="strip-label">
+								<span class="verb">GET</span> the way in, for agents
+							</span>
+							<a class="strip-url" href={links.index} data-copy>
+								<Breakable text={links.index} />
 							</a>
 						</li>
 					</ul>
@@ -289,7 +321,8 @@ export default function Page() {
 						<div class="exchange-grid">
 							<h2 id="exchange-title" class="kicker">
 								<span class="kicker-rule" aria-hidden="true" />
-								One question, answered from the API
+								<span class="kicker-main">An example question, answered from the API</span>
+								<span class="kicker-side">The exchange is written for this page; every figure in it is read from the API's files</span>
 							</h2>
 							<div class="turns">
 								<figure class="turn turn-q">
@@ -301,8 +334,8 @@ export default function Page() {
 									</figcaption>
 									<blockquote class="question">
 										<p>
-											Before I size our ingest workers: on a <span class="nowrap">{ASKED_MACHINE}</span> in {askedMachine.region}, how long does one core take to sort 1&nbsp;MiB of
-											64-bit keys, and what does the machine cost an hour?
+											On a <span class="nowrap">{ASKED_MACHINE}</span> in {askedMachine.region}, how long does one core take to sort 1&nbsp;MiB of 64-bit keys, and what does an
+											hour cost?
 										</p>
 									</blockquote>
 								</figure>
@@ -315,105 +348,35 @@ export default function Page() {
 										<span>The agent, after reading three files</span>
 									</figcaption>
 									<blockquote class="answer">
-										<p>
-											On a {ASKED_MACHINE}, one core copies and radix-sorts 1&nbsp;MiB of 64-bit keys in{" "}
+										<p class="answer-lead">
 											<strong class="fig">
 												{p50.full}&nbsp;{p50.unit}
-											</strong>
-											: the median of {formatCount(askedFigure.count).full} counted Runs, from {askedOldest.longDate} to {askedNewest.longDate}.
-											<Cite n={1} />
-											<Cite n={2} /> The 5th and 95th percentiles are{" "}
-											<strong class="fig">
-												{p5.full}&nbsp;{p5.unit}
 											</strong>{" "}
-											and{" "}
-											<strong class="fig">
-												{p95.full}&nbsp;{p95.unit}
-											</strong>
-											, and {askedDerivation.failed_runs === 0 ? "no Run failed" : `${formatCount(askedDerivation.failed_runs).full} Runs failed`}.
+											a sort,
 											<Cite n={1} />
+											<Cite n={2} /> and{" "}
+											<strong class="fig">${askedPrice.full}</strong> an hour.
+											<Cite n={3} />
 										</p>
 										<p>
-											On-Demand, running Linux in {askedMachine.region}, it costs{" "}
-											<strong class="fig">${askedPrice.full} an hour</strong>, in AWS's price list as copied on {formatMoment(`${snapshot.priceDate}T00:00:00Z`).longDate}.
+											That is the median of {formatCount(askedFigure.count).full} counted Runs, from {askedOldest.longDate} to {askedNewest.longDate}, of one core copying and
+											radix-sorting 1&nbsp;MiB of 64-bit keys. The 5th and 95th percentiles are{" "}
+											<span class="fig-q">
+												{p5.full}&nbsp;{p5.unit}
+											</span>{" "}
+											and{" "}
+											<span class="fig-q">
+												{p95.full}&nbsp;{p95.unit}
+											</span>
+											, and {askedDerivation.failed_runs === 0 ? "no Run failed" : `${formatCount(askedDerivation.failed_runs).full} Runs failed`}.
+											<Cite n={1} /> The price is AWS's On-Demand rate for Linux in {askedMachine.region}, as copied on{" "}
+											{formatMoment(`${snapshot.priceDate}T00:00:00Z`).longDate}.
 											<Cite n={3} />
 										</p>
 										<p class="answer-limit">
-											Those are the measured figures for that one setting. I haven't compared machines or worked out a cost per sort: the figures alone don't make that
-											call.
+											Those are the measured figures for that one setting. I haven't compared machines or worked out a cost per sort: the figures alone don't make that call.
 										</p>
 									</blockquote>
-
-									<details class="ledger-wrap fold" open>
-										<summary class="fold-head">
-											<span>Every figure in the answer, as the files hold it</span>
-											<span class="fold-count">5 lines</span>
-										</summary>
-										<table class="ledger">
-											<caption class="sr">Every figure in the answer, as the files hold it</caption>
-											<thead>
-												<tr>
-													<th scope="col">Source</th>
-													<th scope="col">Figure, and the field it was read from</th>
-													<th scope="col" class="num">
-														Value
-													</th>
-												</tr>
-											</thead>
-											<tbody>
-												{[
-													["Median, one sort", p50, "p50"],
-													["5th percentile", p5, "p5"],
-													["95th percentile", p95, "p95"],
-												].map(([label, shown, key]) => (
-													<tr>
-														<td>
-															<Cite n={1} />
-														</td>
-														<th scope="row">
-<span class="l-label">{label as string}</span>
-<code class="l-field">
-…percentiles.time_per_repetition_ns.<b>{key as string}</b> = {(shown as Shown).source.replace(/ ns$/, "")}
-</code>
-</th>
-														<td class="num">
-															<span class="val">{(shown as Shown).full}</span> <span class="unit">{(shown as Shown).unit}</span>
-														</td>
-													</tr>
-												))}
-												<tr>
-													<td>
-														<Cite n={1} />
-													</td>
-													<th scope="row">
-<span class="l-label">Runs counted, failed</span>
-<code class="l-field">
-…series_v1.<b>counted_runs</b> = {askedDerivation.counted_runs}, <b>failed_runs</b> = {askedDerivation.failed_runs}
-</code>
-</th>
-													<td class="num">
-														<span class="val">
-															{formatCount(askedDerivation.counted_runs).full}, {formatCount(askedDerivation.failed_runs).full}
-														</span>
-													</td>
-												</tr>
-												<tr>
-													<td>
-														<Cite n={3} />
-													</td>
-													<th scope="row">
-<span class="l-label">On-Demand, per hour</span>
-<code class="l-field">
-rate code {askedMachine.price.rateCode}: …<b>pricePerUnit.USD</b> = "{askedMachine.price.usdPerHour}"
-</code>
-</th>
-													<td class="num">
-														<span class="val">{askedPrice.full}</span> <span class="unit">USD</span>
-													</td>
-												</tr>
-											</tbody>
-										</table>
-									</details>
 								</figure>
 							</div>
 
@@ -434,7 +397,7 @@ rate code {askedMachine.price.rateCode}: …<b>pricePerUnit.USD</b> = "{askedMac
 											<code>
 												{ASKED_BENCHMARK}, size_bytes {String(askedSeries.params.size_bytes)}, {askedSeries.build}, {ASKED_MACHINE}
 											</code>
-											: Series <code>{askedSeries.id}</code>, with Method series v{askedDerivation.method.version}'s percentiles.
+											: Series <code>{askedSeries.id}</code>.
 										</p>
 									</li>
 									<li id="read-2">
@@ -458,16 +421,106 @@ rate code {askedMachine.price.rateCode}: …<b>pricePerUnit.USD</b> = "{askedMac
 										</div>
 										<Url href={links.prices} />
 										<p class="read-note">
-											AWS's On-Demand prices for {snapshot.region}, copied{" "}
+											AWS's On-Demand prices, copied{" "}
 											<time datetime={snapshot.pricesFetchedAt} title={pricesFetched.full}>
 												{pricesFetched.date} {pricesFetched.minute} UTC
 											</time>
-											. In AWS's own words: <q>{askedMachine.price.description}</q>, effective {askedMachine.price.effectiveDate.slice(0, 10)}.
+											. In AWS's words: <q>{askedMachine.price.description}</q>.
 										</p>
 									</li>
 								</ol>
 								<p class="trace-foot">
 									Three static files. <a href="#api">Point your agent at the same API</a>.
+								</p>
+							</details>
+
+							<details class="ledger-wrap fold" open>
+								<summary class="fold-head">
+									<h3 class="ledger-title">Every figure in the answer, and where its file holds it</h3>
+									<span class="fold-count">5 lines</span>
+								</summary>
+								<div class="ledger-box">
+									<table class="ledger">
+										<thead>
+											<tr>
+												<th scope="col">File</th>
+												<th scope="col">Figure</th>
+												<th scope="col">Field</th>
+												<th scope="col" class="num">
+													In the file
+												</th>
+												<th scope="col" class="num">
+													In the answer
+												</th>
+											</tr>
+										</thead>
+										<tbody>
+											{[
+												["Median, one sort", p50, "p50"],
+												["5th percentile", p5, "p5"],
+												["95th percentile", p95, "p95"],
+											].map(([label, shown, key]) => (
+												<tr>
+													<td>
+														<Cite n={1} />
+													</td>
+													<th scope="row">{label as string}</th>
+													<td class="l-field">
+														<code>
+															…percentiles.time_per_repetition_ns.<b>{key as string}</b>
+														</code>
+													</td>
+													<td class="num l-raw">
+														<code>{(shown as Shown).source}</code>
+													</td>
+													<td class="num">
+														<span class="val">{(shown as Shown).full}</span> <span class="unit">{(shown as Shown).unit}</span>
+													</td>
+												</tr>
+											))}
+											<tr>
+												<td>
+													<Cite n={1} />
+												</td>
+												<th scope="row">Runs counted, failed</th>
+												<td class="l-field">
+													<code>
+														…series_v1.<b>counted_runs</b>, <b>failed_runs</b>
+													</code>
+												</td>
+												<td class="num l-raw">
+													<code>
+														{askedDerivation.counted_runs}, {askedDerivation.failed_runs}
+													</code>
+												</td>
+												<td class="num">
+													<span class="val">
+														{formatCount(askedDerivation.counted_runs).full}, {formatCount(askedDerivation.failed_runs).full}
+													</span>
+												</td>
+											</tr>
+											<tr>
+												<td>
+													<Cite n={3} />
+												</td>
+												<th scope="row">On-Demand, per hour</th>
+												<td class="l-field">
+													<code title={askedMachine.price.path.pointer}>
+														…{askedMachine.price.rateCode}/<b>pricePerUnit/USD</b>
+													</code>
+												</td>
+												<td class="num l-raw">
+													<code>"{askedMachine.price.usdPerHour}"</code>
+												</td>
+												<td class="num">
+													<span class="val">${askedPrice.full}</span> <span class="unit">/hour</span>
+												</td>
+											</tr>
+										</tbody>
+									</table>
+								</div>
+								<p class="ledger-note">
+									The file holds times in nanoseconds; the answer moves the decimal point three places to microseconds and drops the price's trailing zeros. Nothing is rounded.
 								</p>
 							</details>
 						</div>
@@ -478,11 +531,38 @@ rate code {askedMachine.price.rateCode}: …<b>pricePerUnit.USD</b> = "{askedMac
 					<div class="section-head">
 						<h2 id="numbers-title">The same numbers, for you</h2>
 						<p>
-							Each benchmark at one setting, on all five machine types: the median of each Series' counted Runs, every digit as the API holds it. The first four significant
-							digits are set heavy so a row scans. Under each figure, its median and its 5th to 95th percentile span, each row drawn to its own scale from zero, and the Runs
-							counted. Each figure links to its Series' file, with the Runs behind it.
+							Each benchmark at one setting, on all five machine types: the median of each Series' counted Runs, every digit as the API holds it. The answer above is one
+							cell of it, marked.
 						</p>
 					</div>
+
+					<ul class="key" aria-label="How to read a figure">
+						<li>
+							<span class="key-fig">
+								<Exact full={keyFigure.full} />
+							</span>
+							<span>the median, every digit; the first four set heavy</span>
+						</li>
+						<li>
+							<span class="key-bar bar" aria-hidden="true">
+								<span class="bar-p50" style={{ width: "64%" }} />
+								<span class="bar-span" style={{ left: "54%", width: "22%" }} />
+							</span>
+							<span>
+								the median, to the row's scale from zero; in red, its 5th to 95th percentile span, printed beneath (<span class="spread">low–high</span>)
+							</span>
+						</li>
+						<li>
+							<span class="runs-link">{formatCount(askedFigure.count).full} Runs</span>
+							<span>opens the Series' file, with every Run and its evidence</span>
+						</li>
+					</ul>
+
+					<nav class="jump" aria-label="Benchmark groups">
+						{SECTIONS.map((section) => (
+							<a href={`#group-${section.toLowerCase().replace(/ /g, "-")}`}>{section === "Operating system" ? "OS" : section}</a>
+						))}
+					</nav>
 
 					<div class="table-box" role="region" aria-label="The headline figures, 14 benchmarks on 5 machine types" tabindex="0">
 						<table class="headline">
@@ -495,7 +575,7 @@ rate code {askedMachine.price.rateCode}: …<b>pricePerUnit.USD</b> = "{askedMac
 							<thead>
 								<tr>
 									<th scope="col" class="th-bench">
-										Benchmark<span class="th-sub">, its unit, and which way is faster</span>
+										Benchmark<span class="th-sub">, which way is faster, its unit, what it measures</span>
 									</th>
 									{machines.map((m) => {
 										const price = formatUsd(m.price.usdPerHour, { per: "hour" });
@@ -535,33 +615,45 @@ rate code {askedMachine.price.rateCode}: …<b>pricePerUnit.USD</b> = "{askedMac
 										) : null}
 										{rows.map((row) => {
 											const figs = rowFigures(row);
-											const max = Math.max(...figs.map((f) => f.p95.value));
+											const max = Math.max(...figs.map((f) => Math.max(f.p5.value, f.p95.value)));
 											const u = rowUnit(row, figs[0]!.shown.unit);
 											return (
-												<tr>
+												<tr style={intWidth(figs)}>
 													<th scope="row" class="bench">
 														<span class="bench-label">{row.choice.label}</span>
-														<span class="bench-what">{WHAT[row.choice.benchmark] ?? row.choice.what}</span>
 														<span class="bench-unit">
 															<span class={row.choice.lead === "rate" ? "better up" : "better down"}>{u.better}</span>
 															<b>{u.unit}</b>
 															{u.of ? ` ${u.of}` : ""}
 														</span>
-														<span class="bench-meta">{row.choice.setting}</span>
+														<span class="bench-what">
+															{WHAT[row.choice.benchmark] ?? row.choice.what} <span class="bench-meta">{row.choice.setting}</span>
+														</span>
 													</th>
 													{row.cells.map((cell, i) => {
 														const fig = figs[i]!;
 														const asked = row === askedRow && cell.machine.instanceType === ASKED_MACHINE;
+														const cls = asked ? "fig-cell is-asked" : "fig-cell";
 														return (
-															<td class={asked ? "fig-cell is-asked" : "fig-cell"}>
-																<a href={links.seriesFile(cell.series)} title={cellTitle(fig, cell.machine.instanceType)}>
-																	<Exact full={fig.shown.full} />
-																	<span class="sr"> {fig.shown.unit}</span>
-																</a>
-																<Bar fig={fig} max={max} />
-																<span class="runs">
-																	{formatCount(fig.count).full} Runs{asked ? <span class="asked-tag"> · cited above</span> : null}
-																</span>
+															<td class={cls} title={cellTitle(fig, cell.machine.instanceType)}>
+																<div class="fig-in">
+																	<span class="fig-num">
+																		<Exact full={fig.shown.full} />
+																		<span class="sr">
+																			{" "}
+																			{fig.shown.unit}
+																			
+																		</span>
+																	</span>
+																	<Bar fig={fig} max={max} />
+																	<Spread fig={fig} />
+																	<span class="runs">
+																		<a class="runs-link" href={links.seriesFile(cell.series)}>
+																			{formatCount(fig.count).full} Runs<span class="sr">, the Series file for {cell.machine.instanceType}</span>
+																		</a>
+																		{asked ? <span class="asked-tag"> · the answer</span> : null}
+																	</span>
+																</div>
 															</td>
 														);
 													})}
@@ -577,41 +669,52 @@ rate code {askedMachine.price.rateCode}: …<b>pricePerUnit.USD</b> = "{askedMac
 					<ol class="cards" aria-label="The headline figures, one benchmark at a time">
 						{headline.map((row, n) => {
 							const figs = rowFigures(row);
-							const max = Math.max(...figs.map((f) => f.p95.value));
+							const max = Math.max(...figs.map((f) => Math.max(f.p5.value, f.p95.value)));
 							const u = rowUnit(row, figs[0]!.shown.unit);
 							const first = headline.findIndex((r) => r.choice.section === row.choice.section) === n;
 							const note = first ? GROUP_NOTE[row.choice.section] : undefined;
 							return (
-								<li class={first ? "card card-first" : "card"}>
+								<li style={intWidth(figs)} class={first ? "card card-first" : "card"} id={first ? `group-${row.choice.section.toLowerCase().replace(/ /g, "-")}` : undefined}>
 									{first ? <div class="card-section">{row.choice.section}</div> : null}
 									{note ? <p class="card-note">{note}</p> : null}
 									<h3 class="card-title">{row.choice.label}</h3>
-									<p class="card-what">{WHAT[row.choice.benchmark] ?? row.choice.what}</p>
 									<p class="bench-unit">
 										<span class={row.choice.lead === "rate" ? "better up" : "better down"}>{u.better}</span>
 										<b>{u.unit}</b>
 										{u.of ? ` ${u.of}` : ""}
 									</p>
-									<p class="card-meta">{row.choice.setting}</p>
+									<p class="card-what">
+										{WHAT[row.choice.benchmark] ?? row.choice.what} <span class="bench-meta">{row.choice.setting}</span>
+									</p>
 									<ul class="card-figs">
 										{row.cells.map((cell, i) => {
 											const fig = figs[i]!;
 											const asked = row === askedRow && cell.machine.instanceType === ASKED_MACHINE;
+											const cls = asked ? "is-asked" : undefined;
 											return (
-												<li class={asked ? "is-asked" : undefined}>
+												<li class={cls}>
 													<span class="card-line">
 														<span class="card-machine">
 															{cell.machine.instanceType}
-															{asked ? <span class="asked-tag"> · cited</span> : null}
+															{asked ? <span class="asked-tag"> · the answer</span> : null}
 														</span>
-														<a href={links.seriesFile(cell.series)} class="card-fig" title={cellTitle(fig, cell.machine.instanceType)}>
+														<span class="card-fig" title={cellTitle(fig, cell.machine.instanceType)}>
 															<Exact full={fig.shown.full} />
-															<span class="sr"> {fig.shown.unit}</span>
-														</a>
+															<span class="sr">
+																{" "}
+																{fig.shown.unit}
+																
+															</span>
+														</span>
 													</span>
 													<span class="card-bar">
 														<Bar fig={fig} max={max} />
-														<span class="runs">{formatCount(fig.count).full} Runs</span>
+														<span class="card-sub">
+															<Spread fig={fig} />
+															<a class="runs-link" href={links.seriesFile(cell.series)}>
+																{formatCount(fig.count).full} Runs<span class="sr">, the Series file for {cell.machine.instanceType}</span>
+															</a>
+														</span>
 													</span>
 												</li>
 											);
@@ -749,7 +852,7 @@ rate code {askedMachine.price.rateCode}: …<b>pricePerUnit.USD</b> = "{askedMac
 						</div>
 
 						<div class="day">
-							<div class="day-label">Machines boot, every day, UTC</div>
+							<div class="day-label">Machines boot four times a day, UTC; each boot's benchmarks run after it</div>
 							<div class="day-line">
 								{BOOTS.map((t) => {
 									const [h, mm] = t.split(":").map(Number) as [number, number];
@@ -766,7 +869,7 @@ rate code {askedMachine.price.rateCode}: …<b>pricePerUnit.USD</b> = "{askedMac
 										<span class="newest" style={{ left: `${((h * 60 + mm) / 1440) * 100}%` }}>
 											<span class="newest-tick" aria-hidden="true" />
 											<span class="newest-label">
-												Newest Run started {newest.second}
+												Newest Run started {newest.second}, after the {BOOTS.filter((t) => t <= newest.minute).at(-1)} boot
 											</span>
 										</span>
 									);
@@ -778,6 +881,9 @@ rate code {askedMachine.price.rateCode}: …<b>pricePerUnit.USD</b> = "{askedMac
 									24:00
 								</span>
 							</div>
+							<p class="newest-caption">
+								Newest Run started {newest.second} UTC, after the {BOOTS.filter((t) => t <= newest.minute).at(-1)} boot
+							</p>
 						</div>
 
 						<dl class="facts">
@@ -827,7 +933,10 @@ rate code {askedMachine.price.rateCode}: …<b>pricePerUnit.USD</b> = "{askedMac
 											<code>
 												{m.name} v{m.version}
 											</code>
-											<span>{Object.keys(m.definitions).length} definitions</span>
+											<span>
+												{METHOD_WORDS[m.name] ?? ""}
+												{Object.keys(m.definitions).length} definitions
+											</span>
 										</summary>
 										<dl class="defs">
 											{Object.entries(m.definitions).map(([term, words]) => (
