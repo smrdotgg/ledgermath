@@ -21,9 +21,6 @@ for (const block of document.querySelectorAll<HTMLElement>("[data-copy-block]"))
 	block.append(button);
 }
 
-// On a phone the answer's sources start folded so the figures come sooner; a citation opens them.
+// The answer's sources start folded; a citation opens them.
 const sources = document.querySelector<HTMLDetailsElement>("details.sources");
-if (sources && window.matchMedia("(max-width: 760px)").matches) {
-	sources.open = false;
-	for (const cite of document.querySelectorAll<HTMLAnchorElement>("a.cite")) cite.addEventListener("click", () => (sources.open = true));
-}
+if (sources) for (const cite of document.querySelectorAll<HTMLAnchorElement>("a.cite")) cite.addEventListener("click", () => (sources.open = true));

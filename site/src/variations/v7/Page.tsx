@@ -1,8 +1,7 @@
-// Design v7, "Agent conversation": the page opens on a question a developer puts to their
-// agent and the agent's answer, every figure in it cited to the API file and field it came
-// from. Then the same numbers for the reader: the headline table, the way in, the machines,
-// and where the figures come from. Every figure is the data module's, exactly. The page says
-// as little as it can: figures, what they are of, and how to get them.
+// Design v7, "Agent conversation", spare form: the page opens on a question a developer puts to
+// their agent and the agent's answer, every figure in it cited to the API file and field it came
+// from (the sources folded). Then the same numbers for the reader, the machines and their prices
+// at the head of the table. Every figure is the data module's, exactly. Everything else is a link.
 import "./page.css";
 import {
 	type ByteUnit,
@@ -41,14 +40,9 @@ const p5 = formatDuration(askedFigure.p5, { unit: askedUnit });
 const p95 = formatDuration(askedFigure.p95, { unit: askedUnit });
 const askedPrice = formatUsd(askedMachine.price.usdPerHour, { per: "hour" });
 const askedDerivation = askedSeries.derivations.series_v1;
-const askedOldest = formatMoment(askedSeries.oldest_run_started_at);
-const askedNewest = formatMoment(askedSeries.newest_run_started_at);
 
 const newest = formatMoment(snapshot.newestRunStartedAt);
 const oldest = formatMoment(snapshot.oldestRunStartedAt);
-const pricesFetched = formatMoment(snapshot.pricesFetchedAt);
-const BOOTS = ["04:10", "10:10", "16:10", "22:10"];
-const path = (url: string) => url.replace(/^https:\/\/[^/]+\//, "");
 
 // ---------------------------------------------------------------- one unit per table row
 
@@ -217,14 +211,9 @@ export default function Page() {
 						</span>
 						LedgerMath
 					</a>
-					<nav aria-label="On this page" class="nav">
-						<a href="#numbers">Numbers</a>
-						<a href="#api">API</a>
-						<a href="#machines">Machines</a>
-					</nav>
 					<p class="fresh">
 						<span class="pulse" aria-hidden="true" />
-						<a href="#provenance">
+						<a href="#facts">
 							<time datetime={newest.iso} title={`Newest Run: ${newest.full}`}>
 								<span class="fresh-date">{newest.date} </span>
 								{newest.minute} UTC
@@ -238,13 +227,9 @@ export default function Page() {
 				<section class="hero wrap" aria-labelledby="title">
 					<div class="hero-text">
 						<h1 id="title">
-							<span class="h1-name">LedgerMath</span>
+							<span class="h1-name sr-only">LedgerMath</span>
 							<span class="h1-line">Measured AWS server benchmarks, for AI agents to cite.</span>
 						</h1>
-						<p class="lede">
-							{formatCount(snapshot.benchmarkCount).full} benchmarks on {formatCount(snapshot.machineCount).full} freshly booted machine types in {snapshot.region}, four
-							times a day. Every Run kept, with its evidence.
-						</p>
 						<div class="way-in" data-copy-block="the index command">
 							<pre tabindex="0">
 								<code>
@@ -256,21 +241,19 @@ export default function Page() {
 							</pre>
 						</div>
 						<p class="way-note">
-							Static JSON, no key. <a href={links.docs}>Docs</a> · <a href="#api">More</a>
+							No key. <a href={links.docs}>Docs</a>
 						</p>
-						<dl class="facts-line">
+						<dl class="facts-line" id="facts">
 							<div>
 								<dt>Runs</dt>
 								<dd>
-									<a href="#provenance">{formatCount(snapshot.runCount).full}</a>
+									<span title={`Oldest ${oldest.full} · newest ${newest.full}`}>{formatCount(snapshot.runCount).full}</span>
 								</dd>
 							</div>
 							<div>
-								<dt>Newest</dt>
+								<dt>Series</dt>
 								<dd>
-									<time datetime={newest.iso} title={newest.full}>
-										{newest.minute} UTC
-									</time>
+									<a href={links.seriesList}>{formatCount(snapshot.seriesCount).full}</a>
 								</dd>
 							</div>
 							<div>
@@ -285,7 +268,7 @@ export default function Page() {
 					<section class="exchange" aria-labelledby="exchange-title">
 						<h2 id="exchange-title" class="kicker">
 							<span>Example</span>
-							<span class="kicker-side">written for this page; every figure read from the API</span>
+							<span class="kicker-side">every figure read from the API</span>
 						</h2>
 						<div class="turn turn-q">
 							<span class="mark" aria-hidden="true">
@@ -317,13 +300,11 @@ export default function Page() {
 									</span>
 								</p>
 								<p class="answer-sub">
-									Median of {formatCount(askedFigure.count).full} Runs,{" "}
-									<time datetime={askedOldest.iso}>{askedOldest.date}</time> to <time datetime={askedNewest.iso}>{askedNewest.date}</time>,{" "}
-									{formatCount(askedDerivation.failed_runs).full} failed.
+									Median of {formatCount(askedFigure.count).full} Runs, {formatCount(askedDerivation.failed_runs).full} failed.
 								</p>
 							</blockquote>
 						</div>
-						<details class="sources" open>
+						<details class="sources">
 							<summary>Sources</summary>
 						<ol class="reads" aria-label="The files it read">
 							<li id="read-1">
@@ -370,7 +351,7 @@ export default function Page() {
 									<span class="bar-p50" style={{ width: "62%" }} />
 									<span class="bar-span" style={{ left: "55%", width: "18%" }} />
 								</span>
-								median · p5–p95, from 0
+								median · p5–p95
 							</li>
 							<li>
 								<span class="dir">↑</span> higher <span class="dir">↓</span> lower is faster
@@ -378,12 +359,6 @@ export default function Page() {
 							<li>figure → Series file</li>
 						</ul>
 					</div>
-
-					<nav class="jump" aria-label="Benchmark groups">
-						{SECTIONS.map((section) => (
-							<a href={`#${sectionId(section)}`}>{section === "Operating system" ? "OS" : section}</a>
-						))}
-					</nav>
 
 					<div class="table-box" role="region" aria-label="The headline figures, 14 benchmarks on 5 machine types" tabindex="0">
 						<table class="headline">
@@ -399,7 +374,7 @@ export default function Page() {
 									{machines.map((m) => {
 										const price = formatUsd(m.price.usdPerHour, { per: "hour" });
 										return (
-											<th scope="col" class={m.instanceType === ASKED_MACHINE ? "th-machine is-asked" : "th-machine"}>
+											<th scope="col" class={m.instanceType === ASKED_MACHINE ? "th-machine is-asked" : "th-machine"} title={`${m.processor}, ${m.clockSpeed}`}>
 												<span class="th-code">{m.instanceType.split(".")[0]}</span>
 												<span class="th-type">{m.instanceType}</span>
 												<span class="th-spec">
@@ -479,174 +454,12 @@ export default function Page() {
 					</div>
 				</section>
 
-				<section id="api" class="api" aria-labelledby="api-title">
-					<div class="wrap api-grid">
-						<div class="api-copy">
-							<h2 id="api-title">Point your agent here</h2>
-							<blockquote class="api-say" data-copy-block="the prompt">
-								<p>
-									Use the LedgerMath data API at <Breakable text={links.index} />. Cite the file and field behind each figure.
-								</p>
-							</blockquote>
-							<ul class="schemas" aria-label="Schemas">
-								{links.schemas.map((s) => (
-									<li>
-										<a href={s.url} title={`Schema of ${s.describes}`}>
-											<code>{s.name}</code>
-										</a>
-									</li>
-								))}
-								<li>
-									<a href={links.docs}>Docs</a>
-								</li>
-							</ul>
-						</div>
-						<div class="term">
-							{[
-								["index", links.index, "the index command"],
-								[`every Series (${formatCount(snapshot.seriesCount).full})`, links.seriesList, "the Series list command"],
-								[`prices, ${snapshot.priceDate}`, links.prices, "the prices command"],
-							].map(([comment, url, name]) => (
-								<div class="cmd" data-copy-block={name}>
-									<p class="c"># {comment}</p>
-									<pre tabindex="0">
-										<code>
-											<span class="p">$ </span>
-											<span data-copy>
-												curl <Breakable text={url!} />
-											</span>
-										</code>
-									</pre>
-								</div>
-							))}
-						</div>
-					</div>
-				</section>
-
-				<section id="machines" class="machines wrap" aria-labelledby="machines-title">
-					<h2 id="machines-title">Machines</h2>
-					<p class="sub">
-						On-Demand, Linux, {snapshot.region}
-						<Cite n={3} />
-					</p>
-					<div class="table-box mtable-box" role="region" aria-label="The five machines" tabindex="0">
-						<table class="mtable">
-							<thead>
-								<tr>
-									<th scope="col">Type</th>
-									<th scope="col" class="num">
-										vCPU
-									</th>
-									<th scope="col" class="num">
-										Memory
-									</th>
-									<th scope="col">Processor</th>
-									<th scope="col" class="num">
-										$/hour
-									</th>
-								</tr>
-							</thead>
-							<tbody>
-								{machines.map((m) => (
-									<tr class={m.instanceType === ASKED_MACHINE ? "is-asked" : undefined}>
-										<th scope="row">{m.instanceType}</th>
-										<td class="num">{m.vcpu}</td>
-										<td class="num">{m.memory}</td>
-										<td class="proc">
-											{m.processor}, {m.clockSpeed}
-										</td>
-										<td class="num price">
-											<span title={`${m.price.description} · ${m.price.path.pointer}`}>{formatUsd(m.price.usdPerHour).full}</span>
-										</td>
-									</tr>
-								))}
-							</tbody>
-						</table>
-					</div>
-				</section>
-
-				<section id="provenance" class="provenance wrap" aria-labelledby="provenance-title">
-					<h2 id="provenance-title">Provenance</h2>
-					<div class="day">
-						<span class="day-label">boots, UTC</span>
-						<div class="day-line">
-							{BOOTS.map((t) => {
-								const [h, mm] = t.split(":").map(Number) as [number, number];
-								return (
-									<span class="boot" style={{ left: `${((h * 60 + mm) / 1440) * 100}%` }}>
-										<span class="boot-dot" aria-hidden="true" />
-										<span class="boot-time">{t}</span>
-									</span>
-								);
-							})}
-							{(() => {
-								const [h, mm] = newest.minute.split(":").map(Number) as [number, number];
-								return (
-									<span class="newest" style={{ left: `${((h * 60 + mm) / 1440) * 100}%` }}>
-										<span class="newest-tick" aria-hidden="true" />
-										<span class="newest-label">newest {newest.minute}</span>
-									</span>
-								);
-							})()}
-						</div>
-					</div>
-					<dl class="facts">
-						<div>
-							<dt>Newest Run</dt>
-							<dd>
-								<time datetime={newest.iso}>{newest.full}</time>
-							</dd>
-						</div>
-						<div>
-							<dt>Oldest Run</dt>
-							<dd>
-								<time datetime={oldest.iso}>{oldest.full}</time>
-							</dd>
-						</div>
-						<div>
-							<dt>Runs</dt>
-							<dd>
-								{formatCount(snapshot.runCount).full} · {formatCount(snapshot.failedRuns).full} failed
-							</dd>
-						</div>
-						<div>
-							<dt>Series</dt>
-							<dd>
-								{formatCount(snapshot.seriesCount).full} · {formatCount(headline.length * machines.length).full} above
-							</dd>
-						</div>
-						<div>
-							<dt>Prices copied</dt>
-							<dd>
-								<time datetime={snapshot.pricesFetchedAt}>{pricesFetched.full}</time>
-							</dd>
-						</div>
-						<div>
-							<dt>Methods</dt>
-							<dd>
-								{snapshot.methods.map((m, i) => (
-									<>
-										{i > 0 ? " · " : ""}
-										<a href={links.seriesList}>
-											<code>
-												{m.name}&nbsp;v{m.version}
-											</code>
-										</a>
-									</>
-								))}
-							</dd>
-						</div>
-					</dl>
-				</section>
 			</main>
 
 			<footer class="footer">
 				<div class="wrap footer-row">
 					<strong>LedgerMath</strong>
 					<ul>
-						<li>
-							<a href={links.index}>{path(links.index)}</a>
-						</li>
 						<li>
 							<a href={links.docs}>Docs</a>
 						</li>
