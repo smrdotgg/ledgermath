@@ -2,8 +2,10 @@
 # from the scheduled -runs stage's bucket into smrdotgg/ledgermath-runs and pushes them,
 # derives every Series with Method series v1 and every Series of requests with
 # Method requests v1, builds the page, keeps the page and both files of
-# Derivations as an artifact, builds and checks the data API's static files
-# and keeps them as a second artifact, and opens (or comments on) one issue when a
+# Derivations as an artifact, builds the data API's static files, checks them
+# against the Derivations and against the files the last successful run kept
+# (fetched with this run's token, which may therefore read Actions), keeps them
+# as a second artifact for a week, and opens (or comments on) one issue when a
 # watched Series has had no Run for 48 hours, or the newest price file
 # (prices.yml) is more than 48 hours old.
 #
@@ -21,12 +23,23 @@ on:
   schedule:
     - cron: "40 22 * * *" # half an hour after the 22:10 boot
     - cron: "0 */6 * * *"
+  # new_baseline is a human's declaration, by hand, that this run's data API
+  # tree is a new baseline: there is no earlier tree of its layout to compare
+  # it with (the first build after LAYOUT was raised, or the last tree kept
+  # expired). It is the only source of the check's --allow-no-previous;
+  # nothing automatic grants it, so a scheduled run with no such tree fails.
   workflow_dispatch:
+    inputs:
+      new_baseline:
+        description: "Declare this run's data API tree a new baseline: past months are not compared (no published Series or Run may be missing all the same)"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
   id-token: write # the OIDC token AWS exchanges for the role
   issues: write # the alarm
+  actions: read # the data API's files the last successful run kept, for the check
 
 concurrency:
   group: runs
@@ -132,8 +145,11 @@ jobs:
       # be served. Only when both Methods succeeded, so the tree never lacks a
       # Method's part. The check reads back what was written: every file
       # against its schema, every link, every Series both ways, every Run file
-      # a point cites with its sha256. Only a checked tree is kept, as the
-      # artifact api; nothing is uploaded anywhere else.
+      # a point cites with its sha256; and every month file against the tree
+      # the last successful run kept, which it may differ from only for the
+      # four causes ADR-0030 gives (rule 9). Only a checked tree is kept, as
+      # the artifact api, for a week (the next runs need only the latest);
+      # nothing is uploaded anywhere else.
       - name: Build the data API's files
         id: api
         if: ${{ !cancelled() && steps.derive.outcome == 'success' }}
@@ -141,12 +157,31 @@ jobs:
           bun scripts/build-api.ts --derivations page/derivations.json
           --requests-derivations page/requests-derivations.json --runs ledgermath-runs --out api
 
+      # The tree kept by the latest successful run on main created before this
+      # one. There may be none: no such run, one from before the data API, an
+      # artifact that expired. The script says which in the step's summary,
+      # and decides nothing. A tree that could not be fetched fails this step,
+      # and the check does not run: it is not a tree that does not exist.
+      - name: Fetch the data API's files the last successful run kept
+        id: api-previous
+        if: ${{ !cancelled() && steps.api.outcome == 'success' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          bun scripts/previous-api.ts --repository "$GITHUB_REPOSITORY" --workflow runs.yml
+          --branch main --run-id "$GITHUB_RUN_ID" --tree api --out api-previous
+
+      # A previous tree of this layout is compared strictly, always. With none,
+      # or one of another layout, the check fails unless a human started this
+      # run with the input new_baseline, the only source of
+      # --allow-no-previous; the check's summary says which.
       - name: Check the data API's files
         id: api-check
-        if: ${{ !cancelled() && steps.api.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.api.outcome == 'success' && steps.api-previous.outcome == 'success' }}
         run: >-
           bun scripts/check-api.ts --tree api --derivations page/derivations.json
           --requests-derivations page/requests-derivations.json --runs ledgermath-runs
+          --previous api-previous ${{ inputs.new_baseline == true && '--allow-no-previous' || '' }}
 
       - name: Keep the data API's files
         if: ${{ !cancelled() && steps.api-check.outcome == 'success' }}
@@ -155,6 +190,7 @@ jobs:
           name: api
           path: api/
           if-no-files-found: error
+          retention-days: 7
 
       # Even when the copy, the Method or the page failed. When the copy or
       # its push failed, the Runs repository may be behind the bucket, and the

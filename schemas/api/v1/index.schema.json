@@ -2,9 +2,9 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:ledgermath:api:v1:index",
   "title": "LedgerMath data API, version 1: the table of contents",
-  "description": "v1/index.json: where the list of Series, the price files, the schemas, the evidence and the docs are. Start here. Every address a reader needs is written in the files, so a reader never builds one from an id; the one exception is a blob named by hash inside a Run file, whose address is evidence.blob_url_template. Version 1 only ever gains fields: a field, once in a v1 file, keeps its name, its type and its meaning, and a reader ignores any field it does not know. That is why no object in this schema, nor in series-list and series, forbids members it does not list. A change that would break a reader is published as v2, beside v1. The price files are the exception: each is a price file of the Runs repository, byte for byte, and follows its own schema, ledgermath.prices/1, whose root and LedgerMath's own objects are closed.",
+  "description": "v1/index.json: where the list of Series, the price files, the schemas, the evidence and the docs are. Start here. Every address a reader needs is written in the files, so a reader never builds one from an id; the one exception is a blob named by hash inside a Run file, whose address is evidence.blob_url_template. Version 1 only ever gains fields: a field, once in a v1 file, keeps its name, its type and its meaning, and a reader ignores any field it does not know. That is why no object in this schema, nor in series-list, series and series-month, forbids members it does not list. A change that would break a reader is published as v2, beside v1. The price files are the exception: each is the day's price file as LedgerMath keeps it, byte for byte, and follows its own schema, ledgermath.prices/1, whose root and LedgerMath's own objects are closed.",
   "type": "object",
-  "required": ["schema", "schema_url", "url", "about", "versioning", "figures", "docs", "newest_run_started_at", "series", "prices", "schemas", "evidence"],
+  "required": ["schema", "schema_url", "url", "about", "versioning", "figures", "months", "layout", "docs", "newest_run_started_at", "series", "prices", "schemas", "evidence"],
   "properties": {
     "schema": { "description": "What this file is, and which version of its shape.", "const": "ledgermath.api.index/1" },
     "schema_url": { "description": "The address of this schema.", "$ref": "#/$defs/url" },
@@ -12,6 +12,8 @@
     "about": { "description": "What LedgerMath and this API are, in words.", "type": "string" },
     "versioning": { "description": "The rule the API's own v1 files keep, in words: v1 only ever gains fields; and its exception, the price files, which follow their own schema, closed.", "type": "string" },
     "figures": { "description": "How the numbers are written, in words: exactly as the Derivations hold them, never rounded.", "type": "string" },
+    "months": { "description": "How each Series is split by month, in words, and exactly when a month file's bytes change: for a given layout, for four causes only, a past month included, so a reader holding a copy compares the month file's sha256, which the Series' file gives, before trusting it.", "type": "string" },
+    "layout": { "description": "How the files are written, as a number. It increases when LedgerMath changes how the files are written (the order of a file's fields, the white space between them, a field every file of a kind gains), so that any file's bytes may change without one of the four causes months gives; for a given layout, those four are the only causes. Editing a schema's words does not change it, nor do the data. A reader holding copies of month files made under another layout fetches them again.", "type": "integer", "minimum": 1 },
     "docs": {
       "description": "Where the API is described in words: an absolute https address with a host, and a path, query or fragment if any, written with the characters RFC 3986 allows.",
       "type": "string",
@@ -24,16 +26,17 @@
     "series": {
       "description": "The list of Series.",
       "type": "object",
-      "required": ["url", "schema_url", "count", "series_file_schema_url"],
+      "required": ["url", "schema_url", "count", "series_file_schema_url", "month_file_schema_url"],
       "properties": {
         "url": { "description": "v1/series.json: one row per Series, each with the address of its own file.", "$ref": "#/$defs/url" },
         "schema_url": { "description": "The schema of v1/series.json.", "$ref": "#/$defs/url" },
         "count": { "description": "How many Series it lists.", "type": "integer", "minimum": 0 },
-        "series_file_schema_url": { "description": "The schema of one Series' file, v1/series/<id>.json.", "$ref": "#/$defs/url" }
+        "series_file_schema_url": { "description": "The schema of one Series' file, v1/series/<id>.json: its summary, its newest Runs and its months.", "$ref": "#/$defs/url" },
+        "month_file_schema_url": { "description": "The schema of one month of a Series, v1/series/<id>/<yyyy-mm>.json: every point of the Runs that started that month. A Series' file gives the address, sha256 and size of each of its months; months, above, says when a month file changes.", "$ref": "#/$defs/url" }
       }
     },
     "prices": {
-      "description": "The daily price files: what AWS publicly charges for what LedgerMath measures, one file a day, each byte for byte the file the Runs repository holds. A price is cited by the file's path in the Runs repository (path), the SKU and the rate code.",
+      "description": "The daily price files: what AWS publicly charges for what LedgerMath measures, one file a day, each byte for byte as LedgerMath keeps it. A price is cited by the price file's path (path), the SKU and the rate code.",
       "type": "object",
       "required": ["schema_url", "newest", "files"],
       "properties": {
@@ -56,7 +59,7 @@
       }
     },
     "evidence": {
-      "description": "Where the evidence behind the numbers is: Run files, boot summaries and blobs, served at the keys of LedgerMath's bucket of Runs.",
+      "description": "Where the evidence behind the numbers is: Run files, boot summaries and blobs, served under the same address as the API, never copied into its files.",
       "type": "object",
       "required": ["about", "blob_url_template"],
       "properties": {
@@ -77,7 +80,7 @@
       "required": ["date", "path", "url"],
       "properties": {
         "date": { "description": "The UTC date the prices were fetched.", "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" },
-        "path": { "description": "The file's path in the Runs repository, which a price citation names: prices/<yyyy>/<mm>/<dd>/aws.json.", "type": "string", "pattern": "^prices/[0-9]{4}/[0-9]{2}/[0-9]{2}/aws\\.json$" },
+        "path": { "description": "The price file's own path, prices/<yyyy>/<mm>/<dd>/aws.json: the name a price citation gives it.", "type": "string", "pattern": "^prices/[0-9]{4}/[0-9]{2}/[0-9]{2}/aws\\.json$" },
         "url": { "description": "Its address: v1/prices/<yyyy-mm-dd>.json.", "$ref": "#/$defs/url" }
       }
     }

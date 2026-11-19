@@ -1,4 +1,5 @@
 import { beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
+import { createHash } from "node:crypto";
 import { cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -10,10 +11,12 @@ import {
 	apiJson,
 	buildApi,
 	DEFAULT_BASE,
+	monthPath,
 	readApiSchemas,
 	readBootSummaries,
 	readPriceFiles,
 	seriesPath,
+	writerForm,
 } from "../scripts/lib/api";
 import { checkApi, closeSchema, difference } from "../scripts/lib/api-check";
 import { ADDRESS_PARAM, type ApiFixture, makeApiFixture, OVERFLOW_X } from "./api-fixtures";
@@ -48,6 +51,11 @@ function writeTree(tree: Map<string, Uint8Array>): string {
 
 const text = (tree: Map<string, Uint8Array>, path: string): string => new TextDecoder().decode(tree.get(path));
 const json = (tree: Map<string, Uint8Array>, path: string): Json => JSON.parse(text(tree, path));
+/** Every Run of the fixture's Series started in November 2026: each Series has that one month file. */
+const NOVEMBER = "2026-11";
+const november = (id: string): string => monthPath(id, NOVEMBER);
+/** A stat of the Derivations as the Series file writes it: without the Runs behind it. */
+const summary = (stat: Json | null): Json | null => (stat === null ? null : { count: stat.count, p5: stat.p5, p50: stat.p50, p95: stat.p95 });
 
 /** A seeded shuffle, so a failure can be seen again. */
 function shuffled<T>(items: readonly T[], seed: number): T[] {
@@ -87,9 +95,10 @@ describe("the tree", () => {
 			"v1/schemas/index.schema.json",
 			"v1/schemas/prices.schema.json",
 			"v1/schemas/series-list.schema.json",
+			"v1/schemas/series-month.schema.json",
 			"v1/schemas/series.schema.json",
 			"v1/series.json",
-			...[fixture.http, fixture.memory, fixture.syscall].sort().map(seriesPath),
+			...[fixture.http, fixture.memory, fixture.syscall].sort().flatMap((id) => [seriesPath(id), november(id)]),
 		]);
 		// The price files and their schema, byte for byte.
 		expect(Buffer.from(tree.get("v1/prices/2026-11-12.json") as Uint8Array).equals(readFileSync(join(fixture.runs, "prices/2026/11/12/aws.json")))).toBe(true);
@@ -100,6 +109,7 @@ describe("the tree", () => {
 		const result = checkApi({ tree: directory, runs: fixture.runs, base: DEFAULT_BASE, series: fixture.series, requests: fixture.requests });
 		expect(result.problems).toEqual([]);
 		expect(result.series).toBe(3);
+		expect(result.months).toBe(3);
 		// Every Run file the Derivations cite, the unreadable one included.
 		expect(result.runFiles).toBe(fixture.series.runs_read);
 	});
@@ -113,10 +123,12 @@ describe("the tree", () => {
 			schema_url: `${DEFAULT_BASE}/v1/schemas/series-list.schema.json`,
 			count: 3,
 			series_file_schema_url: `${DEFAULT_BASE}/v1/schemas/series.schema.json`,
+			month_file_schema_url: `${DEFAULT_BASE}/v1/schemas/series-month.schema.json`,
 		});
 		expect(index.prices.files.map((file: Json) => file.date)).toEqual(["2026-11-11", "2026-11-12"]);
 		expect(index.prices.newest).toEqual({ date: "2026-11-12", path: "prices/2026/11/12/aws.json", url: `${DEFAULT_BASE}/v1/prices/2026-11-12.json` });
-		expect(index.schemas.map((schema: Json) => schema.name)).toEqual(["index", "series-list", "series", "prices"]);
+		expect(index.schemas.map((schema: Json) => schema.name)).toEqual(["index", "series-list", "series", "series-month", "prices"]);
+		expect(index.schemas.find((schema: Json) => schema.name === "series-month").describes).toBe("v1/series/<id>/<yyyy-mm>.json");
 		expect(index.docs).toBe("https://example.test/docs");
 		expect(index.evidence.blob_url_template).toBe(`${DEFAULT_BASE}/blobs/sha256/{hex}`);
 		expect(index.versioning).toContain("only ever gains fields");
@@ -129,10 +141,12 @@ describe("the tree", () => {
 		const rows = lines.filter((line) => line.startsWith('    {"id":'));
 		expect(rows.length).toBe(3);
 		for (const row of rows) expect(JSON.parse(row.replace(/,$/, "")).url).toMatch(/^https:\/\/api\.ledgermath\.com\/v1\/series\/[0-9a-f]{12}\.json$/);
-		const points = text(tree, seriesPath(fixture.memory))
-			.split("\n")
-			.filter((line) => line.startsWith('        {"run":'));
-		expect(points.length).toBe(4);
+		for (const path of [seriesPath(fixture.memory), november(fixture.memory)]) {
+			const points = text(tree, path)
+				.split("\n")
+				.filter((line) => line.startsWith('        {"run":'));
+			expect(points.length).toBe(4);
+		}
 		expect(apiJson({ a: [1, 2], b: [{ c: { d: 1 } }, { c: null }], e: {} })).toBe('{\n  "a": [1,2],\n  "b": [\n    {"c":{"d":1}},\n    {"c":null}\n  ],\n  "e": {}\n}\n');
 	});
 
@@ -179,14 +193,20 @@ describe("the same inputs give the same bytes", () => {
 		expect(facts).toEqual([...facts].sort());
 		const services = json(tree, seriesPath(fixture.http)).derivations.requests_v1.recorded.services;
 		for (const service of services) expect(Object.keys(service.inputs)).toEqual(Object.keys(service.inputs).sort());
-		expect(Object.keys(json(tree, seriesPath(fixture.memory)).derivations.series_v1.points[0]).slice(0, 6)).toEqual(["run", "path", "sha256", "evidence", "boot_summary", "started_at"]);
+		expect(Object.keys(json(tree, november(fixture.memory)).derivations.series_v1.points[0]).slice(0, 6)).toEqual(["run", "path", "sha256", "evidence", "boot_summary", "started_at"]);
+		expect(Object.keys(json(tree, seriesPath(fixture.memory)).derivations.series_v1.newest_points[0]).slice(0, 6)).toEqual(["run", "path", "sha256", "evidence", "boot_summary", "started_at"]);
 	});
 
 	test("and a Series that gained no Run keeps its file byte for byte, while the list and the table of contents move on", async () => {
 		const later = await makeApiFixture({ extraSyscallRun: true });
 		const next = buildApi(sourcesOf(later));
-		for (const id of [fixture.memory, fixture.http]) expect(text(next, seriesPath(id))).toBe(text(tree, seriesPath(id)));
+		for (const id of [fixture.memory, fixture.http]) {
+			expect(text(next, seriesPath(id))).toBe(text(tree, seriesPath(id)));
+			expect(text(next, november(id))).toBe(text(tree, november(id)));
+		}
+		// The syscall Series gained a Run in the same month: its Series file and that month's file change.
 		expect(text(next, seriesPath(fixture.syscall))).not.toBe(text(tree, seriesPath(fixture.syscall)));
+		expect(text(next, november(fixture.syscall))).not.toBe(text(tree, november(fixture.syscall)));
 		expect(json(next, "v1/series.json").newest_run_started_at).toBe("2026-11-16T04:13:00.000000000Z");
 		expect(json(next, "v1/index.json").newest_run_started_at).toBe("2026-11-16T04:13:00.000000000Z");
 		for (const path of ["v1/prices/2026-11-11.json", "v1/schemas/series.schema.json"]) expect(text(next, path)).toBe(text(tree, path));
@@ -196,26 +216,39 @@ describe("the same inputs give the same bytes", () => {
 describe("a Series", () => {
 	/** A point as the Derivation holds it: the API's point without what it adds. */
 	const asDerived = (point: Json): Json => {
-		const { sha256: _sha256, evidence: _evidence, boot_summary: _bootSummary, ...rest } = point;
-		return rest;
+		const { sha256: _sha256, evidence: _evidence, boot_summary: _bootSummary, group_through_as_of_run: asOfRun, ...rest } = point;
+		// The fixture's Series of requests has one group: there the Derivation's group_through is the tree's group_through_as_of_run, null.
+		return asOfRun === undefined ? rest : { ...rest, group_through: asOfRun };
 	};
 
-	test("of both Methods carries each one's Derivation in full, labelled with its name and version, and its row each one's summary", () => {
+	test("of both Methods carries each one's summary in its Series file and each one's points in its month file, labelled with its name and version, and its row each one's summary", () => {
 		const file = json(tree, seriesPath(fixture.http));
+		const month = json(tree, november(fixture.http));
 		const seriesV1 = fixture.series.derivations.find((d) => d.series.id === fixture.http) as SeriesFile["derivations"][number];
 		const requestsV1 = fixture.requests.derivations.find((d) => d.series.id === fixture.http) as RequestsFile["derivations"][number];
-		expect(Object.keys(file.derivations)).toEqual(["series_v1", "requests_v1"]);
-		expect(file.derivations.series_v1.method).toEqual({ name: "series", version: 1 });
-		expect(file.derivations.requests_v1.method).toEqual({ name: "requests", version: 1 });
-		expect(file.derivations.series_v1.points.map(asDerived)).toEqual(seriesV1.points);
-		expect(file.derivations.requests_v1.points.map(asDerived)).toEqual(requestsV1.points);
-		for (const key of ["percentiles", "groups", "differed", "sections"] as const) expect(file.derivations.series_v1[key]).toEqual(seriesV1[key]);
-		for (const key of ["recorded", "pool", "groups"] as const) expect(file.derivations.requests_v1[key]).toEqual(requestsV1[key]);
+		for (const of of [file, month]) {
+			expect(Object.keys(of.derivations)).toEqual(["series_v1", "requests_v1"]);
+			expect(of.derivations.series_v1.method).toEqual({ name: "series", version: 1 });
+			expect(of.derivations.requests_v1.method).toEqual({ name: "requests", version: 1 });
+		}
+		expect(month.derivations.series_v1.points.map(asDerived)).toEqual(seriesV1.points);
+		expect(month.derivations.requests_v1.points.map(asDerived)).toEqual(requestsV1.points);
+		expect(month.derivations.series_v1.differed).toEqual(seriesV1.differed);
+		// Fewer than 12 Runs: every point is among the newest, in the Series file too.
+		expect(file.derivations.series_v1.newest_points).toEqual(month.derivations.series_v1.points);
+		expect(file.derivations.requests_v1.newest_points).toEqual(month.derivations.requests_v1.points);
+		expect(file.derivations.series_v1.percentiles).toEqual({ time_per_repetition_ns: summary(seriesV1.percentiles.time_per_repetition_ns), bytes_per_second: summary(seriesV1.percentiles.bytes_per_second) });
+		expect(file.derivations.series_v1.sections).toEqual(seriesV1.sections);
+		expect(file.derivations.series_v1.groups.map((group: Json) => [group.id, group.facts])).toEqual(seriesV1.groups.map((group) => [group.id, group.facts]));
+		for (const key of ["recorded", "pool"] as const) expect(file.derivations.requests_v1[key]).toEqual(requestsV1[key]);
+		expect(file.derivations.requests_v1.groups).toEqual(requestsV1.groups.map((group) => ({ id: group.id, facts: group.facts, pool: group.pool })));
 		expect(file.derivations.requests_v1.definitions).toEqual(fixture.requests.definitions);
 		expect(file.derivations.series_v1.definitions).toEqual(fixture.series.definitions);
 		// The second Run exited 4 with one timed-out request: series v1 does not count it, requests v1 does.
-		expect(file.derivations.series_v1.points.map((point: Json) => point.counted)).toEqual([true, false]);
-		expect(file.derivations.requests_v1.points.map((point: Json) => point.counted)).toEqual([true, true]);
+		expect(month.derivations.series_v1.points.map((point: Json) => point.counted)).toEqual([true, false]);
+		expect(month.derivations.requests_v1.points.map((point: Json) => point.counted)).toEqual([true, true]);
+		expect([file.derivations.series_v1.counted_runs, file.derivations.series_v1.failed_runs]).toEqual([1, 1]);
+		expect([file.derivations.requests_v1.counted_runs, file.derivations.requests_v1.failed_runs]).toEqual([2, 0]);
 
 		const row = json(tree, "v1/series.json").series.find((r: Json) => r.id === fixture.http);
 		expect(row.derivations.series_v1).toEqual({
@@ -238,15 +271,25 @@ describe("a Series", () => {
 		expect(Object.keys(json(tree, "v1/series.json").series.find((r: Json) => r.id === fixture.memory).derivations)).toEqual(["series_v1"]);
 	});
 
-	test("split into groups shows its groups, their facts, and what differed, as the Derivation has them", () => {
+	test("split into groups shows its groups, their facts and figures, and what differed, as the Derivation has them; a group's Runs are its points", () => {
 		const file = json(tree, seriesPath(fixture.memory));
+		const month = json(tree, november(fixture.memory));
 		const derivation = fixture.series.derivations.find((d) => d.series.id === fixture.memory) as SeriesFile["derivations"][number];
 		expect(file.derivations.series_v1.groups.map((group: Json) => group.id)).toEqual(["A", "B"]);
-		expect(file.derivations.series_v1.groups).toEqual(derivation.groups);
-		const split = file.derivations.series_v1.differed.find((entry: Json) => entry.facts.includes("cpuid"));
+		expect(file.derivations.series_v1.groups).toEqual(
+			derivation.groups.map((group) => ({
+				id: group.id,
+				facts: group.facts,
+				percentiles: { time_per_repetition_ns: summary(group.percentiles.time_per_repetition_ns as unknown as Json), bytes_per_second: summary(group.percentiles.bytes_per_second as unknown as Json) },
+			})),
+		);
+		// What the file leaves out, each group's Runs, is the month file's points of its letter.
+		for (const group of derivation.groups) expect(month.derivations.series_v1.points.filter((point: Json) => point.group === group.id).map((point: Json) => point.run)).toEqual(group.runs);
+		const split = month.derivations.series_v1.differed.find((entry: Json) => entry.facts.includes("cpuid"));
 		expect(split).toBeDefined();
 		expect(split.sections.find((section: Json) => section.section === "cpuid").effect).toBe("splits");
-		expect(file.derivations.series_v1.differed).toEqual(derivation.differed);
+		expect(month.derivations.series_v1.differed).toEqual(derivation.differed);
+		expect(file.derivations.series_v1.differed).toBeUndefined();
 		const row = json(tree, "v1/series.json").series.find((r: Json) => r.id === fixture.memory);
 		expect(row.derivations.series_v1.groups).toBe(2);
 		expect(row.runs).toBe(4);
@@ -255,20 +298,24 @@ describe("a Series", () => {
 	});
 
 	test("shows a failed Run's point with why and its evidence, counts it as failed, and leaves it out of every percentile", () => {
-		const file = json(tree, seriesPath(fixture.memory));
-		const failed = file.derivations.series_v1.points.filter((point: Json) => !point.counted);
+		const month = json(tree, november(fixture.memory));
+		const derivation = fixture.series.derivations.find((d) => d.series.id === fixture.memory) as SeriesFile["derivations"][number];
+		const failed = month.derivations.series_v1.points.filter((point: Json) => !point.counted);
 		expect(failed.length).toBe(1);
 		expect(failed[0].failure).toEqual(expect.any(String));
 		expect(failed[0].samples).toEqual([]);
 		expect(failed[0].evidence).toBe(`${DEFAULT_BASE}/${failed[0].path}`);
-		expect(file.derivations.series_v1.percentiles.time_per_repetition_ns.runs).not.toContain(failed[0].run);
+		// The Runs behind the percentiles, which the tree leaves out, are the counted points.
+		expect(derivation.percentiles.time_per_repetition_ns?.runs).not.toContain(failed[0].run);
+		expect(derivation.percentiles.time_per_repetition_ns?.runs).toEqual(month.derivations.series_v1.points.filter((point: Json) => point.counted).map((point: Json) => point.run));
+		expect(json(tree, seriesPath(fixture.memory)).derivations.series_v1.percentiles.time_per_repetition_ns.runs).toBeUndefined();
 		const row = json(tree, "v1/series.json").series.find((r: Json) => r.id === fixture.memory);
 		expect([row.derivations.series_v1.counted_runs, row.derivations.series_v1.failed_runs]).toEqual([3, 1]);
 		expect(row.derivations.series_v1.percentiles.time_per_repetition_ns.count).toBe(3);
 	});
 
 	test("links each point's Run file with its sha256, and its boot's summary when the Runs repository holds one", () => {
-		const file = json(tree, seriesPath(fixture.memory));
+		const file = json(tree, november(fixture.memory));
 		const derivation = fixture.series.derivations.find((d) => d.series.id === fixture.memory) as SeriesFile["derivations"][number];
 		file.derivations.series_v1.points.forEach((point: Json, i: number) => {
 			expect(point.sha256).toBe(derivation.runs[i]?.sha256);
@@ -279,7 +326,7 @@ describe("a Series", () => {
 
 	test("writes every number exactly as the Derivation holds it", () => {
 		const derivation = fixture.series.derivations.find((d) => d.series.id === fixture.memory) as SeriesFile["derivations"][number];
-		const fileText = text(tree, seriesPath(fixture.memory));
+		const fileText = text(tree, november(fixture.memory));
 		for (const point of derivation.points) {
 			if (point.time_per_repetition_ns !== null) expect(fileText).toContain(`"time_per_repetition_ns":${JSON.stringify(point.time_per_repetition_ns)}`);
 			if (point.bytes_per_second !== null) expect(fileText).toContain(`"bytes_per_second":${JSON.stringify(point.bytes_per_second)}`);
@@ -329,18 +376,40 @@ describe("the check fails loudly", () => {
 		change(copy, runs);
 		return checkApi({ tree: copy, runs, base: options.base ?? DEFAULT_BASE, series: options.series ?? fixture.series, requests: fixture.requests }).problems;
 	}
+	/** A file of a copy changed by `change`, written as the build writes it (writerForm()), so a test of a rule sees only that rule's problems. */
 	const edit = (path: string, change: (value: Json) => void) => (copy: string) => {
 		const value = JSON.parse(readFileSync(join(copy, path), "utf8"));
 		change(value);
-		writeFileSync(join(copy, path), apiJson(value));
+		writeFileSync(join(copy, path), writerForm(path, value));
+		keepEntry(copy, path);
+	};
+	/**
+	 * A changed month file's entry in its Series file made to give its new
+	 * sha256 and size, so that a test of another rule sees only that rule's
+	 * problems (tests/api-months.test.ts tests the entry itself).
+	 */
+	const keepEntry = (copy: string, path: string): void => {
+		const month = /^v1\/series\/([^/]+)\/([^/]+)\.json$/.exec(path);
+		if (month === null) return;
+		const at = join(copy, seriesPath(month[1] as string));
+		const series = JSON.parse(readFileSync(at, "utf8"));
+		const entry = (series.months as Json[]).find((one) => one.month === month[2]) as Json;
+		const bytes = readFileSync(join(copy, path));
+		entry.sha256 = createHash("sha256").update(bytes).digest("hex");
+		entry.bytes = bytes.length;
+		writeFileSync(at, writerForm(seriesPath(month[1] as string), series));
 	};
 
 	test("when a file does not match its schema: a field the schema does not describe, or one of the wrong type", () => {
-		const extra = check(edit(seriesPath(fixture.memory), (file) => (file.derivations.series_v1.points[0].colour = "red")));
+		const extra = check(edit(november(fixture.memory), (file) => (file.derivations.series_v1.points[0].colour = "red")));
+		const run = json(tree, november(fixture.memory)).derivations.series_v1.points[0].run;
 		expect(extra).toEqual([
-			expect.stringContaining(`${seriesPath(fixture.memory)} does not match v1/schemas/series.schema.json: /derivations/series_v1/points/0 must NOT have additional properties: colour`),
-			`${seriesPath(fixture.memory)}: series_v1: point 0: /colour is "red", where nothing is expected, as series v1's Derivation of Series ${fixture.memory} holds it`,
+			expect.stringContaining(`${november(fixture.memory)} does not match v1/schemas/series-month.schema.json: /derivations/series_v1/points/0 must NOT have additional properties: colour`),
+			`${november(fixture.memory)}: series_v1: point 0: /colour is "red", where nothing is expected, as series v1's Derivation of Series ${fixture.memory} holds it for ${NOVEMBER}`,
+			`${seriesPath(fixture.memory)}: series_v1: newest_points/0, Run ${run}, is not its point in the month file of ${NOVEMBER}: /colour is absent, not "red"`,
 		]);
+		const newest = check(edit(seriesPath(fixture.memory), (file) => (file.derivations.series_v1.newest_points[0].colour = "red")));
+		expect(newest[0]).toContain(`${seriesPath(fixture.memory)} does not match v1/schemas/series.schema.json: /derivations/series_v1/newest_points/0 must NOT have additional properties: colour`);
 		const wrong = check(edit("v1/series.json", (list) => (list.series[0].runs = "four")));
 		expect(wrong[0]).toContain("v1/series.json does not match v1/schemas/series-list.schema.json: /series/0/runs must be integer");
 		expect(wrong[1]).toMatch(/^v1\/series\.json: the row of Series [0-9a-f]{12} differs from its file v1\/series\/[0-9a-f]{12}\.json: \/runs is "four", not [0-9]+$/);
@@ -360,10 +429,20 @@ describe("the check fails loudly", () => {
 		});
 		expect(count).toEqual(['v1/series.json is not strict JSON: the object at / holds the member "count" twice']);
 		const nested = check((copy) => {
-			const path = join(copy, seriesPath(fixture.memory));
+			const path = join(copy, november(fixture.memory));
 			writeFileSync(path, readFileSync(path, "utf8").replace('{"run":', '{"run":"x","\\u0072un":'));
+			keepEntry(copy, november(fixture.memory));
 		});
-		expect(nested).toEqual([`${seriesPath(fixture.memory)} is not strict JSON: the object at /derivations/series_v1/points/0 holds the member "run" twice`]);
+		expect(nested).toEqual([`${november(fixture.memory)} is not strict JSON: the object at /derivations/series_v1/points/0 holds the member "run" twice`]);
+		// A number a double does not hold exactly: a reader's parse would change it.
+		const digits = check((copy) => {
+			const path = join(copy, november(fixture.memory));
+			writeFileSync(path, readFileSync(path, "utf8").replace('"sample":1,', '"sample":9007199254740993,'));
+			keepEntry(copy, november(fixture.memory));
+		});
+		expect(digits).toEqual([
+			`${november(fixture.memory)} is not strict JSON: the number at /derivations/series_v1/points/0/samples/0/sample is 9007199254740993, which a double does not hold exactly: it would be written 9007199254740992, another value`,
+		]);
 		const byte = check((copy) => {
 			const path = join(copy, "v1/index.json");
 			const value = readFileSync(path);
@@ -390,13 +469,16 @@ describe("the check fails loudly", () => {
 	test("when a link in the list or the table of contents names a file the tree lacks", () => {
 		const series = check((copy) => rmSync(join(copy, seriesPath(fixture.syscall))));
 		expect(series).toContain(`${seriesPath(fixture.syscall)} is missing: Series ${fixture.syscall} of series v1 has no file in the tree`);
-		expect(series).toContain(`v1/series.json links ${DEFAULT_BASE}/${seriesPath(fixture.syscall)}, which is not a file of the tree`);
+		// Its month file, read first, links it back; and nothing leads to the month file now.
+		expect(series).toContain(`${november(fixture.syscall)} links ${DEFAULT_BASE}/${seriesPath(fixture.syscall)}, which is not a file of the tree`);
+		expect(series).toContain(`${november(fixture.syscall)} is in the tree, but no link leads to it from v1/index.json`);
 		const price = check((copy) => rmSync(join(copy, "v1/prices/2026-11-11.json")));
 		expect(price).toContain(`v1/index.json links ${DEFAULT_BASE}/v1/prices/2026-11-11.json, which is not a file of the tree`);
 		const schema = check(edit("v1/index.json", (value) => (value.schemas[0].url = `${DEFAULT_BASE}/v1/schemas/nothing.schema.json`)));
 		expect(schema).toEqual([
 			`v1/index.json: /schemas/0/url is "${DEFAULT_BASE}/v1/schemas/nothing.schema.json", not "${DEFAULT_BASE}/v1/schemas/index.schema.json", as the tree and the Derivations make it`,
 			`v1/index.json links ${DEFAULT_BASE}/v1/schemas/nothing.schema.json, which is not a file of the tree`,
+			"v1/schemas/index.schema.json is a schema, but v1/index.json does not list it",
 		]);
 	});
 
@@ -411,27 +493,40 @@ describe("the check fails loudly", () => {
 		expect(gone).toContain(`${seriesPath(fixture.syscall)} is in the tree, but Series ${fixture.syscall} is in neither file of Derivations`);
 		expect(gone).toContain(`v1/series.json has a row for Series ${fixture.syscall}, which is in neither file of Derivations`);
 		const unexpected = check((copy) => writeFileSync(join(copy, "v1/latest.json"), "{}\n"));
-		expect(unexpected).toEqual(["v1/latest.json is in the tree, but is no file the tree should hold"]);
+		expect(unexpected).toEqual([
+			"v1/latest.json is in the tree, but is no file the tree should hold",
+			"v1/latest.json is of no kind of file a schema listed in v1/index.json describes",
+			"v1/latest.json is in the tree, but no link leads to it from v1/index.json",
+		]);
 	});
 
 	test("when an evidence link names a Run file that is not in the Runs repository checkout, or one with other bytes", () => {
 		const derivation = fixture.series.derivations.find((d) => d.series.id === fixture.memory) as SeriesFile["derivations"][number];
 		const first = derivation.runs[0] as SeriesFile["derivations"][number]["runs"][number];
 		const missing = check((_copy, checkout) => rmSync(join(checkout, first.path)));
-		expect(missing).toContain(`${seriesPath(fixture.memory)}: series_v1's point ${first.id}: evidence ${DEFAULT_BASE}/${first.path} names a Run file that is not in the Runs repository checkout ${runs}`);
+		expect(missing).toContain(`${november(fixture.memory)}: series_v1's point ${first.id}: evidence ${DEFAULT_BASE}/${first.path} names a Run file that is not in the Runs repository checkout ${runs}`);
+		expect(missing).toContain(`${seriesPath(fixture.memory)}: series_v1: newest_points's point ${first.id}: evidence ${DEFAULT_BASE}/${first.path} names a Run file that is not in the Runs repository checkout ${runs}`);
 		const changed = check((_copy, checkout) => writeFileSync(join(checkout, first.path), `${readFileSync(join(checkout, first.path), "utf8")} `));
-		expect(changed).toEqual([expect.stringContaining(`${seriesPath(fixture.memory)}: series_v1's point ${first.id}: the Run file ${first.path} in the checkout has sha256`)]);
+		expect(changed).toEqual([
+			expect.stringContaining(`${november(fixture.memory)}: series_v1's point ${first.id}: the Run file ${first.path} in the checkout has sha256`),
+			expect.stringContaining(`${seriesPath(fixture.memory)}: series_v1: newest_points's point ${first.id}: the Run file ${first.path} in the checkout has sha256`),
+		]);
 		const unreadable = check((_copy, checkout) => rmSync(join(checkout, fixture.unreadable)));
 		expect(unreadable).toContain(`v1/series.json: series_v1's unreadable Run not-a-run: evidence ${DEFAULT_BASE}/${fixture.unreadable} names a Run file that is not in the Runs repository checkout ${runs}`);
 		// Every point of the first day's boot links its summary; once it is gone, each point says so, and the link is reported once.
 		const boot = check((_copy, checkout) => rmSync(join(checkout, "boots"), { recursive: true }));
 		const summary = `${DEFAULT_BASE}/boots/2026/11/12/boot-2026-11-12.json`;
-		const firstDay = (file: string, key: string) =>
-			(json(tree, file).derivations[key].points as Json[]).filter((point) => point.boot_summary === summary).map((point) => `${file}: ${key}'s point ${point.run}: boot_summary is ${summary}, but the checkout ${runs} holds no summary of boot boot-2026-11-12`);
-		const linked = [...[fixture.http, fixture.memory, fixture.syscall].sort().map(seriesPath)];
-		expect(boot.filter((problem) => problem.includes(" links "))).toEqual([`${linked[0]} links ${summary}, which is not a file of the Runs repository checkout ${runs}`]);
+		const firstDay = (id: string, key: string) =>
+			(json(tree, november(id)).derivations[key].points as Json[])
+				.filter((point) => point.boot_summary === summary)
+				.flatMap((point) => [
+					`${november(id)}: ${key}'s point ${point.run}: boot_summary is ${summary}, but the checkout ${runs} holds no summary of boot boot-2026-11-12`,
+					`${seriesPath(id)}: ${key}: newest_points's point ${point.run}: boot_summary is ${summary}, but the checkout ${runs} holds no summary of boot boot-2026-11-12`,
+				]);
+		const firstSeries = [fixture.http, fixture.memory, fixture.syscall].sort()[0] as string;
+		expect(boot.filter((problem) => problem.includes(" links "))).toEqual([`${november(firstSeries)} links ${summary}, which is not a file of the Runs repository checkout ${runs}`]);
 		expect(boot.filter((problem) => !problem.includes(" links ")).sort()).toEqual(
-			[...firstDay(seriesPath(fixture.memory), "series_v1"), ...firstDay(seriesPath(fixture.syscall), "series_v1"), ...firstDay(seriesPath(fixture.http), "series_v1"), ...firstDay(seriesPath(fixture.http), "requests_v1")].sort(),
+			[...firstDay(fixture.memory, "series_v1"), ...firstDay(fixture.syscall, "series_v1"), ...firstDay(fixture.http, "series_v1"), ...firstDay(fixture.http, "requests_v1")].sort(),
 		);
 	});
 
@@ -444,40 +539,43 @@ describe("the check fails loudly", () => {
 	});
 
 	test("when a point cites another Run's evidence: the Run file at its path is another Run's, of another boot", () => {
-		const file = json(tree, seriesPath(fixture.memory));
+		const file = json(tree, november(fixture.memory));
 		const [a, b] = file.derivations.series_v1.points as Json[];
 		if (a === undefined || b === undefined) throw new Error("the memory_read Series has fewer than two points");
 		// Point A keeps its Run id and its figures; B's path, sha256, evidence and boot summary are copied onto it.
 		const copied = check(
-			edit(seriesPath(fixture.memory), (value) => {
+			edit(november(fixture.memory), (value) => {
 				for (const key of ["path", "sha256", "evidence", "boot_summary"]) value.derivations.series_v1.points[0][key] = b[key];
 			}),
 		);
-		const where = `${seriesPath(fixture.memory)}: series_v1's point ${a.run}`;
+		const where = `${november(fixture.memory)}: series_v1's point ${a.run}`;
 		expect(copied).toContain(`${where}: the Run file ${b.path} in the checkout is Run ${b.run}, not ${a.run}`);
 		expect(copied).toContain(`${where}: the Run file ${b.path} in the checkout is of boot ${b.boot}, not ${a.boot}`);
-		expect(copied).toContain(`${seriesPath(fixture.memory)}: series_v1: point 0: /path is ${JSON.stringify(b.path)}, not ${JSON.stringify(a.path)}, as series v1's Derivation of Series ${fixture.memory} holds it`);
+		expect(copied).toContain(`${november(fixture.memory)}: series_v1: point 0: /path is ${JSON.stringify(b.path)}, not ${JSON.stringify(a.path)}, as series v1's Derivation of Series ${fixture.memory} holds it for ${NOVEMBER}`);
 		// And the other way: B with A's evidence, whose boot has a summary, now B's too.
 		const back = check(
-			edit(seriesPath(fixture.memory), (value) => {
+			edit(november(fixture.memory), (value) => {
 				for (const key of ["path", "sha256", "evidence", "boot_summary"]) value.derivations.series_v1.points[1][key] = a[key];
 			}),
 		);
-		expect(back).toContain(`${seriesPath(fixture.memory)}: series_v1's point ${b.run}: the Run file ${a.path} in the checkout is Run ${a.run}, not ${b.run}`);
+		expect(back).toContain(`${november(fixture.memory)}: series_v1's point ${b.run}: the Run file ${a.path} in the checkout is Run ${a.run}, not ${b.run}`);
 	});
 
 	test("when a point's boot_summary is not the summary of its Run's boot, as the summaries in the checkout name their boots", () => {
-		const file = json(tree, seriesPath(fixture.memory));
+		const file = json(tree, november(fixture.memory));
 		const [a, b] = file.derivations.series_v1.points as Json[];
 		if (a === undefined || b === undefined) throw new Error("the memory_read Series has fewer than two points");
-		const other = check(edit(seriesPath(fixture.memory), (value) => (value.derivations.series_v1.points[1].boot_summary = a.boot_summary)));
-		expect(other).toEqual([`${seriesPath(fixture.memory)}: series_v1's point ${b.run}: boot_summary is ${a.boot_summary}, but the checkout ${runs} holds no summary of boot ${b.boot}`]);
+		const other = check(edit(november(fixture.memory), (value) => (value.derivations.series_v1.points[1].boot_summary = a.boot_summary)));
+		expect(other).toEqual([
+			`${november(fixture.memory)}: series_v1's point ${b.run}: boot_summary is ${a.boot_summary}, but the checkout ${runs} holds no summary of boot ${b.boot}`,
+			`${seriesPath(fixture.memory)}: series_v1: newest_points/1, Run ${b.run}, is not its point in the month file of ${NOVEMBER}: /boot_summary is null, not ${JSON.stringify(a.boot_summary)}`,
+		]);
 		// A summary is its boot's by what it says, not by its file's name.
 		const renamed = check((_copy, checkout) => {
 			const path = join(checkout, "boots/2026/11/12/boot-2026-11-12.json");
 			writeFileSync(path, readFileSync(path, "utf8").replace('"boot": "boot-2026-11-12"', '"boot": "another-boot"'));
 		});
-		expect(renamed).toContain(`${seriesPath(fixture.memory)}: series_v1's point ${a.run}: boot_summary is ${a.boot_summary}, but the checkout ${runs} holds no summary of boot ${a.boot}`);
+		expect(renamed).toContain(`${november(fixture.memory)}: series_v1's point ${a.run}: boot_summary is ${a.boot_summary}, but the checkout ${runs} holds no summary of boot ${a.boot}`);
 	});
 
 	test("when an unreadable Run's entry is not its Run file's: another id, or another Run file's sha256", () => {
@@ -492,8 +590,16 @@ describe("the check fails loudly", () => {
 	test("when a Series file's figures are not its Derivations': a point's measurement, a percentile, a pooled figure", () => {
 		const memory = fixture.series.derivations.find((d) => d.series.id === fixture.memory) as SeriesFile["derivations"][number];
 		const time = memory.points[0]?.time_per_repetition_ns as number;
-		const point = check(edit(seriesPath(fixture.memory), (file) => (file.derivations.series_v1.points[0].time_per_repetition_ns = time + 1)));
-		expect(point).toEqual([`${seriesPath(fixture.memory)}: series_v1: point 0: /time_per_repetition_ns is ${time + 1}, not ${time}, as series v1's Derivation of Series ${fixture.memory} holds it`]);
+		const point = check(edit(november(fixture.memory), (file) => (file.derivations.series_v1.points[0].time_per_repetition_ns = time + 1)));
+		expect(point).toEqual([
+			`${november(fixture.memory)}: series_v1: point 0: /time_per_repetition_ns is ${time + 1}, not ${time}, as series v1's Derivation of Series ${fixture.memory} holds it for ${NOVEMBER}`,
+			`${seriesPath(fixture.memory)}: series_v1: newest_points/0, Run ${memory.points[0]?.run}, is not its point in the month file of ${NOVEMBER}: /time_per_repetition_ns is ${time}, not ${time + 1}`,
+		]);
+		const newest = check(edit(seriesPath(fixture.memory), (file) => (file.derivations.series_v1.newest_points[0].time_per_repetition_ns = time + 1)));
+		expect(newest).toEqual([
+			`${seriesPath(fixture.memory)}: series_v1: newest_points: point 0: /time_per_repetition_ns is ${time + 1}, not ${time}, as series v1's Derivation of Series ${fixture.memory} holds its newest 12`,
+			`${seriesPath(fixture.memory)}: series_v1: newest_points/0, Run ${memory.points[0]?.run}, is not its point in the month file of ${NOVEMBER}: /time_per_repetition_ns is ${time + 1}, not ${time}`,
+		]);
 		const p50 = memory.percentiles.time_per_repetition_ns?.p50 as number;
 		const percentile = check(edit(seriesPath(fixture.memory), (file) => (file.derivations.series_v1.percentiles.time_per_repetition_ns.p50 = p50 * 2)));
 		expect(percentile).toEqual([
@@ -517,6 +623,9 @@ describe("the check fails loudly", () => {
 		expect(url).toEqual([
 			`v1/series.json: the row of Series ${fixture.memory} has url "${DEFAULT_BASE}/${seriesPath(fixture.syscall)}", not ${DEFAULT_BASE}/${seriesPath(fixture.memory)}, the address of its file`,
 			`v1/series.json: the row of Series ${fixture.memory} differs from its file ${seriesPath(fixture.memory)}: /url is "${DEFAULT_BASE}/${seriesPath(fixture.syscall)}", not "${DEFAULT_BASE}/${seriesPath(fixture.memory)}"`,
+			// Nothing else leads to the Series file, nor so to its month.
+			`${seriesPath(fixture.memory)} is in the tree, but no link leads to it from v1/index.json`,
+			`${november(fixture.memory)} is in the tree, but no link leads to it from v1/index.json`,
 		]);
 		const total = check(edit("v1/series.json", (list) => (list.count = 4)));
 		expect(total).toEqual(["v1/series.json: /count is 4, not 3, as the tree and the Derivations make it"]);
@@ -534,11 +643,16 @@ describe("the check fails loudly", () => {
 				index.schemas = [];
 			}),
 		);
-		expect(emptied).toEqual([
-			"v1/index.json: /schemas has 0 items, not 4, as the tree and the Derivations make it",
+		expect(emptied.slice(0, 3)).toEqual([
+			"v1/index.json: /schemas has 0 items, not 5, as the tree and the Derivations make it",
 			"v1/index.json: prices: /files has 0 items, not 2, as the price files in the tree make it",
 			`v1/index.json: prices: /newest is null, not {"date":"2026-11-12","path":"prices/2026/11/12/aws.json","url":"${DEFAULT_BASE}/v1/prices/2026-11-12.json"}, as the price files in the tree make it`,
 		]);
+		// With no schema listed, no file's kind is described; and nothing leads to the price files now.
+		const schemas = [...tree.keys()].filter((path) => path.startsWith("v1/schemas/"));
+		expect(emptied.slice(3).filter((problem) => problem.endsWith("is of no kind of file a schema listed in v1/index.json describes")).length).toBe(tree.size - schemas.length);
+		expect(emptied.filter((problem) => problem.endsWith("is a schema, but v1/index.json does not list it"))).toEqual(schemas.map((path) => `${path} is a schema, but v1/index.json does not list it`));
+		expect(emptied.filter((problem) => problem.includes("no link leads to it"))).toEqual(["v1/prices/2026-11-11.json", "v1/prices/2026-11-12.json"].map((path) => `${path} is in the tree, but no link leads to it from v1/index.json`));
 		const count = check(edit("v1/index.json", (index) => (index.series.count = 2)));
 		expect(count).toEqual(["v1/index.json: /series/count is 2, not 3, as the tree and the Derivations make it"]);
 	});
@@ -546,10 +660,13 @@ describe("the check fails loudly", () => {
 	test("when a schema in the tree is not this repository's, and validates with this repository's whatever the tree holds", () => {
 		const blank = check((copy) => {
 			writeFileSync(join(copy, "v1/schemas/series.schema.json"), "{}\n");
-			edit(seriesPath(fixture.memory), (file) => (file.derivations.series_v1.points[0].colour = "red"))(copy);
+			edit(seriesPath(fixture.memory), (file) => (file.derivations.series_v1.newest_points[0].colour = "red"))(copy);
 		});
 		expect(blank[0]).toBe("v1/schemas/series.schema.json is not byte for byte schemas/api/v1/series.schema.json of this repository");
-		expect(blank[1]).toContain(`${seriesPath(fixture.memory)} does not match v1/schemas/series.schema.json: /derivations/series_v1/points/0 must NOT have additional properties: colour`);
+		expect(blank).toContainEqual(expect.stringContaining(`${seriesPath(fixture.memory)} does not match v1/schemas/series.schema.json: /derivations/series_v1/newest_points/0 must NOT have additional properties: colour`));
+		// A schema in the tree that is no JSON Schema at all.
+		const invalid = check((copy) => writeFileSync(join(copy, "v1/schemas/series-month.schema.json"), '{"type":"thing"}\n'));
+		expect(invalid).toContainEqual(expect.stringMatching(/^v1\/schemas\/series-month\.schema\.json is not a valid JSON Schema: /));
 	});
 
 	test("when a link field names no file, by its place in the files: a row's url to a Series that is not there", () => {
@@ -577,17 +694,21 @@ describe("what a Method can emit and today's data do not show", () => {
 		const result = checkApi({ tree: edgeDirectory, runs: edges.runs, base: DEFAULT_BASE, series: edges.series, requests: edges.requests });
 		expect(result.problems).toEqual([]);
 		expect(result.series).toBe(6);
+		expect(result.months).toBe(6);
 	});
 
 	test("a counted Run of 0 ns per repetition, with bytes per repetition: its bytes per second, and every percentile of it, is null", () => {
 		const id = edges.zeroTime as string;
 		const file = json(edgeTree, seriesPath(id));
-		const [point] = file.derivations.series_v1.points;
+		const [point] = json(edgeTree, monthPath(id, "2026-11")).derivations.series_v1.points;
 		expect([point.counted, point.time_per_repetition_ns, point.bytes_per_repetition, point.bytes_per_second]).toEqual([true, 0, 4096, null]);
-		const stat = { count: 1, runs: [point.run], p5: null, p50: null, p95: null };
+		expect(file.derivations.series_v1.newest_points).toEqual([point]);
+		const stat = { count: 1, p5: null, p50: null, p95: null };
 		expect(file.derivations.series_v1.percentiles.bytes_per_second).toEqual(stat);
 		expect(file.derivations.series_v1.groups[0].percentiles.bytes_per_second).toEqual(stat);
-		expect(file.derivations.series_v1.percentiles.time_per_repetition_ns).toEqual({ count: 1, runs: [point.run], p5: 0, p50: 0, p95: 0 });
+		expect(file.derivations.series_v1.percentiles.time_per_repetition_ns).toEqual({ count: 1, p5: 0, p50: 0, p95: 0 });
+		// The Run behind them, which the tree leaves out, is the counted point with a bytes_per_repetition: its bytes per second, null, is infinite.
+		expect(edges.series.derivations.find((d) => d.series.id === id)?.percentiles.bytes_per_second?.runs).toEqual([point.run]);
 		const row = json(edgeTree, "v1/series.json").series.find((r: Json) => r.id === id);
 		expect(row.derivations.series_v1.percentiles.bytes_per_second).toEqual({ count: 1, p5: null, p50: null, p95: null });
 		expect(row.derivations.series_v1.counted_runs).toBe(1);
@@ -596,13 +717,15 @@ describe("what a Method can emit and today's data do not show", () => {
 	test("a counted Run whose time per repetition overflows a double: its time, and every percentile of time, is null; its bytes per second is 0", () => {
 		const id = edges.overflowTime as string;
 		const file = json(edgeTree, seriesPath(id));
-		const [point] = file.derivations.series_v1.points;
+		const [point] = json(edgeTree, monthPath(id, "2026-11")).derivations.series_v1.points;
 		expect(point.samples.map((sample: Json) => sample.ns)).toEqual([OVERFLOW_X, Number.MAX_VALUE - OVERFLOW_X]);
 		expect([point.counted, point.time_per_repetition_ns, point.bytes_per_repetition, point.bytes_per_second]).toEqual([true, null, 4096, 0]);
-		const time = { count: 1, runs: [point.run], p5: null, p50: null, p95: null };
+		const time = { count: 1, p5: null, p50: null, p95: null };
 		expect(file.derivations.series_v1.percentiles.time_per_repetition_ns).toEqual(time);
 		expect(file.derivations.series_v1.groups[0].percentiles.time_per_repetition_ns).toEqual(time);
-		expect(file.derivations.series_v1.percentiles.bytes_per_second).toEqual({ count: 1, runs: [point.run], p5: 0, p50: 0, p95: 0 });
+		expect(file.derivations.series_v1.percentiles.bytes_per_second).toEqual({ count: 1, p5: 0, p50: 0, p95: 0 });
+		// The Run behind them, which the tree leaves out, is the counted point: its time, null, is infinite.
+		expect(edges.series.derivations.find((d) => d.series.id === id)?.percentiles.time_per_repetition_ns?.runs).toEqual([point.run]);
 		const row = json(edgeTree, "v1/series.json").series.find((r: Json) => r.id === id);
 		expect(row.derivations.series_v1.percentiles.time_per_repetition_ns).toEqual({ count: 1, p5: null, p50: null, p95: null });
 		expect(row.derivations.series_v1.counted_runs).toBe(1);
@@ -629,7 +752,7 @@ describe("the check's comparison of parsed values", () => {
 });
 
 describe("the schemas", () => {
-	const names = ["index", "series-list", "series"];
+	const names = ["index", "series-list", "series", "series-month"];
 	const schemas = names.map((name) => JSON.parse(readFileSync(join(ROOT, "schemas", "api", "v1", `${name}.schema.json`), "utf8")) as Json);
 
 	test("forbid no member they do not list, so a field v1 gains later does not fail an older reader's check, and say so", () => {
@@ -669,9 +792,9 @@ describe("the commands", () => {
 		const build = Bun.spawnSync([bun, "scripts/build-api.ts", "--derivations", fixture.derivationsPath, "--requests-derivations", fixture.requestsPath, "--runs", fixture.runs, "--out", out], { cwd: ROOT });
 		expect(build.stderr.toString()).toBe("");
 		expect(build.exitCode).toBe(0);
-		expect(build.stdout.toString()).toContain("3 Series, 2 price files, 4 schemas");
-		const written = readdirSync(join(out, "v1", "series")).sort();
-		expect(written).toEqual([fixture.http, fixture.memory, fixture.syscall].sort().map((id) => `${id}.json`));
+		expect(build.stdout.toString()).toContain("3 Series, 3 month files, 2 price files, 5 schemas");
+		const written = readdirSync(join(out, "v1", "series"), { recursive: true }).map(String).sort();
+		expect(written).toEqual([fixture.http, fixture.memory, fixture.syscall].sort().flatMap((id) => [id, `${id}.json`, join(id, `${NOVEMBER}.json`)]).sort());
 		for (const [path, bytes] of tree) {
 			if (path === "v1/index.json") continue; // its docs address is the default here
 			expect(Buffer.from(readFileSync(join(out, path))).equals(Buffer.from(bytes))).toBe(true);

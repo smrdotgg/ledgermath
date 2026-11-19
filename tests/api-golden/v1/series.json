@@ -4,7 +4,7 @@
   "index": "https://api.ledgermath.com/v1/index.json",
   "url": "https://api.ledgermath.com/v1/series.json",
   "count": 2,
-  "newest_run_started_at": "2026-11-15T04:12:00.000000000Z",
+  "newest_run_started_at": "2026-12-01T22:20:00.000000000Z",
   "methods": {
     "series_v1": {
       "method": {
@@ -53,25 +53,25 @@
         {"fact":"ec2_instance","what":"names the instance and holds its addresses and launch time, new on every launch"},
         {"fact":"ec2_route_tables, ec2_vpc_endpoints","what":"the EC2 API's record of the path out of the box's subnet, taken once per boot: the route tables and the VPC's endpoints, shared by every box of the stage; a failed call records its error instead"}
       ],
-      "runs_read": 7,
+      "runs_read": 9,
       "unreadable": [
         {"id":"not-a-run","path":"runs/2026/11/14/not-a-run.json","sha256":"d47e8fb15cb902d721f325555ccae430bb1580a5c6a92a4f5046a3919fc27347","reason":"/ must have required property 'events'; / must have required property 'stdout_bytes'; / must have required property 'stdout_lines'; / must match exactly one schema in oneOf; / must have required property 'boot'; / must have required property 'started_at'; / must have required property 'ended_at'; / must have required property 'benchmark'; / must have required property 'params'; / must have required property 'samples'; / must have required property 'source_commit'; / must have required property 'source'; / must have required property 'binary'; / must have required property 'provider'; / must have required property 'environment'; / must have required property 'runner'; / must have required property 'exit'; / must have required property 'stdout'; / must have required property 'stderr'; /id must match pattern \"^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$\"","evidence":"https://api.ledgermath.com/runs/2026/11/14/not-a-run.json"}
       ],
       "sections": [
-        {"section":"cpuid","runs":6,"changed_within_run":0,"boot_pairs":2,"changed_within_boot":0,"series_pairs":4,"changed_between_runs":2,"split_on":"cpuid"},
-        {"section":"cpuinfo","runs":6,"changed_within_run":6,"boot_pairs":2,"changed_within_boot":2,"series_pairs":4,"changed_between_runs":4,"split_on":null},
-        {"section":"devices","runs":6,"changed_within_run":0,"boot_pairs":2,"changed_within_boot":0,"series_pairs":4,"changed_between_runs":4,"split_on":null},
-        {"section":"ec2_route_tables","runs":2,"changed_within_run":0,"boot_pairs":2,"changed_within_boot":2,"series_pairs":1,"changed_between_runs":0,"split_on":null},
-        {"section":"ec2_vpc_endpoints","runs":2,"changed_within_run":0,"boot_pairs":2,"changed_within_boot":2,"series_pairs":1,"changed_between_runs":0,"split_on":null},
-        {"section":"kernel","runs":6,"changed_within_run":0,"boot_pairs":2,"changed_within_boot":0,"series_pairs":4,"changed_between_runs":4,"split_on":"kernel"},
-        {"section":"lscpu","runs":6,"changed_within_run":0,"boot_pairs":2,"changed_within_boot":0,"series_pairs":4,"changed_between_runs":2,"split_on":"lscpu"},
-        {"section":"memory","runs":6,"changed_within_run":6,"boot_pairs":2,"changed_within_boot":2,"series_pairs":4,"changed_between_runs":4,"split_on":null},
-        {"section":"net_counters","runs":2,"changed_within_run":2,"boot_pairs":2,"changed_within_boot":2,"series_pairs":1,"changed_between_runs":1,"split_on":null},
-        {"section":"network","runs":2,"changed_within_run":0,"boot_pairs":2,"changed_within_boot":2,"series_pairs":1,"changed_between_runs":0,"split_on":null},
-        {"section":"packages","runs":6,"changed_within_run":0,"boot_pairs":2,"changed_within_boot":0,"series_pairs":4,"changed_between_runs":0,"split_on":"packages"},
-        {"section":"process","runs":6,"changed_within_run":0,"boot_pairs":2,"changed_within_boot":0,"series_pairs":4,"changed_between_runs":0,"split_on":"process"},
-        {"section":"provider","runs":6,"changed_within_run":0,"boot_pairs":2,"changed_within_boot":0,"series_pairs":4,"changed_between_runs":4,"split_on":null},
-        {"section":"sys_cpu","runs":6,"changed_within_run":0,"boot_pairs":2,"changed_within_boot":0,"series_pairs":4,"changed_between_runs":2,"split_on":"sys_cpu"}
+        {"section":"cpuid","runs":8,"changed_within_run":0,"boot_pairs":3,"changed_within_boot":1,"series_pairs":6,"changed_between_runs":3,"split_on":"cpuid"},
+        {"section":"cpuinfo","runs":8,"changed_within_run":8,"boot_pairs":3,"changed_within_boot":3,"series_pairs":6,"changed_between_runs":6,"split_on":null},
+        {"section":"devices","runs":8,"changed_within_run":0,"boot_pairs":3,"changed_within_boot":0,"series_pairs":6,"changed_between_runs":6,"split_on":null},
+        {"section":"ec2_route_tables","runs":3,"changed_within_run":0,"boot_pairs":3,"changed_within_boot":3,"series_pairs":2,"changed_between_runs":0,"split_on":null},
+        {"section":"ec2_vpc_endpoints","runs":3,"changed_within_run":0,"boot_pairs":3,"changed_within_boot":3,"series_pairs":2,"changed_between_runs":0,"split_on":null},
+        {"section":"kernel","runs":8,"changed_within_run":0,"boot_pairs":3,"changed_within_boot":0,"series_pairs":6,"changed_between_runs":6,"split_on":"kernel"},
+        {"section":"lscpu","runs":8,"changed_within_run":0,"boot_pairs":3,"changed_within_boot":1,"series_pairs":6,"changed_between_runs":3,"split_on":"lscpu"},
+        {"section":"memory","runs":8,"changed_within_run":8,"boot_pairs":3,"changed_within_boot":3,"series_pairs":6,"changed_between_runs":6,"split_on":null},
+        {"section":"net_counters","runs":3,"changed_within_run":3,"boot_pairs":3,"changed_within_boot":3,"series_pairs":2,"changed_between_runs":2,"split_on":null},
+        {"section":"network","runs":3,"changed_within_run":0,"boot_pairs":3,"changed_within_boot":3,"series_pairs":2,"changed_between_runs":0,"split_on":null},
+        {"section":"packages","runs":8,"changed_within_run":0,"boot_pairs":3,"changed_within_boot":0,"series_pairs":6,"changed_between_runs":0,"split_on":"packages"},
+        {"section":"process","runs":8,"changed_within_run":0,"boot_pairs":3,"changed_within_boot":0,"series_pairs":6,"changed_between_runs":0,"split_on":"process"},
+        {"section":"provider","runs":8,"changed_within_run":0,"boot_pairs":3,"changed_within_boot":0,"series_pairs":6,"changed_between_runs":6,"split_on":null},
+        {"section":"sys_cpu","runs":8,"changed_within_run":0,"boot_pairs":3,"changed_within_boot":1,"series_pairs":6,"changed_between_runs":3,"split_on":"sys_cpu"}
       ]
     },
     "requests_v1": {
@@ -143,14 +143,14 @@
         {"section":"lscpu","what":"the BogoMIPS field","why":"the kernel's delay-loop calibration at boot, from the same TSC frequency: 5799.99 and 5799.95 on those two boots"},
         {"section":"kernel","what":"the \"$ uname -a\" entry","why":"it holds the host name, which comes from the private address and is new on every launch"}
       ],
-      "runs_read": 7,
+      "runs_read": 9,
       "unreadable": [
         {"id":"not-a-run","path":"runs/2026/11/14/not-a-run.json","sha256":"d47e8fb15cb902d721f325555ccae430bb1580a5c6a92a4f5046a3919fc27347","reason":"/ must have required property 'events'; / must have required property 'stdout_bytes'; / must have required property 'stdout_lines'; / must match exactly one schema in oneOf; / must have required property 'boot'; / must have required property 'started_at'; / must have required property 'ended_at'; / must have required property 'benchmark'; / must have required property 'params'; / must have required property 'samples'; / must have required property 'source_commit'; / must have required property 'source'; / must have required property 'binary'; / must have required property 'provider'; / must have required property 'environment'; / must have required property 'runner'; / must have required property 'exit'; / must have required property 'stdout'; / must have required property 'stderr'; /id must match pattern \"^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$\"","evidence":"https://api.ledgermath.com/runs/2026/11/14/not-a-run.json"}
       ]
     }
   },
   "series": [
-    {"id":"b9f4e4d9ea21","url":"https://api.ledgermath.com/v1/series/b9f4e4d9ea21.json","benchmark":"http_get","params":{"auth":"sigv4","budget_seconds":240,"ca_file":"/etc/pki/tls/certs/ca-bundle.crt","connection":"new","gap_mean_ms":200,"key":"http_get/v1/4096","object_bytes":4096,"resolv_conf":"/etc/resolv.conf","timeout_ms":10000},"build":"static","instance_type":"c6i.8xlarge","availability_zone_id":"use2-az3","runs":2,"oldest_run_started_at":"2026-11-12T22:20:00.000000000Z","newest_run_started_at":"2026-11-13T04:20:00.000000000Z","derivations":{"series_v1":{"method":{"name":"series","version":1},"counted_runs":1,"failed_runs":1,"groups":1,"percentiles":{"time_per_repetition_ns":{"count":1,"p5":20075000,"p50":20075000,"p95":20075000},"bytes_per_second":null}},"requests_v1":{"method":{"name":"requests","version":1},"counted_runs":2,"failed_runs":0,"groups":1,"pool":{"runs":2,"requests":7,"failed":1,"phases":{"dns":{"count":7,"min":200000,"max":200000,"p50":200000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":4}},"connect":{"count":7,"min":900000,"max":900000,"p50":900000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":4}},"tls":{"count":7,"min":2200000,"max":2200000,"p50":2200000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":4}},"send":{"count":7,"min":10000,"max":10000,"p50":10000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":4}},"first_byte":{"count":7,"min":16670000,"max":17750000,"p50":16908288,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":4}},"headers":{"count":7,"min":8000,"max":8000,"p50":8000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":4}},"body":{"count":7,"min":12000,"max":12000,"p50":12000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":4}},"total":{"count":7,"min":20000000,"max":21080000,"p50":20054016,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":4}}}}}}},
-    {"id":"0cacb5fd6fae","url":"https://api.ledgermath.com/v1/series/0cacb5fd6fae.json","benchmark":"memory_read","params":{"path":"scalar","size_bytes":1073741824,"threads":1},"build":"static","instance_type":"c6i.8xlarge","availability_zone_id":"use2-az3","runs":4,"oldest_run_started_at":"2026-11-12T04:12:00.000000000Z","newest_run_started_at":"2026-11-15T04:12:00.000000000Z","derivations":{"series_v1":{"method":{"name":"series","version":1},"counted_runs":3,"failed_runs":1,"groups":2,"percentiles":{"time_per_repetition_ns":{"count":3,"p5":71010,"p50":80010,"p95":89010},"bytes_per_second":{"count":3,"p5":12078234854883.78,"p50":13420095288088.988,"p95":15145289654505.227}}}}}
+    {"id":"b9f4e4d9ea21","url":"https://api.ledgermath.com/v1/series/b9f4e4d9ea21.json","benchmark":"http_get","params":{"auth":"sigv4","budget_seconds":240,"ca_file":"/etc/pki/tls/certs/ca-bundle.crt","connection":"new","gap_mean_ms":200,"key":"http_get/v1/4096","object_bytes":4096,"resolv_conf":"/etc/resolv.conf","timeout_ms":10000},"build":"static","instance_type":"c6i.8xlarge","availability_zone_id":"use2-az3","runs":3,"oldest_run_started_at":"2026-11-12T22:20:00.000000000Z","newest_run_started_at":"2026-12-01T22:20:00.000000000Z","derivations":{"series_v1":{"method":{"name":"series","version":1},"counted_runs":2,"failed_runs":1,"groups":2,"percentiles":{"time_per_repetition_ns":{"count":2,"p5":19139250,"p50":19582500,"p95":20025750},"bytes_per_second":null}},"requests_v1":{"method":{"name":"requests","version":1},"counted_runs":3,"failed_runs":0,"groups":2,"pool":{"runs":3,"requests":11,"failed":1,"phases":{"dns":{"count":11,"min":200000,"max":200000,"p50":200000,"p90":200000,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":6,"p90":2}},"connect":{"count":11,"min":900000,"max":900000,"p50":900000,"p90":900000,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":6,"p90":2}},"tls":{"count":11,"min":2200000,"max":2200000,"p50":2200000,"p90":2200000,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":6,"p90":2}},"send":{"count":11,"min":10000,"max":10000,"p50":10000,"p90":10000,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":6,"p90":2}},"first_byte":{"count":11,"min":15670000,"max":17750000,"p50":16711680,"p90":17694720,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":6,"p90":2}},"headers":{"count":11,"min":8000,"max":8000,"p50":8000,"p90":8000,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":6,"p90":2}},"body":{"count":11,"min":12000,"max":12000,"p50":12000,"p90":12000,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":6,"p90":2}},"total":{"count":11,"min":19000000,"max":21080000,"p50":20054016,"p90":21080000,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":6,"p90":2}}}}}}},
+    {"id":"0cacb5fd6fae","url":"https://api.ledgermath.com/v1/series/0cacb5fd6fae.json","benchmark":"memory_read","params":{"path":"scalar","size_bytes":1073741824,"threads":1},"build":"static","instance_type":"c6i.8xlarge","availability_zone_id":"use2-az3","runs":5,"oldest_run_started_at":"2026-11-12T04:12:00.000000000Z","newest_run_started_at":"2026-12-01T04:12:00.000000000Z","derivations":{"series_v1":{"method":{"name":"series","version":1},"counted_runs":4,"failed_runs":1,"groups":2,"percentiles":{"time_per_repetition_ns":{"count":4,"p5":70760,"p50":77510,"p95":88510},"bytes_per_second":{"count":4,"p5":12152782656728.514,"p50":13867372160775.598,"p95":15183628584843.64}}}}}
   ]
 }

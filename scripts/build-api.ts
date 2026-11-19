@@ -17,7 +17,9 @@
  *                                README's section "The data API")
  *
  * Writes nothing unless every file was made. scripts/check-api.ts checks the
- * tree it wrote. The same inputs give the same bytes, file for file.
+ * tree it wrote. The same inputs give the same bytes, file for file. Refuses a
+ * file of Derivations holding a number it could not write back with its value
+ * (readDerivations).
  */
 
 import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
@@ -67,10 +69,10 @@ function main(): void {
 		writeFileSync(full, content);
 		bytes += content.length;
 	}
-	const count = (prefix: string) => [...tree.keys()].filter((path) => path.startsWith(prefix)).length;
+	const count = (pattern: RegExp) => [...tree.keys()].filter((path) => pattern.test(path)).length;
 	console.log(
-		`data API v1: ${tree.size} files, ${bytes} bytes: ${count("v1/series/")} Series, ${count("v1/prices/")} price files, ` +
-			`${count("v1/schemas/")} schemas, in ${Math.round(performance.now() - started)} ms -> ${out}`,
+		`data API v1: ${tree.size} files, ${bytes} bytes: ${count(/^v1\/series\/[^/]+\.json$/)} Series, ${count(/^v1\/series\/[^/]+\/[^/]+\.json$/)} month files, ` +
+			`${count(/^v1\/prices\//)} price files, ${count(/^v1\/schemas\//)} schemas, in ${Math.round(performance.now() - started)} ms -> ${out}`,
 	);
 }
 

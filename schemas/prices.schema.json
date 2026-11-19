@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:ledgermath:prices:1",
   "title": "Price file",
-  "description": "A day's copy of what AWS publicly charges for what LedgerMath measures, stored at prices/<yyyy>/<mm>/<dd>/aws.json in the Runs repository, under the UTC date it was fetched. Added once, never edited. It holds the records the named rule set selected from AWS's Price List offer files, verbatim: each product and each set of On-Demand terms is AWS's own object, parsed and written back with nothing changed but the whitespace between tokens. Each source names the versioned URL its bytes came from, their size and SHA-256, so anyone can download the whole file and cut it again. A price is cited as this file's path, the SKU and the rate code. The root and LedgerMath's own objects are closed; AWS's objects are open, because they are AWS's words.",
+  "description": "A day's copy of what AWS publicly charges for what LedgerMath measures, kept at the path prices/<yyyy>/<mm>/<dd>/aws.json, under the UTC date it was fetched. Added once, never edited. It holds the records the named rule set selected from AWS's Price List offer files, verbatim: each product and each set of On-Demand terms is AWS's own object, parsed and written back with nothing changed but the whitespace between tokens. Each source names the versioned URL its bytes came from, their size and SHA-256, so anyone can download the whole file and cut it again. A price is cited as this file's path, the SKU and the rate code. The root and LedgerMath's own objects are closed; AWS's objects are open, because they are AWS's words.",
   "type": "object",
   "additionalProperties": false,
   "required": ["schema", "provider", "fetched_at", "measured", "rules", "sources"],
@@ -31,7 +31,7 @@
       }
     },
     "rules": {
-      "description": "The rule set the records were selected with (scripts/lib/price-rules.ts). A record a rule of this version does not select is not in the file, whatever AWS charges for it.",
+      "description": "The rule set the records were selected with, by name and version. A record a rule of this version does not select is not in the file, whatever AWS charges for it.",
       "type": "object",
       "additionalProperties": false,
       "required": ["name", "version"],
