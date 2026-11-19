@@ -13,6 +13,8 @@ fixture tool that is a shell script:
     hangs              prints a line, writes a partial Fixture, sleeps
     ignores-term       ignores SIGTERM, and so does every child it starts
     grandchild         starts a child of its own that ignores SIGTERM, then waits
+    slow-to-die        the same, with that child slow to die: SIGKILLed, it takes
+                       HOLD_SECONDS to be gone (see hold_at_exit)
     leftover           starts such a child, then exits 0 at once, leaving it
     sigterm            ignores SIGTERM; provision.py is sent SIGTERM mid-step
     deadline           sleeps; provision.py's own deadline is short
@@ -60,6 +62,14 @@ seconds, and in the two supervisor cases the supervisor's grace runs out first.
 So this harness is, for the processes it starts, what systemd is on a box:
 their child subreaper (prctl PR_SET_CHILD_SUBREAPER), reaping every orphan
 that comes to it, and never one of its own children, which subprocess waits for.
+
+A process killed by SIGKILL can still be exiting at provision.py's next look,
+so provision.py sends SIGKILL again, and records it. On a loaded machine that
+happens by chance; slow-to-die makes it happen every time. The harness traces
+that case's child (ptrace, which it may: it is the child's ancestor), so that,
+killed, the child stops on its way out (PTRACE_EVENT_EXIT) and is not a zombie
+until the harness lets it go, HOLD_SECONDS later. Further SIGKILLs do not end
+that stop. Every other signal is passed on to the child as it came.
 """
 
 import ctypes
@@ -77,6 +87,13 @@ PROVISION = os.path.join(ROOT, "runner", "provision.py")
 LEFTOVERS = os.path.join(ROOT, "runner", "provision-leftovers.py")
 EBS = "Amazon Elastic Block Store              "
 WAIT_SECONDS = 120
+# How long slow-to-die's child takes to be gone once SIGKILLed: many times
+# provision.py's poll, and well inside the 10 seconds it waits for a killed
+# group to be gone.
+HOLD_SECONDS = 3
+PTRACE_CONT, PTRACE_DETACH, PTRACE_SEIZE = 7, 17, 0x4206
+PTRACE_O_TRACEEXIT, PTRACE_EVENT_EXIT = 0x40, 6
+WALL = 0x40000000  # __WALL: wait for a tracee that is not a child, too
 
 # A child that ignores SIGTERM, started in the background. It says so through
 # the FIFO $READY once its trap is set, and the tool waits for that before it
@@ -90,6 +107,7 @@ TOOLS = {
     "hangs": 'echo $$ > "$PIDS/tool"\necho "writing $1"\nprintf partial > "$1"\nexec sleep 600\n',
     "ignores-term": 'trap "" TERM\necho $$ > "$PIDS/tool"\necho started\nprintf partial > "$1"\nwhile :; do sleep 0.1; done\n',
     "grandchild": GRANDCHILD + 'echo $$ > "$PIDS/tool"\necho started\nwait\n',
+    "slow-to-die": GRANDCHILD + 'echo $$ > "$PIDS/tool"\necho started\nprintf partial > "$1"\nwait\n',
     "leftover": GRANDCHILD + 'echo $$ > "$PIDS/tool"\nprintf whole > "$1"\necho \'{"bytes": 1}\'\nexit 0\n',
     "sigterm": 'trap "" TERM\necho $$ > "$PIDS/tool"\necho started\nprintf partial > "$1"\nwhile :; do sleep 0.1; done\n',
     "deadline": 'echo $$ > "$PIDS/tool"\necho started\nexec sleep 600\n',
@@ -105,6 +123,7 @@ OPTIONS = {
     "hangs": ["--fixture-timeout-seconds", "6"],
     "ignores-term": ["--fixture-timeout-seconds", "6"],
     "grandchild": ["--fixture-timeout-seconds", "6"],
+    "slow-to-die": ["--fixture-timeout-seconds", "6"],
     "leftover": [],
     "sigterm": [],
     "deadline": ["--deadline-seconds", "10"],
@@ -230,6 +249,37 @@ def running_step(record_path, pids):
     return None
 
 
+def hold_at_exit(pid):
+    """Traces `pid` until it is killed, then holds it at its exit stop for
+    HOLD_SECONDS and lets it go: a process slow to die. Every signal it is sent
+    before then is passed on as it came. Must run in one thread throughout (a
+    tracer is a thread); a tracer thread that ends lets its tracee go."""
+    libc = ctypes.CDLL(None, use_errno=True)
+    libc.ptrace.argtypes = [ctypes.c_long, ctypes.c_long, ctypes.c_void_p, ctypes.c_void_p]
+
+    def ptrace(request, data):
+        if libc.ptrace(request, pid, None, data) != 0:
+            raise OSError(ctypes.get_errno(), "ptrace(%d) on pid %d" % (request, pid))
+
+    ptrace(PTRACE_SEIZE, PTRACE_O_TRACEEXIT)
+    passed_on = []
+    end = time.monotonic() + WAIT_SECONDS
+    while time.monotonic() < end:
+        got, status = os.waitpid(pid, os.WNOHANG | WALL)
+        if got == 0:
+            time.sleep(0.05)
+            continue
+        if not os.WIFSTOPPED(status):
+            raise RuntimeError("pid %d ended (wait status %d) without stopping on its way out" % (pid, status))
+        if status >> 16 == PTRACE_EVENT_EXIT:
+            time.sleep(HOLD_SECONDS)
+            ptrace(PTRACE_DETACH, 0)
+            return {"pid": pid, "held_seconds": HOLD_SECONDS, "passed_on": passed_on}
+        passed_on.append(signal.Signals(os.WSTOPSIG(status)).name)
+        ptrace(PTRACE_CONT, os.WSTOPSIG(status))
+    raise RuntimeError("waited %d seconds for pid %d to be killed" % (WAIT_SECONDS, pid))
+
+
 def parent_of(pid):
     with open("/proc/%d/stat" % pid) as handle:
         text = handle.read()
@@ -269,7 +319,12 @@ def run_case(base, name):
     output_file.close()
     sent = None
     leftovers = None
-    if name == "sigterm":
+    held = None
+    if name == "slow-to-die":
+        wait_for(lambda: running_step(record_path, pids), "the fixture step to run")
+        with open(os.path.join(pids, "grandchild")) as handle:
+            held = hold_at_exit(int(handle.read()))
+    elif name == "sigterm":
         wait_for(lambda: running_step(record_path, pids), "the fixture step to run")
         process.send_signal(signal.SIGTERM)
         sent = "SIGTERM to provision.py"
@@ -328,6 +383,7 @@ def run_case(base, name):
         "fixture_exists": os.path.exists(os.path.join(root_dir, "ledgermath-fixture-v1")),
         "record_temporary_left": os.path.exists(record_path + ".tmp"),
         "leftovers": leftovers,
+        "held": held,
     }
 
 
