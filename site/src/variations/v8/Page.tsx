@@ -3,10 +3,11 @@
 import "./page.css";
 import {
 	benchmarks,
-	DURATION_UNITS,
+	type DurationUnit,
 	durationUnit,
 	formatCount,
 	formatDuration,
+	formatDurationPerUnit,
 	formatMoment,
 	formatRate,
 	formatUsd,
@@ -17,16 +18,17 @@ import {
 	leadFigure,
 	links,
 	machines,
-	plain,
-	roundSignificant,
 	type Section,
+	seriesFileContents,
 	type SeriesRow,
-	shift,
 	type Shown,
+	plain,
 	snapshot,
 } from "../../data";
 
 // ------------------------------------------------------------------ figures
+
+const plainNs = (n: number | null | undefined) => (n == null ? "" : plain(n));
 
 const newest = formatMoment(snapshot.newestRunStartedAt);
 const oldest = formatMoment(snapshot.oldestRunStartedAt);
@@ -36,35 +38,28 @@ const failed = formatCount(snapshot.failedRuns);
 const pricesFetched = formatMoment(snapshot.pricesFetchedAt);
 const SCHEDULE = ["04:10", "10:10", "16:10", "22:10"];
 const SECTIONS: Section[] = ["Memory", "Compute", "Operating system", "Disk", "Network"];
+/** The scheduled boot the newest Run started after (the times compare as text, HH:MM). */
+const bootBefore = [...SCHEDULE].reverse().find((t) => t <= newest.minute);
 
 /** The unit a row is shown in: the one its smallest figure reads at least 1 in, so a row compares digit for digit. */
-type RowUnit = { kind: "rate"; unit: string } | { kind: "time"; unit: keyof typeof DURATION_UNITS; per?: { count: number; of: string } };
+type RowUnit = { kind: "rate"; unit: string } | { kind: "time"; unit: DurationUnit; per?: { count: number; of: string } };
 
 function rowUnit(row: HeadlineRow): RowUnit {
+	const per = row.choice.per;
 	const values = row.cells.map((c) => leadFigure(row.choice, c.series).p50);
 	const least = Math.min(...values);
 	if (row.choice.lead === "rate") return { kind: "rate", unit: formatRate(least).unit.replace("/s", "") };
-	const per = row.choice.per;
-	return { kind: "time", unit: durationUnit(per ? least / per.count : least), per };
-}
-
-/** A time per repetition as the time of one of the `per.count` things it is made of: the decimal point moved, nothing else. */
-function perOne(ns: number, per: { count: number; of: string }, unit: keyof typeof DURATION_UNITS): Shown {
-	const places = Math.log10(per.count);
-	if (!Number.isInteger(places)) throw new Error(`${per.count} is not a power of ten`);
-	const text = plain(ns);
-	const full = shift(shift(text, -places), DURATION_UNITS[unit]);
-	const short = roundSignificant(full, 4);
-	return { full, short, unit, rounded: short !== full, source: `${text} ns per ${formatCount(per.count).full} ${per.of}s`, value: ns };
+	if (per) return { kind: "time", unit: formatDurationPerUnit(least, per).unit as DurationUnit, per };
+	return { kind: "time", unit: durationUnit(least) };
 }
 
 function show(value: number, u: RowUnit): Shown {
 	if (u.kind === "rate") return formatRate(value, { unit: u.unit as "GB" });
-	if (u.per) return perOne(value, u.per, u.unit);
+	if (u.per) return formatDurationPerUnit(value, u.per, { unit: u.unit });
 	return formatDuration(value, { unit: u.unit });
 }
 
-function unitWords(choice: HeadlineChoice, u: RowUnit): string {
+function unitWords(u: RowUnit): string {
 	if (u.kind === "rate") return `${u.unit}/s`;
 	if (u.per) return `${u.unit} per ${u.per.of}`;
 	return `${u.unit} per repetition`;
@@ -75,7 +70,58 @@ function cellTitle(choice: HeadlineChoice, row: SeriesRow, u: RowUnit): string {
 	const p50 = show(f.p50, u);
 	const p5 = show(f.p5, u);
 	const p95 = show(f.p95, u);
-	return `${p50.full} ${p50.unit}: the median of ${f.count} counted Runs on ${row.instance_type}. 5th percentile ${p5.full}, 95th ${p95.full}. As the snapshot holds it: ${p50.source}. Series ${row.id}.`;
+	return `${p50.full} ${p50.unit}: the median of ${f.count} counted Runs on ${row.instance_type}. 5th percentile ${p5.full}, 95th ${p95.full}. As the snapshot holds it: ${p50.source}.`;
+}
+
+/**
+ * Every digit of an exact decimal, the first `lead` significant ones set apart from the rest.
+ * Nothing is dropped or rounded: the text is `full`, split in two for the eye.
+ */
+function splitDigits(full: string, lead = 4): { head: string; tail: string } {
+	let seen = 0;
+	let started = false;
+	for (let i = 0; i < full.length; i++) {
+		const c = full[i]!;
+		if (c >= "1" && c <= "9") started = true;
+		if (started && c >= "0" && c <= "9") seen++;
+		if (seen === lead) return { head: full.slice(0, i + 1), tail: full.slice(i + 1) };
+	}
+	return { head: full, tail: "" };
+}
+
+/** An exact figure for the table: integer part right-aligned in the row's width, so every decimal point in a row sits in one place. */
+function Exact(props: { full: string }) {
+	const [int = "", frac] = props.full.split(".");
+	const { head, tail } = splitDigits(props.full);
+	const headInt = head.slice(0, int.length);
+	const tailInt = int.slice(headInt.length);
+	const fracText = frac === undefined ? "" : `.${frac}`;
+	const headFrac = head.length > int.length ? head.slice(int.length) : "";
+	const tailFrac = fracText.slice(headFrac.length);
+	return (
+		<span class="exact">
+			<span class="x-int">
+				{headInt}
+				{tailInt ? <span class="x-tail">{tailInt}</span> : null}
+			</span>
+			<span class="x-frac">
+				{headFrac}
+				{tailFrac ? <span class="x-tail">{tailFrac}</span> : null}
+			</span>
+		</span>
+	);
+}
+
+/** p5, p50 and p95 placed on a scale from zero to the row's largest p95: positions for drawing, never printed. */
+function Spread(props: { f: { p5: number; p50: number; p95: number }; max: number }) {
+	const at = (v: number) => `${((v / props.max) * 100).toFixed(2)}%`;
+	return (
+		<span class="spread" aria-hidden="true" style={{ "--p5": at(props.f.p5), "--p50": at(props.f.p50), "--p95": at(props.f.p95) }}>
+			<span class="sp-bar" />
+			<span class="sp-whisk" />
+			<span class="sp-mid" />
+		</span>
+	);
 }
 
 // ------------------------------------------------------------------ the traced figure (hero)
@@ -87,6 +133,7 @@ const tracedP50 = formatRate(tracedLead.p50);
 const tracedP5 = formatRate(tracedLead.p5, { unit: "GB" });
 const tracedP95 = formatRate(tracedLead.p95, { unit: "GB" });
 const tracedDerivation = tracedCell.series.derivations.series_v1;
+const tracedDigits = splitDigits(tracedP50.full);
 const tracedPrice = formatUsd(tracedCell.machine.price.usdPerHour, { per: "hour" });
 
 function RangeStrip() {
@@ -122,23 +169,28 @@ function TracedFigure() {
 			<p class="traced-what">
 				{traced.choice.label} <span class="sep">on</span> <span class="mono">{tracedCell.machine.instanceType}</span>
 			</p>
-			<p class="traced-figure">
-				<span class="traced-num" title={`${tracedP50.full} ${tracedP50.unit}`}>{tracedP50.short}</span>
+			<p class="traced-figure" title={`${tracedP50.full} ${tracedP50.unit}`}>
+				<span class="traced-num">{tracedDigits.head}</span>
+				<span class="traced-tail">{tracedDigits.tail}</span>
 				<span class="traced-unit">{tracedP50.unit}</span>
 			</p>
 			<p class="traced-full">
-				<span class="mono">{tracedP50.full}</span> {tracedP50.unit}, every digit
+				The median, every digit. As the Series holds it: <span class="mono">{tracedP50.source}</span>
 			</p>
 			<RangeStrip />
 			<p class="traced-pcts mono">
-				<span>p5 {tracedP5.full}</span>
-				<span>p95 {tracedP95.full}</span>
+				<span>
+					<span class="pct-k">p5</span> {tracedP5.full}
+				</span>
+				<span>
+					<span class="pct-k">p95</span> {tracedP95.full}
+				</span>
 			</p>
 			<dl class="traced-facts">
 				<div>
 					<dt>Runs</dt>
 					<dd>
-						{formatCount(tracedDerivation.counted_runs).full} counted, {formatCount(tracedDerivation.failed_runs).full} failed
+						{formatCount(tracedDerivation.counted_runs).full} counted, {formatCount(tracedDerivation.failed_runs).full} failed; each one listed in the Series file, with a link to its evidence
 					</dd>
 				</div>
 				<div>
@@ -174,8 +226,11 @@ function TracedFigure() {
 				</div>
 			</dl>
 			<a class="traced-source" href={links.seriesFile(s)}>
-				<span class="mono">{links.seriesFile(s).replace("https://", "")}</span>
-				<span aria-hidden="true"> →</span>
+				<span class="ts-label">Series file: every Run behind this figure</span>
+				<span class="ts-url mono">
+					{links.seriesFile(s).replace("https://", "")}
+					<span aria-hidden="true"> →</span>
+				</span>
 			</a>
 		</figure>
 	);
@@ -366,7 +421,7 @@ function Hero() {
 						<span class="dot-sep" aria-hidden="true">·</span>
 						<span class="eb-2">a data API for agents</span>
 					</p>
-					<h1 id="claim">Server numbers you can trace to the Run that made them.</h1>
+					<h1 id="claim">Server numbers you can trace to the Runs behind them.</h1>
 					<p class="lede">
 						LedgerMath boots {formatCount(snapshot.machineCount).full} AWS machine types four times a day, runs{" "}
 						{formatCount(snapshot.benchmarkCount).full} benchmarks on each freshly booted machine, and keeps every Run with its evidence. The figures, the
@@ -425,6 +480,10 @@ function Proofs() {
 								<span class="big-unit">UTC, newest Run</span>
 							</p>
 						</div>
+						<p class="dial-key" aria-hidden="true">
+							<span class="k-boot" /> boot <span class="k-hand" /> newest Run, on a 24-hour UTC dial
+						</p>
+
 						<h3>Measured four times a day</h3>
 						<p>
 							A fresh machine boots at <span class="times">{SCHEDULE.join(", ").replace(/, (?=[^,]*$)/, " and ")} UTC</span>. The newest Run in this snapshot
@@ -432,7 +491,7 @@ function Proofs() {
 							<time datetime={newest.iso} title={newest.full}>
 								{newest.second} UTC on {newest.longDate}
 							</time>
-							.
+							{bootBefore ? `, after the ${bootBefore} boot` : ""}.
 						</p>
 					</article>
 					<article class="proof">
@@ -504,6 +563,19 @@ function HowItWorks() {
 	);
 }
 
+const SPECS: { key: "vcpu" | "memory" | "processor" | "clockSpeed" | "storage" | "network"; label: string }[] = [
+	{ key: "vcpu", label: "vCPU" },
+	{ key: "memory", label: "Memory" },
+	{ key: "processor", label: "Processor" },
+	{ key: "clockSpeed", label: "Clock" },
+	{ key: "storage", label: "Storage" },
+	{ key: "network", label: "Network" },
+];
+
+function priceTitle(m: (typeof machines)[number]): string {
+	return `${m.price.description}. In the price file at ${m.price.path.pointer}`;
+}
+
 function Machines() {
 	return (
 		<section class="machines" id="machines" aria-labelledby="machines-title">
@@ -518,56 +590,87 @@ function Machines() {
 						<time datetime={snapshot.pricesFetchedAt} title={snapshot.pricesFetchedAt}>
 							{pricesFetched.minute} UTC
 						</time>
-						. <a href={links.prices}>The price file</a>
+						. The specifications are AWS's own words from the same file. <a href={links.prices}>The price file</a>
 					</p>
 				</div>
-				<ul class="machine-grid">
-					{machines.map((m) => {
-						const price = formatUsd(m.price.usdPerHour, { per: "hour" });
-						return (
-							<li class="machine">
-								<h3 class="mono">{m.instanceType}</h3>
-								<p class="machine-price" title={m.price.description}>
-									<span class="usd">${price.full}</span>
-									<span class="per">per hour, On-Demand</span>
-								</p>
-								<dl>
-									<div>
-										<dt>vCPU</dt>
-										<dd>{m.vcpu}</dd>
-									</div>
-									<div>
-										<dt>Memory</dt>
-										<dd>{m.memory}</dd>
-									</div>
-									<div>
-										<dt>Processor</dt>
-										<dd>{m.processor}</dd>
-									</div>
-									<div>
-										<dt>Clock</dt>
-										<dd>{m.clockSpeed}</dd>
-									</div>
-									<div>
-										<dt>Storage</dt>
-										<dd>{m.storage}</dd>
-									</div>
-									<div>
-										<dt>Network</dt>
-										<dd>{m.network}</dd>
-									</div>
-								</dl>
-								<p class="machine-series">
-									{formatCount(m.series.length).full} Series, zone <span class="mono">{m.availabilityZoneIds.join(", ")}</span>
-								</p>
-							</li>
-						);
-					})}
+
+				<div class="spec-box">
+					<table class="spec">
+						<caption class="visually-hidden">The five machine types: hourly On-Demand price and AWS's specifications</caption>
+						<thead>
+							<tr>
+								<th scope="col" class="spec-corner">
+									Machine type
+								</th>
+								{machines.map((m) => (
+									<th scope="col" class="mono spec-type">
+										{m.instanceType}
+									</th>
+								))}
+							</tr>
+						</thead>
+						<tbody>
+							<tr class="spec-price-row">
+								<th scope="row">Per hour, On-Demand</th>
+								{machines.map((m) => (
+									<td title={priceTitle(m)}>
+										<span class="usd">${formatUsd(m.price.usdPerHour).full}</span>
+									</td>
+								))}
+							</tr>
+							{SPECS.map((spec) => (
+								<tr>
+									<th scope="row">{spec.label}</th>
+									{machines.map((m) => (
+										<td>{m[spec.key]}</td>
+									))}
+								</tr>
+							))}
+							<tr class="spec-meta">
+								<th scope="row">In this snapshot</th>
+								{machines.map((m) => (
+									<td>
+										{formatCount(m.series.length).full} Series, zone <span class="mono">{m.availabilityZoneIds.join(", ")}</span>
+									</td>
+								))}
+							</tr>
+						</tbody>
+					</table>
+				</div>
+
+				<ul class="machine-list" aria-label="The five machine types">
+					{machines.map((m) => (
+						<li>
+							<p class="ml-head">
+								<span class="mono ml-type">{m.instanceType}</span>
+								<span class="ml-price" title={priceTitle(m)}>
+									<span class="usd">${formatUsd(m.price.usdPerHour).full}</span> <span class="per">/ hour</span>
+								</span>
+							</p>
+							<p class="ml-specs">
+								<span>{m.vcpu} vCPU</span>
+								<span>{m.memory}</span>
+								<span>{m.processor}</span>
+								<span>{m.clockSpeed}</span>
+								<span>Storage: {m.storage}</span>
+								<span>Network: {m.network}</span>
+							</p>
+							<p class="ml-meta">
+								{formatCount(m.series.length).full} Series, zone <span class="mono">{m.availabilityZoneIds.join(", ")}</span>
+							</p>
+						</li>
+					))}
 				</ul>
 			</div>
 		</section>
 	);
 }
+
+const sectionId = (section: Section) => `t-${section.toLowerCase().replace(/\s+/g, "-")}`;
+const ioUring = headline.find((row) => row.choice.benchmark === "disk_read_io_uring")!;
+const SECTION_NOTES: Partial<Record<Section, string>> = {
+	Disk: `Every row here reads or writes the machine's root EBS gp3 volume, the same kind of volume on all five types. ${ioUring.choice.reason ?? ""}`,
+};
 
 function NumbersTable() {
 	return (
@@ -577,28 +680,33 @@ function NumbersTable() {
 					<div>
 						<p class="eyebrow">The headline table</p>
 						<h2 id="numbers-title">
-							{formatCount(snapshot.benchmarkCount).full} benchmarks × {formatCount(snapshot.machineCount).full} machines, as measured.
+							{formatCount(snapshot.benchmarkCount).full} benchmarks × {formatCount(snapshot.machineCount).full} machines, every digit.
 						</h2>
 					</div>
 					<p class="section-note">
-						Each figure is the median (p50) across a Series' counted Runs: a rate where the benchmark moves bytes, otherwise the time of one repetition. One
-						Series per benchmark and machine: the setting measured on all five, the static build, one thread. Each figure links to its Series file.
+						Each figure is the median (p50) across a Series' counted Runs, exactly as the API holds it: a rate where the benchmark moves bytes, otherwise the
+						time of one repetition. The first four significant digits are dark, the rest lighter; the bar under each is its 5th to 95th percentile.
 					</p>
 				</div>
 
 				<input type="checkbox" id="digits" class="digits-toggle" />
 				<div class="table-tools">
-					<p class="table-hint">Rounded to four significant figures. Hover a figure for its percentiles, or show every digit.</p>
+					<nav class="jump" aria-label="Benchmark groups">
+						{SECTIONS.map((section) => (
+							<a href={`#${sectionId(section)}`}>{section}</a>
+						))}
+					</nav>
+					<p class="table-hint">Select a figure for its percentiles, its Runs and its Series file.</p>
 					<label for="digits" class="switch">
 						<span class="switch-track" aria-hidden="true">
 							<span class="switch-thumb" />
 						</span>
-						Every digit
+						Round to four figures
 					</label>
 				</div>
 
-				<div class="table-box" tabindex="0" role="region" aria-label={`The headline table: ${formatCount(snapshot.benchmarkCount).full} benchmarks on ${formatCount(snapshot.machineCount).full} machine types`}>
-					<table>
+				<div class="table-box" role="region" aria-label={`The headline table: ${formatCount(snapshot.benchmarkCount).full} benchmarks on ${formatCount(snapshot.machineCount).full} machine types`}>
+					<table class="ht">
 						<thead>
 							<tr>
 								<th scope="col" class="col-bench">
@@ -616,34 +724,78 @@ function NumbersTable() {
 						</thead>
 						{SECTIONS.map((section) => (
 							<tbody>
-								<tr class="section-row">
+								<tr class="section-row" id={sectionId(section)}>
 									<th scope="colgroup" colspan={machines.length + 1}>
-										{section}
+										<span class="sr-name">{section}</span>
+										{SECTION_NOTES[section] ? <span class="sr-note">{SECTION_NOTES[section]}</span> : null}
 									</th>
 								</tr>
 								{headline
 									.filter((row) => row.choice.section === section)
 									.map((row) => {
 										const u = rowUnit(row);
+										const figures = row.cells.map((cell) => leadFigure(row.choice, cell.series));
+										const max = Math.max(...figures.map((f) => f.p95));
+										const shown = figures.map((f) => show(f.p50, u));
+										const intWidth = Math.max(...shown.map((v) => v.full.split(".")[0]!.length));
 										return (
-											<tr>
+											<tr style={{ "--iw": `${intWidth}ch` }}>
 												<th scope="row" class="row-head">
-													<span class="row-label">{row.choice.label}</span>
-													<span class="row-what">{row.choice.what}</span>
+													<a class="row-label" href={row.choice.readme} title={row.choice.what}>
+														{row.choice.label}
+													</a>
 													<span class="row-unit">
-														{unitWords(row.choice, u)}
-														{u.kind === "time" ? <span class="row-dir"> · less is faster</span> : <span class="row-dir"> · more is faster</span>}
+														{unitWords(u)}
+														<span class="row-dir">{u.kind === "time" ? " · less is faster" : " · more is faster"}</span>
 													</span>
+													<span class="row-what">{u.kind === "time" ? `Each repetition: ${row.choice.repetition.charAt(0).toLowerCase()}${row.choice.repetition.slice(1)}` : row.choice.what}</span>
 												</th>
-												{row.cells.map((cell) => {
-													const f = leadFigure(row.choice, cell.series);
-													const s = show(f.p50, u);
+												{row.cells.map((cell, i) => {
+													const f = figures[i]!;
+													const s = shown[i]!;
+													const p5 = show(f.p5, u);
+													const p95 = show(f.p95, u);
+													const d = cell.series.derivations.series_v1;
 													return (
-														<td data-m={cell.machine.instanceType}>
-															<a href={links.seriesFile(cell.series)} title={cellTitle(row.choice, cell.series, u)}>
-																<span class="v-short">{s.short}</span>
-																<span class="v-full">{s.full}</span>
-															</a>
+														<td>
+															<details class="cell">
+																<summary title={cellTitle(row.choice, cell.series, u)}>
+																	<span class="cell-m mono">{cell.machine.instanceType}</span>
+																	<span class="cell-v">
+																		<span class="v-full">
+																			<Exact full={s.full} />
+																		</span>
+																		<span class="v-short">{s.short}</span>
+																		<Spread f={f} max={max} />
+																	</span>
+																</summary>
+																<div class="pop">
+																	<p class="pop-head">
+																		{row.choice.label} on <span class="mono">{cell.machine.instanceType}</span>, {s.unit}
+																	</p>
+																	<dl class="pop-pcts mono">
+																		<div>
+																			<dt>p95</dt>
+																			<dd>{p95.full}</dd>
+																		</div>
+																		<div class="pop-mid">
+																			<dt>p50</dt>
+																			<dd>{s.full}</dd>
+																		</div>
+																		<div>
+																			<dt>p5</dt>
+																			<dd>{p5.full}</dd>
+																		</div>
+																	</dl>
+																	<p class="pop-runs">
+																		{formatCount(f.count).full} counted Runs, {formatCount(d.failed_runs).full} failed, zone{" "}
+																		<span class="mono">{cell.series.availability_zone_id}</span>
+																	</p>
+																	<a class="pop-link" href={links.seriesFile(cell.series)}>
+																		Series {cell.series.id}: each Run and its evidence <span aria-hidden="true">→</span>
+																	</a>
+																</div>
+															</details>
 														</td>
 													);
 												})}
@@ -655,31 +807,62 @@ function NumbersTable() {
 					</table>
 				</div>
 				<p class="table-foot">
-					Mutex figures are one repetition (10,000 critical sections) with the decimal point moved four places. Figures from{" "}
-					{formatCount(headlineSeries.length).full} Series in a snapshot of {seriesCount.full}; the other Series measure other settings and
-					builds. <a href={links.seriesList}>Every Series, in one file</a>
+					Lock and unlock a mutex is shown per critical section: one repetition is 10,000 critical sections, and its time is divided by exactly that. Figures
+					from {formatCount(headlineSeries.length).full} Series in a snapshot of {seriesCount.full}; the others measure other settings and builds.{" "}
+					<a href={links.seriesList}>Every Series, in one file</a>
 				</p>
 			</div>
 		</section>
 	);
 }
 
-/** JSON as text, with keys, strings and numbers in spans for colour. */
-function Json(props: { value: unknown }) {
-	const text = JSON.stringify(props.value, null, 2);
+/** One line of JSON, with keys, strings and numbers in spans for colour. */
+function JsonLine(props: { text: string }) {
 	const parts: (string | { cls: string; t: string })[] = [];
 	const re = /("(?:[^"\\]|\\.)*")(\s*:)?|(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)/g;
 	let last = 0;
-	for (const m of text.matchAll(re)) {
-		parts.push(text.slice(last, m.index));
+	for (const m of props.text.matchAll(re)) {
+		parts.push(props.text.slice(last, m.index));
 		if (m[1]) {
 			parts.push({ cls: m[2] ? "j-key" : "j-str", t: m[1] });
 			if (m[2]) parts.push(m[2]);
 		} else parts.push({ cls: "j-num", t: m[3]! });
 		last = m.index! + m[0].length;
 	}
-	parts.push(text.slice(last));
+	parts.push(props.text.slice(last));
 	return <>{parts.map((p) => (typeof p === "string" ? p : <span class={p.cls}>{p.t}</span>))}</>;
+}
+
+/** JSON as text, one block per line, each indented by its depth so a long line wraps under itself, not under the margin. */
+function Json(props: { value: unknown }) {
+	const lines = JSON.stringify(props.value, null, 2).split("\n");
+	return (
+		<>
+			{lines.map((line) => {
+				const depth = line.length - line.trimStart().length;
+				return (
+					<span class="jl" style={{ "--d": `${depth}ch` }}>
+						{" ".repeat(depth)}
+						<JsonLine text={line.trimStart()} />
+					</span>
+				);
+			})}
+		</>
+	);
+}
+
+/** An API address with its host quiet and its path, the part that tells addresses apart, plain. */
+function Address(props: { url: string }) {
+	const host = "https://api.ledgermath.com";
+	const path = props.url.startsWith(host) ? props.url.slice(host.length) : props.url;
+	// A line may break only after a slash, so a wrapped address still reads in whole names.
+	const breakable = (text: string) => text.split(/(?<=\/)/).map((part, i) => (i > 0 ? [<wbr />, part] : part));
+	return (
+		<a href={props.url} class="addr">
+			{props.url.startsWith(host) ? <span class="addr-host">{host}</span> : null}
+			<span class="addr-path">{breakable(path)}</span>
+		</a>
+	);
 }
 
 function Api() {
@@ -725,7 +908,7 @@ function Api() {
 										<span class="prompt" aria-hidden="true">
 											${" "}
 										</span>
-										curl <a href={e.url}>{e.url}</a>
+										curl <Address url={e.url} />
 									</code>
 								</div>
 								<p class="ep-note">{e.note}</p>
@@ -760,9 +943,65 @@ function Api() {
 						The Series behind the figure at the top of this page, as <span class="mono">series.json</span> lists it. Numbers are exactly as the Method's
 						Derivation holds them: nothing rounded.
 					</p>
+					<OneRun />
 				</div>
 			</div>
 		</section>
+	);
+}
+
+function OneRun() {
+	const point = seriesFileContents.point.example;
+	const sample = seriesFileContents.sample;
+	const started = formatMoment(point.started_at);
+	return (
+		<div class="one-run">
+			<p class="one-run-title">One step further: a Run inside a Series file</p>
+			<p class="one-run-what">
+				The Series file of <span class="mono">{sample.id}</span> ({sample.benchmark} on <span class="mono">{sample.instanceType}</span>) lists its{" "}
+				{formatCount(sample.points).full} Runs, each with its figure and its evidence. The first:
+			</p>
+			<dl class="one-run-facts">
+				<div>
+					<dt>Run</dt>
+					<dd class="mono">{point.run}</dd>
+				</div>
+				<div>
+					<dt>Started</dt>
+					<dd>
+						<time class="mono" datetime={point.started_at} title={started.full}>
+							{point.started_at}
+						</time>
+					</dd>
+				</div>
+				<div>
+					<dt>Counted</dt>
+					<dd class="mono">
+						{String(point.counted)}, group {point.group}
+					</dd>
+				</div>
+				<div>
+					<dt>Its figure</dt>
+					<dd>
+						<span class="mono">{plainNs(point.time_per_repetition_ns)}</span> ns per repetition
+					</dd>
+				</div>
+				<div>
+					<dt>Evidence</dt>
+					<dd>
+						<Address url={point.evidence} />
+					</dd>
+				</div>
+				{point.boot_summary ? (
+					<div>
+						<dt>Its boot</dt>
+						<dd>
+							<Address url={point.boot_summary} />
+						</dd>
+					</div>
+				) : null}
+			</dl>
+		</div>
 	);
 }
 
