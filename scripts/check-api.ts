@@ -1,6 +1,7 @@
 /**
- * Checks the data API's tree that scripts/build-api.ts wrote
- * (scripts/lib/api-check.ts says what is checked):
+ * Checks the data API's tree that scripts/build-api.ts wrote, against the
+ * Derivations, the Runs repository checkout and this repository's schemas
+ * (scripts/lib/api-check.ts says what a passing check establishes):
  *
  *     bun scripts/check-api.ts --tree DIR --derivations FILE --requests-derivations FILE --runs DIR [--base URL]
  *
@@ -55,7 +56,7 @@ function main(): void {
 		process.exit(1);
 	}
 	console.log(
-		`data API v1: ${result.files} files checked, ${result.series} Series, ${result.runFiles} Run files cited and found with their sha256, no problem (${took} ms)`,
+		`data API v1: ${result.files} files checked, ${result.series} Series, ${result.runFiles} Run files cited and found with their id, boot and sha256, no problem (${took} ms)`,
 	);
 }
 

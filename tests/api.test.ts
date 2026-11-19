@@ -15,8 +15,8 @@ import {
 	readPriceFiles,
 	seriesPath,
 } from "../scripts/lib/api";
-import { checkApi, closeSchema } from "../scripts/lib/api-check";
-import { type ApiFixture, makeApiFixture } from "./api-fixtures";
+import { checkApi, closeSchema, difference } from "../scripts/lib/api-check";
+import { ADDRESS_PARAM, type ApiFixture, makeApiFixture } from "./api-fixtures";
 
 // Deriving the hand-made Runs, and reading a whole tree back, can take longer than bun's five-second default on a loaded machine.
 setDefaultTimeout(60_000);
@@ -59,6 +59,13 @@ function shuffled<T>(items: readonly T[], seed: number): T[] {
 		[out[i], out[j]] = [out[j] as T, out[i] as T];
 	}
 	return out;
+}
+
+/** The same value with every object's members in the reverse order: what the input could hold, and the same data. */
+function reversedKeys<T>(value: T): T {
+	if (Array.isArray(value)) return value.map(reversedKeys) as T;
+	if (typeof value !== "object" || value === null) return value;
+	return Object.fromEntries(Object.entries(value).reverse().map(([key, item]) => [key, reversedKeys(item)])) as T;
 }
 
 let fixture: ApiFixture;
@@ -152,6 +159,27 @@ describe("the same inputs give the same bytes", () => {
 			expect([...again.keys()]).toEqual([...tree.keys()]);
 			for (const [path, bytes] of tree) expect(Buffer.from(again.get(path) as Uint8Array).equals(Buffer.from(bytes))).toBe(true);
 		}
+	});
+
+	test("whatever order the members of any object of the Derivations come in, the free-form ones (params, facts, definitions, a Service's inputs) written in byte order", () => {
+		const sources = sourcesOf(fixture);
+		sources.series = reversedKeys(sources.series);
+		sources.requests = reversedKeys(sources.requests);
+		const again = buildApi(sources);
+		expect([...again.keys()]).toEqual([...tree.keys()]);
+		for (const [path, bytes] of tree) expect(text(again, path)).toBe(new TextDecoder().decode(bytes));
+		// Only the params, reversed (the case first seen), changes nothing either.
+		const params = sourcesOf(fixture);
+		for (const derivation of [...params.series.derivations, ...params.requests.derivations]) derivation.series.params = reversedKeys(derivation.series.params);
+		for (const [path, bytes] of buildApi(params)) expect(new TextDecoder().decode(bytes)).toBe(text(tree, path));
+		// Free-form objects in byte order; known fields in the order of their schema.
+		const memory = text(tree, seriesPath(fixture.memory));
+		expect(memory).toContain('"params": {\n    "path": "scalar",\n    "size_bytes": 1073741824,\n    "threads": 1\n  },');
+		const facts = Object.keys(json(tree, seriesPath(fixture.memory)).derivations.series_v1.groups[0].facts);
+		expect(facts).toEqual([...facts].sort());
+		const services = json(tree, seriesPath(fixture.http)).derivations.requests_v1.recorded.services;
+		for (const service of services) expect(Object.keys(service.inputs)).toEqual(Object.keys(service.inputs).sort());
+		expect(Object.keys(json(tree, seriesPath(fixture.memory)).derivations.series_v1.points[0]).slice(0, 6)).toEqual(["run", "path", "sha256", "evidence", "boot_summary", "started_at"]);
 	});
 
 	test("and a Series that gained no Run keeps its file byte for byte, while the list and the table of contents move on", async () => {
@@ -308,11 +336,17 @@ describe("the check fails loudly", () => {
 
 	test("when a file does not match its schema: a field the schema does not describe, or one of the wrong type", () => {
 		const extra = check(edit(seriesPath(fixture.memory), (file) => (file.derivations.series_v1.points[0].colour = "red")));
-		expect(extra).toEqual([expect.stringContaining(`${seriesPath(fixture.memory)} does not match v1/schemas/series.schema.json: /derivations/series_v1/points/0 must NOT have additional properties: colour`)]);
+		expect(extra).toEqual([
+			expect.stringContaining(`${seriesPath(fixture.memory)} does not match v1/schemas/series.schema.json: /derivations/series_v1/points/0 must NOT have additional properties: colour`),
+			`${seriesPath(fixture.memory)}: series_v1: point 0: /colour is "red", where nothing is expected, as series v1's Derivation of Series ${fixture.memory} holds it`,
+		]);
 		const wrong = check(edit("v1/series.json", (list) => (list.series[0].runs = "four")));
-		expect(wrong).toEqual([expect.stringContaining("v1/series.json does not match v1/schemas/series-list.schema.json: /series/0/runs must be integer")]);
+		expect(wrong[0]).toContain("v1/series.json does not match v1/schemas/series-list.schema.json: /series/0/runs must be integer");
+		expect(wrong[1]).toMatch(/^v1\/series\.json: the row of Series [0-9a-f]{12} differs from its file v1\/series\/[0-9a-f]{12}\.json: \/runs is "four", not [0-9]+$/);
+		expect(wrong.length).toBe(2);
 		const index = check(edit("v1/index.json", (value) => delete value.prices));
-		expect(index).toEqual([expect.stringContaining("v1/index.json does not match v1/schemas/index.schema.json: / must have required property 'prices'")]);
+		expect(index[0]).toContain("v1/index.json does not match v1/schemas/index.schema.json: / must have required property 'prices'");
+		expect(index.filter((problem) => problem.startsWith("v1/index.json: prices: /")).map((problem) => problem.split(" ")[2])).toEqual(["/schema_url", "/files", "/newest"]);
 	});
 
 	test("when a link in the list or the table of contents names a file the tree lacks", () => {
@@ -322,7 +356,10 @@ describe("the check fails loudly", () => {
 		const price = check((copy) => rmSync(join(copy, "v1/prices/2026-11-11.json")));
 		expect(price).toContain(`v1/index.json links ${DEFAULT_BASE}/v1/prices/2026-11-11.json, which is not a file of the tree`);
 		const schema = check(edit("v1/index.json", (value) => (value.schemas[0].url = `${DEFAULT_BASE}/v1/schemas/nothing.schema.json`)));
-		expect(schema).toEqual([`v1/index.json links ${DEFAULT_BASE}/v1/schemas/nothing.schema.json, which is not a file of the tree`]);
+		expect(schema).toEqual([
+			`v1/index.json: /schemas/0/url is "${DEFAULT_BASE}/v1/schemas/nothing.schema.json", not "${DEFAULT_BASE}/v1/schemas/index.schema.json", as the tree and the Derivations make it`,
+			`v1/index.json links ${DEFAULT_BASE}/v1/schemas/nothing.schema.json, which is not a file of the tree`,
+		]);
 	});
 
 	test("when a Series of the Derivations is missing from the tree, or the tree holds one the Derivations lack", () => {
@@ -348,8 +385,16 @@ describe("the check fails loudly", () => {
 		expect(changed).toEqual([expect.stringContaining(`${seriesPath(fixture.memory)}: series_v1's point ${first.id}: the Run file ${first.path} in the checkout has sha256`)]);
 		const unreadable = check((_copy, checkout) => rmSync(join(checkout, fixture.unreadable)));
 		expect(unreadable).toContain(`v1/series.json: series_v1's unreadable Run not-a-run: evidence ${DEFAULT_BASE}/${fixture.unreadable} names a Run file that is not in the Runs repository checkout ${runs}`);
+		// Every point of the first day's boot links its summary; once it is gone, each point says so, and the link is reported once.
 		const boot = check((_copy, checkout) => rmSync(join(checkout, "boots"), { recursive: true }));
-		expect(boot).toEqual([`${seriesPath(fixture.http)} links ${DEFAULT_BASE}/boots/2026/11/12/boot-2026-11-12.json, which is not a file of the Runs repository checkout ${runs}`]);
+		const summary = `${DEFAULT_BASE}/boots/2026/11/12/boot-2026-11-12.json`;
+		const firstDay = (file: string, key: string) =>
+			(json(tree, file).derivations[key].points as Json[]).filter((point) => point.boot_summary === summary).map((point) => `${file}: ${key}'s point ${point.run}: boot_summary is ${summary}, but the checkout ${runs} holds no summary of boot boot-2026-11-12`);
+		const linked = [...[fixture.http, fixture.memory, fixture.syscall].sort().map(seriesPath)];
+		expect(boot.filter((problem) => problem.includes(" links "))).toEqual([`${linked[0]} links ${summary}, which is not a file of the Runs repository checkout ${runs}`]);
+		expect(boot.filter((problem) => !problem.includes(" links ")).sort()).toEqual(
+			[...firstDay(seriesPath(fixture.memory), "series_v1"), ...firstDay(seriesPath(fixture.syscall), "series_v1"), ...firstDay(seriesPath(fixture.http), "series_v1"), ...firstDay(seriesPath(fixture.http), "requests_v1")].sort(),
+		);
 	});
 
 	test("when a price file is not the checkout's, byte for byte, or the tree was built for another base", () => {
@@ -358,6 +403,175 @@ describe("the check fails loudly", () => {
 		const base = check(() => {}, { base: "https://staging.example.test" });
 		expect(base).toEqual([`v1/index.json says its address is ${DEFAULT_BASE}/v1/index.json, not https://staging.example.test/v1/index.json: the tree was built for another base`, ...base.slice(1)]);
 		expect(base.length).toBeGreaterThan(1);
+	});
+
+	test("when a point cites another Run's evidence: the Run file at its path is another Run's, of another boot", () => {
+		const file = json(tree, seriesPath(fixture.memory));
+		const [a, b] = file.derivations.series_v1.points as Json[];
+		if (a === undefined || b === undefined) throw new Error("the memory_read Series has fewer than two points");
+		// Point A keeps its Run id and its figures; B's path, sha256, evidence and boot summary are copied onto it.
+		const copied = check(
+			edit(seriesPath(fixture.memory), (value) => {
+				for (const key of ["path", "sha256", "evidence", "boot_summary"]) value.derivations.series_v1.points[0][key] = b[key];
+			}),
+		);
+		const where = `${seriesPath(fixture.memory)}: series_v1's point ${a.run}`;
+		expect(copied).toContain(`${where}: the Run file ${b.path} in the checkout is Run ${b.run}, not ${a.run}`);
+		expect(copied).toContain(`${where}: the Run file ${b.path} in the checkout is of boot ${b.boot}, not ${a.boot}`);
+		expect(copied).toContain(`${seriesPath(fixture.memory)}: series_v1: point 0: /path is ${JSON.stringify(b.path)}, not ${JSON.stringify(a.path)}, as series v1's Derivation of Series ${fixture.memory} holds it`);
+		// And the other way: B with A's evidence, whose boot has a summary, now B's too.
+		const back = check(
+			edit(seriesPath(fixture.memory), (value) => {
+				for (const key of ["path", "sha256", "evidence", "boot_summary"]) value.derivations.series_v1.points[1][key] = a[key];
+			}),
+		);
+		expect(back).toContain(`${seriesPath(fixture.memory)}: series_v1's point ${b.run}: the Run file ${a.path} in the checkout is Run ${a.run}, not ${b.run}`);
+	});
+
+	test("when a point's boot_summary is not the summary of its Run's boot, as the summaries in the checkout name their boots", () => {
+		const file = json(tree, seriesPath(fixture.memory));
+		const [a, b] = file.derivations.series_v1.points as Json[];
+		if (a === undefined || b === undefined) throw new Error("the memory_read Series has fewer than two points");
+		const other = check(edit(seriesPath(fixture.memory), (value) => (value.derivations.series_v1.points[1].boot_summary = a.boot_summary)));
+		expect(other).toEqual([`${seriesPath(fixture.memory)}: series_v1's point ${b.run}: boot_summary is ${a.boot_summary}, but the checkout ${runs} holds no summary of boot ${b.boot}`]);
+		// A summary is its boot's by what it says, not by its file's name.
+		const renamed = check((_copy, checkout) => {
+			const path = join(checkout, "boots/2026/11/12/boot-2026-11-12.json");
+			writeFileSync(path, readFileSync(path, "utf8").replace('"boot": "boot-2026-11-12"', '"boot": "another-boot"'));
+		});
+		expect(renamed).toContain(`${seriesPath(fixture.memory)}: series_v1's point ${a.run}: boot_summary is ${a.boot_summary}, but the checkout ${runs} holds no summary of boot ${a.boot}`);
+	});
+
+	test("when an unreadable Run's entry is not its Run file's: another id, or another Run file's sha256", () => {
+		const id = check(edit("v1/series.json", (list) => (list.methods.series_v1.unreadable[0].id = "another")));
+		expect(id).toContain(`v1/series.json: series_v1's unreadable Run another: its id is another, but its Run file is named not-a-run.json`);
+		expect(id).toContain(`v1/series.json: methods.series_v1: /unreadable/0/id is "another", not "not-a-run", as series v1's file of Derivations holds it`);
+		const memory = fixture.series.derivations.find((d) => d.series.id === fixture.memory) as SeriesFile["derivations"][number];
+		const sha = check(edit("v1/series.json", (list) => (list.methods.requests_v1.unreadable[0].sha256 = memory.runs[0]?.sha256)));
+		expect(sha).toContain(`v1/series.json: requests_v1's unreadable Run not-a-run: the Run file ${fixture.unreadable} in the checkout has sha256 ${fixture.series.unreadable[0]?.sha256}, not ${memory.runs[0]?.sha256}`);
+	});
+
+	test("when a Series file's figures are not its Derivations': a point's measurement, a percentile, a pooled figure", () => {
+		const memory = fixture.series.derivations.find((d) => d.series.id === fixture.memory) as SeriesFile["derivations"][number];
+		const time = memory.points[0]?.time_per_repetition_ns as number;
+		const point = check(edit(seriesPath(fixture.memory), (file) => (file.derivations.series_v1.points[0].time_per_repetition_ns = time + 1)));
+		expect(point).toEqual([`${seriesPath(fixture.memory)}: series_v1: point 0: /time_per_repetition_ns is ${time + 1}, not ${time}, as series v1's Derivation of Series ${fixture.memory} holds it`]);
+		const p50 = memory.percentiles.time_per_repetition_ns?.p50 as number;
+		const percentile = check(edit(seriesPath(fixture.memory), (file) => (file.derivations.series_v1.percentiles.time_per_repetition_ns.p50 = p50 * 2)));
+		expect(percentile).toEqual([
+			`${seriesPath(fixture.memory)}: series_v1: /percentiles/time_per_repetition_ns/p50 is ${p50 * 2}, not ${p50}, as series v1's Derivation of Series ${fixture.memory} holds it`,
+			`v1/series.json: the row of Series ${fixture.memory} differs from its file ${seriesPath(fixture.memory)}: /derivations/series_v1/percentiles/time_per_repetition_ns/p50 is ${p50}, not ${p50 * 2}`,
+		]);
+		const http = fixture.requests.derivations.find((d) => d.series.id === fixture.http) as RequestsFile["derivations"][number];
+		const pooled = check(edit(seriesPath(fixture.http), (file) => (file.derivations.requests_v1.pool.requests += 1)));
+		expect(pooled).toContain(`${seriesPath(fixture.http)}: requests_v1: /pool/requests is ${http.pool.requests + 1}, not ${http.pool.requests}, as requests v1's Derivation of Series ${fixture.http} holds it`);
+		const words = check(edit(seriesPath(fixture.http), (file) => (file.derivations.series_v1.definitions.series = "something else")));
+		expect(words).toEqual([expect.stringMatching(/^v1\/series\/[0-9a-f]{12}\.json: series_v1: \/definitions\/series is "something else", not "The Runs that share/)]);
+		const head = check(edit(seriesPath(fixture.http), (file) => (file.params.auth = "none")));
+		expect(head).toContain(`${seriesPath(fixture.http)}: /params/auth is "none", not "sigv4", as its Derivations and the base make it`);
+	});
+
+	test("when a row is not its Series file's: its count of Runs, or a url to another Series' file", () => {
+		const rowOf = (list: Json, id: string): Json => list.series.find((row: Json) => row.id === id);
+		const count = check(edit("v1/series.json", (list) => (rowOf(list, fixture.memory).runs = 5)));
+		expect(count).toEqual([`v1/series.json: the row of Series ${fixture.memory} differs from its file ${seriesPath(fixture.memory)}: /runs is 5, not 4`]);
+		const url = check(edit("v1/series.json", (list) => (rowOf(list, fixture.memory).url = `${DEFAULT_BASE}/${seriesPath(fixture.syscall)}`)));
+		expect(url).toEqual([
+			`v1/series.json: the row of Series ${fixture.memory} has url "${DEFAULT_BASE}/${seriesPath(fixture.syscall)}", not ${DEFAULT_BASE}/${seriesPath(fixture.memory)}, the address of its file`,
+			`v1/series.json: the row of Series ${fixture.memory} differs from its file ${seriesPath(fixture.memory)}: /url is "${DEFAULT_BASE}/${seriesPath(fixture.syscall)}", not "${DEFAULT_BASE}/${seriesPath(fixture.memory)}"`,
+		]);
+		const total = check(edit("v1/series.json", (list) => (list.count = 4)));
+		expect(total).toEqual(["v1/series.json: /count is 4, not 3, as the tree and the Derivations make it"]);
+		const words = check(edit("v1/series.json", (list) => (list.methods.series_v1.runs_read += 1)));
+		expect(words).toEqual([`v1/series.json: methods.series_v1: /runs_read is ${fixture.series.runs_read + 1}, not ${fixture.series.runs_read}, as series v1's file of Derivations holds it`]);
+		const order = check(edit("v1/series.json", (list) => list.series.reverse()));
+		expect(order).toEqual(["v1/series.json: the rows are not in the order of benchmark, instance type, zone ID, params, build"]);
+	});
+
+	test("when the table of contents does not list exactly the price files and schemas in the tree, or counts the Series wrong", () => {
+		const emptied = check(
+			edit("v1/index.json", (index) => {
+				index.prices.files = [];
+				index.prices.newest = null;
+				index.schemas = [];
+			}),
+		);
+		expect(emptied).toEqual([
+			"v1/index.json: /schemas has 0 items, not 4, as the tree and the Derivations make it",
+			"v1/index.json: prices: /files has 0 items, not 2, as the price files in the tree make it",
+			`v1/index.json: prices: /newest is null, not {"date":"2026-11-12","path":"prices/2026/11/12/aws.json","url":"${DEFAULT_BASE}/v1/prices/2026-11-12.json"}, as the price files in the tree make it`,
+		]);
+		const count = check(edit("v1/index.json", (index) => (index.series.count = 2)));
+		expect(count).toEqual(["v1/index.json: /series/count is 2, not 3, as the tree and the Derivations make it"]);
+	});
+
+	test("when a schema in the tree is not this repository's, and validates with this repository's whatever the tree holds", () => {
+		const blank = check((copy) => {
+			writeFileSync(join(copy, "v1/schemas/series.schema.json"), "{}\n");
+			edit(seriesPath(fixture.memory), (file) => (file.derivations.series_v1.points[0].colour = "red"))(copy);
+		});
+		expect(blank[0]).toBe("v1/schemas/series.schema.json is not byte for byte schemas/api/v1/series.schema.json of this repository");
+		expect(blank[1]).toContain(`${seriesPath(fixture.memory)} does not match v1/schemas/series.schema.json: /derivations/series_v1/points/0 must NOT have additional properties: colour`);
+	});
+
+	test("when a link field names no file, by its place in the files: a row's url to a Series that is not there", () => {
+		const gone = check(edit("v1/series.json", (list) => (list.series[0].url = `${DEFAULT_BASE}/v1/{gone}.json`)));
+		const id = json(tree, "v1/series.json").series[0].id;
+		expect(gone).toContain(`v1/series.json links ${DEFAULT_BASE}/v1/{gone}.json, which is not a file of the tree`);
+		expect(gone).toContain(`v1/series.json: the row of Series ${id} has url "${DEFAULT_BASE}/v1/{gone}.json", not ${DEFAULT_BASE}/${seriesPath(id)}, the address of its file`);
+		// The blob address template is the one address that names no file: it is checked to be exactly the base's.
+		const template = check(edit("v1/index.json", (index) => (index.evidence.blob_url_template = "https://elsewhere.example/blobs/sha256/{hex}")));
+		expect(template).toEqual([`v1/index.json: evidence.blob_url_template is "https://elsewhere.example/blobs/sha256/{hex}", not ${DEFAULT_BASE}/blobs/sha256/{hex}`]);
+	});
+});
+
+describe("what a Method can emit and today's data do not show", () => {
+	let edges: ApiFixture;
+	let edgeTree: Map<string, Uint8Array>;
+	let edgeDirectory: string;
+	beforeAll(async () => {
+		edges = await makeApiFixture({ edges: true });
+		edgeTree = buildApi(sourcesOf(edges));
+		edgeDirectory = writeTree(edgeTree);
+	});
+
+	test("matches the schemas, and the check finds no problem", () => {
+		const result = checkApi({ tree: edgeDirectory, runs: edges.runs, base: DEFAULT_BASE, series: edges.series, requests: edges.requests });
+		expect(result.problems).toEqual([]);
+		expect(result.series).toBe(5);
+	});
+
+	test("a counted Run of 0 ns per repetition, with bytes per repetition: its bytes per second, and every percentile of it, is null", () => {
+		const id = edges.zeroTime as string;
+		const file = json(edgeTree, seriesPath(id));
+		const [point] = file.derivations.series_v1.points;
+		expect([point.counted, point.time_per_repetition_ns, point.bytes_per_repetition, point.bytes_per_second]).toEqual([true, 0, 4096, null]);
+		const stat = { count: 1, runs: [point.run], p5: null, p50: null, p95: null };
+		expect(file.derivations.series_v1.percentiles.bytes_per_second).toEqual(stat);
+		expect(file.derivations.series_v1.groups[0].percentiles.bytes_per_second).toEqual(stat);
+		expect(file.derivations.series_v1.percentiles.time_per_repetition_ns).toEqual({ count: 1, runs: [point.run], p5: 0, p50: 0, p95: 0 });
+		const row = json(edgeTree, "v1/series.json").series.find((r: Json) => r.id === id);
+		expect(row.derivations.series_v1.percentiles.bytes_per_second).toEqual({ count: 1, p5: null, p50: null, p95: null });
+		expect(row.derivations.series_v1.counted_runs).toBe(1);
+	});
+
+	test("a parameter whose value is an address under the base is data, not a link", () => {
+		const id = edges.addressParam as string;
+		expect(json(edgeTree, seriesPath(id)).params).toEqual({ destination: ADDRESS_PARAM });
+		expect(ADDRESS_PARAM.startsWith(`${DEFAULT_BASE}/`)).toBe(true);
+		expect(text(edgeTree, "v1/series.json")).toContain(`"params":{"destination":"${ADDRESS_PARAM}"}`);
+	});
+});
+
+describe("the check's comparison of parsed values", () => {
+	test("sees objects whatever the order of their members, arrays in order, numbers by value", () => {
+		expect(difference({ a: 1, b: [1, 2] }, { b: [1, 2], a: 1 })).toBeNull();
+		expect(difference({ a: 1.5 }, { a: 1.50 })).toBeNull();
+		expect(difference({ a: [1, 2] }, { a: [2, 1] })).toBe("/a/0 is 1, not 2");
+		expect(difference({ a: [1] }, { a: [1, 2] })).toBe("/a has 1 items, not 2");
+		expect(difference({ a: null }, { a: 0 })).toBe("/a is null, not 0");
+		expect(difference({}, { a: 0 })).toBe("/a is absent, not 0");
+		expect(difference({ a: 0, "b/c": 1 }, { a: 0 })).toBe('/b~1c is 1, where nothing is expected');
 	});
 });
 

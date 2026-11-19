@@ -15,6 +15,15 @@
  * - runs/2026/11/14/not-a-run.json: a Run file each Method lists as unreadable.
  * - boots/2026/11/12/boot-2026-11-12.json: the summary of the first day's boot
  *   only, so some points link a boot summary and the others none.
+ *
+ * With `edges`, two Series more, each of what a Method can emit and today's
+ * data do not show:
+ * - memory_write: one Run whose one counted sample took 0 ns, with bytes per
+ *   repetition. It counts, its time per repetition is 0, and its bytes per
+ *   second is infinite, which the Derivation writes as null, in its point and
+ *   in every percentile of bytes per second.
+ * - tcp_echo: one Run whose parameter destination is a string under the API's
+ *   own address, which is data, not a link.
  */
 
 import { copyFileSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
@@ -42,11 +51,17 @@ export interface ApiFixture {
 	http: string;
 	/** The unreadable Run file's path. */
 	unreadable: string;
+	/** With `edges`: the Series with a Run of 0 ns per repetition, and the one whose parameter is an address. */
+	zeroTime?: string;
+	addressParam?: string;
 }
+
+/** The parameter of the tcp_echo Series made with `edges`: an address under the API's own base, that names no file. */
+export const ADDRESS_PARAM = "https://api.ledgermath.com/connection-test";
 
 const samples = (ns: number): number[] => Array.from({ length: 10 }, (_, i) => ns + i * 1000);
 
-export async function makeApiFixture(options: { extraSyscallRun?: boolean } = {}): Promise<ApiFixture> {
+export async function makeApiFixture(options: { extraSyscallRun?: boolean; edges?: boolean } = {}): Promise<ApiFixture> {
 	const made = new HandMade();
 	made.run({ startedAt: "2026-11-12T04:12:00Z", samplesNs: samples(7e6) });
 	made.run({ startedAt: "2026-11-13T04:12:00Z", samplesNs: samples(8e6) });
@@ -59,6 +74,10 @@ export async function makeApiFixture(options: { extraSyscallRun?: boolean } = {}
 		exit: { code: 4 },
 		stream: { connection: "new", requests: [...rampRequests(39, 21_000_000, 40_000), { fail: { phase: "first_byte", error: "timeout" } }] },
 	});
+	if (options.edges) {
+		made.run({ startedAt: "2026-11-13T04:14:00Z", benchmark: "memory_write", binary: "memory_write", params: { size_bytes: 4096 }, samplesNs: [0], repetitions: 1, bytesPerRepetition: 4096 });
+		made.run({ startedAt: "2026-11-13T04:15:00Z", benchmark: "tcp_echo", binary: "tcp_echo", params: { destination: ADDRESS_PARAM }, samplesNs: samples(5e4), bytesPerRepetition: null });
+	}
 	if (options.extraSyscallRun) {
 		made.run({ startedAt: "2026-11-16T04:13:00Z", benchmark: "syscall", binary: "syscall", params: { call: "getpid" }, samplesNs: samples(95.1), bytesPerRepetition: null });
 	}
@@ -106,5 +125,6 @@ export async function makeApiFixture(options: { extraSyscallRun?: boolean } = {}
 		syscall: id("syscall"),
 		http: id("http_get"),
 		unreadable: unreadablePath,
+		...(options.edges ? { zeroTime: id("memory_write"), addressParam: id("tcp_echo") } : {}),
 	};
 }
