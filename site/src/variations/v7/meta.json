@@ -1,4 +1,4 @@
 {
 	"name": "Agent conversation",
-	"idea": "Leads with a real question and its cited answer; the table comes after."
+	"idea": "Opens on a developer's question to their agent and its answer: exact figures, each cited to the API file and field it came from. Then the same numbers for you."
 }
