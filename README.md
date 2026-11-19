@@ -2055,9 +2055,15 @@ address is `--base`, so a private or test address can stand in.
   oldest and newest Run started.
 - **Each Method's part is labelled.** The 25 `http_get` Series carry both `series_v1` and
   `requests_v1`, each with its `method`; the others carry `series_v1` only.
-- **`v1` only ever gains fields.** The schemas forbid no member they do not list, so a field
-  added later fails no older reader; a change that would break one is a `v2` beside `v1`.
-- **The same inputs give the same bytes**, whatever order they come in, and no clock is read.
+- **`v1` only ever gains fields.** The API's own schemas forbid no member they do not list, so
+  a field added later fails no older reader; a change that would break one is a `v2` beside
+  `v1`. The price files are the exception: each is the Runs repository's, byte for byte, and
+  follows its own closed schema, `ledgermath.prices/1`. The schemas admit everything the
+  Methods can emit, not only what today's data show (a percentile of bytes per second is null
+  when it comes from a counted Run of 0 ns per repetition).
+- **The same inputs give the same bytes**, whatever order they come in, the members of their
+  objects included (known fields in their schema's order, the keys of params, facts,
+  definitions and a Service's inputs in byte order), and no clock is read.
   A Series file depends only on its own Runs, its Methods' words and the base, so a Series
   that gained no Run keeps its file byte for byte. The data's own moment, the start of the
   newest Run, is in `v1/index.json` and `v1/series.json`; no file says when it was made.
@@ -2073,19 +2079,23 @@ bun scripts/check-api.ts --tree /tmp/api --derivations /tmp/page/derivations.jso
   --requests-derivations /tmp/page/requests-derivations.json --runs /tmp/ledgermath-runs
 ```
 
-The build writes only into a new or empty directory. The check reads back what was
-written, and fails on any of these: a file the tree should hold and lacks, or one it should
-not hold (one file per Series of either file of Derivations, one per price file); a Series
-without its row or its file, or a row or file without its Series; a file that does not match
-its schema (the API's own schemas are read with every object closed, so a field they do not
-describe fails); an address under the base that names no file of the tree or of the Runs
-repository; a point or unreadable Run whose Run file is not in the Runs repository, or has
-another sha256; a price file that is not the Runs repository's, byte for byte.
+The build writes only into a new or empty directory. The check reads back what was written
+and compares it, by its own reading of the design and never by calling the build, with the
+Derivations, the Runs repository and this repository's schemas. A passing check establishes
+that the tree holds exactly the files it should, each matching this repository's schema of its
+kind (the API's own closed, so an undescribed field fails), with the schemas byte for byte this
+repository's; that every Series file holds each Method's Derivation of its Series value for
+value, apart from what each point adds; that each point's Run file is in the Runs repository
+with the point's Run id, boot and sha256, at the point's evidence, and its boot_summary is
+that boot's summary or null when there is none; that each row agrees with its Series file and
+links it, the table of contents lists exactly the price files and schemas the tree holds and
+counts the Series right; and that every link field, in its place, names a file of the tree or
+of the Runs repository (`scripts/lib/api-check.ts` lists it all).
 
 On the data of 2026-11-19 (187 Series, 6,335 Runs, 9 price files) the tree is 202 files and
 38.6 MB: `v1/index.json` 4 KB, `v1/series.json` 193 KB (31 KB compressed), a Series file
 124 to 146 KB (median 133 KB) or, for `http_get`, 344 to 791 KB (median 705 KB), a price
-file 39 KB. The build takes 0.5 s and the check 0.8 s on the dev machine. The lookup tool
+file 39 KB. The build takes 0.65 s and the check 0.95 s on the dev machine. The lookup tool
 and the agent skill still read the files of Derivations.
 
 ## The website (`site/`)
