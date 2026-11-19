@@ -40,7 +40,11 @@ No case depends on how fast this machine is. Every wait is for a condition (a
 record reaching a state, a file appearing, a process being gone) with an upper
 bound of WAIT_SECONDS, and the short limits a case sets on purpose (6 to 10
 seconds) are far longer than the stand-in tools need to start. The cases run
-side by side, so those limits do not add up.
+side by side, so those limits do not add up. A tool that starts a child of its
+own goes no further until that child has said its trap is set (see GRANDCHILD),
+so the tool cannot exit, write its pid or print a line while the child would
+still end on SIGTERM; and the cases that act on the tool once it is running
+wait, besides, for that child to be the `sleep` it execs.
 
 Each tool writes the pids it and its children have to OUT/<case>/pids/. A pid
 is a survivor if it still names a process that is not a zombie WAIT_SECONDS
@@ -74,17 +78,25 @@ LEFTOVERS = os.path.join(ROOT, "runner", "provision-leftovers.py")
 EBS = "Amazon Elastic Block Store              "
 WAIT_SECONDS = 120
 
+# A child that ignores SIGTERM, started in the background. It says so through
+# the FIFO $READY once its trap is set, and the tool waits for that before it
+# does anything else, so from then on a signal sent to the step's process group
+# always meets a process that ignores TERM: TERM alone cannot end it, and only
+# SIGKILL can. (Without the wait, a tool that exits at once could be signalled
+# before the child had set its trap, and TERM would end it.)
+GRANDCHILD = '(trap "" TERM; echo set > "$READY"; exec sleep 600) &\necho $! > "$PIDS/grandchild"\nread set < "$READY"\n'
+
 TOOLS = {
     "hangs": 'echo $$ > "$PIDS/tool"\necho "writing $1"\nprintf partial > "$1"\nexec sleep 600\n',
     "ignores-term": 'trap "" TERM\necho $$ > "$PIDS/tool"\necho started\nprintf partial > "$1"\nwhile :; do sleep 0.1; done\n',
-    "grandchild": '(trap "" TERM; exec sleep 600) &\necho $! > "$PIDS/grandchild"\necho $$ > "$PIDS/tool"\necho started\nwait\n',
-    "leftover": '(trap "" TERM; exec sleep 600) &\necho $! > "$PIDS/grandchild"\necho $$ > "$PIDS/tool"\nprintf whole > "$1"\necho \'{"bytes": 1}\'\nexit 0\n',
+    "grandchild": GRANDCHILD + 'echo $$ > "$PIDS/tool"\necho started\nwait\n',
+    "leftover": GRANDCHILD + 'echo $$ > "$PIDS/tool"\nprintf whole > "$1"\necho \'{"bytes": 1}\'\nexit 0\n',
     "sigterm": 'trap "" TERM\necho $$ > "$PIDS/tool"\necho started\nprintf partial > "$1"\nwhile :; do sleep 0.1; done\n',
     "deadline": 'echo $$ > "$PIDS/tool"\necho started\nexec sleep 600\n',
     "supervised-limit": 'trap "" TERM\necho $$ > "$PIDS/tool"\necho started\nprintf partial > "$1"\nwhile :; do sleep 0.1; done\n',
-    "supervised-killed": '(trap "" TERM; exec sleep 600) &\necho $! > "$PIDS/grandchild"\necho $$ > "$PIDS/tool"\necho started\nprintf partial > "$1"\nwait\n',
-    "outer-limit-suspended": '(trap "" TERM; exec sleep 600) &\necho $! > "$PIDS/grandchild"\necho $$ > "$PIDS/tool"\necho started\nprintf partial > "$1"\nwhile :; do sleep 0.2; done\n',
-    "outer-limit-killed": 'trap "" TERM\n(trap "" TERM; exec sleep 600) &\necho $! > "$PIDS/grandchild"\necho $$ > "$PIDS/tool"\necho started\nprintf partial > "$1"\nwhile :; do sleep 0.2; done\n',
+    "supervised-killed": GRANDCHILD + 'echo $$ > "$PIDS/tool"\necho started\nprintf partial > "$1"\nwait\n',
+    "outer-limit-suspended": GRANDCHILD + 'echo $$ > "$PIDS/tool"\necho started\nprintf partial > "$1"\nwhile :; do sleep 0.2; done\n',
+    "outer-limit-killed": 'trap "" TERM\n' + GRANDCHILD + 'echo $$ > "$PIDS/tool"\necho started\nprintf partial > "$1"\nwhile :; do sleep 0.2; done\n',
 }
 
 # The deliberate limits, in seconds: each far longer than a stand-in tool
@@ -189,12 +201,27 @@ def wait_for(condition, what):
     raise RuntimeError("waited %d seconds for %s" % (WAIT_SECONDS, what))
 
 
+def comm(pid):
+    try:
+        with open("/proc/%d/comm" % pid) as handle:
+            return handle.read().strip()
+    except OSError:
+        return None
+
+
 def running_step(record_path, pids):
-    """The record, once its fixture step is running with a process group and
-    the tool has written its pid and said it started."""
+    """The record, once its fixture step is running with a process group, the
+    tool has written its pid and said it started, and the child it started, if
+    it starts one, is the `sleep` it execs (the tool writes the child's pid
+    before its own, so that file is whole by then)."""
     record = load(record_path)
     if not record or not os.path.exists(os.path.join(pids, "tool")):
         return None
+    grandchild = os.path.join(pids, "grandchild")
+    if os.path.exists(grandchild):
+        with open(grandchild) as handle:
+            if comm(int(handle.read())) != "sleep":
+                return None
     for step in record.get("steps", []):
         if step["step"].startswith("fixture") and step.get("state") == "running" and step.get("pgid"):
             out = step.get("stdout_file")
@@ -217,6 +244,8 @@ def run_case(base, name):
     write(os.path.join(sys_root, "class", "nvme", "nvme0", "model"), EBS + "\n")
     write(os.path.join(case, "proc", "self", "mountinfo"), "25 1 259:2 / / rw - xfs /dev/nvme0n1p1 rw\n")
     tool = os.path.join(case, "fixture-tool")
+    ready = os.path.join(case, "ready")
+    os.mkfifo(ready)
     write(tool, "#!/bin/sh\n" + TOOLS[name], 0o755)
     record_path = os.path.join(case, "provision.json")
     session_path = os.path.join(case, "provision.session")
@@ -236,7 +265,7 @@ def run_case(base, name):
     output_path = os.path.join(case, "output")
     output_file = open(output_path, "wb")
     process = subprocess.Popen(arguments, stdin=subprocess.DEVNULL, stdout=output_file, stderr=subprocess.STDOUT,
-                               env=dict(os.environ, PIDS=pids))
+                               env=dict(os.environ, PIDS=pids, READY=ready))
     output_file.close()
     sent = None
     leftovers = None
