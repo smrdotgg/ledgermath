@@ -205,11 +205,14 @@ What lives where:
 
 - **Production**: the stage `production-runs` (its Runs bucket and fixtures bucket, launch
   function, reaper, box and fixtures roles, GitHub's OIDC provider and the role the
-  workflow assumes) and SST's own state for the account.
+  workflow assumes) and SST's own state for the account. Its Runs bucket holds every Run:
+  all those of the development bucket (copied, and verified byte for byte), the 35 Runs of
+  the `m5.large` booted there by hand on 2026-11-18 (step 3 of the move, boot
+  `b3d26616-de4e-42b6-80b9-dcf72db34995`), which no other bucket holds, and every Run since.
 - **Development**: the stage `smr-runs` (the same parts, with no launch schedule since
-  2026-11-19; its bucket holds every Run made before the move and is kept as it is), the
-  dev machine, July's retired stack (stage `smr`) and its bucket, and SST's own state for
-  the account.
+  2026-11-19; its bucket is kept as it is, and holds every Run its own scheduled rounds and
+  boxes by hand made, up to its last round, at 10:10 UTC on 2026-11-19), the dev machine,
+  July's retired stack (stage `smr`) and its bucket, and SST's own state for the account.
 
 One stage is the scheduled one: `SCHEDULED_STAGE` in `infra/runs/stages.ts`. Only it gets
 the launch schedules below. Every other `-runs` stage gets the launch function, the reaper,
@@ -623,10 +626,13 @@ old schedule and its replacement both exist, one slot could launch twice. Any ot
 has no schedule, and can be deployed at any time.
 
 Every deploy of a new commit also does three things a reader of `sst diff` may not expect,
-in whichever stage:
+in whichever stage. The source archive's key is git `HEAD`'s commit, so a deploy of the
+commit already deployed does none of them:
 
 - It uploads the new source archive, `source/<commit>.tar.gz`, and points the launch
   function at it (`LEDGERMATH_SOURCE_KEY`).
+- It updates the box's policy, `BoxPolicy`, which lets a box read its source archive by
+  that exact key: the new key in, the previous one out.
 - It deletes the previous commit's `source/` key. Where that object has a real version ID,
   the delete removes every version and nothing of it is kept; where its version is `null`,
   a delete marker is left. No Run loses its source: every box puts the archive it ran from
@@ -634,8 +640,18 @@ in whichever stage:
   `source`), not the `source/` key. On 2026-11-19 the deploy of `smr-runs` deleted the
   development bucket's `source/50db33a….tar.gz` this way, every version and no marker; the
   5,868 Runs built from it name its blob, which both buckets hold.
-- It redeploys the reaper function even when the reaper's code is unchanged: only its zip
-  differs.
+
+A deploy may also redeploy the reaper function with unchanged code, as both deploys of
+2026-11-19 did: SST names a function's code by the hash of its zip, so a zip that differs
+gives an update and an identical one gives none.
+
+Under `blobs/`, `runs/` and `boots/` a deploy never deletes or overwrites anything. The only
+objects it writes there are AWS-LC's source archive and the three Fixture blobs, each at
+`blobs/sha256/<its SHA-256>`, and it writes one only when that key is new to the stage: on
+its first deploy, and on a deploy with a new AWS-LC pin or a changed Fixture. The object it
+replaces stays in the bucket (`retainOnDelete`). Its key is the hash of its bytes, so where
+a box has already put the same blob there, the write stores the same bytes again as a new
+version, and nothing is lost.
 
 `sst diff` changes nothing in a stage, but SST bootstraps itself in an account the first
 time it needs its state there, once per account and Region (SST's documentation names `sst
@@ -1325,9 +1341,10 @@ The boxes that boot on the schedule, the bucket their Runs and blobs go to, and 
 workflow reads move from the development account to the production account, in the same
 Region and zone, from the same image, with the same instance types and schedule. The
 development account keeps the dev machine, `smr-runs` for boxes by hand, and `smr-runs`'s
-bucket as it is: it holds the Runs of the first days, and nothing under `runs/`, `blobs/`,
-`boots/` or `logs/` is deleted (step 10's deploy, like every deploy, deletes the previous
-`source/` archive: "Deploy").
+bucket as it is: it holds the Runs of the first days, all but the 35 of step 3's box,
+which only the production bucket holds, and nothing under `runs/`, `blobs/`, `boots/` or
+`logs/` is deleted (step 10's deploy, like every deploy of a new commit, deletes the
+previous commit's `source/` archive: "Deploy").
 
 ### Why no Series starts a new group
 
@@ -1424,8 +1441,10 @@ sets none, and `aws s3 cp` and the deploy set only the type). The source is vers
 the copy reads the current version of each key; on 2026-11-14 no key of the development
 bucket had more than one version, and its one delete marker is on a `source/` archive a
 deploy replaced, outside what is copied (every source archive a Run names is a blob too).
-Every deploy deletes the previous `source/` archive, sometimes leaving no marker ("Deploy",
-above); nothing under the copied prefixes is touched.
+A deploy of a new commit deletes the previous commit's `source/` archive, sometimes leaving
+no marker; a redeploy of the same commit keeps it. Under the copied prefixes a deploy never
+deletes or overwrites anything, and adds at most AWS-LC's archive and the three Fixture
+blobs under `blobs/`, when one of them is new to the stage ("Deploy", above).
 
 `scripts/copy-bucket.ts verify` reads both buckets and writes neither: every source object
 under those prefixes must be at the destination with the same bytes (both read and compared,
@@ -1587,9 +1606,10 @@ slot:
    merged to main; pull main. Changes: the repository.
 9. **Deploy `production-runs`** from main, **succeeded by 09:00**. Changes, in the production
    account: the five launch schedules (each with its role) and the launch function's list of
-   targets; and, as every deploy of a new commit does ("Deploy"), a new
-   `source/<commit>.tar.gz` that the launch function now points at, the previous `source/`
-   key deleted, and the reaper function redeployed with unchanged code. Nothing fires before
+   targets; as every deploy of a new commit does ("Deploy"), a new
+   `source/<commit>.tar.gz` that the launch function now points at, `BoxPolicy` updated to
+   read it, and the previous `source/` key deleted; and, on 2026-11-19, the reaper function
+   redeployed with unchanged code ("Deploy" says why it may be). Nothing fires before
    10:10. Check: the command of step 11, with `--profile tabot-production`, lists the five
    launch schedules and its reaper's. Four of the five are named
    `ledgerm-production-runs-BoxLaunch…`, the name cut short to fit AWS's limit of 64
@@ -1601,8 +1621,8 @@ slot:
     account: its five launch schedules and their roles are deleted, and its launch
     function's list of targets becomes `none (this stage is not the scheduled stage)`, so
     even a schedule that survived would launch nothing. As in step 9, a new source archive is
-    uploaded and pointed at, the reaper is redeployed, and the previous `source/` key is
-    deleted: on 2026-11-19 that removed `source/50db33a….tar.gz` from the development bucket,
+    uploaded and pointed at, `BoxPolicy` is updated to read it, the reaper was redeployed (on
+    2026-11-19, with unchanged code), and the previous `source/` key is deleted: on 2026-11-19 that removed `source/50db33a….tar.gz` from the development bucket,
     every version and no delete marker, and no Run lost its source ("Deploy" says why). A
     deploy that fails partway can
     leave some schedules deleted and others not, and the list of targets as it was; run it
@@ -1706,9 +1726,10 @@ After the cutover:
     For each Series it compares the group of its last point before the cut with the groups
     of its points after it; it prints, per file, the number of Series and of those with a
     point at or after the cut, then a `CHANGED` line for every Series whose group changed,
-    and should print only the two summary lines per file (as it did on 2026-11-19, with
-    `CUT=2026-11-19T16:00:00Z`: 187 Series in `derivations.json` and 25 in
-    `requests-derivations.json`, each with one new point and none changed):
+    and should print only the summary lines, one per file and two in all (as it did on
+    2026-11-19, with `CUT=2026-11-19T16:00:00Z`: `series: 187; with a point at or after the
+    cut: 187` for `derivations.json` and `series: 25; with a point at or after the cut: 25`
+    for `requests-derivations.json`, each Series with one new point and none changed):
 
     ```bash
     for f in derivations requests-derivations; do jq -r --arg cut "$CUT" '

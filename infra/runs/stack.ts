@@ -119,10 +119,13 @@ export async function runsStack() {
 	// also lets the distribution read blobs/sha256/*; otherwise the arguments
 	// are { versioning: true }, as they always were.
 	const bucket = new sst.aws.Bucket("RunsBucket", runsBucketArgs(publicBlobs?.bucketPolicy ?? null));
-	// A new commit gives a new key, so the resource is replaced and, without
-	// retainOnDelete, the previous source/ object is deleted: every version of
-	// it, or, for an object whose version is "null", behind a delete marker.
-	// No Run loses its source: every box puts the archive it ran from under
+	// The key is HEAD's commit (sourceArchive). A new commit gives a new key, so
+	// the resource is replaced and, without retainOnDelete, the previous
+	// source/ object is deleted: every version of it, or, for an object whose
+	// version is "null", behind a delete marker. A redeploy of the same commit
+	// keeps the key and deletes nothing. Under blobs/ a deploy writes only
+	// TlsArchive and the FixtureBlobs below, each when its key is new, and
+	// deletes nothing there (retainOnDelete). No Run loses its source: every box puts the archive it ran from under
 	// blobs/sha256/ (runner/run.py), and that blob is what its Runs name
 	// (README, "Deploy").
 	const source = new aws.s3.BucketObjectv2("Source", {
