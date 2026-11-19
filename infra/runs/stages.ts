@@ -8,9 +8,10 @@
  * Two accounts, each reached through a profile of the AWS CLI on the machine
  * that deploys:
  *
- *   - production (tabot-production): the stage production-runs, whose boxes
- *     boot on the schedule once it is the scheduled stage, whose bucket keeps
- *     the Runs and blobs for good, and which the runs workflow reads;
+ *   - production (tabot-production): the stage production-runs, the
+ *     scheduled stage since 2026-11-19, whose boxes boot on the schedule,
+ *     whose bucket keeps the Runs and blobs for good, and which the runs
+ *     workflow reads;
  *   - development (tabot-dev): every other -runs stage, for trying changes
  *     with boxes launched by hand, beside the dev machine.
  *
@@ -27,8 +28,8 @@ export const PRODUCTION_STAGE = "production-runs";
  * The one stage that gets launch schedules. Every other -runs stage gets the
  * launch function, the reaper, the buckets and the roles, and no schedule:
  * its boxes start only by hand. Changing it is the cutover (README, "Moving
- * the schedule to the production account"); it stays smr-runs until then, so
- * that deploying smr-runs changes nothing it already has.
+ * the schedule to the production account"), which on 2026-11-19 made it
+ * production-runs in place of smr-runs (issue #57, pull request #65).
  */
 export const SCHEDULED_STAGE: string = "production-runs";
 
