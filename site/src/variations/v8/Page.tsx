@@ -167,7 +167,7 @@ function TracedFigure() {
 					</dd>
 				</div>
 				<div>
-					<dt>Machine</dt>
+					<dt>Zone, price</dt>
 					<dd>
 						<span class="mono">{s.availability_zone_id}</span>, ${tracedPrice.full} an hour
 					</dd>
