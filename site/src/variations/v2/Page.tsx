@@ -36,8 +36,6 @@ const path = (url: string) => decodeURI(new URL(url).pathname);
 
 /** One real Run file, the first point of the sample Series: the evidence a figure stands on. */
 const example = seriesFileContents.point.example;
-/** Its address, the Run's id cut to its first eight digits; the whole address is the link. */
-const runFile = path(example.evidence).replace(/([0-9a-f]{8})-[0-9a-f-]+\.json$/, "$1….json");
 
 // ---------------------------------------------------------------- figures
 
@@ -172,12 +170,15 @@ function Status() {
 	const oldest = formatMoment(snapshot.oldestRunStartedAt);
 	const rows: [string, unknown][] = [
 		["latest Run", <Moment m={newest} bright />],
+		["fresh boots", <span class="nb">{SCHEDULE.join(" ")} UTC</span>],
 		[
 			"Runs kept",
 			<span>
 				<span class="nb">
 					<span class="hi">{formatCount(snapshot.runCount).full}</span> in{" "}
-					<a href={links.seriesList}>{formatCount(snapshot.seriesCount).full} Series</a>
+					<a href={links.seriesList} title="Every setting of every benchmark; the table shows one setting each">
+						{formatCount(snapshot.seriesCount).full} Series, all settings
+					</a>
 				</span>{" "}
 				<span class="nb">
 					since{" "}
@@ -221,14 +222,16 @@ function Status() {
 }
 
 /**
- * The table's key, in its corner: the one qualifier every figure carries, the drawing labelled
- * where its parts are, which way is better, and the switch for the exact lines.
+ * The table's key, in its corner: the drawing, each part labelled where it is. The p50 label, over
+ * the tick, is also the qualifier of every bold figure. Then the switch for the exact lines.
  */
 function Key() {
 	return (
 		<>
-			<span class="corner-q">p50</span>
-			<span class="key-glyph" role="img" aria-label="The drawing: a tick at p50, a band from p5 to p95, on a scale from 0 shared by the row">
+			<span class="key-glyph" role="img" aria-label="Every figure is a p50. The drawing: a tick at p50, a band from p5 to p95, on a scale from 0 shared by the row">
+				<span class="corner-q" aria-hidden="true">
+					p50
+				</span>
 				<span class="key-sp" aria-hidden="true">
 					<span class="sp-r" />
 					<span class="sp-m" />
@@ -243,11 +246,8 @@ function Key() {
 					p95
 				</span>
 			</span>
-			<span class="key-dir nb">
-				<span class="dir">↑</span> higher is better <span class="dir">↓</span> lower
-			</span>
 			<details class="xt">
-				<summary title="Show each figure's exact p5, p95 and count of counted Runs">p5 p95 n</summary>
+				<summary title="Show each figure's exact p5 and p95, and n, the Runs it counts">p5 p95 n Runs</summary>
 			</details>
 		</>
 	);
@@ -352,7 +352,9 @@ function DataTable() {
 													<span class="xk" title="counted Runs">
 														n
 													</span>
-													<Digits full={String(f.count)} width={countWidth} />
+													<a href={links.seriesFile(cell.series)} class="n" title={`The ${f.count} counted Runs, each with its evidence: Series ${cell.series.id}`}>
+														<Digits full={String(f.count)} width={countWidth} />
+													</a>
 												</span>
 											</span>
 										</td>
@@ -389,10 +391,19 @@ function Machines() {
 
 export default function Page() {
 	const title = "LEDGERMATH(5)";
-	const files: [string, string, string, string][] = [
+	/** One real Run file stands behind the word "evidence": a Run, its binary, streams and dumps by sha256. */
+	const evidence = (
+		<>
+			each Run, with{" "}
+			<a href={example.evidence} title={links.evidenceAbout}>
+				evidence
+			</a>
+		</>
+	);
+	const files: [string, string, unknown, string][] = [
 		[links.index, path(links.index), "start here", links.schema.index],
 		[links.seriesList, path(links.seriesList), "every Series", links.schema.seriesList],
-		[links.seriesFile(headline[0]!.cells[0]!.series), path(links.seriesFilePattern), "each Run, with evidence", links.schema.series],
+		[links.seriesFile(headline[0]!.cells[0]!.series), path(links.seriesFilePattern), evidence, links.schema.series],
 		[links.prices, path(links.priceFilePattern), "AWS prices, daily", links.schema.prices],
 	];
 	return (
@@ -414,10 +425,6 @@ export default function Page() {
 							<h1 id="name-h">
 								<span class="acc">ledgermath</span> <span class="dash">—</span> measured AWS machine figures, as JSON for agents, each with its evidence
 							</h1>
-							<p class="lede">
-								{formatCount(snapshot.benchmarkCount).full} benchmarks × {formatCount(snapshot.machineCount).full} machine types, freshly booted at{" "}
-								<span class="nb">{SCHEDULE.join(" ")} UTC.</span>
-							</p>
 						</div>
 					</section>
 
@@ -479,21 +486,12 @@ export default function Page() {
 											{shown}
 										</a>
 									</th>
-									<td>{what}</td>
+									<td>{what as never}</td>
 									<td class="schema">
 										<a href={schema}>schema</a>
 									</td>
 								</tr>
 							))}
-							<tr>
-								<th scope="row">
-									<a href={example.evidence} class="nb" title={links.evidenceAbout}>
-										{runFile}
-									</a>
-								</th>
-								<td>one Run's evidence</td>
-								<td />
-							</tr>
 							<tr>
 								<th scope="row">
 									<a href={links.docs} class="nb">
