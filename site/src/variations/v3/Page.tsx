@@ -173,20 +173,10 @@ const excerptBefore = [
 ].join("\n");
 const excerptAfter = [`, "p95": ${j(bps.p95)}`, "  … } } } }"].join("\n");
 
-/** An address with a place to break after "/v1/", so it wraps where it reads. */
-function Breakable(props: { url: string }) {
-	const p = props.url.split(/(?<=\/v1\/)/);
-	return (
-		<>
-			{p.map((s, i) => (
-				<>
-					{i > 0 ? <wbr /> : ""}
-					{s}
-				</>
-			))}
-		</>
-	);
-}
+/** AWS's processor name without its trailing word "Processor". */
+const processor = (name: string) => name.replace(/ Processor$/, "");
+/** AWS's instance-storage text ("1 x 1875 NVMe SSD", sizes in GB) with its unit written. */
+const storage = (text: string) => text.replace(/^(\d+) x (\d+) /, "$1 × $2 GB ");
 
 // The references: the API's files and the documentation, in the order the page cites them.
 const REFS = [
@@ -209,9 +199,6 @@ function Cite(props: { n: number }) {
 export default function Page() {
 	return (
 		<>
-			<p class="stamp" aria-hidden="true">
-				api.ledgermath.com/v1&ensp;[{snapshot.region}]&ensp;{newest.longDate}
-			</p>
 			<header class="runninghead">
 				<div class="rh-inner">
 					<a class="wordmark" href="./">
@@ -233,14 +220,6 @@ export default function Page() {
 						<h1>
 							<span class="h1-name">LedgerMath:</span> {snapshot.benchmarkCount} benchmarks on {snapshot.machineCount} AWS machine types, measured 4&nbsp;times a&nbsp;day
 						</h1>
-						<p class="authors">
-							{machines.map((m, i) => (
-								<>
-									{i > 0 ? <span class="sep"> · </span> : ""}
-									<span class="author">{m.instanceType}</span>
-								</>
-							))}
-						</p>
 						<p class="affil">
 							Amazon EC2 {snapshot.region} · booted 04:10, 10:10, 16:10, 22:10&nbsp;UTC
 						</p>
@@ -290,21 +269,23 @@ export default function Page() {
 								<span class="runin" id="abstract" role="heading" aria-level={2}>
 									Abstract
 								</span>
-								Every Run is kept with its evidence, and every figure is derived by a published Method <Cite n={5} /> and served as JSON, so an AI agent can choose
-								infrastructure from measured numbers with a source for each.
+								Every figure is served as JSON with its Runs, evidence and Method <Cite n={5} />, so an AI agent can choose infrastructure from measured numbers.
 							</p>
 						</section>
 
 						<aside class="availability" aria-labelledby="availability">
-							<h2 id="availability">Data availability</h2>
+							<div class="av-head">
+								<h2 id="availability">Data availability</h2>
+								<a class="av-files" href="#refs">
+									All files
+								</a>
+								<span class="copy-slot" />
+							</div>
 							<pre class="code" data-copy={`curl ${links.index}`}>
 								<code>
-									<span class="prompt">$ </span>curl <Breakable url={links.index} />
+									<span class="prompt">$ </span>curl {links.index}
 								</code>
 							</pre>
-							<p class="files">
-								<strong>For agents and developers.</strong> Every figure links to its Series file. <a href="#refs">All files</a>
-							</p>
 						</aside>
 					</div>
 
@@ -319,7 +300,7 @@ export default function Page() {
 								<caption id="t1-cap">
 									<span class="cap">
 									<span class="cap-text">
-										<span class="tlabel">Table 1.</span> Median of counted Runs, every digit. <a href="#sA">Table S1</a>: p5, p95, <i>n</i>.
+										<span class="tlabel">Table 1.</span> Median of counted Runs. <a href="#sA">Range and Run count per figure</a>
 									</span>
 									<span class="key" aria-hidden="true">
 										<span class="key-item">
@@ -328,13 +309,10 @@ export default function Page() {
 												<span class="bar-range" style="left:52%;width:22%" />
 												<span class="bar-tick" style="left:62%" />
 											</span>
-											<span class="key-l">median, p5–p95; per row from 0</span>
+											<span class="key-l">median, p5–p95; scale per benchmark, from 0</span>
 										</span>
 										<span class="key-item">
-											<span class="dir">↑</span> higher is faster
-										</span>
-										<span class="key-item">
-											<span class="dir">↓</span> lower is faster
+											<span class="dir">↑↓</span> higher/lower is faster
 										</span>
 									</span>
 									</span>
@@ -403,12 +381,6 @@ export default function Page() {
 								<thead>
 									<tr>
 										<th scope="col">Machine</th>
-										<th scope="col" class="num-col">
-											vCPU
-										</th>
-										<th scope="col" class="num-col">
-											Memory
-										</th>
 										<th scope="col">Processor</th>
 										<th scope="col">Storage</th>
 										<th scope="col" class="num-col">
@@ -420,10 +392,8 @@ export default function Page() {
 									{machines.map((m) => (
 										<tr>
 											<th scope="row">{m.instanceType}</th>
-											<td class="num-col">{m.vcpu}</td>
-											<td class="num-col">{m.memory}</td>
-											<td class="proc">{m.processor}</td>
-											<td class="stor">{m.storage}</td>
+											<td class="proc">{processor(m.processor)}</td>
+											<td class="stor">{storage(m.storage)}</td>
 											<td class="num-col price">
 												<a href={links.prices} title={`${m.price.description} · ${m.price.path.pointer}`}>
 													{formatUsd(m.price.usdPerHour).full}

@@ -13,5 +13,6 @@ for (const pre of document.querySelectorAll<HTMLPreElement>("pre[data-copy]")) {
 		}
 		setTimeout(() => (button.textContent = "copy"), 1600);
 	});
-	pre.append(button);
+	// Beside its block's heading where there is a place for it, else in the block.
+	(pre.parentElement?.querySelector(".copy-slot") ?? pre).append(button);
 }
