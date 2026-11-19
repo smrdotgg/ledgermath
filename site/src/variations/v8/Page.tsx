@@ -2,6 +2,8 @@
 // Every figure comes from src/data as the snapshot holds it; see ../README.md.
 // Round 4: each fact said once. Freshness and the boot schedule live in the hero; the pipeline band and the
 // proofs strip are gone, because the traced figure already shows both.
+// Round 5: one command in the hero and no button; the API band is a list of addresses, each beside its schema,
+// and the JSON shows the file as it is, the division that joins it to the traced figure set under it.
 import "./page.css";
 import {
 	type DurationUnit,
@@ -13,7 +15,6 @@ import {
 	formatRate,
 	formatUsd,
 	headline,
-	headlineSeries,
 	type HeadlineChoice,
 	type HeadlineRow,
 	leadFigure,
@@ -95,14 +96,15 @@ function Exact(props: { full: string }) {
 	const fracText = frac === undefined ? "" : `.${frac}`;
 	const headFrac = head.length > int.length ? head.slice(int.length) : "";
 	const tailFrac = fracText.slice(headFrac.length);
+	// The leading digits carry a hairline: every figure opens onto its percentiles and its Series.
 	return (
 		<span class="exact">
 			<span class="x-int">
-				{headInt}
+				{headInt ? <span class="x-head">{headInt}</span> : null}
 				{tailInt ? <span class="x-tail">{tailInt}</span> : null}
 			</span>
 			<span class="x-frac">
-				{headFrac}
+				{headFrac ? <span class="x-head">{headFrac}</span> : null}
 				{tailFrac ? <span class="x-tail">{tailFrac}</span> : null}
 			</span>
 		</span>
@@ -178,8 +180,7 @@ function RangeStrip() {
 function Trail() {
 	const s = tracedCell.series;
 	const point = seriesFileContents.point.example;
-	const per = tracedRow.choice.per;
-	const ns = point.time_per_repetition_ns;
+	// One of the Series' Runs, by id only: its own figure would read as a rival to the median above.
 	return (
 		<ol class="trail">
 			<li>
@@ -192,14 +193,9 @@ function Trail() {
 				<>
 					<li>
 						<span class="tl-run" title={point.run}>
-							<span class="tl-k">Run</span>
+							<span class="tl-k">One Run</span>
 							<span class="mono">{point.run.slice(0, 8)}</span>
 						</span>
-						{ns != null ? (
-							<span class="tl-v mono" title={`${ns} ns for one repetition`}>
-								{per ? perUnit(ns, per.count) : String(ns)} ns
-							</span>
-						) : null}
 					</li>
 					<li>
 						<a href={point.evidence} title={point.evidence}>
@@ -293,12 +289,9 @@ function ScheduleLine() {
 			<text x="314" y="25.5" class="dl-utc">
 				UTC
 			</text>
-			<line x1={now} x2={now} y1="9" y2="22" class="dl-now-line" />
+			<line x1={now} x2={now} y1="11" y2="22" class="dl-now-line" />
 			<circle cx={now} cy="22" r="7" class="dl-now-ring" />
 			<circle cx={now} cy="22" r="3.5" class="dl-now" />
-			<text x={now} y="6" text-anchor="middle" class="dl-now-label">
-				{newest.minute}
-			</text>
 		</svg>
 	);
 }
@@ -376,7 +369,7 @@ function Hero() {
 		<section class="hero" aria-labelledby="claim">
 			<div class="wrap hero-grid">
 				<div class="hero-top">
-					<p class="eyebrow">AWS server benchmarks, as JSON</p>
+					<p class="eyebrow">AWS server benchmarks as JSON, for agents</p>
 					<h1 id="claim">Server numbers you can trace to their Runs.</h1>
 					<p class="lede">
 						{formatCount(snapshot.machineCount).full} AWS machine types, booted four times a day; {formatCount(snapshot.benchmarkCount).full} benchmarks on each; every Run
@@ -402,13 +395,7 @@ function Hero() {
 				</div>
 				<TracedFigure />
 				<div class="hero-rest">
-					<p class="way-in">
-						<span class="mono">api.ledgermath.com</span>: static JSON for agents, a source for every figure.
-					</p>
 					<Curl url={links.index} light />
-					<a class="btn btn-primary" href="#numbers">
-						All {formatCount(headlineSeries.length).full} figures <span aria-hidden="true">↓</span>
-					</a>
 				</div>
 			</div>
 		</section>
@@ -442,6 +429,21 @@ function priceTitle(m: (typeof machines)[number]): string {
 
 const SPEC_COLS = ["vCPU", "Memory", "Processor", "Clock", "Network", "Storage"] as const;
 
+/** Hourly prices in the table's mono, every decimal point in one column. */
+const PRICES = machines.map((m) => formatUsd(m.price.usdPerHour).full);
+const PRICE_INT = Math.max(...PRICES.map((p) => p.split(".")[0]!.length)) + 1;
+const PRICE_FRAC = Math.max(...PRICES.map((p) => (p.split(".")[1] ?? "").length + 1));
+
+function Price(props: { full: string }) {
+	const [int = "", frac] = props.full.split(".");
+	return (
+		<span class="usd" style={{ "--iw": `${PRICE_INT}ch`, "--fw": `${PRICE_FRAC}ch` }}>
+			<span class="x-int">${int}</span>
+			<span class="x-frac">{frac === undefined ? "" : `.${frac}`}</span>
+		</span>
+	);
+}
+
 function Machines() {
 	return (
 		<section class="machines" id="machines" aria-labelledby="machines-title">
@@ -472,7 +474,7 @@ function Machines() {
 										{m.instanceType}
 									</th>
 									<td class="spec-num spec-price" title={priceTitle(m)}>
-										<span class="usd">${formatUsd(m.price.usdPerHour).full}</span>
+										<Price full={formatUsd(m.price.usdPerHour).full} />
 									</td>
 									<td data-l="vCPU">{m.vcpu}</td>
 									<td data-l="Memory">{m.memory}</td>
@@ -518,17 +520,7 @@ function SpreadKey() {
 				<span class="kg kg-whisk" aria-hidden="true" />
 				p5–p95
 			</span>
-			<span class="key-item">
-				faster:
-				<span class="dir dir-more" aria-hidden="true">
-					↑
-				</span>
-				more,
-				<span class="dir dir-less" aria-hidden="true">
-					↓
-				</span>
-				less
-			</span>
+			<span class="key-item">scale per row</span>
 		</p>
 	);
 }
@@ -657,38 +649,38 @@ function JsonLine(props: { text: string }) {
 		last = m.index! + m[0].length;
 	}
 	parts.push(props.text.slice(last));
-	return <>{parts.map((p) => (typeof p === "string" ? p : <span class={p.cls}>{p.t}</span>))}</>;
+	// A string that wraps breaks after a slash, never inside a name or a hash.
+	const slashes = (t: string) => t.split(/(?<=\/)/).map((part, i) => (i > 0 ? [<wbr />, part] : part));
+	return <>{parts.map((p) => (typeof p === "string" ? p : <span class={p.cls}>{p.cls === "j-str" ? slashes(p.t) : p.t}</span>))}</>;
 }
 
-/**
- * JSON as text, one block per line, each indented by its depth so a long line wraps under itself, not under the margin.
- * `after` puts one extra line, set apart from the JSON, under the first line that starts with its key.
- */
-function Json(props: { value: unknown; after?: { key: string; line: unknown } }) {
+/** JSON as text, one block per line, each indented by its depth so a long line wraps under itself, not under the margin. */
+function Json(props: { value: unknown }) {
 	const lines = JSON.stringify(props.value, null, 2).split("\n");
-	const at = props.after ? lines.findIndex((l) => l.trimStart().startsWith(`"${props.after!.key}"`)) : -1;
 	return (
 		<>
-			{lines.map((line, i) => {
+			{lines.map((line) => {
 				const depth = line.length - line.trimStart().length;
 				return (
-					<>
-						<span class="jl" style={{ "--d": `${depth}ch` }}>
-							{" ".repeat(depth)}
-							<JsonLine text={line.trimStart()} />
-						</span>
-						{i === at ? (
-							<span class="jl j-note" style={{ "--d": `${depth}ch` }}>
-								{" ".repeat(depth)}
-								{props.after!.line}
-							</span>
-						) : null}
-					</>
+					<span class="jl" style={{ "--d": `${depth}ch` }}>
+						{" ".repeat(depth)}
+						<JsonLine text={line.trimStart()} />
+					</span>
 				);
 			})}
 		</>
 	);
 }
+
+const API_HOST = "https://api.ledgermath.com";
+
+/** Every address an agent needs, path only under the host, each beside its schema. */
+const ENDPOINTS: { url: string; schema: string; link: boolean }[] = [
+	{ url: links.index, schema: links.schema.index, link: true },
+	{ url: links.seriesList, schema: links.schema.seriesList, link: true },
+	{ url: links.seriesFilePattern, schema: links.schema.series, link: false },
+	{ url: links.prices, schema: links.schema.prices, link: true },
+];
 
 function Api() {
 	const s = tracedCell.series;
@@ -704,57 +696,64 @@ function Api() {
 			},
 		},
 	};
-	// The hero already gives the index; here, the two files an agent reads next. Their paths say what they are.
-	const endpoints = [links.seriesList, links.prices];
-	// The page shows the mutex time per critical section; the file holds it per repetition. One line of figures joins them.
+	// The page shows the mutex time per critical section; the file holds it per repetition. One line of figures joins them,
+	// under the JSON, so the JSON stays as the file has it.
 	const per = tracedRow.choice.per;
 	const p50 = d.percentiles.time_per_repetition_ns?.p50;
-	const after =
-		per && p50 != null && tracedRow.choice.lead !== "rate"
-			? {
-					key: "p50",
-					line: (
-						<span title={`One repetition is ${formatCount(per.count).full} ${per.of}s: ${p50} ns ÷ ${formatCount(per.count).full} = ${perUnit(p50, per.count)} ns, the figure traced at the top`}>
-							<span class="trace-mark" aria-hidden="true" /> ÷ {formatCount(per.count).full} = {perUnit(p50, per.count)}
-						</span>
-					),
-				}
-			: undefined;
+	const join =
+		per && p50 != null && tracedRow.choice.lead !== "rate" ? (
+			<p class="j-join mono" title={`One repetition is ${formatCount(per.count).full} ${per.of}s: ${p50} ns ÷ ${formatCount(per.count).full}, the figure traced at the top`}>
+				<span class="trace-mark" aria-hidden="true" />
+				<span>
+					<span class="j-k">p50</span> ÷ {formatCount(per.count).full} = {perUnit(p50, per.count)}
+				</span>
+				<span class="j-u">{unitWords(tracedU)}</span>
+			</p>
+		) : null;
 	return (
 		<section class="api" id="api" aria-labelledby="api-title">
 			<div class="wrap api-grid">
 				<div class="api-copy">
 					<h2 id="api-title">Point your agent at the source.</h2>
-					<ul class="endpoints">
-						{endpoints.map((url) => (
-							<li>
-								<Curl url={url} />
-							</li>
-						))}
-					</ul>
-					<p class="api-more">
+					<p class="ep-host">
+						<span class="mono">{API_HOST}</span>
 						<a href={links.docs}>Docs</a>
-						<span class="dot-sep" aria-hidden="true">
-							·
-						</span>
-						Schemas:{" "}
-						{links.schemas.map((sc, i) => (
-							<>
-								{i > 0 ? ", " : ""}
-								<a href={sc.url}>{sc.name}</a>
-							</>
-						))}
 					</p>
+					<ul class="endpoints">
+						{ENDPOINTS.map((e) => {
+							// Whole names only: a wrapped path breaks after a slash, never at a date's dash.
+							const path = e.url
+								.slice(API_HOST.length)
+								.split(/(?<=\/)/)
+								.map((part) => <span class="ep-seg">{part}</span>);
+							return (
+								<li data-copy={e.url}>
+									{e.link ? (
+										<a class="ep-path mono" href={e.url}>
+											{path}
+										</a>
+									) : (
+										<code class="ep-path mono">{path}</code>
+									)}
+									<a class="ep-schema" href={e.schema}>
+										schema
+									</a>
+								</li>
+							);
+						})}
+					</ul>
 				</div>
 				<div class="api-code">
 					<div class="code-head">
 						<span class="mono">GET /v1/series.json</span>
+						<span>one entry</span>
 					</div>
 					<pre tabindex="0" aria-label={`Series ${s.id}'s entry in series.json, shortened`}>
 						<code>
-							<Json value={excerpt} after={after} />
+							<Json value={excerpt} />
 						</code>
 					</pre>
+					{join}
 				</div>
 			</div>
 		</section>
