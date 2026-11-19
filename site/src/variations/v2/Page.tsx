@@ -8,6 +8,7 @@ import {
 	durationUnit,
 	formatCount,
 	formatDuration,
+	formatDurationPerUnit,
 	formatMoment,
 	formatRate,
 	formatUsd,
@@ -17,6 +18,7 @@ import {
 	leadFigure,
 	links,
 	machines,
+	perUnit,
 	type Section,
 	type Shown,
 	snapshot,
@@ -34,16 +36,39 @@ const path = (url: string) => new URL(url).pathname;
 
 // ---------------------------------------------------------------- figures
 
-/** One unit per row, so the row's figures share it and align: the unit the smallest figure of the row would take. */
-function rowUnit(row: HeadlineRow): { kind: "rate"; unit: ByteUnit } | { kind: "time"; unit: DurationUnit } {
-	const p50s = row.cells.map((cell) => leadFigure(row.choice, cell.series).p50);
-	const least = Math.min(...p50s);
-	if (row.choice.lead === "rate") return { kind: "rate", unit: formatRate(least).unit.replace("/s", "") as ByteUnit };
-	return { kind: "time", unit: durationUnit(least) };
+/**
+ * One unit per row, so the row's figures share it and align: the unit the smallest figure of the
+ * row would take. Where one repetition is a power-of-ten count of something smaller (mutex), the
+ * row shows the time of one of those, divided exactly by formatDurationPerUnit.
+ */
+type Fig = (value: number, significant?: number) => Shown;
+function rowFigure(row: HeadlineRow): Fig {
+	const c = row.choice;
+	const least = Math.min(...row.cells.map((cell) => leadFigure(c, cell.series).p50));
+	if (c.lead === "rate") {
+		const unit = formatRate(least).unit.replace("/s", "") as ByteUnit;
+		return (v, significant) => formatRate(v, { unit, significant });
+	}
+	if (c.per) {
+		const per = c.per;
+		const unit: DurationUnit = durationUnit(Number(perUnit(least, per.count)));
+		return (v, significant) => formatDurationPerUnit(v, per, { unit, significant });
+	}
+	const unit: DurationUnit = durationUnit(least);
+	return (v, significant) => formatDuration(v, { unit, significant });
 }
 
-function show(value: number, unit: ReturnType<typeof rowUnit>): Shown {
-	return unit.kind === "rate" ? formatRate(value, { unit: unit.unit }) : formatDuration(value, { unit: unit.unit });
+/**
+ * The 5th and 95th percentiles, rounded to as few significant digits (from four) as tell them
+ * apart, so a range never prints as "131.3–131.3". Their every digit is a tap away, in the row's
+ * EXACT block, and in the figure's title.
+ */
+function range(fig: Fig, p5: number, p95: number): [Shown, Shown] {
+	for (let significant = 4; ; significant++) {
+		const lo = fig(p5, significant);
+		const hi = fig(p95, significant);
+		if (lo.short !== hi.short || (!lo.rounded && !hi.rounded) || significant >= 17) return [lo, hi];
+	}
 }
 
 /**
@@ -88,6 +113,7 @@ function breakable(url: string) {
 function Command(props: { url: string; note: string }) {
 	return (
 		<li class="cmd">
+			<span class="cmd-note"># {props.note}</span>
 			<code>
 				<span class="prompt" aria-hidden="true">
 					${" "}
@@ -96,7 +122,6 @@ function Command(props: { url: string; note: string }) {
 					<span class="curl">curl -s</span> <a href={props.url}>{breakable(props.url)}</a>
 				</span>
 			</code>
-			<span class="cmd-note"># {props.note}</span>
 		</li>
 	);
 }
@@ -114,7 +139,7 @@ function Status() {
 	const runs = formatCount(snapshot.runCount).full;
 	const rows: [string, unknown][] = [
 		[
-			"newest run",
+			"newest",
 			<time datetime={newest.iso}>
 				<span class="hi">
 					{newest.date} {newest.second}
@@ -123,17 +148,23 @@ function Status() {
 			</time>,
 		],
 		[
-			"oldest run",
-			<time datetime={oldest.iso}>
-				{oldest.date} {oldest.second}
-				<span class="dim">{oldest.full.slice(oldest.date.length + 1 + oldest.second.length, -4)}</span> UTC
-			</time>,
+			"where",
+			<>
+				AWS {snapshot.region}, zone {zones.join(", ")}
+			</>,
 		],
 		[
 			"runs",
 			<>
 				<span class="hi">{runs}</span> kept, {formatCount(snapshot.countedRuns).full} counted, {formatCount(snapshot.failedRuns).full} failed
 			</>,
+		],
+		[
+			"oldest",
+			<time datetime={oldest.iso}>
+				{oldest.date} {oldest.second}
+				<span class="dim">{oldest.full.slice(oldest.date.length + 1 + oldest.second.length, -4)}</span> UTC
+			</time>,
 		],
 		[
 			"series",
@@ -144,19 +175,14 @@ function Status() {
 		[
 			"schedule",
 			<>
-				boots at {SCHEDULE.join(" ")} UTC
+				{SCHEDULE.join(" ")} UTC
 			</>,
 		],
 		[
-			"where",
+			"prices",
 			<>
-				AWS {snapshot.region}, zone {zones.join(", ")}, {formatCount(snapshot.machineCount).full} machine types
-			</>,
-		],
-		[
-			"evidence",
-			<>
-				what each Run printed and what was recorded about its machine, linked from <a href="#data">each figure</a>
+				<a href={links.prices}>{snapshot.priceDate}</a>, copied {pricesFetched.second}
+				<span class="dim">{pricesFetched.full.slice(pricesFetched.date.length + 1 + pricesFetched.second.length, -4)}</span> UTC
 			</>,
 		],
 		[
@@ -170,14 +196,13 @@ function Status() {
 						</a>
 					</>
 				))}
-				, published with the data
+
 			</>,
 		],
 		[
-			"prices",
+			"evidence",
 			<>
-				AWS On-Demand, <a href={links.prices}>{snapshot.priceDate}</a>, copied {pricesFetched.second}
-				<span class="dim">{pricesFetched.full.slice(pricesFetched.date.length + 1 + pricesFetched.second.length, -4)}</span> UTC
+				every Run's output and machine record, see <a href="#files">FILES</a>
 			</>,
 		],
 	];
@@ -193,12 +218,35 @@ function Status() {
 	);
 }
 
+const sectionId = (section: Section) => `s-${section.toLowerCase().replace(/ /g, "-")}`;
+
+/** Said once, at the top of a group, where the group's rows share something a reader must know. */
+function SectionNote(props: { section: Section }) {
+	if (props.section !== "Disk") return null;
+	const iops = headline.find((row) => row.choice.benchmark === "disk_read_io_uring")?.choice;
+	const seq = headline.find((row) => row.choice.benchmark === "disk_read_sequential")?.choice;
+	return (
+		<span class="sect-note">
+			Every row here reads or writes the root EBS gp3 volume, on all five machines, and not a machine's own disk: the instance store that only
+			i4i.2xlarge has is not in these rows. So they describe the volume more than the machine.
+			{iops && seq ? (
+				<>
+					{" "}
+					<i>{iops.label}</i> reaches the volume's IOPS limit, and <i>{seq.label}</i> its throughput limit.
+				</>
+			) : null}
+		</span>
+	);
+}
+
 function DataTable() {
+	const cols = machines.length + 1;
 	return (
 		<div class="scroll" role="region" aria-label="The headline figures: 14 benchmarks on 5 machine types" tabindex="0">
 			<table class="data">
 				<caption class="sr">
-					The median (p50) of each Series' counted Runs, one Series per benchmark and machine type. Each figure links to its Series file.
+					The median (p50) of each Series' counted Runs, one Series per benchmark and machine type, with its 5th and 95th percentiles and its count of
+					Runs. Each figure links to its Series file.
 				</caption>
 				<colgroup>
 					<col class="c-unit" />
@@ -209,7 +257,9 @@ function DataTable() {
 				<thead>
 					<tr>
 						<th scope="col" class="corner">
-							p50
+							<span class="hi">p50</span>
+							<span class="m-spec">median of</span>
+							<span class="m-spec">its Runs</span>
 						</th>
 						{machines.map((m) => (
 							<th scope="col">
@@ -222,56 +272,121 @@ function DataTable() {
 						))}
 					</tr>
 				</thead>
-				{SECTION_ORDER.map((section) => {
+				{SECTION_ORDER.map((section, s) => {
 					const rows = headline.filter((row) => row.choice.section === section);
 					return rows.map((row, i) => {
-						const unit = rowUnit(row);
+						const fig = rowFigure(row);
 						const c = row.choice;
+						const up = c.lead === "rate";
+						const unit = fig(leadFigure(c, row.cells[0]!.series).p50).unit;
+						const cells = row.cells.map((cell) => {
+							const f = leadFigure(c, cell.series);
+							return { cell, f, p50: fig(f.p50), p5: fig(f.p5), p95: fig(f.p95), short: range(fig, f.p5, f.p95) };
+						});
+						const each = c.per ? ` per ${c.per.of}` : "";
 						return (
 							<tbody class={i === 0 ? "bench first" : "bench"}>
 								{i === 0 ? (
 									<tr class="sect">
-										<th colspan={machines.length + 1} scope="rowgroup">
+										<th colspan={cols} scope="rowgroup" id={sectionId(section)}>
 											<span class="sect-name">{section}</span>
+											<SectionNote section={section} />
 										</th>
 									</tr>
 								) : null}
+								{i === 0 && s > 0 ? (
+									<tr class="rehead" aria-hidden="true">
+										<td />
+										{machines.map((m) => (
+											<td>{m.instanceType}</td>
+										))}
+									</tr>
+								) : null}
 								<tr class="desc">
-									<th colspan={machines.length + 1} scope="rowgroup">
+									<th colspan={cols} scope="rowgroup">
 										<span class="b-label">{c.label}</span>
 										<span class="b-what">{c.what}</span>
-										<span class="b-set">
-											<span class="k">one repetition</span> {c.repetition}
-											{c.per ? ` (${formatCount(c.per.count).full} ${c.per.of}s)` : ""} <span class="k">setting</span> {c.setting}
-										</span>
+										<div class="b-set">
+											<span class="k">one repetition</span> {c.repetition}{" "}
+											{c.per ? (
+												<>
+													<span class="k">shown</span> the time of one {c.per.of}: a repetition's time ÷ {formatCount(c.per.count).full}{" "}
+												</>
+											) : null}
+											<span class="k">setting</span> {c.setting}
+										</div>
 									</th>
 								</tr>
 								<tr class="figs">
 									<th scope="row" class="unit">
-										<span class="sr">{c.label}, </span>
-										{show(leadFigure(c, row.cells[0]!.series).p50, unit).unit}
-										<span class="sr">{c.lead === "rate" ? ", median rate" : ", median time of one repetition"}</span>
+										<span class="sr">{c.label}, median {up ? "rate" : `time${each}`} in </span>
+										<span class="u">{unit}</span>
+										<span class="dir" aria-hidden="true">
+											{up ? "↑" : "↓"}
+										</span>
+										<span class="sr">{up ? ", higher is better" : ", lower is better"}</span>
+										<span class="u2">p5–p95 n</span>
+										<details class="more">
+											<summary>
+												exact<span class="sr">: {c.label}, every digit of p5 and p95, the Series files{c.reason ? ", why this setting" : ""}</span>
+											</summary>
+										</details>
 									</th>
-									{row.cells.map((cell) => {
-										const f = leadFigure(c, cell.series);
-										const p50 = show(f.p50, unit);
-										const p5 = show(f.p5, unit);
-										const p95 = show(f.p95, unit);
-										return (
-											<td data-m={cell.machine.instanceType}>
-												<a
-													href={links.seriesFile(cell.series)}
-													title={`${cell.machine.instanceType}: p50 ${p50.full} ${p50.unit}; p5 ${p5.full}, p95 ${p95.full}; ${f.count} counted Runs. Exact: ${p50.source}. Series ${cell.series.id}`}
-												>
-													<Digits full={p50.full} />
-												</a>
-												<span class="runs">
-													n={f.count} <span class="sid">{cell.series.id}</span>
+									{cells.map(({ cell, f, p50, p5, p95, short: [lo, hi] }) => (
+										<td data-m={cell.machine.instanceType}>
+											<a
+												href={links.seriesFile(cell.series)}
+												title={`${cell.machine.instanceType}: p50 ${p50.full} ${p50.unit}${each}; p5 ${p5.full}, p95 ${p95.full}; ${f.count} counted Runs. As the snapshot holds it: ${p50.source}. Series ${cell.series.id}`}
+											>
+												<Digits full={p50.full} />
+											</a>
+											<span class="rng" title={`p5 ${p5.full} ${p5.unit}, p95 ${p95.full} ${p95.unit}`}>
+												<span class="sr">p5 to p95: </span>
+												{lo.short}–{hi.short}
+												<span class="n">
+													<span class="sr">, counted Runs: </span>
+													<span aria-hidden="true">n=</span>
+													{f.count}
 												</span>
-											</td>
-										);
-									})}
+											</span>
+										</td>
+									))}
 								</tr>
+								{(["p5", "p95"] as const).map((k) => (
+									<tr class="exact">
+										<th scope="row" class="unit">
+											<span class="sr">{c.label}, </span>
+											{k}
+										</th>
+										{cells.map((x) => (
+											<td data-m={x.cell.machine.instanceType}>
+												<Digits full={x[k].full} />
+											</td>
+										))}
+									</tr>
+								))}
+								<tr class="exact last">
+									<th scope="row" class="unit">
+										<span class="sr">{c.label}, </span>series
+									</th>
+									{cells.map((x) => (
+										<td data-m={x.cell.machine.instanceType}>
+											<a href={links.seriesFile(x.cell.series)} class="sid">
+												{x.cell.series.id}.json
+											</a>
+										</td>
+									))}
+								</tr>
+								{c.reason ? (
+									<tr class="exact why">
+										<th scope="row" class="unit">
+											<span class="sr">{c.label}, </span>why
+										</th>
+										<td colspan={machines.length}>
+											<span class="k">why this setting</span> {c.reason}
+										</td>
+									</tr>
+								) : null}
 							</tbody>
 						);
 					});
@@ -386,37 +501,49 @@ export default function Page() {
 							</h1>
 							<p class="lede">
 								{formatCount(snapshot.benchmarkCount).full} benchmarks on {formatCount(snapshot.machineCount).full} machine types, run four times a day on
-								freshly booted machines, published as static JSON for AI agents and the developers who point them at it.
+								freshly booted machines, published as static JSON for AI agents and their developers: to choose a machine or estimate a cost
+								from measured numbers.
 							</p>
 						</div>
 					</section>
 
+					<Section id="synopsis" title="SYNOPSIS">
+						<ul class="cmds">
+							<Command url={links.index} note="table of contents: start here" />
+							<Command url={links.seriesList} note={`every Series (${formatCount(snapshot.seriesCount).full}) and its percentiles`} />
+							<Command url={links.prices} note="AWS On-Demand prices, copied daily" />
+						</ul>
+						<p class="syn-note">
+							Each Series file links every Run's figure and evidence: cite the file behind each number.
+						</p>
+					</Section>
+
 					<Section id="status" title="STATUS">
 						<Status />
 					</Section>
-
 				</div>
-
-				<Section id="synopsis" title="SYNOPSIS">
-					<ul class="cmds">
-						<Command url={links.index} note="table of contents" />
-						<Command url={links.seriesList} note={`every Series (${formatCount(snapshot.seriesCount).full})`} />
-						<Command url={links.prices} note="AWS On-Demand prices" />
-					</ul>
-					<p>
-						An agent gets every figure on this page and every other Series, each with its percentiles, its count of Runs, the Method that derived it and
-						a link to each Run's evidence, plus each machine's hourly price: enough to choose a machine or estimate a cost from measured numbers, and cite
-						the file each number came from.
-					</p>
-				</Section>
-
 
 				<Section id="data" title="DATA">
 					<p>
 						The median (p50) of each Series' counted Runs, one Series per benchmark and machine type, chosen by a written rule: one thread, static
-						build, settings every machine ran. Every digit is printed; the first four are brighter, for scanning.{" "}
-						<span class="hint">Each figure links to its Series file; n is its count of Runs; hover for p5 and p95.</span>
+						build, settings every machine ran. Every digit printed; each figure links to its Series file; <span class="hi">[+] exact</span> opens a row's p5 and
+						p95 to the last digit.
 					</p>
+					<nav class="jump" aria-label="Benchmark groups">
+						{SECTION_ORDER.map((section, i) => (
+							<span class="nb">
+								{i ? (
+									<span class="sep" aria-hidden="true">
+										·
+									</span>
+								) : null}
+								<a href={`#${sectionId(section)}`}>{section.toLowerCase()}</a>
+							</span>
+						))}
+						<span class="legend">
+							<span class="dir">↑</span> higher is better <span class="dir">↓</span> lower is better
+						</span>
+					</nav>
 					<DataTable />
 				</Section>
 
@@ -436,7 +563,8 @@ export default function Page() {
 				<Section id="machines" title="MACHINES">
 					<p>
 						Cheapest first. Hourly On-Demand Linux price in {snapshot.region}, in US dollars, from AWS's price list of{" "}
-						<a href={links.prices}>{snapshot.priceDate}</a>.
+						<a href={links.prices}>{snapshot.priceDate}</a>. Storage and network are as AWS states them; the instance store of i4i.2xlarge is
+						not what DATA's disk rows measure (they use each machine's root EBS gp3 volume).
 					</p>
 					<Machines />
 				</Section>
