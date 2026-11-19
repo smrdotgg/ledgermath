@@ -251,7 +251,7 @@ h1 {
 	font-size: 0.72rem;
 	letter-spacing: 0.05em;
 	text-transform: uppercase;
-	color: var(--muted);
+	color: var(--ink-2);
 }
 .ro dd {
 	margin: 0;
@@ -359,9 +359,13 @@ h3 a:hover {
 .card-h h3 {
 	flex: 1 1 auto;
 	min-width: 0;
+	text-wrap: balance;
+}
+.card-h .n {
+	flex: none;
+	font: 450 0.72rem/1 var(--mono);
+	color: var(--muted);
 	white-space: nowrap;
-	overflow: hidden;
-	text-overflow: ellipsis;
 }
 .card-h .unit {
 	flex: none;
@@ -578,89 +582,80 @@ a.v:focus-visible {
 	display: block;
 }
 
-/* every digit */
+/* every digit: a median opens, beside itself and over the plot, to its exact p95, p50 and p5, its Runs and its Series */
 
-/* Every digit, folded under the grid: a quiet line, opening to a table that has the grid's width. */
-.every {
-	margin-top: 14px;
+.fig {
+	grid-column: 3;
+	align-self: center;
+	position: relative;
+	justify-self: end;
 }
-.every summary {
+.fig > summary {
+	display: block;
+	list-style: none;
 	cursor: pointer;
-	width: fit-content;
-	padding: 4px 0;
-	font: 500 0.8rem/1.3 var(--mono);
-	color: var(--ink-2);
 }
-.every summary:hover {
+.fig > summary::-webkit-details-marker {
+	display: none;
+}
+.fig > summary:hover,
+.fig > summary:focus-visible,
+.fig[open] > summary {
 	color: var(--accent-ink);
+	text-decoration: underline 1.5px var(--accent);
 }
-.every[open] .scroll {
-	margin-top: 10px;
-	border: 1px solid var(--line);
-	border-radius: 12px;
+.pop {
+	position: absolute;
+	z-index: 3;
+	right: calc(100% + 10px);
+	top: -10px;
+	display: grid;
+	grid-template-columns: auto auto;
+	gap: 3px 14px;
+	padding: 10px 12px;
 	background: var(--panel);
-}
-.every summary .dim {
-	margin-left: 10px;
-	font: 0.76rem var(--mono);
-}
-.digits .n {
-	font-size: 0.66rem;
-	color: var(--faint);
-}
-.scroll {
-	overflow-x: auto;
-}
-.digits {
-	border-collapse: collapse;
-	font: 0.72rem/1.45 var(--mono);
+	border: 1px solid var(--line);
+	border-radius: 8px;
+	box-shadow: 0 6px 24px rgba(0, 0, 0, 0.14);
+	font: 450 0.74rem/1.35 var(--mono);
 	font-variant-numeric: tabular-nums;
-	width: 100%;
-}
-.digits th,
-.digits td {
-	padding: 8px 14px;
-	border-bottom: 1px solid var(--grid);
-	text-align: right;
-	vertical-align: top;
 	white-space: nowrap;
 }
-.digits thead th {
-	position: sticky;
-	top: 0;
-	background: var(--panel);
-	font-weight: 600;
-	color: var(--ink);
+.fig.up .pop {
+	top: auto;
+	bottom: -10px;
 }
-.digits tbody th {
-	text-align: left;
-	font: 600 0.8rem/1.3 var(--sans);
-	white-space: normal;
-	min-width: 11em;
-	position: sticky;
-	left: 0;
-	background: var(--panel);
-}
-.digits .u {
-	display: block;
-	font: 0.7rem var(--mono);
+.pop .k {
 	color: var(--muted);
 }
-.digits th a {
-	text-decoration: none;
+.pop .x {
+	text-align: right;
+	color: var(--ink-2);
 }
-.digits td > * {
-	display: block;
-	color: var(--muted);
-}
-.digits .med {
+.pop .x.med {
 	color: var(--ink);
 	font-weight: 600;
-	text-decoration: none;
+}
+.pop .go {
+	grid-column: 1 / -1;
+	justify-self: end;
+	margin-top: 4px;
+	font-weight: 600;
+	color: var(--accent-ink);
+	text-underline-offset: 3px;
 }
 .tt {
 	color: var(--faint);
 	font-weight: 400;
+}
+
+/* a machine's family in ink, its size lighter */
+.sz {
+	color: var(--muted);
+}
+.mt tbody th .fam,
+.chart .fam {
+	color: var(--ink);
 }
 
 /* ------------------------------------------------------------ API band */
@@ -932,20 +927,19 @@ a.v:focus-visible {
 		right: 0;
 		margin: 0;
 	}
-	/* Six columns: Newest Run and Runs share the first line, the boots the second, Series, Region and Prices the third. */
+	/* Two columns: Newest Run and Runs share the first line, the boots the second, Region and Prices the third. */
 	.ro {
 		display: grid;
-		grid-template-columns: repeat(6, minmax(0, 1fr));
+		grid-template-columns: repeat(2, minmax(0, 1fr));
 		column-gap: 12px;
 	}
 	.ro > div {
-		grid-column: span 2;
+		grid-column: span 1;
 		order: 2;
 		justify-content: flex-start;
 	}
 	.ro > div:nth-child(1),
 	.ro > div:nth-child(3) {
-		grid-column: span 3;
 		order: 0;
 	}
 	.ro > .boots {
@@ -981,15 +975,37 @@ a.v:focus-visible {
 	.card-h h3 {
 		white-space: normal;
 	}
+	/* The family alone names a machine in the charts (the Machines panel above keys it), so the plots get the width. */
+	/* The label column is as wide as "faster →", the widest thing in it. */
 	.chart {
-		grid-template-columns: 6.4em minmax(0, 1fr) minmax(4em, max-content);
+		grid-template-columns: 3.6em minmax(0, 1fr) minmax(4em, max-content);
 		column-gap: 10px;
+	}
+	.chart .dir {
+		font-size: 0.72rem;
+	}
+	/* A zoomed axis starts with a long label, centred on the plot's edge: room for its half too. */
+	.chart.zoomed {
+		grid-template-columns: 4.8em minmax(0, 1fr) minmax(4em, max-content);
+	}
+	.chart .sz {
+		display: none;
+	}
+	.chart.whole {
+		grid-template-columns: 6.4em minmax(0, 1fr) minmax(4em, max-content);
+	}
+	.chart.whole .sz {
+		display: inline;
 	}
 	.ro > div {
 		padding: 8px 0;
 	}
-	.every summary {
-		padding: 10px 0 0;
+	/* A long command wraps after a slash, under a hanging indent, rather than running off the edge. */
+	.line code {
+		white-space: normal;
+		overflow-wrap: normal;
+		padding-left: 2ch;
+		text-indent: -2ch;
 	}
 	.api {
 		padding-top: 36px;

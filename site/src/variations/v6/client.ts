@@ -18,6 +18,14 @@ for (const el of document.querySelectorAll<HTMLElement>("[data-copy]")) {
 	});
 	el.after(button);
 }
+// An opened median closes on a click elsewhere or on Escape (without JavaScript, on its own figure or by opening another).
+const closeFigures = (except?: Element | null) => {
+	for (const d of document.querySelectorAll<HTMLDetailsElement>("details.fig[open]")) if (d !== except) d.open = false;
+};
+document.addEventListener("click", (e) => closeFigures(e.target instanceof Element ? e.target.closest("details.fig") : null));
+document.addEventListener("keydown", (e) => {
+	if (e.key === "Escape") closeFigures();
+});
 // A link to a folded section (the agent prompt) opens it.
 for (const a of document.querySelectorAll<HTMLAnchorElement>('a[href^="#"]')) {
 	const target = document.getElementById(a.hash.slice(1));

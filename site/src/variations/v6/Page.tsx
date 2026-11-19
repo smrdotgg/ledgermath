@@ -4,7 +4,7 @@
 import "./page.css";
 import { formatCount, formatMoment, formatUsd, headline, links, machines, snapshot } from "../../data";
 import { headTail, padFor } from "./digits";
-import { at, instrument, type Instrument, type Scale, width, zeroScale } from "./scale";
+import { at, instrument, type Instrument, type Mark as Point, type Scale, width, zeroScale } from "./scale";
 
 const ROW = 24;
 const AXIS = 22;
@@ -82,16 +82,45 @@ function Strip(props: { inst: Instrument; zoom: Scale }) {
 	);
 }
 
-/** A command, whole on one line: never broken inside an address (it scrolls sideways where it is longer than its box). */
+/** An address that may break only after a slash (a phone wraps it there, under a hanging indent); copied, it is whole. */
 function Url(props: { text: string }) {
-	return <>{props.text}</>;
+	const parts = props.text.split(/(?<=[^/]\/)(?=[^/])/);
+	return (
+		<>
+			{parts.map((p, i) => (
+				<>
+					{i > 0 ? <wbr /> : null}
+					{p}
+				</>
+			))}
+		</>
+	);
 }
+
+/** A machine's name as its family (in ink) and its size (lighter; a phone shows the family alone, keyed by the Machines panel). */
+function Name(props: { type: string }) {
+	const dot = props.type.indexOf(".");
+	return dot < 0 ? (
+		<>{props.type}</>
+	) : (
+		<>
+			<span class="fam">{props.type.slice(0, dot)}</span>
+			<span class="sz">{props.type.slice(dot)}</span>
+		</>
+	);
+}
+
+/** Whether the families alone tell the five machines apart; if not, a phone keeps the whole names. */
+const familiesUnique = new Set(machines.map((m) => m.instanceType.split(".")[0])).size === machines.length;
 
 const pad = (i: number) => String(i + 1).padStart(2, "0");
 
-/** Every digit of a figure, the first four significant ones in full ink and the rest lighter. */
-function Digits(props: { text: string }) {
-	const [head, tail] = headTail(props.text);
+/** Significant digits in a figure as shown ("0.0175" has 3, "858" has 3, "10.00" has 4). */
+const significantIn = (text: string) => text.replace(/[^\d]/g, "").replace(/^0+/, "").length;
+
+/** Every digit of a figure, the ones the chart prints in full ink and the rest lighter. */
+function Digits(props: { text: string; shown: string }) {
+	const [head, tail] = headTail(props.text, Math.max(1, significantIn(props.shown)));
 	return (
 		<>
 			<span class="hd">{head}</span>
@@ -108,9 +137,46 @@ function Digits(props: { text: string }) {
 function limitOf(benchmark: string): { tag: string; title: string } | null {
 	const reason = headline.find((r) => r.choice.benchmark === "disk_read_io_uring")?.choice.reason ?? "";
 	if (!/IOPS limit/.test(reason) || !/throughput limit is what disk_read_sequential/.test(reason)) return null;
-	if (benchmark === "disk_read_io_uring") return { tag: "gp3 IOPS", title: reason };
-	if (benchmark === "disk_read_sequential") return { tag: "gp3 throughput", title: reason };
+	if (benchmark === "disk_read_io_uring" || benchmark === "disk_read_sequential") return { tag: "gp3 limit", title: reason };
 	return null;
+}
+
+/**
+ * One median, rounded to the chart's decimals; opened, every digit of its p5, median and p95, the Runs
+ * counted, and its Series file (each Run with its evidence). Only one is open at a time.
+ */
+function Figure(props: { m: Point; row: number; unit: string; pad: string; last: boolean }) {
+	const m = props.m;
+	const all = [m.p5.full, m.p50.full, m.p95.full];
+	const cells: [string, string, string][] = [
+		["p95", m.p95.full, m.p95.short],
+		["p50", m.p50.full, m.p50.short],
+		["p5", m.p5.full, m.p5.short],
+	];
+	return (
+		<details class={props.last ? "fig up" : "fig"} name="fig" style={`grid-row:${props.row}`}>
+			<summary class="v" style={props.pad} title={`${m.instanceType}, ${props.unit}: median ${m.p50.full}, ${m.runs} Runs`}>
+				{m.p50.short}
+			</summary>
+			<div class="pop">
+				{cells.map(([k, v, shown]) => (
+					<>
+						<span class="k">{k}</span>
+						<span class={k === "p50" ? "x med" : "x"} style={padFor(v, all)}>
+							<Digits text={v} shown={shown} />
+						</span>
+					</>
+				))}
+				<span class="k">n</span>
+				<span class="x" style={padFor(String(m.runs), all)}>
+					{m.runs}
+				</span>
+				<a class="go" href={m.url} title="Its Series file: every Run, each with its evidence">
+					Runs ↗
+				</a>
+			</div>
+		</details>
+	);
 }
 
 function Card(props: { inst: Instrument; index: number }) {
@@ -121,6 +187,9 @@ function Card(props: { inst: Instrument; index: number }) {
 	const limit = limitOf(c.benchmark);
 	const texts = inst.marks.map((m) => m.p50.short);
 	const unit = c.per ? `${inst.unit} / ${c.per.of}` : inst.unit;
+	const runs = inst.marks.map((m) => m.runs);
+	const fewest = Math.min(...runs);
+	const most = Math.max(...runs);
 	return (
 		<article class="card" id={`b-${c.benchmark}`} aria-labelledby={`h-${c.benchmark}`}>
 			<header class="card-h">
@@ -135,25 +204,21 @@ function Card(props: { inst: Instrument; index: number }) {
 						{limit.tag}
 					</a>
 				) : null}
+				<span class="n" title={`Runs counted: ${inst.marks.map((m) => `${m.instanceType} ${m.runs}`).join(", ")}`}>
+					n {fewest === most ? fewest : `${fewest}–${most}`}
+				</span>
 				<span class="unit" title={unit}>
 					{inst.unit}
 				</span>
 			</header>
-			<div class="chart" style={`--n:${inst.marks.length}`}>
+			<div class={["chart", familiesUnique ? "" : "whole", zoom ? "zoomed" : ""].filter(Boolean).join(" ")} style={`--n:${inst.marks.length}`}>
 				<Plot inst={inst} scale={scale} />
 				{inst.marks.map((m, i) => (
 					<>
 						<span class="m" style={`grid-row:${i + 1}`}>
-							{m.instanceType}
+							<Name type={m.instanceType} />
 						</span>
-						<a
-							class="v"
-							href={m.url}
-							style={`grid-row:${i + 1};${padFor(m.p50.short, texts)}`}
-							title={`${m.instanceType}, ${unit}: median ${m.p50.full}, p5 ${m.p5.full}, p95 ${m.p95.full}, ${m.runs} counted Runs`}
-						>
-							{m.p50.short}
-						</a>
+						<Figure m={m} row={i + 1} unit={unit} pad={padFor(m.p50.short, texts)} last={i >= inst.marks.length - 2} />
 					</>
 				))}
 				<span class="dir" title={c.lead === "rate" ? "More is faster" : "Less is faster"}>
@@ -168,57 +233,6 @@ function Card(props: { inst: Instrument; index: number }) {
 				) : null}
 			</div>
 		</article>
-	);
-}
-
-/** Every figure in full: p5, median (a link to its Series file) and p95, and the Runs counted, per machine. */
-function Every(props: { instruments: Instrument[] }) {
-	return (
-		<details class="every" id="digits">
-			<summary>
-Exact percentiles and Run counts</summary>
-			<div class="scroll" tabindex="0" role="region" aria-label="Exact figures">
-				<table class="digits">
-					<thead>
-						<tr>
-							<th scope="col">
-								<span class="vh">Benchmark</span>
-							</th>
-							{machines.map((m) => (
-								<th scope="col">{m.instanceType}</th>
-							))}
-						</tr>
-					</thead>
-					<tbody>
-						{props.instruments.map((inst) => {
-							const all = inst.marks.flatMap((m) => [m.p5.full, m.p50.full, m.p95.full]);
-							const c = inst.row.choice;
-							return (
-								<tr>
-									<th scope="row">
-										<a href={`#b-${c.benchmark}`}>{c.label}</a> <span class="u">{c.per ? `${inst.unit} / ${c.per.of}` : inst.unit}</span>
-									</th>
-									{inst.marks.map((m) => (
-										<td>
-											<span style={padFor(m.p5.full, all)}>
-												<Digits text={m.p5.full} />
-											</span>
-											<a class="med" href={m.url} style={padFor(m.p50.full, all)}>
-												<Digits text={m.p50.full} />
-											</a>
-											<span style={padFor(m.p95.full, all)}>
-												<Digits text={m.p95.full} />
-											</span>
-											<span class="n">n={m.runs}</span>
-										</td>
-									))}
-								</tr>
-							);
-						})}
-					</tbody>
-				</table>
-			</div>
-		</details>
 	);
 }
 
@@ -246,7 +260,6 @@ export default function Page() {
 	const newest = formatMoment(snapshot.newestRunStartedAt);
 	const runs = formatCount(snapshot.runCount).full;
 	const failed = formatCount(snapshot.failedRuns).full;
-	const seriesCount = formatCount(snapshot.seriesCount).full;
 	const prices = machines.map((m) => formatUsd(m.price.usdPerHour, { per: "hour" }));
 	const priceScale = zeroScale(Math.max(...prices.map((p) => p.value)), 3);
 
@@ -321,14 +334,6 @@ export default function Page() {
 								</dd>
 							</div>
 							<div>
-								<dt>Series</dt>
-								<dd>
-									<a href={links.seriesList}>
-										<b>{seriesCount}</b>
-									</a>
-								</dd>
-							</div>
-							<div>
 								<dt>Region</dt>
 								<dd>
 									<b>{snapshot.region}</b>
@@ -398,7 +403,7 @@ export default function Page() {
 									{machines.map((m, i) => (
 										<tr>
 											<th scope="row" title={m.processor}>
-												{m.instanceType}
+												<Name type={m.instanceType} />
 											</th>
 											<td>{m.vcpu}</td>
 											<td>{m.memory.replace(/ GiB$/, "")}</td>
@@ -419,7 +424,6 @@ export default function Page() {
 							<Card inst={inst} index={i} />
 						))}
 					</div>
-					<Every instruments={instruments} />
 				</section>
 
 				<section class="band" id="api" aria-labelledby="h-api">
