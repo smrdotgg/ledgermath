@@ -52,7 +52,7 @@ a {
 	gap: 1rem;
 }
 
-.designs li {
+.designs > li {
 	border: 1px solid var(--line);
 	padding: 0 1rem;
 }
@@ -94,4 +94,13 @@ thead th:first-child {
 
 li {
 	overflow-wrap: anywhere;
+}
+
+.pages {
+	padding-left: 1.25rem;
+	margin: 0.5rem 0 1rem;
+}
+
+.pages details {
+	display: inline;
 }

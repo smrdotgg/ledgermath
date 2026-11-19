@@ -142,11 +142,41 @@ and exits 1 if the page logs an error, fails to load something or reaches anothe
 - At the start of a round, merge the latest `home-variations` into your branch
   (`git merge origin/home-variations`) to pick up shared fixes.
 
+## Forms: the same design with more or less text
+
+To show the maintainer your design at another density, commit that version on your branch and
+tag the commit **`home/v<n>/form-<name>`**, the name of lowercase letters, digits and single
+dashes (`spare`, `lean`, `full`, anything else). Push the tag: `git push origin home/v<n>/form-<name>`.
+To change a form, move its tag (`git tag -f …`, then `git push -f origin home/v<n>/form-<name>`).
+
+Every build of the preview (`bun run build`, and so every deployment of `home-variations`) builds
+each form tag from its own commit, with that commit's own build, into a frozen copy served at
+**`/forms/v<n>/<name>/`**. The commit need not be merged into `home-variations`; it only has to be
+on origin, under its tag. A form whose commit does not build is shown on the picker as "Does not
+build", with the error, and breaks nothing else. A form appears in the preview at the next
+deployment of `home-variations` (about every half hour); until then, `bun run build` in your
+checkout after `git fetch origin --tags` shows it at `http://127.0.0.1:4173/forms/v<n>/<name>/`
+under `bun run preview`.
+
+Forms are built afresh each time and not committed, unlike checkpoints: a form's tag may move,
+and two dozen committed copies would bloat the branch.
+
+## Words
+
+The picker gives every page it links to (the current design, each form, each checkpoint) its
+count of words a visitor reads that are not figures, and apart from those the words folded inside
+closed `<details>`. `bun run check:variation v<n>` prints the same two counts. How a word is
+counted, and what counts as a figure: `site/scripts/variations/words.ts`.
+
 ## How a round ends (for reference)
 
 The judges score every design's screenshots in eight categories, 1 to 10. The orchestrator runs
 `bun run variations:publish` (`site/scripts/variations-publish.ts`), which merges the design
 branches, records the scores in `site/variations/scores.json`, and freezes a design at
 checkpoint T (7, 8, 8.5, 9, 9.5, 10) the first time every judge gives it at least T in every
-category: tag `home/v<n>/cp-<T>`, a copy served at `/checkpoints/v<n>/cp-<T>/`. The picker at `/`
-of the preview lists the designs, their checkpoints and every round's scores.
+category: tag `home/v<n>/cp-<T>`, a copy committed under `site/public/checkpoints/` and served at
+`/checkpoints/v<n>/cp-<T>/` (built by the same code as the forms, `site/scripts/variations/frozen.ts`).
+The picker at `/` of the preview lists the designs, their forms and checkpoints with their word
+counts, and every round's scores. `bun run check` proves every page the picker links to is there,
+holds text, and finds every stylesheet, script, font and image it loads, at the address it asks
+for (`site/scripts/variations/check-links.ts`).

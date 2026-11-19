@@ -15,12 +15,13 @@
  *     judge of the round scored it and gave it at least T in every category. For each checkpoint
  *     a design reaches for the first time, it tags the design's commit home/v<n>/cp-<T> and
  *     builds that commit's design into site/public/checkpoints/v<n>/cp-<T>/, served in the
- *     preview at /checkpoints/v<n>/cp-<T>/. The design's commit is the one its screenshots were
+ *     preview at /checkpoints/v<n>/cp-<T>/ (scripts/variations/frozen.ts, as the forms are). The design's commit is the one its screenshots were
  *     taken of (DIR given as --shots holds v<n>/shots.json, written by `bun run shots`), when
  *     that commit is in the branch merged and its design had no uncommitted changes; otherwise
  *     the tip of home-v<n> (or, with no such branch, the last commit that changed the design).
- *  4. Builds everything (`bun run build`: a design that does not build is shown as such; the
- *     command stops only if the picker fails), commits scores.json and the checkpoints, and
+ *  4. Builds everything (`bun run build`: a design or form that does not build is shown as such;
+ *     the command stops only if the picker fails; the forms are origin's form tags, fetched in
+ *     step 1, built afresh and not committed), commits scores.json and the checkpoints, and
  *     pushes home-variations and the new tags in one push, so the round makes one preview
  *     deployment.
  *  5. Prints each subject's lowest and mean score per judge, and the new checkpoints.
@@ -31,11 +32,11 @@
  */
 
 import Ajv2020 from "ajv/dist/2020";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import judgementSchema from "./variations-judgement.schema.json";
 import scoresSchema from "./variations-scores.schema.json";
+import { freezeDesign } from "./variations/frozen";
 import { parseArgs, SITE, SLOTS, type Slot } from "./variations/lib";
 
 const REPO = resolve(SITE, "..");
@@ -227,27 +228,17 @@ for (const [slot, levels] of reached) {
 	}
 }
 
-function buildFrozen(checkpoint: NewCheckpoint): void {
-	const work = mkdtempSync(join(tmpdir(), `ledgermath-${checkpoint.design}-${checkpoint.level}-`));
-	try {
-		git(["worktree", "add", "--detach", work, checkpoint.commit]);
-		symlinkSync(join(SITE, "node_modules"), join(work, "site", "node_modules"), "dir");
-		const out = join(SITE, "public", "checkpoints", checkpoint.design, `cp-${levelName(checkpoint.level)}`);
-		const built = Bun.spawnSync(["bun", "scripts/variations/build-one.ts", checkpoint.design, "--out", out, "--base", checkpoint.path, "--quiet"], {
-			cwd: join(work, "site"),
-			stdout: "pipe",
-			stderr: "pipe",
-		});
-		if (built.exitCode !== 0) fail(`${checkpoint.design} at ${checkpoint.commit} does not build, so checkpoint ${checkpoint.level} cannot be frozen:\n${built.stderr}`);
-	} finally {
-		git(["worktree", "remove", "--force", work], { allowFail: true });
-		rmSync(work, { recursive: true, force: true });
-	}
+// Built by the same mechanism as the forms (scripts/variations/frozen.ts): the commit's own
+// build-one.ts, from its tree, into the directory that is committed.
+async function buildFrozen(checkpoint: NewCheckpoint): Promise<void> {
+	const out = join(SITE, "public", "checkpoints", checkpoint.design, `cp-${levelName(checkpoint.level)}`);
+	const frozen = await freezeDesign({ slot: checkpoint.design, commit: checkpoint.commit, out, base: checkpoint.path });
+	if (!frozen.builds) fail(`${checkpoint.design} at ${checkpoint.commit} does not build, so checkpoint ${checkpoint.level} cannot be frozen:\n${frozen.error}`);
 }
 
 if (!dryRun) {
 	for (const checkpoint of newCheckpoints) {
-		buildFrozen(checkpoint);
+		await buildFrozen(checkpoint);
 		const exists = git(["rev-parse", "--verify", "--quiet", `refs/tags/${checkpoint.tag}`], { allowFail: true });
 		if (exists.ok) {
 			checkpoint.tagged = exists.out === checkpoint.commit ? "tag already there" : `TAG ALREADY THERE, on ${exists.out.slice(0, 12)}: left as it is`;

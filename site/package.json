@@ -10,7 +10,7 @@
 		"serve:variation": "bun scripts/variations/serve.ts",
 		"preview": "bun scripts/serve.ts",
 		"typecheck": "tsc --noEmit",
-		"check": "bun scripts/check-output.ts && bun scripts/variations/check-built.ts",
+		"check": "bun scripts/check-output.ts && bun scripts/variations/check-built.ts && bun scripts/variations/check-links.ts",
 		"check:variation": "bun scripts/variations/check.ts",
 		"shots": "bun scripts/variations/shots.ts",
 		"variations:publish": "bun scripts/variations-publish.ts"

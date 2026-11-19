@@ -1,9 +1,12 @@
 // The picker at /: a tool for looking at the eight designs, not a ninth design. It lists each
-// design (its meta.json), whether it builds, its frozen checkpoints, and the judges' scores per
-// round (site/variations/scores.json, written by scripts/variations-publish.ts).
+// design (its meta.json), whether it builds, its forms (the same design with more or less text,
+// tags home/v<n>/form-<name>), its frozen checkpoints, each with how many words a visitor reads
+// on it (scripts/variations/words.ts), and the judges' scores per round
+// (site/variations/scores.json, written by scripts/variations-publish.ts). Every link to a page
+// is checked by scripts/variations/check-links.ts.
 import "./picker.css";
 import { formatMoment, snapshot } from "../data";
-import { asScores, readInput, type ScoresFile } from "./input";
+import { asScores, readInput, type ScoresFile, type WordCount } from "./input";
 import { PICKER_TEXT } from "./picker.text";
 
 const REFERENCE = /^ref:/;
@@ -18,6 +21,18 @@ const SHORT: Record<string, string> = {
 	phone_layout: "Phone",
 	craft_and_distinctiveness: "Craft",
 };
+
+// As scripts/variations/words.ts's describeWords (which the picker may not import: it builds alone).
+function Words(props: { words: WordCount | null }) {
+	const w = props.words;
+	if (!w) return <span class="muted"> (words not counted)</span>;
+	return (
+		<span class="words" title={`${w.all.toLocaleString("en")} words in all, ${w.prose.toLocaleString("en")} not figures, ${w.folded.toLocaleString("en")} of them folded in a closed <details>`}>
+			{" "}
+			{w.visible.toLocaleString("en")} words{w.folded > 0 ? ` (+${w.folded.toLocaleString("en")} folded)` : ""}
+		</span>
+	);
+}
 
 function subjectsOf(round: ScoresFile["rounds"][number]): string[] {
 	const all = new Set<string>();
@@ -96,6 +111,7 @@ export default function Page() {
 			<ol class="designs">
 				{input.designs.map((design) => {
 					const saved = input.checkpoints.filter((c) => c.design === design.slot);
+					const forms = (input.forms ?? []).filter((f) => f.design === design.slot);
 					return (
 						<li>
 							<h3>
@@ -119,19 +135,55 @@ export default function Page() {
 								<p class="muted">Whether it builds is not known (the picker was built on its own).</p>
 							) : null}
 							{design.metaProblem ? <p class="bad">{design.metaProblem}</p> : null}
-							<p class="muted">
-								{saved.length === 0 ? "No checkpoint yet." : "Checkpoints: "}
-								{saved.map((c, i) => (
-									<>
-										{i > 0 ? ", " : ""}
-										<a href={c.path}>{c.level}</a>
-									</>
+							<ul class="pages">
+								{design.builds === false ? null : (
+									<li>
+										<a href={`/${design.slot}/`}>Current page</a>
+										<Words words={design.words} />
+									</li>
+								)}
+								{forms.length === 0 ? <li class="muted">No form yet.</li> : null}
+								{forms.map((form) => (
+									<li id={`form-${form.design}-${form.name}`}>
+										{form.builds ? (
+											<>
+												Form <a href={form.path}>{form.name}</a>
+												<Words words={form.words} />
+											</>
+										) : (
+											<>
+												Form {form.name}{" "}
+												<details>
+													<summary class="bad">Does not build</summary>
+													<pre>
+														{form.tag} at {form.commit.slice(0, 12)}: {form.error}
+													</pre>
+												</details>
+											</>
+										)}
+									</li>
 								))}
-							</p>
+								{saved.length === 0 ? <li class="muted">No checkpoint yet.</li> : null}
+								{saved.map((c) => (
+									<li>
+										Checkpoint <a href={c.path}>{c.level}</a>
+										<Words words={c.words} />
+									</li>
+								))}
+							</ul>
 						</li>
 					);
 				})}
 			</ol>
+
+			{(input.formsIgnored ?? []).length > 0 ? (
+				<ul class="bad">
+					{input.formsIgnored.map((why) => (
+						<li>Not a form: {why}</li>
+					))}
+				</ul>
+			) : null}
+			<p class="muted">Words: those a visitor reads without opening anything, figures not counted; words inside closed details elements are counted apart, as folded.</p>
 
 			<h2>Scores</h2>
 			{input.scoresProblem ? <p class="bad">{input.scoresProblem}</p> : null}

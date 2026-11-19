@@ -54,7 +54,7 @@ function files(at: string): string[] {
 const ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " " };
 
 /** Decodes the character references an attribute value or text is likely to hold. */
-function decodeEntities(text: string): string {
+export function decodeEntities(text: string): string {
 	return text.replace(/&(#x[0-9a-f]+|#[0-9]+|[a-z]+);/gi, (whole, name: string) => {
 		if (name[0] === "#") {
 			const code = name[1] === "x" || name[1] === "X" ? parseInt(name.slice(2), 16) : parseInt(name.slice(1), 10);
@@ -65,7 +65,7 @@ function decodeEntities(text: string): string {
 }
 
 /** The URLs of a srcset, as the HTML standard splits it: a URL may hold commas (a data: URL does), descriptors may not. */
-function srcsetUrls(value: string): string[] {
+export function srcsetUrls(value: string): string[] {
 	const urls: string[] = [];
 	let at = 0;
 	while (at < value.length) {
@@ -94,7 +94,7 @@ function all(text: string, pattern: RegExp): string[] {
 	return [...text.matchAll(pattern)].map((match) => match.slice(1).find((group) => group !== undefined) ?? "");
 }
 
-function cssReferences(css: string): string[] {
+export function cssReferences(css: string): string[] {
 	const text = css.replace(/\/\*[\s\S]*?\*\//g, "");
 	return [
 		...all(text, /url\(\s*(?:"([^"]*)"|'([^']*)'|([^)\s"']*))\s*\)/gi),
@@ -102,7 +102,7 @@ function cssReferences(css: string): string[] {
 	];
 }
 
-function jsReferences(js: string): string[] {
+export function jsReferences(js: string): string[] {
 	return [
 		...all(js, /\bimport\s*\(\s*(?:"([^"]+)"|'([^']+)')\s*\)/g),
 		...all(js, /\b(?:import|export)\b[^"';]*?\bfrom\s*(?:"([^"]+)"|'([^']+)')/g),
@@ -150,7 +150,7 @@ function references(path: string, text: string): Reference[] {
 }
 
 /** The text of an HTML page's body as a reader sees it with JavaScript off, near enough. */
-function bodyText(html: string): string {
+export function bodyText(html: string): string {
 	return decodeEntities(
 		html
 			.replace(/<!--[\s\S]*?-->/g, "")

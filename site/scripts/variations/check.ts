@@ -21,6 +21,10 @@
  *     page shows with JavaScript on, it shows with JavaScript off, and it holds at least 200
  *     characters of text.
  *
+ * It also prints, not as a check, the page's words that are not figures: those a visitor reads
+ * without opening anything, and those folded in closed <details> (scripts/variations/words.ts;
+ * the picker shows the same counts).
+ *
  * Exit 0 when every check passes, 1 when one fails (each failure is listed), 2 on a bad command line.
  */
 
@@ -30,6 +34,7 @@ import axe from "axe-core";
 import type { Page } from "playwright";
 import { buildAndServe, launch, newContext, SCHEMES, settle, SIZES, watchPage } from "./browser";
 import { pageDir, SITE, slotArgument, type Slot } from "./lib";
+import { countWords, type WordCount } from "./words";
 
 const BUDGET_BYTES = 300_000;
 const STRUCTURE_RULES = ["landmark-one-main", "page-has-heading-one", "heading-order", "region", "landmark-unique", "landmark-no-duplicate-main"];
@@ -73,12 +78,14 @@ async function visibleText(page: Page): Promise<string> {
 
 const slot = slotArgument(process.argv[2], "usage: bun run check:variation v<1-8>");
 const own = pageDir(slot);
+let words: WordCount | null = null;
 
 // 1. Build, types, no tests.
 let served: Awaited<ReturnType<typeof buildAndServe>>;
 try {
 	served = await buildAndServe(slot);
 	record("builds on its own", [], "built");
+	words = countWords(readFileSync(join(served.out, "index.html"), "utf8"));
 } catch (error) {
 	record("builds on its own", [error instanceof Error ? error.message : String(error)], "");
 	report();
@@ -201,6 +208,10 @@ function report(): never {
 	for (const r of results) {
 		console.log(`${r.ok ? "PASS" : "FAIL"}  ${r.name}`);
 		for (const line of r.detail) console.log(`      ${line}`);
+	}
+	if (words) {
+		console.log(`WORDS ${words.visible.toLocaleString("en")} visible words that are not figures, ${words.folded.toLocaleString("en")} more folded in closed <details>`);
+		console.log(`      (${words.all.toLocaleString("en")} words in all, figures included; how they are counted: scripts/variations/words.ts)`);
 	}
 	const failed = results.filter((r) => !r.ok).length;
 	console.log(failed ? `${slot}: ${failed} check${failed === 1 ? "" : "s"} failed` : `${slot}: every check passed`);

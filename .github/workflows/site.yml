@@ -59,13 +59,17 @@ jobs:
         with:
           bun-version: 1.4.4
       - run: bun install --frozen-lockfile
+      # The checkout above has no tags. The build builds each form tag from its own commit
+      # (site/scripts/variations/frozen.ts), which need not be in this branch's history.
+      - name: The form and checkpoint tags (home/...) and the commits they name
+        run: git fetch --no-tags --depth=1 origin '+refs/tags/home/*:refs/tags/home/*'
       - name: Type-check
         run: bun run typecheck
       - name: Test the output check against its fixtures
         run: bun test
       - name: Build, then prerender into dist/client
         run: bun run build
-      - name: index.html holds the picker's text (src/picker/picker.text.ts) outside its scripts, the output refers to no file it lacks, and each design built or is shown as not building
+      - name: index.html holds the picker's text (src/picker/picker.text.ts) outside its scripts, the output refers to no file it lacks, each design and form built or is shown as not building, and every page the picker links to loads all its files
         run: bun run check
       - name: The site carries the notices of the code it ships (THIRD-PARTY-NOTICES.md, section 3)
         run: cmp public/third-party-notices.txt dist/client/third-party-notices.txt
