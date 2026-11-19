@@ -129,8 +129,7 @@ a:hover {
 }
 a:focus-visible,
 .table-box:focus-visible,
-pre:focus-visible,
-.digits-toggle:focus-visible + .table-tools .switch {
+pre:focus-visible {
 	outline: 2px solid var(--accent);
 	outline-offset: 3px;
 	border-radius: 4px;
@@ -350,26 +349,33 @@ h1 {
 	margin-top: 1.75rem;
 }
 
+/* freshness: the day as a ruler, then one line of facts */
 .fresh {
-	display: block;
-	margin-top: 1.25rem;
+	margin-top: 1.6rem;
 	font-size: 0.9375rem;
 	color: var(--ink-2);
+}
+.fresh-line {
+	margin-top: 0.35rem;
+	display: flex;
+	flex-wrap: wrap;
+	align-items: baseline;
+}
+.fresh-line > span {
+	white-space: nowrap;
+}
+.fresh-line > span + span::before {
+	content: "·";
+	display: inline-block;
+	margin: 0 0.55rem;
+	color: var(--ink-3);
 }
 .fresh time {
 	color: var(--ink);
 	font-weight: 500;
 }
-.pulse {
-	display: inline-block;
-	margin-right: 0.6rem;
-	vertical-align: 0.05em;
-	width: 0.55rem;
-	height: 0.55rem;
-	border-radius: 50%;
-	background: var(--accent);
-	box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 18%, transparent);
-	flex: none;
+.fresh a {
+	color: var(--ink-2);
 }
 
 /* the traced figure */
@@ -462,8 +468,8 @@ h1 {
 .strip {
 	position: relative;
 	margin-top: 1.1rem;
-	height: 3.6rem;
-	font-size: 0.75rem;
+	height: 3.75rem;
+	font-size: 0.8125rem;
 }
 .st-zoom {
 	position: absolute;
@@ -569,6 +575,7 @@ h1 {
 .trail {
 	display: grid;
 	grid-template-columns: repeat(3, minmax(0, 1fr));
+	column-gap: 1rem;
 	margin-top: 1.1rem;
 	position: relative;
 	counter-reset: tl;
@@ -577,7 +584,7 @@ h1 {
 	content: "";
 	position: absolute;
 	left: 0.3rem;
-	right: calc(33.33% - 0.3rem);
+	right: calc((100% - 2rem) / 3 - 0.3rem);
 	top: 0.3rem;
 	border-top: 1.5px solid var(--accent);
 }
@@ -588,7 +595,7 @@ h1 {
 	flex-direction: column;
 	gap: 0.15rem;
 	min-width: 0;
-	font-size: 0.8125rem;
+	font-size: 0.875rem;
 }
 .trail li::before {
 	content: "";
@@ -604,80 +611,34 @@ h1 {
 .trail li:last-child::before {
 	background: var(--accent);
 }
-.trail a {
+.trail a,
+.tl-run {
 	color: var(--accent);
 	font-weight: 600;
 	display: flex;
-	flex-wrap: wrap;
-	gap: 0 0.35rem;
+	flex-direction: column;
+	gap: 0.1rem;
 	overflow-wrap: anywhere;
 }
-.trail a .mono {
+.tl-run {
+	color: var(--ink);
+}
+.trail .mono {
 	font-weight: 500;
 }
 .tl-v {
 	color: var(--ink-2);
-	font-size: 0.75rem;
-	overflow-wrap: anywhere;
-}
-a.tl-v {
-	color: var(--accent);
-	font-weight: 500;
+	font-size: 0.8125rem;
+	white-space: nowrap;
 }
 
-/* ------------------------------------------------------------- proofs */
+/* ------------------------------------------------------------- the day ruler */
 
-.proofs {
-	padding: 3.25rem 0 3.5rem;
-	border-top: 1px solid var(--rule);
-}
-.section-kicker {
-	margin-bottom: 2.25rem;
-}
-.proof-grid {
-	display: grid;
-	grid-template-columns: repeat(3, minmax(0, 1fr));
-	gap: 0;
-}
-.proof {
-	padding: 0 2.25rem;
-	border-left: 1px solid var(--rule);
-}
-.proof:first-child {
-	padding-left: 0;
-	border-left: 0;
-}
-.proof:last-child {
-	padding-right: 0;
-}
-.big {
-	font: 600 3rem/1 var(--serif);
-	letter-spacing: -0.03em;
-	font-variant-numeric: lining-nums tabular-nums;
-	min-height: 3.25rem;
-	display: flex;
-	align-items: flex-end;
-}
-.big-of {
-	font-size: 0.5em;
-	letter-spacing: -0.01em;
-	color: var(--ink-3);
-	margin-left: 0.25em;
-}
-.proof h3 {
-	margin-top: 0.75rem;
-	font: 500 0.98rem/1.45 var(--sans);
-	color: var(--ink-2);
-}
-.times {
-	color: var(--ink);
-	font-variant-numeric: tabular-nums;
-}
 .dayline {
 	display: block;
 	width: 100%;
-	max-width: 22rem;
-	height: 3.25rem;
+	max-width: 25rem;
+	height: auto;
 	overflow: visible;
 }
 .dl-axis {
@@ -688,9 +649,13 @@ a.tl-v {
 	stroke: var(--ink-3);
 	stroke-width: 1;
 }
-.dl-label {
+.dl-label,
+.dl-utc {
 	font: 500 10px var(--mono);
 	fill: var(--ink-2);
+}
+.dl-utc {
+	fill: var(--ink-3);
 }
 .dl-boot {
 	fill: var(--ink);
@@ -704,8 +669,11 @@ a.tl-v {
 .dl-now {
 	fill: var(--accent);
 }
+.dl-now-ring {
+	fill: color-mix(in srgb, var(--accent) 20%, transparent);
+}
 .dl-now-label {
-	font: 500 10.5px var(--mono);
+	font: 600 10px var(--mono);
 	fill: var(--accent);
 }
 
@@ -777,98 +745,6 @@ h2 {
 .dir {
 	font: 600 0.875rem/1 var(--sans);
 	color: var(--accent);
-}
-
-/* how it works */
-
-.how {
-	padding: 5.5rem 0;
-	background: var(--paper-2);
-	border-top: 1px solid var(--rule);
-	border-bottom: 1px solid var(--rule);
-}
-.steps {
-	display: grid;
-	grid-template-columns: repeat(5, minmax(0, 1fr));
-	counter-reset: step;
-}
-.step-figure {
-	margin: 0 -0.0625rem;
-}
-.step-art {
-	display: block;
-	width: 100%;
-	height: auto;
-	overflow: visible;
-}
-.flow {
-	stroke: var(--ink-3);
-	stroke-width: 1.5;
-	stroke-dasharray: 3 4;
-}
-.art-box {
-	fill: var(--card);
-	stroke: var(--rule-2);
-	stroke-width: 1.2;
-}
-.art-paper {
-	fill: var(--card);
-	stroke: var(--ink-3);
-	stroke-width: 1.2;
-	stroke-linejoin: round;
-}
-.art-box-line {
-	fill: none;
-	stroke: var(--ink-3);
-	stroke-width: 1.2;
-}
-.art-line {
-	stroke: var(--ink-3);
-	stroke-width: 1.5;
-	stroke-linecap: round;
-}
-.art-mark {
-	stroke: var(--ink);
-	stroke-width: 1.5;
-}
-.art-mark-accent {
-	stroke: var(--accent);
-	stroke-width: 2.5;
-}
-.art-dot {
-	fill: var(--ink-3);
-}
-.art-fill-accent {
-	fill: var(--accent);
-}
-.art-on-accent {
-	fill: var(--accent-ink);
-}
-.art-fill-ink {
-	fill: var(--ink);
-}
-.art-text,
-.art-text-strong,
-.art-text-on-accent,
-.art-text-on-ink,
-.art-text-on-ink-dim {
-	font: 400 9.5px var(--mono);
-	fill: var(--ink-2);
-}
-.art-text-strong {
-	font-weight: 500;
-	fill: var(--accent);
-}
-.art-text-on-accent {
-	fill: var(--accent-ink);
-	font-weight: 500;
-}
-.art-text-on-ink {
-	fill: var(--paper);
-	font-weight: 500;
-}
-.art-text-on-ink-dim {
-	fill: color-mix(in srgb, var(--paper) 78%, var(--ink));
 }
 
 /* machines */
@@ -958,19 +834,8 @@ table.spec {
 .numbers {
 	padding: 4rem 0 5.5rem;
 }
-.digits-toggle {
-	position: absolute;
-	opacity: 0;
-	width: 1px;
-	height: 1px;
-	pointer-events: none;
-}
-.table-tools {
-	display: flex;
-	align-items: center;
-	gap: 0.75rem 1.5rem;
+.numbers .key {
 	margin-bottom: 0.9rem;
-	flex-wrap: wrap;
 }
 .jump {
 	display: none;
@@ -990,50 +855,6 @@ table.spec {
 	color: var(--accent);
 	box-shadow: inset 0 0 0 1px var(--accent);
 }
-.table-hint {
-	font-size: 0.875rem;
-	color: var(--ink-2);
-	margin-right: auto;
-}
-.table-tools {
-	justify-content: space-between;
-}
-.switch {
-	display: inline-flex;
-	align-items: center;
-	gap: 0.6rem;
-	font-size: 0.875rem;
-	font-weight: 500;
-	cursor: pointer;
-	white-space: nowrap;
-	user-select: none;
-}
-.switch-track {
-	position: relative;
-	width: 2.25rem;
-	height: 1.3rem;
-	border-radius: 999px;
-	background: var(--rule-2);
-	transition: background-color 0.15s;
-}
-.switch-thumb {
-	position: absolute;
-	top: 0.15rem;
-	left: 0.15rem;
-	width: 1rem;
-	height: 1rem;
-	border-radius: 50%;
-	background: var(--card);
-	box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
-	transition: transform 0.15s;
-}
-.digits-toggle:checked + .table-tools .switch-track {
-	background: var(--accent);
-}
-.digits-toggle:checked + .table-tools .switch-thumb {
-	transform: translateX(0.95rem);
-}
-
 .table-box {
 	overflow-x: auto;
 	background: var(--card);
@@ -1215,17 +1036,6 @@ td.is-traced .cell > summary::before {
 	border-radius: 50%;
 	background: var(--accent);
 }
-.v-short {
-	display: none;
-	font: 500 1rem/1.3 var(--mono);
-	letter-spacing: -0.02em;
-}
-.numbers:has(.digits-toggle:checked) .v-full {
-	display: none;
-}
-.numbers:has(.digits-toggle:checked) .v-short {
-	display: inline;
-}
 .spread {
 	position: relative;
 	display: block;
@@ -1343,22 +1153,25 @@ td.is-traced .cell > summary::before {
 	font-size: 1.0625rem;
 	max-width: 34em;
 }
+/* the commands: one block, a Copy per line */
 .endpoints {
 	margin-top: 2.25rem;
-	display: grid;
-	gap: 1.4rem;
+	background: var(--band-2);
+	border: 1px solid var(--band-rule);
+	border-radius: 10px;
+}
+.endpoints > li + li {
+	border-top: 1px solid var(--band-rule);
+}
+.endpoints .cmd {
+	background: transparent;
+	border: 0;
+	border-radius: 0;
 }
 .endpoints > li,
 .api-copy,
 .api-code {
 	min-width: 0;
-}
-.ep-label {
-	font: 500 0.75rem/1.4 var(--mono);
-	letter-spacing: 0.06em;
-	text-transform: uppercase;
-	color: var(--band-accent);
-	margin-bottom: 0.45rem;
 }
 .cmd {
 	position: relative;
@@ -1435,14 +1248,18 @@ td.is-traced .cell > summary::before {
 .code-head .mono {
 	overflow-wrap: anywhere;
 }
-.code-tag {
-	font: 500 0.6875rem/1 var(--mono);
-	text-transform: uppercase;
-	letter-spacing: 0.08em;
-	color: var(--band-ink-2);
-	border: 1px solid var(--band-rule);
-	padding: 0.3rem 0.45rem;
-	border-radius: 4px;
+/* the line that joins the file's figure to the page's: figures only, in the trace's colour */
+.j-note {
+	color: var(--band-accent);
+	font-weight: 500;
+}
+.j-note .trace-mark {
+	display: inline-block;
+	width: 0.45rem;
+	height: 0.45rem;
+	margin-right: 0.2rem;
+	vertical-align: 0.08em;
+	background: var(--band-accent);
 }
 .jl {
 	display: block;
@@ -1505,10 +1322,6 @@ pre {
 	}
 	.traced {
 		max-width: 34rem;
-	}
-	.steps {
-		grid-template-columns: repeat(3, minmax(0, 1fr));
-		row-gap: 2.5rem;
 	}
 	.api-grid {
 		grid-template-columns: minmax(0, 1fr);
@@ -1599,38 +1412,25 @@ pre {
 	.trail li::before {
 		top: 0.3rem;
 	}
-	.proofs {
-		padding: 2.25rem 0 2rem;
-	}
-	.section-kicker {
-		margin-bottom: 1rem;
-	}
-	.proof-grid {
-		grid-template-columns: minmax(0, 1fr);
-		gap: 1.1rem;
-	}
-	.proof {
-		padding: 1.1rem 0 0;
-		border-left: 0;
-		border-top: 1px solid var(--rule);
-	}
-	.proof:first-child {
-		padding-top: 0;
-		border-top: 0;
-	}
-	.proof h3 {
-		margin-top: 0.4rem;
-		font-size: 0.9375rem;
+	.trail a,
+	.tl-run {
+		flex-direction: row;
+		align-items: baseline;
+		gap: 0 0.4rem;
 	}
 	.dayline {
 		max-width: none;
-		height: auto;
 	}
-	.big {
-		font-size: 2.3rem;
-		min-height: 0;
+	.fresh-line {
+		row-gap: 0.15rem;
 	}
-	.how,
+	/* the newest Run has a line to itself; the counts and the prices share the next */
+	.fresh-line > span:first-child {
+		flex-basis: 100%;
+	}
+	.fresh-line > span:nth-child(2)::before {
+		display: none;
+	}
 	.machines {
 		padding: 3rem 0;
 	}
@@ -1640,41 +1440,26 @@ pre {
 	.section-head {
 		margin-bottom: 1.25rem;
 	}
-	.steps {
-		grid-template-columns: minmax(0, 1fr);
-		row-gap: 0;
-	}
-	.step {
+	/* a command: "$ curl" and Copy share the first line, the address takes the full width under them */
+	.cmd {
 		display: grid;
-		grid-template-columns: 6.5rem minmax(0, 1fr);
-		gap: 1rem;
-		align-items: center;
-		padding: 0.4rem 0;
-		border-top: 1px solid var(--rule);
+		grid-template-columns: minmax(0, 1fr) auto;
 	}
-	.step:first-child {
-		border-top: 0;
+	.cmd code {
+		grid-area: 1 / 1 / 2 / 3;
 	}
-	.step h3 {
-		margin-top: 0;
-		font-size: 1.0625rem;
+	.cmd .addr {
+		display: block;
+		margin-top: 0.5rem;
 	}
-	.step .flow {
-		display: none;
+	.cmd .copy {
+		grid-area: 1 / 2;
+		align-self: start;
+		margin-top: -0.1rem;
 	}
-	.step-figure {
-		overflow: hidden;
-		margin: 0;
-		padding: 0.6rem 0;
-	}
-	.step-art {
-		transform: scale(1.3);
-	}
-	/* machines: one card per type, labels drawn from each column's header */
+	/* machines: two lines a type, the price on the first, the rest run together on the second */
 	.spec-box {
-		background: transparent;
-		border: 0;
-		border-radius: 0;
+		border-radius: 12px;
 	}
 	.spec,
 	.spec tbody,
@@ -1685,52 +1470,49 @@ pre {
 		display: none;
 	}
 	.spec tr {
-		display: grid;
-		grid-template-columns: minmax(0, 1fr) auto;
-		background: var(--card);
-		border: 1px solid var(--rule);
-		border-radius: 12px;
-		margin-bottom: 0.75rem;
-		padding: 0.5rem 0.95rem 0.65rem;
+		position: relative;
+		padding: 0.7rem 0.95rem 0.75rem;
+		border-bottom: 1px solid var(--rule);
+	}
+	.spec tbody tr:last-child {
+		border-bottom: 0;
 	}
 	.spec th,
 	.spec td {
-		padding: 0.3rem 0;
+		display: inline;
+		padding: 0;
 		border: 0;
-		font-size: 0.875rem;
+		font-size: 0.8125rem;
+		line-height: 1.5;
+		color: var(--ink-2);
 	}
 	.spec th:first-child {
 		padding-left: 0;
 	}
 	.spec .spec-type {
+		display: block;
 		font-size: 1rem;
-		padding-bottom: 0.45rem;
-		border-bottom: 1px solid var(--rule);
+		color: var(--ink);
+		margin-bottom: 0.15rem;
 	}
 	.spec .spec-price {
-		padding-bottom: 0.45rem;
-		border-bottom: 1px solid var(--rule);
+		position: absolute;
+		top: 0.55rem;
+		right: 0.95rem;
 	}
 	.spec .usd {
 		font-size: 1.375rem;
 	}
 	.spec td[data-l] {
-		grid-column: 1 / -1;
-		display: grid;
-		grid-template-columns: 5.5rem minmax(0, 1fr);
-		gap: 0.75rem;
+		white-space: nowrap;
 	}
-	.spec td[data-l]::before {
-		content: attr(data-l);
+	.spec td[data-l="vCPU"]::after {
+		content: " vCPU";
+	}
+	.spec td[data-l] + td[data-l]::before {
+		content: "·";
+		margin: 0 0.4rem;
 		color: var(--ink-3);
-	}
-	.spec td[data-l="vCPU"] {
-		padding-top: 0.55rem;
-	}
-	.table-tools {
-		flex-direction: column;
-		align-items: flex-start;
-		gap: 0.75rem;
 	}
 	.key {
 		gap: 0.35rem 1rem;
@@ -1800,12 +1582,12 @@ pre {
 	.ht tbody tr:not(.section-row) > * {
 		border-bottom: 0;
 	}
+	/* every card alike: the title, the unit always under it */
 	.ht tbody tr:not(.section-row) > th {
 		display: flex;
-		flex-wrap: wrap;
-		align-items: baseline;
-		justify-content: space-between;
-		gap: 0 0.75rem;
+		flex-direction: column;
+		align-items: flex-start;
+		gap: 0.1rem;
 		border-bottom: 1px solid var(--rule);
 		margin-bottom: 0.25rem;
 	}
@@ -1827,19 +1609,20 @@ pre {
 	.ht td:last-child {
 		margin-bottom: 0.35rem;
 	}
+	/* one figure column, as wide as the widest figure on the page, so every card's bars start at one x */
 	.cell > summary {
 		display: grid;
-		grid-template-columns: 5.5rem auto minmax(2.5rem, 1fr);
+		grid-template-columns: 5.5rem var(--vw) minmax(2.5rem, 1fr);
 		align-items: center;
 		gap: 0 0.55rem;
 		margin: 0;
 		padding: 0.2rem 0.45rem;
+		font: 500 0.8125rem/1.3 var(--mono);
 	}
 	.cell-v {
 		display: contents;
 	}
-	.v-full,
-	.v-short {
+	.cell-v .exact {
 		grid-column: 2;
 	}
 	.spread {
@@ -1869,6 +1652,10 @@ pre {
 	.api {
 		padding: 3rem 0;
 	}
+	.api pre {
+		font-size: 0.75rem;
+		padding: 1rem;
+	}
 	.foot-row {
 		flex-direction: column;
 		align-items: flex-start;
@@ -1879,50 +1666,13 @@ pre {
 	html {
 		scroll-behavior: auto;
 	}
-	.btn,
-	.switch-track,
-	.switch-thumb {
+	.btn {
 		transition: none;
 	}
 }
 
 .numbers h2 {
 	margin-bottom: 1.5rem;
-}
-.step h3 {
-	margin-top: 1rem;
-	font: 600 1.125rem/1.25 var(--serif);
-	letter-spacing: -0.01em;
-}
-.step-n {
-	font: 500 0.75rem/1 var(--mono);
-	color: var(--accent);
-	letter-spacing: 0.06em;
-	margin-right: 0.35rem;
-}
-.how .section-kicker {
-	margin-bottom: 1.5rem;
-}
-.fresh {
-	display: flex;
-	flex-wrap: wrap;
-	align-items: center;
-	gap: 0.35rem 1.1rem;
-}
-.fresh > a {
-	color: var(--ink-2);
-}
-@media (min-width: 46.01rem) {
-	.fresh {
-		column-gap: 0;
-	}
-	.fresh > a::before {
-		content: "·";
-		display: inline-block;
-		margin: 0 0.55rem;
-		color: var(--rule-2);
-		text-decoration: none;
-	}
 }
 .api-copy h2 + .endpoints {
 	margin-top: 2rem;
