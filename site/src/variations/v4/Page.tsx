@@ -96,10 +96,32 @@ function sectionsInOrder() {
 function cut(full: string, places: number) {
 	const grouped = group(full, ",", " ");
 	const dot = grouped.indexOf(".");
-	if (dot < 0) return { head: grouped, tail: "" };
+	if (dot < 0) return { head: grouped, headMore: [] as string[], tail: [] as string[] };
 	const frac = grouped.slice(dot + 1).split(" ");
 	const keep = places / 3;
-	return { head: `${grouped.slice(0, dot + 1)}${frac.slice(0, keep).join(" ")}`, tail: frac.slice(keep).join(" ") };
+	return { head: `${grouped.slice(0, dot + 1)}${frac[0]}`, headMore: frac.slice(1, keep), tail: frac.slice(keep) };
+}
+
+/**
+ * One exact figure as one unbroken run of digits: no space in the text (it copies as one number),
+ * the groups of three set apart by a sliver of margin, the head bold and every further digit lighter.
+ */
+function Figure(props: { head: string; headMore: string[]; tail: string[] }) {
+	return (
+		<span class="fig-v">
+			<span class="fig-h">
+				{props.head}
+				{props.headMore.map((g) => (
+					<span class="g">{g}</span>
+				))}
+			</span>
+			<span class="fig-t">
+				{props.tail.map((g) => (
+					<span class="g">{g}</span>
+				))}
+			</span>
+		</span>
+	);
 }
 
 /**
@@ -128,7 +150,10 @@ function prepareRow(row: HeadlineRow) {
 	const fulls = figs.map((f) => fmt(f.p50).full);
 	let places = 3;
 	for (; places < 12; places += 3) {
-		const heads = fulls.map((full) => cut(full, places).head);
+		const heads = fulls.map((full) => {
+			const c = cut(full, places);
+			return c.head + c.headMore.join("");
+		});
 		if (!heads.some((h, i) => heads.some((k, j) => j > i && h === k && fulls[i] !== fulls[j]))) break;
 	}
 	return {
@@ -163,9 +188,16 @@ export default function Page() {
 	const requestsV1 = snapshot.methods.find((m) => m.key === "requests_v1");
 	const sections = sectionsInOrder();
 	let rowNumber = 0;
-	const roundOfNewest = ROUNDS.reduce((acc, t, i) => (t <= newest.minute ? i : acc), ROUNDS.length - 1);
-	// How far into its six-hour slot the newest Run started: where the marker sits in the lit round.
-	const intoRound = (((minutes(newest.minute) - minutes(ROUNDS[roundOfNewest]!) + 1440) % 1440) / 360) * 100;
+	// The round the newest Run belongs to: the last scheduled time at or before it.
+	const roundOfNewest = ROUNDS.reduce((acc, t, i) => (minutes(t) <= minutes(newest.minute) ? i : acc), ROUNDS.length - 1);
+	// Each machine's Run count, said once in its column heading: the count most of its fourteen figures
+	// share. A figure that stands on another count says so in its own cell.
+	const columnN = machines.map((_, j) => {
+		const counts = headline.map((row) => leadFigure(row.choice, row.cells[j]!.series).count);
+		const tally = new Map<number, number>();
+		for (const n of counts) tally.set(n, (tally.get(n) ?? 0) + 1);
+		return [...tally].reduce((a, b) => (b[1] > a[1] ? b : a))[0];
+	});
 
 	// The sample Series file the snapshot keeps: which board row and machine it is.
 	const sample = seriesFileContents.sample;
@@ -177,10 +209,11 @@ export default function Page() {
 	const pointTime = sampleRow?.choice.per ? formatDurationPerUnit(point.time_per_repetition_ns!, sampleRow.choice.per, { unit: samplePrepared?.p50.unit as DurationUnit }) : formatDuration(point.time_per_repetition_ns!);
 	const J = (v: unknown) => JSON.stringify(v);
 
-	const api = [
+	const api: { note: string; href: string; schema?: string }[] = [
 		{ note: "index", href: links.index, schema: links.schema.index },
 		{ note: `all ${seriesCount} Series`, href: links.seriesList, schema: links.schema.seriesList },
 		{ note: `${sampleCode} · ${sample.instanceType}`, href: sample.url, schema: links.schema.series },
+		{ note: `${sampleCode} · one Run's evidence`, href: point.evidence },
 		{ note: `prices · ${snapshot.priceDate}`, href: links.prices, schema: links.schema.prices },
 	];
 
@@ -237,8 +270,8 @@ export default function Page() {
 									<span class="clock-utc">UTC</span>
 								</time>
 								<span class="clock-date">
-									<span class="dot" aria-hidden="true" />
-									{newest.date}
+									<span>{newest.date}</span>
+									<span>{snapshot.region}</span>
 								</span>
 							</p>
 
@@ -248,13 +281,8 @@ export default function Page() {
 								</span>
 								<ol class="round-list" aria-labelledby="rounds-label">
 									{ROUNDS.map((t, i) => (
-										<li class={i === roundOfNewest ? "round on" : "round"}>
+										<li class={i === roundOfNewest ? "round on" : "round"} aria-current={i === roundOfNewest ? "true" : undefined}>
 											{t}
-											{i === roundOfNewest && (
-												<span class="round-now" aria-hidden="true">
-													<i style={{ width: `${intoRound}%` }} />
-												</span>
-											)}
 										</li>
 									))}
 								</ol>
@@ -266,25 +294,18 @@ export default function Page() {
 									<dd>{runs}</dd>
 								</div>
 								<div>
-									<dt>Failed</dt>
-									<dd>{failed}</dd>
+									<dt>Series</dt>
+									<dd>{seriesCount}</dd>
 								</div>
 								<div>
-									<dt>Region</dt>
-									<dd>{snapshot.region}</dd>
+									<dt>Failed</dt>
+									<dd>{failed}</dd>
 								</div>
 								<div>
 									<dt>Since</dt>
 									<dd title={oldest.full}>{oldest.date}</dd>
 								</div>
 							</dl>
-
-							<p class="panel-prices">
-								<span class="p-label">Prices</span>
-								<a href={links.prices} title={`AWS On-Demand, copied ${fetched.full}`}>
-									AWS On-Demand · {snapshot.priceDate}
-								</a>
-							</p>
 						</div>
 					</div>
 				</section>
@@ -327,9 +348,12 @@ export default function Page() {
 						<thead>
 							<tr>
 								<th scope="col" class="corner">
-									Benchmark
+									<span class="corner-l">Prices</span>
+									<a href={links.prices} title={`AWS On-Demand, copied ${fetched.full}`}>
+										AWS On-Demand · {snapshot.priceDate}
+									</a>
 								</th>
-								{machines.map((m) => {
+								{machines.map((m, j) => {
 									const price = formatUsd(m.price.usdPerHour, { per: "hour" });
 									return (
 										<th scope="col" class="col-m">
@@ -341,6 +365,7 @@ export default function Page() {
 											<span class="col-m-spec">
 												<span>{m.vcpu} vCPU</span> <span>{m.memory}</span>
 											</span>
+											<span class="col-m-n">n={formatCount(columnN[j]!).full}</span>
 										</th>
 									);
 								})}
@@ -348,25 +373,14 @@ export default function Page() {
 						</thead>
 						{sections.map((g) => {
 							const prepared = g.rows.map(prepareRow);
-							// A machine's Run count, said once in the band when every row of the section shares it.
-							const bandN = machines.map((_, j) => {
-								const counts = prepared.map((p) => p.cells[j]!.f.count);
-								return counts.every((n) => n === counts[0]) ? counts[0] : undefined;
-							});
 							return (
 								<tbody class={SECTION_CLASS[g.section]} id={`b-${SECTION_CLASS[g.section]}`}>
 									<tr class="sec-row">
-										<th scope="rowgroup" class="sec-what">
+										<th scope="rowgroup" colspan={machines.length + 1} class="sec-what">
 											<span class="badge">{SECTION_CODE[g.section]}</span>
 											<span class="sec-name">{g.section}</span>
 											{g.section === "Disk" && <span class="sec-note">root EBS gp3 volume on all five</span>}
 										</th>
-										{machines.map((m, j) => (
-											<td class="sec-m">
-												<span class="sec-m-name">{m.instanceType}</span>{" "}
-												{bandN[j] !== undefined && <span class="sec-m-n">n={formatCount(bandN[j]!).full}</span>}
-											</td>
-										))}
 									</tr>
 									{g.rows.map((row, r) => {
 										rowNumber += 1;
@@ -390,20 +404,19 @@ export default function Page() {
 														{c.label}
 													</a>
 												</th>
-												{p.cells.map(({ cell, f, p50, p5, p95, head, tail, at }, j) => {
+												{p.cells.map(({ cell, f, p50, p5, p95, head, headMore, tail, at }, j) => {
 													const t = formatMoment(cell.series.newest_run_started_at);
 													const m = cell.machine.instanceType;
 													return (
 														<td class="fig">
 															<a
 																href={links.seriesFile(cell.series)}
-																title={`${m}: median ${p50.full} ${p50.unit} · p5 ${p5.full} · p95 ${p95.full} · ${formatCount(f.count).full} Runs, newest ${t.full}`}
+																data-m={m}
+																title={`${m}: median ${p50.full} ${p50.unit} · p5 ${p5.full} · p95 ${p95.full} · ${formatCount(f.count).full} Runs, newest ${t.full} · ${cell.series.id}.json`}
 															>
-																<span class="fig-v">
-																	<span class="fig-h">{head}</span> <span class="fig-t">{tail}</span>
-																</span>
+																<Figure head={head} headMore={headMore} tail={tail} />
 																<Strip from={at(f.p5)} to={at(f.p95)} at={at(f.p50)} />
-																{bandN[j] === undefined && <span class="fig-n">n={formatCount(f.count).full}</span>}
+																{f.count !== columnN[j] && <span class="fig-n">n={formatCount(f.count).full}</span>}
 															</a>
 														</td>
 													);
@@ -421,6 +434,9 @@ export default function Page() {
 				<section class="api-sec" id="api" aria-labelledby="api-title">
 					<div class="sec-head">
 						<h2 id="api-title">For agents</h2>
+						<a class="api-docs" href={links.docs}>
+							API documentation →
+						</a>
 					</div>
 
 					<div class="api-grid">
@@ -429,24 +445,22 @@ export default function Page() {
 								<li data-copy-wrap>
 									<span class="term-c">
 										# {a.note}
-										<a href={a.schema}>schema</a>
+										{a.schema && <a href={a.schema}>schema</a>}
 									</span>
 									<code data-copy>
 										<Curl href={a.href} />
 									</code>
 								</li>
 							))}
-							<li>
-								<span class="term-c"># evidence</span>
-								<code class="term-tpl">{links.evidenceBlobTemplate}</code>
-							</li>
 						</ol>
 
 						<div class="api-side">
 							<details class="fold">
-								<summary>One Run, in its Series file</summary>
+								<summary>
+									{sampleCode} · one Run's JSON
+								</summary>
 								<p class="fold-l">
-									<code>v1/series/{sample.id}.json</code> · excerpt, samples omitted
+									<code>v1/series/{sample.id}.json</code>
 								</p>
 								<pre class="resp">
 									<code>
@@ -460,30 +474,22 @@ export default function Page() {
 									</code>
 								</pre>
 								{samplePrepared && (
-									<p class="fold-l">
-										This Run{sampleRow?.choice.per ? ` ÷ ${formatCount(sampleRow.choice.per.count).full}` : ""}: {group(pointTime.full, ",", " ")} {pointTime.unit}. Its
-										cell on the board ({sampleCode}, {sample.instanceType}): {group(samplePrepared.p50.full, ",", " ")} {samplePrepared.p50.unit}.
-									</p>
-								)}
-							</details>
-
-							<details class="fold">
-								<summary>Where each price is read</summary>
-								<dl class="ptr">
-									{machines.map((m) => (
+									<dl class="ptr">
 										<div>
-											<dt>{m.instanceType}</dt>
+											<dt>This Run{sampleRow?.choice.per ? ` ÷ ${formatCount(sampleRow.choice.per.count).full}` : ""}</dt>
 											<dd>
-												<code>{m.price.path.pointer}</code>
+												{group(pointTime.full, ",", " ")} {pointTime.unit}
 											</dd>
 										</div>
-									))}
-								</dl>
+										<div>
+											<dt>Board median</dt>
+											<dd>
+												{group(samplePrepared.p50.full, ",", " ")} {samplePrepared.p50.unit}
+											</dd>
+										</div>
+									</dl>
+								)}
 							</details>
-
-							<p class="api-docs">
-								<a href={links.docs}>API documentation →</a>
-							</p>
 						</div>
 					</div>
 				</section>
@@ -498,9 +504,6 @@ export default function Page() {
 							<i />
 						</span>
 						LedgerMath
-					</span>
-					<span class="foot-asof">
-						As of <time datetime={newest.iso}>{newest.full}</time>
 					</span>
 					<span class="foot-links">
 						<a href={links.seriesList}>

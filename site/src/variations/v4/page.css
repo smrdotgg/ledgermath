@@ -84,7 +84,7 @@
 		--live: #43d17a;
 
 		--s-mem: #6fa8ff;
-		--s-cpu: #ff7aa8;
+		--s-cpu: #ee8fb0;
 		--s-os: #5fd38a;
 		--s-dsk: #ff9a5c;
 		--s-net: #c79bff;
@@ -324,6 +324,12 @@ h1 {
 	white-space: nowrap;
 	text-indent: 0;
 }
+/* a long path (an evidence address) may break anywhere rather than run out of its box */
+.u-path {
+	max-width: 100%;
+	white-space: normal;
+	overflow-wrap: anywhere;
+}
 .copy {
 	appearance: none;
 	flex: none;
@@ -381,23 +387,27 @@ h1 {
 .clock {
 	margin: 0;
 	display: grid;
-	grid-template-columns: auto 1fr;
-	grid-template-areas: "l d" "t t";
+	grid-template-columns: auto auto 1fr;
+	grid-template-areas: "l t d";
 	align-items: center;
-	row-gap: 0.6rem;
+	column-gap: 1.1rem;
 }
 .clock .p-label {
 	grid-area: l;
-	font: 800 1.4rem/1 var(--display);
+	max-width: 5rem;
+	font: 800 1.3rem/1 var(--display);
 	letter-spacing: 0.05em;
 }
 .clock-date {
 	grid-area: d;
 	justify-self: end;
-	display: inline-flex;
-	align-items: center;
-	gap: 0.5rem;
+	display: grid;
+	justify-items: end;
+	gap: 0.45rem;
 	font: 700 0.85rem/1 var(--mono);
+}
+.clock-date span:last-child {
+	color: var(--p-dim);
 }
 .clock-time {
 	grid-area: t;
@@ -421,16 +431,16 @@ h1 {
 	position: relative;
 	display: inline-grid;
 	place-items: center;
-	width: 3.6rem;
-	height: 4.7rem;
-	border-radius: 0.35rem;
+	width: 2.5rem;
+	height: 3.25rem;
+	border-radius: 0.3rem;
 	background: linear-gradient(to bottom, #2b2d31 0 50%, #222427 50% 100%);
 	box-shadow:
 		inset 0 1px 0 rgb(255 255 255 / 0.09),
 		inset 0 -1px 0 rgb(0 0 0 / 0.5),
 		0 3px 0 #000;
 	color: #f5f1e6;
-	font: 800 4.4rem/1 var(--display);
+	font: 800 3rem/1 var(--display);
 	overflow: hidden;
 }
 @media (prefers-color-scheme: dark) {
@@ -451,9 +461,9 @@ h1 {
 	background: #000;
 }
 .flap-colon {
-	font: 800 3rem/1 var(--display);
+	font: 800 2.1rem/1 var(--display);
 	color: #f5f1e6;
-	padding-bottom: 0.45rem;
+	padding-bottom: 0.3rem;
 }
 
 .rounds {
@@ -473,7 +483,7 @@ h1 {
 	gap: 0.4rem;
 }
 .round {
-	padding: 0.35rem 0 0.65rem;
+	padding: 0.45rem 0 0.4rem;
 	text-align: center;
 	background: #1f2124;
 	border-radius: 4px;
@@ -482,39 +492,11 @@ h1 {
 	font: 800 1.55rem/1 var(--display);
 	color: var(--p-dim);
 }
+/* the round the newest Run belongs to: lit, nothing more */
 .round.on {
-	position: relative;
+	background: var(--p-accent);
 	border-top-color: var(--p-accent);
-	color: var(--p-accent);
-}
-/* the lit round's six hours, filled up to the newest Run, which sits at the dot */
-.round-now {
-	position: absolute;
-	left: 6px;
-	right: 6px;
-	bottom: 4px;
-	height: 3px;
-	background: rgb(255 255 255 / 0.14);
-	border-radius: 2px;
-}
-.round-now i {
-	position: absolute;
-	left: 0;
-	top: 0;
-	bottom: 0;
-	background: var(--p-live);
-	border-radius: 2px;
-}
-.round-now i::after {
-	content: "";
-	position: absolute;
-	right: -4px;
-	top: -2.5px;
-	width: 8px;
-	height: 8px;
-	border-radius: 50%;
-	background: var(--p-live);
-	box-shadow: 0 0 0 2px #1f2124;
+	color: #111;
 }
 
 .tally {
@@ -679,11 +661,15 @@ a.key-mark {
 	--track: #dcd8cb;
 	--head: #121315;
 	--head-ink: #f5f1e6;
+	--tail: #4a4944;
+	--tint: 11%;
 }
 @media (prefers-color-scheme: dark) {
 	:root {
 		--track: #2a2d33;
 		--head: #000;
+		--tail: #c2bdb0;
+		--tint: 8%;
 	}
 }
 
@@ -712,12 +698,28 @@ a.key-mark {
 	border-left: 0;
 }
 .corner {
-	width: 21%;
+	width: 20.5%;
 	vertical-align: bottom !important;
 	font: 700 0.75rem/1 var(--mono);
 	letter-spacing: 0.12em;
 	text-transform: uppercase;
 	color: #c4c0b5 !important;
+}
+.corner-l {
+	display: block;
+	margin-bottom: 0.5rem;
+}
+.corner a {
+	color: #ffcc00;
+	font-weight: 600;
+	letter-spacing: 0.02em;
+	text-transform: none;
+	line-height: 1.4;
+}
+@media (prefers-color-scheme: dark) {
+	.corner a {
+		color: #ffb21a;
+	}
 }
 .col-m-name {
 	display: block;
@@ -742,13 +744,20 @@ a.key-mark {
 	font: 500 0.8rem/1 var(--mono);
 	color: #c4c0b5;
 }
+.col-m-n {
+	position: absolute;
+	right: 1rem;
+	bottom: 0.7rem;
+	font: 600 0.8rem/1 var(--mono);
+	color: #c4c0b5;
+}
 
-/* the section band repeats the board's heading in small: each column's machine, and its Runs */
+/* the section band: one line across the board, its code, its name */
 .sec-row > * {
 	text-align: left;
 	vertical-align: middle;
-	padding: 0.5rem 1rem;
-	background: color-mix(in srgb, var(--sec) 11%, var(--panel));
+	padding: 0.45rem 1rem 0.4rem 1.1rem;
+	background: color-mix(in srgb, var(--sec) var(--tint), var(--panel));
 	border-top: 2px solid var(--rule-strong);
 }
 .sec-what {
@@ -762,26 +771,11 @@ a.key-mark {
 	vertical-align: 0.1em;
 }
 .sec-note {
-	display: block;
-	margin-top: 0.35rem;
-	font: 500 0.8rem/1.2 var(--sans);
+	margin-left: 1rem;
+	font: 500 0.82rem/1.2 var(--sans);
 	letter-spacing: 0;
 	text-transform: none;
 	color: var(--ink-2);
-}
-.sec-m {
-	border-left: 1px solid color-mix(in srgb, var(--sec) 18%, var(--rule));
-	font: 600 0.78rem/1.2 var(--mono);
-	color: var(--ink-2);
-	white-space: nowrap;
-}
-.sec-m-name {
-	font: 800 0.95rem/1 var(--display);
-	letter-spacing: 0.02em;
-	color: var(--ink);
-}
-.sec-m-n {
-	margin-left: 0.35rem;
 }
 
 .row > * {
@@ -802,9 +796,8 @@ a.key-mark {
 }
 .what-label {
 	display: block;
-	margin-top: 0.45rem;
-	font: 800 1.3rem/1.05 var(--display);
-	text-transform: uppercase;
+	margin-top: 0.5rem;
+	font: 650 1rem/1.25 var(--sans);
 	color: var(--ink);
 	text-decoration: none;
 }
@@ -838,38 +831,45 @@ a.key-mark {
 .fig a:hover {
 	background: color-mix(in srgb, var(--signal) 14%, transparent);
 }
-/* one exact figure in one run of type: the head large, every further digit small beside it */
+/* one exact figure, one unbroken run of type on one baseline: the head bold, every further digit
+   lighter, the groups of three set apart by a sliver of margin, not a space */
 .fig-v {
 	display: block;
 	font-family: var(--mono);
 	line-height: 1.1;
-}
-.fig-h {
-	font-size: 1.3rem;
-	font-weight: 700;
-	letter-spacing: -0.02em;
+	white-space: nowrap;
+	letter-spacing: -0.03em;
 	text-decoration: underline dotted color-mix(in srgb, var(--fig) 35%, transparent);
 	text-decoration-thickness: 1.5px;
-	text-underline-offset: 0.2em;
+	text-underline-offset: 0.25em;
 }
-.fig a:hover .fig-h {
+.fig a:hover .fig-v {
 	text-decoration: underline solid var(--fig);
 	text-decoration-thickness: 2px;
 }
+.fig-v .g {
+	margin-left: 0.2em;
+}
+.fig-h {
+	font-size: 1.2rem;
+	font-weight: 700;
+}
 .fig-t {
-	font-size: 0.74rem;
+	font-size: 0.86rem;
 	font-weight: 500;
-	letter-spacing: -0.02em;
-	color: var(--ink-3);
+	color: var(--tail);
 }
 /* a Run count that differs from the band's sits in the cell's own corner, taking no line */
 .fig a {
 	position: relative;
 }
+.fig a:has(.fig-n) {
+	padding-bottom: 1.5rem;
+}
 .fig-n {
 	position: absolute;
 	right: 0.75rem;
-	bottom: 0.15rem;
+	bottom: 0.35rem;
 	font: 600 0.68rem/1 var(--mono);
 	color: var(--ink-2);
 }
@@ -906,9 +906,9 @@ a.key-mark {
 }
 .api-grid {
 	display: grid;
-	grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
-	gap: 2rem;
-	align-items: start;
+	grid-template-columns: minmax(0, 1fr);
+	gap: 1.25rem;
+	max-width: 56rem;
 }
 .term {
 	list-style: none;
@@ -1016,7 +1016,8 @@ mark.j-n {
 	color: var(--ink-2);
 }
 .api-docs {
-	margin: 1.25rem 0 0;
+	margin-left: auto;
+	padding-top: 1rem;
 	font-weight: 700;
 	font-size: 1.05rem;
 }
@@ -1092,16 +1093,17 @@ mark.j-n {
 	}
 	.head-in {
 		grid-template-columns: minmax(0, 1fr);
-		padding-top: 1.25rem;
-		padding-bottom: 1.25rem;
-		gap: 1.25rem;
+		padding-top: 1rem;
+		padding-bottom: 1rem;
+		gap: 1rem;
 	}
 	h1 {
-		font-size: clamp(2.1rem, 9.6vw, 3.4rem);
+		font-size: clamp(1.7rem, 7.4vw, 3.4rem);
 	}
 	.lede {
-		margin: 0.75rem 0 1rem;
-		font-size: 1.02rem;
+		margin: 0.6rem 0 0.8rem;
+		font-size: 0.96rem;
+		line-height: 1.4;
 	}
 	.cmd {
 		align-self: stretch;
@@ -1113,8 +1115,8 @@ mark.j-n {
 	}
 
 	.panel {
-		padding: 0.9rem 1rem;
-		gap: 0.75rem;
+		padding: 0.7rem 0.85rem;
+		gap: 0.55rem;
 	}
 	.clock {
 		grid-template-columns: auto auto 1fr;
@@ -1151,14 +1153,15 @@ mark.j-n {
 		display: none;
 	}
 	.rounds {
-		padding-top: 0.75rem;
+		padding-top: 0.55rem;
 		gap: 0.5rem 0.75rem;
 	}
 	.round {
-		font-size: 1.2rem;
+		padding: 0.3rem 0 0.25rem;
+		font-size: 1.05rem;
 	}
 	.tally {
-		padding-top: 0.7rem;
+		padding-top: 0.5rem;
 		grid-template-columns: repeat(4, auto);
 		justify-content: space-between;
 	}
@@ -1168,35 +1171,36 @@ mark.j-n {
 		border-right: 0;
 	}
 	.tally dd {
-		font-size: 1.35rem;
+		font-size: 1.2rem;
 	}
 	.tally dt {
-		font-size: 0.68rem;
+		margin-bottom: 0.25rem;
+		font-size: 0.66rem;
 	}
 	.panel-prices {
-		padding-top: 0.65rem;
-		font-size: 0.8rem;
+		padding-top: 0.5rem;
+		font-size: 0.78rem;
 	}
 
 	.board-sec {
-		padding-top: 1.5rem;
+		padding-top: 1.1rem;
 	}
 	.api-sec {
 		padding-top: 2rem;
 	}
 	h2 {
-		font-size: 2.1rem;
+		font-size: 1.8rem;
 		gap: 0.6rem;
 	}
 	.sec-head {
-		gap: 0.75rem 1.5rem;
-		padding-bottom: 0.75rem;
-		margin-bottom: 0.75rem;
+		gap: 0.5rem 1.5rem;
+		padding-bottom: 0.6rem;
+		margin-bottom: 0.6rem;
 	}
 	.key {
 		flex: 1 1 100%;
-		gap: 0.75rem;
-		padding-top: 0.9rem;
+		gap: 0.6rem;
+		padding-top: 0.85rem;
 	}
 	.key-strip {
 		flex: 1 1 auto;
@@ -1214,165 +1218,141 @@ mark.j-n {
 		font-size: 0.72rem;
 	}
 
-	/* the board: the row's name across the top, five figures beneath, one column per machine */
+	/* the phone board: the machines as a roster, one line each, then every benchmark as a little
+	   board of five departures: the machine, its exact figure on one line, its strip */
 	.board,
 	.board thead,
-	.board tbody {
+	.board tbody,
+	.board tr {
 		display: block;
 	}
 	.board {
+		--name-w: 5.1rem;
 		border-width: 1.5px;
 	}
 	.board thead {
-		position: sticky;
-		top: 0;
-		z-index: 2;
 		background: var(--head);
 		border-radius: 4px 4px 0 0;
+		padding: 0.4rem 0;
 	}
-	.board thead th {
+	.board thead th.corner {
 		position: static;
+		display: flex;
+		gap: 0.9rem;
+		align-items: baseline;
+		width: auto;
+		padding: 0.15rem 0.75rem 0.35rem 0.9rem;
+		font-size: 0.68rem;
 	}
-	.board tr {
+	.corner-l {
+		margin: 0;
+	}
+	.board thead th.col-m {
+		position: static;
 		display: grid;
-		grid-template-columns: repeat(5, minmax(0, 1fr));
-	}
-	.corner {
-		display: none;
-	}
-	.board thead th {
-		padding: 0.5rem 0.2rem 0.45rem 0.3rem;
-		border-left-color: rgb(255 255 255 / 0.08);
+		grid-template-columns: var(--name-w) 4.9rem minmax(0, 1fr) auto;
+		align-items: center;
+		column-gap: 0.5rem;
+		padding: 0.12rem 0.75rem 0.12rem 0.9rem;
+		border-left: 0;
 	}
 	.col-m-name {
-		font-size: 0.84rem;
-		letter-spacing: -0.01em;
+		font-size: 0.95rem;
 		white-space: nowrap;
-		overflow: hidden;
-		text-overflow: clip;
 	}
 	.col-m-price {
-		margin-top: 0.3rem;
-		padding: 0.12rem 0.15rem;
-		font-size: 0.62rem;
-		letter-spacing: -0.03em;
+		justify-self: start;
+		margin: 0;
+		padding: 0.12rem 0.25rem;
+		font-size: 0.72rem;
 		white-space: nowrap;
 	}
-	.col-m-spec {
-		display: block;
-		margin: 0.3rem 0 0;
-		font-size: 0.66rem;
-		line-height: 1.2;
-	}
-	.col-m-spec span {
-		display: block;
-	}
-	/* the band names the five columns again, so a screen of rows far from the heading still says which is which */
-	.sec-row {
-		box-shadow: inset 4px 0 0 var(--sec);
-		background: color-mix(in srgb, var(--sec) 11%, var(--panel));
-		border-top: 2px solid var(--rule-strong);
-	}
-	.sec-row > * {
-		border-top: 0;
-		background: none;
+	.col-m-spec,
+	.col-m-n {
+		position: static;
+		margin: 0;
+		font-size: 0.72rem;
+		white-space: nowrap;
 	}
 	.sec-what {
-		grid-column: 1 / -1;
-		padding: 0.5rem 0.6rem 0.2rem 0.75rem;
+		display: block;
+		padding: 0.45rem 0.75rem 0.4rem 0.9rem;
 		font-size: 0.95rem;
-		box-shadow: none;
 	}
 	.sec-note {
+		display: block;
 		margin: 0.3rem 0 0;
 		font-size: 0.78rem;
 	}
-	.sec-m {
-		padding: 0.2rem 0.2rem 0.4rem 0.4rem;
-		border-left: 0;
-		font-size: 0.62rem;
-		line-height: 1.15;
-		white-space: normal;
-	}
-	.sec-m {
-		padding-left: 0.3rem;
-	}
-	.sec-what {
-		padding-left: 0.35rem;
-	}
-	.sec-m-name {
-		display: block;
-		font-size: 0.74rem;
-		letter-spacing: 0;
-		white-space: nowrap;
-		overflow: hidden;
-	}
-	.sec-m-n {
-		display: block;
-		margin: 0.1rem 0 0;
-	}
-	.what {
-		grid-column: 1 / -1;
-		width: auto;
-		display: block;
-		padding: 0.6rem 0.6rem 0.2rem 0.35rem;
-		border-top: 1px solid var(--rule);
-	}
-	.what .badge {
-		font-size: 0.68rem;
-	}
-	.what-label {
-		font-size: 1.1rem;
-	}
-	.what-unit {
-		font-size: 0.75rem;
-	}
-	.what-meta {
-		gap: 0.5rem;
-	}
-	.what-label {
-		margin-top: 0.35rem;
-	}
-	.row > .fig {
-		border-top: 0;
-		border-left: 0;
-	}
-	.fig {
-		box-shadow: none;
-	}
-	.board tr {
-		padding-left: 0.4rem;
-	}
-	.fig a {
-		padding: 0.25rem 0.35rem 0.75rem 0.3rem;
-	}
-	/* the head on a line of its own, every further digit beneath it, wrapping between groups */
-	.fig-h {
-		display: block;
-		font-size: 0.84rem;
-		letter-spacing: -0.05em;
-	}
-	.fig-t {
-		display: block;
-		margin-top: 0.15rem;
-		font-size: 0.62rem;
-		line-height: 1.2;
-		letter-spacing: -0.03em;
-	}
-	.fig-n {
-		right: 0.35rem;
-		bottom: 0.05rem;
-		font-size: 0.6rem;
-	}
 	.row {
+		padding-bottom: 0.45rem;
 		box-shadow: inset 4px 0 0 var(--sec);
 	}
+	.row > * {
+		border-top: 0;
+	}
+	/* the benchmark on one line: its code, its name, its unit and direction */
 	.what {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 0.3rem 0.55rem;
+		padding: 0.6rem 0.75rem 0.3rem 0.9rem;
+		border-top: 1px solid var(--rule) !important;
 		box-shadow: none;
+	}
+	.sec-row + .row > .what {
+		border-top: 0 !important;
+	}
+	.what-meta {
+		display: contents;
+	}
+	.what .badge {
+		font-size: 0.66rem;
+	}
+	.what-unit {
+		order: 3;
+		font-size: 0.7rem;
+	}
+	.what-label {
+		margin: 0;
+		font-size: 0.96rem;
+	}
+	.fig {
+		display: block;
+		border-left: 0;
+	}
+	/* a departure: the machine (drawn from the link's own data, the column heading's twin), the figure, the strip */
+	.fig a {
+		display: grid;
+		grid-template-columns: var(--name-w) minmax(0, 1fr) 4.1rem;
+		align-items: center;
+		column-gap: 0.5rem;
+		padding: 0.2rem 0.75rem 0.2rem 0.9rem;
+	}
+	.fig a::before {
+		content: attr(data-m);
+		font: 700 0.95rem/1 var(--display);
+		color: var(--ink-2);
+		white-space: nowrap;
+	}
+	.fig-h {
+		font-size: 0.9rem;
+	}
+	.fig-t {
+		font-size: 0.7rem;
+	}
+	.fig-n {
+		position: static;
+		grid-column: 1;
+		font-size: 0.62rem;
+	}
+	.fig a:has(.fig-n) {
+		padding-bottom: 0.2rem;
 	}
 	.strip {
 		height: 6px;
-		margin-top: 0.45rem;
+		margin: 0;
 	}
 	.strip-post {
 		height: 12px;
