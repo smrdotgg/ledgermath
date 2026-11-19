@@ -27,6 +27,7 @@ import {
 	shift,
 	snapshot,
 } from ".";
+import * as data from ".";
 import { HEADLINE_CHOICES } from "./headline";
 import { apiIndex, PRICE_FILE_DATE, priceFile, SERIES_FILE_SAMPLE_ID } from "./snapshot";
 
@@ -68,6 +69,12 @@ describe("the snapshot", () => {
 		for (const choice of HEADLINE_CHOICES) expect(choice.readme).toBe(`https://ledgermath.com/docs/benchmarks/${choice.benchmark}`);
 		const everyLink = JSON.stringify({ links, choices: HEADLINE_CHOICES, contents: seriesFileContents, machines: machines.map((m) => m.price) });
 		expect(everyLink).not.toContain("github");
+	});
+
+	test("the module's output names no other project: nothing says napkin", () => {
+		const everything = JSON.stringify(Object.fromEntries(Object.entries(data).filter(([, value]) => typeof value !== "function")));
+		expect(everything.length).toBeGreaterThan(0);
+		expect(everything.toLowerCase()).not.toContain("napkin");
 	});
 
 	test("each schema's address by name, and the evidence's blob template", () => {

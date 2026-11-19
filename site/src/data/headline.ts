@@ -140,7 +140,7 @@ export const HEADLINE_CHOICES: readonly HeadlineChoice[] = [
 		benchmark: "sort",
 		section: "Compute",
 		label: "Sort 1 MiB of 64-bit keys",
-		what: "How fast one core copies and sorts 131,072 unsorted 64-bit keys with a radix sort.",
+		what: "How long one core takes to copy and sort 131,072 unsorted 64-bit keys with a radix sort.",
 		repetition: "One copy and sort of 1 MiB of keys.",
 		setting: "1 MiB, static build",
 		build: "static",
@@ -172,7 +172,7 @@ export const HEADLINE_CHOICES: readonly HeadlineChoice[] = [
 		params: { threads: 1, placement: "one_cpu", critical_section_lines: 1, lock: "pthread_mutex_default", idle_threads: 1 },
 		lead: "time",
 		per: { count: 10000, of: "critical section" },
-		reason: "With one idle thread, glibc locks with atomic instructions, as in any program that has ever started a thread: the README calls this usually the number wanted, and what napkin-math's mutex lock/unlock means.",
+		reason: "With one idle thread, glibc locks with atomic instructions, as in any program that has ever started a thread: the uncontended lock a reader usually means, and so usually the number wanted. With no other thread, glibc skips the atomic instructions; that has a setting of its own.",
 		readme: README("mutex"),
 	},
 	{
@@ -214,8 +214,8 @@ export const HEADLINE_CHOICES: readonly HeadlineChoice[] = [
 	{
 		benchmark: "disk_read_io_uring",
 		section: "Disk",
-		label: "Random 4 KiB reads, 64 in flight",
-		what: "How many direct reads the root EBS gp3 volume completes when 64 are kept submitted through io_uring.",
+		label: "Random 4 KiB reads, 64 submitted",
+		what: "The time per completed read when 64 direct 4 KiB reads at random offsets are kept submitted through io_uring to the root EBS gp3 volume: one over the volume's IOPS.",
 		repetition: "One completed read.",
 		setting: "Root volume, random 4 KiB, queue depth 64, static build",
 		build: "static",
