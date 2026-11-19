@@ -492,11 +492,18 @@ h1 {
 	font: 800 1.55rem/1 var(--display);
 	color: var(--p-dim);
 }
-/* the round the newest Run belongs to: lit, nothing more */
+/* the round the newest Run belongs to: lit, with that Run's minute on its lower flap */
 .round.on {
 	background: var(--p-accent);
 	border-top-color: var(--p-accent);
 	color: #111;
+	padding-bottom: 0.25rem;
+}
+.round-at {
+	display: block;
+	margin-top: 0.2rem;
+	font: 700 0.72rem/1 var(--mono);
+	letter-spacing: 0.04em;
 }
 
 .tally {
@@ -504,7 +511,7 @@ h1 {
 	padding-top: 0.9rem;
 	border-top: 1px solid var(--p-rule);
 	display: grid;
-	grid-template-columns: repeat(3, auto) 1fr;
+	grid-template-columns: repeat(2, auto) 1fr;
 }
 .tally > div {
 	padding-right: 1.1rem;
@@ -733,9 +740,11 @@ a.key-mark {
 		color: #ffb21a;
 	}
 }
+/* instance types in the figures' mono: "c8i" and "c8a" must not blur */
 .col-m-name {
 	display: block;
-	font: 800 1.45rem/1 var(--display);
+	font: 700 1.1rem/1.1 var(--mono);
+	letter-spacing: -0.01em;
 }
 .col-m-price {
 	display: inline-block;
@@ -773,7 +782,8 @@ a.key-mark {
 	text-align: left;
 	vertical-align: middle;
 	padding: 0.45rem 1rem 0.4rem 1.1rem;
-	background: color-mix(in srgb, var(--sec) var(--tint), var(--panel));
+	/* no tint: the section's colour lives in its line (the rule at the left), its numbers and its strips */
+	background: var(--paper);
 	border-top: 2px solid var(--rule-strong);
 }
 .sec-what {
@@ -833,7 +843,6 @@ a.key-mark {
 .what-unit b {
 	margin-left: 0.15rem;
 	font-weight: 800;
-	color: var(--sec);
 }
 
 .fig {
@@ -859,22 +868,18 @@ a.key-mark {
 	letter-spacing: -0.03em;
 	text-underline-offset: 0.25em;
 }
-/* the figure links to its Series, and says so at rest: a dotted rule under its bold head, solid on hover and focus */
-.fig-h {
-	text-decoration: underline dotted color-mix(in srgb, var(--fig) 45%, transparent);
-	text-decoration-thickness: 1.5px;
-	text-underline-offset: 0.22em;
-}
-.fig a:hover .fig-h,
-.fig a:focus-visible .fig-h {
+/* the whole cell links to its Series: plain at rest (seventy rules would be noise), the full figure underlined on hover and focus */
+.fig a:hover .fig-v,
+.fig a:focus-visible .fig-v {
 	text-decoration: underline solid var(--fig);
 	text-decoration-thickness: 2px;
+	text-underline-offset: 0.22em;
 }
 .fig-v .g {
 	margin-left: 0.2em;
 }
 .fig-h {
-	font-size: 1.2rem;
+	font-size: 1.14rem;
 	font-weight: 700;
 }
 /* the whole part, right-aligned in a box as wide as the row's widest: the points line up */
@@ -884,7 +889,7 @@ a.key-mark {
 	text-align: right;
 }
 .fig-t {
-	font-size: 0.86rem;
+	font-size: 0.92rem;
 	font-weight: 500;
 	color: var(--tail);
 }
@@ -1238,7 +1243,7 @@ mark.j-n {
 	/* the tally on one row of four: each label over its count */
 	.tally {
 		padding-top: 0.5rem;
-		grid-template-columns: repeat(4, auto);
+		grid-template-columns: repeat(3, auto);
 		justify-content: space-between;
 	}
 	.tally > div {
@@ -1310,7 +1315,7 @@ mark.j-n {
 		display: block;
 	}
 	.board {
-		--name-w: 5.1rem;
+		--name-w: 5.5rem;
 		border-width: 1.5px;
 	}
 	.board thead {
@@ -1340,7 +1345,8 @@ mark.j-n {
 		border-left: 0;
 	}
 	.col-m-name {
-		font-size: 0.95rem;
+		font-size: 0.78rem;
+		letter-spacing: -0.02em;
 		white-space: nowrap;
 	}
 	.col-m-price {
@@ -1414,11 +1420,7 @@ mark.j-n {
 	.n-eq {
 		display: none;
 	}
-	/* the response on one line per field: it scrolls in its box rather than breaking inside a string */
 	.resp {
-		white-space: pre;
-		overflow-wrap: normal;
-		overflow-x: auto;
 		font-size: 0.74rem;
 	}
 	.sum {
@@ -1429,10 +1431,10 @@ mark.j-n {
 		padding-right: 0.5rem;
 	}
 	.sum .sum-f {
-		padding-right: 0.4rem;
+		padding-right: 0.3rem;
 	}
 	.sum td:last-child {
-		white-space: normal;
+		letter-spacing: -0.03em;
 	}
 	.fig {
 		display: block;
@@ -1448,7 +1450,8 @@ mark.j-n {
 	}
 	.fig-m {
 		display: block;
-		font: 700 0.95rem/1 var(--display);
+		font: 600 0.74rem/1 var(--mono);
+		letter-spacing: -0.02em;
 		color: var(--ink-2);
 		white-space: nowrap;
 	}

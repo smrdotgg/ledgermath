@@ -198,8 +198,6 @@ export default function Page() {
 	const runs = formatCount(snapshot.runCount).full;
 	const seriesCount = formatCount(snapshot.seriesCount).full;
 	const failed = formatCount(snapshot.failedRuns).full;
-	const benchmarksN = formatCount(snapshot.benchmarkCount).full;
-	const machinesN = formatCount(snapshot.machineCount).full;
 	const seriesV1 = snapshot.methods.find((m) => m.key === "series_v1")!;
 	const requestsV1 = snapshot.methods.find((m) => m.key === "requests_v1");
 	const sections = sectionsInOrder();
@@ -266,7 +264,7 @@ export default function Page() {
 								<span class="h1-a">Fresh AWS machines,</span> <span class="h1-hi">measured four times a day.</span>
 							</h1>
 							<p class="lede">
-								{benchmarksN} benchmarks on {machinesN} freshly booted machine types. Every Run kept with its evidence, in JSON for AI agents.
+								Every Run kept with its evidence, in JSON for AI agents.
 							</p>
 							<div class="cmd" data-copy-wrap>
 								<code data-copy>
@@ -299,18 +297,14 @@ export default function Page() {
 									{ROUNDS.map((t, i) => (
 										<li class={i === roundOfNewest ? "round on" : "round"} aria-current={i === roundOfNewest ? "true" : undefined}>
 											{t}
+											{/* the lit round names the Run the clock shows, so the two times read as one fact */}
+											{i === roundOfNewest && <span class="round-at">{newest.minute}</span>}
 										</li>
 									))}
 								</ol>
 							</div>
 
 							<dl class="tally">
-								<div>
-									<dt>Series</dt>
-									<dd>
-										<a href={links.seriesList}>{seriesCount}</a>
-									</dd>
-								</div>
 								<div>
 									<dt>Runs</dt>
 									<dd>{runs}</dd>
