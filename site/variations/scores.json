@@ -1319,6 +1319,420 @@
 					"level": 7
 				}
 			]
+		},
+		{
+			"round": 4,
+			"judges": [
+				"astra-6.2",
+				"opus-5.5"
+			],
+			"judgements": {
+				"astra-6.2": {
+					"ref:artificialanalysis.ai": {
+						"scores": {
+							"first_ten_seconds": 9,
+							"numbers": 7.5,
+							"trust_and_provenance": 8,
+							"agents_and_developers": 6,
+							"typography_and_hierarchy": 8.5,
+							"colour_and_contrast": 7,
+							"phone_layout": 8,
+							"craft_and_distinctiveness": 8.5
+						},
+						"notes": "Intelligence, time and cost each get a chart with units or scoring direction, and the three distinct questions survive the move to stacked phone cards. Version notices and a dated changelog make revisions visible, though the angled model names are slow to match across charts and several later plots show only a legend and empty space in the captures."
+					},
+					"ref:benchmark.clickhouse.com": {
+						"scores": {
+							"first_ten_seconds": 7,
+							"numbers": 6.5,
+							"trust_and_provenance": 8.5,
+							"agents_and_developers": 8,
+							"typography_and_hierarchy": 5.5,
+							"colour_and_contrast": 6,
+							"phone_layout": 3.5,
+							"craft_and_distinctiveness": 6.5
+						},
+						"notes": "The title identifies the workload immediately, with methodology, reproduction and submission links close enough to inspect before accepting a ranking. The system filters consume the entire desktop first screen, and on the phone the ranked bars finally appear beneath a dense field of miniature orange labels."
+					},
+					"ref:helix-db.com": {
+						"scores": {
+							"first_ten_seconds": 8.5,
+							"numbers": 8,
+							"trust_and_provenance": 8.5,
+							"agents_and_developers": 9,
+							"typography_and_hierarchy": 8,
+							"colour_and_contrast": 7,
+							"phone_layout": 7.5,
+							"craft_and_distinctiveness": 9
+						},
+						"notes": "The account example pairs each match count with a source and a key, and the ticket example carries the explanation through to monthly totals and citations. The desktop hero offers agent setup, a sample company and a local option, while the phone directs a new reader to save the project for later and shrinks the product screenshot until its details are hard to read."
+					},
+					"ref:instances.vantage.sh": {
+						"scores": {
+							"first_ten_seconds": 7.5,
+							"numbers": 8,
+							"trust_and_provenance": 5,
+							"agents_and_developers": 8,
+							"typography_and_hierarchy": 7,
+							"colour_and_contrast": 6.5,
+							"phone_layout": 3.5,
+							"craft_and_distinctiveness": 6.5
+						},
+						"notes": "Region, billing period and precision sit directly above the instance rows, so a desktop reader can establish the basis of comparison at a glance. The MCP button and API announcement give developers two clear entry points, but on the phone that announcement covers rows in a viewport barely wide enough for the instance name."
+					},
+					"ref:planetscale.com": {
+						"scores": {
+							"first_ten_seconds": 7.5,
+							"numbers": 7,
+							"trust_and_provenance": 7.5,
+							"agents_and_developers": 8,
+							"typography_and_hierarchy": 7,
+							"colour_and_contrast": 7.5,
+							"phone_layout": 5.5,
+							"craft_and_distinctiveness": 8
+						},
+						"notes": "The latency chart has a percentile legend, a migration caption and a link to the benchmarks, giving the performance claim a concrete place to investigate. The opening customer grid delays that evidence by dozens of logos, especially on the phone where it wraps into two columns."
+					},
+					"ref:turbopuffer.com": {
+						"scores": {
+							"first_ten_seconds": 9,
+							"numbers": 9,
+							"trust_and_provenance": 8.5,
+							"agents_and_developers": 8,
+							"typography_and_hierarchy": 8.5,
+							"colour_and_contrast": 8.5,
+							"phone_layout": 9,
+							"craft_and_distinctiveness": 9.5
+						},
+						"notes": "The cache and object-store diagram turns vertically on the phone while preserving the read path, and the calculator keeps workload assumptions beside the monthly estimate. The latency panel names its workload, distinguishes warm and cold reads and links the benchmark, though the large difference between those readings is carried by very small labels."
+					},
+					"ref:vercel.com": {
+						"scores": {
+							"first_ten_seconds": 6.5,
+							"numbers": 6,
+							"trust_and_provenance": 6,
+							"agents_and_developers": 7,
+							"typography_and_hierarchy": 8.5,
+							"colour_and_contrast": 8,
+							"phone_layout": 7.5,
+							"craft_and_distinctiveness": 8.5
+						},
+						"notes": "The triangle and Deploy now button retain a clear order when the desktop composition becomes a phone stack. The Zapier example gives the scale claim a customer, a unit and a time period, but it takes considerable scrolling to get from the broad opening promise to that concrete use case."
+					},
+					"v1": {
+						"scores": {
+							"first_ten_seconds": 8,
+							"numbers": 8.5,
+							"trust_and_provenance": 8,
+							"agents_and_developers": 9,
+							"typography_and_hierarchy": 8.5,
+							"colour_and_contrast": 9,
+							"phone_layout": 7.5,
+							"craft_and_distinctiveness": 9
+						},
+						"notes": "Changes, in priority order\n\n1. Bring the first five measurements onto the first phone screen. In phone-light-00 the first viewport ends at the Memory heading. Fold the five-line price key under a Machines link, move the oldest Run and four boot times into the Method detail, and trim the italic tagline. Keep the command, newest Run and region in view.\n2. Make the figures themselves look actionable. In desktop-light-00 the benchmark names are underlined while the numbers look like plain type, despite the instruction that a figure opens its Runs. Give the bold leading digits a consistent link treatment. Surface the counted Run total when a figure receives focus or is tapped so a reader can judge the sample behind that median.\n3. In desktop-light-00 and phone-light-01, replace each written-out direction with an arrow beside the unit. On phone the direction currently takes almost as much width as the benchmark title needs, splitting SHA-256 over two lines. Reclaim the numbered gutter too if needed.\n4. In the legend above Memory, replace the sentence with two directly keyed marks for median and p5–p95. The thick segment can look like the end cap of a single bar. State the per-benchmark scale there and put the Series selection link beside the 14 × 5 heading.\n5. In desktop-light-01 and phone-light-03, express all network rates in Gbit/s, preserving each “up to” qualifier. Comparing 10 Gigabit with 15000 Megabit currently costs mental arithmetic, and neither label gives the time denominator.\n6. On phone-light-02, fold the sample JSON under its existing Run caption. The endpoint and schema index works on its own, while two wrapped evidence URLs occupy much of the example.\n\nKeep the bold leading digits and quieter grouped fractional digits. They let the eye compare five close disk timings quickly and still recover each exact value. Keep the fixed machine order and the phone layout that aligns each set of five on the decimal point. The cream paper, double rules and red margin give the ledger a recognizable identity that survives dark mode. The copyable index command and linked Method earn their space at the top.\n\nPotentially misleading: the c8i mutex sample reports 136389.47576904297 ns per repetition beside a ledger median beginning 13.637 ns. A single counted Run can differ from its median, so this does not establish an error. Verify that the sample and ledger use the same operation and normalization before using this pair to illustrate provenance."
+					},
+					"v2": {
+						"scores": {
+							"first_ten_seconds": 8.5,
+							"numbers": 8.5,
+							"trust_and_provenance": 8,
+							"agents_and_developers": 9,
+							"typography_and_hierarchy": 8,
+							"colour_and_contrast": 8,
+							"phone_layout": 8,
+							"craft_and_distinctiveness": 8.5
+						},
+						"notes": "Changes, in priority order\n1. On phone-light-00, cut the two sentences below curl. The headline already promises evidence and names the audience, and the command gives the address. Use the recovered height to bring more of the first five-machine comparison above the fold.\n2. In the desktop-light-00 and phone-light-00 DATA legend, replace the prose about the range glyph with a directly labelled example. Put p50 at the tick and p5–p95 at the band, and identify the scale as starting at zero and shared within each benchmark. This would make the very tight disk ranges intelligible even when the band and tick coincide.\n3. In phone-light-02, put $/hour beside the MACHINES price heading. The desktop table has that unit, but a phone reader landing here sees five dollar amounts and an On-Demand date with no billing interval.\n4. In STATUS on both widths, replace “at” with “schedule” and “newest” with “latest Run”. The four launch times and the timestamp then have distinct meanings at a glance. Give the two Method links their own aligned line on desktop so they don't look like overflow.\n5. On phone-dark-top, strengthen the outline and text of the copy button and the thin baseline of the range glyph. Both nearly disappear against the dark surface while the orange links remain easy to spot.\n\nKeep the manual-page identity, particularly the NAME/SYNOPSIS pairing and the real command in the opening screen. Keep the full decimal strings with weighted leading digits, the single unit per benchmark, and the phone layout that puts five comparable values and their range marks directly underneath each other. The category jumps and optional exact intervals and counted Runs earn their space. The FILES list gives developers concrete paths and terse descriptions.\n\nCredibility: No factual claim visibly conflicts with the brief. “Every Series, 187” has no visible scope alongside the 14 × 5 current matrix. If 187 includes historical or other Series, qualify the count with that scope or omit it from the FILES description."
+					},
+					"v3": {
+						"scores": {
+							"first_ten_seconds": 8,
+							"numbers": 8,
+							"trust_and_provenance": 8.5,
+							"agents_and_developers": 8.5,
+							"typography_and_hierarchy": 8,
+							"colour_and_contrast": 8.5,
+							"phone_layout": 8,
+							"craft_and_distinctiveness": 9
+						},
+						"notes": "Changes, in priority order\n\n1. On phone-light-00, cut the five machine names below the headline and fold the abstract into the API block. The names recur beside the measurements. Keep the region, latest Run and evidence count up front. This buys room to see all five sequential-read results together on the first screen.\n2. In Table 1 (desktop-light-00 and phone-dark-mid), bring the trailing digits closer in size to the bold prefix and narrow the gap between them. In the sequential disk read benchmark, the smaller digits carry real distinctions between the machines. Keep the weight change for scanning and make the whole decimal comfortable to transcribe.\n3. In the Results legend on phone-light-00, replace ‘per row from 0’ with ‘scale per benchmark, from 0’. Each phone row now represents a single machine, so the current wording suggests five independent scales where the five bars actually share one.\n4. In the Table 1 caption, replace ‘every digit’ and the bare ‘n’ with a descriptive supplement link such as ‘Range and Run count per figure’. The 6,335 counted Runs are prominent, but a reader tracing one median needs to recognise the route to its own sample size.\n5. In the top API block on both widths, give the curl command a full line and move the copy control alongside the heading. The address currently breaks just before index.json even on desktop.\n\nKeep the report's ruled tables, warm paper and ink colours, restrained red range bands and units attached to benchmark names. The phone's five-machine groups with a common bar origin make comparisons practical. The compact machine specifications, dated price reference and individual Series evidence give a developer a clear route from a figure to its source.\n\nPotentially misleading: the phone legend's ‘per row’ wording changes meaning after the table reflows. No other visible claim reads as invented."
+					},
+					"v4": {
+						"scores": {
+							"first_ten_seconds": 8.5,
+							"numbers": 6.5,
+							"trust_and_provenance": 6.5,
+							"agents_and_developers": 8.5,
+							"typography_and_hierarchy": 8,
+							"colour_and_contrast": 8.5,
+							"phone_layout": 6.5,
+							"craft_and_distinctiveness": 8.5
+						},
+						"notes": "Changes, in priority order\n\n1. On desktop-light-00 the first memory result reads 12.50 in bold and 12.502 615 200 030 773 in fine print. On phone-light-00 only 12.50 survives. Keep the five-machine overview, but give each row a compact expander showing all five named machines and their exact medians at reading size. Use that detail view for the Series link, contributing Run count and Method for each figure. A reader should be able to cite the number they just inspected.\n2. Pin the machine headings while scrolling the phone board. In phone-dark-mid there is enough room to compare all five SHA-256 times, yet nothing in the viewport identifies which machine achieved 58.781 ns.\n3. Compress the phone status panel and board heading in phone-light-00. Drop the second set of category badges above the legend and reduce the space devoted to the round timeline. At the first fold the reader has reached machine specifications but has yet to see a measurement. Keep the newest Run time and put us-east-2 alongside its date so the phone retains the desktop measurement scope.\n4. Remove the five repeated divisions in the mutex row on both layouts. Put the measured unit in the row heading and the per-operation conversion in row detail. The little equations on phone-light-01 take as much attention as the five measurements.\n5. In For Agents, combine each copyable request with its schema link in one list. The command block and file table in phone-light-01 currently make the reader match two lists of near-identical paths. Keep the concrete Series ID and dated price example.\n\nKeep the headline, immediate copyable index request, dated AWS price source and machine prices directly above the comparisons. The flip clock gives freshness a memorable form. The board's row-wide units, family colours and common baseline for distribution marks make a large matrix tractable in both themes. The short agent walkthrough gets all the way to a specific Series.\n\nPotentially misleading: the prominent 6,335 Runs is a collection-wide count. It gives no sample size for an individual percentile range. The short phone figures look exact, including 12.50 where the desktop shows further digits. No other visible claim struck me as invented."
+					},
+					"v5": {
+						"scores": {
+							"first_ten_seconds": 8.5,
+							"numbers": 7,
+							"trust_and_provenance": 7.5,
+							"agents_and_developers": 8.5,
+							"typography_and_hierarchy": 8,
+							"colour_and_contrast": 8.5,
+							"phone_layout": 7,
+							"craft_and_distinctiveness": 8
+						},
+						"notes": "Changes, in order\n1. Give the five phone plots for each benchmark identical origins and plot widths. In phone-light-02 the 587.4 µs disk read has a longer-looking bar than the 658.4 µs read. The width of the numeral beside a plot should never change its scale.\n2. Consolidate the featured result in desktop-light-00 and phone-light-00. The visitor sees 12.50 in giant type, the full value below it, then 12.50 again beside a bar, before reaching the same result in the table. Set the exact value once with a prominent prefix and a readable suffix. Drop the duplicate mini-chart on the phone. This makes room for the first five-machine comparison much sooner.\n3. In the figures matrix, align the decimal points within each comparison and increase the size of the trailing digits. In the sequential disk read row of desktop-light-01, several machines share the prominent 131.1 prefix. The smallest type carries the actual differences.\n4. Give each figure a visible route to its Series, where the counted Runs and evidence belong. The featured value is underlined in desktop-light-00, but the other 69 cells offer no comparable cue. The aggregate 6,335 Runs cannot tell a reader how many support a particular median.\n5. In phone-light-02, wrap the dated prices command and the long URL in the JSON example within their blocks. The command ends on screen halfway through the date. The Copy button helps execution, but a reader should also be able to inspect the address.\n6. Cut the four clock times from the first-screen introduction. The headline already establishes cadence and the masthead gives freshness. Keep region, machine count, evidence and JSON together so the visitor can take them in at a glance.\n\nKeep the benchmark name, instance and count immediately above the featured number. The price-ordered desktop headers put cost and capacity directly over the measurements. The phone’s five-row groups preserve machine names and keep units at the benchmark level. The restrained red accent carries the featured machine from the opening to its cell in both themes. The API example names the same mutex benchmark a reader just saw and shows the count alongside the percentiles.\n\nPotentially misleading: the opening chart prints 19.58 for the value beginning 19.581… and 13.92 for the value beginning 13.921… with no indication that these labels omit digits. They look like published exact results. The phone plot widths also suggest comparisons the printed values contradict."
+					},
+					"v6": {
+						"scores": {
+							"first_ten_seconds": 8.5,
+							"numbers": 8.5,
+							"trust_and_provenance": 7,
+							"agents_and_developers": 8.5,
+							"typography_and_hierarchy": 8.5,
+							"colour_and_contrast": 8.5,
+							"phone_layout": 8,
+							"craft_and_distinctiveness": 8.5
+						},
+						"notes": "Changes, in priority order\n\n1. Move the “Every digit” disclosure from below chart 14 to the chart heading on both layouts. Label it “Exact values and Runs” and put the counted Runs and Series link beside each percentile triplet inside it. A phone reader looking for the source of 19.58 currently passes thirteen more charts, and the chart values themselves give no visual cue that they lead to evidence.\n2. On phone-light-00 and phone-dark-top, the copy button occupies the end of the first curl command. Allow the address to wrap at the path boundary and keep the button clear. The full index address should be legible before copying.\n3. In the status strip on desktop-light-00 and phone-light-00, trade the clock graphic and four scheduled times for the measured AWS Region. The headline already gives the cadence. The Region matters to someone reusing the prices and S3 measurements.\n4. On phone-light-00 the machine specifications interrupt the sequence between sequential and random reads. Make the existing Machines navigation open that compact table beside the chart heading, leaving the two memory-read charts adjacent.\n5. In the three zoomed charts on desktop-light-00, remove the repeated “zoomed” chip and use its space to label the zero end of the overview scale. Keep the axis break and highlighted interval. Together they show how a conspicuous difference on the main plot can occupy a sliver of the full scale.\n\nKeep the fixed machine order, right-aligned values and single unit per plot. On the S3 panel, five tightly grouped medians and five overlapping intervals tell two different stories in the same space. The warm median dot survives the switch to dark mode, and the small logo echoes the mark used in the charts. Keep the index command above the fold and the concrete Series response beside the evidence request below.\n\nPotentially misleading: “6,335 Runs kept” is a collection total. Only the API example shows that 33 Runs underlie the illustrated memory figure. Also, the plotted 19.58 GB/s has fewer significant digits than the corresponding JSON p50 in bytes per second. The exact-values disclosure deserves a visible place wherever a reader starts comparing these figures."
+					},
+					"v7": {
+						"scores": {
+							"first_ten_seconds": 8.5,
+							"numbers": 8,
+							"trust_and_provenance": 8,
+							"agents_and_developers": 9,
+							"typography_and_hierarchy": 8,
+							"colour_and_contrast": 8.5,
+							"phone_layout": 7.5,
+							"craft_and_distinctiveness": 8.5
+						},
+						"notes": "Changes, in priority order\n1. In Machines on phone-light-03, remove the Processor heading along with its hidden values. Lay the four remaining headings and their cells on the same grid. The prices currently sit under Processor, with $/hour stranded at the right.\n2. On phone-light-00 the first screen ends around the example answer. Remove the repeated LedgerMath eyebrow and the example-writing credit, shorten the question to ‘Sort 1 MiB of 64-bit keys on one c8a.2xlarge core?’ and put the time and instance hourly rate directly beneath it. Keep the Run count beside the answer. This would bring the benchmark navigation closer to the first screen.\n3. In desktop-light-00, collapse the example’s raw field paths and values behind Sources as the phone already does. Keep the numbered citations visible. The expanded panel sets the height of the entire introduction, yet its smallest text is harder to read than anything in the matrix.\n4. In the matrix on desktop-light-00 and -01, bring the fractional digits closer in size to the bold leading digits. The disk values around 131 MB/s have almost identical bars. Their decimal tails carry the comparison and currently get the smallest type.\n5. In the API section on phone-light-02 and desktop-light-01, remove the second index curl example. Keep the agent instruction and the series and dated price commands. The index command is already prominent at the top.\n6. In Provenance on phone-light-03 and desktop-light-01, label the four clock positions ‘Scheduled boots · UTC’ if they represent the schedule. Their identical filled dots make the 22:10 boot look complete beside a newest Run at 17:07.\n\nKeep the numbered trail from example answer to measured cell, evidence and hourly price. The horizontal desktop comparison and the phone’s five-machine groups both give the bars a common starting point and put the unit once per benchmark. The category jumps earn their space on the phone. Keep the warm paper, dark-mode range ticks and restrained use of serif type for the question and answer.\n\nPotentially misleading: the phone machine prices appear to be processor values, and the boot timeline blurs scheduled and observed events. The example’s hourly rate is for the instance, while the timing uses one core. Label the price ‘per instance-hour’ to resolve that ambiguity at the figure itself."
+					},
+					"v8": {
+						"scores": {
+							"first_ten_seconds": 8.5,
+							"numbers": 8.5,
+							"trust_and_provenance": 7.5,
+							"agents_and_developers": 8,
+							"typography_and_hierarchy": 8.5,
+							"colour_and_contrast": 8.5,
+							"phone_layout": 7.5,
+							"craft_and_distinctiveness": 8.5
+						},
+						"notes": "Changes, in priority order\n\n1. Reconcile the worked example before changing its styling. The trace in desktop-light-00 and the JSON in phone-light-03 share a Series ID and 33 counted Runs. Yet the card gives a median of 13.637057904052734 ns per critical section and the JSON gives 136370.57904052734 under time_per_repetition_ns. Use the returned field that directly supports the headline or show the operation count in a compact conversion alongside the raw field. A developer should be able to reproduce the headline from the example.\n2. Collapse ‘On the record’ in desktop-light-00 and phone-light-00. The hero already gives the Run total, freshness and boot cadence. Keep the failure count with the Run total and put ‘70 of 187 Series’ beside the table link. On the phone this recovers several hundred pixels before the first comparison.\n3. Give all five miniature charts in each phone benchmark card the same origin and plotting width. In phone-light-02 the disk-read bars start at visibly different positions after values of different lengths. Reserve a fixed chart column so a difference in decimal length cannot move the baseline.\n4. Shorten the five-step ‘From a cold boot to a figure’ strip below the API example, especially the five illustrated rows in phone-light-04. The opening trace already demonstrates the process using real records. Bring the dated machine prices closer to the API commands.\n5. In phone-light-00 and -03 the Copy button crowds the command until ‘$ curl’ occupies a line alone. Put Copy on the label line and give the command the full card width so the endpoint is easier to read.\n\nKeep\n\nThe worked mutex example puts a distribution, counted Runs, dates, Method and evidence within one compact frame. The orange dot carries that example into the matrix without grading the machines. Preserve the exact digits, the quieter trailing digits, units stated once per benchmark, and the zero-based bars with percentile whiskers. The phone cards make five machines comparable without lateral scrolling. The warm serif headings and restrained orange accents work in both themes.\n\nPotentially misleading\n\nThe JSON and hero use different denominators for the same Series without a visible conversion. The screenshot supports a factor of 10,000 between the two displayed medians but does not establish why it applies."
+					}
+				},
+				"opus-5.5": {
+					"ref:artificialanalysis.ai": {
+						"scores": {
+							"first_ten_seconds": 8,
+							"numbers": 7,
+							"trust_and_provenance": 6,
+							"agents_and_developers": 4.5,
+							"typography_and_hierarchy": 8,
+							"colour_and_contrast": 7.5,
+							"phone_layout": 6.5,
+							"craft_and_distinctiveness": 7.5
+						},
+						"notes": "A clear claim, 'Independent analysis of AI', in a confident serif, with the three headline metrics (intelligence, time, cost per task) shown as labelled, value-on-bar charts on the first screen. A dated changelog signals freshness. The rotated model labels are hard to read, especially on phone; the many provider hues make comparison harder rather than easier; and the way in for a developer or an agent isn't on the home page. In this capture most charts further down are blank (they load lazily), which leaves long empty boxes."
+					},
+					"ref:benchmark.clickhouse.com": {
+						"scores": {
+							"first_ten_seconds": 6,
+							"numbers": 7,
+							"trust_and_provenance": 7.5,
+							"agents_and_developers": 6,
+							"typography_and_hierarchy": 5,
+							"colour_and_contrast": 5.5,
+							"phone_layout": 4.5,
+							"craft_and_distinctiveness": 6
+						},
+						"notes": "An honest benchmark page. Methodology, 'Reproduce and Validate the Results', a JSON benchmark and Add a System are the first links you see, and each result row carries its own date, category tag and a relative multiplier (×1.62) in an aligned column. Its main fault is that the filter wall of hundreds of beige chips takes the whole first screen on desktop, and nearly two screens on phone, before any result shows. The type and colour are default-browser utilitarian, with little hierarchy beyond the H1."
+					},
+					"ref:helix-db.com": {
+						"scores": {
+							"first_ten_seconds": 8,
+							"numbers": 6.5,
+							"trust_and_provenance": 7.5,
+							"agents_and_developers": 8,
+							"typography_and_hierarchy": 7.5,
+							"colour_and_contrast": 7.5,
+							"phone_layout": 7,
+							"craft_and_distinctiveness": 8.5
+						},
+						"notes": "A distinct, consistent identity: a dotted pixel display face, mono body text, warm paper colours, corner-bracket buttons. The way in for agents and developers is the primary action ('Set up with your agent', a copyable 'run it locally'). Provenance is shown, not claimed: '60 of 62' match bars, sources named for each field, an example answer with footnoted citations and monthly counts. The mono body text on a long line is slow to read, and the beige-on-beige panels are low in contrast. The phone page is designed: it says honestly that the product needs a bigger screen and offers a GitHub star instead."
+					},
+					"ref:instances.vantage.sh": {
+						"scores": {
+							"first_ten_seconds": 6.5,
+							"numbers": 8,
+							"trust_and_provenance": 4.5,
+							"agents_and_developers": 6,
+							"typography_and_hierarchy": 6,
+							"colour_and_contrast": 6,
+							"phone_layout": 3.5,
+							"craft_and_distinctiveness": 5.5
+						},
+						"notes": "The densest, most directly useful figure table of the set: exact CoreMark scores, monospaced API names, filters on every column, region and price-unit controls right where you need them. It costs a lot: numbers are left-aligned and don't share a precision (95,158.796 next to 192,539.11), the 'Updated' line is hidden under a cookie banner and a promo pop-up covers the table, and nothing says where a score comes from or how many runs are behind it. The phone page is the desktop table cut off at the right edge, which is not a design."
+					},
+					"ref:planetscale.com": {
+						"scores": {
+							"first_ten_seconds": 6.5,
+							"numbers": 6,
+							"trust_and_provenance": 6.5,
+							"agents_and_developers": 5,
+							"typography_and_hierarchy": 7,
+							"colour_and_contrast": 7,
+							"phone_layout": 6,
+							"craft_and_distinctiveness": 8
+						},
+						"notes": "A strong, consistent point of view: all-monospace prose, hairline-ruled logo grid, ASCII-style diagrams, dotted section rules. It reads like engineers wrote it, and the p50/p95/p99 before-and-after graph links on to a benchmarking page. But the first screen is a wall of mono paragraphs with no single big claim, the logo grid takes several screens (worse on phone, where it runs to two columns of dozens of cells), and there are few figures for a page that sells speed."
+					},
+					"ref:turbopuffer.com": {
+						"scores": {
+							"first_ten_seconds": 8.5,
+							"numbers": 8,
+							"trust_and_provenance": 8,
+							"agents_and_developers": 6.5,
+							"typography_and_hierarchy": 8,
+							"colour_and_contrast": 8,
+							"phone_layout": 7.5,
+							"craft_and_distinctiveness": 9
+						},
+						"notes": "The best of the set at turning figures into the pitch. A plain claim ('search every byte'), a small architecture diagram, a scale line (1T+ documents, 10M+ writes/s), then a working cost calculator and p50/p90/p99 bars for warm and cold namespaces, with the workload stated and the benchmark repo linked, plus a limits table that gives 'seen in prod' next to each limit. The dark-to-light bands, pixel-shadowed boxes and mono type are carried through with care. On phone it reflows well, though the limits table wraps awkwardly. A developer has no command or snippet on the home page."
+					},
+					"ref:vercel.com": {
+						"scores": {
+							"first_ten_seconds": 5.5,
+							"numbers": 3,
+							"trust_and_provenance": 4.5,
+							"agents_and_developers": 5.5,
+							"typography_and_hierarchy": 8,
+							"colour_and_contrast": 6.5,
+							"phone_layout": 6,
+							"craft_and_distinctiveness": 6.5
+						},
+						"notes": "Excellent type and restraint (the tight grotesk headline, the generous whitespace), but 'Agentic Infrastructure' with a triangle says little to a newcomer in ten seconds, and the page has almost no figures besides a customer stat. In this headless capture everything below the first section is blank (scroll-triggered content never appeared), so most of the page's length was empty: in practice it is a polished template with not enough said."
+					},
+					"v1": {
+						"scores": {
+							"first_ten_seconds": 8,
+							"numbers": 8,
+							"trust_and_provenance": 7.5,
+							"agents_and_developers": 8,
+							"typography_and_hierarchy": 8,
+							"colour_and_contrast": 7.5,
+							"phone_layout": 7.5,
+							"craft_and_distinctiveness": 8.5
+						},
+						"notes": "CHANGES, most valuable first.\n1. Remove the repeated machine/price sub-headers between sections (desktop-light-00: the 'm5.large $0.096 … c6i.8xlarge $1.36' rows above II, III, IV and V). Make the column header (name, vCPU/GiB, price) sticky instead. As it stands each price appears six times on desktop (column header, four sub-headers, machines table). On phone (phone-light-00) the five-row price list under 'The ledger' repeats the machines table at the end of the page: keep one of them.\n2. Cut '↑ higher is better' / '↓ lower is better' from all 14 rows (desktop UNIT column, phone right of each title). An arrow beside the unit ('GB/s ↑', 'ns ↓') says the same thing. This is the most repeated text on the page after the figures.\n3. Rewrite the ledger legend line (desktop-light-00, right of 'The ledger'; phone under it): '0 to median, p5–p95 · a figure opens its Runs · 70 of 187 Series, by a written rule'. '70 of 187 Series' leaves a newcomer asking what happened to the other 117, and 'by a written rule' says nothing. Keep only the bar key, and either drop the Series count or make it one plain link.\n4. Show how many Runs stand behind each figure. Today the page gives only a global total (6,335 Runs in 187 Series). If every cell counts the same number of Runs, say it once in the ledger header ('median of N counted Runs'). If counts differ, add a small n beside each bar. Pay for it by dropping OLDEST RUN and BOOTS from the provenance block (BOOTS repeats 'four times a day' in the hero).\n5. Phone first screen (top half of phone-light-00) shows no figure at all: the hero, the curl box, the six-row provenance table, the legend and the price list fill it. Collapse provenance to one or two lines on phone (newest Run · Runs · method) and drop the price list (see 1), so that benchmark 01 is visible before scrolling.\n6. Stop underlining the 14 benchmark names (desktop and phone). Fourteen underlined bold serif titles are the loudest thing in the table and pull the eye away from the figures. Show that they are links some other way, or on hover.\n7. The sample Run (desktop-light-01, left) works against the table. It shows time_per_repetition_ns 136389.47… for mutex on c8i.2xlarge, while the ledger says 13.637… ns, and nothing tells the reader how one becomes the other. Its evidence URL is also runs/2026/11/11/<uuid>.json, while the endpoint list above it says EVIDENCE blobs/sha256/{hex}. Pick a sample whose field visibly is the figure in the table, and make the evidence address match the endpoint list (or the reverse). Do not add a paragraph to explain it.\n8. Small finish: in desktop dark (desktop-dark-top) the red double rule left of the figures turns grey, while the phone dark shots keep it red. Keep the red in both. The small-caps labels (NEWEST RUN, section index I. MEMORY…) are faint in both modes; raise their contrast a step. The curl box shows a '$' prompt on desktop but none on phone; pick one.\n\nKEEP. The 'book of record' point of view is carried all the way through: serif and mono pairing, roman-numeral sections, double rules, the red ledger rule, the colophon in the footer. It looks like nothing else in this space. The ledger is excellent: all 70 figures exact, decimal-aligned, bold leading digits with lighter thin-spaced tails so the exact value is kept but stays quiet, units on every row, and a 0-to-median bar with a p5–p95 band that lets you compare a row at a glance without the page passing judgement. The desktop first screen does the whole job: name, a one-sentence claim, a copyable curl, freshness and Run counts, and the first section of figures. The phone layout is designed rather than squeezed: one stacked block per benchmark with short machine codes, the same bars, and the red rule. The endpoint table with schema links is compact and usable.\n\nFALSE / MISLEADING. Nothing reads as invented. The identical disk figures (≈131 MB/s, ≈333 µs) look like a fixed volume limit and are honest to show. The only things that read as inconsistent are those in change 7: the sample Run's time_per_repetition_ns against the table figure, and its evidence address against the EVIDENCE entry in the endpoint list. '70 of 187 Series' (change 3) can read as if figures were hidden."
+					},
+					"v2": {
+						"scores": {
+							"first_ten_seconds": 8,
+							"numbers": 7.5,
+							"trust_and_provenance": 8,
+							"agents_and_developers": 8.5,
+							"typography_and_hierarchy": 7.5,
+							"colour_and_contrast": 7.5,
+							"phone_layout": 8,
+							"craft_and_distinctiveness": 8.5
+						},
+						"notes": "CHANGES, most valuable first.\n1. Quiet the digit tails (DATA table, desktop-light-00 and every phone slice). Bolding the first four significant digits is the right idea, but the tail is set in nearly full ink, in light and dark alike, so each cell still reads as a 17-character string and the table turns into a wall of digits. Drop the tail one or two tones, keeping it readable, so the bold head is what the eye scans and the exact value is still there. That fixes the density problem at its cause, with no rounding.\n2. Cut the link noise in the table. Every benchmark name has a solid underline, every bold head a dotted one, and the category nav, the method links and the price date are underlined too. Between rows 'Read memory sequentially' and 'GET 4 KiB from S3' that is more than 80 underlines. Keep one quiet affordance (the dotted rule under figures is enough) and drop the solid underline on benchmark names.\n3. Remove the desktop duplication between the column headers and MACHINES. The headers already give vCPU, GiB and $/h; the MACHINES table at the bottom repeats all three and adds only the processor. On desktop, put a short processor name in the header (e.g. 'Xeon 8175', 'EPYC 9R45') and drop the table; keep the stacked machine list on phone, where the rows show names only. 'prices 2026-11-19' in STATUS and 'On-Demand, 2026-11-19' are also the same fact stated twice.\n4. Fold SEE ALSO into FILES: link each path to its schema page and delete the 'index(5), series-list(5) …' line, which repeats the list above it. Make the path notation consistent ('/blobs/sha256/{hex}' uses braces and isn't linked, while the others use <id> and <date>). 'every Series, 187' sits beside a page of 70 figures with no link between the two numbers; drop the count, or replace it with a word that makes the 187 obvious.\n5. STATUS line: the nanosecond tail on 'newest … 17:07:23.182448102' is noise, since a timestamp isn't a measured figure. Spend those characters on what makes 'runs 6,335, 0 failed' meaningful: the window ('since 2026-…'). 'method series v1 requests v1' is opaque to a newcomer; either name each by what it derives in two words or collapse them into one 'methods' link.\n6. Desktop alignment: values in a row are decimal-aligned across columns, which indents some numbers by a character under their machine heading (3.481…, 76.68…, 6.851…) and makes the column edges ragged. Horizontal comparison gains nothing from that, so left-align to the heading on desktop. Keep decimal alignment on phone, where the five values stack and it does help.\n7. Phone details: the category nav row (phone-light-00, under DATA) sits about 40 px in from the gutter, unlike everything else; align it or drop it on phone. The masthead says LEDGERMATH(5) in both corners, which uses up a phone line; keep one. The curl command breaks mid-URL ('…ledgermath.com/ ⏎ v1/index.json'); break before 'https' or let the box scroll horizontally.\n8. Range bars: on cream the light-grey track and the p50 fill are faint, and the p5–p95 band shows only where it's wide. Darken the fill one step so cross-machine comparison works at a glance; keep the scale from 0.\n\nKEEP. The man-page structure (NAME / SYNOPSIS / STATUS / DATA / FILES) is a real point of view, and it is carried through to the footer. The curl command with a copy button in the first screen. The one-line STATUS (newest, runs, failures, schedule, region and AZ, price date, methods). Full exact figures with a significance cue instead of rounding. Range bars drawn from 0. No verdicts or best marks. The 'root EBS gp3 volume' note, which explains the identical disk rows in four words. The phone pivot into per-benchmark blocks with unit and direction on the right: a designed phone page, not a squeezed one. A dark mode that holds up. Very little prose overall.\n\nFALSE / MISLEADING. Nothing reads as invented. 'runs 6,335, 0 failed' without a time window invites doubt. '187 Series' next to 70 figures looks like a contradiction until explained. 'AMD EPYC 9R45 Processor' keeps the raw 'Processor' suffix that the other CPU names don't have, a small inconsistency that reads as copy-paste."
+					},
+					"v3": {
+						"scores": {
+							"first_ten_seconds": 8,
+							"numbers": 8,
+							"trust_and_provenance": 7.5,
+							"agents_and_developers": 7.5,
+							"typography_and_hierarchy": 8,
+							"colour_and_contrast": 7.5,
+							"phone_layout": 7.5,
+							"craft_and_distinctiveness": 8.5
+						},
+						"notes": "CHANGES, most valuable first.\n1. Give red one job. Right now the dark red marks prices (Table 1 header, Table 2 USD/h), the p5–p95 band, the category labels (Memory, Compute…), the row letters a–n, the reference numbers [1]–[5], the section numbers and the DATA AVAILABILITY label. Because of that the one red thing that is data, the p5–p95 band, does not stand out, even where it is wide (h on c6i/i4i, i on c8i, d on c8i, k/m on c8i). Keep red for the band only. Set prices, headings, letters and reference marks in ink or the muted grey, in both themes.\n2. Make the bar's fill different from its track. In every cell of Table 1 (desktop-light-00, all phone tiles) the grey fill from 0 to the median is only slightly darker than the light grey track, so the bar's length, which is the whole point of the bar, takes effort to read. Darken the fill or lighten the track. Do this before touching anything else on the bars.\n3. Put the curl command on one line. In the Data availability box (desktop-light-00 top right, phone-light-00) `index.json` wraps onto a second line inside a narrow box, even with plenty of width free on desktop. Widen the box or move it to its own full-width line so the command reads, and copies, as one unit.\n4. Cut what the first screen repeats. The line of machine names under the title (m5.large · c8i.2xlarge · …) is repeated by the Table 1 header 300 px below. The vertical margin stamp on desktop repeats the API address, region and date shown elsewhere. The sentence 'For agents and developers. Every figure links to its Series file.' repeats reference [3]. Removing all three costs nothing and brings more of Table 1 above the fold.\n5. Show how many Runs stand behind each figure without opening Table S1. The page gives only a site-wide total (6,335 Runs). If n is uniform per benchmark, add one small 'n 36' beside each row's unit (next to 'GB/s ↑'). If it is uniform overall, add it once in the Table 1 caption. Do not add any prose.\n6. Phone first screen: no figure appears in the first 1688 px (phone-light-00 stops at the Table 1 caption). Collapse the four-cell meta grid and the five-line abstract (shorten it to one sentence on phone, or move it below Results) so benchmark a appears on the first screen. The phone legend also wraps, leaving '↓ lower is faster' alone on its own line. The arrow beside each unit already says this, so drop the 'higher/lower is faster' legend words.\n7. Table 2 repeats vCPU, memory and price, which are already in the Table 1 column headers. Keep only what is new there (processor, storage) or merge it into the header. Small fixes: 'AMD EPYC 9R45 Processor' → 'AMD EPYC 9R45'; '1 x 1875 NVMe SSD' has no unit (GB).\n\nKEEP. The scientific-report conceit is a real point of view and it is carried through everywhere: abstract, Table 1/2/S1, lettered rows a–n, a References list that doubles as the API map, Listing 1, Supplement, and a serif with mono machine names. Splitting each figure into a bold leading part with the remaining digits small and grouped in threes is the best answer yet to 'exact, not rounded': it scans like a rounded table and keeps every digit. Keep the decimal alignment of the bold part, the unit and direction arrow under each benchmark name, the per-row bars starting at 0, and the honesty of rows j, l and n where every bar is identical. Keep the run metadata line (First Run, Latest Run, Prices copied, Runs counted/failed), which carries trust in one line. On phone, the reshaping of each benchmark into a 5-row block (machine · bar · figure) is a designed layout, not a squeezed table; keep it. The page says little and lets the figures speak.\n\nFALSE / MISLEADING. 'Every figure links to its Series file' is not visible: the medians in Table 1 have no link affordance, while the meta dates do have dotted underlines. Either make the figures visibly linked or remove the claim. The margin stamp 'api.ledgermath.com/v1 [us-east-2] 19 November 2026' imitates an arXiv identifier and could be read as a citation ID; one more reason to cut it."
+					},
+					"v4": {
+						"scores": {
+							"first_ten_seconds": 8,
+							"numbers": 7,
+							"trust_and_provenance": 6.5,
+							"agents_and_developers": 8,
+							"typography_and_hierarchy": 7.5,
+							"colour_and_contrast": 7.5,
+							"phone_layout": 6.5,
+							"craft_and_distinctiveness": 7.5
+						},
+						"notes": "CHANGES, most valuable first.\n1. Show each figure once, not twice (desktop-light-00/01, every board cell). Each cell has a bold 4-significant-figure value (\"12.50\") and the exact value under it (\"12.502 615 200 030 773\"). That doubles the figures in all 70 cells, and the largest thing in each cell is a rounded number on a site that does not round. Merge them into one exact string and let weight carry the hierarchy: leading digits bold and large, trailing digit groups lighter and smaller, all in the same run of type. Fixing the cause this way also fixes the phone (point 2) and gives back about 20 px of height per row.\n2. The phone board has only rounded figures (phone-light-00 lower half, phone-light-01): 12.50, 571.43, 131.284. The exact figures are missing there. Point 1 handles this too: show the exact string at a smaller size, or wrap it to two lines in each of the five narrow columns. Don't hide it.\n3. On the phone the columns lose their names once you scroll (phone-dark-mid, phone-light-01). After the header, nothing says that the third column is c8a.2xlarge. Make the machine header row sticky, or repeat a one-line strip of short names (m5.l · c8i.2xl · c8a.2xl · i4i.2xl · c6i.8xl) under each category band.\n4. Cut what repeats. (a) The MEM/CPU/OS/DSK/NET chips beside THE BOARD (desktop top right, phone above the board) repeat the coloured category bands. Remove them. (b) \"↑ faster\" / \"↓ faster\" appears 14 times. Put the arrow inside the unit chip (\"GB/s ↑\", \"µs ↓\") and drop the word. (c) OS 08 prints a third line in every cell (\"÷10,000 = 17.50 ns\"), and on the phone it wraps. Pick one unit: ns per lock/unlock is the natural one. (d) The \"01\" / \"02\" section numbers are template furniture. Drop them.\n5. The 'For agents' section (desktop-light-01, phone-light-01) lists the same files twice: once as curl commands and once in the FILE/SCHEMA table. Merge them into one list, each row giving the address, its schema link and a copy button. Cut the sentence under the heading or fold it into the heading. On the phone this section is longer than any one category of the board.\n6. No figure shows how many Runs stand behind it, and the Method appears only in the footer. The status board has the page-wide totals (6,335 Runs, 187 Series). Put the per-figure count in one place, as one figure per column header or per category band if it is uniform (for example \"n=37\" by the machine name), or as a faint suffix on the range bar. Don't put it in every cell. Name the Method next to the p5/median/p95 key, which is where a reader asks what a figure is.\n7. On the desktop the board sticks out past the right margin (desktop-light-00/01). The heading rule and the chips stop at x≈1392, but the table runs to x≈1422. Bring the table inside the column, or make the whole page wider to match it.\n8. The range key (\"0 — p5 median p95\") doesn't say what the bar's right end means. In each row the bar runs from 0 to the largest figure in that row, and for lower-is-better rows the longest bar is the worst. Label the right end \"row max\", or start each bar at the row minimum. Also, on most cells the p5–p95 band is too thin to see. That is honest, but then the bar is mostly showing rank, not spread.\n\nKEEP. The departure-board point of view: yellow/black masthead, condensed display caps, the split-flap 'NEWEST RUN 17:07 UTC' with the four round slots and a now-marker. It says 'four times a day' without prose and is the most distinctive thing among the candidates. Machine headers with price and vCPU/GiB on the black band. The coloured category bands and left rules. Digit grouping in threes after the decimal point. The one-line DISK note ('root EBS gp3 volume on all five'): one line that explains why the disk rows are identical. The single curl with COPY in the hero. A short page with no explanatory sections. Dark mode works and is not just inverted.\n\nFALSE OR MISLEADING. (a) The rounded bold value is presented as the figure, and on the phone it is the only figure. That reads as rounding on a project that says it doesn't round. (b) 'SERIES 187' sits beside a board of 70 cells and nothing reconciles the two. A reader will wonder what the other 117 are. Either show the number the board stands on or drop the tile. (c) The now-marker on the rounds track sits before 17:07 although the newest run is 17:07. Minor, but it is a precision page."
+					},
+					"v5": {
+						"scores": {
+							"first_ten_seconds": 7.5,
+							"numbers": 7.5,
+							"trust_and_provenance": 7,
+							"agents_and_developers": 8,
+							"typography_and_hierarchy": 8,
+							"colour_and_contrast": 7.5,
+							"phone_layout": 7.5,
+							"craft_and_distinctiveness": 7.5
+						},
+						"notes": "CHANGES, most valuable first.\n1. The hero says one figure four times. On desktop-light-00 (and phone-light-00), m5.large 'Read memory sequentially' appears as the giant 12.50, again as the full-precision line '12.502615200030773 GB/s', again in the five-bar chart on the right, and a fourth time as the first cell of the table 500 px lower. Cut the bar chart (it's the table's first row drawn again) and the separate full-precision line. Show the giant number once, in the table's own form: big head, small tail digits, on one line. The hero then reads as 'this is what every cell below looks like', not as a headline claim about one benchmark that nobody chose, and the stats strip moves up.\n2. Remove section 03 'The machines' (desktop-light-01 bottom and -02, phone-light-03). Its vCPU, memory and $/h are already in the table's column headers. The only new thing is the processor, which fits as one more small line in those headers. That is one fewer section and a shorter phone page.\n3. Line the figures up on the decimal point where they are compared. On the phone (phone-light-00 to -02), each benchmark is a stack of five machines to compare top to bottom. Cells are right-aligned on the whole string, and the tails differ in length, so the bold heads wander: '22.85|4877' against '22.92|701625' in GET 4 KiB from S3, '587.4|01541015625' against '582.9|497937011719' in Read 8 KiB, '76.68' against '571.42' in SHA-256. Give the head a fixed right edge with the tail left-aligned after it, so the decimal points form a column. Do the same in the desktop cells, so heads sit at the same x down each column.\n4. Lock and unlock a mutex (desktop-light-01 top, phone-light-01): the unit is 'µs per 10,000' and every cell repeats '17.50 ns each' underneath. That's the only row with two numbers per cell, and the only row of uneven height. Pick one unit (ns per lock/unlock), state it once in the row label, and drop the five sub-captions.\n5. Shorten the API section (desktop-light-01, phone-light-02). The three black curl blocks repeat the same '$ curl https://api.ledgermath.com/v1/' prefix. The first repeats the hero's command, and the footer lists the same three addresses again. Use one block holding the base address, with the three paths as short lines. Keep the JSON excerpt; it's the best thing in the section. On desktop, the right-hand Schemas/Evidence/Docs column starts at x≈1074 while the section's intro text starts at x≈960, so the grid breaks; put them on one edge.\n6. Make the stats strip mean something to a newcomer, in fewer words. 'Series 187' sits next to a table with 70 cells and reads as a contradiction. 'Method: series v1, requests v1' and the legend's 'Median of each Series' counted Runs' are internal vocabulary. Drop 'Series' from the strip. Give the method a plain link label. Cut 'counted' from the legend. The number of Runs behind each figure appears only in the hero ('p50 of 36 Runs'). If the counts differ between cells, a tiny n per cell, or on hover, would carry more trust than any of the strip's prose.\n7. Phone details: on phone-light-00 and -02 the 'Copy' button floats alone above its code block and reads as a stray control; put it inside or on the block's edge. The prices command and the JSON excerpt are cut off at the right (phone-light-02), and the cut part of the prices URL is its date, which is the part that matters. Wrap these blocks or shorten them for the phone.\n8. Dark mode (desktop-dark-top/-mid): a 12 px cream strip runs across the top of the page and looks like a rendering fault. The code blocks invert to bright cream panels, the brightest things on the page, which pull the eye away from the figures. Keep the code blocks dark-on-dark with a border instead.\n\nKEEP. The headline 'AWS machines, measured four times a day.' and the one-sentence subline with the four UTC times: clear in seconds, no padding. The copyable curl in the first screen. The head/tail split of every figure: exact digits, but the eye reads the head, with a consistent number of decimals in each row. The direction-and-unit line under each benchmark name ('GB/s ↑ faster'). The quiet range bars, 0→p50 with a p5–p95 whisker, scaled per row. The phone layout turns the table into one block per benchmark with machines as rows; that's designed, not squeezed, and the length is earned by the 70 figures. The restrained black, cream and one red, the numbered sections, the heavy rules, and a confident grotesk give it a real point of view and very little prose.\n\nPOSSIBLY MISLEADING. Red marks the 'selected' m5.large cell and bar, and on Read memory sequentially m5.large happens to be the slowest machine. Red there can read as 'worst', which the page must not say. Use the ink colour, or a neutral accent that doesn't carry a verdict. 'Newest Run … 17:07 UTC' next to a schedule of :10 past the hour may read as off-schedule. If 17:07 is the finish time, say 'finished'. The underlined full-precision hero figure looks like a link with no clear destination. Nothing else looks invented: the numbers check out against each other (6,335 Runs / 187 Series ≈ 34, consistent with 36 and 33 per Series, and with ten days of four boots a day)."
+					},
+					"v6": {
+						"scores": {
+							"first_ten_seconds": 8,
+							"numbers": 8,
+							"trust_and_provenance": 7.5,
+							"agents_and_developers": 8,
+							"typography_and_hierarchy": 8,
+							"colour_and_contrast": 8,
+							"phone_layout": 7.5,
+							"craft_and_distinctiveness": 8
+						},
+						"notes": "CHANGES, most valuable first.\n1. Machines, On-Demand card (desktop-light-00 top-left; phone-light-00 after card 01): the grey bar sits right after the GiB column, so it reads as memory, but it is drawn from price (i4i and c6i are both 64 GiB yet the c6i bar is twice as long). Put it on the right next to $/hour, or drop it. Also put this card in the same place on both layouts: it comes first on desktop but after card 01 on phone, which looks like a reflow accident.\n2. Stats strip (desktop-light-00 y≈305-378; phone-light-00 stats grid): 'SERIES 187' sits beside a page that shows 70 figures, and 'METHODS series v1 requests v1' is internal vocabulary. A newcomer can't tell what 187 counts. Either drop SERIES or make the label say what it counts in two words. The strip is the right idea; it only needs fewer unexplained terms.\n3. Runs behind each figure: the page says 6,335 Runs in total but never says how many stand behind a single figure. One small 'n=33' in each card header, in place of something less useful, would answer that at almost no cost. A clue to why it matters: the JSON sample shows counted_runs 33.\n4. Too many signals for one fact on zoomed cards 10, 12 and 14 (desktop-light-00 bottom rows): the '//' axis break, the 'zoomed' chip and the 0-to-max overview strip all say 'axis not from 0'. Keep the break and the overview strip and drop the 'zoomed' chip. The black 'gp3 volume limit' tag is the heaviest mark in the grid. Make it a quiet label on the overview strip's ceiling tick so it weighs less than the data.\n5. Card headers: long titles plus long units wrap and break the row rhythm. '08 Lock and unlock a mutex' with 'ns / critical section' wraps on desktop and pushes row 06-08's charts down; '12 Random 4 KiB reads, 64 submitted' also wraps. On phone (02, 05, 08, 09) 'faster' and the unit drop to their own line in some cards and not others. Shorten the unit ('ns') and the titles where you can, and give the header one fixed layout.\n6. Axis tick labels and machine labels are very small and pale on desktop at 1440 (≈9-11 px, light grey). Raise the tick contrast a step. These are the only means of comparing a dot with its range.\n7. API section (desktop-light-01; phone-light-02): 'Prompt for your agent' shows up twice (as the hero button and as the API disclosure); keep one. The five-level nested JSON sample is the longest block on the page and has a run of closing braces that spills to the phone's edge. Trim it to the few keys that show what you get (runs, p5/p50/p95, a unit). On phone each 'copy' button wraps onto its own line under the URL, and the hero curl is cut off at '/v1/ind'. Let the command wrap, or shorten what is shown.\n8. Precision rule: cards show 3.481, 131.284, 22.9270 and 3297 (varying digits, presumably enough to tell the five apart), while the JSON carries 19581876183.050716. Good, but nothing tells the reader which they are seeing. Labelling the disclosure 'Every digit' is honest; make sure the card figures can't be taken for the full figures (for example, a figure in the card header that links to its Series file).\n\nKEEP: the headline (it says what, how often and why to trust it in one line). The figures on the first screen on both desktop and phone. The 14 small-multiple dot plots with p5-p95 whiskers, the median printed and decimal-aligned (14.43 lines up with 3.481), the unit and a 'faster →' direction in every header, and the same machine order everywhere. Honest zoomed axes with an overview strip. The hero curl. The very low word count. The restrained one-accent palette, which holds up in dark mode; the dark mode is clean. The boot-schedule dial.\n\nFALSE OR MISLEADING: the API text says 'Each figure links to its Series file', but nothing on the cards looks like a link. If they aren't links, the claim is false here; if they are, they need a visible affordance. The price bar placed beside GiB (change 1) misleads. 'Series 187' against 70 visible figures reads as an inconsistency even if it isn't one."
+					},
+					"v7": {
+						"scores": {
+							"first_ten_seconds": 7.5,
+							"numbers": 8,
+							"trust_and_provenance": 8,
+							"agents_and_developers": 8.5,
+							"typography_and_hierarchy": 7.5,
+							"colour_and_contrast": 7.5,
+							"phone_layout": 7,
+							"craft_and_distinctiveness": 8
+						},
+						"notes": "CHANGES, most valuable first.\n1. Say each thing once. Freshness and counts are stated three or four times: the header clock '2026-11-19 17:07 UTC', the hero strip RUNS 6,335 / NEWEST 17:07 UTC / PRICES 2026-11-19, the Provenance grid (NEWEST RUN, RUNS 6,335 · 0 failed, PRICES COPIED) and the timeline's 'newest 17:07' (desktop-light-00 top, desktop-light-01 bottom). The curl to index.json also appears three times (hero, 'Point your agent here', footer). Keep the hero strip and the timeline; cut the header clock and fold the Provenance grid down to what is not said elsewhere (oldest Run, Methods links).\n2. Remove the Machines section (desktop-light-01 middle; phone-light-02/03). vCPU, memory and $/h are already in the table's column heads (desktop) and the machine key (phone); the only new fact is the processor, which fits as one more grey line under each column head. On phone the section is also broken: the PROCESSOR heading has no values under it and the row rules stop at about 80% of the width while the heading rule runs full width (phone-light-03 top).\n3. Stop using the accent to mark c8a.2xlarge as a machine. Its column head is red in the table, its row is pink in Machines, its key entry is red on phone. Only the one cited cell (Sort, c8a) needs the tint and the (1)(2) marks; a red machine name everywhere reads as the page's pick.\n4. Trim the example card (desktop-light-00 right). Drop the caption 'written for this page; every figure read from the API' (the Sources block shows exactly that). In Sources keep p50, counted_runs, the evidence file and the price; the p5 and p95 lines do not support a median answer. The price field path '…WKW5NUYTBWN4S8VU.JRTCKXETXF.6YS6EN2CT7/pricePerUnit/USD' is an unreadable string; show the file and the leaf field only.\n5. Fix the table legend. '↑ higher ↓ lower is faster' reads as one garbled phrase; 'figure → Series file' is cryptic. Arrows already sit next to every unit, so the legend needs only the bar glyph and 'median · p5–p95, from 0'. Rename 'The same numbers': it only makes sense relative to the card above; a plain label (or none) is clearer.\n6. 'Point your agent here' (desktop-light-01 top): the five links 'index series-list series prices Docs' repeat the three curls beside them. Keep the copyable prompt and the curls, drop the link row. Also drop the 'LEDGERMATH' eyebrow over the headline; it repeats the logo directly above it.\n7. Phone Provenance timeline (phone-light-03): the axis line runs through the time labels (04:10, 10:10 struck through); move the labels below the line. The nanosecond timestamps there wrap onto three lines; on phone a date and HH:MM:SS fits one line, with the full value one tap away.\n8. 'SERIES 187 · 70 above' and '# every Series (187)' assume the reader knows what a Series is and why 187 ≠ 70. Either cut the 187 or make the 70 = 14 × 5 obvious without a sentence.\n\nKEEP. The exact figures with the leading significant digits in bold and the tail in a lighter weight: exact and still scannable, the best treatment of unrounded numbers I have seen in this set. Per-row padding so integer parts line up across machines. The thin bar from 0 to the median with a p5–p95 whisker: honest, compact, and it makes the flat disk rows read as flat at a glance. Section notes of four words ('the root EBS gp3 volume', 'S3, same Region'). The Q/A card with numbered footnotes tied to a highlighted table cell: a real point of view that shows what 'cite' means. curl above the fold with 'Static JSON, no key.'. The phone page is genuinely redesigned: machine key, section chips, one block per benchmark with figures stacked. Warm paper palette with one rust accent and a dark mode that holds up.\n\nFALSE OR MISLEADING. The green dot beside '17:07 UTC' in the header reads as a live status or the current time; it is the newest Run's time on a static page. The red c8a.2xlarge styling (point 3) implies a recommendation the page must not make. Processor strings are inconsistent: 'AMD EPYC 9R45 Processor, Up to 4.5 GHz' is a raw AWS string beside tidied Intel names."
+					},
+					"v8": {
+						"scores": {
+							"first_ten_seconds": 8,
+							"numbers": 8,
+							"trust_and_provenance": 8,
+							"agents_and_developers": 8,
+							"typography_and_hierarchy": 8,
+							"colour_and_contrast": 8,
+							"phone_layout": 7.5,
+							"craft_and_distinctiveness": 8
+						},
+						"notes": "CHANGES, most valuable first.\n1. Remove the repetition between the hero and the 'On the record' strip (desktop-light-00, y≈800–1000; phone-light-00 lower half). The hero meta line already says 'Newest Run 2026-11-19 17:07 UTC · 6,335 Runs', and the strip says 6,335 Runs and 'newest Run 17:07' again. '70 of 187 Series in the table below' then repeats the 'All 70 figures' button and the '14 benchmarks × 5 machines' heading right under it. Keep one statement of each: either cut the strip down to the boot-time ruler alone (the one new fact it adds), set inline under the hero, or drop the hero meta line and let the strip carry it. On the phone this frees about 450 px before the table starts.\n2. Cut the 'From a cold boot to a figure' band (desktop-light-01 bottom / -02 top; phone-light-04 top, about 600 px on the phone). Its five pictograms and labels ('A machine boots … The API serves') say again what the hero subtitle and the traced-figure card already show. If you keep anything, keep a single line on desktop and drop it on the phone.\n3. The second hero curl repeats exactly. 'START HERE curl …/v1/index.json' in the dark agent section (desktop-light-01) is the same command as the hero box. Keep the hero one. In the agent section, list only series.json and prices, or turn the three boxes into one block of three commands with one Copy each. On the phone the three wrapped boxes take a whole screen.\n4. The JSON sample doesn't match the hero (desktop-light-01 right; phone-light-03). It shows Series c2d748916b19, the same id as the hero figure, but with p50 136370.579 ns 'time_per_repetition_ns', while the hero and the table give 13.637… ns per critical section. A reader who compares them sees two different numbers for one Series. Show the field that holds the published figure, or pick an entry whose number appears as-is in the table. Make it agree without adding a caption.\n5. Phone benchmark cards: line up their internals (phone-light-01 to -03). The unit sits inline on the right for some cards ('GB/s ↑', 'μs per repetition ↓' on Read 8 KiB / Write 8 KiB / GET S3) and wraps under the title for others. The bar column starts at a different x in different cards (compare 'Read 8 KiB from disk' and 'GET 4 KiB from S3' with the memory cards). Put the unit in one place, always under the title, and give the bars a fixed start so the cards scan as one column down the page.\n6. Phone machines section (phone-light-04/05): five cards of six label rows each come to about 1,800 px for 30 small facts. Use a compact two-line row per machine instead: type and price on the first line, 'vCPU · memory · processor · clock · network · storage' run together on the second. That keeps every fact and takes about a third of the length.\n7. Hero card details (desktop-light-00 right). 'Runs 33 counted, 0 failed' wraps to two lines while 'Dates' beside it doesn't; widen that cell or shorten the text to '33 · 0 failed'. The p5/p95 values and the Series → Run → Evidence chain are set at about 10–11 px; make them a step larger. 'Evidence: boot' is opaque as a link label: name what the file is.\n8. The 'Round to 4 figures' toggle sits under a heading that says 'every digit' and on a project that doesn't round. It's harmless as an option, but it's a control and a label on every visit. Consider dropping it: the bold integer part with lighter fraction already gives quick scanning without hiding digits.\n\nKEEP. The exact figures with bold integer part and lighter fraction, decimal-aligned in tabular mono. This is the best answer yet to showing 17 significant digits that can still be scanned. The thin p50-from-zero bar with a p5–p95 whisker under each cell. The section-grouped table, with 'root EBS gp3 volume' stated once, which explains the flat ~131 MB/s disk row without a note. The traced-figure card as the hero's proof, and the same figure marked with a dot in the table. The phone's per-benchmark cards with chip navigation, a real redesign rather than a squeezed table. The warm paper palette and serif display type, carried through to a dark mode that is as good as the light one. The dark agent band with a real JSON entry. The prices shown once in each column header.\n\nFALSE OR MISLEADING. Nothing reads as invented, but the JSON sample (item 4) shows a different number and unit for the Series the hero traces, which looks like a contradiction. On the phone the hero meta line wraps so that the live dot sits alone on its own line, away from 'Newest Run'. That is cosmetic, but it makes the line look broken."
+					}
+				}
+			},
+			"merged": {
+				"v1": "625fea6c05c8d20d23ebe992f8b167dfc356f237",
+				"v2": "71fc13d5b969ebb7aa2ea16d9c087475ffd1fc30",
+				"v3": "b56d77d6d031fd50aa6dacf4a0748810e503e9b6",
+				"v4": "c4313dbe146107a2f603cdf787d2b25868c3e7bb",
+				"v5": "b7149f226455aaf1c2fa62860684c76dea1f643b",
+				"v6": "ada2ae23601289b298f7549a762e4bd4c5535524",
+				"v7": "fe49c70e89b14abd761f733693d6d79cf4a757b5",
+				"v8": "ed2df582ecbbf1876029073b5c7c03fcc6dac800"
+			},
+			"new_checkpoints": []
 		}
 	],
 	"checkpoints": [
