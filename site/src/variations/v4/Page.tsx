@@ -495,7 +495,7 @@ export default function Page() {
 				<section class="method-sec" id="method" aria-labelledby="method-title">
 					<div class="sec-head">
 						<h2 id="method-title">
-							<span class="h2-code">04</span> Where every figure comes from
+							<span class="h2-code">04</span> Behind every figure
 						</h2>
 						<p class="sec-sub">
 							{runs} Runs in {seriesCount} Series, from {oldest.date} {oldest.minute} to {newest.date} {newest.minute} UTC. {counted} were counted,{" "}
