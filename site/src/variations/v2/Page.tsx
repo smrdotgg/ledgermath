@@ -112,10 +112,8 @@ const SECTION_TAG: Partial<Record<Section, string>> = { Disk: "root EBS gp3 volu
 
 // ---------------------------------------------------------------- pieces
 
-/** The address with a line-break opportunity after each slash. */
-function breakable(url: string) {
-	return url.split(/(?<=\/)/).map((part, i) => [i ? <wbr /> : null, <span class="nb">{part}</span>]);
-}
+/** A processor's name without the word "Processor" that some of AWS's names end with. */
+const cpu = (name: string) => name.replace(/\s+Processor$/i, "");
 
 function Section(props: { id: string; title: string; sub?: unknown; children?: unknown }) {
 	return (
@@ -129,40 +127,49 @@ function Section(props: { id: string; title: string; sub?: unknown; children?: u
 	);
 }
 
-/** A moment to the second, its fraction dimmer, and UTC: one unbreakable piece. */
-function Moment(props: { m: ReturnType<typeof formatMoment> }) {
+/** A moment to the second, and UTC: one unbreakable piece. Its full form is in the title. */
+function Moment(props: { m: ReturnType<typeof formatMoment>; bright?: boolean }) {
 	const m = props.m;
-	const fraction = m.full.slice(m.date.length + 1 + m.second.length, -4);
 	return (
-		<time datetime={m.iso} class="nb">
-			<span class="hi">
+		<time datetime={m.iso} class="nb" title={m.full}>
+			<span class={props.bright ? "hi" : undefined}>
 				{m.date} {m.second}
-			</span>
-			<span class="frac">{fraction}</span> UTC
+			</span>{" "}
+			UTC
 		</time>
 	);
 }
 
-/** Freshness and provenance: one line of facts, each a key and a value. */
+/** Freshness and provenance: two lines of facts, each a key and a value, in aligned columns. */
 function Status() {
+	const oldest = formatMoment(snapshot.oldestRunStartedAt);
 	const rows: [string, unknown][] = [
-		["newest", <Moment m={newest} />],
+		["latest Run", <Moment m={newest} bright />],
+		["schedule", <span class="nb">{SCHEDULE.join(" ")} UTC</span>],
+		[
+			"prices",
+			<a href={links.prices} class="nb">
+				On-Demand {snapshot.priceDate}
+			</a>,
+		],
 		[
 			"runs",
-			<>
-				<span class="hi">{formatCount(snapshot.runCount).full}</span>, {formatCount(snapshot.failedRuns).full} failed
-			</>,
+			<span class="nb">
+				<span class="hi">{formatCount(snapshot.runCount).full}</span> since{" "}
+				<time datetime={oldest.iso} title={oldest.full}>
+					{oldest.date}
+				</time>
+				, {formatCount(snapshot.failedRuns).full} failed
+			</span>,
 		],
-		["at", <span class="nb">{SCHEDULE.join(" ")} UTC</span>],
 		[
-			"in",
+			"region",
 			<span class="nb">
 				{snapshot.region} {zones.join(" ")}
 			</span>,
 		],
-		["prices", <a href={links.prices}>{snapshot.priceDate}</a>],
 		[
-			"method",
+			"methods",
 			<>
 				{snapshot.methods.map((m, i) => (
 					<>
@@ -192,7 +199,6 @@ function DataTable() {
 	return (
 		<div class="scroll" role="region" aria-label="The headline figures: 14 benchmarks on 5 machine types" tabindex="0">
 			<table class="data">
-				<caption class="sr">Median of each Series' counted Runs; each links its Series file.</caption>
 				<colgroup>
 					<col class="c-unit" />
 					{machines.map(() => (
@@ -210,7 +216,12 @@ function DataTable() {
 								<span class="m-spec">
 									{m.vcpu} vCPU {m.memory}
 								</span>
-								<span class="m-spec">${formatUsd(m.price.usdPerHour).full}/h</span>
+								<span class="m-price" title={`${m.price.description} (as the price file writes it: ${m.price.usdPerHour})`}>
+									${formatUsd(m.price.usdPerHour).full}/h
+								</span>
+								<span class="m-cpu" title={m.processor}>
+									{cpu(m.processor)}
+								</span>
 							</th>
 						))}
 					</tr>
@@ -295,36 +306,19 @@ function DataTable() {
 
 function Machines() {
 	return (
-		<table class="machines">
-			<thead>
-				<tr>
-					<th scope="col">type</th>
-					<th scope="col" class="r">
-						vCPU
-					</th>
-					<th scope="col" class="r">
-						memory
-					</th>
-					<th scope="col">processor</th>
-					<th scope="col" class="r">
-						$/hour
-					</th>
-				</tr>
-			</thead>
-			<tbody>
-				{machines.map((m) => (
-					<tr>
-						<th scope="row">{m.instanceType}</th>
-						<td class="r">{m.vcpu}</td>
-						<td class="r">{m.memory}</td>
-						<td class="proc">{m.processor}</td>
-						<td class="r price" title={`${m.price.description} (as the price file writes it: ${m.price.usdPerHour})`}>
-							{formatUsd(m.price.usdPerHour).full}
-						</td>
-					</tr>
-				))}
-			</tbody>
-		</table>
+		<ul class="machines">
+			{machines.map((m) => (
+				<li>
+					<span class="mc-name">{m.instanceType}</span>
+					<span class="mc-price" title={`${m.price.description} (as the price file writes it: ${m.price.usdPerHour})`}>
+						${formatUsd(m.price.usdPerHour).full}
+					</span>
+					<span class="mc-spec">
+						{m.vcpu} vCPU {m.memory} · <span title={m.processor}>{cpu(m.processor)}</span>
+					</span>
+				</li>
+			))}
+		</ul>
 	);
 }
 
@@ -332,11 +326,11 @@ function Machines() {
 
 export default function Page() {
 	const title = "LEDGERMATH(5)";
-	const files: [string, string, string][] = [
-		[links.index, path(links.index), "start here"],
-		[links.seriesList, path(links.seriesList), `every Series, ${formatCount(snapshot.seriesCount).full}`],
-		[links.seriesFile(headline[0]!.cells[0]!.series), path(links.seriesFilePattern), "each Run, with evidence"],
-		[links.prices, "/v1/prices/<date>.json", "AWS prices, daily"],
+	const files: [string, string, string, string][] = [
+		[links.index, path(links.index), "start here", links.schema.index],
+		[links.seriesList, path(links.seriesList), "every Series", links.schema.seriesList],
+		[links.seriesFile(headline[0]!.cells[0]!.series), path(links.seriesFilePattern), "each Run, with evidence", links.schema.series],
+		[links.prices, path(links.priceFilePattern), "AWS prices, daily", links.schema.prices],
 	];
 	return (
 		<div class="term">
@@ -369,17 +363,19 @@ export default function Page() {
 									${" "}
 								</span>
 								<span class="cmd-text">
-									<span class="curl">curl -s</span> <a href={links.index}>{breakable(links.index)}</a>
+									<span class="curl">curl -s</span>{" "}
+									<a href={links.index} class="nb">
+										{links.index}
+									</a>
 								</span>
 							</code>
 						</div>
-						<p class="syn-note">Point your agent here. Every figure links its Runs and their evidence.</p>
+					</Section>
+
+					<Section id="status" title="STATUS">
+						<Status />
 					</Section>
 				</div>
-
-				<Section id="status" title="STATUS">
-					<Status />
-				</Section>
 
 				<Section
 					id="data"
@@ -399,13 +395,16 @@ export default function Page() {
 						<span class="nb">
 							<span class="dir">↓</span> lower
 						</span>
-						<span class="nb">
+						<span class="key-glyph" role="img" aria-label="The drawing: a tick at p50, a band from p5 to p95, on a scale from 0 shared by the row">
 							<span class="key-sp" aria-hidden="true">
 								<span class="sp-b" />
 								<span class="sp-r" />
 								<span class="sp-m" />
-							</span>{" "}
-							p50, p5–p95, from 0
+							</span>
+							<span class="kl kl-0">0</span>
+							<span class="kl kl-5">p5</span>
+							<span class="kl kl-50">p50</span>
+							<span class="kl kl-95">p95</span>
 						</span>
 						<details class="xt">
 							<summary>exact p5, p95, counted runs</summary>
@@ -414,46 +413,39 @@ export default function Page() {
 					<DataTable />
 				</Section>
 
-				<div class="foot">
-				<Section id="machines" title="MACHINES" sub={<a href={links.prices}>On-Demand, {snapshot.priceDate}</a>}>
+				{/* On a wide screen the table's head holds every machine fact, so this list is for the phone. */}
+				<Section id="machines" title="MACHINES" sub="$/hour">
 					<Machines />
 				</Section>
 
 				<Section id="files" title="FILES" sub={<span class="nb">https://{API_HOST}</span>}>
-					<dl class="files">
-						{files.map(([href, shown, what]) => (
-							<div>
-								<dt>
-									<a href={href}>{shown}</a>
-								</dt>
-								<dd>{what}</dd>
-							</div>
-						))}
-						<div>
-							<dt>
-								<span class="nb">{path(links.evidenceBlobTemplate)}</span>
-							</dt>
-							<dd>the evidence</dd>
-						</div>
-					</dl>
+					<table class="files">
+						<tbody>
+							{files.map(([href, shown, what, schema]) => (
+								<tr>
+									<th scope="row">
+										<a href={href} class="nb">
+											{shown}
+										</a>
+									</th>
+									<td>{what}</td>
+									<td class="schema">
+										<a href={schema}>schema</a>
+									</td>
+								</tr>
+							))}
+							<tr>
+								<th scope="row">
+									<a href={links.docs} class="nb">
+										{links.docs}
+									</a>
+								</th>
+								<td>documentation</td>
+								<td />
+							</tr>
+						</tbody>
+					</table>
 				</Section>
-
-				<Section id="see-also" title="SEE ALSO">
-					<p class="xref">
-						{links.schemas.map((s) => (
-							<>
-							<span class="nb">
-								<a href={s.url} title={`The schema of ${s.describes}`}>
-									{s.name}
-								</a>
-								<span class="dim">(5)</span>
-							</span>,{" "}
-							</>
-						))}
-						<a href={links.docs}>docs</a>
-					</p>
-				</Section>
-				</div>
 			</main>
 
 			<footer class="manfoot">
