@@ -62,6 +62,17 @@ function unitWords(u: RowUnit): string {
 	return `${u.unit} per repetition`;
 }
 
+/**
+ * The unit as a row shows it: a time is the time of one repetition, the row's own action ("Hash 64 bytes with
+ * SHA-256", 571 ns), so the bare unit says it; the title gives "per repetition" and what one repetition is. The one
+ * row whose figure is a part of a repetition (mutex, per critical section) keeps its "per" in sight.
+ */
+function rowUnitShort(u: RowUnit): string {
+	if (u.kind === "rate") return `${u.unit}/s`;
+	if (u.per) return `${u.unit} per ${u.per.of}`;
+	return u.unit;
+}
+
 function cellTitle(choice: HeadlineChoice, row: SeriesRow, u: RowUnit): string {
 	const f = leadFigure(choice, row);
 	const p50 = show(f.p50, u);
@@ -122,7 +133,7 @@ function Spread(props: { f: { p5: number; p50: number; p95: number }; max: numbe
 	);
 }
 
-/** The way a row reads faster, as one glyph; the key above the table says it once in words. */
+/** The way a row reads faster, as one glyph; the key above the table says what the two glyphs mean, once. */
 function Direction(props: { u: RowUnit }) {
 	const more = props.u.kind === "rate";
 	return (
@@ -149,6 +160,22 @@ const tracedDerivation = tracedCell.series.derivations.series_v1;
 const tracedDigits = splitDigits(tracedP50.full, tracedP5.full, tracedP95.full);
 const tracedIsSample = tracedCell.series.id === seriesFileContents.sample.id;
 
+/**
+ * p5 or p95 of the traced figure with the digits all three share set as the median's are, so the card shows what the
+ * table's dark digits mean: the same digits, dark in all three. Only when all three have one integer width.
+ */
+function Shared(props: { text: string }) {
+	const intLen = (s: string) => s.split(".")[0]!.length;
+	const n = tracedDigits.head.length;
+	if (n === 0 || intLen(props.text) !== intLen(tracedP50.full)) return <>{props.text}</>;
+	return (
+		<>
+			<span class="sh-head">{props.text.slice(0, n)}</span>
+			<span class="sh-tail">{props.text.slice(n)}</span>
+		</>
+	);
+}
+
 /** The traced figure's p5 to p95 on a zoomed scale (p5 and p95 a quarter in from each end): positions for drawing only. */
 function RangeStrip() {
 	const lo = tracedLead.p5;
@@ -166,10 +193,10 @@ function RangeStrip() {
 				<span class="st-dot" />
 			</span>
 			<span class="st-l st-l5 mono">
-				<span class="pct-k">p5</span> {tracedP5.full}
+				<span class="pct-k">p5</span> <Shared text={tracedP5.full} />
 			</span>
 			<span class="st-l st-l95 mono">
-				<span class="pct-k">p95</span> {tracedP95.full}
+				<span class="pct-k">p95</span> <Shared text={tracedP95.full} />
 			</span>
 		</div>
 	);
@@ -191,7 +218,7 @@ function Trail() {
 						→
 					</span>
 					<a href={point.evidence} title={`Run ${point.run}: ${point.evidence}`}>
-						Evidence of run <span class="mono">{point.run.slice(0, 8)}</span>
+						One run’s evidence <span class="mono">{point.run.slice(0, 8)}</span>
 					</a>
 				</>
 			) : null}
@@ -216,23 +243,28 @@ function TracedFigure() {
 			</p>
 			<p class="traced-unit">{unitWords(tracedU)}, median</p>
 			<RangeStrip />
-			<p class="traced-facts">
-				<span>
-					{formatCount(tracedDerivation.counted_runs).full} runs, {formatCount(tracedDerivation.failed_runs).full} failed
-				</span>
-				<span>
-					<time datetime={s.oldest_run_started_at}>{formatMoment(s.oldest_run_started_at).date}</time> to{" "}
-					<time datetime={s.newest_run_started_at}>{formatMoment(s.newest_run_started_at).date}</time>
-				</span>
-				<span class="mono" title="Availability Zone ID">
-					{s.availability_zone_id}
-				</span>
-				<span>
-					<a class="mono" href={links.docs} title="The Method">
-						{tracedDerivation.method.name} v{tracedDerivation.method.version}
-					</a>
-				</span>
-			</p>
+			{/* two set lines: what the median is of, then where and by which Method */}
+			<div class="traced-facts">
+				<p>
+					<span>
+						{formatCount(tracedDerivation.counted_runs).full} runs, {formatCount(tracedDerivation.failed_runs).full} failed
+					</span>
+					<span>
+						<time datetime={s.oldest_run_started_at}>{formatMoment(s.oldest_run_started_at).date}</time> to{" "}
+						<time datetime={s.newest_run_started_at}>{formatMoment(s.newest_run_started_at).date}</time>
+					</span>
+				</p>
+				<p>
+					<span class="mono" title="Availability Zone ID">
+						{s.availability_zone_id}
+					</span>
+					<span>
+						<a href={links.docs}>
+							Method <span class="mono">{tracedDerivation.method.name} v{tracedDerivation.method.version}</span>
+						</a>
+					</span>
+				</p>
+			</div>
 			<Trail />
 		</figure>
 	);
@@ -313,20 +345,18 @@ function Hero() {
 				<div class="hero-top">
 					<p class="eyebrow">AWS server benchmarks as JSON, for agents</p>
 					<h1 id="claim">Server numbers you can trace to their runs.</h1>
-					<p class="lede">AWS machines booted four times a day; every run kept with its evidence.</p>
+					{/* the cadence beside the newest Run; the claim and the card say the rest */}
 					<div class="fresh">
 						<p class="fresh-line">
+							<span>Booted four times a day</span>
 							<span>
-								Newest run{" "}
+								newest run{" "}
 								<time datetime={newest.iso} title={newest.full}>
 									{newest.date} {newest.minute} UTC
 								</time>
 							</span>
 							<span>
 								<a href={links.seriesList}>{runs.full} runs</a>, {failed.full} failed
-							</span>
-							<span>
-								<a href={links.prices}>prices {snapshot.priceDate}</a>
 							</span>
 						</p>
 					</div>
@@ -450,9 +480,20 @@ function SpreadKey() {
 				<span class="kg kg-whisk" aria-hidden="true" />
 				p5–p95
 			</span>
-			<span class="key-item">scale per benchmark</span>
 			<span class="key-item">
-				<b class="kg-bold">bold</b> unchanged p5→p95
+				<span class="dir" aria-hidden="true">
+					↑
+				</span>
+				more is faster
+			</span>
+			<span class="key-item">
+				<span class="dir" aria-hidden="true">
+					↓
+				</span>
+				less is faster
+			</span>
+			<span class="key-item">
+				<b class="kg-bold">bold</b> digits: same at p5 and p95
 			</span>
 		</p>
 	);
@@ -515,9 +556,9 @@ function NumbersTable() {
 													<a class="row-label" href={row.choice.readme} title={row.choice.what}>
 														{/* a name never breaks at its hyphen: "SHA-256" stays whole */}
 														{row.choice.label.replaceAll("-", "‑")}
-													</a>
-													<span class="row-unit">
-														{unitWords(u)} <Direction u={u} />
+													</a>{" "}
+													<span class="row-unit" title={u.kind === "time" ? `${unitWords(u)}. One repetition: ${row.choice.repetition}` : undefined}>
+														{rowUnitShort(u)} <Direction u={u} />
 													</span>
 												</th>
 												{row.cells.map((cell, i) => {
