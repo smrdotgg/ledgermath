@@ -36,8 +36,9 @@
 	--accent-ink: #9c3116;
 	--accent-wash: #f5dfd4;
 	--accent-line: #e2a891;
-	--whisker: #b23a1c;
+	--band: rgb(178 58 28 / 0.42);
 	--link: #1b1a17;
+	--term-edge: transparent;
 	--term-bg: #1d1c19;
 	--term-ink: #ece7dc;
 	--term-dim: #a49e91;
@@ -60,9 +61,10 @@
 		--accent-ink: #f5a088;
 		--accent-wash: #3a2018;
 		--accent-line: #7c3a28;
-	--whisker: #f08465;
+		--band: rgb(240 132 101 / 0.58);
 		--link: #eeeae1;
-		--term-bg: #0b0b0a;
+		--term-edge: #4a463f;
+		--term-bg: #070706;
 		--term-ink: #ece7dc;
 		--term-dim: #9a9488;
 		--term-accent: #f08465;
@@ -225,6 +227,7 @@ h1 {
 	position: relative;
 	margin-top: 30px;
 	background: var(--term-bg);
+	box-shadow: inset 0 0 0 1px var(--term-edge);
 	color: var(--term-ink);
 	border-radius: 8px;
 	padding: 16px 84px 16px 18px;
@@ -476,12 +479,8 @@ blockquote {
 	cursor: pointer;
 	list-style-position: inside;
 }
-.sources[open] summary {
-	list-style: none;
-	pointer-events: none;
-}
-.sources summary::-webkit-details-marker {
-	display: none;
+.sources summary:hover {
+	color: var(--ink);
 }
 .sources .reads {
 	margin-top: 10px;
@@ -521,7 +520,12 @@ blockquote {
 	gap: 8px;
 }
 .key-bar {
-	width: 64px;
+	width: 34px;
+	margin-top: 0;
+	background: none;
+}
+.key li:last-child {
+	color: var(--muted);
 }
 .dir {
 	font-family: var(--mono);
@@ -644,6 +648,34 @@ blockquote {
 .fig-cell.is-asked {
 	background: var(--accent-wash);
 }
+/* Point at or focus a figure and its card opens below it: Runs, dates, p5 to p95, its field. */
+@media (hover: hover) and (min-width: 761px) {
+	.fig-cell {
+		position: relative;
+	}
+	.fig-cell:has(.fig-link:hover, .fig-link:focus-visible)::after {
+		content: attr(data-card);
+		position: absolute;
+		z-index: 4;
+		top: calc(100% - 4px);
+		left: 4px;
+		white-space: pre;
+		padding: 8px 11px;
+		background: var(--card);
+		border: 1px solid var(--rule-2);
+		border-radius: 6px;
+		box-shadow: var(--shadow);
+		font-family: var(--mono);
+		font-size: 11.5px;
+		line-height: 1.55;
+		color: var(--ink-2);
+		pointer-events: none;
+	}
+	.fig-cell:last-child:has(.fig-link:hover, .fig-link:focus-visible)::after {
+		left: auto;
+		right: 4px;
+	}
+}
 .cell-fig {
 	display: flex;
 	align-items: baseline;
@@ -681,29 +713,42 @@ blockquote {
 	font-weight: 400;
 }
 
+/* A figure drawn to its row's scale from zero: a hairline track, an ink line out to the median
+   with a tick at its end, and the 5th to 95th percentile as a broad translucent band. */
 .bar {
 	position: relative;
 	display: block;
-	height: 9px;
+	height: 11px;
 	margin-top: 6px;
 	background: linear-gradient(var(--rule-2), var(--rule-2)) left center / 100% 1px no-repeat;
 }
 .bar-p50 {
 	position: absolute;
+	z-index: 1;
 	left: 0;
-	top: 3px;
-	height: 3px;
+	top: 4.5px;
+	height: 2px;
 	background: var(--ink-2);
-	border-radius: 1px;
+}
+.bar-p50::after {
+	content: "";
+	position: absolute;
+	right: -1px;
+	top: -4.5px;
+	width: 2px;
+	height: 11px;
+	background: var(--ink);
 }
 .bar-span {
 	position: absolute;
-	top: 0;
+	top: 1px;
 	height: 9px;
-	min-width: 3px;
-	border-left: 2px solid var(--whisker);
-	border-right: 2px solid var(--whisker);
-	background: linear-gradient(var(--whisker), var(--whisker)) left center / 100% 2px no-repeat;
+	min-width: 4px;
+	transform: translateX(-1px);
+	padding-right: 2px;
+	box-sizing: content-box;
+	background: var(--band);
+	border-radius: 2px;
 }
 
 /* ------------------------------------------------------------ API */
@@ -723,7 +768,6 @@ blockquote {
 }
 .api-say {
 	position: relative;
-	margin-top: 22px;
 	padding: 18px 20px;
 	background: var(--card);
 	border: 1px solid var(--rule);
@@ -745,17 +789,15 @@ blockquote {
 	background: var(--rule);
 }
 .term {
+	margin-top: 14px;
 	background: var(--term-bg);
 	color: var(--term-ink);
-	border-radius: 10px;
-	padding: 8px 0;
+	box-shadow: inset 0 0 0 1px var(--term-edge);
+	border-radius: 8px;
 }
 .cmd {
 	position: relative;
 	padding: 14px 92px 14px 20px;
-}
-.cmd + .cmd {
-	border-top: 1px solid rgb(255 255 255 / 0.08);
 }
 .cmd .c {
 	font-family: var(--mono);
@@ -859,8 +901,8 @@ blockquote {
 .facts {
 	margin: 30px 0 0;
 	display: grid;
-	grid-template-columns: repeat(4, minmax(0, 1fr));
-	gap: 0 40px;
+	grid-template-columns: 0.6fr 1.2fr 0.6fr 1.2fr 1fr;
+	gap: 0 32px;
 }
 .facts div {
 	padding: 12px 0;
@@ -978,8 +1020,13 @@ blockquote {
 		margin: 0 -4px;
 	}
 	.kicker {
-		margin: 0 -16px 18px;
-		padding: 11px 16px;
+		margin: 0 0 12px;
+		padding: 14px 0 0;
+		border-bottom: 0;
+	}
+	.turn-a {
+		margin-top: 14px;
+		padding-top: 14px;
 	}
 	.turn,
 	.reads > li {
@@ -1021,8 +1068,17 @@ blockquote {
 		font-size: 12.5px;
 		gap: 4px 18px;
 	}
-	.key li:first-child {
+	/* the drawing's three keys on one line, the two directions on the next */
+	.key li {
+		order: 1;
+	}
+	.key::before {
+		content: "";
 		flex-basis: 100%;
+		order: 2;
+	}
+	.key li:nth-child(n + 4) {
+		order: 3;
 	}
 	.jump {
 		display: flex;
@@ -1065,8 +1121,10 @@ blockquote {
 		border: 0;
 		padding: 2px 0;
 	}
-	.th-corner {
-		display: none !important;
+	.headline thead .th-corner {
+		padding: 0 0 4px;
+		text-align: right;
+		font-size: 11px;
 	}
 	.th-machine {
 		display: grid !important;
@@ -1211,8 +1269,5 @@ blockquote {
 		font-size: 12.5px;
 		text-align: right;
 		white-space: nowrap;
-	}
-	.facts .frac {
-		display: none;
 	}
 }

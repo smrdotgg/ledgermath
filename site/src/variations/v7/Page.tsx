@@ -52,14 +52,12 @@ const dayAt = (hhmm: string) => {
 	return `${((h * 60 + m) / 1440) * 100}%`;
 };
 
-/** A moment with every digit; the fraction of a second folds away on a narrow screen (its title keeps it). */
+/** A moment to the second; its title and datetime keep every digit. */
 function When(props: { at: ReturnType<typeof formatMoment> }) {
 	const m = props.at;
-	const fraction = m.full.slice(`${m.date} ${m.second}`.length, -" UTC".length);
 	return (
 		<time datetime={m.iso} title={m.full}>
-			{m.date} {m.second}
-			{fraction ? <span class="frac">{fraction}</span> : null} UTC
+			{m.date} {m.second} UTC
 		</time>
 	);
 }
@@ -112,10 +110,15 @@ function intWidth(figs: Fig[]): string {
 	return `--int: ${Math.max(...figs.map((f) => f.shown.full.split(".")[0]!.length))}ch`;
 }
 
-/** Every written value of a cell, for the visitor who hovers: median, span, Runs, source. */
-function cellTitle(fig: Fig, machine: string): string {
+/**
+ * What stands behind a cell, shown as a card when a visitor points at or focuses the figure: its
+ * Runs and their dates, its p5 to p95, and its field in the Series list.
+ */
+function cellCard(fig: Fig, series: HeadlineRow["cells"][number]["series"]): string {
 	const [lo, hi] = spread(fig);
-	return `${machine}: median ${fig.shown.full} ${fig.shown.unit} of ${fig.count} Runs; p5–p95 ${lo.full}–${hi.full} ${fig.shown.unit}. In the file: ${fig.shown.source}.`;
+	const from = formatMoment(series.oldest_run_started_at).date;
+	const to = formatMoment(series.newest_run_started_at).date;
+	return `${formatCount(fig.count).full} Runs, ${from} to ${to}\np5–p95 ${lo.full} – ${hi.full} ${fig.shown.unit}\nin the file: ${fig.shown.source}`;
 }
 
 /** A few words on a group whose figures come from something the machines share. */
@@ -265,17 +268,13 @@ export default function Page() {
 						</p>
 						<dl class="facts-line">
 							<div>
-								<dt>Runs</dt>
+								<dt>Newest Run</dt>
 								<dd>
-									<a href="#provenance">{formatCount(snapshot.runCount).full}</a>
-								</dd>
-							</div>
-							<div>
-								<dt>Newest</dt>
-								<dd>
-									<time datetime={newest.iso} title={newest.full}>
-										{newest.minute} UTC
-									</time>
+									<a href="#provenance">
+										<time datetime={newest.iso} title={newest.full}>
+											{newest.date} <span class="nowrap">{newest.minute} UTC</span>
+										</time>
+									</a>
 								</dd>
 							</div>
 							<div>
@@ -327,7 +326,7 @@ export default function Page() {
 								</p>
 							</blockquote>
 						</div>
-						<details class="sources" open>
+						<details class="sources">
 							<summary>Sources</summary>
 							<ol class="reads" aria-label="The files it read">
 								<li id="read-1">
@@ -371,11 +370,17 @@ export default function Page() {
 						<ul class="key" aria-label="Key">
 							<li>
 								<span class="key-bar bar" aria-hidden="true">
-									<span class="bar-p50" style={{ width: "62%" }} />
-									<span class="bar-span" style={{ left: "55%", width: "18%" }} />
+									<span class="bar-p50" style={{ width: "100%" }} />
 								</span>
-								median · p5–p95, from 0
+								median
 							</li>
+							<li>
+								<span class="key-bar key-band bar" aria-hidden="true">
+									<span class="bar-span" style={{ left: "0", width: "100%" }} />
+								</span>
+								p5–p95
+							</li>
+							<li>each row from 0</li>
 							<li>
 								<span class="dir">↑</span> higher is faster
 							</li>
@@ -457,7 +462,7 @@ export default function Page() {
 														const fig = figs[i]!;
 														const asked = row === askedRow && cell.machine.instanceType === ASKED_MACHINE;
 														return (
-															<td class={asked ? "fig-cell is-asked" : "fig-cell"}>
+															<td class={asked ? "fig-cell is-asked" : "fig-cell"} data-card={cellCard(fig, cell.series)}>
 																<span class="cell-code" aria-hidden="true">
 																	{cell.machine.instanceType.split(".")[0]}
 																</span>
@@ -465,8 +470,7 @@ export default function Page() {
 																	<a
 																		class="fig-link"
 																		href={links.seriesFile(cell.series)}
-																		title={cellTitle(fig, cell.machine.instanceType)}
-																		aria-label={`${cell.machine.instanceType}: ${fig.shown.full} ${fig.shown.unit}, its Series file`}
+																		aria-label={`${cell.machine.instanceType}: median ${fig.shown.full} ${fig.shown.unit} of ${formatCount(fig.count).full} Runs, its Series file`}
 																	>
 																		<Exact full={fig.shown.full} />
 																	</a>
@@ -493,31 +497,24 @@ export default function Page() {
 
 				<section id="api" class="api" aria-labelledby="api-title">
 					<div class="wrap api-grid">
+						<h2 id="api-title">Point your agent here</h2>
 						<div class="api-copy">
-							<h2 id="api-title">Point your agent here</h2>
 							<blockquote class="api-say" data-copy-block="the prompt">
 								<p>
 									Use the LedgerMath data API at <Breakable text={links.index} />. Cite the file and field behind each figure.
 								</p>
 							</blockquote>
-						</div>
-						<div class="term">
-							{[
-								["every figure", links.seriesList, "the Series list command"],
-								[`prices, ${snapshot.priceDate}`, links.prices, "the prices command"],
-							].map(([comment, url, name]) => (
-								<div class="cmd" data-copy-block={name}>
-									<p class="c"># {comment}</p>
-									<pre tabindex="0">
-										<code>
-											<span class="p">$ </span>
-											<span data-copy>
-												curl <Breakable text={url!} />
-											</span>
-										</code>
-									</pre>
-								</div>
-							))}
+							<div class="term cmd" data-copy-block="the Series list command">
+								<p class="c"># every figure</p>
+								<pre tabindex="0">
+									<code>
+										<span class="p">$ </span>
+										<span data-copy>
+											curl <Breakable text={links.seriesList} />
+										</span>
+									</code>
+								</pre>
+							</div>
 						</div>
 					</div>
 				</section>
@@ -545,6 +542,10 @@ export default function Page() {
 						</div>
 					</div>
 					<dl class="facts">
+						<div>
+							<dt>Runs</dt>
+							<dd>{formatCount(snapshot.runCount).full}</dd>
+						</div>
 						<div>
 							<dt>Oldest Run</dt>
 							<dd>
