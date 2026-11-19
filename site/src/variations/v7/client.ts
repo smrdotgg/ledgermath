@@ -20,9 +20,3 @@ for (const block of document.querySelectorAll<HTMLElement>("[data-copy-block]"))
 	});
 	block.append(button);
 }
-
-// The answer's sources start folded so the figures come sooner; a citation opens them.
-const sources = document.querySelector<HTMLDetailsElement>("details.sources");
-if (sources) {
-	for (const cite of document.querySelectorAll<HTMLAnchorElement>("a.cite")) cite.addEventListener("click", () => (sources.open = true));
-}

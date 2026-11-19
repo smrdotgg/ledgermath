@@ -5,9 +5,9 @@
 // data module's, exactly. The page says as little as it can: figures, what they are of, and how
 // to get them.
 import "./page.css";
+import type { JSX } from "@solidjs/web";
 import {
 	type ByteUnit,
-	type DurationUnit,
 	durationUnit,
 	formatCount,
 	formatDuration,
@@ -22,26 +22,13 @@ import {
 	machineOf,
 	machines,
 	type Section,
+	series,
+	seriesFileContents,
 	type Shown,
 	snapshot,
 } from "../../data";
 
 // ---------------------------------------------------------------- the exchange's facts
-
-const ASKED_BENCHMARK = "sort";
-const ASKED_MACHINE = "c8a.2xlarge";
-
-const askedRow = headline.find((row) => row.choice.benchmark === ASKED_BENCHMARK)!;
-const askedCell = askedRow.cells.find((cell) => cell.machine.instanceType === ASKED_MACHINE)!;
-const askedSeries = askedCell.series;
-const askedFigure = leadFigure(askedRow.choice, askedSeries);
-const askedMachine = machineOf(ASKED_MACHINE);
-const askedUnit: DurationUnit = durationUnit(askedFigure.p50);
-const p50 = formatDuration(askedFigure.p50, { unit: askedUnit });
-const askedPrice = formatUsd(askedMachine.price.usdPerHour, { per: "hour" });
-const askedDerivation = askedSeries.derivations.series_v1;
-const askedOldest = formatMoment(askedSeries.oldest_run_started_at);
-const askedNewest = formatMoment(askedSeries.newest_run_started_at);
 
 const newest = formatMoment(snapshot.newestRunStartedAt);
 const oldest = formatMoment(snapshot.oldestRunStartedAt);
@@ -105,6 +92,31 @@ function spread(fig: Fig): [Shown, Shown] {
 	return fig.p5.value <= fig.p95.value ? [fig.p5, fig.p95] : [fig.p95, fig.p5];
 }
 
+// ---------------------------------------------------------------- the exchange's facts
+
+// The exchange asks about the one Series whose own file the snapshot keeps, so its answer can be
+// cited all the way down: the figure in series.json, the Series file, one Run's evidence.
+const askedSeries = series.find((row) => row.id === seriesFileContents.sample.id)!;
+const askedRow = headline.find((row) => row.cells.some((cell) => cell.series.id === askedSeries.id));
+if (!askedRow) throw new Error(`the sample Series ${askedSeries.id} is not a headline figure`);
+const ASKED_MACHINE = askedSeries.instance_type;
+const askedIndex = askedRow.cells.findIndex((cell) => cell.series.id === askedSeries.id);
+const askedFig = rowFigures(askedRow)[askedIndex]!;
+const askedPer: { count: number; of: string } =
+	askedRow.choice.per ??
+	(() => {
+		throw new Error("the exchange's answer expects a figure per critical section");
+	})();
+const askedMachine = machineOf(ASKED_MACHINE);
+const askedPrice = formatUsd(askedMachine.price.usdPerHour, { per: "hour" });
+const askedDerivation = askedSeries.derivations.series_v1;
+const askedOldest = formatMoment(askedSeries.oldest_run_started_at);
+const askedNewest = formatMoment(askedSeries.newest_run_started_at);
+const askedRun = seriesFileContents.point.example;
+const askedRunAt = formatMoment(askedRun.started_at);
+const askedSeriesIndex = series.indexOf(askedSeries);
+const askedRaw = askedFig.shown.source.replace(/ ns$/, "");
+
 /** The widest integer part in a row, so its figures' decimal points line up down a column. */
 function intWidth(figs: Fig[]): string {
 	return `--int: ${Math.max(...figs.map((f) => f.shown.full.split(".")[0]!.length))}ch`;
@@ -164,12 +176,12 @@ function Exact(props: { full: string }) {
 
 /** A figure's median and its 5th to 95th percentile span, drawn to the row's scale from zero. */
 function Bar(props: { fig: Fig; max: number }) {
-	const at = (s: Shown) => `${((s.value / props.max) * 100).toFixed(2)}%`;
+	const pct = (v: number) => `${((v / props.max) * 100).toFixed(2)}%`;
 	const [lo, hi] = spread(props.fig);
 	return (
 		<span class="bar" aria-hidden="true">
-			<span class="bar-p50" style={{ width: at(props.fig.shown) }} />
-			<span class="bar-span" style={{ left: at(lo), width: `calc(${at(hi)} - ${at(lo)})` }} />
+			<span class="bar-p50" style={{ width: pct(props.fig.shown.value) }} />
+			<span class="bar-span" style={{ left: pct((lo.value + hi.value) / 2), width: `max(6px, ${pct(hi.value - lo.value)})` }} />
 		</span>
 	);
 }
@@ -189,34 +201,21 @@ function Breakable(props: { text: string }) {
 	);
 }
 
-function Cite(props: { n: number }) {
+/**
+ * One citation, on one line: the file (a link, its path shown without the host), the field in
+ * it (its whole path in the title), and what the answer took from there.
+ */
+function Source(props: { href: string; field: string; path: string; children: JSX.Element }) {
+	const file = props.href.replace(/^https:\/\/[^/]+\//, "");
 	return (
-		<a class="cite" href={`#read-${props.n}`} aria-label={`source ${props.n}`}>
-			{props.n}
-		</a>
-	);
-}
-
-function Url(props: { href: string }) {
-	const [, host, rest] = /^(https:\/\/[^/]+\/)(.*)$/.exec(props.href) ?? ["", "", props.href];
-	return (
-		<a class="url" href={props.href}>
-			<span class="url-host">{host}</span>
-			<span class="url-path">
-				<Breakable text={rest!} />
-			</span>
-		</a>
-	);
-}
-
-/** One line of a source: a field of the file, and its value there, as the file writes it. */
-function Field(props: { name: string; raw: string; title?: string }) {
-	return (
-		<li>
-			<code class="f-name" title={props.title}>
-				{props.name}
+		<li class="src">
+			<a class="src-file" href={props.href}>
+				<Breakable text={file} />
+			</a>
+			<code class="src-field" title={props.path}>
+				{props.field}
 			</code>
-			<code class="f-raw">{props.raw}</code>
+			<span class="src-val">{props.children}</span>
 		</li>
 	);
 }
@@ -280,14 +279,16 @@ export default function Page() {
 							<div>
 								<dt>Prices</dt>
 								<dd>
-									<a href={links.prices}>{snapshot.priceDate}</a>
+									<a href={links.prices} title={`AWS On-Demand prices, copied ${pricesFetched.full}`}>
+										{snapshot.priceDate}
+									</a>
 								</dd>
 							</div>
 						</dl>
 					</div>
 
 					<section class="exchange" aria-labelledby="exchange-title">
-						<h2 id="exchange-title" class="kicker">
+						<h2 id="exchange-title" class="sr-only">
 							Example
 						</h2>
 						<div class="turn turn-q">
@@ -296,7 +297,7 @@ export default function Page() {
 							</span>
 							<blockquote class="question">
 								<p>
-									How long does one <span class="nowrap">{ASKED_MACHINE}</span> core take to sort 1&nbsp;MiB of 64-bit keys, and at what hourly price?
+									How long does <span class="nowrap">{ASKED_MACHINE}</span> take to lock and unlock an uncontended mutex, and what does it cost an hour?
 								</p>
 							</blockquote>
 						</div>
@@ -305,60 +306,38 @@ export default function Page() {
 								A
 							</span>
 							<blockquote class="answer">
-								<p class="answer-lead">
-									<span class="ans">
-										<strong class="fig">
-											{p50.full}&nbsp;{p50.unit}
-										</strong>{" "}
-										a sort
-										<Cite n={1} />
-										<Cite n={2} />
-									</span>{" "}
-									<span class="ans">
-										<strong class="fig">${askedPrice.full}</strong> per instance-hour
-										<Cite n={3} />
-									</span>
+								<p class="ans">
+									<strong class="fig">
+										{askedFig.shown.full}&nbsp;{askedFig.shown.unit}
+									</strong>{" "}
+									each
 								</p>
 								<p class="answer-sub">
-									Median of {formatCount(askedFigure.count).full} Runs,{" "}
-									<time datetime={askedOldest.iso}>{askedOldest.date}</time> to <time datetime={askedNewest.iso}>{askedNewest.date}</time>,{" "}
-									{formatCount(askedDerivation.failed_runs).full} failed.
+									Median of {formatCount(askedFig.count).full} Runs, <time datetime={askedOldest.iso}>{askedOldest.date}</time> to{" "}
+									<time datetime={askedNewest.iso}>{askedNewest.date}</time>, {formatCount(askedDerivation.failed_runs).full} failed
+								</p>
+								<p class="ans">
+									<strong class="fig">${askedPrice.full}</strong> per instance-hour
 								</p>
 							</blockquote>
 						</div>
-						<details class="sources">
-							<summary>Sources</summary>
-							<ol class="reads" aria-label="The files it read">
-								<li id="read-1">
-									<span class="read-n">1</span>
-									<div>
-										<Url href={links.seriesList} />
-										<ul class="fields">
-											<Field name="…time_per_repetition_ns.p50" raw={p50.source} />
-											<Field name="…counted_runs" raw={String(askedDerivation.counted_runs)} />
-										</ul>
-									</div>
-								</li>
-								<li id="read-2">
-									<span class="read-n">2</span>
-									<div>
-										<Url href={askedSeries.url} />
-										<ul class="fields">
-											<Field name="points[].evidence" raw={`${formatCount(askedSeries.runs).full} Runs`} />
-										</ul>
-									</div>
-								</li>
-								<li id="read-3">
-									<span class="read-n">3</span>
-									<div>
-										<Url href={links.prices} />
-										<ul class="fields">
-											<Field name="…/pricePerUnit/USD" raw={`"${askedMachine.price.usdPerHour}"`} title={askedMachine.price.path.pointer} />
-										</ul>
-									</div>
-								</li>
-							</ol>
-						</details>
+						<ol class="srcs" aria-label="Sources">
+							<Source
+								href={links.seriesList}
+								field={`${askedSeries.id} › p50`}
+								path={`/series/${askedSeriesIndex}/derivations/series_v1/percentiles/time_per_repetition_ns/p50`}
+							>
+								{askedRaw}&nbsp;÷&nbsp;{formatCount(askedPer.count).full}
+							</Source>
+							<Source href={askedSeries.url} field="points[0].evidence" path="/derivations/series_v1/points/0/evidence">
+								<a href={askedRun.evidence} title={`Run ${askedRun.run}, ${askedRunAt.full}`}>
+									Run {askedRunAt.date}
+								</a>
+							</Source>
+							<Source href={links.prices} field="…/pricePerUnit/USD" path={askedMachine.price.path.pointer}>
+								"{askedMachine.price.usdPerHour}"
+							</Source>
+						</ol>
 					</section>
 				</section>
 
@@ -376,11 +355,11 @@ export default function Page() {
 							</li>
 							<li>
 								<span class="key-bar key-band bar" aria-hidden="true">
-									<span class="bar-span" style={{ left: "0", width: "100%" }} />
+									<span class="bar-span" style={{ left: "50%", width: "100%" }} />
 								</span>
 								p5–p95
 							</li>
-							<li>each row from 0</li>
+							<li>each benchmark from 0</li>
 							<li>
 								<span class="dir">↑</span> higher is faster
 							</li>
@@ -474,12 +453,6 @@ export default function Page() {
 																	>
 																		<Exact full={fig.shown.full} />
 																	</a>
-																	{asked ? (
-																		<span class="cell-cites">
-																			<Cite n={1} />
-																			<Cite n={2} />
-																		</span>
-																	) : null}
 																</span>
 																<Bar fig={fig} max={max} />
 															</td>
@@ -498,24 +471,11 @@ export default function Page() {
 				<section id="api" class="api" aria-labelledby="api-title">
 					<div class="wrap api-grid">
 						<h2 id="api-title">Point your agent here</h2>
-						<div class="api-copy">
-							<blockquote class="api-say" data-copy-block="the prompt">
-								<p>
-									Use the LedgerMath data API at <Breakable text={links.index} />. Cite the file and field behind each figure.
-								</p>
-							</blockquote>
-							<div class="term cmd" data-copy-block="the Series list command">
-								<p class="c"># every figure</p>
-								<pre tabindex="0">
-									<code>
-										<span class="p">$ </span>
-										<span data-copy>
-											curl <Breakable text={links.seriesList} />
-										</span>
-									</code>
-								</pre>
-							</div>
-						</div>
+						<blockquote class="api-say" data-copy-block="the prompt">
+							<p>
+								Read <Breakable text={links.index} /> and cite each figure's file and field.
+							</p>
+						</blockquote>
 					</div>
 				</section>
 
@@ -544,7 +504,9 @@ export default function Page() {
 					<dl class="facts">
 						<div>
 							<dt>Runs</dt>
-							<dd>{formatCount(snapshot.runCount).full}</dd>
+							<dd>
+								{formatCount(snapshot.runCount).full} in {formatCount(snapshot.seriesCount).full} Series
+							</dd>
 						</div>
 						<div>
 							<dt>Oldest Run</dt>
@@ -557,24 +519,11 @@ export default function Page() {
 							<dd>{formatCount(snapshot.failedRuns).full}</dd>
 						</div>
 						<div>
-							<dt>Prices copied</dt>
-							<dd>
-								<When at={pricesFetched} />
-							</dd>
-						</div>
-						<div>
 							<dt>Methods</dt>
 							<dd>
-								{snapshot.methods.map((m, i) => (
-									<>
-										{i > 0 ? " · " : ""}
-										<a href={links.seriesList}>
-											<code>
-												{m.name}&nbsp;v{m.version}
-											</code>
-										</a>
-									</>
-								))}
+								<a href={links.seriesList} title={snapshot.methods.map((m) => `${m.name} v${m.version}`).join(", ")}>
+									series.json › methods
+								</a>
 							</dd>
 						</div>
 					</dl>
