@@ -31,12 +31,12 @@
 	--hair: #d8d3c8;
 	--rule: #1d1c1a;
 	--accent: #9a2b1b;
-	/* the p5–p95 range: a quiet warm grey-rose, read as extent, not as alarm */
-	--range: #c88a73;
+	/* the p5–p95 range: a lighter shade of the bar's own ink, part of the bar, never a flag */
+	--range: #aaa397;
 	--median: #1d1c1a;
 	--to: #4a4741;
-	/* the digits past the third decimal: lighter than the lead, darker than a caption */
-	--tail: #4f4b44;
+	/* the digits past the third decimal: smaller than the lead, near its ink */
+	--tail: #3b3833;
 	--track: #e6e1d6;
 	--grid: #ddd7ca;
 	--tint: #f3efe6;
@@ -55,11 +55,11 @@
 		--hair: #3a3833;
 		--rule: #ebe6db;
 		--accent: #f08e74;
-		/* the range as the same terracotta as by day, lifted so it reads on the dark ground */
-		--range: #d9876a;
+		/* the range a darker shade of the bar's ink, between the line and the track */
+		--range: #8d877c;
 		--median: #fff4e6;
 		--to: #c9c2b4;
-		--tail: #c4beb1;
+		--tail: #dcd6ca;
 		--track: #4e4b45;
 		--grid: #45423c;
 		--tint: #1c1b19;
@@ -120,36 +120,6 @@ i {
 	white-space: nowrap;
 }
 
-/* ---------------------------------------------------------------- running head */
-
-.runninghead {
-	border-bottom: 1px solid var(--hair);
-}
-.rh-inner {
-	max-width: calc(var(--wide) + 2rem);
-	margin: 0 auto;
-	padding: 0.8rem 1rem 0.7rem;
-	display: flex;
-	align-items: baseline;
-	gap: 0.5rem 1.1rem;
-	font-size: 0.9rem;
-	color: var(--ink-2);
-}
-.rh-nav {
-	margin-left: auto;
-	display: flex;
-	gap: 0 1.1rem;
-	font-size: 0.95rem;
-}
-.rh-nav a {
-	color: var(--ink);
-	text-decoration: none;
-}
-.rh-nav a:hover {
-	color: var(--accent);
-	text-decoration: underline;
-}
-
 /* ---------------------------------------------------------------- front matter: one left edge, the table's */
 
 main {
@@ -160,7 +130,7 @@ article {
 	margin: 0 auto;
 }
 .front {
-	padding: 1.7rem 0 0.9rem;
+	padding: 2.6rem 0 0.9rem;
 	border-bottom: 1px solid var(--hair);
 }
 .front p {
@@ -508,12 +478,19 @@ td {
 	font-size: 1.12rem;
 	font-weight: 600;
 }
-/* the figure is the way to its Series; it shows so on hover and focus, not with seventy rules at rest */
+/* the figure is the way to its Series: a hairline under its lead digits, firm on hover and focus */
+.t1 td.c-fig > a .x-int,
+.t1 td.c-fig > a .x-head {
+	text-decoration: underline;
+	text-decoration-thickness: 1px;
+	text-decoration-color: color-mix(in srgb, currentColor 28%, transparent);
+	text-underline-offset: 0.2em;
+}
 .x-tail {
 	display: inline-block;
 	text-align: left;
 	padding-left: 0.12em;
-	font-size: 0.86rem;
+	font-size: 0.9rem;
 	color: var(--tail);
 }
 .t1 td.c-fig > a:hover .x-tail {
