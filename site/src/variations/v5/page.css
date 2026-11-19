@@ -13,7 +13,7 @@
 	--paper: #f3f2ee;
 	--ink: #0d0d0c;
 	--muted: #4f4d48;
-	--tail: #6b6962;
+	--tail: #57554f;
 	--hair: #c7c4bb;
 	--red: #c4141c;
 	--frame: #0d0d0c;
@@ -34,7 +34,7 @@
 		--paper: #0f0f0e;
 		--ink: #f1efe9;
 		--muted: #b3b0a8;
-		--tail: #8f8c85;
+		--tail: #aeaba3;
 		--hair: #3a3934;
 		--red: #ff4f44;
 		--frame: #ff4f44;
@@ -508,7 +508,7 @@ td {
 }
 
 .corner {
-	width: 22%;
+	width: 24%;
 	padding-left: 0 !important;
 	font-size: 12px;
 	font-weight: 600;
@@ -560,9 +560,13 @@ td {
 }
 
 .mach-spec,
-.mach-proc,
-.mach-runs {
+.mach-proc {
 	color: var(--muted);
+}
+
+/* The Run counts carry weight, as their label in the corner does, so the two read as one line. */
+.mach-runs {
+	font-weight: 640;
 }
 
 .mach-price {
@@ -680,18 +684,26 @@ td {
 .ft {
 	min-width: var(--wt);
 	text-align: left;
-	font-size: 13px;
-	font-weight: 420;
+	font-size: 14px;
+	font-weight: 450;
 	letter-spacing: -0.02em;
 	color: var(--tail);
 }
 
-/* Each figure opens its Series: the whole value takes one underline on hover, none at rest. */
-.fig:hover,
-.fig:focus-visible {
+/* Each figure opens its Series: the compared digits carry the prices' quiet underline; the whole value darkens it on hover. */
+.fi,
+.fh {
 	text-decoration: underline;
+	text-decoration-color: var(--hair);
 	text-decoration-thickness: 1px;
-	text-underline-offset: 0.2em;
+	text-underline-offset: 0.18em;
+}
+
+.fig:hover .fi,
+.fig:hover .fh,
+.fig:focus-visible .fi,
+.fig:focus-visible .fh {
+	text-decoration-color: currentColor;
 }
 
 .fig:hover .ft,
@@ -838,6 +850,25 @@ td.hero-cell {
 	text-decoration-color: var(--hair);
 }
 
+/* Not part of the file: the one exact division from the p50 above to the poster's figure, in the poster's red. */
+.json-note {
+	display: block;
+	padding-left: 5ch;
+	color: var(--red);
+	user-select: none;
+}
+
+.json-note b {
+	font-weight: 700;
+}
+
+/* The evidence address on its own lines, under its key; it breaks only after "runs/" and after the date. */
+.json-url {
+	display: block;
+	padding-left: 7ch;
+	overflow-wrap: normal;
+}
+
 .api-lede {
 	margin-bottom: 14px;
 	font-size: 15px;
@@ -905,6 +936,14 @@ td.hero-cell {
 	font-weight: 750;
 	letter-spacing: -0.03em;
 	line-height: 1;
+}
+
+/* The font's licence travels with the page: one word, at the grid's right edge. */
+.foot-lic {
+	grid-column: -4 / -1;
+	justify-self: end;
+	font-size: 13px;
+	font-weight: 600;
 }
 
 /* ---------------------------------------------------------------- middle widths */
@@ -1264,9 +1303,8 @@ td.hero-cell {
 	}
 
 	.ft {
-		font-size: 11.5px;
+		font-size: 12px;
 		letter-spacing: -0.03em;
-		color: var(--muted);
 	}
 
 	.bar {
@@ -1300,13 +1338,14 @@ td.hero-cell {
 		min-width: 0;
 	}
 
-	/* On a phone the excerpt keeps its lines and scrolls sideways in its own box. */
+	/* Every line of the excerpt fits a phone whole; the evidence address breaks at its slashes. */
 	.json {
-		font-size: 11.5px;
+		font-size: 11px;
 		padding-left: 10px;
-		white-space: pre;
-		overflow-wrap: normal;
-		overflow-x: auto;
+	}
+
+	.json-url {
+		padding-left: 5ch;
 	}
 
 	.mast-t {
@@ -1319,6 +1358,10 @@ td.hero-cell {
 	}
 
 	.foot-name {
-		grid-column: 1 / -1;
+		grid-column: 1 / span 2;
+	}
+
+	.foot-lic {
+		grid-column: 3 / span 2;
 	}
 }
