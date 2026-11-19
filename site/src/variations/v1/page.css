@@ -153,7 +153,7 @@ main,
 
 .masthead {
 	display: grid;
-	grid-template-columns: minmax(0, 1fr) minmax(0, 27rem);
+	grid-template-columns: minmax(0, 1fr) minmax(0, 31rem);
 	gap: 1.25rem 4rem;
 	align-items: end;
 	padding-top: 2rem;
@@ -252,27 +252,54 @@ h1 .sub {
 	border-color: var(--ink);
 }
 
-.folio {
+.start-links {
 	margin: 0;
 	font-size: 0.9375rem;
-	border-top: 3px double var(--rule-strong);
+	color: var(--pencil);
 }
 
-.folio > div {
-	display: grid;
-	grid-template-columns: 6.5rem minmax(0, 1fr);
-	gap: 1rem;
-	padding: 0.24rem 0;
-	border-bottom: 1px solid var(--rule);
+/* one dateline under the masthead's rules: when, how many, how, and the price file */
+.dateline {
+	margin: 0;
+	padding: 0.55rem 0 0.6rem;
+	border-bottom: 1px solid var(--rule-2);
+	font-size: 0.9375rem;
+	color: var(--ink-2);
 }
 
-.folio > div:last-child {
-	border-bottom: 0;
+.dateline time {
+	color: var(--ink);
+	font-weight: 600;
 }
 
-.folio dt,
-.addr th,
-.mtable thead th,
+.dateline .sep {
+	margin: 0 0.6rem;
+	color: var(--pencil);
+}
+
+.dateline {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: baseline;
+}
+
+.dateline .item {
+	white-space: nowrap;
+}
+
+@media (max-width: 760px) {
+	.dateline {
+		flex-direction: column;
+		gap: 0.1rem;
+	}
+	.dateline .sep {
+		display: none;
+	}
+	.dateline .item {
+		white-space: normal;
+	}
+}
+
 .ledger thead th.no,
 .ledger thead th.what,
 .ledger thead th.unit {
@@ -281,11 +308,6 @@ h1 .sub {
 	letter-spacing: 0.06em;
 	color: var(--pencil);
 	font-size: 1.0625rem;
-}
-
-.folio dd {
-	margin: 0;
-	overflow-wrap: anywhere;
 }
 
 /* ------------------------------------------------------------------ the ledger */
@@ -397,7 +419,7 @@ td.no {
 }
 
 th.what {
-	width: 14.5rem;
+	width: 16.75rem;
 	padding-right: 1rem;
 	font-weight: 400;
 }
@@ -417,7 +439,7 @@ tr.entry th.what a:hover {
 
 th.unit,
 td.unit {
-	width: 8rem;
+	width: 5.5rem;
 	border-right: 3px double var(--red-rule);
 }
 
@@ -431,14 +453,8 @@ td.unit .u {
 	font-weight: 600;
 }
 
-td.unit .dir {
-	display: block;
-	font-size: 0.8125rem;
-	line-height: 1.3;
-	color: var(--ink-2);
-}
-
 td.unit .arrow {
+	margin-left: 0.35rem;
 	font-weight: 600;
 	color: var(--ink);
 }
@@ -616,39 +632,6 @@ td.fig-cell a:hover .fig .w {
 	display: none;
 }
 
-/* the accounts, as a thumb index */
-.index-tabs ol {
-	display: flex;
-	flex-wrap: wrap;
-	gap: 0.25rem 1.5rem;
-	margin: 0 0 0.6rem;
-	padding: 0;
-	list-style: none;
-	font-variant-caps: all-small-caps;
-	letter-spacing: 0.08em;
-	font-size: 1rem;
-}
-
-.index-tabs a {
-	color: var(--ink-2);
-	text-decoration: none;
-}
-
-.index-tabs a.on {
-	color: var(--ink);
-	text-decoration: underline 2px var(--red-rule);
-	text-underline-offset: 0.3em;
-}
-
-.index-tabs a:hover {
-	text-decoration: underline;
-}
-
-.index-tabs .roman {
-	font-weight: 400;
-	color: var(--pencil);
-}
-
 /* on a wide screen the ledger needs no scroll box, and its column heads stay in view */
 @media (min-width: 1360px) {
 	.ledger .scroll {
@@ -661,164 +644,12 @@ td.fig-cell a:hover .fig .w {
 	}
 }
 
-/* ------------------------------------------------------------------ the back matter */
-
-.back {
-	display: grid;
-	grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr);
-	gap: 4rem;
-	margin-top: 3.5rem;
-	padding-top: 1.5rem;
-	border-top: 1px solid var(--rule-strong);
-}
-
-.back h2 {
-	font-size: 1.375rem;
-}
-
-.api-lede,
-.section-lede {
-	margin: 0.4rem 0 0.9rem;
-	font-size: 0.9375rem;
-	color: var(--ink-2);
-}
-
-.api-lede .mono {
-	color: var(--ink);
-}
-
-.addr {
-	width: 100%;
-	border-collapse: collapse;
-	border-top: 3px double var(--rule-strong);
-	border-bottom: 3px double var(--rule-strong);
-}
-
-.addr th,
-.addr td {
-	padding: 0.35rem 0.75rem 0.35rem 0;
-	text-align: left;
-	vertical-align: baseline;
-	border-bottom: 1px solid var(--rule);
-}
-
-.addr th {
-	width: 7rem;
-	white-space: nowrap;
-}
-
-.addr td.mono {
-	font-size: 0.8125rem;
-	overflow-wrap: anywhere;
-}
-
-.addr td.sch {
-	width: 4rem;
-	padding-right: 0;
-	text-align: right;
-	font-size: 0.875rem;
-}
-
-.point {
-	margin: 1.5rem 0 0;
-}
-
-.point figcaption {
-	margin-bottom: 0.4rem;
-	font-size: 0.875rem;
-	color: var(--ink-2);
-}
-
-.json {
-	margin: 0;
-	padding: 0.7rem 1rem;
-	background: var(--paper-2);
-	border-left: 3px double var(--rule-2);
-	font-family: var(--mono);
-	font-size: 0.8125rem;
-	line-height: 1.6;
-	white-space: pre-wrap;
-	overflow-wrap: anywhere;
-	color: var(--ink-2);
-}
-
-.json code {
-	font: inherit;
-}
-
-.json .jk {
-	color: var(--ink);
-	font-weight: 500;
-}
-
-.json .jp {
-	color: var(--pencil);
-}
-
-.mtable {
-	width: 100%;
-	border-collapse: collapse;
-	font-size: 0.9375rem;
-	border-top: 3px double var(--rule-strong);
-	border-bottom: 3px double var(--rule-strong);
-}
-
-.mtable th,
-.mtable td {
-	padding: 0.5rem 0.75rem;
-	text-align: left;
-	vertical-align: top;
-	border-bottom: 1px solid var(--rule);
-}
-
-.mtable th:first-child {
-	padding-left: 0;
-}
-
-.mtable thead th {
-	border-bottom: 3px double var(--rule-strong);
-	vertical-align: bottom;
-	white-space: nowrap;
-}
-
-.mtable tbody th {
-	font-weight: 500;
-	white-space: nowrap;
-}
-
-.mtable .r {
-	text-align: right;
-}
-
-.mtable .num {
-	white-space: nowrap;
-}
-
-.mtable td.m-price {
-	border-left: 3px double var(--red-rule);
-	padding-right: 0;
-	padding-left: 1rem;
-	text-align: left;
-	font-size: 1rem;
-	--whole: 1ch;
-}
-
-.mtable .clock {
-	display: block;
-	color: var(--pencil);
-	font-size: 0.8125rem;
-}
-
-.ph {
-	display: none;
-}
-
 /* ------------------------------------------------------------------ colophon */
 
 .colophon {
-	margin-top: 3.5rem;
-	padding-bottom: 2.5rem;
-	text-align: center;
+	margin-top: 2.5rem;
+	padding-bottom: 2rem;
+	text-align: right;
 	font-size: 0.875rem;
 	color: var(--pencil);
 }
@@ -839,8 +670,7 @@ td.fig-cell a:hover .fig .w {
 /* ------------------------------------------------------------------ narrower screens */
 
 @media (max-width: 1100px) {
-	.masthead,
-	.back {
+	.masthead {
 		grid-template-columns: minmax(0, 1fr);
 		align-items: start;
 	}
@@ -890,20 +720,6 @@ td.fig-cell a:hover .fig .w {
 		font-size: 0.75rem;
 		white-space: normal;
 		overflow-wrap: anywhere;
-	}
-
-	.folio {
-		font-size: 0.875rem;
-	}
-
-	.folio > div {
-		grid-template-columns: 5.5rem minmax(0, 1fr);
-		gap: 0.5rem;
-		padding: 0.15rem 0;
-	}
-
-	.folio dt {
-		font-size: 1rem;
 	}
 
 	/* the ledger's head, and the five machines named once */
@@ -968,25 +784,6 @@ td.fig-cell a:hover .fig .w {
 		line-height: 1.6rem;
 	}
 
-	/* the accounts: a bar that stays at the top while the ledger scrolls, all five in reach */
-	.index-tabs {
-		position: sticky;
-		top: 0;
-		z-index: 3;
-		margin: 0 calc(-1 * var(--gutter));
-		padding: 0 var(--gutter);
-		background: var(--paper);
-		border-bottom: 1px solid var(--rule-2);
-	}
-
-	.index-tabs ol {
-		gap: 0 1rem;
-		margin: 0;
-		padding: 0.3rem 0 0.35rem;
-		font-size: 0.9375rem;
-		line-height: 1.6;
-	}
-
 	.ledger .scroll {
 		overflow: visible;
 	}
@@ -997,10 +794,6 @@ td.fig-cell a:hover .fig .w {
 	.ledger tr.sec th {
 		display: block;
 		min-width: 0;
-	}
-
-	.ledger tbody {
-		scroll-margin-top: 3.75rem;
 	}
 
 	.ledger thead {
@@ -1054,10 +847,6 @@ td.fig-cell a:hover .fig .w {
 		text-align: right;
 		font-size: 0.875rem;
 		border: 0;
-	}
-
-	.ledger td.unit .dir {
-		font-size: 0.75rem;
 	}
 
 	/* a machine's line: its family, then the figure, the rule under it */
@@ -1117,95 +906,7 @@ td.fig-cell a:hover .fig .w {
 		height: 4px;
 	}
 
-	.back {
-		margin-top: 2.5rem;
-		gap: 2.5rem;
-	}
 
-	.addr th {
-		width: 5.75rem;
-		font-size: 1rem;
-	}
-
-	.json {
-		padding: 0.55rem 0.7rem;
-		font-size: 0.75rem;
-	}
-
-	/* the machines: one record each, the price beside the type */
-	.mtable,
-	.mtable tbody {
-		display: block;
-	}
-
-	.mtable thead {
-		position: absolute;
-		width: 1px;
-		height: 1px;
-		overflow: hidden;
-		clip-path: inset(50%);
-	}
-
-	.mtable tr {
-		display: flex;
-		flex-wrap: wrap;
-		align-items: baseline;
-		padding: 0.55rem 0;
-		border-bottom: 1px solid var(--rule);
-	}
-
-	.mtable tr:last-child {
-		border-bottom: 0;
-	}
-
-	.mtable th,
-	.mtable td {
-		padding: 0;
-		border: 0;
-		text-align: left;
-	}
-
-	.mtable .m-type {
-		flex: 1;
-	}
-
-	.mtable td.m-price {
-		order: 1;
-		border: 0;
-		padding: 0;
-		font-size: 1.0625rem;
-		font-weight: 600;
-	}
-
-	.mtable .m-proc {
-		order: 2;
-		flex-basis: 100%;
-		margin-top: 0.15rem;
-	}
-
-	.mtable .m-proc .clock {
-		display: inline;
-		margin-left: 0.4rem;
-	}
-
-	.mtable .m-cpu,
-	.mtable .m-mem,
-	.mtable .m-net {
-		order: 3;
-		font-size: 0.875rem;
-		color: var(--ink-2);
-	}
-
-	.mtable .m-mem::before,
-	.mtable .m-net::before {
-		content: "·";
-		margin: 0 0.4rem;
-		color: var(--pencil);
-	}
-
-	.ph {
-		display: inline;
-	}
 }
 
 .nowrap {
