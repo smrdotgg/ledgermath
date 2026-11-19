@@ -28,8 +28,8 @@
 	--bg: #0f0f0d;
 	--bg-2: #161613;
 	--fg: #e8e3d6;
-	--fg-2: #bdb7a8;
-	--dim: #8e897c;
+	--fg-2: #c9c3b4;
+	--dim: #a19b8d;
 	--rule: #2b2a25;
 	--rule-2: #3a3832;
 	--acc: #f4a742;
@@ -45,7 +45,7 @@
 		--bg-2: #ebe6d8;
 		--fg: #1c1a15;
 		--fg-2: #3f3b33;
-		--dim: #6a6457;
+		--dim: #5b5549;
 		--rule: #d9d2c0;
 		--rule-2: #c6bea9;
 		--acc: #a3410c;
@@ -173,10 +173,22 @@ main {
 .sec .body {
 	padding-left: var(--indent);
 }
+.h2-sub {
+	margin-left: 3ch;
+	font-weight: 400;
+	letter-spacing: 0;
+	color: var(--fg-2);
+}
+#data-h {
+	font-size: 17px;
+}
 
 .sec p {
 	margin: 0 0 12px;
 	max-width: 80ch;
+}
+#data {
+	margin-top: 30px;
 }
 #data .body > p {
 	max-width: 126ch;
@@ -287,7 +299,7 @@ main {
 	grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
 	column-gap: 56px;
 	align-items: start;
-	margin-top: 40px;
+	margin-top: 30px;
 }
 .hero > .sec {
 	margin-top: 0;
@@ -297,22 +309,36 @@ main {
 }
 .hero #status {
 	grid-column: 1 / -1;
-	margin-top: 26px;
+	margin-top: 20px;
 }
 .hero #status .body {
 	padding-left: 0;
 }
+/* Three columns of three, read down: when; how much; where and how. */
 #status .kv {
+	display: block;
+	columns: 3;
+	column-gap: 4ch;
 	font-size: 13px;
 	line-height: 1.5;
 	padding: 10px 0 0;
 	border-top: 1px solid var(--rule-2);
-	grid-template-columns: repeat(5, max-content) minmax(0, max-content);
-	justify-content: space-between;
-	column-gap: 1.5ch;
 }
-#status .kv dd {
-	padding-right: 3ch;
+#status .kv > div {
+	display: grid;
+	grid-template-columns: 9ch minmax(0, 1fr);
+	column-gap: 1ch;
+	break-inside: avoid;
+	padding: 1px 0;
+}
+.frac {
+	color: var(--dim);
+	font-weight: 400;
+}
+/* The glance and the jump list under the lede serve the phone, where STATUS comes after DATA. */
+.glance,
+.goto {
+	display: none;
 }
 .syn-note {
 	color: var(--fg-2);
@@ -329,8 +355,7 @@ main {
 		padding-left: var(--indent);
 	}
 	#status .kv {
-		grid-template-columns: max-content minmax(0, 1fr);
-		column-gap: 3ch;
+		columns: 2;
 	}
 }
 
@@ -384,7 +409,7 @@ table {
 	text-align: left;
 	vertical-align: bottom;
 	font-weight: 400;
-	padding: 0 0 10px 6ch;
+	padding: 0 0 10px 2ch;
 	border-bottom: 1px solid var(--rule-2);
 }
 .data .sect th,
@@ -421,7 +446,7 @@ table {
 	font-weight: 600;
 	letter-spacing: 0.1em;
 	text-transform: uppercase;
-	font-size: 15px;
+	font-size: 16px;
 	padding-bottom: 6px;
 	border-bottom: 1px solid var(--rule-2);
 	scroll-margin-top: 16px;
@@ -440,10 +465,9 @@ table {
 	color: var(--fg);
 }
 .data .rehead td {
-	padding: 6px 0 0 2ch;
-	color: var(--dim);
-	font-size: 12px;
+	padding: 10px 0 0 2ch;
 	white-space: nowrap;
+	line-height: 1.45;
 }
 .sect-name::before {
 	content: "## ";
@@ -465,19 +489,18 @@ table {
 .b-what {
 	color: var(--fg-2);
 }
-.b-set {
+.b-shown {
 	display: block;
-	color: var(--dim);
+	color: var(--fg-2);
 	font-size: 12.5px;
 }
-.b-set .k {
+.b-shown .k,
+.about .k {
 	color: var(--dim);
 	font-style: italic;
 }
-.b-set .k:not(:first-child) {
-	margin-left: 1.5ch;
-}
-.b-set .k::after {
+.b-shown .k::after,
+.about .k::after {
 	content: ":";
 }
 
@@ -492,7 +515,7 @@ table {
 }
 .data .figs td,
 .data .exact td {
-	padding-left: 2ch;
+	padding-left: 0;
 }
 .data .unit {
 	text-align: left;
@@ -508,7 +531,7 @@ table {
 .unit .u2 {
 	display: block;
 	color: var(--dim);
-	font-size: 12px;
+	font-size: 12.5px;
 	line-height: 1.5;
 }
 
@@ -545,26 +568,19 @@ table {
 	outline: 2px solid var(--acc);
 	outline-offset: 2px;
 }
-.data .exact.why td {
+.data .exact.about td {
 	white-space: normal;
 	color: var(--fg-2);
-	padding: 4px 2ch 8px;
+	padding: 4px 2ch 10px;
 	border-bottom: 1px dashed var(--rule);
 }
-.data .exact.why th {
+.data .exact.about th {
 	padding-top: 4px;
 	border-bottom: 1px dashed var(--rule);
 }
-.bench:has(.exact.why) .exact.last th,
-.bench:has(.exact.why) .exact.last td {
-	border-bottom: 0;
-}
-.why .k {
-	font-style: italic;
-	color: var(--dim);
-}
-.why .k::after {
-	content: ":";
+.about .ab {
+	display: inline;
+	margin-right: 2.5ch;
 }
 .data .exact {
 	display: none;
@@ -586,6 +602,9 @@ table {
 .data .exact td {
 	padding-left: 2ch;
 }
+.data .exact.about td {
+	padding: 6px 2ch 10px;
+}
 .data .exact th {
 	color: var(--dim);
 	padding-left: 1ch;
@@ -593,26 +612,50 @@ table {
 .data .exact:nth-child(n) td .digits .tail {
 	color: var(--fg-2);
 }
-.data .exact.last th,
-.data .exact.last td {
-	padding-bottom: 8px;
-	border-bottom: 1px dashed var(--rule);
+.data .exact.sids th,
+.data .exact.sids td {
+	padding-bottom: 6px;
 }
 .exact .sid {
-	padding-left: 4ch;
 	font-size: 12px;
 }
 
+.figs .fig {
+	display: block;
+}
+/* The mark hangs in the two columns before the anchor: the figures, the heads and the ranges share one left edge. */
+.mk {
+	display: inline-block;
+	width: 2ch;
+	color: var(--acc);
+	font-weight: 600;
+}
+.m-near .mk {
+	color: var(--fg-2);
+	font-weight: 400;
+}
 .figs a {
 	color: var(--fg);
 	text-decoration: none;
 	display: inline-block;
 }
+/* Each median is a link to its Series file: a dotted rule under the bold digits says so at rest. */
+.figs a .lead {
+	text-decoration: underline dotted;
+	text-decoration-color: color-mix(in srgb, var(--fg) 40%, transparent);
+	text-decoration-thickness: 1px;
+	text-underline-offset: 4px;
+}
 .figs a:hover .lead,
 .figs a:focus-visible .lead {
-	text-decoration: underline;
+	text-decoration-style: solid;
 	text-decoration-color: var(--acc);
-	text-underline-offset: 3px;
+}
+.m-best .digits .lead {
+	color: var(--acc);
+}
+.m-best a .lead {
+	text-decoration-color: color-mix(in srgb, var(--acc) 50%, transparent);
 }
 .digits .lead {
 	font-weight: 600;
@@ -623,9 +666,9 @@ table {
 }
 .rng {
 	display: block;
-	padding-left: 4ch;
+	padding-left: 2ch;
 	color: var(--fg-2);
-	font-size: 12px;
+	font-size: 12.5px;
 	line-height: 1.5;
 }
 .rng .n {
@@ -653,10 +696,64 @@ table {
 }
 .jump .legend .dir {
 	color: var(--fg);
-	margin-left: 2ch;
 }
 .jump .legend .dir:first-child {
 	margin-left: 0;
+}
+.jump .legend > .nb + .nb {
+	margin-left: 2.5ch;
+}
+.lg-mk {
+	color: var(--acc);
+	font-weight: 600;
+}
+.lg-mk.near {
+	color: var(--fg-2);
+	font-weight: 400;
+}
+.sum-more {
+	font-weight: 400;
+}
+
+/* A point of a Series file, abridged. */
+.json {
+	margin: 10px 0 4px;
+	padding: 10px 14px;
+	background: var(--bg-2);
+	border-left: 2px solid var(--rule-2);
+	font: inherit;
+	font-size: 12.5px;
+	line-height: 1.55;
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+	color: var(--fg-2);
+}
+.jl0 {
+	display: block;
+}
+.jl {
+	display: block;
+	padding-left: 4ch;
+	text-indent: -2ch;
+}
+.json-note {
+	display: block;
+	font-size: 13px;
+	color: var(--dim);
+}
+.j-k {
+	color: var(--fg);
+}
+.j-s {
+	color: var(--fg-2);
+}
+.j-v {
+	color: var(--acc);
+	font-weight: 600;
+}
+.j-n,
+.j-c {
+	color: var(--dim);
 }
 
 /* ------------------------------------------------------------ MACHINES */
@@ -725,7 +822,7 @@ table {
 
 .files > div {
 	display: grid;
-	grid-template-columns: 30ch 1fr;
+	grid-template-columns: 27ch minmax(0, 1fr);
 	gap: 3ch;
 	margin-bottom: 6px;
 }
@@ -783,7 +880,7 @@ table {
 		margin-top: 36px;
 	}
 	.hero > #status {
-		margin-top: 36px;
+		margin-top: 40px;
 	}
 	.name h1 {
 		font-size: 23px;
@@ -820,10 +917,63 @@ table {
 	}
 
 	#status .kv {
-		grid-template-columns: 9ch minmax(0, 1fr);
-		column-gap: 1.5ch;
+		columns: 1;
 		font-size: 12.5px;
-		row-gap: 4px;
+	}
+	#status .kv > div {
+		padding: 2px 0;
+	}
+	.frac {
+		font-size: 11px;
+	}
+
+	/* On a phone the figures come right after the commands; STATUS follows them, and a glance
+	   at freshness and a jump list sit under the lede. */
+	main {
+		display: flex;
+		flex-direction: column;
+	}
+	main > * {
+		order: 10;
+	}
+	.hero {
+		display: contents;
+	}
+	.hero > .name {
+		order: 1;
+		margin-top: 30px;
+	}
+	.hero > #synopsis {
+		order: 2;
+	}
+	main > #data {
+		order: 3;
+	}
+	.hero > #status {
+		order: 4;
+	}
+	.glance {
+		display: block;
+		margin-top: 14px;
+		font-size: 12.5px;
+		color: var(--fg-2);
+	}
+	.gl-2 {
+		display: block;
+	}
+	.goto {
+		display: block;
+		margin-top: 6px;
+		font-size: 13px;
+		color: var(--dim);
+	}
+	.h2-sub {
+		display: block;
+		margin: 2px 0 0;
+		font-size: 12.5px;
+	}
+	#data-h {
+		font-size: 15px;
 	}
 
 	.scroll {
@@ -857,15 +1007,8 @@ table {
 	.b-what {
 		display: block;
 	}
-	.b-set {
+	.b-shown {
 		font-size: 12px;
-	}
-	.b-set .k:not(:first-child) {
-		margin-left: 0;
-	}
-	.b-set .k:not(:first-child)::before {
-		content: "\A";
-		white-space: pre;
 	}
 	.data .figs {
 		border-bottom: 1px dashed var(--rule);
@@ -904,8 +1047,11 @@ table {
 	.data .exact td::before {
 		grid-row: 1 / span 2;
 	}
-	.data .figs td a {
+	.data .figs td .fig {
 		grid-column: 2;
+	}
+	.data .exact td > .digits {
+		padding-left: 2ch;
 	}
 	.rng {
 		grid-column: 2;
@@ -935,10 +1081,8 @@ table {
 	.data .exact th {
 		padding: 0 0 2px;
 	}
-	.data .exact.last th,
-	.data .exact.last td {
-		border: 0;
-		padding-bottom: 1px;
+	.data .exact.sids td a {
+		padding-left: 2ch;
 	}
 	.data .exact td::before {
 		content: attr(data-m);
@@ -958,23 +1102,38 @@ table {
 	.more summary {
 		padding: 4px 0 4px 2ch;
 	}
-	.data .exact.why td {
+	.data .exact.about td {
 		display: block;
-		padding: 4px 0 2px;
+		padding: 6px 0 2px;
 		border: 0;
+		font-size: 12px;
 	}
-	.data .exact.why td::before {
+	.data .exact.about td::before {
 		content: none;
 	}
-	.data .exact.why th {
+	.data .exact.about th {
 		display: none;
+	}
+	.about .ab {
+		display: block;
+		margin: 0 0 2px;
+	}
+	.json {
+		font-size: 11.5px;
+		padding: 8px 10px;
 	}
 	.sect-note {
 		font-size: 12.5px;
 	}
 	.jump .legend {
-		margin-left: 0;
+		margin: 6px 0 0;
 		flex-basis: 100%;
+		display: grid;
+		grid-template-columns: max-content max-content;
+		gap: 2px 3ch;
+	}
+	.jump .legend > .nb + .nb {
+		margin-left: 0;
 	}
 	.cmd-note {
 		font-size: 12px;

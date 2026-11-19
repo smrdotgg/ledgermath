@@ -19,6 +19,8 @@ import {
 	links,
 	machines,
 	perUnit,
+	roundPlaces,
+	seriesFileContents,
 	type Section,
 	type Shown,
 	snapshot,
@@ -58,38 +60,66 @@ function rowFigure(row: HeadlineRow): Fig {
 	return (v, significant) => formatDuration(v, { unit, significant });
 }
 
+/** Where the bold part of a figure ends: after its first four significant digits. */
+function leadCut(text: string): number {
+	let significant = 0;
+	for (let i = 0; i < text.length; i++) {
+		const c = text[i]!;
+		if (c >= "0" && c <= "9" && (significant > 0 || c !== "0")) significant++;
+		if (significant === 4) return i + 1;
+	}
+	return text.length;
+}
+
+/** How many places after the point the bold part of a figure shows. */
+function leadPlaces(full: string): number {
+	const point = full.indexOf(".");
+	if (point < 0) return 0;
+	return Math.max(0, leadCut(full) - point - 1);
+}
+
 /**
- * The 5th and 95th percentiles, rounded to as few significant digits (from four) as tell them
- * apart, so a range never prints as "131.3–131.3". Their every digit is a tap away, in the row's
- * EXACT block, and in the figure's title.
+ * One rule for a row's p5–p95 ranges: each is printed to the places its own median's bold part
+ * shows, so the range reads at the precision of the bold digits above it, trailing zeros kept.
+ * Where that would print a range as "131.3–131.3", the whole row takes one more place, and again,
+ * until every range in it reads as two numbers. Every digit is in the row's [+] block and in the
+ * figure's title.
  */
-function range(fig: Fig, p5: number, p95: number): [Shown, Shown] {
-	for (let significant = 4; ; significant++) {
-		const lo = fig(p5, significant);
-		const hi = fig(p95, significant);
-		if (lo.short !== hi.short || (!lo.rounded && !hi.rounded) || significant >= 17) return [lo, hi];
+function ranges(cells: { p50: Shown; p5: Shown; p95: Shown }[]): [string, string][] {
+	for (let extra = 0; ; extra++) {
+		const out = cells.map(({ p50, p5, p95 }): [string, string] => {
+			const places = leadPlaces(p50.full) + extra;
+			return [roundPlaces(p5.full, places), roundPlaces(p95.full, places)];
+		});
+		const clash = out.some(([lo, hi], i) => lo === hi && cells[i]!.p5.full !== cells[i]!.p95.full);
+		if (!clash || extra >= 17) return out;
 	}
 }
 
 /**
+ * Which figure of a row is best (the highest rate, or the lowest time), and which others have a
+ * p5–p95 that overlaps the best's: a mark for reading the row, not a figure. No number is made.
+ */
+function marks(up: boolean, cells: { f: { p5: number; p50: number; p95: number } }[]): ("best" | "near" | "")[] {
+	const p50s = cells.map((x) => x.f.p50);
+	const top = up ? Math.max(...p50s) : Math.min(...p50s);
+	const best = cells.filter((x) => x.f.p50 === top);
+	return cells.map((x) => {
+		if (x.f.p50 === top) return "best";
+		return best.some((b) => x.f.p5 <= b.f.p95 && b.f.p5 <= x.f.p95) ? "near" : "";
+	});
+}
+
+/**
  * A figure printed in full, every digit, aligned on its decimal point: the whole part in a box
- * four characters wide, the fraction after it. The first four significant digits are set
+ * as wide as the row's widest, the fraction after it. The first four significant digits are set
  * brighter, the rest dimmer: a typographic emphasis on the exact text, not a rounding.
  */
-function Digits(props: { full: string }) {
+function Digits(props: { full: string; width?: number }) {
 	const [whole = "", fraction] = props.full.split(".");
 	const text = fraction === undefined ? whole : `${whole}.${fraction}`;
-	let significant = 0;
-	let cut = text.length;
-	for (let i = 0; i < text.length; i++) {
-		const c = text[i]!;
-		if (c >= "0" && c <= "9" && (significant > 0 || c !== "0")) significant++;
-		if (significant === 4) {
-			cut = i + 1;
-			break;
-		}
-	}
-	const pad = Math.max(0, 4 - whole.length);
+	const cut = leadCut(text);
+	const pad = Math.max(0, (props.width ?? 4) - whole.length);
 	return (
 		<span class="digits">
 			<span class="pad" aria-hidden="true">
@@ -126,63 +156,64 @@ function Command(props: { url: string; note: string }) {
 	);
 }
 
-function Section(props: { id: string; title: string; children?: unknown }) {
+function Section(props: { id: string; title: string; sub?: string; children?: unknown }) {
 	return (
 		<section class="sec" id={props.id} aria-labelledby={`${props.id}-h`}>
-			<h2 id={`${props.id}-h`}>{props.title}</h2>
+			<h2 id={`${props.id}-h`}>
+				{props.title}
+				{props.sub ? <span class="h2-sub">{props.sub}</span> : null}
+			</h2>
 			<div class="body">{props.children as never}</div>
 		</section>
 	);
 }
 
+/** A moment to the second, its fraction dimmer, and UTC: one unbreakable piece. */
+function Moment(props: { m: ReturnType<typeof formatMoment>; hi?: boolean }) {
+	const m = props.m;
+	const fraction = m.full.slice(m.date.length + 1 + m.second.length, -4);
+	return (
+		<time datetime={m.iso} class="nb">
+			<span class={props.hi ? "hi" : undefined}>
+				{m.date} {m.second}
+			</span>
+			<span class="frac">{fraction}</span> UTC
+		</time>
+	);
+}
+
+/** In reading order for one column: when, then how much, then where and how. A wide screen sets it in three columns of three. */
 function Status() {
 	const runs = formatCount(snapshot.runCount).full;
 	const rows: [string, unknown][] = [
-		[
-			"newest",
-			<time datetime={newest.iso}>
-				<span class="hi">
-					{newest.date} {newest.second}
-				</span>
-				<span class="dim">{newest.full.slice(newest.date.length + 1 + newest.second.length, -4)}</span> UTC
-			</time>,
-		],
-		[
-			"where",
-			<>
-				AWS {snapshot.region}, zone {zones.join(", ")}
-			</>,
-		],
+		["newest", <Moment m={newest} hi />],
+		["oldest", <Moment m={oldest} />],
+		["schedule", <>{SCHEDULE.join(" ")} UTC, daily</>],
 		[
 			"runs",
 			<>
-				<span class="hi">{runs}</span> kept, {formatCount(snapshot.countedRuns).full} counted, {formatCount(snapshot.failedRuns).full} failed
+				<span class="nb">
+					<span class="hi">{runs}</span> kept,
+				</span>{" "}
+				<span class="nb">{formatCount(snapshot.countedRuns).full} counted,</span> <span class="nb">{formatCount(snapshot.failedRuns).full} failed</span>
 			</>,
-		],
-		[
-			"oldest",
-			<time datetime={oldest.iso}>
-				{oldest.date} {oldest.second}
-				<span class="dim">{oldest.full.slice(oldest.date.length + 1 + oldest.second.length, -4)}</span> UTC
-			</time>,
 		],
 		[
 			"series",
 			<>
-				<span class="hi">{formatCount(snapshot.seriesCount).full}</span>, {formatCount(headlineSeries.length).full} of them in DATA below
-			</>,
-		],
-		[
-			"schedule",
-			<>
-				{SCHEDULE.join(" ")} UTC
+				<span class="hi">{formatCount(snapshot.seriesCount).full}</span>, {formatCount(headlineSeries.length).full} of them in DATA
 			</>,
 		],
 		[
 			"prices",
 			<>
-				<a href={links.prices}>{snapshot.priceDate}</a>, copied {pricesFetched.second}
-				<span class="dim">{pricesFetched.full.slice(pricesFetched.date.length + 1 + pricesFetched.second.length, -4)}</span> UTC
+				<a href={links.prices}>{snapshot.priceDate}</a>, copied <span class="nb">{pricesFetched.second}<span class="frac">{pricesFetched.full.slice(pricesFetched.date.length + 1 + pricesFetched.second.length, -4)}</span> UTC</span>
+			</>,
+		],
+		[
+			"where",
+			<>
+				AWS {snapshot.region}, zone {zones.join(", ")}
 			</>,
 		],
 		[
@@ -196,13 +227,12 @@ function Status() {
 						</a>
 					</>
 				))}
-
 			</>,
 		],
 		[
 			"evidence",
 			<>
-				every Run's output and machine record, see <a href="#files">FILES</a>
+				each Run's output and machine, <a href="#files">FILES</a>
 			</>,
 		],
 	];
@@ -239,6 +269,21 @@ function SectionNote(props: { section: Section }) {
 	);
 }
 
+const MARK_WORDS = { best: "the best median in this row", near: "its p5–p95 overlaps the best median's", "": "" } as const;
+
+/** A machine's column head: its name, size and hourly price. Said once at the top, and again at each group. */
+function MachineHead(props: { m: (typeof machines)[number] }) {
+	return (
+		<>
+			<span class="m-name">{props.m.instanceType}</span>
+			<span class="m-spec">
+				{props.m.vcpu} vCPU · {props.m.memory}
+			</span>
+			<span class="m-spec">${formatUsd(props.m.price.usdPerHour).full}/h</span>
+		</>
+	);
+}
+
 function DataTable() {
 	const cols = machines.length + 1;
 	return (
@@ -246,7 +291,8 @@ function DataTable() {
 			<table class="data">
 				<caption class="sr">
 					The median (p50) of each Series' counted Runs, one Series per benchmark and machine type, with its 5th and 95th percentiles and its count of
-					Runs. Each figure links to its Series file.
+					Runs. Each figure links to its Series file. A star marks the best median of a row; an approximately-equal sign marks a median whose p5 to p95
+					overlaps the best one's.
 				</caption>
 				<colgroup>
 					<col class="c-unit" />
@@ -263,11 +309,7 @@ function DataTable() {
 						</th>
 						{machines.map((m) => (
 							<th scope="col">
-								<span class="m-name">{m.instanceType}</span>
-								<span class="m-spec">
-									{m.vcpu} vCPU · {m.memory}
-								</span>
-								<span class="m-spec">${formatUsd(m.price.usdPerHour).full}/h</span>
+								<MachineHead m={m} />
 							</th>
 						))}
 					</tr>
@@ -281,8 +323,13 @@ function DataTable() {
 						const unit = fig(leadFigure(c, row.cells[0]!.series).p50).unit;
 						const cells = row.cells.map((cell) => {
 							const f = leadFigure(c, cell.series);
-							return { cell, f, p50: fig(f.p50), p5: fig(f.p5), p95: fig(f.p95), short: range(fig, f.p5, f.p95) };
+							return { cell, f, p50: fig(f.p50), p5: fig(f.p5), p95: fig(f.p95) };
 						});
+						const shortRanges = ranges(cells);
+						const rowMarks = marks(up, cells);
+						const whole = (x: Shown) => x.full.split(".")[0]!.length;
+						const width = Math.max(...cells.map((x) => whole(x.p50)));
+						const exactWidth = Math.max(...cells.flatMap((x) => [whole(x.p5), whole(x.p95)]));
 						const each = c.per ? ` per ${c.per.of}` : "";
 						return (
 							<tbody class={i === 0 ? "bench first" : "bench"}>
@@ -298,7 +345,9 @@ function DataTable() {
 									<tr class="rehead" aria-hidden="true">
 										<td />
 										{machines.map((m) => (
-											<td>{m.instanceType}</td>
+											<td>
+												<MachineHead m={m} />
+											</td>
 										))}
 									</tr>
 								) : null}
@@ -306,15 +355,11 @@ function DataTable() {
 									<th colspan={cols} scope="rowgroup">
 										<span class="b-label">{c.label}</span>
 										<span class="b-what">{c.what}</span>
-										<div class="b-set">
-											<span class="k">one repetition</span> {c.repetition}{" "}
-											{c.per ? (
-												<>
-													<span class="k">shown</span> the time of one {c.per.of}: a repetition's time ÷ {formatCount(c.per.count).full}{" "}
-												</>
-											) : null}
-											<span class="k">setting</span> {c.setting}
-										</div>
+										{c.per ? (
+											<span class="b-shown">
+												<span class="k">shown</span> the time of one {c.per.of}: a repetition's time ÷ {formatCount(c.per.count).full}
+											</span>
+										) : null}
 									</th>
 								</tr>
 								<tr class="figs">
@@ -328,29 +373,42 @@ function DataTable() {
 										<span class="u2">p5–p95 n</span>
 										<details class="more">
 											<summary>
-												exact<span class="sr">: {c.label}, every digit of p5 and p95, the Series files{c.reason ? ", why this setting" : ""}</span>
+												exact<span class="sr">: {c.label}, every digit of p5 and p95, the Series files, one repetition and the setting</span>
+												<span class="sum-more" aria-hidden="true">
+													, setting
+												</span>
 											</summary>
 										</details>
 									</th>
-									{cells.map(({ cell, f, p50, p5, p95, short: [lo, hi] }) => (
-										<td data-m={cell.machine.instanceType}>
-											<a
-												href={links.seriesFile(cell.series)}
-												title={`${cell.machine.instanceType}: p50 ${p50.full} ${p50.unit}${each}; p5 ${p5.full}, p95 ${p95.full}; ${f.count} counted Runs. As the snapshot holds it: ${p50.source}. Series ${cell.series.id}`}
-											>
-												<Digits full={p50.full} />
-											</a>
-											<span class="rng" title={`p5 ${p5.full} ${p5.unit}, p95 ${p95.full} ${p95.unit}`}>
-												<span class="sr">p5 to p95: </span>
-												{lo.short}–{hi.short}
-												<span class="n">
-													<span class="sr">, counted Runs: </span>
-													<span aria-hidden="true">n=</span>
-													{f.count}
+									{cells.map(({ cell, f, p50, p5, p95 }, k) => {
+										const mark = rowMarks[k]!;
+										const [lo, hi] = shortRanges[k]!;
+										return (
+											<td data-m={cell.machine.instanceType} class={mark ? `m-${mark}` : undefined}>
+												<span class="fig">
+													<span class="mk" aria-hidden="true">
+														{mark === "best" ? "*" : mark === "near" ? "≈" : " "}
+													</span>
+													<a
+														href={links.seriesFile(cell.series)}
+														title={`${cell.machine.instanceType}: p50 ${p50.full} ${p50.unit}${each}; p5 ${p5.full}, p95 ${p95.full}; ${f.count} counted Runs.${mark ? ` ${MARK_WORDS[mark][0]!.toUpperCase()}${MARK_WORDS[mark].slice(1)}.` : ""} As the snapshot holds it: ${p50.source}. Series ${cell.series.id}`}
+													>
+														<Digits full={p50.full} width={width} />
+													</a>
+													{mark ? <span class="sr">, {MARK_WORDS[mark]}</span> : null}
 												</span>
-											</span>
-										</td>
-									))}
+												<span class="rng" title={`p5 ${p5.full} ${p5.unit}, p95 ${p95.full} ${p95.unit}`}>
+													<span class="sr">p5 to p95: </span>
+													{lo}–{hi}
+													<span class="n">
+														<span class="sr">, counted Runs: </span>
+														<span aria-hidden="true">n=</span>
+														{f.count}
+													</span>
+												</span>
+											</td>
+										);
+									})}
 								</tr>
 								{(["p5", "p95"] as const).map((k) => (
 									<tr class="exact">
@@ -360,12 +418,12 @@ function DataTable() {
 										</th>
 										{cells.map((x) => (
 											<td data-m={x.cell.machine.instanceType}>
-												<Digits full={x[k].full} />
+												<Digits full={x[k].full} width={exactWidth} />
 											</td>
 										))}
 									</tr>
 								))}
-								<tr class="exact last">
+								<tr class="exact sids">
 									<th scope="row" class="unit">
 										<span class="sr">{c.label}, </span>series
 									</th>
@@ -377,16 +435,27 @@ function DataTable() {
 										</td>
 									))}
 								</tr>
-								{c.reason ? (
-									<tr class="exact why">
-										<th scope="row" class="unit">
-											<span class="sr">{c.label}, </span>why
-										</th>
-										<td colspan={machines.length}>
-											<span class="k">why this setting</span> {c.reason}
-										</td>
-									</tr>
-								) : null}
+								<tr class="exact about">
+									<th scope="row" class="unit">
+										<span class="sr">{c.label}, </span>about
+									</th>
+									<td colspan={machines.length}>
+										<span class="ab">
+											<span class="k">one repetition</span> {c.repetition}
+										</span>
+										<span class="ab">
+											<span class="k">setting</span> {c.setting}
+										</span>
+										{c.reason ? (
+											<span class="ab">
+												<span class="k">why this setting</span> {c.reason}
+											</span>
+										) : null}
+										<span class="ab">
+											<span class="k">how it is run</span> <a href={c.readme}>{c.readme.replace(/^https:\/\//, "")}</a>
+										</span>
+									</td>
+								</tr>
 							</tbody>
 						);
 					});
@@ -442,7 +511,45 @@ function Machines() {
 	);
 }
 
-const SERIES_DEFS = ["time_per_repetition", "bytes_per_second", "percentiles", "counted"] as const;
+/** One real point of a Series file, the fields a reader most needs in the file's own order, the rest named on one line. */
+function ExamplePoint() {
+	const point = seriesFileContents.point.example as unknown as Record<string, unknown>;
+	const keep = new Set<string>(seriesFileContents.point.key);
+	const names = Object.keys(point);
+	const shown = names.filter((n) => keep.has(n));
+	const left = names
+		.filter((n) => !keep.has(n))
+		.map((n) => (Array.isArray(point[n]) ? `${n} (${(point[n] as unknown[]).length})` : n));
+	const per = headline.find((row) => row.choice.benchmark === seriesFileContents.sample.benchmark)?.choice.per;
+	return (
+		<>
+			<pre class="json">
+				<code>
+					<span class="jl0">{"{"}</span>
+					{shown.map((n) => {
+						const value = JSON.stringify(point[n]);
+						const kind = typeof point[n] === "string" ? "j-s" : point[n] === null ? "j-n" : "j-v";
+						return (
+							<span class="jl">
+								<span class="j-k">"{n}"</span>: <span class={kind}>{value}</span>,
+							</span>
+						);
+					})}
+					<span class="jl j-c">… also {left.join(", ")}</span>
+					<span class="jl0">{"}"}</span>
+				</code>
+			</pre>
+			{per ? (
+				<span class="json-note">
+					A point's figure is one repetition's time in nanoseconds. One repetition of {seriesFileContents.sample.benchmark} is{" "}
+					{formatCount(per.count).full} {per.of}s, so DATA shows the time of one: this one ÷ {formatCount(per.count).full}.
+				</span>
+			) : null}
+		</>
+	);
+}
+
+const SERIES_DEFS = ["time_per_repetition", "bytes_per_second", "percentiles"] as const;
 
 function Methods() {
 	const series = snapshot.methods.find((m) => m.key === "series_v1");
@@ -460,6 +567,14 @@ function Methods() {
 						<dd>{series?.definitions[key]}</dd>
 					</div>
 				))}
+				<div>
+					<dt>counted</dt>
+					<dd>
+						In short: a Run counts when its benchmark exited 0, every line it printed is a well-formed event, and its events came in the required order
+						with as many samples as it asked for. Any other Run is failed: kept, shown with its reasons, and in no percentile. The full rule is in{" "}
+						<a href={links.seriesList}>{path(links.seriesList)}</a>.
+					</dd>
+				</div>
 			</dl>
 			{others.length ? (
 				<p>
@@ -485,7 +600,7 @@ export default function Page() {
 		<div class="term">
 			<header class="manhead">
 				<span>{title}</span>
-				<span class="mid">LedgerMath Data API</span>
+				<span class="mid">LedgerMath Manual</span>
 				<span>{title}</span>
 			</header>
 
@@ -504,17 +619,34 @@ export default function Page() {
 								freshly booted machines, published as static JSON for AI agents and their developers: to choose a machine or estimate a cost
 								from measured numbers.
 							</p>
+							<p class="glance">
+								<span class="nb">
+									newest Run <Moment m={newest} />
+								</span>
+								<span class="gl-2">
+									{formatCount(snapshot.runCount).full} Runs kept, {formatCount(snapshot.failedRuns).full} failed, in {snapshot.region}
+								</span>
+							</p>
+							<nav class="goto" aria-label="On this page">
+								<a href="#data">the figures</a>
+								<span aria-hidden="true"> · </span>
+								<a href="#synopsis">the API</a>
+								<span aria-hidden="true"> · </span>
+								<a href="#status">status</a>
+								<span aria-hidden="true"> · </span>
+								<a href="#machines">machines</a>
+							</nav>
 						</div>
 					</section>
 
 					<Section id="synopsis" title="SYNOPSIS">
 						<ul class="cmds">
 							<Command url={links.index} note="table of contents: start here" />
-							<Command url={links.seriesList} note={`every Series (${formatCount(snapshot.seriesCount).full}) and its percentiles`} />
-							<Command url={links.prices} note="AWS On-Demand prices, copied daily" />
+							<Command url={links.seriesList} note={`every Series (${formatCount(snapshot.seriesCount).full}): percentiles, file`} />
+							<Command url={links.prices} note="AWS On-Demand prices, a new file daily" />
 						</ul>
 						<p class="syn-note">
-							Each Series file links every Run's figure and evidence: cite the file behind each number.
+							Each Series file links every Run's figure and its evidence: cite it.
 						</p>
 					</Section>
 
@@ -523,11 +655,11 @@ export default function Page() {
 					</Section>
 				</div>
 
-				<Section id="data" title="DATA">
+				<Section id="data" title="DATA" sub={`${formatCount(snapshot.benchmarkCount).full} benchmarks × ${formatCount(snapshot.machineCount).full} machine types`}>
 					<p>
-						The median (p50) of each Series' counted Runs, one Series per benchmark and machine type, chosen by a written rule: one thread, static
-						build, settings every machine ran. Every digit printed; each figure links to its Series file; <span class="hi">[+] exact</span> opens a row's p5 and
-						p95 to the last digit.
+						The median (p50) of each Series' counted Runs, chosen by a written rule: one thread, static build, settings every machine ran. Each
+						median is printed in full and links to its Series file; the p5–p95 under it is shortened; <span class="hi">[+] exact</span> gives it in
+						full.
 					</p>
 					<nav class="jump" aria-label="Benchmark groups">
 						{SECTION_ORDER.map((section, i) => (
@@ -541,7 +673,18 @@ export default function Page() {
 							</span>
 						))}
 						<span class="legend">
-							<span class="dir">↑</span> higher is better <span class="dir">↓</span> lower is better
+							<span class="nb">
+								<span class="dir">↑</span> higher is better
+							</span>{" "}
+							<span class="nb">
+								<span class="dir">↓</span> lower is better
+							</span>{" "}
+							<span class="nb">
+								<span class="lg-mk">*</span> the row's best median
+							</span>{" "}
+							<span class="nb">
+								<span class="lg-mk near">≈</span> range overlaps it
+							</span>
 						</span>
 					</nav>
 					<DataTable />
@@ -598,7 +741,12 @@ export default function Page() {
 							<dt>
 								<code>/v1/series/&lt;id&gt;.json</code>
 							</dt>
-							<dd>One Series: its points, each linking its Run file and boot summary, the evidence. Every figure in DATA links one.</dd>
+							<dd>
+								One Series: each Run's figure and a link to its evidence. Every figure in DATA links one. One point, one Run, as the file of Series{" "}
+								<a href={seriesFileContents.sample.url}>{seriesFileContents.sample.id}</a> holds it ({seriesFileContents.sample.benchmark} on{" "}
+								{seriesFileContents.sample.instanceType}), abridged:
+								<ExamplePoint />
+							</dd>
 						</div>
 						<div>
 							<dt>
