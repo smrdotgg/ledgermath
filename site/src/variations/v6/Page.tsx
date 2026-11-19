@@ -96,8 +96,8 @@ function Digits(props: { text: string }) {
 function limitOf(benchmark: string): string | null {
 	const reason = headline.find((r) => r.choice.benchmark === "disk_read_io_uring")?.choice.reason ?? "";
 	if (!/IOPS limit/.test(reason) || !/throughput limit is what disk_read_sequential/.test(reason)) return null;
-	if (benchmark === "disk_read_io_uring") return "The root gp3 volume's IOPS limit: this row measures the volume, the same kind on all five.";
-	if (benchmark === "disk_read_sequential") return "The root gp3 volume's throughput limit: this row measures the volume, the same kind on all five.";
+	if (benchmark === "disk_read_io_uring") return "The root gp3 volume's IOPS limit: this chart measures the volume, the same kind on all five.";
+	if (benchmark === "disk_read_sequential") return "The root gp3 volume's throughput limit: this chart measures the volume, the same kind on all five.";
 	return null;
 }
 
@@ -118,12 +118,11 @@ function Card(props: { inst: Instrument; index: number }) {
 						{c.label}
 					</a>
 				</h3>
-				<span class="meta">
-					<span class="dir" title={c.lead === "rate" ? "More is faster" : "Less is faster"}>
-						{c.lead === "rate" ? "faster →" : "← faster"}
-					</span>
-					<span class="unit">{unit}</span>
-				</span>
+				{limit ? (
+					<a class="lim" href={c.readme} title={limit}>
+						gp3 limit
+					</a>
+				) : null}
 			</header>
 			<div class="chart" style={`--n:${inst.marks.length}`}>
 				<Plot inst={inst} scale={scale} />
@@ -142,26 +141,73 @@ function Card(props: { inst: Instrument; index: number }) {
 						</a>
 					</>
 				))}
+				<span class="dir" title={c.lead === "rate" ? "More is faster" : "Less is faster"}>
+					{c.lead === "rate" ? "faster →" : "← faster"}
+				</span>
+				<span class="unit" title={unit}>
+					{inst.unit}
+				</span>
 			</div>
-			{zoom || limit ? (
-				<p class="tags">
-					{zoom ? (
-						<span class="zoom">
-							<span class="tag" title={`The axis starts at ${zoom.ticks[0]!.label} ${inst.unit}. From zero, all five sit inside the box.`}>
-								zoomed
-							</span>
-							<Strip inst={inst} zoom={zoom} />
-							<span class="zmax">{inst.zero.ticks[inst.zero.ticks.length - 1]!.label}</span>
-						</span>
-					) : null}
-					{limit ? (
-						<a class="tag lim" href={c.readme} title={limit}>
-							gp3 volume limit
-						</a>
-					) : null}
+			{zoom ? (
+				<p class="zoom" title={`The axis starts at ${zoom.ticks[0]!.label} ${inst.unit}. From zero, all five sit inside the box.`}>
+					<span class="z0">0</span>
+					<Strip inst={inst} zoom={zoom} />
+					<span class="zmax">{inst.zero.ticks[inst.zero.ticks.length - 1]!.label}</span>
 				</p>
 			) : null}
 		</article>
+	);
+}
+
+/** Every figure in full: p5, median (a link to its Series file) and p95, and the Runs counted, per machine. */
+function Every(props: { instruments: Instrument[] }) {
+	return (
+		<details class="every" id="digits">
+			<summary>
+				Exact figures <span class="dim">p5 · median · p95 · Runs</span>
+			</summary>
+			<div class="scroll" tabindex="0" role="region" aria-label="Exact figures">
+				<table class="digits">
+					<thead>
+						<tr>
+							<th scope="col">
+								<span class="vh">Benchmark</span>
+							</th>
+							{machines.map((m) => (
+								<th scope="col">{m.instanceType}</th>
+							))}
+						</tr>
+					</thead>
+					<tbody>
+						{props.instruments.map((inst) => {
+							const all = inst.marks.flatMap((m) => [m.p5.full, m.p50.full, m.p95.full]);
+							const c = inst.row.choice;
+							return (
+								<tr>
+									<th scope="row">
+										<a href={`#b-${c.benchmark}`}>{c.label}</a> <span class="u">{c.per ? `${inst.unit} / ${c.per.of}` : inst.unit}</span>
+									</th>
+									{inst.marks.map((m) => (
+										<td>
+											<span style={padFor(m.p5.full, all)}>
+												<Digits text={m.p5.full} />
+											</span>
+											<a class="med" href={m.url} style={padFor(m.p50.full, all)}>
+												<Digits text={m.p50.full} />
+											</a>
+											<span style={padFor(m.p95.full, all)}>
+												<Digits text={m.p95.full} />
+											</span>
+											<span class="n">n={m.runs}</span>
+										</td>
+									))}
+								</tr>
+							);
+						})}
+					</tbody>
+				</table>
+			</div>
+		</details>
 	);
 }
 
@@ -213,7 +259,6 @@ export default function Page() {
 	const newest = formatMoment(snapshot.newestRunStartedAt);
 	const runs = formatCount(snapshot.runCount).full;
 	const failed = formatCount(snapshot.failedRuns).full;
-	const shown = headline.length * machines.length;
 	const prices = machines.map((m) => formatUsd(m.price.usdPerHour, { per: "hour" }));
 	const priceScale = zeroScale(Math.max(...prices.map((p) => p.value)), 3);
 
@@ -223,21 +268,8 @@ export default function Page() {
 	const exMark = hero.marks[ex < 0 ? 0 : ex]!;
 	const row = hero.row.cells[ex < 0 ? 0 : ex]!.series;
 	const d = row.derivations.series_v1;
-	const excerpt = JSON.stringify(
-		{
-			benchmark: row.benchmark,
-			instance_type: row.instance_type,
-			runs: row.runs,
-			derivations: { series_v1: { counted_runs: d.counted_runs, percentiles: { bytes_per_second: d.percentiles.bytes_per_second } } },
-		},
-		null,
-		2,
-	).replace(/\{\n\s+([^{}]*?)\n\s*\}/g, (whole: string, body: string) => {
-		const line = `{ ${body.split(/,\n\s*/).join(", ")} }`;
-		return line.length <= 60 ? line : whole;
-	})
-		// Closing braces share a line, so the excerpt stays short.
-		.replace(/\n\s*\}(?:\n\s*\})+/g, (run: string) => ` ${run.replace(/\s+/g, " ").trim()}`);
+	// One object of that row, as the file holds it: the figure's percentiles in bytes per second.
+	const excerpt = `"bytes_per_second": ${JSON.stringify(d.percentiles.bytes_per_second, null, 2)}`;
 	const tokens = [...excerpt.matchAll(/("(?:[^"\\]|\\.)*")(?=\s*:)|("(?:[^"\\]|\\.)*")|(-?\d[\d.eE+-]*)|([^"\d-]+|-)/g)].map(([text, key, str, num]) => ({
 		kind: key ? "k" : str ? "s" : num ? "n" : "",
 		text,
@@ -268,11 +300,10 @@ export default function Page() {
 						<p class="lede">{headline.length} benchmarks on each freshly booted machine, published with AWS's prices as a static JSON API for AI agents.</p>
 						<div class="cmd">
 							<span class="prompt" aria-hidden="true">$</span>
-							<code data-copy tabindex="0">curl {links.index}</code>
+							<code data-copy tabindex="0">
+								curl <Url text={links.index} />
+							</code>
 						</div>
-						<a href="#agent" class="btn">
-							Prompt for your agent
-						</a>
 					</div>
 				</section>
 
@@ -300,11 +331,9 @@ export default function Page() {
 								</dd>
 							</div>
 							<div>
-								<dt>Series</dt>
+								<dt>Region</dt>
 								<dd>
-									<a href={links.seriesList}>
-										<b>{formatCount(snapshot.seriesCount).full}</b>
-									</a>
+									<b>{snapshot.region}</b>
 								</dd>
 							</div>
 							<div>
@@ -358,6 +387,7 @@ export default function Page() {
 							</span>
 						</p>
 					</div>
+					<Every instruments={instruments} />
 					<div class="grid">
 						<article class="card price" id="machines" aria-labelledby="h-machines">
 							<header class="card-h">
@@ -374,8 +404,9 @@ export default function Page() {
 										</th>
 										<th scope="col">vCPU</th>
 										<th scope="col">GiB</th>
-										<th scope="col" class="pc">
-											$ / hour
+										<th scope="col">$ / hour</th>
+										<th scope="col" class="pb">
+											<span class="vh">Price drawn to scale</span>
 										</th>
 									</tr>
 								</thead>
@@ -387,11 +418,13 @@ export default function Page() {
 											</th>
 											<td>{m.vcpu}</td>
 											<td>{m.memory.replace(/ GiB$/, "")}</td>
-											<td class="pc">
+											<td class="pc" title={`${m.price.description} · ${m.price.path.pointer}`}>
+												${prices[i]!.full}
+											</td>
+											<td class="pb">
 												<svg class="pbar" aria-hidden="true" width="100%" height="10">
 													<rect class="bar" x="0" y="2" width={width(priceScale, 0, prices[i]!.value)} height="6" />
 												</svg>
-												<span title={`${m.price.description} · ${m.price.path.pointer}`}>${prices[i]!.full}</span>
 											</td>
 										</tr>
 									))}
@@ -402,52 +435,6 @@ export default function Page() {
 							<Card inst={inst} index={i} />
 						))}
 					</div>
-
-					<details class="every" id="digits">
-						<summary>
-							Every digit <span class="dim">· {shown} medians with p5 and p95</span>
-						</summary>
-						<div class="scroll" tabindex="0" role="region" aria-label="Every digit">
-							<table class="digits">
-								<thead>
-									<tr>
-										<th scope="col">
-											<span class="vh">Benchmark</span>
-										</th>
-										{machines.map((m) => (
-											<th scope="col">{m.instanceType}</th>
-										))}
-									</tr>
-								</thead>
-								<tbody>
-									{instruments.map((inst) => {
-										const all = inst.marks.flatMap((m) => [m.p5.full, m.p50.full, m.p95.full]);
-										const c = inst.row.choice;
-										return (
-											<tr>
-												<th scope="row">
-													<a href={`#b-${c.benchmark}`}>{c.label}</a> <span class="u">{c.per ? `${inst.unit} / ${c.per.of}` : inst.unit}</span>
-												</th>
-												{inst.marks.map((m) => (
-													<td>
-														<span style={padFor(m.p5.full, all)}>
-															<Digits text={m.p5.full} />
-														</span>
-														<a class="med" href={m.url} style={padFor(m.p50.full, all)}>
-															<Digits text={m.p50.full} />
-														</a>
-														<span style={padFor(m.p95.full, all)}>
-															<Digits text={m.p95.full} />
-														</span>
-													</td>
-												))}
-											</tr>
-										);
-									})}
-								</tbody>
-							</table>
-						</div>
-					</details>
 				</section>
 
 				<section class="band" id="api" aria-labelledby="h-api">
@@ -475,24 +462,30 @@ export default function Page() {
 							<ul class="cmds">
 								<li>
 									<p class="c"># every Series, with p5, p50, p95</p>
-									<code data-copy tabindex="0">
-										curl <Url text={links.seriesList} />
-									</code>
-									<pre tabindex="0" role="region" aria-label="One row of series.json, some fields left out">
+									<div class="line">
+										<code data-copy tabindex="0">
+											curl <Url text={links.seriesList} />
+										</code>
+									</div>
+									<pre tabindex="0" role="region" aria-label={`From series.json: ${row.benchmark} on ${row.instance_type}`}>
 										<code>{tokens.map((t) => (t.kind === "" ? t.text : <span class={t.kind}>{t.text}</span>))}</code>
 									</pre>
 								</li>
 								<li>
 									<p class="c"># that Series: each Run, its evidence</p>
-									<code data-copy tabindex="0">
-										curl <Url text={exMark.url} />
-									</code>
+									<div class="line">
+										<code data-copy tabindex="0">
+											curl <Url text={exMark.url} />
+										</code>
+									</div>
 								</li>
 								<li>
 									<p class="c"># prices, {snapshot.priceDate}</p>
-									<code data-copy tabindex="0">
-										curl <Url text={links.prices} />
-									</code>
+									<div class="line">
+										<code data-copy tabindex="0">
+											curl <Url text={links.prices} />
+										</code>
+									</div>
 								</li>
 							</ul>
 						</div>
