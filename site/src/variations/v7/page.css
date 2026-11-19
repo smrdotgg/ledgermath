@@ -297,18 +297,8 @@ h1 {
 	border: 1px solid var(--rule);
 	border-radius: 12px;
 	box-shadow: var(--shadow);
-	padding: 0 32px 26px;
-}
-.kicker {
-	margin: 0 -32px 24px;
-	padding: 13px 32px;
-	border-bottom: 1px solid var(--rule);
-	font-family: var(--mono);
-	font-size: 11.5px;
-	letter-spacing: 0.1em;
-	text-transform: uppercase;
-	color: var(--accent-ink);
-	line-height: 1.4;
+	padding: 28px 32px 0;
+	overflow: hidden;
 }
 .turn {
 	display: grid;
@@ -339,15 +329,12 @@ blockquote {
 	padding-top: 20px;
 	border-top: 1px dashed var(--rule-2);
 }
-.answer-lead {
-	display: flex;
-	flex-wrap: wrap;
-	gap: 6px 22px;
-	font-size: 17px;
-	align-items: baseline;
-}
 .ans {
+	font-size: 17px;
 	white-space: nowrap;
+}
+.answer-sub + .ans {
+	margin-top: 14px;
 }
 .fig {
 	font-family: var(--mono);
@@ -367,125 +354,41 @@ blockquote {
 	font-size: 13px;
 	white-space: nowrap;
 }
-.cite {
-	display: inline-grid;
-	place-items: center;
-	min-width: 17px;
-	height: 17px;
-	padding: 0 4px;
-	margin-left: 3px;
-	border-radius: 9px;
-	border: 1px solid var(--accent-line);
-	color: var(--accent-ink);
-	font-family: var(--mono);
-	font-size: 10.5px;
-	font-weight: 600;
-	line-height: 1;
-	text-decoration: none;
-	vertical-align: 0.3em;
-}
-.cite:hover {
-	background: var(--accent);
-	border-color: var(--accent);
-	color: var(--paper);
-}
-.reads {
+/* The answer's sources, a ledger strip along the card's foot: one line per citation, the file,
+   the field and what was taken from it in three aligned columns. */
+.srcs {
 	list-style: none;
-	margin: 24px 0 0;
-	padding: 18px 0 0;
+	margin: 24px -32px 0;
+	padding: 14px 32px 16px;
+	background: var(--paper-2);
 	border-top: 1px solid var(--rule);
 	display: grid;
-	gap: 14px;
-}
-.reads > li {
-	display: grid;
-	grid-template-columns: 40px minmax(0, 1fr);
-	scroll-margin-top: 20px;
-}
-.reads > li:target {
-	background: var(--accent-wash);
-	border-radius: 6px;
-}
-.read-n {
-	display: inline-grid;
-	place-items: center;
-	width: 20px;
-	height: 20px;
-	border-radius: 50%;
-	border: 1px solid var(--accent-line);
-	color: var(--accent-ink);
+	grid-template-columns: auto auto minmax(0, 1fr);
+	gap: 7px 14px;
 	font-family: var(--mono);
-	font-size: 11px;
+	font-size: 12px;
+	line-height: 1.4;
+}
+.src {
+	display: contents;
+}
+.src-file {
 	font-weight: 600;
-	margin-top: 1px;
-}
-.url {
-	font-family: var(--mono);
-	font-size: 13px;
-	text-decoration: none;
-	overflow-wrap: anywhere;
-}
-.url-host {
-	color: var(--muted);
-}
-.url-path {
-	color: var(--ink);
-	font-weight: 600;
-	text-decoration: underline;
-	text-decoration-color: var(--rule-2);
-	text-underline-offset: 0.18em;
-}
-.url:hover .url-path {
-	text-decoration-color: var(--accent);
-}
-.fields {
-	list-style: none;
-	margin: 4px 0 0;
-	padding: 0;
-	font-size: 13px;
-}
-.fields li {
-	display: flex;
-	justify-content: space-between;
-	gap: 16px;
-	padding: 3px 0;
-	border-bottom: 1px dotted var(--rule-2);
-}
-.fields li:last-child {
-	border-bottom: 0;
-}
-.f-name {
-	color: var(--muted);
-	min-width: 0;
-	word-break: break-all;
-}
-.f-raw {
-	color: var(--ink);
 	white-space: nowrap;
-	font-weight: 500;
 }
-
-.sources {
-	margin-top: 22px;
-	border-top: 1px solid var(--rule);
-}
-.sources summary {
-	padding: 12px 0 0;
-	font-family: var(--mono);
-	font-size: 11px;
-	letter-spacing: 0.1em;
-	text-transform: uppercase;
+.src-field {
+	font-size: inherit;
 	color: var(--muted);
-	cursor: pointer;
-	list-style-position: inside;
+	white-space: nowrap;
 }
-.sources summary:hover {
+.src-field::before {
+	content: "› ";
+	color: var(--rule-2);
+}
+.src-val {
 	color: var(--ink);
-}
-.sources .reads {
-	margin-top: 10px;
-	padding-top: 0;
-	border-top: 0;
+	text-align: right;
+	white-space: nowrap;
 }
 
 /* ------------------------------------------------------------ the numbers */
@@ -645,8 +548,10 @@ blockquote {
 .fig-cell {
 	padding: 11px 10px 10px;
 }
+/* The figure the exchange cites: a hairline frame, not a fill, so it reads as "this one", never as a verdict. */
 .fig-cell.is-asked {
-	background: var(--accent-wash);
+	box-shadow: inset 0 0 0 1px var(--accent-line);
+	border-radius: 3px;
 }
 /* Point at or focus a figure and its card opens below it: Runs, dates, p5 to p95, its field. */
 @media (hover: hover) and (min-width: 761px) {
@@ -690,9 +595,6 @@ blockquote {
 	text-decoration-color: var(--accent);
 	text-underline-offset: 0.2em;
 }
-.cell-cites .cite {
-	vertical-align: 0;
-}
 .x {
 	font-family: var(--mono);
 	font-size: 13px;
@@ -713,21 +615,23 @@ blockquote {
 	font-weight: 400;
 }
 
-/* A figure drawn to its row's scale from zero: a hairline track, an ink line out to the median
-   with a tick at its end, and the 5th to 95th percentile as a broad translucent band. */
+/* A figure drawn to its row's scale from zero: a light track, an ink line out to the median with
+   a tick at its end, and the 5th to 95th percentile as a band as tall as the tick and never
+   narrower than it, centred on its own span. */
 .bar {
 	position: relative;
 	display: block;
-	height: 11px;
+	height: 12px;
 	margin-top: 6px;
-	background: linear-gradient(var(--rule-2), var(--rule-2)) left center / 100% 1px no-repeat;
+	background: linear-gradient(var(--rule), var(--rule)) left center / 100% 4px no-repeat;
+	border-radius: 2px;
 }
 .bar-p50 {
 	position: absolute;
 	z-index: 1;
 	left: 0;
 	top: 4.5px;
-	height: 2px;
+	height: 3px;
 	background: var(--ink-2);
 }
 .bar-p50::after {
@@ -736,17 +640,14 @@ blockquote {
 	right: -1px;
 	top: -4.5px;
 	width: 2px;
-	height: 11px;
+	height: 12px;
 	background: var(--ink);
 }
 .bar-span {
 	position: absolute;
-	top: 1px;
-	height: 9px;
-	min-width: 4px;
-	transform: translateX(-1px);
-	padding-right: 2px;
-	box-sizing: content-box;
+	top: 0;
+	height: 12px;
+	transform: translateX(-50%);
 	background: var(--band);
 	border-radius: 2px;
 }
@@ -757,30 +658,34 @@ blockquote {
 	background: var(--paper-2);
 	border-top: 1px solid var(--rule);
 	border-bottom: 1px solid var(--rule);
-	padding: 56px 0;
+	padding: 30px 0;
 	scroll-margin-top: 0;
 }
 .api-grid {
 	display: grid;
 	grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
 	gap: 56px;
-	align-items: start;
+	align-items: center;
 }
 .api-say {
-	position: relative;
-	padding: 18px 20px;
+	display: flex;
+	align-items: center;
+	gap: 18px;
+	padding: 14px 16px 14px 20px;
 	background: var(--card);
 	border: 1px solid var(--rule);
 	border-left: 3px solid var(--accent);
 	border-radius: 6px;
 }
 .api-say p {
+	flex: 1;
+	min-width: 0;
 	font-size: 15.5px;
 	line-height: 1.5;
 	overflow-wrap: anywhere;
 }
 .api-say .copy-btn {
-	margin-top: 12px;
+	flex: none;
 	color: var(--ink);
 	background: var(--paper-2);
 	border-color: var(--rule-2);
@@ -901,7 +806,7 @@ blockquote {
 .facts {
 	margin: 30px 0 0;
 	display: grid;
-	grid-template-columns: 0.6fr 1.2fr 0.6fr 1.2fr 1fr;
+	grid-template-columns: 1fr 1.3fr 0.7fr 1fr;
 	gap: 0 32px;
 }
 .facts div {
@@ -1016,20 +921,14 @@ blockquote {
 		font-size: 20px;
 	}
 	.exchange {
-		padding: 0 16px 18px;
+		padding: 18px 16px 0;
 		margin: 0 -4px;
-	}
-	.kicker {
-		margin: 0 0 12px;
-		padding: 14px 0 0;
-		border-bottom: 0;
 	}
 	.turn-a {
 		margin-top: 14px;
 		padding-top: 14px;
 	}
-	.turn,
-	.reads > li {
+	.turn {
 		grid-template-columns: 30px minmax(0, 1fr);
 	}
 	.mark {
@@ -1038,19 +937,29 @@ blockquote {
 	.question p {
 		font-size: 20px;
 	}
-	.answer-lead {
-		flex-direction: column;
-		gap: 8px;
+	.ans {
+		font-size: 16px;
 	}
 	.fig {
 		font-size: 16px;
 	}
-	.fields li {
-		flex-direction: column;
-		gap: 0;
+	.srcs {
+		margin: 18px -16px 0;
+		padding: 12px 16px 14px;
+		grid-template-columns: auto minmax(0, 1fr);
+		gap: 1px 10px;
+		font-size: 11.5px;
 	}
-	.f-raw {
+	.src-file {
+		grid-column: 1 / -1;
+		margin-top: 8px;
 		white-space: normal;
+	}
+	.src:first-child .src-file {
+		margin-top: 0;
+	}
+	.src-val {
+		min-width: 0;
 		overflow-wrap: anywhere;
 	}
 	h2 {
@@ -1211,28 +1120,18 @@ blockquote {
 		margin-top: 0;
 		align-self: center;
 	}
-	.cell-cites .cite {
-		min-width: 15px;
-		height: 15px;
-		font-size: 9.5px;
-		margin-left: 2px;
-	}
-
 	.api {
-		padding: 40px 0;
+		padding: 28px 0;
 	}
 	.api-grid {
-		gap: 24px;
+		gap: 14px;
 	}
-	.cmd {
-		padding: 12px 76px 12px 14px;
+	.api-say {
+		align-items: flex-start;
+		padding: 12px 12px 12px 14px;
 	}
-	.cmd pre {
-		font-size: 12.5px;
-	}
-	.cmd .copy-btn {
-		right: 10px;
-		top: 11px;
+	.api-say p {
+		font-size: 14.5px;
 	}
 	.provenance {
 		padding-top: 40px;
