@@ -147,8 +147,6 @@ const runs = formatCount(snapshot.runCount);
 const failed = formatCount(snapshot.failedRuns);
 const series1 = snapshot.methods.find((m) => m.key === "series_v1")!;
 const schema = (name: string) => links.schemas.find((s) => s.name === name)!;
-const priceFileName = links.prices.replace(/^.*\/v1\//, "v1/");
-const short = (url: string) => url.replace(/^https:\/\//, "");
 
 // Listing 1: Table 1's first figure, as the Series list holds it, cut to the path that leads to it.
 const first = rows[0]!;
@@ -171,16 +169,30 @@ const excerptBefore = [
 ].join("\n");
 const excerptAfter = [`, "p95": ${j(bps.p95)}`, "  … } } } }"].join("\n");
 
-/** AWS's processor name without its trailing word "Processor". Instance storage is left out: Table 1 measures the EBS root volume. */
-const processor = (name: string) => name.replace(/ Processor$/, "");
+/** AWS's processor name, words left out so each fits one line of its column: the trailing "Processor", and "Scalable". */
+const processor = (name: string) => name.replace(/ Processor$/, "").replace(/ Scalable\b/, "");
 
-// The references: the API's files and the documentation, in the order the page cites them.
+/** A full address, set as host (light) and path (ink), with a break allowed after the host. */
+function Address(props: { url: string }) {
+	const m = /^(https:\/\/[^/]+\/)(.*)$/.exec(props.url);
+	return m ? (
+		<>
+			<span class="addr-host">{m[1]}</span>
+			<wbr />
+			<span class="addr-path">{m[2]}</span>
+		</>
+	) : (
+		props.url
+	);
+}
+
+// The references: the API's files and the documentation, in the order the page cites them, each a whole address.
 const REFS = [
-	{ n: 1, file: "v1/index.json", url: links.index, what: "Contents; start here", schema: schema("index").url },
-	{ n: 2, file: "v1/series.json", url: links.seriesList, what: "Every Series: figures, Methods", schema: schema("series-list").url },
-	{ n: 3, file: "v1/series/<id>.json", url: firstCell.url, what: "One Series: each Run, its evidence", schema: schema("series").url },
-	{ n: 4, file: priceFileName, url: links.prices, what: "AWS On-Demand prices", schema: schema("prices").url },
-	{ n: 5, file: short(links.docs), url: links.docs, what: "Methods, benchmarks", schema: "" },
+	{ n: 1, file: links.index, url: links.index, what: "Contents; start here", schema: schema("index").url },
+	{ n: 2, file: links.seriesList, url: links.seriesList, what: "Every Series: figures, Methods", schema: schema("series-list").url },
+	{ n: 3, file: links.seriesFilePattern, url: firstCell.url, what: "One Series: each Run, its evidence", schema: schema("series").url },
+	{ n: 4, file: links.prices, url: links.prices, what: "AWS On-Demand prices", schema: schema("prices").url },
+	{ n: 5, file: links.docs, url: links.docs, what: "Methods, benchmarks", schema: "" },
 ] as const;
 function Cite(props: { n: number }) {
 	return (
@@ -197,9 +209,6 @@ export default function Page() {
 		<>
 			<header class="runninghead">
 				<div class="rh-inner">
-					<a class="wordmark" href="./">
-						LedgerMath
-					</a>
 					<nav class="rh-nav" aria-label="Sections">
 						<a href="#s1">Results</a>
 						<a href="#refs">API</a>
@@ -263,7 +272,7 @@ export default function Page() {
 								<span class="runin" id="abstract" role="heading" aria-level={2}>
 									Abstract
 								</span>
-								Every figure is served as JSON with its Runs, evidence and Method <Cite n={5} />, so an AI agent can choose infrastructure from measured numbers.
+								Every benchmark result is served as JSON with its Runs, evidence and Method <Cite n={5} />, so an AI agent can choose infrastructure from measured numbers.
 							</p>
 						</section>
 
@@ -336,10 +345,15 @@ export default function Page() {
 													<span class="bar-range" style="left:50%;width:24%" />
 													<span class="bar-tick" style="left:62%" />
 												</span>
-												<span>median, p5–p95; each row from 0</span>
+												<span>median, p5–p95; one scale per benchmark, from 0</span>
 											</span>
-											<span class="key-item">
-												<span class="dir">↑↓</span> higher/lower is faster
+											<span class="key-item key-dir">
+												<span>
+													<span class="dir">↑</span> higher is faster
+												</span>
+												<span>
+													<span class="dir">↓</span> lower is faster
+												</span>
 											</span>
 										</th>
 										{machines.map((m) => (
@@ -393,37 +407,46 @@ export default function Page() {
 
 					{/* ---------------------------------------------------- references: the API */}
 					<section class="sec refs" aria-labelledby="refs">
-						<h2 id="refs">References</h2>
-						<ol class="reflist">
-							{REFS.map((r) => (
-								<li id={`ref-${r.n}`}>
-									<span class="ref-n">[{r.n}]</span>
-									<a class="ref-file" href={r.url}>
-										{r.file}
-									</a>
-									<span class="ref-what">{r.what}</span>
-									{r.schema ? (
-										<a class="ref-schema" href={r.schema}>
-											schema
-										</a>
-									) : (
-										<span class="ref-schema" />
-									)}
-								</li>
-							))}
-						</ol>
-						<details class="fold listing">
-							<summary>
-								<span class="tlabel">Listing 1.</span> Example JSON from [2]
-							</summary>
-							<pre class="code json" tabindex="0" aria-label="Listing 1">
-								<code>
-									{excerptBefore}
-									<mark>{listingMark}</mark>
-									{excerptAfter}
-								</code>
-							</pre>
-						</details>
+						<div class="refs-body">
+							<div class="refs-list">
+								<h2 id="refs">References</h2>
+								<ol class="reflist">
+									{REFS.map((r) => (
+										<li id={`ref-${r.n}`}>
+											<span class="ref-n">[{r.n}]</span>
+											<a class="ref-file" href={r.url}>
+												<Address url={r.file} />
+											</a>
+											<span class="ref-what">
+												{r.what}
+												{r.schema ? (
+													<>
+														{" · "}
+														<a class="ref-schema" href={r.schema}>
+															schema
+														</a>
+													</>
+												) : (
+													""
+												)}
+											</span>
+										</li>
+									))}
+								</ol>
+							</div>
+							<figure class="listing" aria-labelledby="listing-1">
+								<figcaption id="listing-1">
+									<span class="tlabel">Listing 1.</span> Table 1's first figure, in <Cite n={2} />
+								</figcaption>
+								<pre class="code json" tabindex="0">
+									<code>
+										{excerptBefore}
+										<mark>{listingMark}</mark>
+										{excerptAfter}
+									</code>
+								</pre>
+							</figure>
+						</div>
 					</section>
 				</article>
 			</main>
