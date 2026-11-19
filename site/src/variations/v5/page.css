@@ -15,9 +15,11 @@
 	--muted: #4f4d48;
 	--hair: #c7c4bb;
 	--red: #c4141c;
+	--frame: #0d0d0c;
 	--code-bg: #0d0d0c;
 	--code-fg: #f3f2ee;
-	--code-muted: #9b9890;
+	--code-muted: #a3a097;
+	--code-line: #0d0d0c;
 
 	--m: 48px; /* page margin */
 	--g: 24px; /* column gap */
@@ -33,9 +35,11 @@
 		--muted: #b3b0a8;
 		--hair: #3a3934;
 		--red: #ff4f44;
-		--code-bg: #f1efe9;
-		--code-fg: #0f0f0e;
-		--code-muted: #5d5a54;
+		--frame: #ff4f44;
+		--code-bg: #191917;
+		--code-fg: #f1efe9;
+		--code-muted: #a3a097;
+		--code-line: #45443e;
 	}
 }
 
@@ -106,6 +110,15 @@ pre {
 	white-space: nowrap;
 }
 
+.sr {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	overflow: hidden;
+	clip-path: inset(50%);
+	white-space: nowrap;
+}
+
 .mono {
 	font-family: var(--mono);
 	font-size: 12.5px;
@@ -121,21 +134,14 @@ pre {
 	padding-inline: var(--m);
 }
 
-.grid-inner {
-	display: grid;
-	grid-template-columns: repeat(var(--cols), minmax(0, 1fr));
-	column-gap: var(--g);
-}
-
-.grid > *,
-.grid-inner > * {
+.grid > * {
 	min-width: 0;
 }
 
 /* ---------------------------------------------------------------- masthead */
 
 .mast {
-	border-top: 12px solid var(--ink);
+	border-top: 12px solid var(--frame);
 	padding-block: 18px 0;
 	font-size: 14px;
 	line-height: 1.35;
@@ -194,13 +200,15 @@ pre {
 	gap: 16px;
 }
 
-.intro-curl {
+/* A command: dark on light, and dark with a rule on dark, never the brightest thing on the page. */
+.cmd {
 	position: relative;
 	background: var(--code-bg);
 	color: var(--code-fg);
+	border: 1px solid var(--code-line);
 }
 
-.intro-curl code {
+.cmd code {
 	display: block;
 	font-size: 12px;
 	line-height: 1.4;
@@ -214,7 +222,7 @@ pre {
 	user-select: none;
 }
 
-/* The copy button, added by client.ts. */
+/* The copy button, added by client.ts, inside the command's box at its right edge. */
 .copy {
 	position: absolute;
 	top: 50%;
@@ -245,11 +253,9 @@ pre {
 .hero {
 	grid-column: 1 / -1;
 	margin-top: 72px;
-	align-items: end;
 }
 
 .hero-kicker {
-	grid-column: 1 / -1;
 	font-size: 22px;
 	font-weight: 560;
 	letter-spacing: -0.015em;
@@ -278,117 +284,48 @@ pre {
 	white-space: nowrap;
 }
 
+/* The poster's figure, in the table's own form: compared digits enormous, every other digit beside them. */
 .hero-figure {
-	grid-column: 1 / span 8;
 	display: flex;
-	align-items: baseline;
-	gap: 0.32em;
+	align-items: flex-end;
+	align-items: last baseline;
+	gap: 0.07em;
 	color: var(--red);
-	line-height: 0.74;
 	white-space: nowrap;
+	font-size: clamp(7rem, 19.5vw, 18rem);
+	line-height: 0.74;
 }
 
 .hero-head {
-	font-size: clamp(7rem, 19.5vw, 18rem);
 	font-weight: 780;
 	letter-spacing: -0.065em;
 	margin-left: -0.045em;
 	font-variant-numeric: tabular-nums;
 }
 
+/* The unit above, the remaining digits on the giant figure's baseline. */
+.hero-side {
+	display: grid;
+	justify-items: start;
+}
+
 .hero-unit {
-	font-size: clamp(2.5rem, 6vw, 5.4rem);
+	grid-row: 1;
+	font-size: 0.3em;
 	font-weight: 760;
 	letter-spacing: -0.05em;
+	line-height: 1;
 	color: var(--ink);
+	margin-bottom: 0.12em;
 }
 
-/* The exact figure, under the poster's: every digit. */
-.hero-exact {
-	grid-column: 1 / span 8;
-	grid-row: 3;
-	margin-top: 26px;
-	padding-top: 12px;
-	border-top: 1px solid var(--ink);
-	font-size: clamp(1.25rem, 2.3vw, 2.1rem);
-	font-weight: 450;
-	letter-spacing: -0.02em;
-	line-height: 1.1;
-	color: var(--red);
+.hero-tail {
+	grid-row: 2;
+	font-size: 0.16em;
+	font-weight: 460;
+	letter-spacing: -0.01em;
+	line-height: 0.74;
 	font-variant-numeric: tabular-nums;
-	overflow-wrap: anywhere;
-}
-
-.hero-exact a {
-	text-decoration-thickness: 1px;
-	text-underline-offset: 0.14em;
-}
-
-.hero-exact b {
-	font-weight: 760;
-}
-
-.hero-exact-u {
-	color: var(--ink);
-	font-weight: 650;
-}
-
-/* The same benchmark on the five machines, beside the poster figure. */
-.compare {
-	grid-column: 9 / span 4;
-	grid-row: 2 / span 2;
-	align-self: end;
-	border-top: 2px solid var(--ink);
-	padding-top: 14px;
-}
-
-.compare ol {
-	display: grid;
-	gap: 9px;
-}
-
-.compare li {
-	display: grid;
-	grid-template-columns: 92px minmax(0, 1fr) 62px;
-	align-items: center;
-	column-gap: 10px;
-	font-size: 14px;
-	line-height: 1.2;
-}
-
-.compare-m {
-	font-weight: 600;
-}
-
-.compare-bar {
-	height: 14px;
-	background: color-mix(in srgb, var(--hair) 45%, transparent);
-}
-
-.compare-bar span {
-	display: block;
-	height: 100%;
-	background: var(--ink);
-}
-
-.compare-v {
-	text-align: right;
-	font-variant-numeric: tabular-nums;
-	font-weight: 650;
-	text-decoration: none;
-}
-
-.compare-v:hover {
-	text-decoration: underline;
-}
-
-.compare li.is-hero .compare-bar span {
-	background: var(--red);
-}
-
-.compare li.is-hero .compare-m,
-.compare li.is-hero .compare-v {
-	color: var(--red);
 }
 
 /* Freshness and provenance: one line of facts, each a link to its file. */
@@ -397,7 +334,7 @@ pre {
 	display: grid;
 	grid-template-columns: repeat(5, minmax(0, 1fr));
 	column-gap: var(--g);
-	margin-top: 56px;
+	margin-top: 64px;
 }
 
 .facts > div {
@@ -539,11 +476,8 @@ td {
 	font-weight: inherit;
 }
 
-/* The machine names stay in view while the table scrolls past. */
+/* The machines: name, size, processor and hourly price, over their column. */
 .figures thead th {
-	position: sticky;
-	top: 0;
-	z-index: 1;
 	background: var(--paper);
 	padding: 14px 0 14px 12px;
 	vertical-align: bottom;
@@ -557,12 +491,23 @@ td {
 	color: var(--muted);
 }
 
-.mach span {
+.mach span,
+.mach a {
 	display: block;
 }
 
-.mach {
+/* Names on one line at the top, prices on one line at the bottom, however the processors wrap. */
+.figures thead th.mach {
+	position: relative;
 	text-align: right;
+	vertical-align: top;
+	padding-bottom: 44px;
+}
+
+.figures thead th.mach .mach-price {
+	position: absolute;
+	right: 0;
+	bottom: 14px;
 }
 
 .mach-name {
@@ -574,18 +519,29 @@ td {
 }
 
 .mach-spec,
+.mach-proc,
 .mach-price {
 	font-size: 13px;
 	line-height: 1.35;
 	font-variant-numeric: tabular-nums;
 }
 
-.mach-spec {
+.mach-spec,
+.mach-proc {
 	color: var(--muted);
 }
 
+.mach-proc {
+	font-size: 12px;
+	text-wrap: balance;
+}
+
 .mach-price {
-	font-weight: 600;
+	margin-top: 6px;
+	font-size: 17px;
+	font-weight: 680;
+	letter-spacing: -0.02em;
+	text-decoration-color: var(--hair);
 }
 
 tr.group th,
@@ -622,7 +578,7 @@ tbody:first-of-type tr.group td {
 
 tr.row th,
 tr.row td {
-	padding: 14px 0 15px 20px;
+	padding: 14px 0 15px 14px;
 	border-bottom: 1px solid var(--hair);
 	vertical-align: middle;
 }
@@ -651,7 +607,8 @@ tr.row:target th .row-label {
 
 .row-fig {
 	display: flex;
-	gap: 10px;
+	flex-wrap: wrap;
+	gap: 0 10px;
 	margin-top: 3px;
 	font-size: 13px;
 	font-weight: 650;
@@ -669,8 +626,8 @@ td {
 
 /*
  * One exact figure per cell, every digit: the integer part and the compared digits strong, the
- * rest light, on one baseline. The row sets the widths (--wi, --wt), so the five figures of a
- * row share one decimal point.
+ * rest lighter, on one baseline. The row sets the widths (--wi, --wt), so the five figures of a
+ * row share one decimal point. A hairline under the strong digits: each figure opens its Series.
  */
 .fig {
 	display: inline-flex;
@@ -687,6 +644,10 @@ td {
 	font-size: 21px;
 	font-weight: 640;
 	letter-spacing: -0.01em;
+	text-decoration: underline;
+	text-decoration-color: var(--hair);
+	text-decoration-thickness: 1px;
+	text-underline-offset: 0.18em;
 }
 
 .fi {
@@ -697,8 +658,8 @@ td {
 .ft {
 	min-width: var(--wt);
 	text-align: left;
-	font-size: 13px;
-	font-weight: 480;
+	font-size: 14px;
+	font-weight: 470;
 	color: var(--muted);
 }
 
@@ -709,7 +670,7 @@ td {
 
 .fig:hover .fi,
 .fig:hover .fh {
-	text-decoration: underline;
+	text-decoration-color: currentColor;
 	text-decoration-thickness: 2px;
 }
 
@@ -755,22 +716,9 @@ td {
 	background: var(--ink);
 }
 
-.each {
-	display: block;
-	margin-top: 6px;
-	font-size: 12.5px;
-	line-height: 1.3;
-	font-weight: 600;
-	font-variant-numeric: tabular-nums;
-}
-
-/* The poster's figure, in the table: marked by the red rule above it and a red bar. */
+/* The poster's figure, in the table: found by the red rule above it, and nothing else. */
 td.hero-cell {
 	box-shadow: inset 0 3px 0 var(--red);
-}
-
-td.hero-cell .bar-f {
-	background: var(--red);
 }
 
 /* ---------------------------------------------------------------- API */
@@ -779,32 +727,44 @@ td.hero-cell .bar-f {
 	grid-column: 1 / span 8;
 }
 
-.curls {
-	display: grid;
-	grid-template-columns: minmax(0, 1fr);
-	gap: 18px;
-}
-
-.curl-what {
-	display: block;
-	font-size: 13px;
-	font-weight: 700;
-	margin-bottom: 6px;
-}
-
-.curl {
-	position: relative;
+/* The base address once, its three files under it. */
+.addr {
 	background: var(--code-bg);
 	color: var(--code-fg);
+	border: 1px solid var(--code-line);
+	font-family: var(--mono);
 	font-size: 15px;
-	line-height: 1.4;
-	white-space: pre;
+	line-height: 1.5;
+	padding: 18px 20px 20px;
 }
 
-.curl code {
-	display: block;
-	padding: 16px 20px;
-	overflow-x: auto;
+.addr-base {
+	overflow-wrap: anywhere;
+}
+
+.addr-files {
+	margin-top: 6px;
+	display: grid;
+	gap: 4px;
+}
+
+.addr-files li {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: baseline;
+	gap: 0 24px;
+	padding-left: 2ch;
+}
+
+.addr-files a {
+	min-width: 24ch;
+	text-decoration-color: var(--code-muted);
+}
+
+.addr-what {
+	font-family: var(--sans);
+	font-size: 13px;
+	color: var(--code-muted);
 }
 
 .walk-h {
@@ -826,7 +786,7 @@ td.hero-cell .bar-f {
 }
 
 .api-side {
-	grid-column: 10 / span 3;
+	grid-column: 9 / span 4;
 	display: grid;
 	grid-template-columns: minmax(0, 1fr);
 	gap: 22px;
@@ -853,75 +813,16 @@ td.hero-cell .bar-f {
 
 .api-links {
 	display: flex;
-	flex-direction: column;
-	gap: 2px;
+	flex-wrap: wrap;
+	gap: 2px 18px;
 	font-weight: 600;
-}
-
-/* ---------------------------------------------------------------- machines */
-
-.mtable thead th {
-	font-size: 12px;
-	font-weight: 700;
-	color: var(--muted);
-	padding: 0 0 8px;
-	border-bottom: 2px solid var(--ink);
-}
-
-.mtable tbody th,
-.mtable tbody td {
-	padding: 12px 0;
-	border-bottom: 1px solid var(--hair);
-	vertical-align: baseline;
-	font-variant-numeric: tabular-nums;
-}
-
-.mtable tbody th {
-	font-size: clamp(1.3rem, 2vw, 1.75rem);
-	font-weight: 750;
-	letter-spacing: -0.035em;
-	line-height: 1.1;
-}
-
-.mtable td {
-	font-size: 16px;
-}
-
-.mtable .num {
-	width: 10%;
-	text-align: right;
-	padding-left: 16px;
-}
-
-.mtable thead th:first-child {
-	width: 24%;
-}
-
-.mtable thead th:last-child {
-	width: 16%;
-}
-
-.mtable .m-proc {
-	padding-left: 40px;
-	text-align: left;
-}
-
-.mtable td.m-proc {
-	color: var(--muted);
-	font-size: 14px;
-}
-
-.mtable .m-usd {
-	font-size: clamp(1.3rem, 2vw, 1.75rem);
-	font-weight: 600;
-	letter-spacing: -0.03em;
 }
 
 /* ---------------------------------------------------------------- footer */
 
 .foot {
 	margin-top: 128px;
-	border-top: 12px solid var(--ink);
+	border-top: 12px solid var(--frame);
 	padding-block: 22px 56px;
 	font-size: 14px;
 	line-height: 1.45;
@@ -934,10 +835,6 @@ td.hero-cell .bar-f {
 	font-weight: 750;
 	letter-spacing: -0.03em;
 	line-height: 1;
-}
-
-.foot-cell {
-	grid-column: 4 / span 9;
 }
 
 /* ---------------------------------------------------------------- middle widths */
@@ -955,17 +852,6 @@ td.hero-cell .bar-f {
 	.intro {
 		grid-column: 1 / span 8;
 		margin-top: 32px;
-	}
-
-	.hero-figure,
-	.hero-exact {
-		grid-column: 1 / -1;
-	}
-
-	.compare {
-		grid-column: 1 / span 8;
-		grid-row: auto;
-		margin-top: 40px;
 	}
 
 	.facts {
@@ -1041,43 +927,30 @@ td.hero-cell .bar-f {
 		gap: 14px;
 	}
 
-	.intro-curl code,
-	.curl code {
-		font-size: 12px;
-		padding: 13px 14px;
+	/* The whole command shows: "curl" and Copy on the first line, the address whole on the second. */
+	.cmd code {
+		font-size: 11.5px;
+		line-height: 1.5;
+		padding: 12px;
+		white-space: normal;
 	}
 
-	/* On a phone Copy sits above its box, so the whole command keeps the box's width. */
-	.copy {
-		top: auto;
-		bottom: 100%;
-		right: 0;
-		transform: none;
-		margin-bottom: 6px;
-		font-size: 11px;
-		padding: 5px 8px;
-		color: var(--ink);
-		background: var(--paper);
-		border-color: var(--ink);
+	.cmd-url {
+		display: block;
+		margin-top: 4px;
+		white-space: nowrap;
+		overflow-x: auto;
 	}
 
 	[data-copy].has-copy code {
 		margin-right: 0;
 	}
 
-	.intro-curl.has-copy {
-		margin-top: 22px;
-	}
-
-	.curl-what {
-		line-height: 26px;
-		margin-bottom: 6px;
-	}
-
-	.intro-curl code,
-	.curl code {
-		font-size: 11.5px;
-		padding: 12px;
+	.copy {
+		top: 7px;
+		transform: none;
+		font-size: 11px;
+		padding: 5px 8px;
 	}
 
 	.hero {
@@ -1090,36 +963,25 @@ td.hero-cell .bar-f {
 	}
 
 	.hero-figure {
-		gap: 0.14em;
+		font-size: 24vw;
 	}
 
-	.hero-head {
-		font-size: 29vw;
-	}
-
-	.hero-unit {
-		font-size: 8.4vw;
-	}
-
-	.hero-exact {
-		margin-top: 16px;
-		font-size: 21px;
-	}
-
-	.compare {
-		grid-column: 1 / -1;
-		margin-top: 26px;
-	}
-
-	.compare li {
-		grid-template-columns: 88px minmax(0, 1fr) 54px;
-		font-size: 13.5px;
+	.hero-tail {
+		font-size: 0.14em;
 	}
 
 	.facts {
 		grid-template-columns: repeat(2, minmax(0, 1fr));
-		margin-top: 32px;
+		margin-top: 36px;
 		row-gap: 14px;
+	}
+
+	.facts > div:first-child {
+		grid-column: 1 / -1;
+	}
+
+	.facts dd {
+		font-size: 16px;
 	}
 
 	section + section {
@@ -1150,6 +1012,7 @@ td.hero-cell .bar-f {
 
 	/* The table becomes one block per benchmark: its name, then one line per machine type. */
 	.figures table,
+	.figures thead,
 	.figures tbody,
 	.figures tr,
 	.figures th,
@@ -1158,14 +1021,50 @@ td.hero-cell .bar-f {
 		width: auto;
 	}
 
-	.figures thead {
-		display: block;
-		position: absolute;
-		width: 1px;
-		height: 1px;
-		overflow: hidden;
-		clip: rect(0 0 0 0);
-		clip-path: inset(50%);
+	/* The machine row becomes a short list of the five machines: name, size, hourly price. */
+	.figures thead tr {
+		border-bottom: 2px solid var(--ink);
+		margin-bottom: 28px;
+	}
+
+	.figures thead th {
+		border-bottom: 0;
+		padding: 0;
+	}
+
+	.figures thead th.corner {
+		padding-bottom: 6px !important;
+		border-bottom: 2px solid var(--ink);
+	}
+
+	.figures thead th.mach {
+		display: grid;
+		grid-template-columns: 96px minmax(0, 1fr) auto;
+		align-items: baseline;
+		column-gap: 10px;
+		text-align: left;
+		padding: 6px 0;
+		border-top: 1px solid var(--hair);
+	}
+
+	.figures thead th.corner + th.mach {
+		border-top: 0;
+	}
+
+	.mach-name {
+		font-size: 14px;
+		margin: 0;
+	}
+
+	.mach-proc {
+		display: none !important;
+	}
+
+	.figures thead th.mach .mach-price {
+		position: static;
+		margin: 0;
+		font-size: 15px;
+		text-align: right;
 	}
 
 	tr.group th {
@@ -1208,6 +1107,9 @@ td.hero-cell .bar-f {
 	.row-fig {
 		margin: 0;
 		flex: none;
+		max-width: 45%;
+		justify-content: flex-end;
+		text-align: right;
 		font-size: 12px;
 	}
 
@@ -1241,7 +1143,7 @@ td.hero-cell .bar-f {
 	}
 
 	.ft {
-		font-size: 11px;
+		font-size: 12px;
 	}
 
 	.bar {
@@ -1251,24 +1153,34 @@ td.hero-cell .bar-f {
 		max-width: none;
 	}
 
-	.each {
-		grid-column: 3;
-		margin-top: 0;
-		font-size: 11.5px;
-	}
-
+	/* The mark indents the name only, so this line's bar keeps the same scale as its neighbours'. */
 	tr.row td.hero-cell {
 		box-shadow: inset 3px 0 0 var(--red);
+	}
+
+	tr.row td.hero-cell::before {
 		padding-left: 8px;
 	}
 
-	.curl {
-		font-size: 12px;
+	.addr {
+		font-size: 12.5px;
+		padding: 14px;
+	}
+
+	.addr-files li {
+		gap: 0 12px;
+		padding-left: 1ch;
+	}
+
+	.addr-files a {
+		min-width: 0;
 	}
 
 	.json {
 		font-size: 11.5px;
 		padding-left: 10px;
+		white-space: pre-wrap;
+		overflow-wrap: break-word;
 	}
 
 	.api-side {
@@ -1276,56 +1188,12 @@ td.hero-cell .bar-f {
 		margin-top: 36px;
 	}
 
-	.api-links {
-		flex-direction: row;
-		flex-wrap: wrap;
-		gap: 4px 16px;
-	}
-
-	.facts dd {
-		font-size: 16px;
-	}
-
-	.mtable thead th,
-	.mtable tbody th,
-	.mtable tbody td {
-		padding-inline: 0;
-	}
-
-	.mtable .m-proc {
-		display: none;
-	}
-
-	.mtable .num {
-		width: auto;
-		padding-left: 8px;
-	}
-
-	.mtable thead th:first-child {
-		width: 38%;
-	}
-
-	.mtable thead th:last-child {
-		width: 24%;
-	}
-
-	.mtable tbody th,
-	.mtable .m-usd {
-		font-size: 17px;
-	}
-
-	.mtable td {
-		font-size: 14px;
-	}
-
 	.foot {
 		margin-top: 72px;
 		border-top-width: 8px;
-		row-gap: 10px;
 	}
 
-	.foot-name,
-	.foot-cell {
+	.foot-name {
 		grid-column: 1 / -1;
 	}
 }

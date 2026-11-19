@@ -13,7 +13,6 @@ import {
 	leadFigure,
 	links,
 	machines,
-	roundPlaces,
 	seriesFileContents,
 	snapshot,
 	type DurationUnit,
@@ -25,21 +24,28 @@ import {
 // ---------------------------------------------------------------- figures
 
 type Lead = ReturnType<typeof leadFigure>;
+type RowUnit = { kind: "rate"; unit: "B" | "kB" | "MB" | "GB" | "TB" } | { kind: "time"; unit: DurationUnit };
 
 /**
  * One unit for a whole row, so its five figures read against each other: the unit the
- * largest of them would take on its own. Only the unit is chosen here.
+ * largest of them would take on its own. Where a repetition holds many units of work (the
+ * mutex), the row is set in the time of one, divided exactly by the module. Only the unit is
+ * chosen here.
  */
-function rowUnit(row: HeadlineRow): { kind: "rate"; unit: "B" | "kB" | "MB" | "GB" | "TB" } | { kind: "time"; unit: DurationUnit } {
+function rowUnit(row: HeadlineRow): RowUnit {
 	const leads = row.cells.map((cell) => leadFigure(row.choice, cell.series));
 	const largest = leads.reduce((a, b) => (b.p50 > a.p50 ? b : a));
 	if (row.choice.lead === "rate") return { kind: "rate", unit: formatRate(largest.p50).unit.replace("/s", "") as "GB" };
+	if (row.choice.per) return { kind: "time", unit: formatDurationPerUnit(largest.p50, row.choice.per).unit as DurationUnit };
 	return { kind: "time", unit: durationUnit(largest.p50) };
 }
 
+/** A figure of the row, in the row's unit; the time of one unit of work where the row has `per`. */
 function show(row: HeadlineRow, value: number): Shown {
 	const u = rowUnit(row);
-	return u.kind === "rate" ? formatRate(value, { unit: u.unit }) : formatDuration(value, { unit: u.unit });
+	if (u.kind === "rate") return formatRate(value, { unit: u.unit });
+	if (row.choice.per) return formatDurationPerUnit(value, row.choice.per, { unit: u.unit });
+	return formatDuration(value, { unit: u.unit });
 }
 
 /** Places after the point that give `full` four significant digits. */
@@ -53,11 +59,6 @@ function placesFor(full: string): number {
 /** One count of places for the whole row: enough for its smallest figure to keep four significant digits. */
 function rowPlaces(row: HeadlineRow): number {
 	return Math.max(...row.cells.map((cell) => placesFor(show(row, leadFigure(row.choice, cell.series).p50).full)));
-}
-
-/** `full` rounded to `places`, for display beside the exact figure. */
-function atPlaces(full: string, places: number): string {
-	return roundPlaces(full, places);
 }
 
 /**
@@ -88,11 +89,16 @@ const SECTIONS: Section[] = ["Memory", "Compute", "Operating system", "Disk", "N
 
 const anchor = (row: HeadlineRow) => `b-${row.choice.benchmark.replaceAll("_", "-")}`;
 
+/** The row's unit as its label shows it, once. */
+function unitLabel(row: HeadlineRow): string {
+	const unit = show(row, leadFigure(row.choice, row.cells[0]!.series).p50).unit;
+	return row.choice.per ? `${unit} per ${row.choice.per.of}` : unit;
+}
+
 /** Every written value of a cell, for the visitor who hovers: exact p5, p50, p95 and the count. */
 function cellTitle(row: HeadlineRow, lead: Lead, machine: string): string {
 	const s = (v: number) => show(row, v).full;
-	const u = show(row, lead.p50).unit;
-	return `${machine}, ${u}\np50 ${s(lead.p50)}\np5 ${s(lead.p5)}\np95 ${s(lead.p95)}\n${lead.count} counted Runs`;
+	return `${machine}, ${unitLabel(row)}\np50 ${s(lead.p50)}\np5 ${s(lead.p5)}\np95 ${s(lead.p95)}\n${lead.count} Runs`;
 }
 
 // The poster's figure: the table's first cell, read memory sequentially on the first machine type.
@@ -100,8 +106,7 @@ const heroRow = headline[0]!;
 const heroCell = heroRow.cells[0]!;
 const heroLead = leadFigure(heroRow.choice, heroCell.series);
 const heroShown = show(heroRow, heroLead.p50);
-const heroPlaces = rowPlaces(heroRow);
-const heroShort = atPlaces(heroShown.full, heroPlaces);
+const heroSplit = split(heroShown.full, rowPlaces(heroRow));
 
 const newest = formatMoment(snapshot.newestRunStartedAt);
 const oldest = formatMoment(snapshot.oldestRunStartedAt);
@@ -130,7 +135,7 @@ function Masthead() {
 				<a href="#top">LedgerMath</a>
 			</div>
 			<p class="mast-cell">
-				Newest Run{" "}
+				Newest Run started{" "}
 				<time datetime={newest.iso} title={newest.full}>
 					{newest.longDate}, {newest.minute} UTC
 				</time>
@@ -138,42 +143,12 @@ function Masthead() {
 			<nav class="mast-nav" aria-label="On this page">
 				<a href="#figures">Figures</a>
 				<a href="#api">API</a>
-				<a href="#machines">Machines</a>
 			</nav>
 		</header>
 	);
 }
 
-function Compare() {
-	const max = Math.max(...heroRow.cells.map((c) => leadFigure(heroRow.choice, c.series).p50));
-	return (
-		<figure class="compare" aria-label={`${heroRow.choice.label} on all five machine types, ${heroShown.unit}`}>
-			<ol>
-				{heroRow.cells.map((cell) => {
-					const lead = leadFigure(heroRow.choice, cell.series);
-					const s = show(heroRow, lead.p50);
-					const here = cell.series === heroCell.series;
-					return (
-						<li class={here ? "is-hero" : undefined}>
-							<span class="compare-m">{cell.machine.instanceType}</span>
-							<span class="compare-bar" aria-hidden="true">
-								<span style={{ width: pct(lead.p50, max) }} />
-							</span>
-							<a class="compare-v" href={links.seriesFile(cell.series)} title={`${s.full} ${s.unit}, exact`}>
-								{atPlaces(s.full, heroPlaces)}
-							</a>
-						</li>
-					);
-				})}
-			</ol>
-		</figure>
-	);
-}
-
 function Poster() {
-	const [exactHead, exactTail] = heroShown.full.startsWith(heroShort)
-		? [heroShort, heroShown.full.slice(heroShort.length)]
-		: [heroShown.full, ""];
 	return (
 		<section class="poster grid" aria-labelledby="top">
 			<h1 id="top" class="headline">
@@ -182,19 +157,19 @@ function Poster() {
 			<div class="intro">
 				<p>
 					{formatCount(snapshot.benchmarkCount).full} benchmarks on {formatCount(snapshot.machineCount).full} freshly booted machine types in{" "}
-					<span class="nowrap">{snapshot.region}</span> at 04:10, 10:10, 16:10 and 22:10 UTC. Every Run kept with its evidence, published as JSON for agents.
+					<span class="nowrap">{snapshot.region}</span>. Every Run kept with its evidence, published as JSON for agents.
 				</p>
-				<div class="intro-curl" data-copy={`curl ${links.index}`}>
+				<div class="cmd" data-copy={`curl ${links.index}`}>
 					<code tabindex="0">
 						<span class="prompt" aria-hidden="true">
 							${" "}
 						</span>
-						curl {links.index}
+						curl <span class="cmd-url">{links.index}</span>
 					</code>
 				</div>
 			</div>
 
-			<div class="hero grid-inner" role="group" aria-labelledby="hero-k">
+			<div class="hero" role="group" aria-labelledby="hero-k">
 				<p id="hero-k" class="hero-kicker">
 					<a class="hero-kicker-b" href={`#${anchor(heroRow)}`}>
 						{heroRow.choice.label}
@@ -208,23 +183,31 @@ function Poster() {
 						{" "}
 						/{" "}
 					</span>
-					<span class="hero-kicker-m">p50 of {formatCount(heroLead.count).full} Runs</span>
+					<a class="hero-kicker-m" href={links.seriesFile(heroCell.series)}>
+						p50 of {formatCount(heroLead.count).full} Runs
+					</a>
 				</p>
-				<p class="hero-figure" aria-hidden="true">
-					<span class="hero-head">{heroShort}</span>
-					<span class="hero-unit">{heroShown.unit}</span>
+				{/* The table's own form, set enormous: the compared digits, then every other digit. */}
+				<p class="hero-figure">
+					<span class="sr">
+						{heroShown.full} {heroShown.unit}
+					</span>
+					<span class="hero-head" aria-hidden="true">
+						{heroSplit.int}
+						{heroSplit.head}
+					</span>
+					<span class="hero-side" aria-hidden="true">
+						<span class="hero-tail">{heroSplit.tail}</span>
+						<span class="hero-unit">{heroShown.unit}</span>
+					</span>
 				</p>
-				<p class="hero-exact">
-					<a href={links.seriesFile(heroCell.series)}>
-						<b>{exactHead}</b>
-						{exactTail}
-					</a>{" "}
-					<span class="hero-exact-u">{heroShown.unit}</span>
-				</p>
-				<Compare />
 			</div>
 
 			<dl class="facts">
+				<div>
+					<dt>Boots, UTC</dt>
+					<dd>04:10 10:10 16:10 22:10</dd>
+				</div>
 				<div>
 					<dt>Runs started</dt>
 					<dd>
@@ -240,17 +223,9 @@ function Poster() {
 					</dd>
 				</div>
 				<div>
-					<dt>Series</dt>
+					<dt>Methods</dt>
 					<dd>
-						<a href={links.seriesList}>{formatCount(snapshot.seriesCount).full}</a>
-					</dd>
-				</div>
-				<div>
-					<dt>Method</dt>
-					<dd>
-						<a href={links.docs}>
-							{snapshot.methods.map((m) => `${m.name} v${m.version}`).join(", ")}
-						</a>
+						<a href={links.docs}>{snapshot.methods.map((m) => `${m.name} v${m.version}`).join(", ")}</a>
 					</dd>
 				</div>
 				<div>
@@ -292,7 +267,7 @@ function FigureTable() {
 				</p>
 				<h2 id="figures-h">The figures</h2>
 				<div class="sec-side">
-					<p class="sec-lede">Median of each Series' counted Runs, every digit.</p>
+					<p class="sec-lede">Median of each Series' Runs, every digit.</p>
 					<Key />
 				</div>
 			</div>
@@ -302,7 +277,7 @@ function FigureTable() {
 					<thead>
 						<tr>
 							<th scope="col" class="corner">
-								Cheapest first
+								On-Demand, cheapest first
 							</th>
 							{machines.map((m) => (
 								<th scope="col" class="mach">
@@ -310,9 +285,10 @@ function FigureTable() {
 									<span class="mach-spec">
 										{m.vcpu} vCPU · {m.memory}
 									</span>
-									<span class="mach-price" title={`$${price(m).full} an hour, On-Demand`}>
+									<span class="mach-proc">{m.processor}</span>
+									<a class="mach-price" href={links.prices} title={`$${price(m).full} an hour: ${m.price.path.pointer}`}>
 										${price(m).full}/h
-									</span>
+									</a>
 								</th>
 							))}
 						</tr>
@@ -332,7 +308,6 @@ function FigureTable() {
 							{headline
 								.filter((row) => row.choice.section === section)
 								.map((row) => {
-									const unit = show(row, leadFigure(row.choice, row.cells[0]!.series).p50).unit;
 									const places = rowPlaces(row);
 									const w = rowWidths(row, places);
 									const max = rowMax(row);
@@ -343,16 +318,14 @@ function FigureTable() {
 													{row.choice.label}
 												</a>
 												<span class="row-fig">
-													<span class="row-unit">{row.choice.per ? `${unit} per ${formatCount(row.choice.per.count).full}` : unit}</span>
+													<span class="row-unit">{unitLabel(row)}</span>
 													<span class="row-dir">{faster(row)}</span>
 												</span>
 											</th>
 											{row.cells.map((cell) => {
 												const lead = leadFigure(row.choice, cell.series);
-												const s = show(row, lead.p50);
-												const f = split(s.full, places);
+												const f = split(show(row, lead.p50).full, places);
 												const isHero = cell.series === heroCell.series;
-												const each = row.choice.per ? formatDurationPerUnit(lead.p50, row.choice.per, { unit: "ns" }) : undefined;
 												return (
 													<td class={isHero ? "hero-cell" : undefined} data-m={cell.machine.instanceType}>
 														<a class="fig" href={links.seriesFile(cell.series)} title={cellTitle(row, lead, cell.machine.instanceType)}>
@@ -364,11 +337,6 @@ function FigureTable() {
 															<span class="bar-f" style={{ width: pct(lead.p50, max) }} />
 															<span class="bar-s" style={{ left: pct(lead.p5, max), right: `calc(100% - ${pct(lead.p95, max)})` }} />
 														</span>
-														{each ? (
-															<span class="each" title={`${each.full} ns per ${each.per.of}, exact`}>
-																{each.short} ns each
-															</span>
-														) : null}
 													</td>
 												);
 											})}
@@ -393,19 +361,24 @@ const seriesExcerpt = [
 	`{ "id": ${J(walkCell.series.id)},`,
 	`  "url": ${J(walkCell.series.url)},`,
 	`  "instance_type": ${J(walkCell.series.instance_type)},`,
-	`  "derivations": { "series_v1": { "percentiles": {`,
-	`    ${J(walkKey)}: { "count": ${J(walkP.count)},`,
-	`      "p5": ${J(walkP.p5)},`,
-	`      "p50": ${J(walkP.p50)},`,
-	`      "p95": ${J(walkP.p95)} } … } } } }`,
+	`  "derivations": {`,
+	`    "series_v1": { "percentiles": {`,
+	`      ${J(walkKey)}: {`,
+	`        "count": ${J(walkP.count)},`,
+	`        "p5": ${J(walkP.p5)},`,
+	`        "p50": ${J(walkP.p50)},`,
+	`        "p95": ${J(walkP.p95)} } … } } } }`,
 ].join("\n");
 
+/** The API's three files under its one base address. */
+const BASE = links.index.slice(0, links.index.lastIndexOf("/") + 1);
+const files = [
+	{ url: links.index, what: "contents" },
+	{ url: links.seriesList, what: "every Series" },
+	{ url: links.prices, what: "AWS prices" },
+];
+
 function Api() {
-	const lines = [
-		{ url: links.index, what: "Contents" },
-		{ url: links.seriesList, what: "Every Series" },
-		{ url: links.prices, what: "Prices" },
-	];
 	return (
 		<section id="api" class="api" aria-labelledby="api-h">
 			<div class="sec-head grid">
@@ -418,21 +391,17 @@ function Api() {
 
 			<div class="grid">
 				<div class="api-main">
-					<ul class="curls">
-						{lines.map((line) => (
-							<li>
-								<span class="curl-what">{line.what}</span>
-								<pre class="curl" data-copy={`curl ${line.url}`}>
-									<code tabindex="0">
-										<span class="prompt" aria-hidden="true">
-											${" "}
-										</span>
-										curl {line.url}
-									</code>
-								</pre>
-							</li>
-						))}
-					</ul>
+					<div class="addr">
+						<p class="addr-base">{BASE}</p>
+						<ul class="addr-files">
+							{files.map((f) => (
+								<li>
+									<a href={f.url}>{f.url.slice(BASE.length)}</a>
+									<span class="addr-what">{f.what}</span>
+								</li>
+							))}
+						</ul>
+					</div>
 
 					<h3 class="walk-h">
 						<a href={`#${anchor(walkRow)}`}>
@@ -441,7 +410,12 @@ function Api() {
 						, in series.json
 					</h3>
 					<pre class="json" role="region" tabindex="0" aria-label="An excerpt of series.json">
-						<code>{seriesExcerpt}</code>
+						{/* A break opportunity inside the Series' address, so a narrow screen wraps it at a slash. */}
+						<code>
+							{seriesExcerpt.slice(0, seriesExcerpt.indexOf("/series/") + 8)}
+							<wbr />
+							{seriesExcerpt.slice(seriesExcerpt.indexOf("/series/") + 8)}
+						</code>
 					</pre>
 				</div>
 
@@ -474,64 +448,10 @@ function Api() {
 	);
 }
 
-function Machines() {
-	return (
-		<section id="machines" class="machines" aria-labelledby="machines-h">
-			<div class="sec-head grid">
-				<p class="sec-no" aria-hidden="true">
-					03
-				</p>
-				<h2 id="machines-h">The machines</h2>
-				<p class="sec-lede">
-					On-Demand Linux, {snapshot.region}, <a href={links.prices}>{snapshot.priceDate}</a>.
-				</p>
-			</div>
-
-			<div class="table-box">
-				<table class="mtable">
-					<thead>
-						<tr>
-							<th scope="col">Type</th>
-							<th scope="col" class="num">
-								vCPU
-							</th>
-							<th scope="col" class="num">
-								Memory
-							</th>
-							<th scope="col" class="m-proc">
-								Processor
-							</th>
-							<th scope="col" class="num">
-								$/hour
-							</th>
-						</tr>
-					</thead>
-					<tbody>
-						{machines.map((m) => (
-							<tr>
-								<th scope="row">{m.instanceType}</th>
-								<td class="num">{m.vcpu}</td>
-								<td class="num">{m.memory}</td>
-								<td class="m-proc">{m.processor}</td>
-								<td class="num m-usd" title={m.price.path.pointer}>
-									{price(m).full}
-								</td>
-							</tr>
-						))}
-					</tbody>
-				</table>
-			</div>
-		</section>
-	);
-}
-
 function Footer() {
 	return (
 		<footer class="foot grid">
 			<div class="foot-name">LedgerMath</div>
-			<p class="foot-cell">
-				<a href={links.index}>index.json</a> · <a href={links.seriesList}>series.json</a> · <a href={links.prices}>prices</a> · <a href={links.docs}>docs</a>
-			</p>
 		</footer>
 	);
 }
@@ -544,7 +464,6 @@ export default function Page() {
 				<Poster />
 				<FigureTable />
 				<Api />
-				<Machines />
 			</main>
 			<Footer />
 		</>
