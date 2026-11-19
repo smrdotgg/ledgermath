@@ -463,9 +463,10 @@ td.unit .u {
 	font-weight: 600;
 }
 
+/* the direction in the label's grey: red is kept for the margin and the median notch */
 td.unit .arrow {
 	font-weight: 600;
-	color: var(--red);
+	color: var(--pencil);
 	cursor: help;
 }
 
@@ -511,16 +512,23 @@ th.mach > span {
 	cursor: help;
 }
 
+/* the price links to the day's price file; it shows as a link only under the pointer, so the heads read as names */
 .mach .price {
 	display: inline-block;
 	font-weight: 600;
 	color: var(--ink);
-	text-decoration: underline 1px var(--link);
+	text-decoration: none;
 	text-underline-offset: 0.22em;
 }
 
-.mach .price:hover {
+.mach .price:hover,
+.mach .price:focus-visible {
 	color: var(--link);
+	text-decoration: underline 1px;
+}
+
+.mach .n {
+	color: var(--pencil);
 }
 
 .mach .per {
@@ -629,6 +637,12 @@ td.fig-cell a:hover .fig .w {
 	margin: 0.3rem 0.4rem 0 0;
 }
 
+/* a count, or its empty room in a row where another cell names one: every rule in the row is the same width */
+.line .n {
+	min-width: 2.6em;
+	text-align: right;
+}
+
 /* the pencil rule, from zero: a zero tick, a pencil line to the median, the figure's p5–p95 in ink, its median a red notch.
    The row's highest p95 sets the full width, so every rule in a row shares one scale that starts at zero. */
 .bar {
@@ -708,10 +722,10 @@ td.fig-cell a:hover .fig .w {
 	align-items: start;
 }
 
-.api h2,
-.api .api-lede {
+.api h2 {
 	grid-column: 1;
 	padding-right: 2rem;
+	margin-bottom: 0.9rem;
 }
 
 .api .addr {
@@ -723,14 +737,22 @@ td.fig-cell a:hover .fig .w {
 	font-size: 1.375rem;
 }
 
-.api-lede {
-	margin: 0.4rem 0 0.9rem;
-	font-size: 0.9375rem;
+/* a template, not an address: written in ink, not linked */
+.addr .tpl {
 	color: var(--ink-2);
 }
 
-.api-lede .mono {
-	color: var(--ink);
+.addr .ditto {
+	display: inline-block;
+	padding-inline: 0.75rem;
+	text-decoration: none;
+	font-size: 1.0625rem;
+	line-height: 1;
+}
+
+.addr .ditto:hover,
+.addr .ditto:focus-visible {
+	text-decoration: underline 1px;
 }
 
 .addr {
@@ -758,10 +780,11 @@ td.fig-cell a:hover .fig .w {
 	overflow-wrap: anywhere;
 }
 
+/* centred, so each ditto stands under the word it repeats */
 .addr td.sch {
 	width: 4rem;
 	padding-right: 0;
-	text-align: right;
+	text-align: center;
 	font-size: 0.875rem;
 }
 
@@ -895,15 +918,9 @@ td.fig-cell a:hover .fig .w {
 		min-width: 0;
 	}
 
-	/* the entries come first; the column heads follow them as the key */
-	.ledger table {
-		display: flex;
-		flex-direction: column;
-	}
-
+	/* the column heads become the key, first, so each machine's name has its size and price before its figures */
 	.ledger thead {
-		order: 2;
-		margin-top: 1.5rem;
+		margin-bottom: 0.4rem;
 		scroll-margin-top: 1rem;
 	}
 
@@ -911,6 +928,7 @@ td.fig-cell a:hover .fig .w {
 	.ledger thead tr {
 		display: block;
 		border-top: 3px double var(--rule-strong);
+		border-bottom: 3px double var(--rule-strong);
 	}
 
 	.ledger thead th.what,
