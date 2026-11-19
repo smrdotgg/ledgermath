@@ -123,14 +123,15 @@ function intWidth(figs: Fig[]): string {
 }
 
 /**
- * What stands behind a cell, shown as a card when a visitor points at or focuses the figure: its
- * Runs and their dates, its p5 to p95, and its field in the Series list.
+ * What stands behind a cell, in its figure's title: its Runs and their dates, its p5 to p95, and
+ * its field in the Series list. The figure itself links to the Series' own file, every Run's
+ * figure and evidence.
  */
-function cellCard(fig: Fig, series: HeadlineRow["cells"][number]["series"]): string {
+function cellTitle(fig: Fig, series: HeadlineRow["cells"][number]["series"]): string {
 	const [lo, hi] = spread(fig);
 	const from = formatMoment(series.oldest_run_started_at).date;
 	const to = formatMoment(series.newest_run_started_at).date;
-	return `${formatCount(fig.count).full} Runs, ${from} to ${to}\np5–p95 ${lo.full} – ${hi.full} ${fig.shown.unit}\nin the file: ${fig.shown.source}`;
+	return `Median of ${formatCount(fig.count).full} Runs, ${from} to ${to}\np5–p95 ${lo.full} – ${hi.full} ${fig.shown.unit}\nseries.json: ${fig.shown.source}\nOpen: this Series' Runs and evidence`;
 }
 
 /** A few words on a group whose figures come from something the machines share. */
@@ -186,9 +187,9 @@ function Bar(props: { fig: Fig; max: number }) {
 	);
 }
 
-/** A URL as text that breaks only after a slash. */
+/** A URL as text that breaks only after a slash, never inside its scheme and host. */
 function Breakable(props: { text: string }) {
-	const parts = props.text.split(/(?<=\/)/);
+	const parts = props.text.split(/(?<=[^/:]\/)/);
 	return (
 		<>
 			{parts.map((part, i) => (
@@ -252,20 +253,28 @@ export default function Page() {
 							{formatCount(snapshot.benchmarkCount).full} benchmarks on {formatCount(snapshot.machineCount).full} freshly booted machine types in {snapshot.region}, four
 							times a day. Every Run kept, with its evidence.
 						</p>
-						<div class="way-in" data-copy-block="the index command">
-							<pre tabindex="0">
-								<code>
-									<span class="p">$ </span>
-									<span data-copy>
+						<div class="way-in" id="api">
+							<div class="way-row" data-copy-block="the index command">
+								<span class="way-tag">shell</span>
+								<pre tabindex="0">
+									<code data-copy>
 										curl <Breakable text={links.index} />
-									</span>
-								</code>
-							</pre>
+									</code>
+								</pre>
+							</div>
+							<div class="way-row" data-copy-block="the agent prompt">
+								<span class="way-tag">agent</span>
+								<p data-copy>
+									Read <Breakable text={links.index} /> and cite each figure's file and field.
+								</p>
+							</div>
 						</div>
 						<p class="way-note">
 							Static JSON, no key. <a href={links.docs}>Docs</a>
 						</p>
-						<dl class="facts-line">
+					</div>
+
+					<dl class="facts-line">
 							<div>
 								<dt>Newest Run</dt>
 								<dd>
@@ -285,9 +294,8 @@ export default function Page() {
 								</dd>
 							</div>
 						</dl>
-					</div>
 
-					<section class="exchange" aria-labelledby="exchange-title">
+					<section class="exchange" id="example" aria-labelledby="exchange-title">
 						<h2 id="exchange-title" class="sr-only">
 							Example
 						</h2>
@@ -297,7 +305,7 @@ export default function Page() {
 							</span>
 							<blockquote class="question">
 								<p>
-									How long does <span class="nowrap">{ASKED_MACHINE}</span> take to lock and unlock an uncontended mutex, and what does it cost an hour?
+									On <span class="nowrap">{ASKED_MACHINE}</span>, how long is one uncontended mutex lock and unlock, and the hourly price?
 								</p>
 							</blockquote>
 						</div>
@@ -310,7 +318,7 @@ export default function Page() {
 									<strong class="fig">
 										{askedFig.shown.full}&nbsp;{askedFig.shown.unit}
 									</strong>{" "}
-									each
+									<span class="nowrap">per {askedPer.of}</span>
 								</p>
 								<p class="answer-sub">
 									Median of {formatCount(askedFig.count).full} Runs, <time datetime={askedOldest.iso}>{askedOldest.date}</time> to{" "}
@@ -327,11 +335,12 @@ export default function Page() {
 								field={`${askedSeries.id} › p50`}
 								path={`/series/${askedSeriesIndex}/derivations/series_v1/percentiles/time_per_repetition_ns/p50`}
 							>
-								{askedRaw}&nbsp;÷&nbsp;{formatCount(askedPer.count).full}
+								{askedRaw}&nbsp;÷&nbsp;
+								<abbr title={`${formatCount(askedPer.count).full} ${askedPer.of}s in one repetition`}>{formatCount(askedPer.count).full}</abbr>
 							</Source>
 							<Source href={askedSeries.url} field="points[0].evidence" path="/derivations/series_v1/points/0/evidence">
 								<a href={askedRun.evidence} title={`Run ${askedRun.run}, ${askedRunAt.full}`}>
-									Run {askedRunAt.date}
+									Example Run {askedRunAt.date}
 								</a>
 							</Source>
 							<Source href={links.prices} field="…/pricePerUnit/USD" path={askedMachine.price.path.pointer}>
@@ -441,14 +450,20 @@ export default function Page() {
 														const fig = figs[i]!;
 														const asked = row === askedRow && cell.machine.instanceType === ASKED_MACHINE;
 														return (
-															<td class={asked ? "fig-cell is-asked" : "fig-cell"} data-card={cellCard(fig, cell.series)}>
+															<td class={asked ? "fig-cell is-asked" : "fig-cell"}>
 																<span class="cell-code" aria-hidden="true">
 																	{cell.machine.instanceType.split(".")[0]}
 																</span>
+																{asked ? (
+																	<a class="ref" href="#example" aria-label="A, the example answer above" title="The example answer">
+																		A
+																	</a>
+																) : null}
 																<span class="cell-fig">
 																	<a
 																		class="fig-link"
 																		href={links.seriesFile(cell.series)}
+																		title={cellTitle(fig, cell.series)}
 																		aria-label={`${cell.machine.instanceType}: median ${fig.shown.full} ${fig.shown.unit} of ${formatCount(fig.count).full} Runs, its Series file`}
 																	>
 																		<Exact full={fig.shown.full} />
@@ -465,17 +480,6 @@ export default function Page() {
 								);
 							})}
 						</table>
-					</div>
-				</section>
-
-				<section id="api" class="api" aria-labelledby="api-title">
-					<div class="wrap api-grid">
-						<h2 id="api-title">Point your agent here</h2>
-						<blockquote class="api-say" data-copy-block="the prompt">
-							<p>
-								Read <Breakable text={links.index} /> and cite each figure's file and field.
-							</p>
-						</blockquote>
 					</div>
 				</section>
 
@@ -505,7 +509,7 @@ export default function Page() {
 						<div>
 							<dt>Runs</dt>
 							<dd>
-								{formatCount(snapshot.runCount).full} in {formatCount(snapshot.seriesCount).full} Series
+								{formatCount(snapshot.runCount).full}
 							</dd>
 						</div>
 						<div>
@@ -518,14 +522,6 @@ export default function Page() {
 							<dt>Failed Runs</dt>
 							<dd>{formatCount(snapshot.failedRuns).full}</dd>
 						</div>
-						<div>
-							<dt>Methods</dt>
-							<dd>
-								<a href={links.seriesList} title={snapshot.methods.map((m) => `${m.name} v${m.version}`).join(", ")}>
-									series.json › methods
-								</a>
-							</dd>
-						</div>
 					</dl>
 				</section>
 			</main>
@@ -536,6 +532,11 @@ export default function Page() {
 					<ul>
 						<li>
 							<a href={links.docs}>Docs</a>
+						</li>
+						<li>
+							<a href={links.seriesList} title={snapshot.methods.map((m) => `${m.name} v${m.version}`).join(", ")}>
+								Methods
+							</a>
 						</li>
 						<li>
 							<a href="third-party-notices.txt">Font notices</a>
