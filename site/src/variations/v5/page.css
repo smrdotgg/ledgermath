@@ -13,6 +13,7 @@
 	--paper: #f3f2ee;
 	--ink: #0d0d0c;
 	--muted: #4f4d48;
+	--tail: #6b6962;
 	--hair: #c7c4bb;
 	--red: #c4141c;
 	--frame: #0d0d0c;
@@ -33,6 +34,7 @@
 		--paper: #0f0f0e;
 		--ink: #f1efe9;
 		--muted: #b3b0a8;
+		--tail: #8f8c85;
 		--hair: #3a3934;
 		--red: #ff4f44;
 		--frame: #ff4f44;
@@ -176,13 +178,14 @@ pre {
 /* ---------------------------------------------------------------- poster */
 
 .poster {
-	padding-top: 56px;
+	padding-top: 36px;
 	align-items: start;
 }
 
 .headline {
 	grid-column: 1 / span 8;
-	font-size: clamp(2.6rem, 7.1vw, 7.5rem);
+	grid-row: 1;
+	font-size: clamp(2.6rem, 5.8vw, 6.2rem);
 	font-weight: 760;
 	line-height: 0.93;
 	letter-spacing: -0.048em;
@@ -190,9 +193,37 @@ pre {
 	margin-top: -0.06em;
 }
 
+/* The cadence's four times, set straight under the words that name it. */
+.boots {
+	grid-column: 1 / span 8;
+	grid-row: 2;
+	display: flex;
+	flex-wrap: wrap;
+	align-items: baseline;
+	gap: 0 10px;
+	margin-top: 14px;
+	font-size: 22px;
+	font-weight: 640;
+	letter-spacing: -0.02em;
+	font-variant-numeric: tabular-nums;
+}
+
+.boots-k {
+	font-size: 13px;
+	font-weight: 700;
+	letter-spacing: 0;
+	color: var(--muted);
+}
+
+.boots-t {
+	word-spacing: 0.35em;
+}
+
 .intro {
 	grid-column: 9 / span 4;
-	align-self: end;
+	grid-row: 1 / span 3;
+	align-self: start;
+	padding-top: 6px;
 	font-size: 16px;
 	line-height: 1.45;
 	display: grid;
@@ -251,18 +282,19 @@ pre {
 }
 
 .hero {
-	grid-column: 1 / -1;
-	margin-top: 48px;
+	grid-column: 1 / span 8;
+	grid-row: 3;
+	margin-top: 28px;
 }
 
 .hero-kicker {
-	font-size: 22px;
+	font-size: 17px;
 	font-weight: 560;
 	letter-spacing: -0.015em;
 	line-height: 1.2;
 	border-top: 4px solid var(--red);
-	padding-top: 12px;
-	margin-bottom: 20px;
+	padding-top: 10px;
+	margin-bottom: 10px;
 }
 
 .hero-kicker-b {
@@ -293,7 +325,7 @@ pre {
 	align-items: baseline;
 	color: var(--red);
 	white-space: nowrap;
-	font-size: clamp(7rem, 16vw, 15rem);
+	font-size: clamp(5rem, 9.4vw, 9rem);
 	line-height: 0.74;
 }
 
@@ -305,7 +337,7 @@ pre {
 }
 
 .hero-tail {
-	font-size: 0.17em;
+	font-size: 0.22em;
 	font-weight: 430;
 	letter-spacing: -0.01em;
 	line-height: 1;
@@ -335,10 +367,6 @@ pre {
 	padding-top: 6px;
 }
 
-.facts > div:first-child {
-	grid-column: 1 / -1;
-}
-
 .facts dt {
 	font-size: 12px;
 	font-weight: 700;
@@ -354,20 +382,15 @@ pre {
 	font-variant-numeric: tabular-nums;
 }
 
-.facts-s {
-	font-weight: 450;
-	color: var(--muted);
-}
-
 /* ---------------------------------------------------------------- section heads */
 
 section + section {
-	margin-top: 128px;
+	margin-top: 88px;
 }
 
 /* The table follows the poster's facts closely, so the first screen shows the grid begin. */
 .poster + section {
-	margin-top: 56px;
+	margin-top: 32px;
 }
 
 .sec-head {
@@ -396,7 +419,7 @@ section + section {
 .sec-head h2 {
 	grid-column: 2 / span 6;
 	align-self: start;
-	font-size: clamp(1.8rem, 3.2vw, 2.9rem);
+	font-size: clamp(1.8rem, 2.6vw, 2.4rem);
 	font-weight: 760;
 	line-height: 1;
 	letter-spacing: -0.04em;
@@ -484,9 +507,13 @@ td {
 }
 
 /* The machines: name, size, processor and hourly price, over their column. */
+/* One header for the whole table, kept in view while the rows scroll under it. */
 .figures thead th {
+	position: sticky;
+	top: 0;
+	z-index: 2;
 	background: var(--paper);
-	padding: 14px 0 14px 12px;
+	padding: 12px 0 10px 12px;
 	vertical-align: bottom;
 	border-bottom: 2px solid var(--ink);
 }
@@ -505,16 +532,8 @@ td {
 
 /* Names on one line at the top, prices on one line at the bottom, however the processors wrap. */
 .figures thead th.mach {
-	position: relative;
 	text-align: right;
 	vertical-align: top;
-	padding-bottom: 44px;
-}
-
-.figures thead th.mach .mach-price {
-	position: absolute;
-	right: 0;
-	bottom: 14px;
 }
 
 .mach-name {
@@ -522,29 +541,27 @@ td {
 	font-weight: 720;
 	letter-spacing: -0.02em;
 	line-height: 1.1;
-	margin-bottom: 4px;
+	margin-bottom: 3px;
 }
 
 .mach-spec,
 .mach-proc,
+.mach-runs,
 .mach-price {
-	font-size: 13px;
+	font-size: 12px;
 	line-height: 1.35;
 	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
 }
 
 .mach-spec,
-.mach-proc {
+.mach-proc,
+.mach-runs {
 	color: var(--muted);
 }
 
-.mach-proc {
-	font-size: 12px;
-	text-wrap: balance;
-}
-
 .mach-price {
-	margin-top: 6px;
+	margin-top: 4px;
 	font-size: 17px;
 	font-weight: 680;
 	letter-spacing: -0.02em;
@@ -570,23 +587,14 @@ tr.group td {
 	color: var(--muted);
 }
 
-/* The machine names again at every group, so a column never loses its name. */
-.group-m {
-	padding-left: 20px !important;
-	text-align: right;
-	font-size: 13px;
-	font-weight: 600;
-	color: var(--muted);
-	white-space: nowrap;
-}
-
-tbody:first-of-type .group-m {
-	visibility: hidden;
+/* A machine type's name inside each cell: shown on a phone only, where the cells stack. */
+.cm {
+	display: none;
 }
 
 tbody:first-of-type tr.group th,
 tbody:first-of-type tr.group td {
-	padding-top: 20px;
+	padding-top: 12px;
 }
 
 tr.row th,
@@ -657,10 +665,6 @@ td {
 	font-size: 21px;
 	font-weight: 640;
 	letter-spacing: -0.01em;
-	text-decoration: underline;
-	text-decoration-color: var(--hair);
-	text-decoration-thickness: 1px;
-	text-underline-offset: 0.18em;
 }
 
 .fi {
@@ -671,20 +675,23 @@ td {
 .ft {
 	min-width: var(--wt);
 	text-align: left;
-	font-size: 14px;
-	font-weight: 470;
-	color: var(--muted);
+	font-size: 13px;
+	font-weight: 420;
+	letter-spacing: -0.02em;
+	color: var(--tail);
+}
+
+/* Each figure opens its Series: the whole value takes one underline on hover, none at rest. */
+.fig:hover,
+.fig:focus-visible {
+	text-decoration: underline;
+	text-decoration-thickness: 1px;
+	text-underline-offset: 0.2em;
 }
 
 .fig:hover .ft,
 .fig:focus-visible .ft {
 	color: var(--ink);
-}
-
-.fig:hover .fi,
-.fig:hover .fh {
-	text-decoration-color: currentColor;
-	text-decoration-thickness: 2px;
 }
 
 /* The bar: zero to the median, on one zero-based scale per row; the bracket spans p5 to p95. */
@@ -715,10 +722,10 @@ td {
 
 .bar-s {
 	position: absolute;
-	top: 0;
-	bottom: 0;
-	min-width: 2px;
-	border-inline: 1.5px solid var(--ink);
+	top: -2px;
+	bottom: -2px;
+	min-width: 3px;
+	border-inline: 2px solid var(--ink);
 }
 
 .bar-s::before {
@@ -737,7 +744,11 @@ td.hero-cell {
 /* ---------------------------------------------------------------- API */
 
 .api-main {
-	grid-column: 1 / span 8;
+	grid-column: 1 / span 6;
+}
+
+.api-walk {
+	grid-column: 7 / span 6;
 }
 
 /* The base address once, its three files under it. */
@@ -781,7 +792,6 @@ td.hero-cell {
 }
 
 .walk-h {
-	margin-top: 48px;
 	margin-bottom: 12px;
 	font-size: 13px;
 	font-weight: 700;
@@ -805,10 +815,10 @@ td.hero-cell {
 }
 
 .api-side {
-	grid-column: 9 / span 4;
+	margin-top: 28px;
 	display: grid;
 	grid-template-columns: minmax(0, 1fr);
-	gap: 22px;
+	gap: 18px;
 	align-content: start;
 	font-size: 14.5px;
 	line-height: 1.45;
@@ -830,6 +840,18 @@ td.hero-cell {
 	font-size: 12px;
 }
 
+.api-run {
+	display: block;
+	font-weight: 600;
+	font-variant-numeric: tabular-nums;
+}
+
+.api-tpl {
+	display: block;
+	margin-top: 2px;
+	color: var(--muted);
+}
+
 .api-links {
 	display: flex;
 	flex-wrap: wrap;
@@ -840,9 +862,9 @@ td.hero-cell {
 /* ---------------------------------------------------------------- footer */
 
 .foot {
-	margin-top: 128px;
+	margin-top: 88px;
 	border-top: 12px solid var(--frame);
-	padding-block: 22px 56px;
+	padding-block: 18px 24px;
 	font-size: 14px;
 	line-height: 1.45;
 	align-items: baseline;
@@ -864,13 +886,20 @@ td.hero-cell {
 		--g: 20px;
 	}
 
-	.headline {
+	.headline,
+	.boots,
+	.hero {
 		grid-column: 1 / -1;
 	}
 
 	.intro {
 		grid-column: 1 / span 8;
+		grid-row: 3;
 		margin-top: 32px;
+	}
+
+	.hero {
+		grid-row: 4;
 	}
 
 	.sec-head h2 {
@@ -883,12 +912,12 @@ td.hero-cell {
 		margin-top: 14px;
 	}
 
-	.api-main {
+	.api-main,
+	.api-walk {
 		grid-column: 1 / -1;
 	}
 
-	.api-side {
-		grid-column: 1 / span 8;
+	.api-walk {
 		margin-top: 40px;
 	}
 }
@@ -977,7 +1006,7 @@ td.hero-cell {
 	}
 
 	.hero-figure {
-		font-size: 18.5vw;
+		font-size: 16.5vw;
 	}
 
 	.jump {
@@ -1046,6 +1075,7 @@ td.hero-cell {
 	}
 
 	.figures thead th {
+		position: static;
 		border-bottom: 0;
 		padding: 0;
 	}
@@ -1070,6 +1100,7 @@ td.hero-cell {
 	}
 
 	.mach-name {
+		grid-row: 1 / span 2;
 		font-size: 14px;
 		margin: 0;
 	}
@@ -1078,8 +1109,19 @@ td.hero-cell {
 		display: none !important;
 	}
 
+	.mach-spec {
+		grid-column: 2;
+		grid-row: 1;
+	}
+
+	.mach-runs {
+		grid-column: 2;
+		grid-row: 2;
+	}
+
 	.figures thead th.mach .mach-price {
-		position: static;
+		grid-column: 3;
+		grid-row: 1 / span 2;
 		margin: 0;
 		font-size: 15px;
 		text-align: right;
@@ -1125,7 +1167,8 @@ td.hero-cell {
 	.row-fig {
 		margin: 0;
 		flex: none;
-		max-width: 45%;
+		flex-wrap: nowrap;
+		white-space: nowrap;
 		justify-content: flex-end;
 		text-align: right;
 		font-size: 12px;
@@ -1141,8 +1184,8 @@ td.hero-cell {
 		padding: 5px 0;
 	}
 
-	tr.row td::before {
-		content: attr(data-m);
+	.cm {
+		display: block;
 		grid-column: 1;
 		grid-row: 1;
 		font-size: 13px;
@@ -1161,7 +1204,8 @@ td.hero-cell {
 	}
 
 	.ft {
-		font-size: 12px;
+		font-size: 11px;
+		letter-spacing: -0.03em;
 	}
 
 	.bar {
@@ -1176,7 +1220,7 @@ td.hero-cell {
 		box-shadow: inset 3px 0 0 var(--red);
 	}
 
-	tr.row td.hero-cell::before {
+	tr.row td.hero-cell .cm {
 		padding-left: 8px;
 	}
 
@@ -1201,9 +1245,19 @@ td.hero-cell {
 		overflow-wrap: break-word;
 	}
 
-	.api-side {
-		grid-column: 1 / -1;
-		margin-top: 36px;
+	.boots {
+		margin-top: 14px;
+		font-size: 19px;
+		gap: 0 8px;
+	}
+
+	.boots-k {
+		flex-basis: 100%;
+		font-size: 12px;
+	}
+
+	.boots-t {
+		word-spacing: 0.15em;
 	}
 
 	.foot {
