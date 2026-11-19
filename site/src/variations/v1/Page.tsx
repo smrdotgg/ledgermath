@@ -4,7 +4,7 @@
 // Under each figure a pencil rule drawn from zero, on one scale per row, with the figure's p5–p95 in
 // ink and its median a notch: a drawing that never makes 0.2% look like more. Each column head holds
 // its machine's usual count of Runs; a cell names its own only where it differs. On a phone the
-// machines' key follows the entries. Few words: the figures are the page, and everything else is a
+// machines' key comes first, under the legend. Few words: the figures are the page, and everything else is a
 // link. No best, no ranking, no ties.
 import "./page.css";
 import {
@@ -54,15 +54,22 @@ function rowCells(row: HeadlineRow): Cell[] {
 }
 
 const cells = headline.map(rowCells);
-/** The widest whole part of any figure, in digits, so every column's decimal points line up. */
-const wholeDigits = Math.max(...cells.flat().map((c) => c.p50.full.split(".")[0]!.length));
+/** The widest whole part of a row's figures, in digits: one benchmark's figures line up on the point, and no other's push them in. */
+const wholeDigits = (xs: Cell[]) => Math.max(...xs.map((c) => c.p50.full.split(".")[0]!.length));
 
-/** A figure as a ledger writes it: whole part right-aligned, three places in ink, the rest in pencil, in threes from the point. */
+/**
+ * A figure as a ledger writes it: whole part right-aligned, three places in ink, the rest in pencil, in threes
+ * from the point. A last group of one or two digits closes up on the group before it, so the tail reads as one figure.
+ */
 function Written(props: { full: string; inkPlaces?: number }) {
 	const [whole = "0", fraction = ""] = props.full.split(".");
 	const places = props.inkPlaces ?? 3;
 	const ink = fraction.slice(0, places);
 	const pencil = fraction.slice(places).match(/\d{1,3}/g) ?? [];
+	if (pencil.length > 1 && pencil[pencil.length - 1]!.length < 3) {
+		const last = pencil.pop()!;
+		pencil[pencil.length - 1] += last;
+	}
 	return (
 		<span class="fig">
 			<span class="w">{whole}</span>
@@ -148,13 +155,16 @@ const API = "https://api.ledgermath.com/";
 const rel = (url: string) => url.replace(API, "");
 const schemaOf = (name: string) => links.schemas.find((s) => s.name === name)!.url;
 
-/** The API's addresses, one line each: the file, and the schema it follows. */
-const ADDRESSES: { label: string; href: string; shown: string; schema?: string }[] = [
+/**
+ * The API's addresses, one line each: the file, and the schema it follows. Each address shown is a real one a
+ * reader can copy; the evidence's is a template, so it is written, not linked (the masthead links one Run's).
+ */
+const ADDRESSES: { label: string; href?: string; shown: string; schema?: string }[] = [
 	{ label: "Index", href: links.index, shown: rel(links.index), schema: schemaOf("index") },
 	{ label: "All Series", href: links.seriesList, shown: rel(links.seriesList), schema: schemaOf("series-list") },
 	{ label: "One Series", href: seriesFileContents.sample.url, shown: rel(seriesFileContents.sample.url), schema: schemaOf("series") },
-	{ label: "Prices", href: links.prices, shown: rel(links.priceFilePattern), schema: schemaOf("prices") },
-	{ label: "Evidence", href: links.evidenceBlobTemplate, shown: rel(links.evidenceBlobTemplate) },
+	{ label: "Prices", href: links.prices, shown: rel(links.prices), schema: schemaOf("prices") },
+	{ label: "Evidence", shown: rel(links.evidenceBlobTemplate) },
 ];
 
 export default function Page() {
@@ -193,10 +203,13 @@ export default function Page() {
 					<div>
 						<dt>Runs</dt>
 						<dd>
-							<a href={links.seriesList} title={`${seriesCount} Series since ${oldest.full}; boots at ${RUN_TIMES.join(", ")} UTC`}>
+							<a href={links.seriesList} title={`Since ${oldest.full}; boots at ${RUN_TIMES.join(", ")} UTC`}>
 								{runs}
 							</a>
-							<span class="aside"> · {formatCount(snapshot.failedRuns).full} failed</span>
+							<span class="aside">
+								{" "}
+								in {seriesCount} Series · {formatCount(snapshot.failedRuns).full} failed
+							</span>
 						</dd>
 					</div>
 					<div>
@@ -265,7 +278,7 @@ export default function Page() {
 							</span>
 						</p>
 					</div>
-					<div class="scroll" tabindex="0" role="region" aria-label="The ledger, scrollable" style={{ "--whole": `${wholeDigits}ch` }}>
+					<div class="scroll" tabindex="0" role="region" aria-label="The ledger, scrollable">
 						<table>
 							<thead id="machines">
 								<tr>
@@ -312,8 +325,10 @@ export default function Page() {
 											const unit = xs[0]!.p50.unit;
 											const top = rowTop(xs);
 											const higher = c.lead === "rate";
+											// Where any cell in the row names its count, every cell keeps the count's room, so all five rules share one width.
+											const tallied = xs.some((x, k) => x.count !== usualCount[k]);
 											return (
-												<tr class="entry">
+												<tr class="entry" style={{ "--whole": `${wholeDigits(xs)}ch` }}>
 													<th scope="row" class="what">
 														<a href={c.readme} title={`${c.what} ${c.setting}.`}>
 															{c.label}
@@ -339,7 +354,7 @@ export default function Page() {
 																	<Written full={x.p50.full} />
 																	<span class="line">
 																		<Rule x={x} hi={top} />
-																		{x.count !== usualCount[k] ? <Tally count={x.count} /> : ""}
+																		{x.count !== usualCount[k] ? <Tally count={x.count} /> : tallied ? <span class="n" /> : ""}
 																	</span>
 																</a>
 															</td>
@@ -358,20 +373,36 @@ export default function Page() {
 				<div class="back">
 					<section class="api" aria-labelledby="api-h">
 						<h2 id="api-h">For agents and developers</h2>
-						<p class="api-lede">
-							Static JSON at <span class="mono">{API}</span>
-						</p>
 						<table class="addr">
 							<tbody>
-								{ADDRESSES.map((a) => (
+								{ADDRESSES.map((a, i) => (
 									<tr>
 										<th scope="row">{a.label}</th>
 										<td class="mono">
-											<a href={a.href}>
-												<Url href={a.shown} />
-											</a>
+											{a.href ? (
+												<a href={a.href}>
+													<Url href={a.shown} />
+												</a>
+											) : (
+												<span class="tpl">
+													<Url href={a.shown} />
+												</span>
+											)}
 										</td>
-										<td class="sch">{a.schema ? <a href={a.schema}>schema</a> : ""}</td>
+										<td class="sch">
+											{/* a ledger writes a repeated word once, and ditto under it */}
+											{a.schema ? (
+												i === 0 ? (
+													<a href={a.schema}>schema</a>
+												) : (
+													<a href={a.schema} class="ditto" aria-label={`${a.label} schema`} title={`${a.label} schema`}>
+														〃
+													</a>
+												)
+											) : (
+												""
+											)}
+										</td>
 									</tr>
 								))}
 								<tr>
