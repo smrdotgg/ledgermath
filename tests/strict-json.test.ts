@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test";
 
-import { duplicateMember, parseStrictJson } from "../scripts/lib/strict-json";
+import { decimalValue, duplicateMember, inexactNumber, inexactNumberIn, parseStrictJson } from "../scripts/lib/strict-json";
 
 const bytes = (text: string): Uint8Array => new TextEncoder().encode(text);
-const problem = (input: Uint8Array): string => {
+const problem = (input: Uint8Array, exactNumbers = false): string => {
 	try {
-		parseStrictJson(input);
+		parseStrictJson(input, { exactNumbers });
 	} catch (error) {
 		return (error as Error).message;
 	}
@@ -62,5 +62,53 @@ describe("strict JSON", () => {
 	test("rejects a byte-order mark, and what is not JSON", () => {
 		expect(problem(new Uint8Array([0xef, 0xbb, 0xbf, ...bytes("{}")]))).toBe("it begins with a byte-order mark");
 		expect(problem(bytes('{"a":1,}'))).toStartWith("it is not JSON: ");
+	});
+
+	test("with exactNumbers, refuses a number whose value a double does not hold, naming where it is and what would be written", () => {
+		const refused = (token: string): string => problem(bytes(`{"a":[1,{"b":${token}}]}`), true);
+		expect(refused("9007199254740993")).toBe("the number at /a/1/b is 9007199254740993, which a double does not hold exactly: it would be written 9007199254740992, another value");
+		expect(refused("1e400")).toBe("the number at /a/1/b is 1e400, past the range of a double: JavaScript reads it as Infinity, which JSON writes as null");
+		expect(refused("-1e400")).toBe("the number at /a/1/b is -1e400, past the range of a double: JavaScript reads it as -Infinity, which JSON writes as null");
+		expect(refused("1e-400")).toBe("the number at /a/1/b is 1e-400, which a double does not hold exactly: it would be written 0, another value");
+		expect(refused("0.10000000000000001")).toBe("the number at /a/1/b is 0.10000000000000001, which a double does not hold exactly: it would be written 0.1, another value");
+		// Without the option, as JSON.parse reads them.
+		expect(problem(bytes('{"a":9007199254740993}'))).toBe("none");
+		// At the top, and in an array at the top.
+		expect(inexactNumberIn("9007199254740993")).toEqual({ at: "/", token: "9007199254740993", written: "9007199254740992" });
+		expect(inexactNumberIn("[0,1,1e400]")).toEqual({ at: "/2", token: "1e400", written: "null" });
+	});
+
+	test("with exactNumbers, passes a number written otherwise with the same value, and reads -0 as zero, written 0", () => {
+		for (const token of ["1e3", "1E3", "1.50", "0.1", "100e-2", "1e+21", "1e21", "5e-324", "1.7976931348623157e308", "9007199254740992", "-0", "-0.0", "0e999", "123456789012345e-3"]) {
+			expect(problem(bytes(`{"a":${token}}`), true)).toBe("none");
+		}
+		expect(JSON.stringify(parseStrictJson(bytes('{"a":-0,"b":1e3}'), { exactNumbers: true }))).toBe('{"a":0,"b":1000}');
+		expect(decimalValue("-0")).toBe("0");
+		expect(decimalValue("1.50e+1")).toBe("15e0");
+		expect(decimalValue("0.0012300")).toBe("123e-5");
+		expect(decimalValue("1e+21")).toBe(decimalValue("1000000000000000000000"));
+	});
+
+	test("takes no digit inside a string, or of a name, for a number", () => {
+		expect(inexactNumberIn('{"9007199254740993":"9007199254740993","b":["1e400"]}')).toBeNull();
+		expect(problem(bytes('{"9007199254740993":"1e400"}'), true)).toBe("none");
+	});
+
+	test("the fast path is exact: a token of at most 15 characters with no exponent is written back with its value", () => {
+		// A seeded walk through such tokens: whole numbers, decimals, tiny and large, negative.
+		let state = 7;
+		const next = (n: number): number => {
+			state = (state * 1103515245 + 12345) % 2 ** 31;
+			return state % n;
+		};
+		for (let k = 0; k < 20_000; k++) {
+			const digits = Array.from({ length: 1 + next(14) }, (_, i) => String(i === 0 ? 1 + next(9) : next(10))).join("");
+			const point = next(digits.length + 1);
+			let token = point === digits.length ? digits : point === 0 ? `0.${"0".repeat(next(14 - digits.length + 1))}${digits}` : `${digits.slice(0, point)}.${digits.slice(point)}`;
+			if (next(2) === 1) token = `-${token}`;
+			if (token.length > 15) continue;
+			expect(decimalValue(String(Number(token)))).toBe(decimalValue(token));
+			expect(inexactNumber(token)).toBeNull();
+		}
 	});
 });
