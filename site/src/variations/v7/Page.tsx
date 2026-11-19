@@ -1,8 +1,9 @@
 // Design v7, "Agent conversation": the page opens on a question a developer puts to their
 // agent and the agent's answer, every figure in it cited to the API file and field it came
-// from. Then the same numbers for the reader: the headline table, the way in, the machines,
-// and where the figures come from. Every figure is the data module's, exactly. The page says
-// as little as it can: figures, what they are of, and how to get them.
+// from. Then the same numbers for the reader: the headline table (its column heads are the
+// machines and their prices), the way in, and where the figures come from. Every figure is the
+// data module's, exactly. The page says as little as it can: figures, what they are of, and how
+// to get them.
 import "./page.css";
 import {
 	type ByteUnit,
@@ -37,8 +38,6 @@ const askedFigure = leadFigure(askedRow.choice, askedSeries);
 const askedMachine = machineOf(ASKED_MACHINE);
 const askedUnit: DurationUnit = durationUnit(askedFigure.p50);
 const p50 = formatDuration(askedFigure.p50, { unit: askedUnit });
-const p5 = formatDuration(askedFigure.p5, { unit: askedUnit });
-const p95 = formatDuration(askedFigure.p95, { unit: askedUnit });
 const askedPrice = formatUsd(askedMachine.price.usdPerHour, { per: "hour" });
 const askedDerivation = askedSeries.derivations.series_v1;
 const askedOldest = formatMoment(askedSeries.oldest_run_started_at);
@@ -48,7 +47,22 @@ const newest = formatMoment(snapshot.newestRunStartedAt);
 const oldest = formatMoment(snapshot.oldestRunStartedAt);
 const pricesFetched = formatMoment(snapshot.pricesFetchedAt);
 const BOOTS = ["04:10", "10:10", "16:10", "22:10"];
-const path = (url: string) => url.replace(/^https:\/\/[^/]+\//, "");
+const dayAt = (hhmm: string) => {
+	const [h, m] = hhmm.split(":").map(Number) as [number, number];
+	return `${((h * 60 + m) / 1440) * 100}%`;
+};
+
+/** A moment with every digit; the fraction of a second folds away on a narrow screen (its title keeps it). */
+function When(props: { at: ReturnType<typeof formatMoment> }) {
+	const m = props.at;
+	const fraction = m.full.slice(`${m.date} ${m.second}`.length, -" UTC".length);
+	return (
+		<time datetime={m.iso} title={m.full}>
+			{m.date} {m.second}
+			{fraction ? <span class="frac">{fraction}</span> : null} UTC
+		</time>
+	);
+}
 
 // ---------------------------------------------------------------- one unit per table row
 
@@ -220,17 +234,8 @@ export default function Page() {
 					<nav aria-label="On this page" class="nav">
 						<a href="#numbers">Numbers</a>
 						<a href="#api">API</a>
-						<a href="#machines">Machines</a>
+						<a href="#provenance">Provenance</a>
 					</nav>
-					<p class="fresh">
-						<span class="pulse" aria-hidden="true" />
-						<a href="#provenance">
-							<time datetime={newest.iso} title={`Newest Run: ${newest.full}`}>
-								<span class="fresh-date">{newest.date} </span>
-								{newest.minute} UTC
-							</time>
-						</a>
-					</p>
 				</div>
 			</header>
 
@@ -238,7 +243,7 @@ export default function Page() {
 				<section class="hero wrap" aria-labelledby="title">
 					<div class="hero-text">
 						<h1 id="title">
-							<span class="h1-name">LedgerMath</span>
+							<span class="sr-only">LedgerMath: </span>
 							<span class="h1-line">Measured AWS server benchmarks, for AI agents to cite.</span>
 						</h1>
 						<p class="lede">
@@ -256,7 +261,7 @@ export default function Page() {
 							</pre>
 						</div>
 						<p class="way-note">
-							Static JSON, no key. <a href={links.docs}>Docs</a> · <a href="#api">More</a>
+							Static JSON, no key. <a href={links.docs}>Docs</a>
 						</p>
 						<dl class="facts-line">
 							<div>
@@ -284,8 +289,7 @@ export default function Page() {
 
 					<section class="exchange" aria-labelledby="exchange-title">
 						<h2 id="exchange-title" class="kicker">
-							<span>Example</span>
-							<span class="kicker-side">written for this page; every figure read from the API</span>
+							Example
 						</h2>
 						<div class="turn turn-q">
 							<span class="mark" aria-hidden="true">
@@ -293,7 +297,7 @@ export default function Page() {
 							</span>
 							<blockquote class="question">
 								<p>
-									How long does one core of a <span class="nowrap">{ASKED_MACHINE}</span> take to sort 1&nbsp;MiB of 64-bit keys, and what does an hour cost?
+									How long does one <span class="nowrap">{ASKED_MACHINE}</span> core take to sort 1&nbsp;MiB of 64-bit keys, and at what hourly price?
 								</p>
 							</blockquote>
 						</div>
@@ -312,7 +316,7 @@ export default function Page() {
 										<Cite n={2} />
 									</span>{" "}
 									<span class="ans">
-										<strong class="fig">${askedPrice.full}</strong> an hour
+										<strong class="fig">${askedPrice.full}</strong> per instance-hour
 										<Cite n={3} />
 									</span>
 								</p>
@@ -325,46 +329,46 @@ export default function Page() {
 						</div>
 						<details class="sources" open>
 							<summary>Sources</summary>
-						<ol class="reads" aria-label="The files it read">
-							<li id="read-1">
-								<span class="read-n">1</span>
-								<div>
-									<Url href={links.seriesList} />
-									<ul class="fields">
-										<Field name="…time_per_repetition_ns.p50" raw={p50.source} />
-										<Field name="…time_per_repetition_ns.p5" raw={p5.source} />
-										<Field name="…time_per_repetition_ns.p95" raw={p95.source} />
-										<Field name="…series_v1.counted_runs" raw={String(askedDerivation.counted_runs)} />
-									</ul>
-								</div>
-							</li>
-							<li id="read-2">
-								<span class="read-n">2</span>
-								<div>
-									<Url href={askedSeries.url} />
-									<ul class="fields">
-										<Field name="points[].evidence" raw={`${formatCount(askedSeries.runs).full} Runs`} />
-									</ul>
-								</div>
-							</li>
-							<li id="read-3">
-								<span class="read-n">3</span>
-								<div>
-									<Url href={links.prices} />
-									<ul class="fields">
-										<Field name={`…${askedMachine.price.rateCode}/pricePerUnit/USD`} raw={`"${askedMachine.price.usdPerHour}"`} title={askedMachine.price.path.pointer} />
-									</ul>
-								</div>
-							</li>
-						</ol>
+							<ol class="reads" aria-label="The files it read">
+								<li id="read-1">
+									<span class="read-n">1</span>
+									<div>
+										<Url href={links.seriesList} />
+										<ul class="fields">
+											<Field name="…time_per_repetition_ns.p50" raw={p50.source} />
+											<Field name="…counted_runs" raw={String(askedDerivation.counted_runs)} />
+										</ul>
+									</div>
+								</li>
+								<li id="read-2">
+									<span class="read-n">2</span>
+									<div>
+										<Url href={askedSeries.url} />
+										<ul class="fields">
+											<Field name="points[].evidence" raw={`${formatCount(askedSeries.runs).full} Runs`} />
+										</ul>
+									</div>
+								</li>
+								<li id="read-3">
+									<span class="read-n">3</span>
+									<div>
+										<Url href={links.prices} />
+										<ul class="fields">
+											<Field name="…/pricePerUnit/USD" raw={`"${askedMachine.price.usdPerHour}"`} title={askedMachine.price.path.pointer} />
+										</ul>
+									</div>
+								</li>
+							</ol>
 						</details>
 					</section>
 				</section>
 
 				<section id="numbers" class="numbers wrap" aria-labelledby="numbers-title">
 					<div class="numbers-head">
-						<h2 id="numbers-title">The same numbers</h2>
-						<ul class="key" aria-label="How to read the table">
+						<h2 id="numbers-title">
+							{formatCount(headline.length).full} benchmarks × {formatCount(machines.length).full} machines
+						</h2>
+						<ul class="key" aria-label="Key">
 							<li>
 								<span class="key-bar bar" aria-hidden="true">
 									<span class="bar-p50" style={{ width: "62%" }} />
@@ -373,9 +377,11 @@ export default function Page() {
 								median · p5–p95, from 0
 							</li>
 							<li>
-								<span class="dir">↑</span> higher <span class="dir">↓</span> lower is faster
+								<span class="dir">↑</span> higher is faster
 							</li>
-							<li>figure → Series file</li>
+							<li>
+								<span class="dir">↓</span> lower is faster
+							</li>
 						</ul>
 					</div>
 
@@ -395,17 +401,23 @@ export default function Page() {
 							</colgroup>
 							<thead>
 								<tr>
-									<td class="th-corner" />
+									<th scope="col" class="th-corner">
+										<a href={links.prices} title={`AWS On-Demand prices, copied ${pricesFetched.full}`}>
+											On-Demand, {snapshot.region}
+										</a>
+									</th>
 									{machines.map((m) => {
 										const price = formatUsd(m.price.usdPerHour, { per: "hour" });
 										return (
-											<th scope="col" class={m.instanceType === ASKED_MACHINE ? "th-machine is-asked" : "th-machine"}>
+											<th scope="col" class="th-machine">
 												<span class="th-code">{m.instanceType.split(".")[0]}</span>
-												<span class="th-type">{m.instanceType}</span>
+												<span class="th-type" title={`${m.processor}, ${m.clockSpeed}`}>
+													{m.instanceType}
+												</span>
 												<span class="th-spec">
 													{m.vcpu}&thinsp;vCPU · {m.memory}
 												</span>
-												<span class="th-price" title={m.price.description}>
+												<span class="th-price" title={`${m.price.description} · ${m.price.path.pointer}`}>
 													${price.full}/h
 												</span>
 											</th>
@@ -435,7 +447,7 @@ export default function Page() {
 															{row.choice.label}
 														</a>
 														<span class="bench-unit">
-															<span class="dir" role="img" aria-label={up ? "higher is faster" : "lower is faster"}>
+															<span class="dir" role="img" aria-label={up ? "higher is faster" : "lower is faster"} title={up ? "higher is faster" : "lower is faster"}>
 																{up ? "↑" : "↓"}
 															</span>
 															{figs[0]!.shown.unit}
@@ -488,23 +500,10 @@ export default function Page() {
 									Use the LedgerMath data API at <Breakable text={links.index} />. Cite the file and field behind each figure.
 								</p>
 							</blockquote>
-							<ul class="schemas" aria-label="Schemas">
-								{links.schemas.map((s) => (
-									<li>
-										<a href={s.url} title={`Schema of ${s.describes}`}>
-											<code>{s.name}</code>
-										</a>
-									</li>
-								))}
-								<li>
-									<a href={links.docs}>Docs</a>
-								</li>
-							</ul>
 						</div>
 						<div class="term">
 							{[
-								["index", links.index, "the index command"],
-								[`every Series (${formatCount(snapshot.seriesCount).full})`, links.seriesList, "the Series list command"],
+								["every figure", links.seriesList, "the Series list command"],
 								[`prices, ${snapshot.priceDate}`, links.prices, "the prices command"],
 							].map(([comment, url, name]) => (
 								<div class="cmd" data-copy-block={name}>
@@ -523,102 +522,43 @@ export default function Page() {
 					</div>
 				</section>
 
-				<section id="machines" class="machines wrap" aria-labelledby="machines-title">
-					<h2 id="machines-title">Machines</h2>
-					<p class="sub">
-						On-Demand, Linux, {snapshot.region}
-						<Cite n={3} />
-					</p>
-					<div class="table-box mtable-box" role="region" aria-label="The five machines" tabindex="0">
-						<table class="mtable">
-							<thead>
-								<tr>
-									<th scope="col">Type</th>
-									<th scope="col" class="num">
-										vCPU
-									</th>
-									<th scope="col" class="num">
-										Memory
-									</th>
-									<th scope="col">Processor</th>
-									<th scope="col" class="num">
-										$/hour
-									</th>
-								</tr>
-							</thead>
-							<tbody>
-								{machines.map((m) => (
-									<tr class={m.instanceType === ASKED_MACHINE ? "is-asked" : undefined}>
-										<th scope="row">{m.instanceType}</th>
-										<td class="num">{m.vcpu}</td>
-										<td class="num">{m.memory}</td>
-										<td class="proc">
-											{m.processor}, {m.clockSpeed}
-										</td>
-										<td class="num price">
-											<span title={`${m.price.description} · ${m.price.path.pointer}`}>{formatUsd(m.price.usdPerHour).full}</span>
-										</td>
-									</tr>
-								))}
-							</tbody>
-						</table>
-					</div>
-				</section>
-
 				<section id="provenance" class="provenance wrap" aria-labelledby="provenance-title">
 					<h2 id="provenance-title">Provenance</h2>
 					<div class="day">
-						<span class="day-label">boots, UTC</span>
+						<span class="day-label">scheduled boots, UTC</span>
 						<div class="day-line">
-							{BOOTS.map((t) => {
-								const [h, mm] = t.split(":").map(Number) as [number, number];
-								return (
-									<span class="boot" style={{ left: `${((h * 60 + mm) / 1440) * 100}%` }}>
-										<span class="boot-dot" aria-hidden="true" />
-										<span class="boot-time">{t}</span>
-									</span>
-								);
-							})}
-							{(() => {
-								const [h, mm] = newest.minute.split(":").map(Number) as [number, number];
-								return (
-									<span class="newest" style={{ left: `${((h * 60 + mm) / 1440) * 100}%` }}>
-										<span class="newest-tick" aria-hidden="true" />
-										<span class="newest-label">newest {newest.minute}</span>
-									</span>
-								);
-							})()}
+							{BOOTS.map((t) => (
+								<span class="boot" style={{ left: dayAt(t) }}>
+									<span class="boot-dot" aria-hidden="true" />
+									<span class="boot-time">{t}</span>
+								</span>
+							))}
+							<span class="newest" style={{ left: dayAt(newest.minute) }}>
+								<span class="newest-label">
+									newest Run{" "}
+									<time datetime={newest.iso} title={newest.full}>
+										{newest.minute}
+									</time>
+								</span>
+								<span class="newest-tick" aria-hidden="true" />
+							</span>
 						</div>
 					</div>
 					<dl class="facts">
 						<div>
-							<dt>Newest Run</dt>
-							<dd>
-								<time datetime={newest.iso}>{newest.full}</time>
-							</dd>
-						</div>
-						<div>
 							<dt>Oldest Run</dt>
 							<dd>
-								<time datetime={oldest.iso}>{oldest.full}</time>
+								<When at={oldest} />
 							</dd>
 						</div>
 						<div>
-							<dt>Runs</dt>
-							<dd>
-								{formatCount(snapshot.runCount).full} · {formatCount(snapshot.failedRuns).full} failed
-							</dd>
-						</div>
-						<div>
-							<dt>Series</dt>
-							<dd>
-								{formatCount(snapshot.seriesCount).full} · {formatCount(headline.length * machines.length).full} above
-							</dd>
+							<dt>Failed Runs</dt>
+							<dd>{formatCount(snapshot.failedRuns).full}</dd>
 						</div>
 						<div>
 							<dt>Prices copied</dt>
 							<dd>
-								<time datetime={snapshot.pricesFetchedAt}>{pricesFetched.full}</time>
+								<When at={pricesFetched} />
 							</dd>
 						</div>
 						<div>
@@ -644,9 +584,6 @@ export default function Page() {
 				<div class="wrap footer-row">
 					<strong>LedgerMath</strong>
 					<ul>
-						<li>
-							<a href={links.index}>{path(links.index)}</a>
-						</li>
 						<li>
 							<a href={links.docs}>Docs</a>
 						</li>
