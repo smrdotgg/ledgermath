@@ -13,6 +13,7 @@ import {
 	leadFigure,
 	links,
 	machines,
+	seriesFileContents,
 	snapshot,
 	type DurationUnit,
 	type HeadlineRow,
@@ -131,6 +132,17 @@ function span(a: ReturnType<typeof formatMoment>, b: ReturnType<typeof formatMom
 	return `${ad} ${am!.slice(0, 3)}–${bd} ${bm!.slice(0, 3)} ${by}`;
 }
 
+/** The fewest and most Runs behind a machine type's 14 figures, as they stand: "34–36", or one count where all agree. */
+function runsOf(instanceType: string): string {
+	const counts = headline.map((row) => leadFigure(row.choice, row.cells.find((c) => c.machine.instanceType === instanceType)!.series).count);
+	const lo = Math.min(...counts);
+	const hi = Math.max(...counts);
+	return lo === hi ? formatCount(lo).full : `${formatCount(lo).full}–${formatCount(hi).full}`;
+}
+
+/** The processor in one short line: AWS's words, without "Processor" and "Scalable". */
+const proc = (p: string) => p.replace(/ Processor$/, "").replace(" Scalable ", " ");
+
 const faster = (row: HeadlineRow) => (row.choice.lead === "rate" ? "↑ faster" : "↓ faster");
 
 // ---------------------------------------------------------------- parts
@@ -161,6 +173,10 @@ function Poster() {
 			<h1 id="top" class="headline">
 				AWS machines, measured four times a&nbsp;day.
 			</h1>
+			<p class="boots">
+				<span class="boots-k">Scheduled boots</span>
+				<span class="boots-t">04:10 10:10 16:10 22:10</span> UTC
+			</p>
 			<div class="intro">
 				<p>
 					{formatCount(snapshot.benchmarkCount).full} benchmarks on {formatCount(snapshot.machineCount).full} freshly booted machine types in{" "}
@@ -221,10 +237,6 @@ function Facts() {
 	return (
 		<dl class="facts">
 				<div>
-					<dt>Boots, UTC</dt>
-					<dd>04:10 10:10 16:10 22:10</dd>
-				</div>
-				<div>
 					<dt>Runs started</dt>
 					<dd>
 						<time datetime={oldest.iso} title={`${oldest.full} to ${newest.full}`}>
@@ -235,7 +247,7 @@ function Facts() {
 				<div>
 					<dt>Runs kept</dt>
 					<dd>
-						{formatCount(snapshot.runCount).full} <span class="facts-s">· {formatCount(snapshot.seriesCount).full} Series</span>
+						<a href={links.seriesList}>{formatCount(snapshot.runCount).full}</a>
 					</dd>
 				</div>
 				<div>
@@ -304,7 +316,8 @@ function FigureTable() {
 									<span class="mach-spec">
 										{m.vcpu} vCPU · {m.memory}
 									</span>
-									<span class="mach-proc">{m.processor}</span>
+									<span class="mach-proc">{proc(m.processor)}</span>
+									<span class="mach-runs">{runsOf(m.instanceType)} Runs</span>
 									<a class="mach-price" href={links.prices} title={`$${price(m).full} an hour: ${m.price.path.pointer}`}>
 										${price(m).full}/h
 									</a>
@@ -315,15 +328,10 @@ function FigureTable() {
 					{SECTIONS.map((section) => (
 						<tbody>
 							<tr class="group" id={sectionId(section)}>
-								<th scope="rowgroup" class="group-h">
+								<th scope="rowgroup" colspan={machines.length + 1} class="group-h">
 									{section}
 									{SECTION_NOTE[section] && <span class="group-note"> · {SECTION_NOTE[section]}</span>}
 								</th>
-								{machines.map((m) => (
-									<td class="group-m" aria-hidden="true">
-										{m.instanceType}
-									</td>
-								))}
 							</tr>
 							{headline
 								.filter((row) => row.choice.section === section)
@@ -347,7 +355,8 @@ function FigureTable() {
 												const f = split(show(row, lead.p50).full, places);
 												const isHero = cell.series === heroCell.series;
 												return (
-													<td class={isHero ? "hero-cell" : undefined} data-m={cell.machine.instanceType}>
+													<td class={isHero ? "hero-cell" : undefined}>
+														<span class="cm">{cell.machine.instanceType}</span>
 														<a class="fig" href={links.seriesFile(cell.series)} title={cellTitle(row, lead, cell.machine.instanceType)}>
 															<span class="fi">{f.int}</span>
 															<span class="fh">{f.head}</span>
@@ -379,14 +388,19 @@ const walkP = heroCell.series.derivations.series_v1.percentiles[walkKey]!;
 const excerptHead = [
 	`{ "id": ${J(heroCell.series.id)},`,
 	`  "instance_type": ${J(heroCell.series.instance_type)},`,
-	`  "derivations": { "series_v1": { "percentiles": {`,
-	`    ${J(walkKey)}: {`,
+	`  "derivations": { "series_v1": {`,
+	`    "percentiles": { ${J(walkKey)}: {`,
 	`      "count": ${J(walkP.count)},`,
 	`      "p5": ${J(walkP.p5)},`,
 	`      "p50": `,
 ].join("\n");
 const excerptP50 = J(walkP.p50);
 const excerptTail = [`,`, `      "p95": ${J(walkP.p95)} } } } } }`].join("\n");
+
+/** One real Run's evidence: the first point of the Series file the snapshot keeps as a sample. */
+const run = seriesFileContents.point.example;
+const runAt = formatMoment(run.started_at);
+const runLabel = headline.find((row) => row.choice.benchmark === seriesFileContents.sample.benchmark)!.choice.label;
 
 /** The API's three files under its one base address. */
 const BASE = links.index.slice(0, links.index.lastIndexOf("/") + 1);
@@ -421,6 +435,38 @@ function Api() {
 						</ul>
 					</div>
 
+					<dl class="api-side">
+						<div>
+							<dt>Evidence of one Run</dt>
+							<dd>
+								<a class="api-run" href={run.evidence} title={`${runLabel}, ${seriesFileContents.sample.instanceType}, ${runAt.full}`}>
+									{seriesFileContents.sample.instanceType}, {runAt.date} {runAt.minute} UTC
+								</a>
+								<span class="mono api-tpl">
+									{links.evidenceBlobTemplate.split("blobs/")[0]}
+									<wbr />
+									blobs/{links.evidenceBlobTemplate.split("blobs/")[1]}
+								</span>
+							</dd>
+						</div>
+						<div>
+							<dt>Schemas</dt>
+							<dd class="api-links">
+								{links.schemas.map((s) => (
+									<a href={s.url}>{s.name}</a>
+								))}
+							</dd>
+						</div>
+						<div>
+							<dt>Docs</dt>
+							<dd>
+								<a href={links.docs}>{links.docs.replace("https://", "")}</a>
+							</dd>
+						</div>
+					</dl>
+				</div>
+
+				<div class="api-walk">
 					<h3 class="walk-h">
 						<a href={`#${anchor(heroRow)}`}>
 							{heroRow.choice.label}, {heroCell.machine.instanceType}
@@ -435,31 +481,6 @@ function Api() {
 						</code>
 					</pre>
 				</div>
-
-				<dl class="api-side">
-					<div>
-						<dt>Schemas</dt>
-						<dd class="api-links">
-							{links.schemas.map((s) => (
-								<a href={s.url}>{s.name}</a>
-							))}
-						</dd>
-					</div>
-					<div>
-						<dt>Evidence</dt>
-						<dd class="mono">
-							{links.evidenceBlobTemplate.split("blobs/")[0]}
-							<wbr />
-							blobs/{links.evidenceBlobTemplate.split("blobs/")[1]}
-						</dd>
-					</div>
-					<div>
-						<dt>Docs</dt>
-						<dd>
-							<a href={links.docs}>{links.docs.replace("https://", "")}</a>
-						</dd>
-					</div>
-				</dl>
 			</div>
 		</section>
 	);
