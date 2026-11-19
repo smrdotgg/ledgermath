@@ -17,6 +17,16 @@
 # A pull request from a fork gets no secrets, so its run skips both deploy
 # jobs and still passes; nothing a fork's code controls ever sees
 # VERCEL_TOKEN.
+#
+# On the branch home-variations (an exploration of the home page, never merged)
+# the build is site/scripts/variations/build-all.ts: eight designs, each built
+# on its own, and a picker at /. `bun run check` checks the picker's text
+# (site/src/picker/picker.text.ts) and that each design either built or is
+# shown as not building. The design branches home-v1 to home-v8 get no
+# deployment: they have no pull request, a push to them starts no run of this
+# workflow, and deploy-preview refuses them if a pull request or a run by hand
+# names one. Only home-variations' pull request deploys a preview, once per
+# push.
 name: site
 
 on:
@@ -55,7 +65,7 @@ jobs:
         run: bun test
       - name: Build, then prerender into dist/client
         run: bun run build
-      - name: index.html holds the page's text (src/App.text.ts) outside its scripts, and the output refers to no file it lacks
+      - name: index.html holds the picker's text (src/picker/picker.text.ts) outside its scripts, the output refers to no file it lacks, and each design built or is shown as not building
         run: bun run check
       - name: The site carries the notices of the code it ships (THIRD-PARTY-NOTICES.md, section 3)
         run: cmp public/third-party-notices.txt dist/client/third-party-notices.txt
@@ -171,8 +181,10 @@ jobs:
     needs: build
     # A fork's pull request is not given the repository's secrets: skip the
     # job rather than fail it. Same-repository branches are pushed by people
-    # with write access, who could read the secret anyway.
-    if: (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && !(github.ref == 'refs/heads/main' && github.event_name != 'pull_request')
+    # with write access, who could read the secret anyway. The design branches
+    # of the home-page variations (home-v1 to home-v8) never deploy: only
+    # home-variations does, so that a round makes one preview deployment.
+    if: (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && !(github.ref == 'refs/heads/main' && github.event_name != 'pull_request') && !(startsWith(github.head_ref || github.ref_name, 'home-v') && (github.head_ref || github.ref_name) != 'home-variations')
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:

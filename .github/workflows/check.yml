@@ -4,6 +4,14 @@ name: check
 
 on:
   push:
+    # The home-page variations: the design branches (home-v1 to home-v8) are
+    # pushed each round with only a design's files changed, and home-variations
+    # is checked through its pull request. Neither needs these checks again on
+    # every push. (With only branches-ignore set, a pushed tag starts no run
+    # either: the publish script tags checkpoints.)
+    branches-ignore:
+      - "home-v[1-8]"
+      - "home-variations"
   pull_request:
 
 permissions:
