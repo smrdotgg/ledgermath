@@ -415,8 +415,12 @@ main {
 	left: 75%;
 }
 
-.xt {
-	margin-left: auto;
+.key-fig {
+	color: var(--fg);
+	font-weight: 600;
+}
+.sep {
+	color: var(--dim);
 }
 .xt summary {
 	cursor: pointer;
@@ -482,13 +486,21 @@ table {
 	color: var(--dim);
 	font-size: 12.5px;
 }
+.m-name,
+.m-spec,
+.m-cpu,
 .m-price {
-	color: var(--fg-2);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
 }
-.m-cpu {
-	min-height: 3em;
-	padding-right: 1ch;
-	line-height: 1.5;
+.price {
+	color: var(--fg);
+	font-weight: 600;
+	text-decoration-color: color-mix(in srgb, var(--acc) 55%, transparent);
+}
+.price:hover {
+	color: var(--acc);
 }
 .data thead th {
 	vertical-align: top;
@@ -508,11 +520,6 @@ table {
 	font-weight: 600;
 	letter-spacing: 0.08em;
 	text-transform: uppercase;
-}
-.sect-name::before {
-	content: "## ";
-	color: var(--dim);
-	font-weight: 400;
 }
 .sect-tag {
 	margin-left: 3ch;
@@ -555,11 +562,9 @@ table {
 	color: var(--fg);
 	text-decoration: none;
 }
-.fig .lead {
-	border-bottom: 1px dotted var(--rule-2);
-}
-.fig:hover .lead {
-	border-bottom-color: var(--acc);
+.fig:hover .lead,
+.fig:focus-visible .lead {
+	color: var(--acc);
 }
 .digits {
 	white-space: pre;
@@ -580,12 +585,14 @@ table {
 	margin: 5px 2ch 0 0;
 	border-bottom: 1px solid var(--rule-2);
 }
+/* Three tones, far apart: a faint run from zero to p50, the p5 to p95 band in ink, the p50 tick in
+   the accent, cut out of the band by a hairline of the page's own colour. */
 .sp-b {
 	position: absolute;
 	left: 0;
 	bottom: 0;
 	height: 3px;
-	background: color-mix(in srgb, var(--dim) 70%, transparent);
+	background: var(--rule-2);
 }
 .sp-r,
 .sp-m {
@@ -595,15 +602,18 @@ table {
 .sp-r {
 	bottom: -1px;
 	min-width: 3px;
-	height: 5px;
+	height: 6px;
 	background: var(--fg-2);
 }
 .sp-m {
-	bottom: -1px;
+	bottom: -2px;
 	width: 2px;
-	height: 8px;
+	height: 10px;
 	margin-left: -1px;
-	background: var(--fg);
+	background: var(--acc);
+	box-shadow:
+		-1px 0 0 var(--bg),
+		1px 0 0 var(--bg);
 }
 
 /* The exact lines: shown together, by the one switch above the table. */
@@ -676,8 +686,12 @@ table {
 	grid-template-columns: minmax(0, 1fr) auto;
 	column-gap: 2ch;
 	align-items: baseline;
-	padding: 7px 0;
+	padding: 4px 0 5px;
+	line-height: 1.4;
 	border-bottom: 1px solid var(--rule);
+}
+.machines li:first-child {
+	border-top: 1px solid var(--rule-2);
 }
 .mc-name {
 	font-weight: 600;
@@ -917,7 +931,10 @@ table {
 
 	#machines {
 		display: block;
-		margin-top: 30px;
+		margin-top: 26px;
+	}
+	.name .label {
+		display: none;
 	}
 	#files {
 		margin-top: 30px;
