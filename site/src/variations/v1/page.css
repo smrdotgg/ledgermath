@@ -56,7 +56,7 @@
 		--paper: #101417;
 		--paper-2: #171d21;
 		--ink: #ece5d3;
-		--ink-2: #c9c3b4;
+		--ink-2: #d6d0c1;
 		--pencil: #b0b4ac;
 		--pencil-2: #b8bcb4;
 		--bar-rng: #ece5d3;
@@ -267,15 +267,14 @@ h1 .sub {
 
 .folio dt,
 .addr th,
-.mtable thead th,
 .ledger thead th.no,
 .ledger thead th.what,
 .ledger thead th.unit {
-	font-weight: 400;
+	font-weight: 500;
 	font-variant-caps: all-small-caps;
 	letter-spacing: 0.06em;
 	color: var(--ink-2);
-	font-size: 1.0625rem;
+	font-size: 1.125rem;
 }
 
 .folio dd {
@@ -330,22 +329,55 @@ h1 .sub {
 	gap: 0.45rem;
 }
 
-/* the two marks of the rule, drawn as they are drawn under each figure */
-.lg-len,
-.lg-rng {
+/* the rule, drawn as it is drawn under each figure: pencil from zero, the p5–p95 in ink */
+.lg-rule {
+	position: relative;
 	display: inline-block;
+	width: 2.75rem;
+	height: 5px;
+}
+
+.lg-len {
+	position: absolute;
+	left: 0;
+	top: 1px;
 	height: 3px;
-	width: 2.25rem;
+	width: 100%;
 	background: var(--pencil);
 	opacity: 0.45;
 }
 
 .lg-rng {
+	position: absolute;
+	right: 0.35rem;
+	top: 0;
 	height: 5px;
 	width: 0.9rem;
 	background: var(--bar-rng);
-	opacity: 1;
 	border-radius: 1px;
+}
+
+/* the tally: counted Runs behind a figure, in the link's ink, since the figure opens its Series */
+.n {
+	flex: none;
+	font-family: var(--mono);
+	font-size: 0.75rem;
+	line-height: 1;
+	color: var(--link);
+	white-space: nowrap;
+}
+
+.n i {
+	margin-right: 0.12em;
+	font-family: var(--serif);
+	font-size: 1.1em;
+	font-style: italic;
+	color: var(--pencil);
+}
+
+.legend .n i {
+	margin: 0;
+	font-size: 1.05rem;
 }
 
 .scroll {
@@ -469,8 +501,16 @@ th.mach > span {
 }
 
 .mach .price {
-	margin-top: 0.1rem;
+	display: inline-block;
+	margin-top: 0.2rem;
 	font-weight: 600;
+	color: var(--ink);
+	text-decoration: underline 1px var(--link);
+	text-underline-offset: 0.22em;
+}
+
+.mach .price:hover {
+	color: var(--link);
 }
 
 .mach .per {
@@ -562,12 +602,20 @@ td.fig-cell a:hover .fig .w {
 	margin-left: 0.14em;
 }
 
+/* the rule's line: the pencil rule, then the tally at its end */
+.line {
+	display: flex;
+	align-items: center;
+	gap: 0.5rem;
+	margin: 0.3rem 0.4rem 0 0;
+}
+
 /* the pencil rule: 0 to the median, drawn to the row's scale, with the p5–p95 range in ink */
 .bar {
 	position: relative;
 	display: block;
+	flex: 1;
 	height: 5px;
-	margin: 0.45rem 0.75rem 0.1rem 0;
 }
 
 .bar-len {
@@ -594,39 +642,6 @@ td.fig-cell a:hover .fig .w {
 	display: none;
 }
 
-/* the accounts, as a thumb index */
-.index-tabs ol {
-	display: flex;
-	flex-wrap: wrap;
-	gap: 0.25rem 1.5rem;
-	margin: 0 0 0.6rem;
-	padding: 0;
-	list-style: none;
-	font-variant-caps: all-small-caps;
-	letter-spacing: 0.08em;
-	font-size: 1rem;
-}
-
-.index-tabs a {
-	color: var(--ink-2);
-	text-decoration: none;
-}
-
-.index-tabs a.on {
-	color: var(--ink);
-	text-decoration: underline 2px var(--red-rule);
-	text-underline-offset: 0.3em;
-}
-
-.index-tabs a:hover {
-	text-decoration: underline;
-}
-
-.index-tabs .roman {
-	font-weight: 400;
-	color: var(--ink-2);
-}
-
 /* on a wide screen the ledger needs no scroll box, and its column heads stay in view */
 @media (min-width: 1360px) {
 	.ledger .scroll {
@@ -642,20 +657,36 @@ td.fig-cell a:hover .fig .w {
 /* ------------------------------------------------------------------ the back matter */
 
 .back {
-	display: grid;
-	grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr);
-	gap: 4rem;
 	margin-top: 3.5rem;
 	padding-top: 1.5rem;
 	border-top: 1px solid var(--rule-strong);
+}
+
+/* the API: its heading where the ledger names its entries, its addresses under the machines' columns */
+.api {
+	display: grid;
+	grid-template-columns: 24.25rem minmax(0, 1fr);
+	grid-template-rows: auto 1fr;
+	gap: 0 0.75rem;
+	align-items: start;
+}
+
+.api h2,
+.api .api-lede {
+	grid-column: 1;
+	padding-right: 2rem;
+}
+
+.api .addr {
+	grid-column: 2;
+	grid-row: 1 / span 2;
 }
 
 .back h2 {
 	font-size: 1.375rem;
 }
 
-.api-lede,
-.section-lede {
+.api-lede {
 	margin: 0.4rem 0 0.9rem;
 	font-size: 0.9375rem;
 	color: var(--ink-2);
@@ -697,64 +728,6 @@ td.fig-cell a:hover .fig .w {
 	font-size: 0.875rem;
 }
 
-.mtable {
-	width: 100%;
-	border-collapse: collapse;
-	font-size: 0.9375rem;
-	border-top: 3px double var(--rule-strong);
-	border-bottom: 3px double var(--rule-strong);
-}
-
-.mtable th,
-.mtable td {
-	padding: 0.5rem 0.75rem;
-	text-align: left;
-	vertical-align: top;
-	border-bottom: 1px solid var(--rule);
-}
-
-.mtable th:first-child {
-	padding-left: 0;
-}
-
-.mtable thead th {
-	border-bottom: 3px double var(--rule-strong);
-	vertical-align: bottom;
-	white-space: nowrap;
-}
-
-.mtable tbody th {
-	font-weight: 500;
-	white-space: nowrap;
-}
-
-.mtable .r {
-	text-align: right;
-}
-
-.mtable .num {
-	white-space: nowrap;
-}
-
-.mtable td.m-price {
-	border-left: 5px double var(--red-rule);
-	padding-right: 0;
-	padding-left: 1rem;
-	text-align: left;
-	font-size: 1rem;
-	--whole: 1ch;
-}
-
-.mtable .clock {
-	display: block;
-	color: var(--pencil);
-	font-size: 0.8125rem;
-}
-
-.ph {
-	display: none;
-}
-
 /* ------------------------------------------------------------------ colophon */
 
 .colophon {
@@ -782,9 +755,13 @@ td.fig-cell a:hover .fig .w {
 
 @media (max-width: 1100px) {
 	.masthead,
-	.back {
+	.api {
 		grid-template-columns: minmax(0, 1fr);
 		align-items: start;
+	}
+	.api .addr {
+		grid-column: 1;
+		grid-row: auto;
 	}
 	.ledger table {
 		min-width: 74rem;
@@ -826,8 +803,6 @@ td.fig-cell a:hover .fig .w {
 
 	.cmd code {
 		font-size: 0.75rem;
-		white-space: normal;
-		overflow-wrap: anywhere;
 	}
 
 	.folio {
@@ -868,31 +843,12 @@ td.fig-cell a:hover .fig .w {
 		gap: 0.15rem 0.45rem;
 	}
 
-
-	/* the accounts: a bar that stays at the top while the ledger scrolls, all five in reach */
-	.index-tabs {
-		position: sticky;
-		top: 0;
-		z-index: 3;
-		margin: 0 calc(-1 * var(--gutter));
-		padding: 0 var(--gutter);
-		background: var(--paper);
-		border-bottom: 1px solid var(--rule-2);
-	}
-
-	.index-tabs ol {
-		gap: 0 1rem;
-		margin: 0;
-		padding: 0.3rem 0 0.35rem;
-		font-size: 0.9375rem;
-		line-height: 1.6;
-	}
-
 	.ledger .scroll {
 		overflow: visible;
 	}
 
 	.ledger table,
+	.ledger thead,
 	.ledger tbody,
 	.ledger tr.sec,
 	.ledger tr.sec th {
@@ -900,16 +856,50 @@ td.fig-cell a:hover .fig .w {
 		min-width: 0;
 	}
 
-	.ledger tbody {
-		scroll-margin-top: 3.75rem;
+	/* the column heads become the key: one line a machine, its type, size and hourly price */
+	.ledger thead tr {
+		display: block;
+		border-top: 3px double var(--rule-strong);
+		border-bottom: 3px double var(--rule-strong);
 	}
 
-	.ledger thead {
-		position: absolute;
-		width: 1px;
-		height: 1px;
-		overflow: hidden;
-		clip-path: inset(50%);
+	.ledger thead th.no,
+	.ledger thead th.what,
+	.ledger thead th.unit {
+		display: none;
+	}
+
+	.ledger thead th.mach {
+		display: grid;
+		grid-template-columns: 5.6rem minmax(0, 1fr) auto;
+		align-items: baseline;
+		width: auto;
+		padding: 0.25rem 0;
+		border: 0;
+		border-bottom: 1px solid var(--rule);
+	}
+
+	.ledger thead th.mach:last-child {
+		border-bottom: 0;
+	}
+
+	.ledger thead th.mach > span,
+	.ledger thead th.mach > a {
+		display: block;
+		margin: 0;
+	}
+
+	.mach .it {
+		font-size: 0.8125rem;
+	}
+
+	.mach .spec {
+		font-size: 0.8125rem;
+	}
+
+	.mach .price {
+		font-size: 0.9375rem;
+		text-align: right;
 	}
 
 	tr.sec th {
@@ -957,11 +947,11 @@ td.fig-cell a:hover .fig .w {
 		margin-left: 0.15rem;
 	}
 
-	/* a machine's line: its family, then the figure, the rule under it */
+	/* a machine's line: its type in the number gutter, then the figure, the rule and the tally */
 	.ledger td.fig-cell {
-		grid-column: 2 / 4;
+		grid-column: 1 / 4;
 		display: grid;
-		grid-template-columns: 2.5rem minmax(0, 1fr);
+		grid-template-columns: 5.6rem minmax(0, 1fr);
 		align-items: start;
 		padding: 0;
 		border-bottom: 1px solid var(--rule);
@@ -980,29 +970,38 @@ td.fig-cell a:hover .fig .w {
 		display: block;
 		padding-top: 0.2rem;
 		font-family: var(--mono);
-		font-size: 0.8125rem;
+		font-size: 0.75rem;
 		line-height: 1.35rem;
 		color: var(--ink-2);
+		white-space: nowrap;
 	}
 
 	.ledger td.fig-cell a {
 		display: grid;
-		grid-template-columns: 10.75rem minmax(0, 1fr);
+		grid-template-columns: 10rem minmax(0, 1fr);
 		align-items: center;
 		margin: 0;
-		padding: 0.2rem 0 0.2rem 0.6rem;
+		padding: 0.2rem 0 0.2rem 0.5rem;
 		line-height: 1.35rem;
 		border-left: 3px double var(--red-rule);
 		border-radius: 0;
 	}
 
 	.ledger td.fig-cell .fig {
-		font-size: 0.9375rem;
+		font-size: 0.9rem;
+	}
+
+	.ledger td.fig-cell .line {
+		margin: 0 0 0 0.35rem;
+		gap: 0.3rem;
 	}
 
 	.ledger td.fig-cell .bar {
 		height: 4px;
-		margin: 0 0.1rem 0 0.5rem;
+	}
+
+	.n {
+		font-size: 0.6875rem;
 	}
 
 	.bar-len {
@@ -1016,87 +1015,21 @@ td.fig-cell a:hover .fig .w {
 
 	.back {
 		margin-top: 2.5rem;
-		gap: 2.5rem;
 	}
 
 	.addr th {
-		width: 5.75rem;
+		width: 5rem;
 		font-size: 1rem;
 	}
 
-	/* the machines: one record each, the price beside the type */
-	.mtable,
-	.mtable tbody {
-		display: block;
+	.addr td.mono {
+		font-size: 0.75rem;
+		white-space: nowrap;
+		overflow-wrap: normal;
 	}
 
-	.mtable thead {
-		position: absolute;
-		width: 1px;
-		height: 1px;
-		overflow: hidden;
-		clip-path: inset(50%);
-	}
-
-	.mtable tr {
-		display: flex;
-		flex-wrap: wrap;
-		align-items: baseline;
-		padding: 0.55rem 0;
-		border-bottom: 1px solid var(--rule);
-	}
-
-	.mtable tr:last-child {
-		border-bottom: 0;
-	}
-
-	.mtable th,
-	.mtable td {
-		padding: 0;
-		border: 0;
-		text-align: left;
-	}
-
-	.mtable .m-type {
-		flex: 1;
-	}
-
-	.mtable td.m-price {
-		order: 1;
-		border: 0;
-		padding: 0;
-		font-size: 1.0625rem;
-		font-weight: 600;
-	}
-
-	.mtable .m-proc {
-		order: 2;
-		flex-basis: 100%;
-		margin-top: 0.15rem;
-	}
-
-	.mtable .m-proc .clock {
-		display: inline;
-		margin-left: 0.4rem;
-	}
-
-	.mtable .m-cpu,
-	.mtable .m-mem,
-	.mtable .m-net {
-		order: 3;
-		font-size: 0.875rem;
-		color: var(--ink-2);
-	}
-
-	.mtable .m-mem::before,
-	.mtable .m-net::before {
-		content: "·";
-		margin: 0 0.4rem;
-		color: var(--pencil);
-	}
-
-	.ph {
-		display: inline;
+	.addr td.sch {
+		width: 3.25rem;
 	}
 }
 

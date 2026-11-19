@@ -100,9 +100,18 @@ const runs = formatCount(snapshot.runCount).full;
 const seriesCount = formatCount(snapshot.seriesCount).full;
 const method = snapshot.methods[0]!;
 const price = (usd: Parameters<typeof formatUsd>[0]) => `$${formatUsd(usd).full}`;
+/** One real Run, as a Series file holds it: its evidence and its boot's summary, to show what "kept with its evidence" means. */
+const sampleRun = seriesFileContents.point.example;
 
-/** On a phone a machine's line names it by its family, which is unique among the five; the machines table gives the full type. */
-const family = (instanceType: string) => instanceType.split(".")[0]!;
+/** The tally beside each figure: the counted Runs behind it, in pencil, inside the figure's link to its Series. */
+function Tally(props: { count: number }) {
+	return (
+		<span class="n">
+			<i>n</i>
+			{props.count}
+		</span>
+	);
+}
 
 /** An address, with a place to break after each slash so it wraps where a reader expects. */
 function Url(props: { href: string }) {
@@ -142,15 +151,13 @@ export default function Page() {
 						LedgerMath<span class="sub">A book of record for cloud servers</span>
 					</h1>
 					<p class="claim">
-						{formatCount(snapshot.machineCount).full} AWS machine types, benchmarked four times a day. Every figure kept with its evidence and published as
-						static JSON for AI agents.
+						{formatCount(snapshot.machineCount).full} AWS machine types, benchmarked four times a day. Every Run kept with its evidence, published as static
+						JSON for AI agents.
 					</p>
 					<div class="start">
 						<span class="start-h">Point an agent at it</span>
 						<div class="cmd">
-							<code>
-								curl <Url href={links.index} />
-							</code>
+							<code tabindex="0">curl {links.index}</code>
 							<button type="button" class="copy" data-copy={`curl ${links.index}`} aria-label="Copy the command" hidden>
 								Copy
 							</button>
@@ -172,6 +179,28 @@ export default function Page() {
 							<span title={`Since ${oldest.full}; boots at ${RUN_TIMES.join(", ")} UTC`}>{runs}</span> <span class="aside">in</span>{" "}
 							<a href={links.seriesList}>{seriesCount} Series</a>
 							<span class="aside">, {formatCount(snapshot.failedRuns).full} failed</span>
+						</dd>
+					</div>
+					<div>
+						<dt>Evidence</dt>
+						<dd>
+							<a href={sampleRun.evidence ?? links.evidenceBlobTemplate} title={`Run ${sampleRun.run}: its binary, streams and dumps by sha256`}>
+								Run file
+							</a>
+							<span class="aside"> · </span>
+							<a href={sampleRun.boot_summary ?? links.evidenceBlobTemplate}>boot summary</a>
+						</dd>
+					</div>
+					<div>
+						<dt>Prices</dt>
+						<dd>
+							AWS On-Demand{" "}
+							<span class="aside">
+								· copied{" "}
+								<a href={links.prices} class="nowrap">
+									{snapshot.priceDate}
+								</a>
+							</span>
 						</dd>
 					</div>
 					<div>
@@ -203,26 +232,20 @@ export default function Page() {
 						</h2>
 						<p class="legend">
 							<span class="lg-item">
-								<span class="lg-len" aria-hidden="true" />
-								0–median
+								<span class="lg-rule" aria-hidden="true">
+									<span class="lg-len" />
+									<span class="lg-rng" />
+								</span>
+								p5–p95 · scale per row
 							</span>
 							<span class="lg-item">
-								<span class="lg-rng" aria-hidden="true" />
-								p5–p95
+								<span class="n" aria-hidden="true">
+									<i>n</i>
+								</span>
+								counted Runs · links to its Series
 							</span>
 						</p>
 					</div>
-					<nav class="index-tabs" aria-label="The ledger's accounts">
-						<ol>
-							{SECTIONS.map((s, i) => (
-								<li>
-									<a href={`#${sectionId(s)}`} data-sec={sectionId(s)}>
-										<span class="roman">{ROMAN[i]}.</span> {s}
-									</a>
-								</li>
-							))}
-						</ol>
-					</nav>
 					<div class="scroll" tabindex="0" role="region" aria-label="The ledger, scrollable" style={{ "--whole": `${wholeDigits}ch` }}>
 						<table>
 							<thead>
@@ -238,14 +261,16 @@ export default function Page() {
 									</th>
 									{machines.map((m) => (
 										<th scope="col" class="mach">
-											<span class="it">{m.instanceType}</span>
+											<span class="it" title={`${m.processor}, ${m.clockSpeed}; network ${m.network}`}>
+												{m.instanceType}
+											</span>
 											<span class="spec">
 												{m.vcpu} vCPU · {m.memory}
 											</span>
-											<span class="price" title={m.price.description}>
+											<a class="price" href={links.prices} title={`${m.price.description}; SKU ${m.price.sku}; at ${m.price.path.pointer}`}>
 												{price(m.price.usdPerHour)}
 												<span class="per">/h</span>
-											</span>
+											</a>
 										</th>
 									))}
 								</tr>
@@ -285,14 +310,17 @@ export default function Page() {
 														return (
 															<td class="fig-cell">
 																<span class="mkey" aria-hidden="true">
-																	{family(cell.machine.instanceType)}
+																	{cell.machine.instanceType}
 																</span>
 																<a
 																	href={links.seriesFile(cell.series)}
 																	title={`${cell.machine.instanceType}: median of ${x.count} counted Runs ${x.p50.full} ${unit}; 5th percentile ${x.p5.full}, 95th ${x.p95.full}. As the Derivation holds it: ${x.p50.source}.`}
 																>
 																	<Written full={x.p50.full} />
-																	<Rule x={x} scale={scale} />
+																	<span class="line">
+																		<Rule x={x} scale={scale} />
+																		<Tally count={x.count} />
+																	</span>
 																</a>
 															</td>
 														);
@@ -335,64 +363,12 @@ export default function Page() {
 							</tbody>
 						</table>
 					</section>
-
-					<section class="machines" id="machines" aria-labelledby="machines-h">
-						<h2 id="machines-h">The machines</h2>
-						<p class="section-lede">
-							AWS On-Demand Linux, per hour, as of{" "}
-							<a href={links.prices} class="nowrap">
-								{snapshot.priceDate}
-							</a>
-						</p>
-						<table class="mtable">
-							<thead>
-								<tr>
-									<th scope="col">Type</th>
-									<th scope="col" class="r">
-										vCPU
-									</th>
-									<th scope="col" class="r">
-										Memory
-									</th>
-									<th scope="col">Processor</th>
-									<th scope="col">Network</th>
-									<th scope="col" class="price-h">
-										USD/h
-									</th>
-								</tr>
-							</thead>
-							<tbody>
-								{machines.map((m) => (
-									<tr>
-										<th scope="row" class="mono m-type">
-											{m.instanceType}
-										</th>
-										<td class="r num m-cpu">
-											{m.vcpu}
-											<span class="ph"> vCPU</span>
-										</td>
-										<td class="r num m-mem">{m.memory}</td>
-										<td class="m-proc">
-											{m.processor}
-											<span class="clock">{m.clockSpeed}</span>
-										</td>
-										<td class="m-net">{m.network}</td>
-										<td class="r num m-price" title={`${m.price.description}; SKU ${m.price.sku}`}>
-											<span class="ph">$</span>
-											<Written full={formatUsd(m.price.usdPerHour).full} inkPlaces={10} />
-										</td>
-									</tr>
-								))}
-							</tbody>
-						</table>
-					</section>
 				</div>
 			</main>
 
 			<footer class="colophon">
 				<p>
-					LedgerMath · entries to {newest.longDate}, {newest.second} UTC · Source Serif 4, IBM Plex Mono ·{" "}
-					<a href="third-party-notices.txt">Notices</a>
+					LedgerMath · entries to {newest.longDate}, {newest.second} UTC · <a href="third-party-notices.txt">Notices</a>
 				</p>
 			</footer>
 		</>
