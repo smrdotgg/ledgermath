@@ -97,20 +97,6 @@ function ranges(cells: { p50: Shown; p5: Shown; p95: Shown }[]): [string, string
 }
 
 /**
- * Which figure of a row is best (the highest rate, or the lowest time), and which others have a
- * p5–p95 that overlaps the best's: a mark for reading the row, not a figure. No number is made.
- */
-function marks(up: boolean, cells: { f: { p5: number; p50: number; p95: number } }[]): ("best" | "near" | "")[] {
-	const p50s = cells.map((x) => x.f.p50);
-	const top = up ? Math.max(...p50s) : Math.min(...p50s);
-	const best = cells.filter((x) => x.f.p50 === top);
-	return cells.map((x) => {
-		if (x.f.p50 === top) return "best";
-		return best.some((b) => x.f.p5 <= b.f.p95 && b.f.p5 <= x.f.p95) ? "near" : "";
-	});
-}
-
-/**
  * A figure printed in full, every digit, aligned on its decimal point: the whole part in a box
  * as wide as the row's widest, the fraction after it. The first four significant digits are set
  * brighter, the rest dimmer: a typographic emphasis on the exact text, not a rounding.
@@ -257,8 +243,8 @@ function SectionNote(props: { section: Section }) {
 	const seq = headline.find((row) => row.choice.benchmark === "disk_read_sequential")?.choice;
 	return (
 		<span class="sect-note">
-			Every row here reads or writes the root EBS gp3 volume, on all five machines, and not a machine's own disk: the instance store that only
-			i4i.2xlarge has is not in these rows. So they describe the volume more than the machine.
+			Every row here reads or writes the root EBS gp3 volume, not the instance store only i4i.2xlarge has, so they describe the volume more than
+			the machine.
 			{iops && seq ? (
 				<>
 					{" "}
@@ -269,9 +255,7 @@ function SectionNote(props: { section: Section }) {
 	);
 }
 
-const MARK_WORDS = { best: "the best median in this row", near: "its p5–p95 overlaps the best median's", "": "" } as const;
-
-/** A machine's column head: its name, size and hourly price. Said once at the top, and again at each group. */
+/** A machine's column head: its name, size and hourly price. On a wide screen it stays in view while the figures scroll. */
 function MachineHead(props: { m: (typeof machines)[number] }) {
 	return (
 		<>
@@ -289,11 +273,7 @@ function DataTable() {
 	return (
 		<div class="scroll" role="region" aria-label="The headline figures: 14 benchmarks on 5 machine types" tabindex="0">
 			<table class="data">
-				<caption class="sr">
-					The median (p50) of each Series' counted Runs, one Series per benchmark and machine type, with its 5th and 95th percentiles and its count of
-					Runs. Each figure links to its Series file. A star marks the best median of a row; an approximately-equal sign marks a median whose p5 to p95
-					overlaps the best one's.
-				</caption>
+				<caption class="sr">Medians, p5–p95 and counted Runs (n)</caption>
 				<colgroup>
 					<col class="c-unit" />
 					{machines.map(() => (
@@ -314,7 +294,7 @@ function DataTable() {
 						))}
 					</tr>
 				</thead>
-				{SECTION_ORDER.map((section, s) => {
+				{SECTION_ORDER.map((section) => {
 					const rows = headline.filter((row) => row.choice.section === section);
 					return rows.map((row, i) => {
 						const fig = rowFigure(row);
@@ -326,7 +306,6 @@ function DataTable() {
 							return { cell, f, p50: fig(f.p50), p5: fig(f.p5), p95: fig(f.p95) };
 						});
 						const shortRanges = ranges(cells);
-						const rowMarks = marks(up, cells);
 						const whole = (x: Shown) => x.full.split(".")[0]!.length;
 						const width = Math.max(...cells.map((x) => whole(x.p50)));
 						const exactWidth = Math.max(...cells.flatMap((x) => [whole(x.p5), whole(x.p95)]));
@@ -341,19 +320,11 @@ function DataTable() {
 										</th>
 									</tr>
 								) : null}
-								{i === 0 && s > 0 ? (
-									<tr class="rehead" aria-hidden="true">
-										<td />
-										{machines.map((m) => (
-											<td>
-												<MachineHead m={m} />
-											</td>
-										))}
-									</tr>
-								) : null}
 								<tr class="desc">
 									<th colspan={cols} scope="rowgroup">
-										<span class="b-label">{c.label}</span>
+										<a href={c.readme} class="b-label" title={`How ${c.label.toLowerCase()} is run`}>
+											{c.label}
+										</a>
 										<span class="b-what">{c.what}</span>
 										{c.per ? (
 											<span class="b-shown">
@@ -364,47 +335,30 @@ function DataTable() {
 								</tr>
 								<tr class="figs">
 									<th scope="row" class="unit">
-										<span class="sr">{c.label}, median {up ? "rate" : `time${each}`} in </span>
 										<span class="u">{unit}</span>
-										<span class="dir" aria-hidden="true">
+										<span class="dir" role="img" aria-label={up ? "higher is better" : "lower is better"}>
 											{up ? "↑" : "↓"}
 										</span>
-										<span class="sr">{up ? ", higher is better" : ", lower is better"}</span>
 										<span class="u2">p5–p95 n</span>
 										<details class="more">
-											<summary>
-												exact<span class="sr">: {c.label}, every digit of p5 and p95, the Series files, one repetition and the setting</span>
-												<span class="sum-more" aria-hidden="true">
-													, setting
-												</span>
-											</summary>
+											<summary aria-label={`exact p5, p95 and setting: ${c.label}`}>exact</summary>
 										</details>
 									</th>
 									{cells.map(({ cell, f, p50, p5, p95 }, k) => {
-										const mark = rowMarks[k]!;
 										const [lo, hi] = shortRanges[k]!;
 										return (
-											<td data-m={cell.machine.instanceType} class={mark ? `m-${mark}` : undefined}>
+											<td data-m={cell.machine.instanceType}>
 												<span class="fig">
-													<span class="mk" aria-hidden="true">
-														{mark === "best" ? "*" : mark === "near" ? "≈" : " "}
-													</span>
 													<a
 														href={links.seriesFile(cell.series)}
-														title={`${cell.machine.instanceType}: p50 ${p50.full} ${p50.unit}${each}; p5 ${p5.full}, p95 ${p95.full}; ${f.count} counted Runs.${mark ? ` ${MARK_WORDS[mark][0]!.toUpperCase()}${MARK_WORDS[mark].slice(1)}.` : ""} As the snapshot holds it: ${p50.source}. Series ${cell.series.id}`}
+														title={`${cell.machine.instanceType}: p50 ${p50.full} ${p50.unit}${each}; p5 ${p5.full}, p95 ${p95.full}; ${f.count} counted Runs. As the snapshot holds it: ${p50.source}. Series ${cell.series.id}`}
 													>
 														<Digits full={p50.full} width={width} />
 													</a>
-													{mark ? <span class="sr">, {MARK_WORDS[mark]}</span> : null}
 												</span>
 												<span class="rng" title={`p5 ${p5.full} ${p5.unit}, p95 ${p95.full} ${p95.unit}`}>
-													<span class="sr">p5 to p95: </span>
 													{lo}–{hi}
-													<span class="n">
-														<span class="sr">, counted Runs: </span>
-														<span aria-hidden="true">n=</span>
-														{f.count}
-													</span>
+													<span class="n">n={f.count}</span>
 												</span>
 											</td>
 										);
@@ -413,7 +367,6 @@ function DataTable() {
 								{(["p5", "p95"] as const).map((k) => (
 									<tr class="exact">
 										<th scope="row" class="unit">
-											<span class="sr">{c.label}, </span>
 											{k}
 										</th>
 										{cells.map((x) => (
@@ -423,21 +376,9 @@ function DataTable() {
 										))}
 									</tr>
 								))}
-								<tr class="exact sids">
-									<th scope="row" class="unit">
-										<span class="sr">{c.label}, </span>series
-									</th>
-									{cells.map((x) => (
-										<td data-m={x.cell.machine.instanceType}>
-											<a href={links.seriesFile(x.cell.series)} class="sid">
-												{x.cell.series.id}.json
-											</a>
-										</td>
-									))}
-								</tr>
 								<tr class="exact about">
 									<th scope="row" class="unit">
-										<span class="sr">{c.label}, </span>about
+										about
 									</th>
 									<td colspan={machines.length}>
 										<span class="ab">
@@ -447,13 +388,11 @@ function DataTable() {
 											<span class="k">setting</span> {c.setting}
 										</span>
 										{c.reason ? (
-											<span class="ab">
-												<span class="k">why this setting</span> {c.reason}
-											</span>
+											<details class="why">
+												<summary>why this setting</summary>
+												{c.reason}
+											</details>
 										) : null}
-										<span class="ab">
-											<span class="k">how it is run</span> <a href={c.readme}>{c.readme.replace(/^https:\/\//, "")}</a>
-										</span>
 									</td>
 								</tr>
 							</tbody>
@@ -520,7 +459,6 @@ function ExamplePoint() {
 	const left = names
 		.filter((n) => !keep.has(n))
 		.map((n) => (Array.isArray(point[n]) ? `${n} (${(point[n] as unknown[]).length})` : n));
-	const per = headline.find((row) => row.choice.benchmark === seriesFileContents.sample.benchmark)?.choice.per;
 	return (
 		<>
 			<pre class="json">
@@ -539,12 +477,6 @@ function ExamplePoint() {
 					<span class="jl0">{"}"}</span>
 				</code>
 			</pre>
-			{per ? (
-				<span class="json-note">
-					A point's figure is one repetition's time in nanoseconds. One repetition of {seriesFileContents.sample.benchmark} is{" "}
-					{formatCount(per.count).full} {per.of}s, so DATA shows the time of one: this one ÷ {formatCount(per.count).full}.
-				</span>
-			) : null}
 		</>
 	);
 }
@@ -557,25 +489,28 @@ function Methods() {
 	return (
 		<>
 			<p>
-				A versioned Method turns a Series' Runs into a Derivation, and its words are published with the data, in{" "}
-				<a href={links.seriesList}>{path(links.seriesList)}</a>. The DATA above is Method <b>series</b> v{series?.version}:
+				The DATA above is Method <b>series</b> v{series?.version}, published with its words in <a href={links.seriesList}>{path(links.seriesList)}</a>.
 			</p>
 			<dl class="defs">
-				{SERIES_DEFS.map((key) => (
-					<div>
-						<dt>{key}</dt>
-						<dd>{series?.definitions[key]}</dd>
-					</div>
-				))}
 				<div>
 					<dt>counted</dt>
 					<dd>
 						In short: a Run counts when its benchmark exited 0, every line it printed is a well-formed event, and its events came in the required order
-						with as many samples as it asked for. Any other Run is failed: kept, shown with its reasons, and in no percentile. The full rule is in{" "}
-						<a href={links.seriesList}>{path(links.seriesList)}</a>.
+						with as many samples as it asked for. Any other Run is failed (EXIT STATUS).
 					</dd>
 				</div>
 			</dl>
+			<details class="defs-more">
+				<summary>how it derives the figures, in its own words</summary>
+				<dl class="defs">
+					{SERIES_DEFS.map((key) => (
+						<div>
+							<dt>{key}</dt>
+							<dd>{series?.definitions[key]}</dd>
+						</div>
+					))}
+				</dl>
+			</details>
 			{others.length ? (
 				<p>
 					Also published:{" "}
@@ -616,16 +551,10 @@ export default function Page() {
 							</h1>
 							<p class="lede">
 								{formatCount(snapshot.benchmarkCount).full} benchmarks on {formatCount(snapshot.machineCount).full} machine types, run four times a day on
-								freshly booted machines, published as static JSON for AI agents and their developers: to choose a machine or estimate a cost
-								from measured numbers.
+								freshly booted machines, published as static JSON for AI agents: to choose a machine or estimate a cost from measured numbers.
 							</p>
 							<p class="glance">
-								<span class="nb">
-									newest Run <Moment m={newest} />
-								</span>
-								<span class="gl-2">
-									{formatCount(snapshot.runCount).full} Runs kept, {formatCount(snapshot.failedRuns).full} failed, in {snapshot.region}
-								</span>
+								newest Run <Moment m={newest} />
 							</p>
 							<nav class="goto" aria-label="On this page">
 								<a href="#data">the figures</a>
@@ -658,8 +587,7 @@ export default function Page() {
 				<Section id="data" title="DATA" sub={`${formatCount(snapshot.benchmarkCount).full} benchmarks × ${formatCount(snapshot.machineCount).full} machine types`}>
 					<p>
 						The median (p50) of each Series' counted Runs, chosen by a written rule: one thread, static build, settings every machine ran. Each
-						median is printed in full and links to its Series file; the p5–p95 under it is shortened; <span class="hi">[+] exact</span> gives it in
-						full.
+						median links its Series file; the p5–p95 under it is shortened, and <span class="hi">[+] exact</span> gives it in full.
 					</p>
 					<nav class="jump" aria-label="Benchmark groups">
 						{SECTION_ORDER.map((section, i) => (
@@ -678,12 +606,6 @@ export default function Page() {
 							</span>{" "}
 							<span class="nb">
 								<span class="dir">↓</span> lower is better
-							</span>{" "}
-							<span class="nb">
-								<span class="lg-mk">*</span> the row's best median
-							</span>{" "}
-							<span class="nb">
-								<span class="lg-mk near">≈</span> range overlaps it
 							</span>
 						</span>
 					</nav>
@@ -692,22 +614,16 @@ export default function Page() {
 
 				<Section id="description" title="DESCRIPTION">
 					<p>
-						LedgerMath boots AWS machines four times a day, at {SCHEDULE.slice(0, -1).join(", ")} and {SCHEDULE.at(-1)} UTC, and runs{" "}
-						{formatCount(snapshot.benchmarkCount).full} benchmarks on each freshly booted machine. Every execution is kept as a <b>Run</b>, with its
-						evidence: what the benchmark printed, and what was recorded about the machine. A <b>Series</b> is the Runs of one benchmark, setting, build,
-						machine type and zone; a published <b>Method</b> derives its figures.
-					</p>
-					<p>
-						{formatCount(snapshot.machineCount).full} machine types in {snapshot.region} are measured. The figures, the evidence and AWS's public
-						On-Demand prices, copied daily, are served as static JSON at <a href={links.index}>{API_HOST}</a>.
+						Every execution of a benchmark is kept as a <b>Run</b>, with its evidence: what the benchmark printed, and what was recorded about the
+						machine. A <b>Series</b> is the Runs of one benchmark, setting, build, machine type and zone; a published <b>Method</b> derives its
+						figures. All of it, with AWS's On-Demand prices, is served at <a href={links.index}>{API_HOST}</a>.
 					</p>
 				</Section>
 
 				<Section id="machines" title="MACHINES">
 					<p>
 						Cheapest first. Hourly On-Demand Linux price in {snapshot.region}, in US dollars, from AWS's price list of{" "}
-						<a href={links.prices}>{snapshot.priceDate}</a>. Storage and network are as AWS states them; the instance store of i4i.2xlarge is
-						not what DATA's disk rows measure (they use each machine's root EBS gp3 volume).
+						<a href={links.prices}>{snapshot.priceDate}</a>; storage and network as AWS states them.
 					</p>
 					<Machines />
 				</Section>
@@ -729,7 +645,7 @@ export default function Page() {
 							<dt>
 								<a href={links.index}>{path(links.index)}</a>
 							</dt>
-							<dd>The table of contents: what LedgerMath is, how v1 changes, where everything is.</dd>
+							<dd>What LedgerMath is, how v1 changes, where everything is.</dd>
 						</div>
 						<div>
 							<dt>
@@ -742,8 +658,8 @@ export default function Page() {
 								<code>/v1/series/&lt;id&gt;.json</code>
 							</dt>
 							<dd>
-								One Series: each Run's figure and a link to its evidence. Every figure in DATA links one. One point, one Run, as the file of Series{" "}
-								<a href={seriesFileContents.sample.url}>{seriesFileContents.sample.id}</a> holds it ({seriesFileContents.sample.benchmark} on{" "}
+								One Series: each Run's figure and a link to its evidence. One Run of Series{" "}
+								<a href={seriesFileContents.sample.url}>{seriesFileContents.sample.id}</a> ({seriesFileContents.sample.benchmark} on{" "}
 								{seriesFileContents.sample.instanceType}), abridged:
 								<ExamplePoint />
 							</dd>
