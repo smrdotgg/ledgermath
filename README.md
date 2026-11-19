@@ -32,7 +32,7 @@ as the base the build started from (last section).
 | `scripts/copy-runs.ts` | The copy job: the bucket's Run files and boot summaries into the Runs repository |
 | `scripts/copy-bucket.ts` | Copies one `-runs` bucket into another, across two accounts, only ever adding, and checks the copy (`scripts/lib/bucket-copy.ts`): the move to the production account |
 | `scripts/derive.ts`, `scripts/build-page.ts` | Run the Methods over the Runs; turn their Derivations into the page |
-| `scripts/build-api.ts`, `scripts/check-api.ts` | Cut the Derivations and the price files into the data API's static files, laid out as they will be served; check what was written against its schemas, its links, the Derivations and the Runs repository (`scripts/lib/api.ts`, `scripts/lib/api-check.ts`; section "The data API") |
+| `scripts/build-api.ts`, `scripts/check-api.ts`, `scripts/previous-api.ts` | Cut the Derivations and the price files into the data API's static files, laid out as they will be served; check what was written against its schemas, its links, the Derivations and the Runs repository, and against the tree before it; fetch that tree, the last successful run's (`scripts/lib/api.ts`, `scripts/lib/api-check.ts`; section "The data API") |
 | `scripts/alarm.ts` | Opens, or comments on, one issue when a watched Series has had no Run for 48 hours, or the newest price file is more than 48 hours old |
 | `.github/workflows/runs.yml` | On a schedule: copy, push, derive, page, the data API's files, alarm |
 | `scripts/fetch-prices.ts`, `scripts/check-prices.ts` | Make the day's price file from AWS's public price lists; check a price file by downloading its sources again and cutting them again |
@@ -1253,8 +1253,10 @@ six hours, and by hand (`workflow_dispatch`), one run at a time. It checks out t
 repository with its whole history (for the alarm's `--schedule-changed-at`), takes AWS
 credentials through OIDC, checks out `smrdotgg/ledgermath-runs` with the deploy key,
 runs the copy job, commits and pushes what it added, runs both Methods, builds the page,
-uploads the page and both files of Derivations as the artifact `page`, and runs the alarm
-with the workflow's own token. Each Method runs on its own: when one fails, `derive.ts`
+uploads the page and both files of Derivations as the artifact `page`, builds and checks
+the data API's files and keeps them for a week as the artifact `api` (section "The data
+API"; to compare them with the last successful run's, its token may read Actions), and runs
+the alarm with the workflow's own token. Each Method runs on its own: when one fails, `derive.ts`
 still writes the other's Derivations and, in place of the failed one's, a note saying why
 (`page/<name>.failed.json`); the page is built from what there is and says which part is
 missing and why, the artifact is kept, and the run still ends as failed. Between runs it keeps, in GitHub's cache, the dump blobs it
@@ -2034,14 +2036,15 @@ Issue #64, ADR-0030. LedgerMath's numbers, for agents first, as a tree of small 
 files, each kind with a JSON schema. `scripts/build-api.ts` cuts it from the two files of
 Derivations and the Runs repository's price files, laid out exactly as it will be served
 from `https://api.ledgermath.com`. Nothing is served yet: the `runs` workflow builds the
-tree, checks it and keeps it as the artifact `api`, beside `page`. Serving it is the next
+tree, checks it, against the tree its last successful run kept too, and keeps it for a
+week as the artifact `api`, beside `page`. Serving it is the next
 step, and it goes public only on the maintainer's go.
 
 | Path | Holds |
 |------|-------|
 | `v1/index.json` | The table of contents: the list's address, every price file held with the newest marked, the schemas, the docs, and the template of a blob's address |
 | `v1/series.json` | One row per Series, each on a line of its own: what it is, how many Runs, its oldest and newest Run, a summary of each Method's Derivation under `derivations.<method>_v<version>`, and the `url` of its file. Above the rows, each Method's own words, with the Run files it could not read (`methods.<method>_v<version>.unreadable`) |
-| `v1/series/<id>.json` | One Series: each Method's summary at the Derivations' own paths (percentiles, groups and their facts and figures, section counts, `counted_runs`, `failed_runs`), with the Method's definitions; the points of its newest 12 Runs (`newest_points`; `newest_runs` says how many); and `months`, each month a Run of it started in, oldest first, with the month file's `url`, its Runs and its first and last start |
+| `v1/series/<id>.json` | One Series: each Method's summary at the Derivations' own paths (percentiles, groups and their facts and figures, section counts, `counted_runs`, `failed_runs`), with the Method's definitions; the points of its newest 12 Runs (`newest_points`; `newest_runs` says how many); and `months`, each month a Run of it started in, oldest first, with the month file's `url`, its Runs, its first and last start, and the month file's `sha256` and size in `bytes` |
 | `v1/series/<id>/<yyyy-mm>.json` | One month of a Series: every point of the Runs that started that month (UTC), each Method's under its key, and series v1's `differed` entry for each pair of consecutive Runs whose later Run started that month. Every point gives its Run file's `sha256`, `evidence` (the Run file's address) and `boot_summary` (its boot's, or null when the Runs repository has none) |
 | `v1/prices/<yyyy-mm-dd>.json` | That day's price file, byte for byte |
 | `v1/schemas/<name>.schema.json` | `index`, `series-list`, `series`, `series-month` (kept in `schemas/api/v1/`) and `prices` |
@@ -2061,19 +2064,40 @@ address is `--base`, so a private or test address can stand in.
   `1000`; `-0` passes, written `0`, the same value.
 - **Split by month.** What grows with every Run is in the month files: the points, and the
   pair entries (`differed`), filed under the month of the later Run. The Series file holds
-  the rest and the newest 12 points, and does not grow with its Runs beyond one month entry
-  a month. The Runs behind each percentile and in each group are not repeated: they are the
-  month files' counted points (with a `bytes_per_repetition`, for bytes per second) and the
-  points of a group's letter, and the build refuses Derivations where that is not so.
-  requests v1's `group_through` is written as it stood through each Run, null before the
-  Series' first Run of a second group, where the Derivation's value is that point's
-  `through`, so a Run that splits a Series changes no earlier month.
-- **A past month does not change.** A month file changes only when a Run of its month is
-  added, or when a missing boot summary arrives (its points' `boot_summary`). A Run added
-  after every Run of its Series leaves every earlier month file byte for byte; one that
-  arrives after a later Run of its Series changes the later months too, and
-  `check-api.ts --previous DIR` reports every month file that changed otherwise since the
-  tree in `DIR`.
+  the rest and the newest 12 points, so the number of points in it is bounded; its summaries
+  still grow with what the data hold (a group per change of the machine's split facts, a
+  value per new distinct value of a request fact, an entry per month). The Runs behind each
+  percentile and in each group are not repeated: they are the month files' counted points
+  (with a `bytes_per_repetition`, for bytes per second) and the points with a group's
+  letter, counted or not (then filtered the same way, for a group's percentile), in order of
+  start, then Run id, and the build refuses Derivations where that is not so. In place of
+  requests v1's `group_through` the month files hold `group_through_as_of_run`, the group's
+  figures as they stood through each Run, which no later Run changes. It is null before the
+  Series' first Run of a second group, and for a group with no counted Run yet (though
+  `through` then holds the other groups' figures); the Derivation's `group_through` is that
+  point's `through` for exactly the points before the first point of a second group, in a
+  Series of more than one group, and this field for every other point.
+- **When a month file changes.** A month file's bytes change only when (a) a Run that
+  started in that month is added, (b) a boot summary that was missing arrives, (c) a Run
+  arrives late, having started before a Run of the Series already in the files, in that
+  month or an earlier one, or (d) a Method first applies to the Series; otherwise they do
+  not change. A past month is therefore not immutable: each entry of the Series file's
+  months gives its month file's sha256 and size in bytes, so a reader holding a copy can
+  tell whether it is current, and fetches the file again only when the sha256 differs. (a)
+  brings the Run's point, its pair entry, and the month's count and span; (b) turns a
+  point's `boot_summary` from null into its address, and nothing else; (c) does what (a)
+  does and, in that month and every later one, may change the later points' group and
+  requests v1's `through` and `group_through_as_of_run`, and the pair entry of the Run right
+  after it; (d) adds the Method's block to every month file of the Series. The last two are
+  what the Methods produce, and the tree neither changes them nor hides them. `check-api.ts
+  --previous DIR` holds a tree to this against the tree before it: every month file of `DIR`
+  must be in it, byte for byte or changed only for those causes, both files laid out exactly
+  as their values are, no published Run gone; it lists each changed month file by cause. A
+  previous tree that is missing, empty or of another layout (other schemas, another base) is
+  an error unless `--allow-no-previous` says there may be none, for the first build of a
+  layout. The `runs` workflow fetches the artifact `api` of its last successful run on main
+  (`scripts/previous-api.ts`), compares with it, and says in the step's summary when there
+  is none of this layout and why; a tree it could not download fails the step.
 - **Each Method's part is labelled.** The 25 `http_get` Series carry both `series_v1` and
   `requests_v1`, each with its `method`; the others carry `series_v1` only.
 - **`v1` only ever gains fields.** The API's own schemas forbid no member they do not list, so
@@ -2090,8 +2114,9 @@ address is `--base`, so a private or test address can stand in.
   `tests/api-golden/` holds every file the build writes from the tests' small fixture, so any
   change to the bytes, a reordered schema included, shows in review as a diff of those files;
   `LEDGERMATH_WRITE_GOLDEN=1 bun test tests/api-golden.test.ts` writes them anew on purpose.
-  A Series file depends only on its own Runs, its Methods' words and the base, so a Series
-  that gained no Run keeps its file byte for byte. The data's own moment, the start of the
+  A Series file depends only on its own Runs, its Methods' words, its boots' summaries and
+  the base, so a Series that gained no Run, and none of whose boot summaries arrived, keeps
+  its file byte for byte. The data's own moment, the start of the
   newest Run, is in `v1/index.json` and `v1/series.json`; no file says when it was made.
 - **Every file has a ceiling of bytes**: the table of contents 100 KB, the list and a Series
   file 1 MB, a month file 5 MB, a price file 1 MB, a schema 256 KB (`CEILINGS` in
@@ -2107,7 +2132,8 @@ bun scripts/build-api.ts --derivations /tmp/page/derivations.json \
   --requests-derivations /tmp/page/requests-derivations.json --runs /tmp/ledgermath-runs --out /tmp/api
 bun scripts/check-api.ts --tree /tmp/api --derivations /tmp/page/derivations.json \
   --requests-derivations /tmp/page/requests-derivations.json --runs /tmp/ledgermath-runs
-# And that no past month changed since the tree readers were last served, in /tmp/api-before:
+# And that every month file of the tree before it, in /tmp/api-before, changed only for one of the four causes
+# (add --allow-no-previous only for the first build of a layout, when there is no such tree):
 bun scripts/check-api.ts --tree /tmp/api --derivations /tmp/page/derivations.json \
   --requests-derivations /tmp/page/requests-derivations.json --runs /tmp/ledgermath-runs --previous /tmp/api-before
 ```
@@ -2124,10 +2150,10 @@ this repository's and valid JSON Schemas; that every month file holds every poin
 month's Runs value for value as the Derivations hold them, apart from what each point adds,
 and the pair entries whose later Run started that month; that each Run is in exactly one
 month file, its own month's; that every Series file holds each Method's words and summary
-value for value, lists exactly the month files of the tree, and holds the newest 12 points as
-the month files and the Derivations do; that the lists of Runs it leaves out are what the
+value for value, lists exactly the month files of the tree, each with its sha256 and size as
+the tree holds it, and holds the newest 12 points as the month files and the Derivations do; that the lists of Runs it leaves out are what the
 month files recover; that each point's Run file is in the Runs repository with the point's Run
-id, boot and sha256, at the point's evidence, and its boot_summary is that boot's summary or
+id, boot, start and sha256, at the point's evidence, and its boot_summary is that boot's summary or
 null when there is none; that each row agrees with its Series file and links it, the table of
 contents lists exactly the price files and schemas the tree holds and counts the Series right,
 and gives the docs as an absolute https address with a host; and that every link field, in its
@@ -2135,11 +2161,14 @@ place, names a file of the tree or of the Runs repository (`scripts/lib/api-chec
 all).
 
 On the data of 2026-11-19 (187 Series, 6,335 Runs, all of November, 9 price files) the tree is
-390 files and 45.6 MB: `v1/index.json` 4.9 KB, `v1/series.json` 193 KB, a Series file 29 to
+390 files and 45.6 MB: `v1/index.json` 6.3 KB, `v1/series.json` 193 KB, a Series file 29 to
 31 KB (median 31 KB) or, for `http_get`, 138 to 302 KB (median 264 KB), a month file 107 to
 128 KB or, for `http_get`, 285 to 714 KB, a price file 39 KB. A month file grows by up to
 4.5 KB a Run (22 KB for `http_get`): a full month at four Runs a day is about 0.56 MB (2.7 MB).
-The build takes about 1.0 s and the check about 1.8 s on the dev machine. The lookup tool and
+The build takes about 1.0 s and the check about 1.8 s on the dev machine, and comparing the
+tree with the one before about 2 s more. Between the trees of two snapshots of that day in
+which every Series gained one Run, every one of the 187 month files changed, each for
+cause (a) only. The lookup tool and
 the agent skill still read the files of Derivations.
 
 ## The website (`site/`)

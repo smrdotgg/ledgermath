@@ -1087,4 +1087,21 @@ A migrated benchmark is done only when **all** of these hold:
   Series file is 29 to 31 KB (138 to 302 KB for `http_get`, from 124 to 791 KB), a month file
   grows by up to 4.5 KB a Run (22 KB), and the build and check take 1.0 s and 1.8 s. The
   index's list of price files still grows (124 bytes a day), and is left as it is.
+- **2026-11-19** — After an independent review of the split (#69): the promise that a past
+  month never changes was not true. A Run that arrives late changes its own month and the
+  later ones, and a Method that first applies to a Series (requests v1, once one of its
+  Runs' streams holds a request) adds its block to every past month. The Methods are left as
+  they are; the contract now names the four causes (a Run of the month added, a missing boot
+  summary arriving, a late Run, a Method first applying), word for word in the index
+  (`months`), both Series schemas, ADR-0030 and the README, and each Series file's `months`
+  gives every month file's sha256 and size. `group_through` is `group_through_as_of_run` in
+  the tree, since it is not the Derivation's field, and its description gives both reasons it
+  is null and the one rule that recovers the Derivation's value (`?? through` would hand a
+  group with no counted Run the other groups' figures). `--previous` is a gate now: a missing
+  or other-layout baseline is an error unless `--allow-no-previous`; a changed month passes
+  only when both files are exactly the layout of their values and every change is one of the
+  four causes, listed by cause. The `runs` workflow compares with its last successful run's
+  artifact `api` (kept 7 days) and says in its summary when there is none. The check also
+  takes a point's month from its Run file's own `started_at`. On page-3 to page-4 every one
+  of the 187 month files changed, each for (a) only.
 - _(agents: append your entry here, one per merged benchmark)_
