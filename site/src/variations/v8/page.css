@@ -1928,6 +1928,67 @@ pre {
 	margin-top: 2rem;
 }
 
+/* ------------------------------------------------------------- spare form */
+
+.traced-span {
+	margin-top: 0.15rem;
+	font-size: 0.8125rem;
+	color: var(--ink-3);
+}
+.traced-span time {
+	white-space: nowrap;
+}
+.hero-rest .cmd {
+	margin-top: 2.25rem;
+}
+.fresh-at {
+	display: inline-flex;
+	align-items: center;
+	flex-wrap: wrap;
+	column-gap: 0.3em;
+}
+.fresh-at .pulse {
+	margin-right: 0.35rem;
+}
+.numbers {
+	padding-bottom: 3rem;
+}
+.machines {
+	padding-top: 2.5rem;
+}
+.foot-links {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.5rem 1.5rem;
+}
+table.spec-spare {
+	font-variant-numeric: tabular-nums;
+}
+.spec-spare th:first-child {
+	width: 16rem;
+}
+.spec-spare .spec-num {
+	width: 9rem;
+}
+.spec-spare th:nth-child(3),
+.spec-spare td:nth-child(3) {
+	width: 9rem;
+	padding-left: 3.5rem;
+}
+@media (min-width: 46.01rem) {
+	.numbers {
+		padding-top: 2rem;
+	}
+}
+@media (max-width: 46rem) {
+	.hero-rest .cmd {
+		margin-top: 0;
+	}
+	.cell > summary {
+		grid-template-columns: 2.4rem auto minmax(2.5rem, 1fr);
+	}
+}
+
 .traced-facts time {
 	white-space: nowrap;
 }
