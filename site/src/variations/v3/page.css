@@ -36,7 +36,7 @@
 	--median: #1d1c1a;
 	--to: #4a4741;
 	/* the digits past the third decimal: lighter than the lead, darker than a caption */
-	--tail: #57534b;
+	--tail: #4f4b44;
 	--track: #e6e1d6;
 	--grid: #ddd7ca;
 	--tint: #f3efe6;
@@ -55,11 +55,12 @@
 		--hair: #3a3833;
 		--rule: #ebe6db;
 		--accent: #f08e74;
-		--range: #a3725f;
+		/* the range as the same terracotta as by day, lifted so it reads on the dark ground */
+		--range: #d9876a;
 		--median: #fff4e6;
-		--to: #b3ada0;
-		--tail: #bfb9ac;
-		--track: #3b3935;
+		--to: #c9c2b4;
+		--tail: #c4beb1;
+		--track: #4e4b45;
 		--grid: #45423c;
 		--tint: #1c1b19;
 		--code-bg: #1f1e1b;
@@ -134,12 +135,6 @@ i {
 	font-size: 0.9rem;
 	color: var(--ink-2);
 }
-.wordmark {
-	font-weight: 700;
-	font-size: 1.125rem;
-	color: var(--ink);
-	text-decoration: none;
-}
 .rh-nav {
 	margin-left: auto;
 	display: flex;
@@ -185,7 +180,7 @@ h1 {
 }
 .affil {
 	margin-top: 0.55rem !important;
-	font-size: 0.88rem;
+	font-size: 0.95rem;
 	color: var(--ink-2);
 }
 .dates {
@@ -193,7 +188,7 @@ h1 {
 	flex-wrap: wrap;
 	gap: 0.3rem 1.8rem;
 	margin: 0.35rem 0 0;
-	font-size: 0.84rem;
+	font-size: 0.9rem;
 	color: var(--ink-2);
 }
 .dates div {
@@ -236,8 +231,10 @@ h1 {
 	line-height: 1.55;
 	text-wrap: pretty;
 }
+/* the rubric: the paper's own labels (Abstract, Table 1., Listing 1., the reference numbers) in its one red */
 .runin {
 	margin-right: 0.55rem;
+	color: var(--accent);
 	font-size: 0.95rem;
 	font-weight: 700;
 	font-variant-caps: all-small-caps;
@@ -319,7 +316,7 @@ h1 {
 }
 .tlabel {
 	font-weight: 700;
-	color: var(--ink);
+	color: var(--accent);
 	margin-right: 0.15rem;
 }
 
@@ -357,7 +354,7 @@ td {
 	padding-bottom: 0.45rem;
 }
 .t1 .c-op {
-	width: 21%;
+	width: 20.5%;
 	padding-left: 0;
 }
 /* the stub of the head: how to read a cell, and where the prices come from */
@@ -365,7 +362,7 @@ td {
 	padding-left: 0;
 	text-indent: 0;
 	font-weight: 400;
-	font-size: 0.84rem;
+	font-size: 0.88rem;
 	line-height: 1.35;
 	color: var(--ink-2);
 }
@@ -376,6 +373,10 @@ td {
 }
 .key-item + .key-item {
 	margin-top: 0.15rem;
+}
+.key-dir {
+	flex-wrap: wrap;
+	gap: 0 0.9rem;
 }
 .key-bar {
 	width: 2.6rem;
@@ -407,7 +408,7 @@ td {
 .m-spec,
 .m-proc {
 	display: block;
-	font-size: 0.84rem;
+	font-size: 0.88rem;
 	color: var(--ink-2);
 }
 .m-proc {
@@ -507,19 +508,12 @@ td {
 	font-size: 1.12rem;
 	font-weight: 600;
 }
-/* the figure is the way to its Series: a hairline under the lead digits says so without a word */
-.x-int,
-.x-head {
-	text-decoration: underline;
-	text-decoration-thickness: 1px;
-	text-decoration-color: color-mix(in srgb, currentColor 22%, transparent);
-	text-underline-offset: 0.22em;
-}
+/* the figure is the way to its Series; it shows so on hover and focus, not with seventy rules at rest */
 .x-tail {
 	display: inline-block;
 	text-align: left;
 	padding-left: 0.12em;
-	font-size: 0.95rem;
+	font-size: 0.86rem;
 	color: var(--tail);
 }
 .t1 td.c-fig > a:hover .x-tail {
@@ -569,30 +563,61 @@ td {
 	border-top: 2px solid var(--rule);
 	border-bottom: 2px solid var(--rule);
 }
+/* the references beside Listing 1: the addresses, and what one of them returns */
+.refs-body {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+	gap: 0 2.5rem;
+	align-items: start;
+}
 .reflist li {
 	display: grid;
-	grid-template-columns: 2.1rem minmax(0, 17rem) minmax(0, 1fr) auto;
-	gap: 0 0.8rem;
+	grid-template-columns: 2.1rem minmax(0, 1fr);
+	gap: 0 0.6rem;
 	align-items: baseline;
-	padding: 0.35rem 0;
+	padding: 0.4rem 0;
 }
 .reflist li + li {
 	border-top: 1px solid var(--grid);
 }
 .ref-n {
-	color: var(--ink-3);
+	grid-row: 1 / span 2;
+	color: var(--accent);
 }
+/* a whole address to copy: the host light, the path in ink */
 .ref-file {
 	font-family: var(--mono);
 	font-size: 0.82rem;
 	overflow-wrap: anywhere;
+	text-decoration-color: color-mix(in srgb, currentColor 30%, transparent);
+}
+.addr-host {
+	color: var(--ink-3);
+}
+/* the path breaks from its host, never inside itself */
+.addr-path {
+	white-space: nowrap;
 }
 .ref-what {
+	grid-column: 2;
+	font-size: 0.88rem;
+	line-height: 1.35;
 	color: var(--ink-2);
 }
-.ref-schema {
-	font-size: 0.84rem;
+.listing {
+	margin: 0;
+}
+.listing figcaption {
+	margin: 0 0 0.5rem;
+	padding-top: 0.25rem;
+	font-size: 1rem;
+	line-height: 1.4;
 	color: var(--ink-2);
+}
+.listing .code {
+	border-top: 2px solid var(--rule);
+	border-left: 0;
+	padding: 0.7rem 0.8rem;
 }
 
 /* a passage folded behind its label: the ranges and counts, Listing 1 */
@@ -715,7 +740,8 @@ td {
 /* ---------------------------------------------------------------- narrower screens */
 
 @media (max-width: 999px) {
-	.opening {
+	.opening,
+	.refs-body {
 		grid-template-columns: minmax(0, 1fr);
 		gap: 1rem;
 	}
@@ -831,11 +857,14 @@ td {
 	.key-item + .key-item {
 		margin-top: 0;
 	}
+	/* the prices' label over the prices, apart from the chart's key */
 	.key-price {
-		padding-top: 0;
-		margin-bottom: 0;
-		font-size: 0.76rem;
 		order: 3;
+		flex-basis: 100%;
+		justify-content: flex-end;
+		padding-top: 0.25rem;
+		margin-bottom: -0.2rem;
+		font-size: 0.76rem;
 	}
 	/* one line per machine; the processor stays on the desktop head */
 	.t1 thead th.c-m {
@@ -932,14 +961,16 @@ td {
 	}
 
 	.reflist li {
-		grid-template-columns: 2rem minmax(0, 1fr) auto;
+		grid-template-columns: 1.8rem minmax(0, 1fr);
+		gap: 0 0.4rem;
+	}
+	.ref-file {
+		font-size: 0.74rem;
 	}
 	.ref-what {
-		grid-column: 2 / 3;
-		font-size: 0.86rem;
+		font-size: 0.84rem;
 	}
-	.ref-schema {
-		grid-row: 1;
-		grid-column: 3;
+	.json {
+		font-size: 0.66rem;
 	}
 }
