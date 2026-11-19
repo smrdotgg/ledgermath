@@ -138,8 +138,24 @@ export async function settle(page: Page): Promise<void> {
 		.catch(() => {});
 }
 
-export async function screenshot(page: Page, path: string, fullPage: boolean): Promise<void> {
-	await page.screenshot({ path, fullPage, animations: "disabled", caret: "hide" });
+/** Chromium cannot capture an image taller than this many device pixels in one piece. */
+const TALLEST_CAPTURE = 16_384;
+
+/**
+ * Takes a screenshot of the first screen, or of the full page. A page too tall for Chromium to
+ * capture whole is captured from the top down to the limit; the note returned says so.
+ */
+export async function screenshot(page: Page, path: string, fullPage: boolean): Promise<string | null> {
+	try {
+		await page.screenshot({ path, fullPage, animations: "disabled", caret: "hide" });
+		return null;
+	} catch (error) {
+		if (!fullPage) throw error;
+		const { width, height, scale } = await page.evaluate(() => ({ width: document.documentElement.scrollWidth, height: document.documentElement.scrollHeight, scale: window.devicePixelRatio }));
+		const tallest = Math.floor(TALLEST_CAPTURE / scale);
+		await page.screenshot({ path, fullPage: true, clip: { x: 0, y: 0, width, height: Math.min(height, tallest) }, animations: "disabled", caret: "hide" });
+		return `${path.split("/").pop()}: the page is ${height} px tall, more than Chromium captures at once; cut at ${tallest} px`;
+	}
 }
 
 /** Builds SLOT into a temporary directory and serves it; `url` is the design's page, `origin` the server's. */

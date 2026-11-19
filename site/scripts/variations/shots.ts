@@ -44,6 +44,7 @@ async function shootDesign(slot: Slot, out: string): Promise<number> {
 	const commit = git(["rev-parse", "HEAD"]);
 	const dirty = (git(["status", "--porcelain", "--", `src/variations/${slot}`, "src/data", "data"]) ?? "") !== "";
 	const problems: string[] = [];
+	const notes: string[] = [];
 	const files: string[] = [];
 	let served: Awaited<ReturnType<typeof buildAndServe>>;
 	try {
@@ -67,7 +68,8 @@ async function shootDesign(slot: Slot, out: string): Promise<number> {
 					["full", true],
 				] as const) {
 					const name = `${size.name}-${scheme}-${part}.png`;
-					await screenshot(page, join(out, name), full);
+					const note = await screenshot(page, join(out, name), full);
+					if (note) notes.push(note);
 					files.push(name);
 				}
 				problems.push(...[...new Set(watch.problems)].map((p) => `${size.name} ${scheme}: ${p}`));
@@ -80,8 +82,9 @@ async function shootDesign(slot: Slot, out: string): Promise<number> {
 	}
 	writeFileSync(
 		join(out, "shots.json"),
-		`${JSON.stringify({ design: slot, commit, dirty, taken_at: new Date().toISOString(), sizes: SIZES, files, problems }, null, "\t")}\n`,
+		`${JSON.stringify({ design: slot, commit, dirty, taken_at: new Date().toISOString(), sizes: SIZES, files, problems, notes }, null, "\t")}\n`,
 	);
+	for (const note of notes) console.log(`  ${note}`);
 	console.log(`${slot}: ${files.length} screenshots in ${relative(process.cwd(), out) || "."}${commit ? ` (commit ${commit.slice(0, 12)}${dirty ? ", with uncommitted changes to the design" : ""})` : ""}`);
 	if (problems.length > 0) {
 		console.error(`${problems.length} problem${problems.length === 1 ? "" : "s"}:`);
@@ -114,7 +117,8 @@ async function shootUrl(url: string, out: string): Promise<number> {
 					["full", true],
 				] as const) {
 					const name = `${size.name}-${part}.png`;
-					await screenshot(page, join(out, name), full);
+					const note = await screenshot(page, join(out, name), full);
+					if (note) notes.push(note);
 					files.push(name);
 				}
 			} catch (error) {
