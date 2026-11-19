@@ -34,7 +34,8 @@
 	--rule-2: #3a3832;
 	--acc: #f4a742;
 	--acc-ink: #0f0f0d;
-	--band: #a39a85;
+	--band: #8f8775;
+	--track: #302e28;
 	--axis: #57534a;
 	--sel: rgba(244, 167, 66, 0.28);
 }
@@ -52,7 +53,8 @@
 		--rule-2: #c6bea9;
 		--acc: #a3410c;
 		--acc-ink: #f3efe4;
-		--band: #6f6656;
+		--band: #8a8170;
+		--track: #e3ddcd;
 		--axis: #b3aa94;
 		--sel: rgba(163, 65, 12, 0.18);
 	}
@@ -351,6 +353,19 @@ main {
 .jump a {
 	text-decoration: none;
 }
+/* On a wide screen the whole table is little more than a screen: the group list is for the phone. */
+@media (min-width: 761px) {
+	.jump {
+		display: none;
+	}
+}
+.runs {
+	color: var(--fg-2);
+	text-decoration-color: color-mix(in srgb, var(--acc) 45%, transparent);
+}
+.runs:hover {
+	color: var(--acc);
+}
 .jump a:hover {
 	text-decoration: underline;
 }
@@ -358,97 +373,44 @@ main {
 .dir {
 	color: var(--acc);
 }
-/* The key, in the table's corner: p50 set as the caption of every figure, then the drawing
-   labelled where its parts are, which way is better, and the switch. */
-/* The drawing, enlarged, each part labelled where it is: p50 over the tick, p5 and p95 under the
-   band's ends, 0 under the start of the scale. */
-.key-glyph {
-	position: relative;
+/* The key, in the table's corner: one line, each mark of the drawing beside its name. */
+.key {
 	display: block;
-	width: 20ch;
-	height: 58px;
-	font-size: 12px;
-	line-height: 1;
+	font-size: 12.5px;
+	line-height: 1.5;
 	color: var(--fg-2);
+	white-space: nowrap;
 }
-.corner-q {
-	position: absolute;
-	top: 0;
-	left: 52%;
-	transform: translateX(-50%);
-	font-size: 20px;
-	line-height: 1;
-	font-weight: 600;
-	letter-spacing: -0.01em;
-	color: var(--acc);
+.key-sw {
+	display: inline-block;
+	vertical-align: middle;
+	margin: -2px 0.8ch 0 0;
 }
-.key-sp {
-	position: absolute;
-	left: 0;
-	right: 0;
-	top: 26px;
-	height: 13px;
-	border-bottom: 1px solid var(--axis);
+.sw-r {
+	margin-left: 1.5ch;
 }
-.key-sp .sp-r {
-	left: 30%;
-	width: 45%;
-	height: 11px;
-}
-.key-sp .sp-m {
-	left: 52%;
-	height: 16px;
-}
-.kl {
-	position: absolute;
-	top: 45px;
-	transform: translateX(-50%);
-}
-.kl-0 {
-	left: 0;
-	transform: none;
+.key-row {
+	display: block;
 	color: var(--dim);
-}
-.kl-5 {
-	left: 30%;
-}
-.kl-95 {
-	left: 75%;
 }
 .sep {
 	color: var(--dim);
 }
-.xt summary,
-.mx summary {
+.xt summary {
 	cursor: pointer;
 	list-style: none;
 	color: var(--acc);
 }
-.xt summary::-webkit-details-marker,
-.mx summary::-webkit-details-marker {
+.xt summary::-webkit-details-marker {
 	display: none;
 }
-.xt summary::before,
-.mx summary::after {
+.xt summary::before {
 	content: "[+] ";
 }
-.xt[open] summary::before,
-.mx[open] summary::after {
+.xt[open] summary::before {
 	content: "[−] ";
 }
-.mx summary {
-	display: flex;
-	align-items: baseline;
-	gap: 2ch;
-}
-.mx summary h2 {
-	margin: 0;
-}
-.mx[open] summary {
-	margin-bottom: 8px;
-}
-.xt summary:focus-visible,
-.mx summary:focus-visible {
+.xt summary:focus-visible {
 	outline: 2px solid var(--acc);
 	outline-offset: 2px;
 }
@@ -570,21 +532,19 @@ table {
 	font-size: 13.5px;
 }
 
-/* A figure is a link to its Series, every Run behind it: a dotted underline says so, as a man
-   page's cross-reference would, and turns solid in the accent under the pointer. */
+/* A figure is a link to its Series, every Run behind it: it says so under the pointer or focus,
+   not with seventy underlines at rest. */
 .fig {
 	display: inline-block;
 	white-space: pre;
 	color: var(--fg);
-	text-decoration: underline dotted;
+	text-decoration: none;
 	text-decoration-thickness: 1px;
 	text-underline-offset: 3px;
-	text-decoration-color: var(--axis);
 }
 .fig:hover,
 .fig:focus-visible {
-	text-decoration-style: solid;
-	text-decoration-color: var(--acc);
+	text-decoration: underline solid var(--acc);
 }
 .fig:hover .lead,
 .fig:focus-visible .lead {
@@ -605,35 +565,39 @@ table {
 	color: var(--dim);
 }
 
-/* The spread: a hairline from zero to the row's largest p95, the p5 to p95 band in its own tone and
-   with real height, the p50 tick in the accent, cut out of the band by the page's own colour. */
+/* The drawing: a track the row's full scale long (0 to its largest p95), a bar from zero to the
+   p50, and the p5 to p95 band in the accent laid over the bar's end, taller than the bar. */
 .spread {
 	position: relative;
 	display: block;
-	height: 12px;
+	height: 11px;
 	margin: 6px 2ch 0 0;
-	border-bottom: 1px solid var(--axis);
+	background: linear-gradient(var(--track), var(--track)) 0 50% / 100% 5px no-repeat;
 }
-.sp-r,
-.sp-m {
+.sp-b,
+.sp-r {
 	position: absolute;
 	display: block;
 }
-.sp-r {
-	bottom: 0;
-	min-width: 3px;
-	height: 10px;
+.sp-b,
+.sw-b {
+	top: 3px;
+	left: 0;
+	height: 5px;
 	background: var(--band);
 }
-.sp-m {
-	bottom: -1px;
-	width: 2px;
-	height: 13px;
-	margin-left: -1px;
+.sw-b {
+	width: 2.5ch;
+}
+.sp-r,
+.sw-r {
+	top: 0;
+	min-width: 2px;
+	height: 11px;
 	background: var(--acc);
-	box-shadow:
-		-1px 0 0 var(--bg),
-		1px 0 0 var(--bg);
+}
+.sw-r {
+	width: 2px;
 }
 
 /* The machine's name in a cell is for the phone, where the columns become lines. */
@@ -787,17 +751,23 @@ table {
 		font-size: 20px;
 		line-height: 1.3;
 	}
-	/* The command breaks once, after "curl -s", so the address stays whole inside the box, with the
-	   copy button beside it. */
+	/* The command keeps to one line, the box to itself; the copy button sits up on the SYNOPSIS
+	   line, at the right. */
+	#synopsis .body {
+		position: relative;
+	}
 	.cmd {
+		display: block;
 		padding: 8px 10px;
 		font-size: 12px;
 		line-height: 1.5;
-		gap: 0 1.5ch;
+		white-space: nowrap;
+		overflow-x: auto;
 	}
-	.cmd code .nb {
-		display: block;
-		width: fit-content;
+	.cmd .copy {
+		position: absolute;
+		right: 0;
+		top: -30px;
 	}
 	#status {
 		margin-top: 20px;
@@ -809,6 +779,9 @@ table {
 		grid-template-columns: minmax(0, 1fr);
 		font-size: 12.5px;
 		gap: 2px 3ch;
+	}
+	.kv dt {
+		min-width: 11ch;
 	}
 
 	#data {
@@ -870,10 +843,11 @@ table {
 		border-bottom: 0;
 	}
 	.data thead th.corner {
-		align-items: flex-end;
+		align-items: baseline;
 	}
-	.key-glyph {
-		width: 18ch;
+	.key-row {
+		display: inline;
+		margin-left: 1.5ch;
 	}
 	.data .sect th {
 		padding: 22px 0 4px;
@@ -931,12 +905,6 @@ table {
 	#machines {
 		display: block;
 		margin-top: 22px;
-	}
-	#machines + #data {
-		margin-top: 14px;
-	}
-	.name .label {
-		display: none;
 	}
 	#files {
 		margin-top: 30px;

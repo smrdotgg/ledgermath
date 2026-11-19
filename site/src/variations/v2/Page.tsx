@@ -94,16 +94,16 @@ function Digits(props: { full: string; width: number }) {
 }
 
 /**
- * A figure's p5 to p95, drawn: a hairline from zero to the row's largest p95, the same for every
- * cell of the row, with the range as a band and the median as a tick. A drawing, not a figure;
- * the written values are in the cell's exact lines and the figure's title.
+ * A figure drawn on the row's one scale, from zero to the row's largest p95: a bar from zero to
+ * the p50, so lengths compare as the figures do, and the p5 to p95 band laid on its end. A
+ * drawing, not a figure; the written values are in the cell's exact lines and the figure's title.
  */
 function Spread(props: { p5: number; p50: number; p95: number; max: number }) {
 	const at = (v: number) => `${((v / props.max) * 100).toFixed(3)}%`;
 	return (
 		<span class="spread" aria-hidden="true">
+			<span class="sp-b" style={{ width: at(props.p50) }} />
 			<span class="sp-r" style={{ left: at(props.p5), width: at(props.p95 - props.p5) }} />
-			<span class="sp-m" style={{ left: at(props.p50) }} />
 		</span>
 	);
 }
@@ -173,21 +173,20 @@ function Status() {
 		["fresh boots", <span class="nb">{SCHEDULE.join(" ")} UTC</span>],
 		[
 			"Runs kept",
-			<span>
+			<a
+				href={links.seriesList}
+				class="runs"
+				title={`${formatCount(snapshot.seriesCount).full} Series: every setting of every benchmark; the table shows one setting each`}
+			>
 				<span class="nb">
-					<span class="hi">{formatCount(snapshot.runCount).full}</span> in{" "}
-					<a href={links.seriesList} title="Every setting of every benchmark; the table shows one setting each">
-						{formatCount(snapshot.seriesCount).full} Series, all settings
-					</a>
-				</span>{" "}
-				<span class="nb">
-					since{" "}
+					<span class="hi">{formatCount(snapshot.runCount).full}</span> since{" "}
 					<time datetime={oldest.iso} title={oldest.full}>
 						{oldest.date}
 					</time>
-					, {formatCount(snapshot.failedRuns).full} failed
 				</span>
-			</span>,
+				<span class="sep">, </span>
+				<span class="nb">{formatCount(snapshot.failedRuns).full} failed</span>
+			</a>,
 		],
 		[
 			"prices",
@@ -228,26 +227,15 @@ function Status() {
 function Key() {
 	return (
 		<>
-			<span class="key-glyph" role="img" aria-label="Every figure is a p50. The drawing: a tick at p50, a band from p5 to p95, on a scale from 0 shared by the row">
-				<span class="corner-q" aria-hidden="true">
-					p50
-				</span>
-				<span class="key-sp" aria-hidden="true">
-					<span class="sp-r" />
-					<span class="sp-m" />
-				</span>
-				<span class="kl kl-0" aria-hidden="true">
-					0
-				</span>
-				<span class="kl kl-5" aria-hidden="true">
-					p5
-				</span>
-				<span class="kl kl-95" aria-hidden="true">
-					p95
-				</span>
+			<span class="key" title="Every figure is a p50. The drawing: a bar from 0 to the p50 and a band from p5 to p95, on one scale per row">
+				<span class="key-sw sw-b" aria-hidden="true" />
+				p50
+				<span class="key-sw sw-r" aria-hidden="true" />
+				p5–p95
+				<span class="key-row">0 → row max</span>
 			</span>
 			<details class="xt">
-				<summary title="Show each figure's exact p5 and p95, and n, the Runs it counts">p5 p95 n Runs</summary>
+				<summary title="Show each figure's exact p5 and p95, and n, the Runs it counts">ranges, Runs</summary>
 			</details>
 		</>
 	);
@@ -371,7 +359,7 @@ function DataTable() {
 
 function Machines() {
 	return (
-		<ul class="machines">
+		<ul class="machines" aria-labelledby="machines-h">
 			{machines.map((m) => (
 				<li title={m.processor}>
 					<span class="mc-name">{m.instanceType}</span>
@@ -401,7 +389,7 @@ export default function Page() {
 		</>
 	);
 	const files: [string, string, unknown, string][] = [
-		[links.index, path(links.index), "start here", links.schema.index],
+		[links.index, path(links.index), "every address", links.schema.index],
 		[links.seriesList, path(links.seriesList), "every Series", links.schema.seriesList],
 		[links.seriesFile(headline[0]!.cells[0]!.series), path(links.seriesFilePattern), evidence, links.schema.series],
 		[links.prices, path(links.priceFilePattern), "AWS prices, daily", links.schema.prices],
@@ -418,14 +406,9 @@ export default function Page() {
 			<main>
 				<div class="hero">
 					<section class="sec name" aria-labelledby="name-h">
-						<p class="label" aria-hidden="true">
-							NAME
-						</p>
-						<div class="body">
-							<h1 id="name-h">
-								<span class="acc">ledgermath</span> <span class="dash">—</span> measured AWS machine figures, as JSON for agents, each with its evidence
-							</h1>
-						</div>
+						<h1 id="name-h">
+							<span class="acc">ledgermath</span> <span class="dash">—</span> AWS machine benchmarks as JSON for agents, every figure with its evidence
+						</h1>
 					</section>
 
 					<Section id="synopsis" title="SYNOPSIS">
@@ -435,7 +418,7 @@ export default function Page() {
 									${" "}
 								</span>
 								<span class="cmd-text">
-									<span class="curl">curl -s</span>{" "}
+									<span class="curl">curl</span>{" "}
 									<a href={links.index} class="nb">
 										{links.index}
 									</a>
@@ -450,17 +433,10 @@ export default function Page() {
 				</div>
 
 				{/* On a wide screen the table's head holds every machine fact, so this list is for the
-				    phone, folded under its heading so the first figures reach the first screen. */}
-				<section class="sec" id="machines" aria-labelledby="machines-h">
-					<details class="mx">
-						<summary>
-							<h2 id="machines-h">MACHINES</h2>
-						</summary>
-						<div class="body">
-							<Machines />
-						</div>
-					</details>
-				</section>
+				    phone, open: the price is half of any estimate. */}
+				<Section id="machines" title="MACHINES">
+					<Machines />
+				</Section>
 
 				<Section
 					id="data"
@@ -507,7 +483,10 @@ export default function Page() {
 			</main>
 
 			<footer class="manfoot">
-				<span>LedgerMath v1</span>
+				<span>api v1</span>
+				<time datetime={newest.iso} title={newest.full}>
+					{newest.date}
+				</time>
 			</footer>
 		</div>
 	);
