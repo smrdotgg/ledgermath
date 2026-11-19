@@ -9,6 +9,7 @@ import {
 	durationUnit,
 	formatCount,
 	formatDuration,
+	formatDurationPerUnit,
 	formatMoment,
 	formatRate,
 	formatUsd,
@@ -59,22 +60,124 @@ const SI_RATE: [number, ByteUnit][] = [
 	[0, "B"],
 ];
 
-/** The unit a whole row is shown in: the one its smallest figure reads at least 1 in, so the row compares at a glance. */
-function rowFigures(row: HeadlineRow): { shown: Shown; p5: Shown; p95: Shown; count: number }[] {
+type Fig = { shown: Shown; p5: Shown; p95: Shown; count: number };
+
+/**
+ * The figures of a row, all in one unit: the one its smallest figure reads at least 1 in, so the
+ * row compares at a glance. Where one repetition is a power-of-ten count of something smaller
+ * (mutex), the figures are of one of those, divided exactly by the data module's helper.
+ */
+function rowFigures(row: HeadlineRow): Fig[] {
 	const figures = row.cells.map((cell) => leadFigure(row.choice, cell.series));
 	const least = Math.min(...figures.map((f) => f.p50));
 	if (row.choice.lead === "rate") {
 		const unit = SI_RATE.find(([floor]) => least >= floor)![1];
 		return figures.map((f) => ({ shown: formatRate(f.p50, { unit }), p5: formatRate(f.p5, { unit }), p95: formatRate(f.p95, { unit }), count: f.count }));
 	}
+	const per = row.choice.per;
+	if (per) {
+		const unit = durationUnit(formatDurationPerUnit(least, per).value);
+		return figures.map((f) => ({
+			shown: formatDurationPerUnit(f.p50, per, { unit }),
+			p5: formatDurationPerUnit(f.p5, per, { unit }),
+			p95: formatDurationPerUnit(f.p95, per, { unit }),
+			count: f.count,
+		}));
+	}
 	const unit = durationUnit(least);
 	return figures.map((f) => ({ shown: formatDuration(f.p50, { unit }), p5: formatDuration(f.p5, { unit }), p95: formatDuration(f.p95, { unit }), count: f.count }));
 }
 
+/** A sentence's first word in lower case, unless it is a name or a figure ("SHA-256", "10,000"). */
+function lowerFirst(text: string): string {
+	return /^[A-Z][a-z]/.test(text) ? text[0]!.toLowerCase() + text.slice(1) : text;
+}
+
+/** What a row's unit is of, and which way is faster, for the line under its name. */
+function rowUnit(row: HeadlineRow, unit: string): { unit: string; of: string; better: string } {
+	if (row.choice.lead === "rate") return { unit, of: "", better: "higher is faster" };
+	if (row.choice.per) return { unit, of: `per ${row.choice.per.of}: one repetition is ${lowerFirst(row.choice.repetition).replace(/\.$/, "")}, divided exactly`, better: "lower is faster" };
+	return { unit, of: `per ${lowerFirst(row.choice.repetition).replace(/\.$/, "").replace(/^one /, "")}`, better: "lower is faster" };
+}
+
+/**
+ * Where a benchmark's one-sentence description reads as a rate but its figure is a time, the
+ * page says what the figure is instead. (Reported for the data module's own words.)
+ */
+const WHAT: Record<string, string> = {
+	disk_read_io_uring: "The time per completed direct 4 KiB read from the root EBS gp3 volume, with 64 kept submitted through io_uring.",
+};
+
+/** A few words on a group of rows whose figures come from something the machines share. */
+const GROUP_NOTE: Partial<Record<Section, string>> = {
+	Disk: "All four rows measure the root EBS gp3 volume each machine booted from, not the machine type's own disks. Where the volume's limits set the pace (in the benchmarks' own words, random 4 KiB reads reach the volume's IOPS limit, and the sequential read shows its throughput limit), the five machine types can read alike.",
+	Network: "One request to S3 in the same Region. Its time runs through AWS's network and S3 as well as the machine, so the five machine types can read alike.",
+};
+
 const SECTIONS: Section[] = ["Memory", "Compute", "Operating system", "Disk", "Network"];
 
-function cellTitle(fig: { shown: Shown; p5: Shown; p95: Shown; count: number }, machine: string): string {
+function cellTitle(fig: Fig, machine: string): string {
 	return `${machine}: ${fig.shown.full} ${fig.shown.unit}, the median of ${fig.count} counted Runs (5th percentile ${fig.p5.full}, 95th ${fig.p95.full} ${fig.shown.unit}). As the API holds it: ${fig.shown.source}.`;
+}
+
+/**
+ * Every digit of a figure, its first four significant digits set heavier so a row scans, the
+ * integer part in a box of fixed width so the decimal points line up down a column. Nothing is
+ * rounded: the heavy digits are the figure's own leading digits.
+ */
+function Exact(props: { full: string }) {
+	const full = props.full;
+	let k = full.length;
+	for (let i = 0, sig = 0; i < full.length; i++) {
+		const c = full[i]!;
+		if (c >= "0" && c <= "9" && (sig > 0 || c !== "0")) sig++;
+		if (sig === 4) {
+			k = i + 1;
+			break;
+		}
+	}
+	const dot = full.includes(".") ? full.indexOf(".") : full.length;
+	const cut = (from: number, to: number) => [full.slice(from, Math.max(from, Math.min(k, to))), full.slice(Math.max(from, Math.min(k, to)), to)] as const;
+	const [intHeavy, intLight] = cut(0, dot);
+	const [fracHeavy, fracLight] = cut(dot, full.length);
+	return (
+		<span class="x">
+			<span class="x-int">
+				<b>{intHeavy}</b>
+				{intLight}
+			</span>
+			<span class="x-frac">
+				<b>{fracHeavy}</b>
+				{fracLight}
+			</span>
+		</span>
+	);
+}
+
+/** A figure's median and its 5th to 95th percentile span, drawn to the row's scale from zero. */
+function Bar(props: { fig: Fig; max: number }) {
+	const at = (s: Shown) => `${((s.value / props.max) * 100).toFixed(2)}%`;
+	return (
+		<span class="bar" aria-hidden="true">
+			<span class="bar-span" style={{ left: at(props.fig.p5), width: `calc(${at(props.fig.p95)} - ${at(props.fig.p5)})` }} />
+			<span class="bar-p50" style={{ width: at(props.fig.shown) }} />
+		</span>
+	);
+}
+
+/** A URL as text that breaks only after a slash. */
+function Breakable(props: { text: string }) {
+	const parts = props.text.split(/(?<=\/)/);
+	return (
+		<>
+			{parts.map((part, i) => (
+				<>
+					{part}
+					{i < parts.length - 1 ? <wbr /> : null}
+				</>
+			))}
+		</>
+	);
 }
 
 function Cite(props: { n: number }) {
@@ -111,7 +214,7 @@ export default function Page() {
 						</a>
 					</div>
 					<nav aria-label="On this page" class="nav">
-						<a href="#numbers">The numbers</a>
+						<a href="#numbers">Numbers</a>
 						<a href="#api">For agents</a>
 						<a href="#machines">Machines</a>
 						<a href="#provenance">Provenance</a>
@@ -120,7 +223,8 @@ export default function Page() {
 						<span class="pulse" aria-hidden="true" />
 						<span class="fresh-word">Newest Run</span>
 						<time datetime={newest.iso} title={newest.full}>
-							{newest.date} {newest.minute} UTC
+							<span class="fresh-date">{newest.date} </span>
+							{newest.minute} UTC
 						</time>
 					</p>
 				</div>
@@ -137,6 +241,47 @@ export default function Page() {
 						freshly booted machine, and keeps every Run with its evidence. The figures, and AWS's hourly prices, are static JSON at <code>api.ledgermath.com</code>. Here is what
 						that lets an agent do:
 					</p>
+					<ul class="strip" aria-label="What the API holds">
+						<li>
+							<a href="#numbers">
+								<span class="strip-big">
+									{formatCount(snapshot.benchmarkCount).full} × {formatCount(snapshot.machineCount).full}
+								</span>
+								<span class="strip-small">benchmarks × machine types, every digit</span>
+							</a>
+						</li>
+						<li>
+							<a href="#provenance">
+								<span class="strip-big">{formatCount(snapshot.runCount).full}</span>
+								<span class="strip-small">Runs kept, each with its evidence</span>
+							</a>
+						</li>
+						<li>
+							<a href="#provenance">
+								<span class="strip-big">
+									<time datetime={newest.iso} title={newest.full}>
+										{newest.minute}
+									</time>{" "}
+									<span class="strip-unit">UTC</span>
+								</span>
+								<span class="strip-small">newest Run, {newest.date}</span>
+							</a>
+						</li>
+						<li>
+							<a href="#machines">
+								<span class="strip-big">
+									${formatUsd(machines[0]!.price.usdPerHour).full}–${formatUsd(machines[machines.length - 1]!.price.usdPerHour).full}
+								</span>
+								<span class="strip-small">an hour On-Demand, AWS's prices of <span class="nowrap">{snapshot.priceDate}</span></span>
+							</a>
+						</li>
+						<li class="strip-api">
+							<a href="#api">
+								<span class="strip-big strip-mono">GET v1/index.json</span>
+								<span class="strip-small">the way in, for agents</span>
+							</a>
+						</li>
+					</ul>
 				</section>
 
 				<section class="exchange" aria-labelledby="exchange-title">
@@ -199,9 +344,13 @@ export default function Page() {
 										</p>
 									</blockquote>
 
-									<div class="ledger-wrap">
+									<details class="ledger-wrap fold" open>
+										<summary class="fold-head">
+											<span>Every figure in the answer, as the files hold it</span>
+											<span class="fold-count">5 lines</span>
+										</summary>
 										<table class="ledger">
-											<caption>Every figure in the answer, as the files hold it</caption>
+											<caption class="sr">Every figure in the answer, as the files hold it</caption>
 											<thead>
 												<tr>
 													<th scope="col">Source</th>
@@ -264,12 +413,15 @@ rate code {askedMachine.price.rateCode}: …<b>pricePerUnit.USD</b> = "{askedMac
 												</tr>
 											</tbody>
 										</table>
-									</div>
+									</details>
 								</figure>
 							</div>
 
-							<div class="trace">
-								<h3 class="trace-title">The files it read, in order</h3>
+							<details class="trace fold" open>
+								<summary class="fold-head">
+									<h3 class="trace-title">The files it read, in order</h3>
+									<span class="fold-count">3 GETs</span>
+								</summary>
 								<ol class="reads">
 									<li id="read-1">
 										<div class="read-head">
@@ -317,7 +469,7 @@ rate code {askedMachine.price.rateCode}: …<b>pricePerUnit.USD</b> = "{askedMac
 								<p class="trace-foot">
 									Three static files. <a href="#api">Point your agent at the same API</a>.
 								</p>
-							</div>
+							</details>
 						</div>
 					</div>
 				</section>
@@ -326,8 +478,9 @@ rate code {askedMachine.price.rateCode}: …<b>pricePerUnit.USD</b> = "{askedMac
 					<div class="section-head">
 						<h2 id="numbers-title">The same numbers, for you</h2>
 						<p>
-							Each benchmark at one setting, on all five machine types: the median of each Series' counted Runs, exact. The large figure is rounded to four digits; the small
-							line under it is every digit. Each figure links to its Series' file, with the Runs behind it.
+							Each benchmark at one setting, on all five machine types: the median of each Series' counted Runs, every digit as the API holds it. The first four significant
+							digits are set heavy so a row scans. Under each figure, its median and its 5th to 95th percentile span, each row drawn to its own scale from zero, and the Runs
+							counted. Each figure links to its Series' file, with the Runs behind it.
 						</p>
 					</div>
 
@@ -342,7 +495,7 @@ rate code {askedMachine.price.rateCode}: …<b>pricePerUnit.USD</b> = "{askedMac
 							<thead>
 								<tr>
 									<th scope="col" class="th-bench">
-										Benchmark <span class="th-sub">and what it measures</span>
+										Benchmark<span class="th-sub">, its unit, and which way is faster</span>
 									</th>
 									{machines.map((m) => {
 										const price = formatUsd(m.price.usdPerHour, { per: "hour" });
@@ -362,24 +515,39 @@ rate code {askedMachine.price.rateCode}: …<b>pricePerUnit.USD</b> = "{askedMac
 							</thead>
 							{SECTIONS.map((section) => {
 								const rows = headline.filter((row) => row.choice.section === section);
+								const note = GROUP_NOTE[section];
 								return (
 									<tbody>
 										<tr class="section-row">
-											<th scope="colgroup" colspan={machines.length + 1}>
-												{section}
-											</th>
+											<th scope="colgroup">{section}</th>
+											{machines.map((m) => (
+												<td aria-hidden="true" class={m.instanceType === ASKED_MACHINE ? "section-machine is-asked" : "section-machine"}>
+													{m.instanceType}
+												</td>
+											))}
 										</tr>
+										{note ? (
+											<tr class="group-note">
+												<td colspan={machines.length + 1}>
+													<p>{note}</p>
+												</td>
+											</tr>
+										) : null}
 										{rows.map((row) => {
 											const figs = rowFigures(row);
+											const max = Math.max(...figs.map((f) => f.p95.value));
+											const u = rowUnit(row, figs[0]!.shown.unit);
 											return (
 												<tr>
 													<th scope="row" class="bench">
 														<span class="bench-label">{row.choice.label}</span>
-														<span class="bench-what">{row.choice.what}</span>
-														<span class="bench-meta">
-															{row.choice.lead === "rate" ? "Bytes per second" : `Time of one repetition: ${row.choice.repetition.replace(/\.$/, "").replace(/^One /, "one ")}`}{" "}
-															· {row.choice.setting}
+														<span class="bench-what">{WHAT[row.choice.benchmark] ?? row.choice.what}</span>
+														<span class="bench-unit">
+															<span class={row.choice.lead === "rate" ? "better up" : "better down"}>{u.better}</span>
+															<b>{u.unit}</b>
+															{u.of ? ` ${u.of}` : ""}
 														</span>
+														<span class="bench-meta">{row.choice.setting}</span>
 													</th>
 													{row.cells.map((cell, i) => {
 														const fig = figs[i]!;
@@ -387,13 +555,13 @@ rate code {askedMachine.price.rateCode}: …<b>pricePerUnit.USD</b> = "{askedMac
 														return (
 															<td class={asked ? "fig-cell is-asked" : "fig-cell"}>
 																<a href={links.seriesFile(cell.series)} title={cellTitle(fig, cell.machine.instanceType)}>
-																	<span class="fig-short">
-																		{fig.shown.short}
-																		<span class="fig-unit">{fig.shown.unit}</span>
-																	</span>
-																	<span class="fig-full">{fig.shown.full}</span>
+																	<Exact full={fig.shown.full} />
+																	<span class="sr"> {fig.shown.unit}</span>
 																</a>
-																{asked ? <span class="asked-tag">cited above</span> : null}
+																<Bar fig={fig} max={max} />
+																<span class="runs">
+																	{formatCount(fig.count).full} Runs{asked ? <span class="asked-tag"> · cited above</span> : null}
+																</span>
 															</td>
 														);
 													})}
@@ -407,31 +575,44 @@ rate code {askedMachine.price.rateCode}: …<b>pricePerUnit.USD</b> = "{askedMac
 					</div>
 
 					<ol class="cards" aria-label="The headline figures, one benchmark at a time">
-						{headline.map((row) => {
+						{headline.map((row, n) => {
 							const figs = rowFigures(row);
+							const max = Math.max(...figs.map((f) => f.p95.value));
+							const u = rowUnit(row, figs[0]!.shown.unit);
+							const first = headline.findIndex((r) => r.choice.section === row.choice.section) === n;
+							const note = first ? GROUP_NOTE[row.choice.section] : undefined;
 							return (
-								<li class="card">
-									<div class="card-section">{row.choice.section}</div>
+								<li class={first ? "card card-first" : "card"}>
+									{first ? <div class="card-section">{row.choice.section}</div> : null}
+									{note ? <p class="card-note">{note}</p> : null}
 									<h3 class="card-title">{row.choice.label}</h3>
-									<p class="card-what">{row.choice.what}</p>
-									<p class="card-meta">
-										{row.choice.lead === "rate" ? "Median bytes per second" : `Median time of ${row.choice.repetition.replace(/\.$/, "").replace(/^One /, "one ")}`} ·{" "}
-										{row.choice.setting}
+									<p class="card-what">{WHAT[row.choice.benchmark] ?? row.choice.what}</p>
+									<p class="bench-unit">
+										<span class={row.choice.lead === "rate" ? "better up" : "better down"}>{u.better}</span>
+										<b>{u.unit}</b>
+										{u.of ? ` ${u.of}` : ""}
 									</p>
+									<p class="card-meta">{row.choice.setting}</p>
 									<ul class="card-figs">
 										{row.cells.map((cell, i) => {
 											const fig = figs[i]!;
 											const asked = row === askedRow && cell.machine.instanceType === ASKED_MACHINE;
 											return (
 												<li class={asked ? "is-asked" : undefined}>
-													<span class="card-machine">{cell.machine.instanceType}</span>
-													<a href={links.seriesFile(cell.series)} class="card-fig" title={cellTitle(fig, cell.machine.instanceType)}>
-														<span class="fig-short">
-															{fig.shown.short}
-															<span class="fig-unit">{fig.shown.unit}</span>
+													<span class="card-line">
+														<span class="card-machine">
+															{cell.machine.instanceType}
+															{asked ? <span class="asked-tag"> · cited</span> : null}
 														</span>
-														<span class="fig-full">{fig.shown.full}</span>
-													</a>
+														<a href={links.seriesFile(cell.series)} class="card-fig" title={cellTitle(fig, cell.machine.instanceType)}>
+															<Exact full={fig.shown.full} />
+															<span class="sr"> {fig.shown.unit}</span>
+														</a>
+													</span>
+													<span class="card-bar">
+														<Bar fig={fig} max={max} />
+														<span class="runs">{formatCount(fig.count).full} Runs</span>
+													</span>
 												</li>
 											);
 										})}
@@ -452,35 +633,35 @@ rate code {askedMachine.price.rateCode}: …<b>pricePerUnit.USD</b> = "{askedMac
 								field behind every number it gives you.
 							</p>
 							<div class="api-say-label">Or tell your agent, in so many words:</div>
-							<blockquote class="api-say">
+							<blockquote class="api-say" data-copy-block="the prompt">
 								<p>
-									Use the LedgerMath data API at {links.index}. Answer from the figures in its files, and name the file and field each figure came from.
+									Use the LedgerMath data API at <Breakable text={links.index} />. Answer from the figures in its files, and name the file and field each figure came from.
 								</p>
 							</blockquote>
 						</div>
 						<div class="api-code">
-							<div class="term" data-copy-scope>
+							<div class="term">
 								<div class="term-bar">
 									<span>shell</span>
+									<span>plain GET, no key</span>
 								</div>
-								<pre tabindex="0">
-									<code>
-										<span class="c"># the table of contents</span>
-										{"\n"}
-										<span class="p">$ </span>
-										<span data-copy>curl {links.index}</span>
-										{"\n\n"}
-										<span class="c"># every Series, with its figures ({formatCount(snapshot.seriesCount).full})</span>
-										{"\n"}
-										<span class="p">$ </span>
-										<span data-copy>curl {links.seriesList}</span>
-										{"\n\n"}
-										<span class="c"># the day's On-Demand prices, {snapshot.region}</span>
-										{"\n"}
-										<span class="p">$ </span>
-										<span data-copy>curl {links.prices}</span>
-									</code>
-								</pre>
+								{[
+									[`the table of contents`, links.index, "the index command"],
+									[`every Series, with its figures (${formatCount(snapshot.seriesCount).full})`, links.seriesList, "the Series list command"],
+									[`the day's On-Demand prices, ${snapshot.region}`, links.prices, "the prices command"],
+								].map(([comment, url, name]) => (
+									<div class="cmd" data-copy-block={name}>
+										<p class="c"># {comment}</p>
+										<pre tabindex="0">
+											<code>
+												<span class="p">$ </span>
+												<span data-copy>
+													curl <Breakable text={url!} />
+												</span>
+											</code>
+										</pre>
+									</div>
+								))}
 							</div>
 							<ul class="schemas">
 								{links.schemas.map((s) => (

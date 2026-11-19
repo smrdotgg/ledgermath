@@ -1,20 +1,27 @@
-// Copy buttons for the shell lines. The page reads the same without them.
-const scope = document.querySelector<HTMLElement>("[data-copy-scope]");
-const bar = scope?.querySelector<HTMLElement>(".term-bar");
-if (scope && bar && navigator.clipboard) {
-	const lines = [...scope.querySelectorAll<HTMLElement>("[data-copy]")].map((el) => el.textContent ?? "");
+// Copy buttons for the shell commands and the prompt, and, on a phone, the answer's two
+// audit trails folded so the numbers come sooner. The page reads the same without any of it.
+for (const block of document.querySelectorAll<HTMLElement>("[data-copy-block]")) {
+	if (!navigator.clipboard) break;
+	const source = block.querySelector<HTMLElement>("[data-copy]") ?? block;
+	const text = (source.textContent ?? "").replace(/\s+/g, " ").trim();
+	const label = "Copy";
 	const button = document.createElement("button");
 	button.type = "button";
 	button.className = "copy-btn";
-	button.textContent = "Copy first line";
+	button.textContent = label;
+	button.setAttribute("aria-label", `Copy ${block.dataset.copyBlock ?? "this"}`);
 	button.addEventListener("click", async () => {
 		try {
-			await navigator.clipboard.writeText(lines[0] ?? "");
+			await navigator.clipboard.writeText(text);
 			button.textContent = "Copied";
 		} catch {
 			button.textContent = "Copy failed";
 		}
-		setTimeout(() => (button.textContent = "Copy first line"), 1600);
+		setTimeout(() => (button.textContent = label), 1600);
 	});
-	bar.append(button);
+	block.append(button);
+}
+
+if (window.matchMedia("(max-width: 600px)").matches) {
+	for (const fold of document.querySelectorAll<HTMLDetailsElement>("details.fold")) fold.open = false;
 }
