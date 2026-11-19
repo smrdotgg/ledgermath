@@ -4,7 +4,7 @@
 // Under each figure a pencil rule drawn from zero, on one scale per row, with the figure's p5–p95 in
 // ink and its median a notch: a drawing that never makes 0.2% look like more. Each column head holds
 // its machine's usual count of Runs; a cell names its own only where it differs. On a phone the
-// machines' key comes first, under the legend. Few words: the figures are the page, and everything else is a
+// machines' key closes the ledger, so the first figures come first. Few words: the figures are the page, and everything else is a
 // link. No best, no ranking, no ties.
 import "./page.css";
 import {
@@ -58,18 +58,14 @@ const cells = headline.map(rowCells);
 const wholeDigits = (xs: Cell[]) => Math.max(...xs.map((c) => c.p50.full.split(".")[0]!.length));
 
 /**
- * A figure as a ledger writes it: whole part right-aligned, three places in ink, the rest in pencil, in threes
- * from the point. A last group of one or two digits closes up on the group before it, so the tail reads as one figure.
+ * A figure as a ledger writes it: whole part right-aligned, three places in ink, the rest in pencil, in strict
+ * threes from the point, the last group as short as it falls, so every column's tails keep one rhythm.
  */
 function Written(props: { full: string; inkPlaces?: number }) {
 	const [whole = "0", fraction = ""] = props.full.split(".");
 	const places = props.inkPlaces ?? 3;
 	const ink = fraction.slice(0, places);
 	const pencil = fraction.slice(places).match(/\d{1,3}/g) ?? [];
-	if (pencil.length > 1 && pencil[pencil.length - 1]!.length < 3) {
-		const last = pencil.pop()!;
-		pencil[pencil.length - 1] += last;
-	}
 	return (
 		<span class="fig">
 			<span class="w">{whole}</span>
@@ -143,7 +139,7 @@ function Url(props: { href: string }) {
 		<>
 			{parts.map((part, i) => (
 				<>
-					{part}
+					<span class="nowrap">{part}</span>
 					{i < parts.length - 1 ? <wbr /> : ""}
 				</>
 			))}
@@ -156,15 +152,15 @@ const rel = (url: string) => url.replace(API, "");
 const schemaOf = (name: string) => links.schemas.find((s) => s.name === name)!.url;
 
 /**
- * The API's addresses, one line each: the file, and the schema it follows. Each address shown is a real one a
- * reader can copy; the evidence's is a template, so it is written, not linked (the masthead links one Run's).
+ * The API's addresses, one column each, like the ledger's machines: the name, the schema it follows, the file.
+ * Every one is a real address a reader can open (the masthead links one Run's evidence).
  */
-const ADDRESSES: { label: string; href?: string; shown: string; schema?: string }[] = [
+const ADDRESSES: { label: string; href: string; shown: string; schema?: string }[] = [
 	{ label: "Index", href: links.index, shown: rel(links.index), schema: schemaOf("index") },
 	{ label: "All Series", href: links.seriesList, shown: rel(links.seriesList), schema: schemaOf("series-list") },
 	{ label: "One Series", href: seriesFileContents.sample.url, shown: rel(seriesFileContents.sample.url), schema: schemaOf("series") },
 	{ label: "Prices", href: links.prices, shown: rel(links.prices), schema: schemaOf("prices") },
-	{ label: "Evidence", shown: rel(links.evidenceBlobTemplate) },
+	{ label: "Docs", href: links.docs, shown: links.docs.replace("https://", "") },
 ];
 
 export default function Page() {
@@ -263,12 +259,22 @@ export default function Page() {
 						</h2>
 						<p class="legend">
 							<span class="lg-item">
-								<span class="lg-rule" aria-hidden="true">
+								<span class="lg-rule lg-zero" aria-hidden="true">
 									<span class="lg-len" />
+								</span>
+								from 0, per row
+							</span>
+							<span class="lg-item">
+								<span class="lg-rule" aria-hidden="true">
 									<span class="lg-rng" />
+								</span>
+								p5–p95
+							</span>
+							<span class="lg-item">
+								<span class="lg-rule" aria-hidden="true">
 									<span class="lg-mid" />
 								</span>
-								0 to median, p5–p95
+								median
 							</span>
 							<span class="lg-item">
 								<span class="n" aria-hidden="true">
@@ -370,51 +376,26 @@ export default function Page() {
 					</div>
 				</section>
 
-				<div class="back">
-					<section class="api" aria-labelledby="api-h">
-						<h2 id="api-h">For agents and developers</h2>
-						<table class="addr">
-							<tbody>
-								{ADDRESSES.map((a, i) => (
-									<tr>
-										<th scope="row">{a.label}</th>
-										<td class="mono">
-											{a.href ? (
-												<a href={a.href}>
-													<Url href={a.shown} />
-												</a>
-											) : (
-												<span class="tpl">
-													<Url href={a.shown} />
-												</span>
-											)}
-										</td>
-										<td class="sch">
-											{/* a ledger writes a repeated word once, and ditto under it */}
-											{a.schema ? (
-												i === 0 ? (
-													<a href={a.schema}>schema</a>
-												) : (
-													<a href={a.schema} class="ditto" aria-label={`${a.label} schema`} title={`${a.label} schema`}>
-														〃
-													</a>
-												)
-											) : (
-												""
-											)}
-										</td>
-									</tr>
-								))}
-								<tr>
-									<th scope="row">Docs</th>
-									<td class="mono" colspan={2}>
-										<a href={links.docs}>{links.docs.replace("https://", "")}</a>
-									</td>
-								</tr>
-							</tbody>
-						</table>
-					</section>
-				</div>
+				<section class="api" aria-labelledby="api-h">
+					<h2 id="api-h">For agents and developers</h2>
+					<ul class="addr">
+						{ADDRESSES.map((a) => (
+							<li>
+								<span class="al">{a.label}</span>
+								{a.schema ? (
+									<a class="sch" href={a.schema} aria-label={`${a.label} schema`}>
+										schema
+									</a>
+								) : (
+									""
+								)}
+								<a class="mono" href={a.href}>
+									<Url href={a.shown} />
+								</a>
+							</li>
+						))}
+					</ul>
+				</section>
 			</main>
 
 			<footer class="colophon">
