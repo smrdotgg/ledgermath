@@ -440,6 +440,21 @@ a.big {
 .ro .date {
 	margin-left: 6px;
 }
+.exact.why {
+	margin-top: 2px;
+	font-family: var(--sans);
+	font-size: 0.78rem;
+	color: var(--ink-2);
+}
+.exact a {
+	color: inherit;
+}
+.case {
+	margin: -4px 0 10px;
+	font: 500 0.72rem/1.4 var(--mono);
+	letter-spacing: 0.03em;
+	color: var(--accent-ink);
+}
 .exact {
 	display: block;
 	margin-top: 6px;
@@ -553,23 +568,52 @@ h2 .dim {
 .dial {
 	align-self: end;
 }
+/* The caption sits on the chart's own columns, so "Runs" heads the Runs and a long unit wraps
+   inside its cell instead of running into "Machine". */
+.dial-cap,
+.dial-grid {
+	display: grid;
+	grid-template-columns: 86px minmax(0, 1fr) minmax(56px, max-content);
+	column-gap: 14px;
+}
+.dial.runs .dial-cap,
+.dial.runs .dial-grid {
+	grid-template-columns: 86px minmax(0, 1fr) minmax(56px, max-content) minmax(2.2em, max-content);
+}
+.dial.lg .dial-cap,
+.dial.lg .dial-grid {
+	grid-template-columns: 96px minmax(0, 1fr) minmax(64px, max-content) minmax(2.2em, max-content);
+}
 .dial-cap {
-	display: flex;
-	justify-content: space-between;
-	font: 500 0.7rem/1 var(--mono);
-	color: var(--muted);
+	align-items: end;
+	font: 500 0.7rem/1.35 var(--mono);
+	color: var(--ink-2);
 	padding-bottom: 6px;
 	margin-bottom: 2px;
 	border-bottom: 1px solid var(--grid);
 }
-.dial-grid {
-	display: grid;
-	grid-template-columns: 86px minmax(0, 1fr) minmax(56px, max-content);
-	grid-template-rows: repeat(var(--n), var(--row)) var(--axis);
-	column-gap: 14px;
+.dial-cap .c-f {
+	grid-column: 2 / 4;
+	text-align: right;
 }
-.dial.lg .dial-grid {
-	grid-template-columns: 96px minmax(0, 1fr) minmax(64px, max-content);
+.dial:not(.runs) .dial-cap .c-f {
+	grid-column: 2 / -1;
+}
+.dial-cap .c-n {
+	grid-column: 4;
+	text-align: right;
+	color: var(--muted);
+}
+.dial-grid {
+	grid-template-rows: repeat(var(--n), var(--row)) var(--axis);
+}
+.dial-grid .n {
+	grid-column: 4;
+	align-self: center;
+	text-align: right;
+	font: 450 0.7rem/1 var(--mono);
+	font-variant-numeric: tabular-nums;
+	color: var(--muted);
 }
 .plot {
 	grid-column: 2;
@@ -647,8 +691,8 @@ a.v:hover {
 	stroke: var(--ink-2);
 }
 .tl {
-	font: 0.66rem var(--mono);
-	fill: var(--muted);
+	font: 500 0.7rem var(--mono);
+	fill: var(--ink-2);
 	font-variant-numeric: tabular-nums;
 }
 .tl.first {
@@ -690,7 +734,7 @@ a.v:hover {
 }
 .strip-grid {
 	display: grid;
-	grid-template-columns: 86px minmax(0, 1fr) minmax(56px, max-content);
+	grid-template-columns: 86px minmax(0, 1fr) minmax(56px, max-content) minmax(2.2em, max-content);
 	column-gap: 14px;
 	align-items: center;
 	padding: 4px 0 2px;
@@ -832,6 +876,44 @@ a.v:hover {
 .inst-foot dt {
 	color: var(--muted);
 }
+.inst-foot .of {
+	color: var(--muted);
+}
+.back,
+.rep-in {
+	display: none;
+}
+.rep-in {
+	margin: 0 0 12px;
+	padding: 0;
+}
+
+.limit-note {
+	margin: 0 0 10px;
+	padding: 9px 11px;
+	font-size: 0.78rem;
+	line-height: 1.45;
+	color: var(--ink);
+	background: color-mix(in srgb, var(--ink) 5%, var(--panel));
+	border-left: 2px solid var(--ink-2);
+	border-radius: 0 6px 6px 0;
+	text-wrap: pretty;
+}
+.badge.lim {
+	color: var(--panel);
+	background: var(--ink-2);
+	border-color: var(--ink-2);
+}
+.lg-n {
+	display: inline-block;
+	width: 18px;
+	text-align: center;
+	font: 500 0.68rem/1 var(--mono);
+	color: var(--muted);
+}
+.narrow-only {
+	display: none !important;
+}
 .inst-foot dd {
 	margin: 0;
 	color: var(--ink-2);
@@ -946,6 +1028,42 @@ a.v:hover {
 	display: grid;
 	width: 100%;
 	font-size: 0.78rem;
+}
+.digits .exact-fig .ln {
+	justify-content: flex-end;
+}
+.digits .exact-fig .n .nm {
+	color: var(--muted);
+}
+/* The four row labels, once per benchmark, between its name and the five machines. */
+.digits .lbs {
+	padding-left: 0;
+	padding-right: 4px;
+	text-align: left;
+	font: 0.76rem/1.55 var(--mono);
+	color: var(--muted);
+	white-space: nowrap;
+}
+.digits tbody .lbs {
+	padding-top: 12px;
+}
+.digits .lbs span {
+	display: block;
+	font-size: 0.78rem;
+}
+.digits .lbs .med {
+	color: var(--ink);
+	font-weight: 600;
+}
+.digits thead .lbs {
+	background: color-mix(in srgb, var(--panel) 50%, var(--bg));
+	border-bottom: 1px solid var(--line);
+}
+.digits .q.rep {
+	margin-top: 4px;
+	max-width: 15rem;
+	white-space: normal;
+	line-height: 1.4;
 }
 .digits tbody tr:hover th,
 .digits tbody tr:hover td {
@@ -1120,6 +1238,108 @@ a.v:hover {
 	line-height: 1.45;
 	color: var(--band-ink);
 }
+/* Every digit on a phone: one benchmark at a time, the five machines as rows, so they compare. */
+.dlist {
+	display: grid;
+	gap: 12px;
+}
+.dl-b {
+	background: var(--panel);
+	border: 1px solid var(--line);
+	border-radius: 12px;
+	padding: 14px 14px 8px;
+}
+.dl-b h3 {
+	margin: 0;
+	font-size: 0.95rem;
+	font-weight: 600;
+	letter-spacing: -0.01em;
+}
+.dl-b h3 a {
+	text-decoration: none;
+	color: var(--ink);
+}
+.dl-b .q {
+	margin: 2px 0 8px;
+	font: 0.7rem/1.4 var(--mono);
+	color: var(--muted);
+}
+.dl-b ol {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+}
+.dl-b li {
+	display: grid;
+	grid-template-columns: auto minmax(0, 1fr) 2.2em;
+	column-gap: 10px;
+	row-gap: 1px;
+	padding: 6px 0;
+	border-top: 1px solid var(--grid);
+	font: 0.76rem/1.4 var(--mono);
+	font-variant-numeric: tabular-nums;
+}
+.dl-b .m {
+	align-self: baseline;
+	font-size: 0.74rem;
+}
+.dl-b .p50 {
+	justify-self: end;
+	font-weight: 600;
+	color: var(--ink);
+	text-decoration: none;
+	white-space: nowrap;
+}
+.dl-b .n {
+	text-align: right;
+	color: var(--muted);
+}
+.dl-b .pr {
+	grid-column: 1 / -1;
+	display: flex;
+	flex-wrap: wrap;
+	justify-content: flex-end;
+	column-gap: 2ch;
+	font-size: 0.64rem;
+	color: var(--ink-2);
+}
+.dl-b .pr > span {
+	white-space: nowrap;
+}
+
+.agent {
+	margin: 22px 0 22px;
+	border: 1px solid var(--band-line);
+	border-radius: 10px;
+	background: var(--band-panel);
+	padding: 14px 16px 14px;
+	position: relative;
+}
+.agent-h {
+	margin: 0 0 8px;
+	font: 600 0.72rem/1.3 var(--mono);
+	letter-spacing: 0.05em;
+	text-transform: uppercase;
+	color: var(--band-accent);
+}
+.api-copy .agent-t {
+	margin: 0;
+	font: 0.78rem/1.6 var(--mono);
+	color: var(--band-ink);
+	overflow-wrap: break-word;
+}
+.agent-t:focus-visible {
+	outline: 2px solid var(--band-accent);
+	outline-offset: 3px;
+	border-radius: 2px;
+}
+.agent .copy {
+	position: absolute;
+	top: 11px;
+	right: 12px;
+	margin: 0;
+}
+
 .swipe {
 	display: none;
 	margin: 0 0 10px;
@@ -1168,14 +1388,14 @@ a.v:hover {
 }
 .cmd-row {
 	display: flex;
-	align-items: center;
+	align-items: flex-start;
 	gap: 10px;
 	color: var(--band-ink);
 }
 .cmd-row code {
 	font-size: inherit;
-	white-space: nowrap;
-	overflow-x: auto;
+	white-space: normal;
+	overflow-wrap: normal;
 	min-width: 0;
 	scrollbar-width: none;
 }
@@ -1426,16 +1646,26 @@ a.v:hover {
 	padding-left: 1.1em;
 	list-style: circle;
 }
-.defs-more {
-	margin-top: 20px;
+.defs-plain {
+	margin: 20px 0 0;
 	padding-top: 16px;
 	border-top: 1px dashed var(--line);
-}
-.defs-more p:last-child {
-	margin: 0;
-	font-size: 0.82rem;
+	font-size: 0.85rem;
 	color: var(--ink-2);
 	line-height: 1.55;
+	max-width: 62em;
+}
+.defs-more {
+	margin-top: 16px;
+}
+.defs-more summary {
+	cursor: pointer;
+	font: 600 0.76rem/1.3 var(--mono);
+	color: var(--accent-ink);
+	padding: 6px 0;
+}
+.defs-more[open] summary {
+	margin-bottom: 12px;
 }
 .defs dl .wide {
 	grid-column: 1 / -1;
@@ -1573,6 +1803,38 @@ a.v:hover {
 	.jump {
 		display: block;
 		margin: 0 0 18px;
+		scroll-margin-top: 12px;
+	}
+	.wide-only {
+		display: none !important;
+	}
+	.narrow-only {
+		display: revert !important;
+	}
+	.hero-links .narrow-only {
+		display: inline-block !important;
+	}
+	.dlist.narrow-only {
+		display: grid !important;
+	}
+	.inst-foot {
+		position: relative;
+	}
+	.back {
+		display: block;
+		position: absolute;
+		top: 0;
+		right: 0;
+		padding: 9px 0 9px 12px;
+		font: 500 0.72rem/1.3 var(--mono);
+		color: var(--muted);
+		text-decoration: none;
+	}
+	.rep-in {
+		display: grid;
+	}
+	.rep-out {
+		display: none !important;
 	}
 	.defs dl {
 		grid-template-columns: minmax(0, 1fr);
@@ -1605,6 +1867,7 @@ a.v:hover {
 		padding: 18px 16px 14px;
 	}
 	.strip-grid,
+	.dial-cap,
 	.dial-grid,
 	.dial.lg .dial-grid {
 		grid-template-columns: 80px minmax(0, 1fr) minmax(48px, max-content);
@@ -1645,6 +1908,20 @@ a.v:hover {
 	}
 	.every .sum-n {
 		display: none;
+	}
+	.tl {
+		font-size: 0.64rem;
+	}
+	.dial.runs .dial-cap,
+	.dial.runs .dial-grid,
+	.dial.lg .dial-cap,
+	.dial.lg .dial-grid,
+	.inst .strip-grid {
+		grid-template-columns: 80px minmax(0, 1fr) minmax(44px, max-content) minmax(1.6em, max-content);
+		column-gap: 9px;
+	}
+	.dial-cap .c-n {
+		font-size: 0.64rem;
 	}
 	.hero {
 		row-gap: 18px;
@@ -1712,7 +1989,8 @@ a.v:hover {
 		font-size: 0.72rem;
 	}
 	.machine dl {
-		grid-template-columns: repeat(2, minmax(0, 1fr));
+		grid-template-columns: repeat(3, minmax(0, 1fr));
+		grid-auto-flow: dense;
 		gap: 6px 12px;
 	}
 	.machine dl div {
@@ -1721,6 +1999,9 @@ a.v:hover {
 	}
 	.machine dl .span {
 		grid-column: 1 / -1;
+	}
+	.machine dl .span:last-child {
+		grid-column: span 2;
 	}
 	.machine dt {
 		font-size: 0.7rem;
