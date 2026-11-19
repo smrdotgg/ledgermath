@@ -315,7 +315,7 @@ h1 {
 	position: absolute;
 	left: 0;
 	content: "$";
-	color: var(--term-accent);
+	color: var(--term-dim);
 	font-weight: 700;
 }
 .u-host,
@@ -528,6 +528,12 @@ h1 {
 	font: 800 1.95rem/1 var(--display);
 	font-variant-numeric: tabular-nums;
 }
+.tally dd a {
+	color: inherit;
+	text-decoration: underline dotted var(--p-dim);
+	text-decoration-thickness: 2px;
+	text-underline-offset: 0.15em;
+}
 .panel-prices {
 	margin: 0;
 	padding-top: 0.8rem;
@@ -584,7 +590,16 @@ h2 {
 	margin: 0 7.4rem 0 1rem;
 	background: var(--track);
 	border-radius: 1px;
-	--sec: var(--ink-2);
+	/* the span tinted, the post in ink, as in every cell */
+	--sec: color-mix(in srgb, var(--ink-3) 55%, var(--track));
+	text-decoration: none;
+}
+.key-strip:hover .key-l,
+.key-strip:focus-visible .key-l {
+	text-decoration: underline;
+}
+.key-strip .key-l {
+	color: var(--link);
 }
 .key-end {
 	position: absolute;
@@ -748,6 +763,10 @@ a.key-mark {
 	font: 600 0.8rem/1 var(--mono);
 	color: #c4c0b5;
 }
+/* the n column's heading: only on the phone, where the machines become a roster */
+.corner-n {
+	display: none;
+}
 
 /* the section band: one line across the board, its code, its name */
 .sec-row > * {
@@ -779,22 +798,23 @@ a.key-mark {
 	border-top: 1px solid var(--rule);
 	vertical-align: top;
 }
+/* the benchmark on one line: its number, its name, and its unit and direction against the figures */
 .what {
 	text-align: left;
-	padding: 0.85rem 1rem 0.8rem 1.1rem;
+	vertical-align: middle !important;
+	padding: 0.55rem 0.75rem 0.55rem 1.1rem;
 	box-shadow: inset 4px 0 0 var(--sec);
-	display: table-cell;
 	font-weight: 400;
 }
-.what-meta {
+.what-in {
 	display: flex;
-	align-items: center;
-	gap: 0.6rem;
+	align-items: first baseline;
+	gap: 0.55rem;
 }
 .what-label {
-	display: block;
-	margin-top: 0.5rem;
-	font: 650 1rem/1.25 var(--sans);
+	flex: 1 1 auto;
+	min-width: 0;
+	font: 650 0.97rem/1.25 var(--sans);
 	color: var(--ink);
 	text-decoration: none;
 }
@@ -802,6 +822,7 @@ a.key-mark {
 	text-decoration: underline;
 }
 .what-unit {
+	flex: none;
 	padding: 0.2rem 0.35rem;
 	border: 1px solid var(--ink-3);
 	border-radius: 2px;
@@ -821,7 +842,7 @@ a.key-mark {
 }
 .fig a {
 	display: block;
-	padding: 0.9rem 0.75rem 0.85rem;
+	padding: 0.7rem 0.75rem 0.7rem;
 	color: var(--fig);
 	text-decoration: none;
 }
@@ -838,9 +859,14 @@ a.key-mark {
 	letter-spacing: -0.03em;
 	text-underline-offset: 0.25em;
 }
-/* the figure links to its Series: no texture at rest, a rule under it on hover and focus */
-.fig a:hover .fig-v,
-.fig a:focus-visible .fig-v {
+/* the figure links to its Series, and says so at rest: a dotted rule under its bold head, solid on hover and focus */
+.fig-h {
+	text-decoration: underline dotted color-mix(in srgb, var(--fig) 45%, transparent);
+	text-decoration-thickness: 1.5px;
+	text-underline-offset: 0.22em;
+}
+.fig a:hover .fig-h,
+.fig a:focus-visible .fig-h {
 	text-decoration: underline solid var(--fig);
 	text-decoration-thickness: 2px;
 }
@@ -953,7 +979,8 @@ a.key-mark {
 	font-size: 0.85rem;
 }
 .term-c a {
-	color: var(--term-accent);
+	color: var(--term-ink);
+	text-decoration-color: var(--term-dim);
 }
 .term code {
 	grid-column: 1;
@@ -988,6 +1015,10 @@ a.key-mark {
 .fold-l code {
 	font-size: inherit;
 }
+.fold-l .badge {
+	--sec: var(--s-os);
+	font-size: inherit;
+}
 .resp {
 	margin: 0.75rem 0 0;
 	padding: 0.9rem 1rem;
@@ -1007,24 +1038,57 @@ a.key-mark {
 .j-n {
 	font-weight: 700;
 }
+/* the field the sum below starts from: marked in its row's section colour (row 08, operating system) */
 mark.j-n {
-	background: var(--signal);
-	color: var(--signal-ink);
-	padding: 0 0.15em;
+	background: none;
+	color: inherit;
+	padding: 0 0.1em;
+	box-shadow: inset 0 -0.45em 0 color-mix(in srgb, var(--s-os) 28%, transparent);
 }
-.ptr {
-	margin: 0.75rem 0 0;
-	display: grid;
-	gap: 0.5rem;
-	font-size: 0.85rem;
+/* the worked example as a sum in a ledger: every number on its point, the result under a rule */
+.sum {
+	margin: 0.9rem 0 0;
+	border-collapse: collapse;
+	font: 500 0.92rem/1.3 var(--mono);
+	font-variant-numeric: tabular-nums;
 }
-.ptr dt {
-	font: 800 1rem/1 var(--display);
+.sum td {
+	padding: 0.3rem 0;
+	white-space: nowrap;
+	vertical-align: baseline;
 }
-.ptr dd {
-	margin: 0.2rem 0 0;
-	overflow-wrap: anywhere;
+.sum .sum-l {
+	padding-right: 1rem;
+	text-align: left;
+	font: 800 1.05rem/1 var(--display);
+	letter-spacing: 0.02em;
+	text-transform: uppercase;
+}
+.sum .sum-w {
+	text-align: right;
+	font-weight: 700;
+}
+.sum .sum-f {
+	text-align: left;
+	padding-right: 0.6rem;
+}
+.sum td:last-child {
 	color: var(--ink-2);
+}
+.sum td a {
+	color: var(--link);
+}
+.sum mark {
+	background: none;
+	color: inherit;
+	box-shadow: inset 0 -0.45em 0 color-mix(in srgb, var(--s-os) 28%, transparent);
+}
+.sum-eq > * {
+	border-top: 2px solid var(--rule-strong);
+}
+.sum-n {
+	margin-left: 0.4rem;
+	font-size: 0.8rem;
 }
 .api-docs {
 	margin-left: auto;
@@ -1171,26 +1235,24 @@ mark.j-n {
 		padding: 0.3rem 0 0.25rem;
 		font-size: 1.05rem;
 	}
-	/* the tally on one line: each label beside its count */
+	/* the tally on one row of four: each label over its count */
 	.tally {
 		padding-top: 0.5rem;
-		grid-template-columns: repeat(3, auto);
+		grid-template-columns: repeat(4, auto);
 		justify-content: space-between;
 	}
 	.tally > div {
-		display: flex;
-		align-items: baseline;
-		gap: 0.4rem;
 		margin-right: 0;
 		padding-right: 0;
 		border-right: 0;
 	}
 	.tally dd {
-		font-size: 1.2rem;
+		font-size: 1.3rem;
+		white-space: nowrap;
 	}
 	.tally dt {
-		margin: 0;
-		font-size: 0.66rem;
+		margin: 0 0 0.25rem;
+		font-size: 0.64rem;
 	}
 	.panel-prices {
 		padding-top: 0.5rem;
@@ -1336,8 +1398,41 @@ mark.j-n {
 		font-size: 0.7rem;
 	}
 	.what-label {
+		width: auto;
 		margin: 0;
 		font-size: 0.96rem;
+	}
+	.what-in {
+		display: contents;
+	}
+	.corner-n {
+		display: block;
+		margin-left: auto;
+		text-transform: none;
+		font-size: 0.8rem;
+	}
+	.n-eq {
+		display: none;
+	}
+	/* the response on one line per field: it scrolls in its box rather than breaking inside a string */
+	.resp {
+		white-space: pre;
+		overflow-wrap: normal;
+		overflow-x: auto;
+		font-size: 0.74rem;
+	}
+	.sum {
+		font-size: 0.72rem;
+	}
+	.sum .sum-l {
+		font-size: 0.85rem;
+		padding-right: 0.5rem;
+	}
+	.sum .sum-f {
+		padding-right: 0.4rem;
+	}
+	.sum td:last-child {
+		white-space: normal;
 	}
 	.fig {
 		display: block;
