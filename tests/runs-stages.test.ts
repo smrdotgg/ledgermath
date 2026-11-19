@@ -144,15 +144,16 @@ const delivered = (time: string, instanceType: string): unknown =>
 const UNSCHEDULED = ["smr-runs", "production-runs", "alice-runs", "dev-runs"].filter((stage) => stage !== SCHEDULED_STAGE);
 
 describe("the one scheduled stage", () => {
-	test("is smr-runs until the cutover", () => {
-		// The cutover changes SCHEDULED_STAGE to production-runs, and this line with it
-		// (README, "Moving the schedule to the production account"). No other test names it.
+	test("is production-runs since the cutover of 2026-11-19", () => {
+		// The cutover changed SCHEDULED_STAGE from smr-runs to production-runs, and this line
+		// with it (README, "Moving the schedule to the production account"); going back would
+		// change both again. No other test names it.
 		expect(SCHEDULED_STAGE).toBe("production-runs");
 		expect(isScheduledStage(SCHEDULED_STAGE)).toBe(true);
 		for (const stage of UNSCHEDULED) expect(isScheduledStage(stage)).toBe(false);
 	});
 
-	test("gets every launch schedule, exactly those smr-runs has had, so deploying it changes none", () => {
+	test("gets every launch schedule, exactly those smr-runs had before the cutover, so the move changed none", () => {
 		expect(stageLaunchSchedules(SCHEDULED_STAGE)).toBe(LAUNCH_SCHEDULES);
 		expect(stageLaunchSchedules(SCHEDULED_STAGE).map((schedule) => [schedule.name, schedule.expression, schedule.event])).toEqual([
 			["BoxLaunchC6i8xlargeAt10", "cron(10 4,10,16,22 * * ? *)", { scheduledTime: "<aws.scheduler.scheduled-time>", instanceType: "c6i.8xlarge" }],
@@ -161,7 +162,7 @@ describe("the one scheduled stage", () => {
 			["BoxLaunchC8a2xlargeAt40", "cron(40 4,10,16,22 * * ? *)", { scheduledTime: "<aws.scheduler.scheduled-time>", instanceType: "c8a.2xlarge" }],
 			["BoxLaunchI4i2xlargeAt50", "cron(50 4,10,16,22 * * ? *)", { scheduledTime: "<aws.scheduler.scheduled-time>", instanceType: "i4i.2xlarge" }],
 		]);
-		// The launch function's list of targets, as deployed to smr-runs before this change.
+		// The launch function's list of targets, as deployed to smr-runs before the cutover.
 		expect(scheduledTargetTypes(SCHEDULED_STAGE)).toBe("c6i.8xlarge,m5.large,c8i.2xlarge,c8a.2xlarge,i4i.2xlarge");
 		expect(scheduledTargetTypes(SCHEDULED_STAGE)).toBe(TARGETS.map((target) => target.instance_type).join(","));
 	});

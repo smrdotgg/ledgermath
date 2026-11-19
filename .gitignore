@@ -35,6 +35,9 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 
 # sst
 .sst
+# SST writes one beside each package.json at every diff and deploy; the root one is committed
+site/sst-env.d.ts
+site/deploy/sst-env.d.ts
 
 local
 

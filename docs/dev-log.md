@@ -1036,4 +1036,24 @@ A migrated benchmark is done only when **all** of these hold:
   is not yet measured, and finding it is deferred. ADR-0029 (decision 4) and ADR-0008's
   note say so. Only documents changed: `schedule.json`, the code and the tests are as they
   were.
+- **2026-11-19** — The schedule moved to the production account (#57), following the
+  README's "Moving the schedule to the production account" as written. Steps 1 to 5 on
+  2026-11-18, 19:53 to 20:27 UTC: `production-runs` deployed with no launch schedule, one
+  `m5.large` booted there by hand (16.5 minutes to its log), the development bucket copied
+  and verified. Steps 6 to 12 on 2026-11-19, 12:33 to 13:07 UTC, in the 12:30 to 15:00 gap:
+  the copy again (13:01, `verify` compared 86,550 source objects, 568 s),
+  `SCHEDULED_STAGE = "production-runs"` merged as `0a704fb` (#65), `production-runs`
+  deployed with its five launch schedules, `smr-runs` deployed without them, and the
+  workflow's `RUNS_BUCKET` and `RUNS_AWS_ROLE_ARN` pointed at production. Step 13, the
+  first production round at 16:10 UTC, passed (checked 17:30 to 17:41 UTC): five launches,
+  five boot summaries, `check-runs.ts` on the bucket, the workflow, and no Series of either
+  Method starting a new group. Step 14, going back, was not needed. `smr-runs` and its
+  bucket are kept, with no launch schedule. **One unplanned effect**: the deploy of
+  `smr-runs` deleted the development bucket's previous source archive,
+  `source/50db33a….tar.gz`, every version and no delete marker, as every deploy does to
+  the previous `source/` key. No Run was affected: the 5,868 Runs built from it name its
+  blob, which both buckets hold. The README now says so, with the other corrections the
+  move showed (the launch function's log group, the names of production's launch
+  schedules, how long `verify` takes, a group check that also reads the requests Series,
+  the two new `sst-env.d.ts` files, and dated figures for the buckets).
 - _(agents: append your entry here, one per merged benchmark)_
