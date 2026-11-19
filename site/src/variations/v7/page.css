@@ -37,6 +37,9 @@
 	--accent-wash: #f5dfd4;
 	--accent-line: #e2a891;
 	--band: rgb(178 58 28 / 0.42);
+	--bar: #a8a296;
+	--bar-tick: #5f5b52;
+	--hover: #ece8de;
 	--link: #1b1a17;
 	--term-edge: transparent;
 	--term-bg: #1d1c19;
@@ -61,7 +64,10 @@
 		--accent-ink: #f5a088;
 		--accent-wash: #3a2018;
 		--accent-line: #7c3a28;
-		--band: rgb(240 132 101 / 0.58);
+		--band: rgb(240 132 101 / 0.5);
+		--bar: #5c5850;
+		--bar-tick: #9a9488;
+		--hover: #201f1b;
 		--link: #eeeae1;
 		--term-edge: #4a463f;
 		--term-bg: #070706;
@@ -196,14 +202,14 @@ h2 {
 
 /* ------------------------------------------------------------ hero */
 
-/* The words and the way in on the left; the exchange on the right with its freshness under it. */
+/* The words and the way in on the left, the exchange on the right; freshness and provenance in
+   one line across the foot of both. */
 .hero {
 	display: grid;
 	grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
-	grid-template-rows: auto 1fr;
 	grid-template-areas:
 		"text card"
-		"text facts";
+		"facts facts";
 	column-gap: 56px;
 	align-items: start;
 	padding-top: 48px;
@@ -291,11 +297,14 @@ h1 {
 	color: var(--muted);
 }
 .facts-line {
-	display: flex;
-	flex-wrap: wrap;
-	gap: 8px 36px;
-	margin: 22px 0 0;
-	padding: 0 4px;
+	display: grid;
+	grid-template-columns: repeat(5, auto);
+	justify-content: space-between;
+	gap: 10px 28px;
+	margin: 40px 0 0;
+	padding-top: 14px;
+	border-top: 1px solid var(--rule-2);
+	scroll-margin-top: 16px;
 }
 .facts-line div {
 	display: flex;
@@ -311,7 +320,7 @@ h1 {
 .facts-line dd {
 	margin: 2px 0 0;
 	font-family: var(--serif);
-	font-size: 24px;
+	font-size: 21px;
 	line-height: 1.2;
 }
 .facts-line dd a {
@@ -394,9 +403,9 @@ blockquote {
 	border-top: 1px solid var(--rule);
 	display: grid;
 	grid-template-columns: auto auto minmax(0, 1fr);
-	gap: 8px 16px;
+	gap: 8px 14px;
 	font-family: var(--mono);
-	font-size: 12.5px;
+	font-size: 12px;
 	line-height: 1.4;
 	color: var(--ink);
 }
@@ -586,6 +595,7 @@ blockquote {
 	color: var(--ink-2);
 }
 .fig-cell {
+	position: relative;
 	padding: 11px 10px 10px;
 }
 /* The figure the exchange cites: a hairline frame and the answer's own "A", which links back to it,
@@ -597,6 +607,7 @@ blockquote {
 }
 .ref {
 	position: absolute;
+	z-index: 2;
 	top: 3px;
 	right: 6px;
 	font-family: var(--serif);
@@ -613,16 +624,36 @@ blockquote {
 	align-items: baseline;
 	white-space: nowrap;
 }
-/* Every figure is a link to its Series' own file: each Run's figure and evidence. */
+/* Every figure is a link to its Series' own file: each Run's figure and evidence. No underline:
+   the whole cell is the link, and shows it on hover. */
 .fig-link {
 	color: var(--ink);
-	text-decoration: underline;
-	text-decoration-color: var(--rule-2);
-	text-decoration-thickness: 1px;
-	text-underline-offset: 0.28em;
+	text-decoration: none;
 }
-.fig-link:hover {
-	text-decoration-color: var(--accent);
+.fig-link::after {
+	content: "";
+	position: absolute;
+	z-index: -1;
+	inset: 0;
+	border-radius: 3px;
+}
+.fig-cell {
+	isolation: isolate;
+}
+.fig-cell .bar,
+.cell-code {
+	pointer-events: none;
+}
+.fig-link:hover::after {
+	background: var(--hover);
+	box-shadow: inset 0 0 0 1px var(--rule-2);
+}
+.fig-link:focus-visible {
+	outline: none;
+}
+.fig-link:focus-visible::after {
+	outline: 2px solid var(--accent);
+	outline-offset: -2px;
 }
 .x {
 	font-family: var(--mono);
@@ -659,18 +690,18 @@ blockquote {
 	position: absolute;
 	z-index: 1;
 	left: 0;
-	top: 4.5px;
-	height: 3px;
-	background: var(--ink-2);
+	top: 5px;
+	height: 2px;
+	background: var(--bar);
 }
 .bar-p50::after {
 	content: "";
 	position: absolute;
 	right: -1px;
-	top: -4.5px;
+	top: -4px;
 	width: 2px;
-	height: 12px;
-	background: var(--ink);
+	height: 10px;
+	background: var(--bar-tick);
 }
 .bar-span {
 	position: absolute;
@@ -694,108 +725,6 @@ blockquote {
 }
 .copy-btn:hover {
 	background: rgb(255 255 255 / 0.16);
-}
-
-/* ------------------------------------------------------------ provenance */
-
-.provenance {
-	padding-top: 8px;
-	padding-bottom: 72px;
-}
-/* The day, 00:00 to 24:00 UTC: the four scheduled boots as open rings on the line, the newest
-   Run as a solid tick rising above it, its label on top. Labels never touch the line. */
-.day {
-	margin-top: 30px;
-	display: flex;
-	align-items: flex-start;
-	gap: 18px;
-}
-.day-line {
-	position: relative;
-	flex: 1;
-	height: 64px;
-}
-.day-line::before {
-	content: "";
-	position: absolute;
-	left: 0;
-	right: 0;
-	top: 30px;
-	height: 1px;
-	background: var(--rule-2);
-}
-.day-label {
-	padding-top: 22px;
-	font-family: var(--mono);
-	font-size: 11.5px;
-	color: var(--muted);
-	white-space: nowrap;
-}
-.boot,
-.newest {
-	position: absolute;
-	transform: translateX(-50%);
-	display: flex;
-	flex-direction: column;
-	align-items: center;
-	font-family: var(--mono);
-	font-size: 12px;
-}
-.boot {
-	top: 25px;
-}
-.boot-dot {
-	width: 11px;
-	height: 11px;
-	border-radius: 50%;
-	background: var(--paper);
-	border: 1.5px solid var(--ink-2);
-}
-.boot-time {
-	margin-top: 8px;
-	color: var(--ink-2);
-	line-height: 1;
-}
-.newest {
-	top: 0;
-}
-.newest-label {
-	white-space: nowrap;
-	color: var(--accent-ink);
-	line-height: 1;
-}
-.newest-label time {
-	font-weight: 600;
-}
-.newest-tick {
-	margin-top: 4px;
-	width: 3px;
-	height: 22px;
-	border-radius: 1px;
-	background: var(--accent);
-}
-.facts {
-	margin: 30px 0 0;
-	display: grid;
-	grid-template-columns: repeat(3, minmax(0, 1fr));
-	gap: 0 32px;
-}
-.facts div {
-	padding: 12px 0;
-	border-top: 1px solid var(--rule);
-}
-.facts dt {
-	font-family: var(--mono);
-	font-size: 11px;
-	letter-spacing: 0.1em;
-	text-transform: uppercase;
-	color: var(--muted);
-}
-.facts dd {
-	margin: 3px 0 0;
-	font-family: var(--mono);
-	font-size: 13.5px;
-	overflow-wrap: anywhere;
 }
 
 /* ------------------------------------------------------------ footer */
@@ -832,17 +761,19 @@ blockquote {
 @media (max-width: 1180px) {
 	.hero {
 		grid-template-columns: minmax(0, 1fr);
-		grid-template-rows: none;
 		grid-template-areas:
 			"text"
-			"facts"
-			"card";
+			"card"
+			"facts";
 		gap: 0;
 	}
-	.hero > .facts-line {
-		margin: 22px 0 32px;
-		padding: 16px 0 0;
-		border-top: 1px solid var(--rule-2);
+	.exchange {
+		margin-top: 36px;
+	}
+	.facts-line {
+		grid-template-columns: repeat(3, auto);
+		justify-content: start;
+		column-gap: 40px;
 	}
 	.h1-line {
 		max-width: 16em;
@@ -897,16 +828,17 @@ blockquote {
 		top: 10px;
 		right: 10px;
 	}
-	.hero > .facts-line {
-		margin: 18px 0 26px;
-		gap: 8px 22px;
+	.facts-line {
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: 12px 18px;
+		margin-top: 28px;
 	}
 	.facts-line dd {
-		font-size: 20px;
+		font-size: 18px;
 	}
 	.exchange {
 		padding: 18px 16px 0;
-		margin: 0 -4px;
+		margin: 28px -4px 0;
 	}
 	.turn-a {
 		margin-top: 14px;
@@ -944,6 +876,7 @@ blockquote {
 	}
 	.src-val {
 		min-width: 0;
+		white-space: normal;
 		overflow-wrap: anywhere;
 	}
 	h2 {
@@ -1119,41 +1052,5 @@ blockquote {
 	.bar {
 		margin-top: 0;
 		align-self: center;
-	}
-	.provenance {
-		padding-top: 40px;
-		padding-bottom: 48px;
-	}
-	.day {
-		flex-direction: column;
-		align-items: stretch;
-		gap: 10px;
-	}
-	.day-label {
-		padding-top: 0;
-	}
-	.day-line {
-		flex: none;
-		margin: 0 18px;
-	}
-	.boot-time {
-		font-size: 11px;
-	}
-	.facts {
-		grid-template-columns: minmax(0, 1fr);
-		margin-top: 24px;
-	}
-	.facts div {
-		display: flex;
-		justify-content: space-between;
-		align-items: baseline;
-		gap: 16px;
-		padding: 10px 0;
-	}
-	.facts dd {
-		margin: 0;
-		font-size: 12.5px;
-		text-align: right;
-		white-space: nowrap;
 	}
 }
