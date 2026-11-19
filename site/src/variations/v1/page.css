@@ -57,8 +57,8 @@
 		--paper-2: #171d21;
 		--ink: #ece5d3;
 		--ink-2: #c9c3b4;
-		--pencil: #a4a8a1;
-		--pencil-2: #adb1aa;
+		--pencil: #b0b4ac;
+		--pencil-2: #b8bcb4;
 		--bar-rng: #ece5d3;
 		--rule: #222c31;
 		--rule-2: #2e3a40;
@@ -160,11 +160,15 @@ main,
 	padding-bottom: 0.75rem;
 }
 
-.title {
+.lede-col {
 	display: grid;
-	grid-template-columns: auto minmax(0, 1fr);
-	gap: 0 3rem;
+	grid-template-columns: minmax(0, 1fr) auto;
+	gap: 0 2.5rem;
 	align-items: end;
+}
+
+.lede-col .claim {
+	grid-column: 1 / -1;
 }
 
 .masthead::after {
@@ -184,8 +188,7 @@ h1 {
 }
 
 h1 .sub {
-	display: block;
-	margin-top: 0.5rem;
+	margin-left: 1rem;
 	font-size: 1.25rem;
 	line-height: 1.3;
 	letter-spacing: 0;
@@ -194,10 +197,21 @@ h1 .sub {
 	color: var(--ink-2);
 }
 
+.claim {
+	max-width: 52rem;
+	margin: 1rem 0 0.75rem;
+	font-size: 1.75rem;
+	line-height: 1.25;
+	font-weight: 500;
+	letter-spacing: -0.008em;
+	color: var(--ink);
+	text-wrap: balance;
+}
+
 .lede {
 	max-width: 40rem;
 	margin: 0;
-	font-size: 1.0625rem;
+	font-size: 1rem;
 	line-height: 1.55;
 	color: var(--ink-2);
 }
@@ -241,10 +255,78 @@ h1 .sub {
 
 .ledger-head {
 	display: grid;
-	grid-template-columns: minmax(0, auto) minmax(0, 1fr);
-	gap: 0.5rem 3rem;
+	grid-template-columns: minmax(0, 1fr) minmax(0, 46rem);
+	gap: 1rem 3rem;
+	align-items: start;
+	margin-bottom: 1rem;
+}
+
+.lh-scope {
+	margin: 0.5rem 0 0;
+	max-width: 30rem;
+	font-size: 0.9375rem;
+	color: var(--ink-2);
+}
+
+/* the reading key: one real entry, taken apart */
+.key {
+	margin: 0;
+	padding: 0.7rem 1rem 0.8rem;
+	background: var(--paper-2);
+	border-left: 3px double var(--red-rule);
+}
+
+.key-h {
+	margin-bottom: 0.45rem;
+	font-size: 0.8125rem;
+	font-variant-caps: all-small-caps;
+	letter-spacing: 0.06em;
+	font-size: 0.9375rem;
+	color: var(--pencil);
+}
+
+.key-h .mono {
+	font-variant-caps: normal;
+	letter-spacing: 0;
+	color: var(--ink-2);
+}
+
+.key-grid {
+	display: grid;
+	grid-template-columns: max-content minmax(0, 1fr);
+	gap: 0.35rem 1.5rem;
 	align-items: baseline;
-	margin-bottom: 0.5rem;
+	--whole: 2ch;
+}
+
+.key-s {
+	position: relative;
+	white-space: nowrap;
+}
+
+.key-s .bar {
+	width: 12.5rem;
+	margin: 0.3rem 0 0;
+}
+
+.key-u {
+	font-size: 0.875rem;
+	color: var(--ink-2);
+}
+
+.key-n {
+	font-size: 0.8125rem;
+	line-height: 1.4;
+	color: var(--ink-2);
+}
+
+.key-n b {
+	font-weight: 600;
+	color: var(--ink);
+}
+
+.kn-short {
+	display: none;
 }
 
 .ledger-head h2 {
@@ -252,18 +334,7 @@ h1 .sub {
 	white-space: nowrap;
 }
 
-.reading {
-	margin: 0;
-	max-width: 52rem;
-	justify-self: end;
-	font-size: 0.875rem;
-	color: var(--ink-2);
-}
 
-.ink-key {
-	color: var(--ink);
-	font-weight: 600;
-}
 
 .scroll {
 	overflow-x: auto;
@@ -348,10 +419,14 @@ td.unit .u {
 td.unit .dir {
 	display: block;
 	margin-top: 0.15rem;
-	font-size: 0.75rem;
+	font-size: 0.8125rem;
 	line-height: 1.3;
-	font-style: italic;
-	color: var(--pencil);
+	color: var(--ink-2);
+}
+
+td.unit .arrow {
+	font-weight: 600;
+	color: var(--ink);
 }
 
 th.mach,
@@ -398,51 +473,50 @@ th.mach > span {
 	font-size: 0.875rem;
 }
 
-th.what .note {
-	display: block;
-	margin-top: 0.4rem;
+/* the memo line under each entry: what one repetition is, the settings, and any N.B. */
+tr.entry > td.fig-cell {
+	border-bottom: 0;
+	padding-bottom: 0.15rem;
+}
+
+.ledger td.memocell {
+	padding: 0.15rem 0.75rem 0.7rem;
+	border-bottom: 1px solid var(--rule);
 	font-size: 0.8125rem;
 	line-height: 1.4;
 	color: var(--pencil);
 }
 
-th.what .note .per-rep {
+tbody tr.memo:last-child > td.memocell,
+tbody tr.entry:nth-last-child(2) > * {
+	border-bottom: 0;
+}
+
+.memo-t {
+	display: block;
+}
+
+.memo-t .per-rep {
 	font-style: italic;
 	color: var(--ink-2);
-}
-
-/* a note in red pencil written across the row, where it times what every machine type shares */
-tr.entry.has-nb > td.fig-cell {
-	border-bottom: 0;
-	padding-bottom: 0.2rem;
-}
-
-.ledger td.nbcell {
-	padding: 0.2rem 0.75rem 0.75rem;
-	border-bottom: 1px solid var(--rule);
-	vertical-align: top;
-}
-
-tbody tr.nbrow:last-child > td.nbcell {
-	border-bottom: 0;
 }
 
 .nb {
 	display: block;
 	max-width: 62rem;
+	margin-top: 0.35rem;
 	padding-left: 0.6rem;
 	border-left: 2px solid var(--red-rule);
 	font-size: 0.875rem;
 	line-height: 1.4;
-	font-style: italic;
-	color: var(--red);
+	color: var(--ink-2);
 }
 
 .nb-mark {
-	font-style: normal;
 	font-weight: 600;
 	font-variant-caps: all-small-caps;
 	letter-spacing: 0.06em;
+	color: var(--red);
 }
 
 /* section rows: the account headings */
@@ -453,7 +527,7 @@ tr.sec th {
 	font-variant-caps: all-small-caps;
 	letter-spacing: 0.1em;
 	font-size: 1.125rem;
-	color: var(--red);
+	color: var(--ink);
 }
 
 tr.sec td.mrep {
@@ -470,6 +544,13 @@ tr.sec .roman {
 	display: inline-block;
 	min-width: 2rem;
 	font-weight: 400;
+	color: var(--pencil);
+}
+
+.mrep-p {
+	margin-left: 0.35rem;
+	font-family: var(--serif);
+	font-size: 0.875rem;
 }
 
 tbody:first-of-type tr.sec th,
@@ -481,10 +562,6 @@ tr.entry > * {
 	border-bottom: 1px solid var(--rule);
 }
 
-tbody tr.entry:last-child > *,
-tbody tr.entry.has-nb:nth-last-child(2) > * {
-	border-bottom: 0;
-}
 
 th.what {
 	font-weight: 400;
@@ -513,6 +590,7 @@ td.fig-cell {
 }
 
 td.fig-cell a {
+	position: relative;
 	display: block;
 	color: var(--ink);
 	text-decoration: none;
@@ -554,11 +632,13 @@ td.fig-cell a:hover .fig .w {
 }
 
 .fig .p {
-	font-size: 0.84em;
+	font-size: 0.88em;
 	font-weight: 400;
 	color: var(--pencil);
 	letter-spacing: -0.01em;
 }
+
+
 
 .fig .p span {
 	margin-left: 0.2em;
@@ -636,8 +716,14 @@ td.fig-cell a:hover .fig .w {
 }
 
 .index-tabs a {
-	color: var(--red);
+	color: var(--ink-2);
 	text-decoration: none;
+}
+
+.index-tabs a.on {
+	color: var(--ink);
+	text-decoration: underline 2px var(--red-rule);
+	text-underline-offset: 0.3em;
 }
 
 .index-tabs a:hover {
@@ -822,7 +908,7 @@ td.fig-cell a:hover .fig .w {
 
 .api {
 	display: grid;
-	grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr);
+	grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
 	gap: 2.5rem 4rem;
 	margin-top: 4rem;
 	padding-top: 1.75rem;
@@ -847,7 +933,7 @@ td.fig-cell a:hover .fig .w {
 	gap: 0.75rem;
 	padding: 0.6rem 0.75rem 0.6rem 1rem;
 	background: var(--paper-2);
-	border-left: 3px double var(--red-rule);
+	border-left: 3px double var(--rule-2);
 	margin-bottom: 0.5rem;
 }
 
@@ -857,14 +943,18 @@ td.fig-cell a:hover .fig .w {
 	font-family: var(--mono);
 	font-size: 0.875rem;
 	color: var(--ink);
-	overflow-wrap: break-word;
+	white-space: nowrap;
+	overflow-x: auto;
+	scrollbar-width: thin;
 }
 
-
-.folio .jump {
-	display: block;
+.start-h .jump {
+	margin-left: 0.75rem;
+	font-variant-caps: normal;
+	letter-spacing: 0;
+	font-weight: 400;
+	font-size: 0.875rem;
 	color: var(--link);
-	font-size: 0.8125rem;
 }
 
 .cmd .prompt {
@@ -943,16 +1033,30 @@ td.fig-cell a:hover .fig .w {
 	border-top: 3px double var(--rule-strong);
 }
 
+.ways {
+	margin-top: 1.25rem;
+}
+
 .ways li {
+	position: relative;
 	display: grid;
-	grid-template-columns: 11rem minmax(0, 1fr);
-	gap: 0.2rem 1rem;
+	grid-template-columns: minmax(0, 1fr);
+	gap: 0.15rem;
 	padding: 0.7rem 0;
 	border-bottom: 1px solid var(--rule);
 }
 
+.way-n {
+	display: inline-block;
+	min-width: 1.25rem;
+	font-family: var(--mono);
+	font-variant-caps: normal;
+	font-weight: 400;
+	font-size: 0.875rem;
+	color: var(--pencil);
+}
+
 .ways .way-h {
-	grid-row: 1 / 3;
 	font-variant-caps: all-small-caps;
 	letter-spacing: 0.06em;
 	font-size: 1rem;
@@ -962,17 +1066,23 @@ td.fig-cell a:hover .fig .w {
 }
 
 .ways .way-d {
+	padding-left: 1.25rem;
 	font-size: 0.875rem;
 	color: var(--ink-2);
 }
 
 .ways .cmd {
-	margin: 0.2rem 0 0;
+	margin-left: 1.25rem;
 }
 
-/* one Run, as its Series' file gives it */
+.ways .cmd {
+	margin-top: 0.25rem;
+	margin-bottom: 0;
+}
+
+/* one Run, as its Series' file gives it: JSON, with the schema's words in the margin */
 .point {
-	margin: 2rem 0 0;
+	margin: 0;
 }
 
 .point figcaption {
@@ -990,36 +1100,59 @@ td.fig-cell a:hover .fig .w {
 	margin-bottom: 0.15rem;
 }
 
-.point dl {
-	margin: 0;
-	padding: 0.4rem 0 0.4rem 1rem;
+.json {
 	background: var(--paper-2);
-	border-left: 3px double var(--red-rule);
+	border-left: 3px double var(--rule-2);
 }
 
-.point dl > div {
-	padding: 0.4rem 1rem 0.4rem 0;
+.json-bar {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	padding: 0.45rem 0.75rem 0.35rem 1rem;
 	border-bottom: 1px solid var(--rule);
 }
 
-.point dt,
-.point dd.v {
-	display: inline;
+.json-t {
+	font-family: var(--mono);
+	font-size: 0.75rem;
+	letter-spacing: 0.06em;
+	color: var(--pencil);
 }
 
-.point dd.v::before {
-	content: " ";
+.json-body {
+	padding: 0.5rem 1rem 0.6rem;
 }
 
-.point dl > div:last-child {
+.point dl {
+	margin: 0;
+}
+
+.point .brace {
+	font-family: var(--mono);
+	font-size: 0.8125rem;
+	color: var(--pencil);
+}
+
+.point .jline {
+	padding: 0.3rem 0 0.35rem 1.25rem;
+	border-bottom: 1px solid var(--rule);
+}
+
+.point .jline:last-child {
 	border-bottom: 0;
 }
 
 .point dt,
 .point dd.v {
+	display: inline;
 	font-family: var(--mono);
 	font-size: 0.8125rem;
 	overflow-wrap: anywhere;
+}
+
+.point dd.v::before {
+	content: " ";
 }
 
 .point dt {
@@ -1045,9 +1178,13 @@ td.fig-cell a:hover .fig .w {
 	color: var(--ink-2);
 }
 
+.point .comma {
+	color: var(--pencil);
+}
+
 .point dd.w {
 	display: block;
-	margin-top: 0.1rem;
+	margin-top: 0.05rem;
 	font-size: 0.8125rem;
 	line-height: 1.4;
 	font-style: italic;
@@ -1058,15 +1195,18 @@ td.fig-cell a:hover .fig .w {
 	display: flex;
 	flex-direction: column;
 	gap: 0.3rem;
-	margin-top: 0.9rem;
 	max-width: 36rem;
+}
+
+.start .cmd code {
+	font-size: 0.8125rem;
 }
 
 .start-h {
 	font-variant-caps: all-small-caps;
 	letter-spacing: 0.06em;
 	font-size: 1.0625rem;
-	color: var(--red);
+	color: var(--ink-2);
 	font-weight: 600;
 }
 
@@ -1110,15 +1250,15 @@ td.fig-cell a:hover .fig .w {
 		grid-template-columns: minmax(0, 1fr);
 		align-items: start;
 	}
-	.title {
+	.lede-col {
 		grid-template-columns: minmax(0, 1fr);
-		gap: 0.75rem;
+		gap: 0.6rem;
 	}
 	.ledger-head {
 		grid-template-columns: minmax(0, 1fr);
 	}
-	.reading {
-		justify-self: start;
+	.key {
+		max-width: 46rem;
 	}
 	.back,
 	.api {
@@ -1137,11 +1277,8 @@ td.fig-cell a:hover .fig .w {
 	}
 
 	.masthead {
-		padding-top: 1.25rem;
-		gap: 0.9rem;
-	}
-
-	.title {
+		padding-top: 1.1rem;
+		padding-bottom: 0.5rem;
 		gap: 0.6rem;
 	}
 
@@ -1150,8 +1287,19 @@ td.fig-cell a:hover .fig .w {
 	}
 
 	h1 .sub {
+		display: block;
+		margin: 0.3rem 0 0;
 		font-size: 1rem;
-		margin-top: 0.3rem;
+	}
+
+	.lede-col {
+		gap: 0;
+	}
+
+	.claim {
+		font-size: 1.1875rem;
+		line-height: 1.3;
+		margin: 0.6rem 0 0.2rem;
 	}
 
 	.lede {
@@ -1159,18 +1307,90 @@ td.fig-cell a:hover .fig .w {
 		line-height: 1.5;
 	}
 
+	.lede,
+	.key-row,
+	.folio .wide-only {
+		display: none;
+	}
+
 	.folio {
-		font-size: 0.8125rem;
+		font-size: 0.875rem;
 	}
 
 	.folio > div {
-		grid-template-columns: 4.75rem minmax(0, 1fr);
+		grid-template-columns: 5.5rem minmax(0, 1fr);
 		gap: 0.5rem;
-		padding: 0.12rem 0;
+		padding: 0.15rem 0;
 	}
 
+	/* a command: on one line, the copy button up in its heading's line */
+	.start,
+	.ways li {
+		position: relative;
+	}
+
+	.start {
+		margin-top: 0.7rem;
+	}
+
+	.cmd {
+		display: block;
+		padding: 0.5rem 0.6rem;
+	}
+
+	.cmd .prompt {
+		display: none;
+	}
+
+	/* a long command wraps after a slash, its later lines indented under the first */
+	.cmd code,
+	.start .cmd code {
+		display: block;
+		font-size: 0.75rem;
+		white-space: normal;
+		overflow-wrap: anywhere;
+		padding-left: 2ch;
+		text-indent: -2ch;
+	}
+
+	.start .copy {
+		position: absolute;
+		top: -0.1rem;
+		right: 0;
+	}
+
+	.ways .copy {
+		position: absolute;
+		top: 0.55rem;
+		right: 0;
+	}
+
+	.ways .way-h {
+		padding-right: 4.5rem;
+	}
+
+	.ways .way-d,
+	.ways .cmd {
+		margin-left: 0;
+		padding-left: 0;
+	}
+
+	.ways .cmd {
+		padding-left: 0.6rem;
+	}
+
+	.start-h .jump {
+		display: none;
+	}
+
+	/* the ledger's head and its key */
 	.ledger {
-		padding-top: 1.25rem;
+		padding-top: 0.9rem;
+	}
+
+	.ledger-head {
+		gap: 0.6rem;
+		margin-bottom: 0.4rem;
 	}
 
 	.ledger-head h2 {
@@ -1183,14 +1403,79 @@ td.fig-cell a:hover .fig .w {
 	}
 
 	.ledger-head h2 .dim {
-		display: block;
+		margin-left: 0.4rem;
 		font-size: 0.875rem;
 		font-style: italic;
 	}
 
-	.reading {
+	.lh-scope {
+		margin-top: 0.15rem;
 		font-size: 0.8125rem;
 		line-height: 1.45;
+	}
+
+	.key {
+		padding: 0.55rem 0.75rem 0.6rem 1.1rem;
+	}
+
+	.key-h {
+		font-size: 0.875rem;
+	}
+
+	.key-grid {
+		grid-template-columns: max-content minmax(0, 1fr);
+		gap: 0.3rem 0.75rem;
+	}
+
+	.key-s .bar {
+		width: 9rem;
+	}
+
+	.key-fig .fig {
+		font-size: 0.9375rem;
+	}
+
+	.key-fig .key-u {
+		display: none;
+	}
+
+	.key-s.range {
+		font-size: 0.75rem;
+	}
+
+	.key-n {
+		font-size: 0.75rem;
+		line-height: 1.3;
+	}
+
+	.kn-long {
+		display: none;
+	}
+
+	.kn-short {
+		display: inline;
+	}
+
+	/* the accounts: a bar that stays at the top while the ledger scrolls */
+	.index-tabs {
+		position: sticky;
+		top: 0;
+		z-index: 3;
+		margin: 0 calc(-1 * var(--gutter));
+		padding: 0 var(--gutter);
+		background: var(--paper);
+		border-bottom: 1px solid var(--rule-2);
+		overflow-x: auto;
+		scrollbar-width: none;
+	}
+
+	.index-tabs ol {
+		flex-wrap: nowrap;
+		gap: 1.1rem;
+		margin: 0;
+		padding: 0.45rem 0 0.5rem;
+		white-space: nowrap;
+		font-size: 0.9375rem;
 	}
 
 	.ledger .scroll {
@@ -1206,7 +1491,11 @@ td.fig-cell a:hover .fig .w {
 	}
 
 	.ledger table {
-		border-top: 3px double var(--rule-strong);
+		border-top: 0;
+	}
+
+	.ledger tbody {
+		scroll-margin-top: 2.5rem;
 	}
 
 	.ledger thead {
@@ -1219,21 +1508,21 @@ td.fig-cell a:hover .fig .w {
 
 	tr.sec th {
 		padding-top: 1.25rem;
+		padding-bottom: 0.25rem;
 	}
 
 	tbody:first-of-type tr.sec th {
-		padding-top: 0.75rem;
+		padding-top: 0.6rem;
+	}
+
+	tr.sec td.mrep {
+		display: none;
 	}
 
 	.ledger tr.entry {
 		display: grid;
-		grid-template-columns: 2rem minmax(0, 1fr) auto;
-		padding: 0.75rem 0 0.8rem;
-		border-bottom: 1px solid var(--rule-2);
-	}
-
-	tbody tr.entry:last-child {
-		border-bottom: 0;
+		grid-template-columns: 2rem minmax(0, 1fr) 5.25rem;
+		padding: 0.7rem 0 0;
 	}
 
 	.ledger tr.entry > * {
@@ -1258,61 +1547,38 @@ td.fig-cell a:hover .fig .w {
 		grid-column: 3;
 		grid-row: 1;
 		padding-top: 0.1rem;
-		font-size: 0.875rem;
-		color: var(--pencil);
-	}
-
-	.ledger tr.entry {
-		grid-template-columns: 2rem minmax(0, 1fr) 5.5rem;
-	}
-
-	.ledger td.unit {
 		text-align: right;
+		font-size: 0.875rem;
+		border: 0;
 	}
 
 	.ledger td.unit .u {
 		font-size: 0.9375rem;
 	}
 
-	tr.sec td.mrep {
-		display: none;
+	.ledger td.unit .dir {
+		font-size: 0.75rem;
 	}
 
-	.ledger tr.entry.has-nb {
-		border-bottom: 0;
-		padding-bottom: 0.4rem;
-	}
-
-	.ledger tr.nbrow {
-		display: grid;
-		grid-template-columns: 2rem minmax(0, 1fr);
-		padding-bottom: 0.8rem;
-		border-bottom: 1px solid var(--rule-2);
-	}
-
-	.ledger tr.nbrow > * {
-		border: 0;
-		padding: 0;
-		grid-column: 2;
-	}
-
-	tbody tr.nbrow:last-child {
-		border-bottom: 0;
-	}
-
+	/* a machine's line: type and price at the left, the figure and its range at the right, the rule along the foot */
 	.ledger td.fig-cell {
 		grid-column: 2 / 4;
 		display: grid;
-		grid-template-columns: 7.25rem minmax(0, 1fr);
+		grid-template-columns: 7rem minmax(0, 1fr);
 		align-items: stretch;
 		padding: 0;
 		border-bottom: 1px solid var(--rule);
 	}
 
+	.ledger td.unit + td.fig-cell {
+		margin-top: 0.5rem;
+		border-top: 1px solid var(--rule-2);
+	}
+
 	.ledger td.fig-cell .mkey {
 		display: block;
-		padding: 0.3rem 0 0.35rem;
-		line-height: 1.35;
+		padding: 0.3rem 0 0.5rem;
+		line-height: 1.35rem;
 	}
 
 	.mkey .mk-it {
@@ -1328,27 +1594,53 @@ td.fig-cell a:hover .fig .w {
 		color: var(--pencil);
 	}
 
-	.ledger td.unit + td.fig-cell {
-		margin-top: 0.55rem;
-		border-top: 1px solid var(--rule-2);
-	}
-
 	.ledger td.fig-cell a {
 		margin: 0;
-		padding: 0.3rem 0 0.35rem 0.6rem;
-		line-height: 1.4rem;
+		padding: 0.3rem 0 0.35rem 0.65rem;
+		line-height: 1.35rem;
 		border-left: 3px double var(--red-rule);
 		border-radius: 0;
 	}
 
-	.bar {
-		margin: 0.15rem 0.25rem 0.2rem 0;
+	.ledger td.fig-cell .bar {
+		height: 4px;
+		margin: 0.2rem 0.25rem 0.15rem 0;
 	}
 
-	.fig {
-		font-size: 1rem;
+	.bar-len {
+		top: 1px;
+		height: 2px;
 	}
 
+	.bar-rng {
+		height: 4px;
+	}
+
+	.range {
+		font-size: 0.75rem;
+	}
+
+	.ledger tr.memo {
+		display: grid;
+		grid-template-columns: 2rem minmax(0, 1fr);
+		padding: 0.45rem 0 0.85rem;
+		border-bottom: 1px solid var(--rule-2);
+	}
+
+	tbody tr.memo:last-child {
+		border-bottom: 0;
+	}
+
+	.ledger tr.memo > td.memocell {
+		grid-column: 2;
+		padding: 0;
+		border: 0;
+		font-size: 0.75rem;
+	}
+
+	.nb {
+		font-size: 0.8125rem;
+	}
 
 	.back,
 	.api {
@@ -1443,27 +1735,16 @@ td.fig-cell a:hover .fig .w {
 		display: inline;
 	}
 
-	.start {
-		flex-direction: column;
-		align-items: stretch;
-		gap: 0.3rem;
-		margin-top: 0.75rem;
-	}
-
-	.ways li {
-		grid-template-columns: minmax(0, 1fr);
-	}
-
-	.ways .way-h {
-		grid-row: auto;
-	}
-
-	.point dl {
+	.json-bar {
 		padding-left: 0.75rem;
 	}
 
-	.point dl > div {
-		padding-right: 0.75rem;
+	.json-body {
+		padding: 0.45rem 0.75rem 0.55rem;
+	}
+
+	.point .jline {
+		padding-left: 0.75rem;
 	}
 
 	.tally {
@@ -1484,12 +1765,9 @@ td.fig-cell a:hover .fig .w {
 		grid-template-columns: minmax(0, 1fr);
 		gap: 0.1rem;
 	}
+}
 
-	.cmd {
-		padding-left: 0.75rem;
-	}
-
-	.cmd code {
-		font-size: 0.8125rem;
-	}
+sup {
+	line-height: 0;
+	font-size: 0.7em;
 }

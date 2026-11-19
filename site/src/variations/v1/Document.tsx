@@ -15,7 +15,7 @@ export default function Document(props: { children?: JSX.Element }) {
 				<title>LedgerMath: a book of record for cloud servers</title>
 				<meta
 					name="description"
-					content="14 benchmarks on 5 AWS machine types, run four times a day. Every Run kept with its evidence, every figure exact, all of it a static JSON API for agents."
+					content="14 benchmarks on 5 AWS machine types, run four times a day. Every Run kept with its evidence, each median printed to every digit, all of it a static JSON API for agents."
 				/>
 				<link rel="preload" href={serif} as="font" type="font/woff2" crossorigin="anonymous" />
 			</head>
