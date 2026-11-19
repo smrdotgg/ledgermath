@@ -96,15 +96,14 @@ function Digits(props: { full: string; width: number }) {
 }
 
 /**
- * A figure's p5 to p95, drawn: a rule from zero to the row's largest p95, the same for every cell
- * of the row, with the range as a bar and the median as a tick. A drawing, not a figure; the
- * written values are in the row's exact lines and the figure's title.
+ * A figure's p5 to p95, drawn: a hairline from zero to the row's largest p95, the same for every
+ * cell of the row, with the range as a band and the median as a tick. A drawing, not a figure;
+ * the written values are in the cell's exact lines and the figure's title.
  */
 function Spread(props: { p5: number; p50: number; p95: number; max: number }) {
 	const at = (v: number) => `${((v / props.max) * 100).toFixed(3)}%`;
 	return (
 		<span class="spread" aria-hidden="true">
-			<span class="sp-b" style={{ width: at(props.p50) }} />
 			<span class="sp-r" style={{ left: at(props.p5), width: at(props.p95 - props.p5) }} />
 			<span class="sp-m" style={{ left: at(props.p50) }} />
 		</span>
@@ -129,7 +128,7 @@ function cpu(name: string): string {
 		.replace(/^(Intel|AMD)\s+/, "")
 		.replace(/\b(Platinum|Scalable)\s+/g, "");
 	if (/\d/.test(s.replace(/\(.*\)/, ""))) s = s.replace(/\s*\(.*\)$/, "");
-	return s;
+	return s.replace(/[()]/g, "");
 }
 
 /** A machine's hourly price, linked to the place in the day's price file it was read from. */
@@ -168,18 +167,11 @@ function Moment(props: { m: ReturnType<typeof formatMoment>; bright?: boolean })
 	);
 }
 
-/** Freshness and provenance: two lines of facts, each a key and a value, in aligned columns. */
+/** Freshness and provenance: four facts, each a key and a value, in aligned columns. */
 function Status() {
 	const oldest = formatMoment(snapshot.oldestRunStartedAt);
 	const rows: [string, unknown][] = [
 		["latest Run", <Moment m={newest} bright />],
-		["schedule", <span class="nb">{SCHEDULE.join(" ")} UTC</span>],
-		[
-			"prices",
-			<a href={links.prices} class="nb">
-				On-Demand {snapshot.priceDate}
-			</a>,
-		],
 		[
 			"Runs kept",
 			<span>
@@ -197,18 +189,10 @@ function Status() {
 			</span>,
 		],
 		[
-			"evidence",
-			<span class="nb">
-				<a href={example.evidence} title={links.evidenceAbout}>
-					{runFile}
-				</a>
-			</span>,
-		],
-		[
-			"region",
-			<span class="nb">
-				{snapshot.region} {zones.join(" ")}
-			</span>,
+			"prices",
+			<a href={links.prices} class="nb">
+				On-Demand {snapshot.priceDate}
+			</a>,
 		],
 		[
 			"methods",
@@ -236,6 +220,39 @@ function Status() {
 	);
 }
 
+/**
+ * The table's key, in its corner: the one qualifier every figure carries, the drawing labelled
+ * where its parts are, which way is better, and the switch for the exact lines.
+ */
+function Key() {
+	return (
+		<>
+			<span class="corner-q">p50</span>
+			<span class="key-glyph" role="img" aria-label="The drawing: a tick at p50, a band from p5 to p95, on a scale from 0 shared by the row">
+				<span class="key-sp" aria-hidden="true">
+					<span class="sp-r" />
+					<span class="sp-m" />
+				</span>
+				<span class="kl kl-0" aria-hidden="true">
+					0
+				</span>
+				<span class="kl kl-5" aria-hidden="true">
+					p5
+				</span>
+				<span class="kl kl-95" aria-hidden="true">
+					p95
+				</span>
+			</span>
+			<span class="key-dir nb">
+				<span class="dir">↑</span> higher is better <span class="dir">↓</span> lower
+			</span>
+			<details class="xt">
+				<summary title="Show each figure's exact p5, p95 and count of counted Runs">p5 p95 n</summary>
+			</details>
+		</>
+	);
+}
+
 function DataTable() {
 	const cols = machines.length + 1;
 	return (
@@ -250,7 +267,7 @@ function DataTable() {
 				<thead>
 					<tr>
 						<th scope="col" class="corner">
-							p50
+							<Key />
 						</th>
 						{machines.map((m) => (
 							<th scope="col">
@@ -281,7 +298,9 @@ function DataTable() {
 						});
 						const max = Math.max(...cells.map((x) => x.f.p95));
 						const whole = (x: Shown) => x.full.split(".")[0]!.length;
-						const width = Math.max(...cells.flatMap((x) => [whole(x.p50), whole(x.p5), whole(x.p95)]));
+						// The p50s align among themselves, the exact lines among themselves.
+						const width = Math.max(...cells.map((x) => whole(x.p50)));
+						const exactWidth = Math.max(...cells.flatMap((x) => [whole(x.p5), whole(x.p95)]));
 						const countWidth = Math.max(...cells.map((x) => String(x.f.count).length));
 						const each = c.per ? ` per ${c.per.of}` : "";
 						const tag = SECTION_TAG[section];
@@ -309,7 +328,9 @@ function DataTable() {
 										</span>
 									</th>
 									{cells.map(({ cell, f, p50, p5, p95 }) => (
-										<td data-m={cell.machine.instanceType}>
+										<td>
+											{/* The machine's name, for the phone, where the columns become lines. */}
+											<span class="m-lbl">{cell.machine.instanceType}</span>
 											<a
 												href={links.seriesFile(cell.series)}
 												class="fig"
@@ -318,25 +339,25 @@ function DataTable() {
 												<Digits full={p50.full} width={width} />
 											</a>
 											<Spread p5={f.p5} p50={f.p50} p95={f.p95} max={max} />
+											<span class="x">
+												<span>
+													<span class="xk">p5</span>
+													<Digits full={p5.full} width={exactWidth} />
+												</span>
+												<span>
+													<span class="xk">p95</span>
+													<Digits full={p95.full} width={exactWidth} />
+												</span>
+												<span>
+													<span class="xk" title="counted Runs">
+														n
+													</span>
+													<Digits full={String(f.count)} width={countWidth} />
+												</span>
+											</span>
 										</td>
 									))}
 								</tr>
-								{(["p5", "p95", "n"] as const).map((k) => (
-									<tr class={`exact x-${k}`}>
-										<th scope="row" class="rl" aria-label={k === "n" ? "counted Runs" : k}>
-											{k}
-										</th>
-										{cells.map((x) => (
-											<td data-m={x.cell.machine.instanceType}>
-												{k === "n" ? (
-													<Digits full={String(x.f.count)} width={countWidth} />
-												) : (
-													<Digits full={x[k].full} width={width} />
-												)}
-											</td>
-										))}
-									</tr>
-								))}
 							</tbody>
 						);
 					});
@@ -350,13 +371,13 @@ function Machines() {
 	return (
 		<ul class="machines">
 			{machines.map((m) => (
-				<li>
+				<li title={m.processor}>
 					<span class="mc-name">{m.instanceType}</span>
+					<span class="mc-spec">
+						{m.vcpu} vCPU {m.memory}
+					</span>
 					<span class="mc-price">
 						<Price m={m} unit="/h" />
-					</span>
-					<span class="mc-spec">
-						{m.vcpu} vCPU {m.memory} · <span title={m.processor}>{cpu(m.processor)}</span>
 					</span>
 				</li>
 			))}
@@ -379,7 +400,7 @@ export default function Page() {
 			<header class="manhead">
 				<span>{title}</span>
 				<span>
-					<Moment m={newest} />
+					{snapshot.region} {zones.join(" ")}
 				</span>
 			</header>
 
@@ -394,8 +415,8 @@ export default function Page() {
 								<span class="acc">ledgermath</span> <span class="dash">—</span> measured AWS machine figures, as JSON for agents, each with its evidence
 							</h1>
 							<p class="lede">
-								{formatCount(snapshot.benchmarkCount).full} benchmarks × {formatCount(snapshot.machineCount).full} machine types, four times a day, on
-								freshly booted machines.
+								{formatCount(snapshot.benchmarkCount).full} benchmarks × {formatCount(snapshot.machineCount).full} machine types, freshly booted at{" "}
+								<span class="nb">{SCHEDULE.join(" ")} UTC.</span>
 							</p>
 						</div>
 					</section>
@@ -421,10 +442,18 @@ export default function Page() {
 					</Section>
 				</div>
 
-				{/* On a wide screen the table's head holds every machine fact, so this list is for the phone. */}
-				<Section id="machines" title="MACHINES">
-					<Machines />
-				</Section>
+				{/* On a wide screen the table's head holds every machine fact, so this list is for the
+				    phone, folded under its heading so the first figures reach the first screen. */}
+				<section class="sec" id="machines" aria-labelledby="machines-h">
+					<details class="mx">
+						<summary>
+							<h2 id="machines-h">MACHINES</h2>
+						</summary>
+						<div class="body">
+							<Machines />
+						</div>
+					</details>
+				</section>
 
 				<Section
 					id="data"
@@ -437,28 +466,6 @@ export default function Page() {
 						</nav>
 					}
 				>
-					<div class="key">
-						<span class="key-glyph" role="img" aria-label="The drawing: a tick at p50, a band from p5 to p95, on a scale from 0 shared by the row">
-							<span class="key-sp" aria-hidden="true">
-								<span class="sp-b" />
-								<span class="sp-r" />
-								<span class="sp-m" />
-							</span>
-							<span class="kl kl-0">0</span>
-							<span class="kl kl-5">p5</span>
-							<span class="kl kl-50">p50</span>
-							<span class="kl kl-95">p95</span>
-						</span>
-						<span class="nb">
-							<span class="dir">↑</span> higher is better <span class="dir">↓</span> lower
-						</span>
-						<span class="nb">
-							<span class="key-fig">figure</span> <span class="dir">→</span> its Runs
-						</span>
-						<details class="xt">
-							<summary>exact p5, p95, counted runs</summary>
-						</details>
-					</div>
 					<DataTable />
 				</Section>
 
@@ -480,6 +487,15 @@ export default function Page() {
 							))}
 							<tr>
 								<th scope="row">
+									<a href={example.evidence} class="nb" title={links.evidenceAbout}>
+										{runFile}
+									</a>
+								</th>
+								<td>one Run's evidence</td>
+								<td />
+							</tr>
+							<tr>
+								<th scope="row">
 									<a href={links.docs} class="nb">
 										{links.docs}
 									</a>
@@ -494,8 +510,6 @@ export default function Page() {
 
 			<footer class="manfoot">
 				<span>LedgerMath v1</span>
-				<span>{newest.date}</span>
-				<span>{title}</span>
 			</footer>
 		</div>
 	);

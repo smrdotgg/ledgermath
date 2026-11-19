@@ -34,6 +34,7 @@
 	--rule-2: #3a3832;
 	--acc: #f4a742;
 	--acc-ink: #0f0f0d;
+	--band: #7a7363;
 	--sel: rgba(244, 167, 66, 0.28);
 }
 
@@ -50,6 +51,7 @@
 		--rule-2: #c6bea9;
 		--acc: #a3410c;
 		--acc-ink: #f3efe4;
+		--band: #8c8474;
 		--sel: rgba(163, 65, 12, 0.18);
 	}
 }
@@ -352,27 +354,25 @@ main {
 	text-decoration: underline;
 }
 
-.key {
-	display: flex;
-	flex-wrap: wrap;
-	align-items: center;
-	gap: 4px 4ch;
-	font-size: 13px;
-	color: var(--fg-2);
-}
 .dir {
 	color: var(--acc);
 }
-.key .dir + .dir {
-	margin-left: 0.5ch;
+/* The key, in the table's corner: p50 set as the caption of every figure, then the drawing
+   labelled where its parts are, which way is better, and the switch. */
+.corner-q {
+	display: block;
+	font-size: 22px;
+	line-height: 1.1;
+	font-weight: 600;
+	letter-spacing: -0.01em;
+	color: var(--acc);
 }
-/* The key: the drawing itself, labelled where its parts are. */
 .key-glyph {
 	position: relative;
-	display: inline-block;
-	width: 26ch;
-	height: 30px;
-	vertical-align: top;
+	display: block;
+	width: 22ch;
+	height: 27px;
+	margin-top: 8px;
 	font-size: 11.5px;
 	line-height: 1;
 	color: var(--dim);
@@ -381,19 +381,16 @@ main {
 	position: absolute;
 	left: 0;
 	right: 0;
-	top: 2px;
-	height: 8px;
+	top: 0;
+	height: 10px;
 	border-bottom: 1px solid var(--dim);
-}
-.key-sp .sp-b {
-	width: 55%;
 }
 .key-sp .sp-r {
 	left: 35%;
 	width: 40%;
 }
 .key-sp .sp-m {
-	left: 55%;
+	left: 52%;
 }
 .kl {
 	position: absolute;
@@ -407,36 +404,51 @@ main {
 .kl-5 {
 	left: 35%;
 }
-.kl-50 {
-	left: 55%;
-	color: var(--fg);
-}
 .kl-95 {
 	left: 75%;
 }
-
-.key-fig {
-	color: var(--fg);
-	font-weight: 600;
+.key-dir {
+	display: block;
+	font-size: 12.5px;
+	color: var(--fg-2);
+}
+.key-dir .dir + .dir {
+	margin-left: 0.5ch;
 }
 .sep {
 	color: var(--dim);
 }
-.xt summary {
+.xt summary,
+.mx summary {
 	cursor: pointer;
 	list-style: none;
 	color: var(--acc);
 }
-.xt summary::-webkit-details-marker {
+.xt summary::-webkit-details-marker,
+.mx summary::-webkit-details-marker {
 	display: none;
 }
-.xt summary::before {
+.xt summary::before,
+.mx summary::after {
 	content: "[+] ";
 }
-.xt[open] summary::before {
+.xt[open] summary::before,
+.mx[open] summary::after {
 	content: "[−] ";
 }
-.xt summary:focus-visible {
+.mx summary {
+	display: flex;
+	align-items: baseline;
+	gap: 2ch;
+}
+.mx summary h2 {
+	margin: 0;
+}
+.mx[open] summary {
+	margin-bottom: 8px;
+}
+.xt summary:focus-visible,
+.mx summary:focus-visible {
 	outline: 2px solid var(--acc);
 	outline-offset: 2px;
 }
@@ -458,7 +470,7 @@ table {
 	table-layout: fixed;
 }
 .data .c-unit {
-	width: 31ch;
+	width: 33ch;
 }
 
 .data thead th {
@@ -472,7 +484,9 @@ table {
 .data thead .corner {
 	padding-left: 0;
 	color: var(--fg);
-	font-weight: 600;
+}
+.xt {
+	font-size: 12.5px;
 }
 .m-name {
 	display: block;
@@ -577,22 +591,14 @@ table {
 	color: var(--dim);
 }
 
-/* The spread: a rule from zero to the row's largest p95, the range as a bar, the median as a tick. */
+/* The spread: a hairline from zero to the row's largest p95, the p5 to p95 band in its own tone and
+   with real height, the p50 tick in the accent, cut out of the band by the page's own colour. */
 .spread {
 	position: relative;
 	display: block;
-	height: 7px;
-	margin: 5px 2ch 0 0;
+	height: 11px;
+	margin: 4px 2ch 0 0;
 	border-bottom: 1px solid var(--rule-2);
-}
-/* Three tones, far apart: a faint run from zero to p50, the p5 to p95 band in ink, the p50 tick in
-   the accent, cut out of the band by a hairline of the page's own colour. */
-.sp-b {
-	position: absolute;
-	left: 0;
-	bottom: 0;
-	height: 3px;
-	background: var(--rule-2);
 }
 .sp-r,
 .sp-m {
@@ -600,15 +606,15 @@ table {
 	display: block;
 }
 .sp-r {
-	bottom: -1px;
+	bottom: 0;
 	min-width: 3px;
-	height: 6px;
-	background: var(--fg-2);
+	height: 9px;
+	background: var(--band);
 }
 .sp-m {
-	bottom: -2px;
+	bottom: -1px;
 	width: 2px;
-	height: 10px;
+	height: 12px;
 	margin-left: -1px;
 	background: var(--acc);
 	box-shadow:
@@ -616,42 +622,42 @@ table {
 		1px 0 0 var(--bg);
 }
 
-/* The exact lines: shown together, by the one switch above the table. */
-.data .exact {
+/* The machine's name in a cell is for the phone, where the columns become lines. */
+.m-lbl {
 	display: none;
 }
-#data:has(.xt[open]) .data .exact {
-	display: table-row;
+/* On a wide screen a column holds many units, so its figures sit flush left; the padding that
+   aligns a benchmark's decimal points is for the phone, where a benchmark is a column. */
+@media (min-width: 761px) {
+	.digits .pad {
+		display: none;
+	}
 }
-#data:has(.xt[open]) .data .figs th,
-#data:has(.xt[open]) .data .figs td {
-	border-bottom: 0;
-}
-.data .exact th,
-.data .exact td {
-	padding: 0 0 0 2ch;
-	font-size: 12.5px;
-	background: var(--bg-2);
-	text-align: left;
-	font-weight: 400;
+
+/* The exact lines, in each cell under its drawing: shown together, by the one switch in the corner. */
+.x {
+	display: none;
+	margin-top: 6px;
+	font-size: 11.5px;
+	line-height: 1.45;
 	color: var(--dim);
 }
-.data .exact th {
-	padding-left: 1ch;
-	text-align: right;
-	padding-right: 1ch;
+#data:has(.xt[open]) .x {
+	display: block;
 }
-.data .exact .digits .lead,
-.data .exact .digits .tail {
+.x > span {
+	display: block;
+	white-space: nowrap;
+}
+.xk {
+	display: inline-block;
+	width: 3.5ch;
+	color: var(--acc);
+}
+.x .digits .lead,
+.x .digits .tail {
 	color: var(--fg-2);
 	font-weight: 400;
-}
-.data .exact.x-p5 > * {
-	padding-top: 6px;
-}
-.data .exact.x-n > * {
-	padding-bottom: 6px;
-	border-bottom: 1px dashed var(--rule);
 }
 
 /* A wide screen holds the whole table: let the head stay with the reader. */
@@ -683,10 +689,10 @@ table {
 }
 .machines li {
 	display: grid;
-	grid-template-columns: minmax(0, 1fr) auto;
-	column-gap: 2ch;
+	grid-template-columns: 13ch minmax(0, 1fr) auto;
+	column-gap: 1ch;
 	align-items: baseline;
-	padding: 4px 0 5px;
+	padding: 3px 0;
 	line-height: 1.4;
 	border-bottom: 1px solid var(--rule);
 }
@@ -702,9 +708,8 @@ table {
 	color: var(--fg);
 }
 .mc-spec {
-	grid-column: 1 / -1;
 	color: var(--dim);
-	font-size: 12.5px;
+	white-space: nowrap;
 }
 
 .files {
@@ -746,10 +751,6 @@ table {
 	.manfoot {
 		font-size: 12px;
 	}
-	.manfoot span:nth-child(2),
-	.manhead span + span {
-		display: none;
-	}
 	.manhead {
 		padding-top: 14px;
 	}
@@ -776,13 +777,21 @@ table {
 		font-size: 13.5px;
 		margin-top: 8px;
 	}
-	.cmd {
-		padding: 10px 10px;
-		font-size: 12px;
+	/* The command stays on one line, the copy button moves up beside SYNOPSIS to make room. */
+	#synopsis .body {
+		position: relative;
 	}
-	/* The address goes whole onto its own line rather than breaking inside. */
-	.cmd code a {
-		display: inline-block;
+	.cmd {
+		display: block;
+		padding: 9px 6px;
+		font-size: 11px;
+		white-space: nowrap;
+		overflow-x: auto;
+	}
+	.copy {
+		position: absolute;
+		right: 0;
+		top: -27px;
 	}
 	#status {
 		margin-top: 20px;
@@ -823,14 +832,6 @@ table {
 	.jump {
 		gap: 0 1.6ch;
 	}
-	.key {
-		font-size: 12px;
-		gap: 2px 2.5ch;
-	}
-	.xt {
-		margin-left: 0;
-	}
-
 	.scroll {
 		overflow-x: visible;
 		margin-top: 6px;
@@ -846,9 +847,28 @@ table {
 		min-width: 0;
 		width: auto;
 	}
+	/* Of the head, only the key in its corner stays: the machines are the list above. */
 	.data colgroup,
-	.data thead {
+	.data thead th:not(.corner) {
 		display: none;
+	}
+	.data thead {
+		display: block;
+	}
+	.data thead th.corner {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: flex-start;
+		gap: 6px 3ch;
+		padding: 6px 0 4px;
+		border-bottom: 0;
+	}
+	.corner-q {
+		font-size: 20px;
+	}
+	.key-glyph {
+		margin-top: 2px;
+		width: 18ch;
 	}
 	.data .sect th {
 		padding: 22px 0 4px;
@@ -877,61 +897,36 @@ table {
 	.u {
 		display: inline;
 	}
-	.data .figs td,
-	.data .exact td {
+	/* A line per machine: its name, the figure, the drawing. The figure column is one width for
+	   every row, so each row's drawings share one scale. */
+	.data .figs td {
 		display: grid;
-		grid-template-columns: 13ch minmax(0, 1fr);
+		grid-template-columns: 13ch 20ch minmax(0, 1fr);
 		align-items: center;
 		padding: 2px 0;
 	}
-	.data .figs td::before,
-	.data .exact td::before {
-		content: attr(data-m);
+	.m-lbl {
+		display: block;
 		color: var(--fg-2);
-	}
-	/* The figure column is one width for every row, so each row's drawings share one scale. */
-	.data .figs td {
-		grid-template-columns: 13ch 20ch minmax(0, 1fr);
 	}
 	.spread {
 		margin: 0 0 0 1.5ch;
 	}
-	#data:has(.xt[open]) .data .exact {
-		display: block;
+	.x {
+		grid-column: 2 / -1;
+		margin: 0 0 6px;
+		font-size: 12px;
 	}
-	.data .exact {
-		background: var(--bg-2);
-		padding: 0 8px;
-	}
-	.data .exact th,
-	.data .exact td {
-		background: none;
-		padding: 0;
-		border: 0 !important;
-		text-align: left;
-	}
-	.data .exact th {
-		padding: 6px 0 0;
-		color: var(--acc);
-	}
-	.data .exact.x-n {
-		margin-bottom: 8px;
-		padding-bottom: 6px;
-	}
-	.data .exact td::before {
-		color: var(--dim);
-	}
-	.data .exact.x-p5 > td,
-	.data .exact.x-n > td {
-		padding: 0;
-	}
-	.data .exact td {
-		line-height: 1.45;
+	.xk {
+		width: 4ch;
 	}
 
 	#machines {
 		display: block;
-		margin-top: 26px;
+		margin-top: 22px;
+	}
+	#machines + #data {
+		margin-top: 14px;
 	}
 	.name .label {
 		display: none;
