@@ -299,10 +299,9 @@ function FigureTable() {
 				<table style={{ "--wt": `${TAIL}ch` }}>
 					<thead>
 						<tr>
-							{/* The labels of the machine header's lines, each level with its line. */}
+							{/* One label, level with the prices' line. */}
 							<th scope="col" class="corner">
-								<span class="corner-runs">Runs per figure</span>
-								<span class="corner-price">On-Demand, cheapest first</span>
+								<span class="corner-price">On-Demand</span>
 							</th>
 							{machines.map((m) => (
 								<th scope="col" class="mach">
@@ -311,7 +310,7 @@ function FigureTable() {
 										{m.vcpu} vCPU · {m.memory}
 									</span>
 									<span class="mach-proc">{proc(m.processor)}</span>
-									<span class="mach-runs">{runsOf(m.instanceType)}</span>
+									<span class="mach-runs">{runsOf(m.instanceType)} Runs</span>
 									<a class="mach-price" href={links.prices} title={`$${price(m).full} an hour: ${m.price.path.pointer}`}>
 										${price(m).full}/h
 									</a>
@@ -464,16 +463,7 @@ function Api() {
 					<pre class="json" role="region" tabindex="0" aria-label={`An excerpt of series/${heroCell.series.id}.json`}>
 						<code>
 							{excerptHead}
-							<b class="json-hit">{excerptP50}</b>,
-							{heroRow.choice.per && (
-								<span class="json-note">
-									÷ {formatCount(heroRow.choice.per.count).full} {heroRow.choice.per.of}s{" "}
-									<span class="nowrap">
-										= <b>{heroShown.full}</b> {heroShown.unit}
-									</span>
-								</span>
-							)}
-							{heroRow.choice.per ? "" : "\n"}
+							<b class="json-hit">{excerptP50}</b>,{"\n"}
 							{excerptMid}
 							<a class="json-url" href={run.evidence}>
 								{evidenceParts.map((p, i) => (
@@ -486,6 +476,16 @@ function Api() {
 							{excerptTail}
 						</code>
 					</pre>
+					{/* Not part of the file: the one exact division from that p50 to the poster's figure. */}
+					{heroRow.choice.per && (
+						<p class="derive">
+							<span class="derive-a">p50</span> <span class="derive-op">÷</span> {formatCount(heroRow.choice.per.count).full}{" "}
+							{heroRow.choice.per.of}s{" "}
+							<span class="nowrap">
+								<span class="derive-op">=</span> <b>{heroShown.full}</b> {heroShown.unit}
+							</span>
+						</p>
+					)}
 				</div>
 			</div>
 		</section>

@@ -15,6 +15,7 @@
 	--muted: #4f4d48;
 	--tail: #57554f;
 	--hair: #c7c4bb;
+	--barf: #95928a;
 	--red: #c4141c;
 	--frame: #0d0d0c;
 	--code-bg: #0d0d0c;
@@ -36,6 +37,7 @@
 		--muted: #b3b0a8;
 		--tail: #aeaba3;
 		--hair: #3a3934;
+		--barf: #6b6962;
 		--red: #ff4f44;
 		--frame: #ff4f44;
 		--code-bg: #191917;
@@ -457,14 +459,19 @@ section + section {
 .km-f::before {
 	content: "";
 	position: absolute;
-	inset: 3px 0 auto;
-	height: 3px;
-	background: var(--ink);
+	inset: 2px 0 auto;
+	height: 5px;
+	background: var(--barf);
 }
 
 .km-s {
 	width: 16px;
-	border-inline: 1.5px solid var(--ink);
+	height: 13px;
+	border-inline: 2px solid var(--ink);
+}
+
+.km-s::before {
+	inset: 6px 0 auto !important;
 }
 
 .km-s::before {
@@ -508,25 +515,17 @@ td {
 }
 
 .corner {
-	width: 24%;
+	width: 23%;
 	padding-left: 0 !important;
 	font-size: 12px;
 	font-weight: 600;
 	color: var(--muted);
 }
 
-/* Each label level with the line it names: the Run counts' line, then the prices' line. */
+/* The one label, level with the prices' line. */
 .corner span {
 	display: block;
 	white-space: nowrap;
-}
-
-.corner-runs {
-	line-height: 1.35;
-}
-
-.corner-price {
-	margin-top: 4px;
 	line-height: 20.4px; /* the price's 17px × 1.2 */
 }
 
@@ -535,10 +534,18 @@ td {
 	display: block;
 }
 
-/* Names on one line at the top, prices on one line at the bottom, however the processors wrap. */
+/*
+ * Each machine type owns a lane: its name, every figure and every bar start on the lane's left
+ * edge, flush left, and a wide gutter (--lane) keeps one lane's ragged tails clear of the next.
+ */
+.figures {
+	--lane: 30px;
+}
+
 .figures thead th.mach {
-	text-align: right;
+	text-align: left;
 	vertical-align: top;
+	padding-left: var(--lane);
 }
 
 .mach-name {
@@ -564,7 +571,6 @@ td {
 	color: var(--muted);
 }
 
-/* The Run counts carry weight, as their label in the corner does, so the two read as one line. */
 .mach-runs {
 	font-weight: 640;
 }
@@ -585,10 +591,16 @@ tr.group td {
 }
 
 .group-h {
-	font-size: 15px;
-	font-weight: 750;
-	letter-spacing: -0.01em;
+	font-size: 22px;
+	font-weight: 760;
+	letter-spacing: -0.03em;
+	line-height: 1.1;
 	white-space: nowrap;
+}
+
+.group-note {
+	font-size: 15px;
+	letter-spacing: -0.01em;
 }
 
 .group-note {
@@ -608,7 +620,7 @@ tbody:first-of-type tr.group td {
 
 tr.row th,
 tr.row td {
-	padding: 14px 0 15px 14px;
+	padding: 14px 0 15px var(--lane);
 	border-bottom: 1px solid var(--hair);
 	vertical-align: middle;
 }
@@ -651,18 +663,17 @@ tr.row:target th .row-label {
 }
 
 td {
-	text-align: right;
+	text-align: left;
 }
 
 /*
  * One exact figure per cell, every digit: the integer part and the compared digits strong, the
- * rest lighter, on one baseline. The row sets the widths (--wi, --wt), so the five figures of a
- * row share one decimal point. A hairline under the strong digits: each figure opens its Series.
+ * rest smaller, on one baseline, starting on the lane's edge. Each figure opens its Series; the
+ * whole value underlines on hover and focus only, so seventy figures draw no seventy stripes.
  */
 .fig {
 	display: inline-flex;
 	align-items: baseline;
-	justify-content: flex-end;
 	white-space: nowrap;
 	font-variant-numeric: tabular-nums;
 	text-decoration: none;
@@ -676,34 +687,18 @@ td {
 	letter-spacing: -0.01em;
 }
 
-.fi {
-	min-width: var(--wi);
-	text-align: right;
-}
-
 .ft {
-	min-width: var(--wt);
-	text-align: left;
-	font-size: 14px;
+	font-size: 13px;
 	font-weight: 450;
-	letter-spacing: -0.02em;
+	letter-spacing: -0.03em;
 	color: var(--tail);
 }
 
-/* Each figure opens its Series: the compared digits carry the prices' quiet underline; the whole value darkens it on hover. */
-.fi,
-.fh {
+.fig:hover,
+.fig:focus-visible {
 	text-decoration: underline;
-	text-decoration-color: var(--hair);
 	text-decoration-thickness: 1px;
 	text-underline-offset: 0.18em;
-}
-
-.fig:hover .fi,
-.fig:hover .fh,
-.fig:focus-visible .fi,
-.fig:focus-visible .fh {
-	text-decoration-color: currentColor;
 }
 
 .fig:hover .ft,
@@ -719,47 +714,47 @@ td {
 .bar {
 	position: relative;
 	display: block;
-	height: 9px;
-	margin: 9px 0 0 auto;
-	width: 100%;
-	max-width: 168px;
+	height: 13px;
+	margin: 8px 0 0;
+	width: calc(100% - 5px); /* room for a bracket's least width at the scale's end */
 }
 
 .bar::before {
 	content: "";
 	position: absolute;
-	inset: 4px 0 auto;
+	inset: 6px 0 auto;
 	height: 1px;
 	background: var(--hair);
 }
 
+/* Zero to p50 in grey; the p5 to p95 bracket in ink over it, two 2px caps the bar's full height, so it never hides in the bar's end. */
 .bar-f {
 	position: absolute;
 	left: 0;
-	top: 2.5px;
-	height: 4px;
-	background: var(--ink);
+	top: 4px;
+	height: 5px;
+	background: var(--barf);
 }
 
 .bar-s {
 	position: absolute;
-	top: -4px;
-	bottom: -4px;
-	min-width: 3px;
-	border-inline: 1px solid var(--ink);
+	top: 0;
+	bottom: 0;
+	min-width: 5px;
+	border-inline: 2px solid var(--ink);
 }
 
 .bar-s::before {
 	content: "";
 	position: absolute;
-	inset: 8px 0 auto;
+	inset: 6px 0 auto;
 	height: 1px;
 	background: var(--ink);
 }
 
-/* The poster's figure, in the table: a red rule over the cell's own column, from the figure's edge to the bar's. */
+/* The poster's figure, in the table: a red rule over its lane. */
 td.hero-cell {
-	background: linear-gradient(var(--red), var(--red)) no-repeat right top / min(168px, calc(100% - 14px)) 3px;
+	background: linear-gradient(var(--red), var(--red)) no-repeat var(--lane) 0 / calc(100% - var(--lane)) 3px;
 }
 
 /* ---------------------------------------------------------------- API */
@@ -850,16 +845,29 @@ td.hero-cell {
 	text-decoration-color: var(--hair);
 }
 
-/* Not part of the file: the one exact division from the p50 above to the poster's figure, in the poster's red. */
-.json-note {
-	display: block;
-	padding-left: 5ch;
+/* Not part of the file: under it, as an equation, the one exact division from its p50 to the poster's figure. */
+.derive {
+	margin-top: 14px;
+	padding: 10px 0 0 20px;
+	border-top: 1px solid var(--hair);
+	font-family: var(--mono);
+	font-size: 13px;
+	line-height: 1.5;
 	color: var(--red);
-	user-select: none;
+	font-variant-numeric: tabular-nums;
 }
 
-.json-note b {
+.derive b {
 	font-weight: 700;
+}
+
+.derive-a {
+	font-weight: 700;
+}
+
+.derive-op {
+	color: var(--ink);
+	padding-inline: 0.2ch;
 }
 
 /* The evidence address on its own lines, under its key; it breaks only after "runs/" and after the date. */
@@ -1173,14 +1181,9 @@ td.hero-cell {
 		border-bottom: 2px solid var(--ink);
 	}
 
-	.corner-runs {
-		grid-column: 2;
-	}
-
 	.corner-price {
 		grid-column: 3;
-		margin-top: 0;
-		line-height: 1.35;
+		line-height: 1.35 !important;
 		text-align: right;
 	}
 
@@ -1292,9 +1295,11 @@ td.hero-cell {
 		text-align: left;
 	}
 
+	/* On a phone the five figures of a benchmark stack, so they share one decimal point (--wi, --wt, set per row). */
 	.fig {
 		grid-column: 3;
 		grid-row: 1;
+		justify-content: flex-end;
 	}
 
 	.fi,
@@ -1302,7 +1307,14 @@ td.hero-cell {
 		font-size: 17px;
 	}
 
+	.fi {
+		min-width: var(--wi);
+		text-align: right;
+	}
+
 	.ft {
+		min-width: var(--wt);
+		text-align: left;
 		font-size: 12px;
 		letter-spacing: -0.03em;
 	}
@@ -1346,6 +1358,11 @@ td.hero-cell {
 
 	.json-url {
 		padding-left: 5ch;
+	}
+
+	.derive {
+		padding-left: 14px;
+		font-size: 11.5px;
 	}
 
 	.mast-t {
