@@ -49,6 +49,16 @@ function dayPercent(hhmm: string): number {
 	return ((h! * 60 + m!) / 1440) * 100;
 }
 
+/**
+ * A row's setting without what every row shares: each is a static build (the board's heading says
+ * so once), and each disk row uses the root volume (its section's note says so once).
+ */
+function settingShort(setting: string): string {
+	return setting
+		.replace(/,?\s*static build\.?$/i, "")
+		.replace(/^root volume,\s*/i, "");
+}
+
 function exactTitle(shown: Shown): string {
 	return `${shown.full} ${shown.unit} exactly (as the API holds it: ${shown.source})`;
 }
@@ -148,7 +158,6 @@ type PreparedCell = ReturnType<typeof prepareRow>["cells"][number];
  */
 function Key(props: { cell: PreparedCell; code: string; class: string }) {
 	const k = props.cell;
-	const t = formatMoment(k.cell.series.newest_run_started_at);
 	return (
 		<span class={`key ${props.class}`} aria-hidden="true">
 			<span class="key-title">
@@ -158,24 +167,20 @@ function Key(props: { cell: PreparedCell; code: string; class: string }) {
 				<span class="key-s key-n">
 					<b>{k.p50.short}</b> {k.p50.unit}
 				</span>
-				<span class="key-l">median, rounded to tell its row apart</span>
+				<span class="key-l">median, rounded</span>
 				<span class="key-s key-full">{group(k.p50.full, ",", " ")}</span>
-				<span class="key-l">every digit the API holds</span>
+				<span class="key-l">every digit</span>
 				<span class="key-s">
 					<span class="key-bar">
 						<i class="fig-fill" style={{ width: `${k.at(k.f.p50)}%` }} />
 						<i class="fig-whisk" style={{ left: `${k.at(k.f.p5)}%`, width: `${k.at(k.f.p95) - k.at(k.f.p5)}%` }} />
 					</span>
 				</span>
-				<span class="key-l">drawn to its row's scale</span>
+				<span class="key-l">to its row's scale</span>
 				<span class="key-s key-range">
 					p5–p95 {k.p5.short}–{k.p95.short}
 				</span>
-				<span class="key-l">5th to 95th percentile of its Runs</span>
-				<span class="key-s key-meta">
-					{formatCount(k.cell.series.runs).full} Runs · newest {t.minute}
-				</span>
-				<span class="key-l">Runs; newest Run's start, UTC</span>
+				<span class="key-l">5th to 95th percentile</span>
 			</span>
 		</span>
 	);
@@ -247,10 +252,6 @@ export default function Page() {
 				<section class="head" aria-labelledby="title">
 					<div class="head-in">
 						<div class="head-id">
-							<p class="kicker">
-								<span class="dot" aria-hidden="true" />
-								LedgerMath · server benchmarks on AWS
-							</p>
 							<h1 id="title">
 								<span class="h1-a">Fresh AWS machines,</span> <span class="h1-hi">measured four times a day.</span>
 							</h1>
@@ -268,9 +269,8 @@ export default function Page() {
 								</span>
 							</p>
 							<p class="lede">
-								LedgerMath runs {benchmarksN} benchmarks on {machinesN} freshly booted machine types at every round, keeps every Run with its evidence,
-								and derives each figure by a published Method. A static JSON API serves it all beside AWS's On-Demand prices, so AI agents can choose
-								infrastructure from measured numbers, with a source for each.
+								{benchmarksN} benchmarks on {machinesN} freshly booted machine types, every Run kept with its evidence, every figure derived by a
+								published Method and served as static JSON beside AWS's prices, so AI agents can cite a source for each.
 							</p>
 							<div class="cmd" data-copy-wrap>
 								<code data-copy>
@@ -301,7 +301,6 @@ export default function Page() {
 										UTC
 									</span>
 									<span class="clock-full">
-										<span class="clock-full-l">to the nanosecond</span>
 										{newest.full}
 									</span>
 								</p>
@@ -312,13 +311,11 @@ export default function Page() {
 									<span class="panel-label" id="rounds-label">
 										Daily rounds, UTC
 									</span>
-									<span class="panel-note">A freshly booted machine each round · {benchmarksN} benchmarks</span>
 								</p>
 								<ol class="round-list">
-									{ROUNDS.map((t, i) => (
+									{ROUNDS.map((t) => (
 										<li class="round">
-											<span class="round-n">Round {i + 1}</span>
-											<span class="round-t">{t}</span>
+												<span class="round-t">{t}</span>
 										</li>
 									))}
 								</ol>
@@ -334,15 +331,15 @@ export default function Page() {
 
 							<dl class="tally">
 								<div>
-									<dt>Runs kept</dt>
+									<dt>Runs</dt>
 									<dd>{runs}</dd>
 								</div>
 								<div>
-									<dt>Failed Runs</dt>
+									<dt>Failed</dt>
 									<dd>{failed}</dd>
 								</div>
 								<div>
-									<dt>Series in the API</dt>
+									<dt>Series</dt>
 									<dd>{seriesCount}</dd>
 								</div>
 								<div>
@@ -356,7 +353,7 @@ export default function Page() {
 							<p class="panel-prices">
 								<span class="panel-label">Prices</span>
 								<span>
-									AWS On-Demand, copied {snapshot.priceDate} {fetched.minute} UTC:{" "}
+									AWS On-Demand, {snapshot.priceDate} {fetched.minute}:{" "}
 									<a href={links.prices} title={fetched.full}>
 										prices/{snapshot.priceDate}.json
 									</a>
@@ -372,8 +369,7 @@ export default function Page() {
 							<span class="h2-code">01</span> The board
 						</h2>
 						<p class="sec-sub">
-							{benchmarksN} benchmarks × {machinesN} machine types: {onBoard} of the API's {seriesCount} Series, one setting per benchmark by a written
-							rule. The rest are the same benchmarks at other settings: thread counts, object sizes, builds, the instance-store disk. Each figure is the
+							{onBoard} of the API's {seriesCount} Series: one setting per benchmark, chosen by a written rule, all static builds. Each figure is the
 							median of one Series' counted Runs and links to its file.
 						</p>
 					</div>
@@ -393,8 +389,7 @@ export default function Page() {
 					<div class="board-wrap" role="region" aria-label="The board: headline figures" tabindex="0">
 						<table class="board">
 							<caption class="sr">
-								Headline figures: {benchmarksN} benchmarks on {machinesN} AWS machine types, the median of each Series' counted Runs with its 5th and
-								95th percentiles, the time each Series' newest Run started and how many Runs it has.
+								Headline figures: each cell gives a median, every digit of it, then its 5th to 95th percentile.
 							</caption>
 							<thead>
 								<tr>
@@ -426,18 +421,15 @@ export default function Page() {
 											<span class="badge">{SECTION_CODE[g.section]}</span>
 											{g.section}
 										</th>
-										{machines.map((m) => (
-											<td class="sec-m" aria-hidden="true">
-												{m.instanceType}
-											</td>
+										{machines.map(() => (
+											<td class="sec-m" aria-hidden="true" />
 										))}
 									</tr>
 									{g.section === "Disk" && (
 										<tr class="sec-note">
 											<td colspan={machines.length + 1}>
-												<b>These rows measure the volume as much as the machine.</b> Every disk row uses each machine's root EBS gp3 volume, the same kind of volume on
-												all five. Random 4 KiB reads ({rowCode("disk_read_io_uring")}) reach the volume's IOPS limit; its throughput limit is what{" "}
-												{rowCode("disk_read_sequential")} shows.
+												<b>These rows measure the volume as much as the machine:</b> the same root EBS gp3 volume on all five. {rowCode("disk_read_io_uring")}{" "}
+												reaches its IOPS limit, {rowCode("disk_read_sequential")} its throughput limit.
 											</td>
 										</tr>
 									)}
@@ -454,7 +446,8 @@ export default function Page() {
 															{SECTION_CODE[c.section]} {n}
 														</span>
 														<span class="what-kind">
-															{c.lead === "rate" ? "Median rate" : "Median time"} · <span class="what-unit">{p.unit}</span>
+															<span class="what-unit">{p.unit}</span>
+															{c.per && <> per {formatCount(c.per.count).full}</>}
 														</span>
 														<span class={`what-dir ${c.lead === "rate" ? "up" : "down"}`}>
 															{c.lead === "rate" ? "higher is faster" : "lower is faster"}
@@ -462,32 +455,24 @@ export default function Page() {
 													</span>
 													<span class="what-label">{c.label}</span>
 													<span class="what-desc">{c.what}</span>
-													<span class="what-set">
-														{c.lead === "time" && (
-															<>
-																<b>One repetition:</b> {c.repetition.replace(/\.$/, "")} ·{" "}
-															</>
-														)}
-														{c.setting}
-													</span>
+													<span class="what-set">{settingShort(c.setting)}</span>
 												</th>
 												{p.cells.map(({ cell, f, p50, p5, p95, at }) => {
 													const t = formatMoment(cell.series.newest_run_started_at);
 													const per = c.per && f.kind === "time" ? formatDurationPerUnit(f.p50, c.per) : undefined;
 													return (
 														<td class="fig">
-															<a href={links.seriesFile(cell.series)} title={exactTitle(p50)}>
+															<a
+																href={links.seriesFile(cell.series)}
+																title={`${exactTitle(p50)} · ${formatCount(cell.series.runs).full} Runs, the newest started ${t.full}`}
+															>
 																<span class="fig-m" aria-hidden="true">
 																	{cell.machine.instanceType}
 																</span>
 																<span class="fig-main">
 																	<span class="fig-n">{p50.short}</span>
-																	<span class="fig-u">{p50.unit}</span>
 																</span>
-																<span class="fig-full">
-																	<span class="sr">exactly </span>
-																	{group(p50.full, ",", " ")}
-																</span>
+																<span class="fig-full">{group(p50.full, ",", " ")}</span>
 																{per && (
 																	<span class="fig-per" title={`${per.full} ${per.unit} per ${per.per.of}, exactly`}>
 																		{per.short} {per.unit} / section
@@ -498,22 +483,8 @@ export default function Page() {
 																	<i class="fig-whisk" style={{ left: `${at(f.p5)}%`, width: `${at(f.p95) - at(f.p5)}%` }} />
 																</span>
 																<span class="fig-range" title={`5th percentile ${p5.full} ${p5.unit}, 95th ${p95.full} ${p95.unit}, exactly`}>
-																	<span class="fig-range-l" aria-hidden="true">
-																		p5–p95{" "}
-																	</span>
-																	<span class="sr">5th to 95th percentile: </span>
+																	<span class="fig-range-l">p5–p95 </span>
 																	{p5.short}–{p95.short}
-																</span>
-																<span class="fig-meta">
-																	{formatCount(cell.series.runs).full} Runs<span aria-hidden="true"> · </span>
-																	<span class="sr">, the newest started at </span>
-																	<span class="fig-meta-l" aria-hidden="true">
-																		newest{" "}
-																	</span>
-																	<time datetime={t.iso} title={t.full}>
-																		{t.minute}
-																	</time>
-																	<span class="sr"> UTC</span>
 																</span>
 															</a>
 														</td>
@@ -527,9 +498,7 @@ export default function Page() {
 						</table>
 					</div>
 					<p class="board-foot">
-						Each bar is its figure drawn to its own row's scale, which ends at the row's largest 95th percentile; rows are not drawn to one scale. The
-						thin line spans the 5th to the 95th percentile of the Series' counted Runs, printed beneath it. “Newest” is the start of the Series' newest
-						Run, {newest.date}, UTC.
+						Each row has its own scale, ending at its largest 95th percentile; rows are not drawn to one scale.
 					</p>
 				</section>
 
@@ -540,8 +509,7 @@ export default function Page() {
 							<span class="h2-code">02</span> The machines
 						</h2>
 						<p class="sec-sub">
-							{machinesN} instance types in {snapshot.region}, cheapest first. Hourly On-Demand Linux prices from AWS's public price list, copied daily;
-							this one on {snapshot.priceDate}, fetched at {fetched.second} UTC.
+							Cheapest first. Hourly On-Demand Linux prices from AWS, copied daily; this copy {fetched.second} UTC.
 						</p>
 					</div>
 					<ol class="gates">
@@ -579,8 +547,7 @@ export default function Page() {
 											<dd>{m.network}</dd>
 										</div>
 									</dl>
-									<p class="gate-aws">
-										AWS's words: “{m.price.description}”
+									<p class="gate-aws" title={m.price.description}>
 										<span class="gate-ptr" title={`In ${links.prices}, at the JSON Pointer ${m.price.path.pointer}`}>
 											SKU <code>{m.price.sku}</code> · rate code <code>{m.price.rateCode.split(".").pop()}</code>
 										</span>
@@ -605,7 +572,7 @@ export default function Page() {
 											</span>
 											<span class="fleet-usd" title={price.source}>
 												${price.full}
-												<small> per hour</small>
+												<small>/h</small>
 											</span>
 										</summary>
 										<dl class="gate-spec fleet-more">
@@ -637,7 +604,7 @@ export default function Page() {
 						})}
 					</ul>
 					<p class="board-foot">
-						Price file: <a href={links.prices}>{links.prices}</a> · each machine names the SKU and rate code its price is read from.
+						Each price is read from <a href={links.prices}>the day's price file</a> at its SKU and rate code.
 					</p>
 				</section>
 
@@ -648,8 +615,8 @@ export default function Page() {
 							<span class="h2-code">03</span> For agents and developers
 						</h2>
 						<p class="sec-sub">
-							Everything on this page is a static JSON file at <b>api.ledgermath.com</b>, made for AI agents that make infrastructure decisions. An
-							agent reads the table of contents, takes the Series it needs, and cites each figure by its Series' address, beside the day's AWS prices.
+							Everything on this page is a static JSON file at <b>api.ledgermath.com</b>. An agent reads the index, takes the Series it needs, and cites
+							each figure by its file's address.
 						</p>
 					</div>
 
@@ -664,27 +631,27 @@ export default function Page() {
 								</p>
 								<ol class="term-lines">
 									<li data-copy-wrap>
-										<span class="term-c"># the table of contents: newest Run, Series, prices, schemas</span>
+										<span class="term-c"># the index: newest Run, Series, prices, schemas</span>
 										<code data-copy>
 											<Curl href={links.index} />
 										</code>
 									</li>
 									<li data-copy-wrap>
-										<span class="term-c"># every Series ({seriesCount}): percentiles, Run counts, its own file</span>
+										<span class="term-c"># all {seriesCount} Series, with percentiles</span>
 										<code data-copy>
 											<Curl href={links.seriesList} />
 										</code>
 									</li>
 									<li data-copy-wrap>
 										<span class="term-c">
-											# one Series: {sampleCode} on {sample.instanceType}, each Run's figure and a link to its evidence
+											# {sampleCode} on {sample.instanceType}: each Run, linked to its evidence
 										</span>
 										<code data-copy>
 											<Curl href={sample.url} />
 										</code>
 									</li>
 									<li data-copy-wrap>
-										<span class="term-c"># AWS On-Demand prices, copied {snapshot.priceDate}</span>
+										<span class="term-c"># prices, {snapshot.priceDate}</span>
 										<code data-copy>
 											<Curl href={links.prices} />
 										</code>
@@ -698,7 +665,7 @@ export default function Page() {
 										<code>v1/series/{sample.id}.json</code>
 									</span>
 									<span class="resp-what">
-										One of its {formatCount(sample.points).full} Runs, an excerpt of the file as it is
+										One of {formatCount(sample.points).full} Runs, excerpt
 									</span>
 								</figcaption>
 								<pre class="resp-body">
@@ -731,22 +698,25 @@ export default function Page() {
 									</code>
 								</pre>
 								<p class="resp-foot">
-									This Run started {pointStart.full} and took <b>{group(pointTime.full, ",", " ")} {pointTime.unit}</b> per repetition.
+									This Run, started <span title={pointStart.full}>{pointStart.minute}</span> on {pointStart.date}, took{" "}
+									<b>
+										{group(pointTime.full, ",", " ")} {pointTime.unit}
+									</b>
+									.
 									{samplePrepared && (
 										<>
 											{" "}
-											Its Series' figure, the {sample.instanceType} cell of row {sampleCode} on the board, is{" "}
+											The board shows its Series' median ({sampleCode}, {sample.instanceType}):{" "}
 											<b>
 												{group(samplePrepared.p50.full, ",", " ")} {samplePrepared.p50.unit}
 											</b>
-											: the median of all its counted Runs, not this one Run's time.
+											.
 										</>
 									)}
 								</p>
 								<div class="ev">
 									<p class="ev-l">
-										Follow it down: the <code>evidence</code> address is this Run's own file.{" "}
-										<a href={point.evidence}>Open the Run file</a>
+										Its <code>evidence</code> is <a href={point.evidence}>the Run's own file</a>:
 									</p>
 									<div class="cmd cmd-ev" data-copy-wrap>
 										<code data-copy>
@@ -759,7 +729,6 @@ export default function Page() {
 
 						<div class="api-side">
 							<table class="files">
-								<caption class="sr">The data API's files and their JSON schemas</caption>
 								<thead>
 									<tr>
 										<th scope="col">File</th>
@@ -787,7 +756,7 @@ export default function Page() {
 								<div>
 									<dt>Evidence</dt>
 									<dd>
-										Each Run file names its binary, streams and dumps by hash; each is a blob at <code>{links.evidenceBlobTemplate}</code>.
+										A Run file names its binary, streams and dumps by hash, each at <code>{links.evidenceBlobTemplate}</code>.
 									</dd>
 								</div>
 								<div>
@@ -798,7 +767,7 @@ export default function Page() {
 								</div>
 							</dl>
 							<p class="api-docs">
-								<a href={links.docs}>Read the data API's documentation →</a>
+								<a href={links.docs}>API documentation →</a>
 							</p>
 						</div>
 					</div>
@@ -820,17 +789,17 @@ export default function Page() {
 						<li>
 							<span class="route-n">1</span>
 							<h3>Boot</h3>
-							<p>A freshly booted AWS machine for every round, at 04:10, 10:10, 16:10 and 22:10 UTC.</p>
+							<p>A freshly booted machine for every round.</p>
 						</li>
 						<li>
 							<span class="route-n">2</span>
 							<h3>Run</h3>
-							<p>{benchmarksN} benchmarks on each machine. Each execution of one is a Run.</p>
+							<p>{benchmarksN} benchmarks on each; each execution is a Run.</p>
 						</li>
 						<li>
 							<span class="route-n">3</span>
 							<h3>Keep</h3>
-							<p>Every Run is kept with its evidence: what the benchmark printed, and what was recorded about the machine.</p>
+							<p>Every Run, with what the benchmark printed and what was recorded about the machine.</p>
 						</li>
 						<li>
 							<span class="route-n">4</span>
@@ -849,7 +818,7 @@ export default function Page() {
 						<li>
 							<span class="route-n">5</span>
 							<h3>Publish</h3>
-							<p>Static JSON with a schema for each kind of file, beside AWS's prices for the day.</p>
+							<p>Static JSON, a schema for each file, beside the day's prices.</p>
 						</li>
 					</ol>
 
@@ -857,6 +826,8 @@ export default function Page() {
 						<h3 class="defs-title">
 							Method <code>series v{seriesV1.version}</code>, in its own words
 						</h3>
+						<details class="defs-fold">
+							<summary>Three definitions</summary>
 						<dl>
 							{(["time_per_repetition", "bytes_per_second", "percentiles"] as const).map((k) => (
 								<div>
@@ -867,12 +838,13 @@ export default function Page() {
 								</div>
 							))}
 						</dl>
+						</details>
 						<p class="defs-more">
 							Every definition of both Methods, word for word, is in <a href={links.seriesList}>series.json</a> under <code>methods</code>.
 						</p>
 						<p class="defs-figures">
-							<b>Rounding.</b> In the API nothing is rounded: every number is as the Methods' Derivations hold it. On the board, the large figure is
-							shortened for reading, to as many digits as tell its row apart; the line beneath it, and its title, keep every digit.
+							<b>Rounding.</b> The API rounds nothing. The board shortens each large figure to as many digits as tell its row apart; the line beneath
+							keeps every digit.
 						</p>
 					</div>
 				</section>
@@ -889,15 +861,14 @@ export default function Page() {
 						LedgerMath
 					</div>
 					<p>
-						Figures from the data API as of the newest Run, {newest.full}. Prices: AWS's public On-Demand price list for {snapshot.region}, copied{" "}
-						{snapshot.priceDate}.
+						As of {newest.full}. Prices: AWS On-Demand, {snapshot.region}, {snapshot.priceDate}.
 					</p>
 					<p class="foot-links">
 						<a href={links.index}>index.json</a>
 						<a href={links.seriesList}>series.json</a>
 						<a href={links.prices}>prices</a>
 						<a href={links.docs}>docs</a>
-						<a href="third-party-notices.txt">Font licences</a>
+						<a href="third-party-notices.txt">Fonts</a>
 					</p>
 				</div>
 			</footer>

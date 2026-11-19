@@ -567,7 +567,7 @@ h1 {
 	position: relative;
 	display: flex;
 	align-items: baseline;
-	justify-content: space-between;
+	justify-content: center;
 	gap: 0.3rem;
 	padding: 0.45rem 0.6rem 0.4rem;
 	background: #1f2124;
@@ -1589,6 +1589,24 @@ tbody {
 	padding: 0.1rem 0.35rem;
 	border-radius: 3px;
 }
+.defs-fold summary {
+	display: inline-block;
+	cursor: pointer;
+	padding: 0.4rem 0.75rem;
+	border: 2px solid var(--rule-strong);
+	border-radius: 4px;
+	font: 700 0.8rem/1 var(--mono);
+	letter-spacing: 0.08em;
+	text-transform: uppercase;
+}
+.defs-fold summary:hover {
+	background: var(--signal);
+	color: var(--signal-ink);
+	border-color: var(--signal);
+}
+.defs-fold[open] summary {
+	margin-bottom: 1rem;
+}
 .defs dl {
 	margin: 0;
 	display: grid;
@@ -1791,7 +1809,6 @@ tbody {
 		gap: 0.3rem;
 	}
 	.round {
-		display: grid;
 		gap: 0.2rem;
 		padding: 0.35rem 0.45rem 0.4rem;
 	}
