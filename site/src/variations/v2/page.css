@@ -158,7 +158,7 @@ main {
 }
 
 .sec {
-	margin-top: 40px;
+	margin-top: 36px;
 }
 
 .sec h2,
@@ -179,7 +179,7 @@ main {
 	max-width: 80ch;
 }
 #data .body > p {
-	max-width: 112ch;
+	max-width: 126ch;
 	color: var(--fg-2);
 }
 .sec p:last-child {
@@ -190,7 +190,7 @@ main {
 .name h1 {
 	margin: 0;
 	max-width: 31ch;
-	font-size: 32px;
+	font-size: 29px;
 	line-height: 1.28;
 	font-weight: 600;
 	letter-spacing: -0.015em;
@@ -202,7 +202,7 @@ main {
 	font-weight: 400;
 }
 .name .lede {
-	margin-top: 18px;
+	margin-top: 16px;
 	max-width: 62ch;
 	font-size: 16px;
 	color: var(--fg-2);
@@ -211,7 +211,8 @@ main {
 /* SYNOPSIS */
 .cmds {
 	list-style: none;
-	margin: 0 0 18px;
+	margin: 0 0 14px;
+	font-size: 14px;
 	padding: 0;
 	border-left: 2px solid var(--acc);
 	background: var(--bg-2);
@@ -219,11 +220,19 @@ main {
 }
 .cmd {
 	display: grid;
-	grid-template-columns: minmax(0, 1fr) auto auto;
+	grid-template-columns: minmax(0, 1fr) auto;
 	align-items: baseline;
 	gap: 0 2ch;
-	padding: 7px 16px;
+	padding: 8px 14px 9px;
 	border-bottom: 1px solid var(--rule);
+}
+.cmd code {
+	grid-column: 1 / -1;
+	grid-row: 2;
+}
+.cmd .copy {
+	grid-column: 2;
+	grid-row: 1;
 }
 .cmd:last-child {
 	border-bottom: 0;
@@ -248,7 +257,7 @@ main {
 }
 .cmd-note {
 	color: var(--dim);
-	white-space: nowrap;
+	font-size: 13px;
 }
 .copy {
 	font: inherit;
@@ -271,39 +280,58 @@ main {
 }
 
 /* The top: NAME, and STATUS beside it on a wide screen. */
+/* The top: NAME and SYNOPSIS side by side, STATUS across beneath them, so that on a wide
+   screen the first figures of DATA arrive on the first screen. */
 .hero {
 	display: grid;
-	grid-template-columns: minmax(0, 1.18fr) minmax(0, 1fr);
+	grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
 	column-gap: 56px;
 	align-items: start;
-	margin-top: 52px;
+	margin-top: 40px;
 }
 .hero > .sec {
 	margin-top: 0;
+}
+.hero #synopsis .body {
+	padding-left: 0;
+}
+.hero #status {
+	grid-column: 1 / -1;
+	margin-top: 26px;
 }
 .hero #status .body {
 	padding-left: 0;
 }
 #status .kv {
-	font-size: 13.5px;
-	line-height: 1.55;
-	padding: 12px 0 0;
+	font-size: 13px;
+	line-height: 1.5;
+	padding: 10px 0 0;
 	border-top: 1px solid var(--rule-2);
+	grid-template-columns: repeat(5, max-content) minmax(0, max-content);
+	justify-content: space-between;
+	column-gap: 1.5ch;
+}
+#status .kv dd {
+	padding-right: 3ch;
+}
+.syn-note {
+	color: var(--fg-2);
+	font-size: 14px;
 }
 @media (max-width: 1180px) {
 	.hero {
 		grid-template-columns: minmax(0, 1fr);
 	}
-	.hero > #status {
-		margin-top: 40px;
+	.hero > #synopsis {
+		margin-top: 36px;
 	}
-	.hero #status .body {
+	.hero #synopsis .body {
 		padding-left: var(--indent);
 	}
-}
-
-#synopsis .body > p {
-	max-width: 104ch;
+	#status .kv {
+		grid-template-columns: max-content minmax(0, 1fr);
+		column-gap: 3ch;
+	}
 }
 
 /* STATUS: key, value; like `systemctl status` */
@@ -334,7 +362,7 @@ main {
 
 .scroll {
 	overflow-x: auto;
-	margin-top: 22px;
+	margin-top: 16px;
 }
 
 table {
@@ -346,9 +374,10 @@ table {
 .data {
 	width: 100%;
 	min-width: 980px;
+	table-layout: fixed;
 }
 .data .c-unit {
-	width: 9ch;
+	width: 11ch;
 }
 
 .data thead th {
@@ -381,15 +410,40 @@ table {
 }
 
 .data .sect th {
-	padding: 26px 0 0;
+	padding: 40px 0 2px;
+}
+.data thead + tbody .sect th {
+	padding-top: 16px;
 }
 .sect-name {
-	display: inline-block;
+	display: block;
 	color: var(--acc);
 	font-weight: 600;
-	letter-spacing: 0.08em;
+	letter-spacing: 0.1em;
 	text-transform: uppercase;
-	font-size: 12.5px;
+	font-size: 15px;
+	padding-bottom: 6px;
+	border-bottom: 1px solid var(--rule-2);
+	scroll-margin-top: 16px;
+}
+.sect-note {
+	display: block;
+	max-width: 118ch;
+	margin-top: 8px;
+	color: var(--fg-2);
+	font-size: 13px;
+	line-height: 1.55;
+}
+.sect-note i {
+	font-style: normal;
+	font-weight: 600;
+	color: var(--fg);
+}
+.data .rehead td {
+	padding: 6px 0 0 2ch;
+	color: var(--dim);
+	font-size: 12px;
+	white-space: nowrap;
 }
 .sect-name::before {
 	content: "## ";
@@ -421,26 +475,132 @@ table {
 	font-style: italic;
 }
 .b-set .k:not(:first-child) {
-	margin-left: 2ch;
+	margin-left: 1.5ch;
 }
 .b-set .k::after {
 	content: ":";
 }
 
 .data .figs th,
-.data .figs td {
+.data .figs td,
+.data .exact th,
+.data .exact td {
 	padding: 4px 0 14px;
 	vertical-align: top;
 	border-bottom: 1px dashed var(--rule);
 	white-space: pre;
 }
-.data .figs td {
+.data .figs td,
+.data .exact td {
 	padding-left: 2ch;
 }
-.data .figs .unit {
+.data .unit {
 	text-align: left;
 	font-weight: 400;
+}
+.unit .u {
 	color: var(--acc);
+}
+.dir {
+	margin-left: 0.6ch;
+	color: var(--fg-2);
+}
+.unit .u2 {
+	display: block;
+	color: var(--dim);
+	font-size: 12px;
+	line-height: 1.5;
+}
+
+/* [+]: a row's p5 and p95 to the last digit and its Series files, without JavaScript. The rows
+   are in the table so they align with the figures above; the toggle opens them. */
+.more {
+	display: block;
+	margin-top: 2px;
+}
+.more summary {
+	display: inline-block;
+	list-style: none;
+	cursor: pointer;
+	font-size: 12px;
+	line-height: 1.5;
+	color: var(--acc);
+	white-space: nowrap;
+}
+.more summary::-webkit-details-marker {
+	display: none;
+}
+.more summary::before {
+	content: "[+] ";
+	font-weight: 600;
+}
+.more[open] summary::before {
+	content: "[−] ";
+}
+.more summary:hover {
+	text-decoration: underline;
+	text-underline-offset: 3px;
+}
+.more summary:focus-visible {
+	outline: 2px solid var(--acc);
+	outline-offset: 2px;
+}
+.data .exact.why td {
+	white-space: normal;
+	color: var(--fg-2);
+	padding: 4px 2ch 8px;
+	border-bottom: 1px dashed var(--rule);
+}
+.data .exact.why th {
+	padding-top: 4px;
+	border-bottom: 1px dashed var(--rule);
+}
+.bench:has(.exact.why) .exact.last th,
+.bench:has(.exact.why) .exact.last td {
+	border-bottom: 0;
+}
+.why .k {
+	font-style: italic;
+	color: var(--dim);
+}
+.why .k::after {
+	content: ":";
+}
+.data .exact {
+	display: none;
+}
+.bench:has(.more[open]) .exact {
+	display: table-row;
+}
+.bench:has(.more[open]) .figs > * {
+	border-bottom: 0;
+	padding-bottom: 6px;
+}
+.data .exact th,
+.data .exact td {
+	border-bottom: 0;
+	padding: 0 0 2px;
+	font-size: 12.5px;
+	background: var(--bg-2);
+}
+.data .exact td {
+	padding-left: 2ch;
+}
+.data .exact th {
+	color: var(--dim);
+	padding-left: 1ch;
+}
+.data .exact:nth-child(n) td .digits .tail {
+	color: var(--fg-2);
+}
+.data .exact.last th,
+.data .exact.last td {
+	padding-bottom: 8px;
+	border-bottom: 1px dashed var(--rule);
+}
+.exact .sid {
+	padding-left: 4ch;
+	font-size: 12px;
 }
 
 .figs a {
@@ -461,20 +621,42 @@ table {
 .digits .tail {
 	color: var(--dim);
 }
-.runs {
+.rng {
 	display: block;
-	color: var(--dim);
-	font-size: 11.5px;
-	line-height: 1.4;
 	padding-left: 4ch;
+	color: var(--fg-2);
+	font-size: 12px;
+	line-height: 1.5;
 }
-.runs .sid {
-	margin-left: 1ch;
-	opacity: 1;
+.rng .n {
+	margin-left: 1.5ch;
+	color: var(--dim);
 }
 
-.hint {
+/* The jump list and the legend, one line above the table. */
+.jump {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: baseline;
+	gap: 4px 0;
+	margin-top: 14px;
+	font-size: 13.5px;
+}
+.jump .sep {
+	padding: 0 1ch;
 	color: var(--dim);
+}
+.jump .legend {
+	margin-left: auto;
+	color: var(--dim);
+	font-size: 13px;
+}
+.jump .legend .dir {
+	color: var(--fg);
+	margin-left: 2ch;
+}
+.jump .legend .dir:first-child {
+	margin-left: 0;
 }
 
 /* ------------------------------------------------------------ MACHINES */
@@ -485,6 +667,7 @@ table {
 }
 .machines th,
 .machines td {
+	vertical-align: baseline;
 	text-align: left;
 	padding: 7px 3ch 7px 0;
 	border-bottom: 1px dashed var(--rule);
@@ -707,8 +890,94 @@ table {
 		content: attr(data-m);
 		color: var(--fg-2);
 	}
-	.runs {
+	.data .rehead {
 		display: none;
+	}
+	.data .figs td,
+	.data .exact td {
+		display: grid;
+		align-items: baseline;
+		grid-template-columns: 13ch minmax(0, 1fr);
+		column-gap: 0;
+	}
+	.data .figs td::before,
+	.data .exact td::before {
+		grid-row: 1 / span 2;
+	}
+	.data .figs td a {
+		grid-column: 2;
+	}
+	.rng {
+		grid-column: 2;
+		font-size: 11.5px;
+		padding-bottom: 3px;
+	}
+	.unit .u2 {
+		display: inline;
+		margin-left: 2ch;
+	}
+	.unit .u2::before {
+		content: "under each: ";
+	}
+	.bench:has(.more[open]) .exact {
+		display: block;
+	}
+	.data .exact {
+		padding: 6px 8px;
+		background: var(--bg-2);
+	}
+	.data .exact th,
+	.data .exact td {
+		background: none;
+		padding: 1px 0;
+		border: 0;
+	}
+	.data .exact th {
+		padding: 0 0 2px;
+	}
+	.data .exact.last th,
+	.data .exact.last td {
+		border: 0;
+		padding-bottom: 1px;
+	}
+	.data .exact td::before {
+		content: attr(data-m);
+		color: var(--dim);
+	}
+	.exact .sid {
+		padding-left: 0;
+	}
+	.data .figs .unit {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: baseline;
+	}
+	.more {
+		margin: 0 0 0 auto;
+	}
+	.more summary {
+		padding: 4px 0 4px 2ch;
+	}
+	.data .exact.why td {
+		display: block;
+		padding: 4px 0 2px;
+		border: 0;
+	}
+	.data .exact.why td::before {
+		content: none;
+	}
+	.data .exact.why th {
+		display: none;
+	}
+	.sect-note {
+		font-size: 12.5px;
+	}
+	.jump .legend {
+		margin-left: 0;
+		flex-basis: 100%;
+	}
+	.cmd-note {
+		font-size: 12px;
 	}
 
 	/* Each machine in three lines: type and price; vCPU, memory, clock; processor; storage and network. */
