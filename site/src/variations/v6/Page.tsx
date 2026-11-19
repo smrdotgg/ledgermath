@@ -1,9 +1,11 @@
 // Design v6, "Instrument panel": every headline figure drawn to exact scale beside the others,
 // one small chart per benchmark, the exact figure printed beside each mark.
 import "./page.css";
+import type { JSX } from "@solidjs/web";
 import {
 	formatCount,
 	formatMoment,
+	benchmarks,
 	formatUsd,
 	headline,
 	links,
@@ -26,6 +28,8 @@ type DialRow = {
 	to?: number;
 	text: string;
 	title: string;
+	/** Counted Runs behind the figure, printed in the chart's last column. */
+	runs?: number;
 };
 
 function Plot(props: { rows: DialRow[]; scale: Scale; row?: number; annotate?: { index: number; p5: string; p50: string; p95: string } }) {
@@ -90,17 +94,19 @@ function Plot(props: { rows: DialRow[]; scale: Scale; row?: number; annotate?: {
 function Dial(props: {
 	rows: DialRow[];
 	scale: Scale;
-	figCaption: string;
+	figCaption: JSX.Element;
 	labelCaption?: string;
 	size?: "lg";
 	annotate?: { index: number; p5: string; p50: string; p95: string };
 }) {
 	const rowH = props.size === "lg" ? 50 : ROW;
+	const runs = props.rows.some((r) => r.runs !== undefined);
 	return (
-		<div class={props.size === "lg" ? "dial lg" : "dial"}>
+		<div class={`dial${props.size === "lg" ? " lg" : ""}${runs ? " runs" : ""}`}>
 			<div class="dial-cap" aria-hidden="true">
-				<span>{props.labelCaption ?? "Machine"}</span>
-				<span>{props.figCaption}</span>
+				<span class="c-m">{props.labelCaption ?? "Machine"}</span>
+				<span class="c-f">{props.figCaption}</span>
+				{runs ? <span class="c-n">Runs</span> : null}
 			</div>
 			<div class="dial-grid" style={`--n:${props.rows.length};--row:${rowH}px;--axis:${AXIS}px`}>
 				<Plot rows={props.rows} scale={props.scale} row={rowH} annotate={props.annotate} />
@@ -121,6 +127,11 @@ function Dial(props: {
 									{r.text}
 								</span>
 							)}
+							{r.runs !== undefined ? (
+								<span class="n" style={`grid-row:${i + 1}`} title={`${r.runs} counted Runs behind the ${r.label} figure`}>
+									{r.runs}
+								</span>
+							) : null}
 						</>
 					);
 				})}
@@ -138,6 +149,7 @@ function intervalRows(inst: Instrument, scale: Scale): DialRow[] {
 		from: m.p5.value,
 		to: m.p95.value,
 		text: m.p50.short,
+		runs: m.runs,
 		title: `${m.instanceType}: median ${m.p50.full} ${inst.unit} (5th percentile ${m.p5.full}, 95th ${m.p95.full}) across ${m.runs} counted Runs. As the snapshot holds it: ${m.p50.source}`,
 	}));
 }
@@ -153,6 +165,21 @@ function tokens(json: string): { kind: "" | "k" | "s" | "n"; text: string }[] {
 	return out;
 }
 
+/** An address that may break only after a slash, never inside a name or a hash; the text is unchanged. */
+function Url(props: { text: string }) {
+	const parts = props.text.split(/(?<=[^:/]\/)/);
+	return (
+		<>
+			{parts.map((p, i) => (
+				<>
+					{p}
+					{i < parts.length - 1 ? <wbr /> : null}
+				</>
+			))}
+		</>
+	);
+}
+
 const pad = (i: number) => String(i + 1).padStart(2, "0");
 
 /** Every digit of a figure, the first four significant ones in full ink and the rest lighter. */
@@ -166,32 +193,33 @@ function Digits(props: { text: string }) {
 	);
 }
 
-/** A figure's median, 5th and 95th percentiles and Run count, every digit, lined up on the point with `all`. */
-function Exact(props: { m: InstMark; all: readonly string[] }) {
+/** A figure's 5th percentile, median and 95th percentile and its Run count, every digit, lined up on the point with `all`; low to high, as the charts draw them. */
+function Exact(props: { m: InstMark; all: readonly string[]; labels?: boolean }) {
 	const m = props.m;
+	const lb = (text: string) => (props.labels === false ? <span class="vh">{text} </span> : <span class="lb">{text}</span>);
 	return (
 		<span class="exact-fig">
+			<span class="ln">
+				{lb("p5")}
+				<span class="nm" style={padFor(m.p5.full, props.all)}>
+					<Digits text={m.p5.full} />
+				</span>
+			</span>
 			<span class="ln med">
-				<span class="lb">p50</span>
+				{lb("p50")}
 				<a class="nm" href={m.url} title={`${m.instanceType}: the Series' file, with each Run's figure and a link to its evidence`} style={padFor(m.p50.full, props.all)}>
 					<Digits text={m.p50.full} />
 				</a>
 			</span>
 			<span class="ln">
-				<span class="lb">p5</span>
-				<span class="nm" style={padFor(m.p5.full, props.all)}>
-					<Digits text={m.p5.full} />
-				</span>
-			</span>
-			<span class="ln">
-				<span class="lb">p95</span>
+				{lb("p95")}
 				<span class="nm" style={padFor(m.p95.full, props.all)}>
 					<Digits text={m.p95.full} />
 				</span>
 			</span>
 			<span class="ln n">
-				<span class="lb">n</span>
-				<span class="nm">{m.runs} Runs</span>
+				{lb("Runs")}
+				<span class="nm">{m.runs}</span>
 			</span>
 		</span>
 	);
@@ -200,18 +228,36 @@ function Exact(props: { m: InstMark; all: readonly string[] }) {
 const allFigures = (inst: Instrument) => inst.marks.flatMap((m) => [m.p5.full, m.p50.full, m.p95.full]);
 
 /**
- * Where the data module's words describe something other than what the chart draws. Its words for
- * disk_read_io_uring describe a count, but the headline figure is the time of one completed read.
+ * Where a row measures the volume rather than the machine. The data module says so in the reason for
+ * disk_read_io_uring's settings: random 4 KiB reads reach the volume's IOPS limit, and its throughput
+ * limit is what disk_read_sequential's row shows. All five machines read the same kind of volume (root
+ * EBS gp3); the card says what the row measures, in those words, and draws no conclusion from the
+ * figures. When the module stops saying so, the note goes.
  */
-const WHAT: Record<string, string> = {
-	disk_read_io_uring: "The time until one direct read completes, at random 4 KiB offsets on the root EBS gp3 volume, with 64 kept submitted through io_uring.",
-};
+function limitOf(benchmark: string): string | null {
+	const reason = headline.find((r) => r.choice.benchmark === "disk_read_io_uring")?.choice.reason ?? "";
+	if (!/IOPS limit/.test(reason) || !/throughput limit is what disk_read_sequential/.test(reason)) return null;
+	if (benchmark === "disk_read_io_uring")
+		return "64 reads in flight reach the root gp3 volume's IOPS limit: this row measures the volume, the same kind on all five, not the machine.";
+	if (benchmark === "disk_read_sequential") return "This row shows the root gp3 volume's throughput limit: it measures the volume, the same kind on all five, not the machine.";
+	return null;
+}
 
 function InstrumentCard(props: { inst: Instrument; index: number }) {
 	const inst = props.inst;
 	const c = inst.row.choice;
 	const zoom = inst.zoom;
 	const all = allFigures(inst);
+	const limit = limitOf(c.benchmark);
+	const settings = benchmarks.find((b) => b.name === c.benchmark)?.settings.length ?? 1;
+	const scale = zoom ?? inst.zero;
+	const repetition = (cls?: string) =>
+		c.lead === "time" ? (
+			<div class={cls}>
+				<dt>One repetition</dt>
+				<dd>{c.repetition}</dd>
+			</div>
+		) : null;
 	return (
 		<article class={zoom ? "inst zoomed" : "inst"} id={`b-${c.benchmark}`} aria-labelledby={`h-${c.benchmark}`}>
 			<div class="inst-top">
@@ -220,41 +266,54 @@ function InstrumentCard(props: { inst: Instrument; index: number }) {
 				<span class="kind">{c.lead === "rate" ? "more is faster" : "less is faster"}</span>
 			</div>
 			<h3 id={`h-${c.benchmark}`}>{c.label}</h3>
-			<p class="what">{WHAT[c.benchmark] ?? c.what}</p>
-			{zoom ? (
+			<p class="what">{c.what}</p>
+			{zoom || limit ? (
 				<div class="context">
-					<p class="zoom-note">
-						<span class="badge">Zoomed</span> The scale below starts at {zoom.ticks[0]!.label} {inst.unit}, not zero. Drawn from zero, the five marks sit inside the box:
-					</p>
-					<div class="strip-grid">
-						<span class="m">from 0</span>
-						<svg class="strip" aria-hidden="true" width="100%" height="20">
-							<line class="axis" x1="0" x2="100%" y1="10.5" y2="10.5" />
-							<line class="axis" x1="0.5" x2="0.5" y1="6" y2="15" />
-							<line class="axis" x1="100%" x2="100%" y1="6" y2="15" />
-							<rect class="window" x={at(inst.zero, zoom.lo)} width={width(inst.zero, zoom.lo, zoom.hi)} y="3" height="15" />
-							{inst.marks.map((m) => (
-								<circle class="median small" cx={at(inst.zero, m.p50.value)} cy="10.5" r="2.5" />
-							))}
-						</svg>
-						<span class="v dimv">
-							{inst.zero.ticks[inst.zero.ticks.length - 1]!.label} {inst.unit}
-						</span>
-					</div>
+					{limit ? (
+						<p class="limit-note">
+							<span class="badge lim">Volume limit</span> {limit}
+						</p>
+					) : null}
+					{zoom ? (
+						<>
+							<p class="zoom-note">
+								<span class="badge">Zoomed</span> The scale starts at {zoom.ticks[0]!.label} {inst.unit}, not zero. From zero, all five sit inside the box:
+							</p>
+							<div class="strip-grid">
+								<span class="m">from 0</span>
+								<svg class="strip" aria-hidden="true" width="100%" height="20">
+									<line class="axis" x1="0" x2="100%" y1="10.5" y2="10.5" />
+									<line class="axis" x1="0.5" x2="0.5" y1="6" y2="15" />
+									<line class="axis" x1="100%" x2="100%" y1="6" y2="15" />
+									<rect class="window" x={at(inst.zero, zoom.lo)} width={width(inst.zero, zoom.lo, zoom.hi)} y="3" height="15" />
+									{inst.marks.map((m) => (
+										<circle class="median small" cx={at(inst.zero, m.p50.value)} cy="10.5" r="2.5" />
+									))}
+								</svg>
+								<span class="v dimv">
+									{inst.zero.ticks[inst.zero.ticks.length - 1]!.label} {inst.unit}
+								</span>
+							</div>
+						</>
+					) : null}
 				</div>
 			) : (
 				<div class="context empty" />
 			)}
 			<Dial
-				rows={intervalRows(inst, zoom ?? inst.zero)}
-				scale={zoom ?? inst.zero}
-				figCaption={`${c.per ? `${inst.unit} per ${c.per.of}` : inst.unit} · median, ${zoom ? 6 : 4} digits`}
+				rows={intervalRows(inst, scale)}
+				scale={scale}
+				figCaption={
+					<>
+						<span class="nw">{c.per ? `${inst.unit} per ${c.per.of}` : inst.unit} ·</span> <span class="nw">median, {zoom ? 6 : 4} digits</span>
+					</>
+				}
 			/>
 			<div class="inst-foot">
 				<details class="every">
 					<summary>
 						<span>Every digit, in {inst.unit}</span>
-						<span class="sum-n">with Runs and Series files</span>
+						<span class="sum-n">p5 · p50 · p95 · Runs</span>
 					</summary>
 					<div class="every-rows">
 						{inst.marks.map((m) => (
@@ -264,19 +323,21 @@ function InstrumentCard(props: { inst: Instrument; index: number }) {
 							</div>
 						))}
 					</div>
+					{c.lead === "time" ? <dl class="rep-in">{repetition()}</dl> : null}
 				</details>
 				<dl>
 					<div>
 						<dt>Settings</dt>
-						<dd>{c.setting}</dd>
+						<dd>
+							{c.setting}
+							<span class="of">{settings > 1 ? ` · 1 of ${settings} measured` : " · the only one measured"}</span>
+						</dd>
 					</div>
-					{c.lead === "time" ? (
-						<div>
-							<dt>One repetition</dt>
-							<dd>{c.repetition}</dd>
-						</div>
-					) : null}
+					{repetition("rep-out")}
 				</dl>
+				<a class="back" href="#choose">
+					↑ All benchmarks
+				</a>
 			</div>
 		</article>
 	);
@@ -341,8 +402,11 @@ function Mark() {
 	);
 }
 
+/** The four boots a day, UTC. */
+const BOOTS = ["04:10", "10:10", "16:10", "22:10"] as const;
+
 function ScheduleDial() {
-	const times = ["04:10", "10:10", "16:10", "22:10"];
+	const times = BOOTS;
 	const r = 46;
 	const pos = (hhmm: string, radius: number) => {
 		const [h, m] = hhmm.split(":").map(Number) as [number, number];
@@ -436,6 +500,10 @@ export default function Page() {
 	const counted = formatCount(snapshot.countedRuns).full;
 	const failed = formatCount(snapshot.failedRuns).full;
 	const methods = snapshot.methods;
+	const shown = headline.length * machines.length;
+	// The boot the newest Run followed: the last of the day's four boot times at or before its start.
+	const hhmm = newest.iso.slice(11, 16);
+	const boot = [...BOOTS].reverse().find((t) => t <= hhmm) ?? BOOTS[BOOTS.length - 1]!;
 	const seriesMethod = methods.find((m) => m.key === "series_v1")!;
 
 	// The hero's chart: the first benchmark, with one row's percentiles written out to teach the marks.
@@ -481,6 +549,18 @@ export default function Page() {
 		{ comment: `One Series' own file (here: ${hero.row.choice.benchmark} on ${taught.instanceType})`, url: exampleSeries },
 		{ comment: `AWS's On-Demand prices, copied ${snapshot.priceDate}`, url: links.prices },
 	];
+	// Words to hand an agent: what the API holds and how to cite it, nothing it does not say.
+	const agentPrompt: (string | { url: string })[] = [
+		`LedgerMath measures ${machines.length} AWS EC2 machine types in ${snapshot.region}, ${headline.length} benchmarks each, four times a day, and publishes the figures with AWS's On-Demand prices as static JSON. Start at `,
+		{ url: links.index },
+		`: it says what exists and how it is versioned. `,
+		{ url: links.seriesList },
+		` lists every Series (benchmark, params, build, instance type) with its p5, p50 and p95. Prices for ${snapshot.priceDate}: `,
+		{ url: links.prices },
+		`. When you use a figure, cite its Series file, `,
+		{ url: links.seriesFilePattern },
+		`, which lists each Run behind it with a link to its evidence. Do not state a figure the API does not give.`,
+	];
 
 	return (
 		<>
@@ -519,8 +599,9 @@ export default function Page() {
 							<code data-copy tabindex="0">curl {links.index}</code>
 						</div>
 						<p class="hero-links">
-							<a href="#api" class="btn">Point an agent at the API</a>
-							<a href="#instruments" class="btn ghost">Read the 14 instruments</a>
+							<a href="#agent" class="btn">Copy a prompt for your agent</a>
+							<a href="#instruments" class="btn ghost wide-only">Read the {headline.length} instruments</a>
+							<a href="#choose" class="btn ghost narrow-only">Choose a benchmark</a>
 						</p>
 						<p class="lede how">
 							LedgerMath boots each machine type at 04:10, 10:10, 16:10 and 22:10 UTC, runs {snapshot.benchmarkCount} benchmarks on the freshly booted machine, and keeps every Run:
@@ -581,7 +662,13 @@ export default function Page() {
 									<svg width="18" height="12" aria-hidden="true">
 										<circle class="median" cx="9" cy="6" r="4.75" />
 									</svg>
-									Median (p50) of a Series' counted Runs, printed on the right to four significant digits
+									Median (p50) of a Series' counted Runs, printed on the right to four significant digits; every digit is in the panel above and in the table
+								</li>
+								<li>
+									<span class="lg-n" aria-hidden="true">
+										{taught.runs}
+									</span>
+									The counted Runs behind that median, last on each row
 								</li>
 								<li>
 									<svg width="30" height="12" aria-hidden="true">
@@ -619,6 +706,7 @@ export default function Page() {
 										<span class="big">{newest.minute}</span> <span class="unit">UTC</span> <span class="date">{newest.longDate}</span>
 									</time>
 									<span class="exact">{newest.full}</span>
+									<span class="exact why">After the {boot} boot: a machine's Runs start once it has booted.</span>
 								</dd>
 							</div>
 							<div class="ro-cell">
@@ -634,7 +722,9 @@ export default function Page() {
 								<dt>Series</dt>
 								<dd>
 									<span class="big">{seriesCount}</span>
-									<span class="exact">one benchmark, setting, build and machine each</span>
+									<span class="exact">
+										one benchmark, setting, build and machine each; <a href="#instruments">{shown} drawn here</a>, all in <a href={links.seriesList}>series.json</a>
+									</span>
 								</dd>
 							</div>
 							<div class="ro-cell">
@@ -680,12 +770,13 @@ export default function Page() {
 							The instruments <span class="dim">· {headline.length} benchmarks × {machines.length} machine types</span>
 						</h2>
 						<p>
-							One chart per benchmark, the five machines on one scale, cheapest first. Each dot is the median of one Series' counted Runs; the bar runs from its 5th to its 95th percentile.
-							The figure beside each mark is rounded to four significant digits (six on a zoomed chart). Open <strong>Every digit</strong> under any chart for the exact figures, the
-							Runs behind each and its Series' file, or read all {headline.length * machines.length} in <a href="#digits">one table</a>.
+							One chart per benchmark, the five machines on one scale, cheapest first. Each dot is the median of one Series' counted Runs, the bar runs from its 5th to its 95th
+							percentile, and the last column counts the Runs. The figure beside each mark is rounded to four significant digits (six on a zoomed chart): open <strong>Every digit</strong>{" "}
+							under a chart, or read all {shown} in <a href="#digits">one table</a>. Each chart draws one setting of its benchmark, chosen by a written rule; the {seriesCount} Series,
+							every setting and build, are in <a href={links.seriesList}>series.json</a>.
 						</p>
 					</div>
-					<nav class="jump" aria-label="Jump to a benchmark">
+					<nav class="jump" id="choose" aria-label="Choose a benchmark">
 						<ol>
 							{instruments.map((inst, i) => (
 								<li>
@@ -696,7 +787,7 @@ export default function Page() {
 							))}
 							<li class="all">
 								<a href="#digits">
-									<span class="idx">→</span> All {headline.length * machines.length} figures, every digit
+									<span class="idx">→</span> All {shown} figures, every digit
 								</a>
 							</li>
 						</ol>
@@ -713,16 +804,16 @@ export default function Page() {
 					<div class="block-head">
 						<h2 id="h-digits">Every digit</h2>
 						<p>
-							The same {headline.length * machines.length} figures as the charts, as the snapshot holds them, nothing rounded: the median, and beneath it the 5th and 95th percentiles and the
-							number of counted Runs. Each column lines up on the decimal point; the digits past the fourth significant one are set lighter. Each median links to its Series' file.
+							The {shown} exact medians the charts show rounded, as the snapshot holds them, each with its 5th and 95th percentiles and its counted Runs. Each column lines up on the
+							decimal point; the digits past the fourth significant one are set lighter. Each median links to its Series' file.
 						</p>
 					</div>
-					<p class="swipe">Swipe the table sideways for all five machines.</p>
-					<div class="scroll" tabindex="0" role="region" aria-label="Every digit: the headline figures in full">
+					<div class="scroll wide-only" tabindex="0" role="region" aria-label="Every digit: the headline figures in full">
 						<table class="digits">
 							<thead>
 								<tr>
 									<th scope="col">Benchmark</th>
+									<td class="lbs" aria-hidden="true" />
 									{machines.map((m) => (
 										<th scope="col">{m.instanceType}</th>
 									))}
@@ -731,17 +822,25 @@ export default function Page() {
 							<tbody>
 								{instruments.map((inst) => {
 									const all = allFigures(inst);
+									const c = inst.row.choice;
 									return (
 										<tr>
 											<th scope="row">
-												<a href={`#b-${inst.row.choice.benchmark}`}>{inst.row.choice.label}</a>
+												<a href={`#b-${c.benchmark}`}>{c.label}</a>
 												<span class="q">
 													{inst.quantity}, {inst.unit}
 												</span>
+												{c.lead === "time" ? <span class="q rep">One repetition: {c.repetition.replace(/\.$/, "")}</span> : null}
 											</th>
+											<td class="lbs" aria-hidden="true">
+												<span>p5</span>
+												<span class="med">p50</span>
+												<span>p95</span>
+												<span>Runs</span>
+											</td>
 											{inst.marks.map((m) => (
 												<td>
-													<Exact m={m} all={all} />
+													<Exact m={m} all={all} labels={false} />
 												</td>
 											))}
 										</tr>
@@ -749,6 +848,45 @@ export default function Page() {
 								})}
 							</tbody>
 						</table>
+					</div>
+					<div class="dlist narrow-only">
+						{instruments.map((inst) => {
+							const c = inst.row.choice;
+							const p50s = inst.marks.map((m) => m.p50.full);
+							return (
+								<section class="dl-b" aria-labelledby={`d-${c.benchmark}`}>
+									<h3 id={`d-${c.benchmark}`}>
+										<a href={`#b-${c.benchmark}`}>{c.label}</a>
+									</h3>
+									<p class="q">
+										{inst.unit} · {inst.quantity.toLowerCase()} · {c.lead === "rate" ? "more" : "less"} is faster
+									</p>
+									<ol>
+										{inst.marks.map((m) => (
+											<li>
+												<span class="m">{m.instanceType}</span>
+												<a class="p50" href={m.url} style={padFor(m.p50.full, p50s)}>
+													<span class="vh">median </span>
+													<Digits text={m.p50.full} />
+												</a>
+												<span class="n">
+													<span class="vh">counted Runs </span>
+													{m.runs}
+												</span>
+												<span class="pr">
+													<span>
+														p5 <Digits text={m.p5.full} />
+													</span>{" "}
+													<span>
+														p95 <Digits text={m.p95.full} />
+													</span>
+												</span>
+											</li>
+										))}
+									</ol>
+								</section>
+							);
+						})}
 					</div>
 				</section>
 
@@ -820,6 +958,12 @@ export default function Page() {
 								An agent starts at the index, which says what exists and how it is versioned. The Series list gives every Series with its settings, its Run counts and its percentiles;
 								each Series has its own file, and the price file gives AWS's On-Demand prices for the day. Each kind of file has a JSON schema.
 							</p>
+							<div class="agent" id="agent">
+								<h3 class="agent-h">A prompt for your agent</h3>
+								<p class="agent-t" data-copy tabindex="0">
+									{agentPrompt.map((part) => (typeof part === "string" ? part : <Url text={part.url} />))}
+								</p>
+							</div>
 							<p class="quote">“{snapshot.versioning.split(". ")[0]}.”</p>
 							<ul class="schemas">
 								{links.schemas.map((s) => (
@@ -867,7 +1011,9 @@ export default function Page() {
 									<li>
 										<p class="c"># {c.comment}</p>
 										<div class="cmd-row">
-											<code data-copy tabindex="0">curl {c.url}</code>
+											<code data-copy tabindex="0">
+											curl <Url text={c.url} />
+										</code>
 										</div>
 									</li>
 								))}
@@ -901,12 +1047,12 @@ export default function Page() {
 							</li>
 							<li>
 								<span class="step">Run</span>
-								<div class="chain-n">{runs}</div>
+								<div class="chain-n">a Run</div>
 								<p>Every execution of a benchmark is kept as a Run, with what it printed and what was recorded about the machine. Failed Runs are kept and shown too.</p>
 							</li>
 							<li>
 								<span class="step">Series</span>
-								<div class="chain-n">{seriesCount}</div>
+								<div class="chain-n">a Series</div>
 								<p>The Runs of one benchmark, parameter set, build, instance type and Availability Zone ID.</p>
 							</li>
 							<li>
@@ -923,6 +1069,7 @@ export default function Page() {
 						<div class="onerun">
 							<div class="onerun-copy">
 								<h3>One Run, as its Series' file holds it</h3>
+								<p class="case">A second example, from another Series: the one file the snapshot keeps whole.</p>
 								<p>
 									The first of the {sample.points} Runs in the file of {sampleChoice ? <a href={`#b-${sample.benchmark}`}>{sampleChoice.label}</a> : sample.benchmark} on{" "}
 									<span class="mono">{sample.instanceType}</span>
@@ -961,10 +1108,10 @@ export default function Page() {
 
 						<div class="defs">
 							<h3 class="defs-title">
-								Method <code>{seriesMethod.name}</code> v{seriesMethod.version}, in the API's own words
+								Method <code>{seriesMethod.name}</code> v{seriesMethod.version}: which Runs count, and the percentiles
 							</h3>
 							<dl>
-								{(["time_per_repetition", "bytes_per_second", "percentiles", "counted"] as const).map((k) =>
+								{(["counted", "percentiles"] as const).map((k) =>
 									seriesMethod.definitions[k] ? (
 										<div>
 											<dt>
@@ -975,14 +1122,36 @@ export default function Page() {
 									) : null,
 								)}
 							</dl>
-							{requestsMethod?.definitions.series ? (
-								<div class="defs-more">
-									<h3 class="defs-title">
-										Method <code>{requestsMethod.name}</code> v{requestsMethod.version}, for the S3 requests
-									</h3>
-									<p>{requestsMethod.definitions.series}</p>
-								</div>
+							{requestsMethod ? (
+								<p class="defs-plain">
+									The S3 GETs have a second Method, <code>{requestsMethod.name}</code> v{requestsMethod.version}. It takes the same Series as <code>{seriesMethod.name}</code>: the
+									Runs that share a benchmark, params, build, instance type and zone. It applies to a Series when any of its Runs recorded a request, and then shows every Run of
+									it, counted or not.
+								</p>
 							) : null}
+							<details class="defs-more">
+								<summary>The rest, in the API's own words</summary>
+								<dl>
+									{(["time_per_repetition", "bytes_per_second"] as const).map((k) =>
+										seriesMethod.definitions[k] ? (
+											<div>
+												<dt>
+													<code>{k}</code>
+												</dt>
+												<dd>{seriesMethod.definitions[k]}</dd>
+											</div>
+										) : null,
+									)}
+									{requestsMethod?.definitions.series ? (
+										<div>
+											<dt>
+												<code>{requestsMethod.name}</code> v{requestsMethod.version}, <code>series</code>
+											</dt>
+											<dd>{requestsMethod.definitions.series}</dd>
+										</div>
+									) : null}
+								</dl>
+							</details>
 						</div>
 					</div>
 				</section>
