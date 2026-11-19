@@ -100,15 +100,16 @@ function sameOrigin(url: string, origin: string): boolean {
 
 /**
  * Lets the page settle before a screenshot: the network idle (up to 10 s), a scroll to the end
- * and back so lazy content loads, fonts loaded, images decoded, and the page's height unchanged
- * over two checks 250 ms apart (up to 5 s).
+ * and back so lazy content loads, fonts loaded and images decoded (up to 5 s each), and the
+ * page's height unchanged over two checks 250 ms apart (up to about 4 s).
  */
 export async function settle(page: Page): Promise<void> {
 	await page.waitForLoadState("networkidle", { timeout: 10_000 }).catch(() => {});
 	await page
 		.evaluate(async () => {
 			const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-			for (let y = 0; y < document.documentElement.scrollHeight; y += Math.max(200, window.innerHeight * 0.8)) {
+			// At most 150 steps, so a page that grows as it scrolls cannot hold the screenshot forever.
+			for (let y = 0, step = 0; y < document.documentElement.scrollHeight && step < 150; y += Math.max(200, window.innerHeight * 0.8), step++) {
 				window.scrollTo(0, y);
 				await pause(60);
 			}
@@ -118,15 +119,25 @@ export async function settle(page: Page): Promise<void> {
 	await page.waitForLoadState("networkidle", { timeout: 10_000 }).catch(() => {});
 	await page
 		.evaluate(async () => {
-			await document.fonts.ready;
-			await Promise.all(
-				[...document.images].map((image) =>
-					image.complete ? image.decode().catch(() => {}) : new Promise((resolve) => image.addEventListener("loadend", resolve, { once: true })),
+			const within = <T,>(ms: number, work: Promise<T>) => Promise.race([work, new Promise((resolve) => setTimeout(resolve, ms))]);
+			await within(5_000, document.fonts.ready);
+			// An image still loading gets until `load` or `error`, 5 s at most (a lazy image off screen may never start).
+			await within(
+				5_000,
+				Promise.all(
+					[...document.images].map((image) =>
+						image.complete
+							? image.decode().catch(() => {})
+							: new Promise((resolve) => {
+									image.addEventListener("load", resolve, { once: true });
+									image.addEventListener("error", resolve, { once: true });
+								}),
+					),
 				),
 			);
 			const frame = () => new Promise((resolve) => requestAnimationFrame(() => resolve(null)));
 			let last = -1;
-			for (let i = 0; i < 20; i++) {
+			for (let i = 0; i < 12; i++) {
 				await frame();
 				await frame();
 				await new Promise((resolve) => setTimeout(resolve, 250));
@@ -142,8 +153,10 @@ export async function settle(page: Page): Promise<void> {
 const TALLEST_CAPTURE = 16_384;
 
 /**
- * Takes a screenshot of the first screen, or of the full page. A page too tall for Chromium to
- * capture whole is captured from the top down to the limit; the note returned says so.
+ * Takes a screenshot of the first screen, or of the full page. When Chromium cannot capture the
+ * full page in one piece (too tall, or far wider than the viewport, as a page with a very wide
+ * table is), it captures the viewport's width from the top down, as far as the limit allows; the
+ * note returned says what was cut.
  */
 export async function screenshot(page: Page, path: string, fullPage: boolean): Promise<string | null> {
 	try {
@@ -151,10 +164,16 @@ export async function screenshot(page: Page, path: string, fullPage: boolean): P
 		return null;
 	} catch (error) {
 		if (!fullPage) throw error;
-		const { width, height, scale } = await page.evaluate(() => ({ width: document.documentElement.scrollWidth, height: document.documentElement.scrollHeight, scale: window.devicePixelRatio }));
-		const tallest = Math.floor(TALLEST_CAPTURE / scale);
-		await page.screenshot({ path, fullPage: true, clip: { x: 0, y: 0, width, height: Math.min(height, tallest) }, animations: "disabled", caret: "hide" });
-		return `${path.split("/").pop()}: the page is ${height} px tall, more than Chromium captures at once; cut at ${tallest} px`;
+		const size = await page.evaluate(() => ({
+			width: document.documentElement.scrollWidth,
+			height: document.documentElement.scrollHeight,
+			viewport: document.documentElement.clientWidth,
+			scale: window.devicePixelRatio,
+		}));
+		const width = Math.min(size.width, size.viewport);
+		const height = Math.min(size.height, Math.floor(TALLEST_CAPTURE / size.scale));
+		await page.screenshot({ path, fullPage: true, clip: { x: 0, y: 0, width, height }, animations: "disabled", caret: "hide" });
+		return `${path.split("/").pop()}: Chromium could not capture the whole page (${size.width}×${size.height} px); captured the top ${width}×${height} px`;
 	}
 }
 
