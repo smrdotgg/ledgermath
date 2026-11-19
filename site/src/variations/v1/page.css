@@ -153,11 +153,22 @@ main,
 
 .masthead {
 	display: grid;
-	grid-template-columns: minmax(0, 1fr) minmax(0, 27rem);
+	grid-template-columns: minmax(0, 1fr) minmax(0, 25rem);
 	gap: 1.25rem 4rem;
 	align-items: end;
 	padding-top: 2rem;
 	padding-bottom: 0.75rem;
+}
+
+.lede-col {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) auto;
+	gap: 0 2.5rem;
+	align-items: end;
+}
+
+.lede-col .claim {
+	grid-column: 1 / -1;
 }
 
 .masthead::after {
@@ -166,7 +177,7 @@ main,
 	height: 4px;
 	border-top: 1px solid var(--rule-strong);
 	border-bottom: 1px solid var(--rule-strong);
-	margin-top: 0.5rem;
+	margin-top: 0.25rem;
 }
 
 h1 {
@@ -187,82 +198,34 @@ h1 .sub {
 }
 
 .claim {
-	max-width: 50rem;
-	margin: 1rem 0 1.25rem;
+	max-width: 52rem;
+	margin: 1rem 0 0.75rem;
 	font-size: 1.75rem;
 	line-height: 1.25;
 	font-weight: 500;
 	letter-spacing: -0.008em;
+	color: var(--ink);
 	text-wrap: balance;
 }
 
-.start {
-	display: flex;
-	flex-direction: column;
-	gap: 0.35rem;
-	max-width: 36rem;
-}
-
-.start-h {
-	font-variant-caps: all-small-caps;
-	letter-spacing: 0.06em;
-	font-size: 1.0625rem;
+.lede {
+	max-width: 40rem;
+	margin: 0;
+	font-size: 1rem;
+	line-height: 1.55;
 	color: var(--ink-2);
-	font-weight: 600;
-}
-
-.cmd {
-	display: flex;
-	align-items: center;
-	gap: 0.75rem;
-	padding: 0.45rem 0.5rem 0.45rem 1rem;
-	background: var(--paper-2);
-	border-left: 3px double var(--red-rule);
-}
-
-.cmd code {
-	flex: 1;
-	min-width: 0;
-	font-family: var(--mono);
-	font-size: 0.875rem;
-	white-space: nowrap;
-	overflow-x: auto;
-	scrollbar-width: thin;
-}
-
-.cmd .prompt {
-	color: var(--pencil-2);
-	user-select: none;
-}
-
-.copy {
-	flex: none;
-	font: 500 0.75rem/1 var(--mono);
-	letter-spacing: 0.04em;
-	text-transform: uppercase;
-	color: var(--ink);
-	background: var(--paper);
-	border: 1px solid var(--rule-2);
-	border-radius: 2px;
-	padding: 0.4rem 0.55rem;
-	cursor: pointer;
-}
-
-.copy:hover {
-	border-color: var(--ink);
 }
 
 .folio {
 	margin: 0;
 	font-size: 0.9375rem;
-	border-top: 3px double var(--rule-strong);
 }
 
 .folio > div {
 	display: grid;
 	grid-template-columns: 6.5rem minmax(0, 1fr);
 	gap: 1rem;
-	padding: 0.24rem 0;
+	padding: 0.22rem 0;
 	border-bottom: 1px solid var(--rule);
 }
 
@@ -271,16 +234,12 @@ h1 .sub {
 }
 
 .folio dt,
-.addr th,
-.mtable thead th,
-.ledger thead th.no,
-.ledger thead th.what,
-.ledger thead th.unit {
-	font-weight: 400;
+.tally dt,
+.addr dt {
 	font-variant-caps: all-small-caps;
 	letter-spacing: 0.06em;
 	color: var(--pencil);
-	font-size: 1.0625rem;
+	font-size: 1.0625em;
 }
 
 .folio dd {
@@ -291,63 +250,91 @@ h1 .sub {
 /* ------------------------------------------------------------------ the ledger */
 
 .ledger {
-	padding-top: 1.5rem;
+	padding-top: 1.25rem;
 }
 
 .ledger-head {
-	display: flex;
-	flex-wrap: wrap;
-	align-items: baseline;
-	justify-content: space-between;
-	gap: 0.5rem 2rem;
-	margin-bottom: 0.9rem;
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) minmax(0, 46rem);
+	gap: 1rem 3rem;
+	align-items: start;
+	margin-bottom: 1rem;
 }
 
-.ledger-head h2 {
-	font-size: 1.375rem;
-}
-
-.ledger-head h2 .dim {
-	margin-left: 0.5rem;
-	font-weight: 400;
-	font-style: italic;
-	font-size: 1.0625rem;
-	color: var(--ink-2);
-}
-
-.legend {
-	display: flex;
-	flex-wrap: wrap;
-	align-items: baseline;
-	gap: 0.25rem 0.6rem;
-	margin: 0;
+.lh-scope {
+	margin: 0.5rem 0 0;
+	max-width: 30rem;
 	font-size: 0.9375rem;
 	color: var(--ink-2);
 }
 
-.legend b {
+/* the reading key: one real entry, taken apart */
+.key {
+	margin: 0;
+	padding: 0.7rem 1rem 0.8rem;
+	background: var(--paper-2);
+	border-left: 3px double var(--red-rule);
+}
+
+.key-h {
+	margin-bottom: 0.45rem;
+	font-size: 0.8125rem;
+	font-variant-caps: all-small-caps;
+	letter-spacing: 0.06em;
+	font-size: 0.9375rem;
+	color: var(--pencil);
+}
+
+.key-h .mono {
+	font-variant-caps: normal;
+	letter-spacing: 0;
+	color: var(--ink-2);
+}
+
+.key-grid {
+	display: grid;
+	grid-template-columns: max-content minmax(0, 1fr);
+	gap: 0.35rem 1.5rem;
+	align-items: baseline;
+	--whole: 2ch;
+}
+
+.key-s {
+	position: relative;
+	white-space: nowrap;
+}
+
+.key-s .bar {
+	width: 12.5rem;
+	margin: 0.3rem 0 0;
+}
+
+.key-u {
+	font-size: 0.875rem;
+	color: var(--ink-2);
+}
+
+.key-n {
+	font-size: 0.8125rem;
+	line-height: 1.4;
+	color: var(--ink-2);
+}
+
+.key-n b {
 	font-weight: 600;
 	color: var(--ink);
 }
 
-.lg-sep {
-	color: var(--pencil);
-}
-
-.lg-bar {
-	position: relative;
-	display: inline-block;
-	width: 3.5rem;
-	height: 5px;
-	align-self: center;
-	--to: 72%;
-	--lo: 62%;
-	--hi: 82%;
-}
-
-.phone-key {
+.kn-short {
 	display: none;
 }
+
+.ledger-head h2 {
+	font-size: 1.375rem;
+	white-space: nowrap;
+}
+
+
 
 .scroll {
 	overflow-x: auto;
@@ -372,11 +359,21 @@ h1 .sub {
 }
 
 .ledger thead th {
+	font-weight: 400;
 	vertical-align: bottom;
 	padding-top: 0.5rem;
 	padding-bottom: 0.6rem;
 	border-bottom: 3px double var(--rule-strong);
 	background: var(--paper);
+}
+
+.ledger thead th.no,
+.ledger thead th.what,
+.ledger thead th.unit {
+	font-variant-caps: all-small-caps;
+	letter-spacing: 0.06em;
+	color: var(--pencil);
+	font-size: 1.0625rem;
 }
 
 .ledger abbr {
@@ -385,7 +382,7 @@ h1 .sub {
 
 th.no,
 td.no {
-	width: 2.25rem;
+	width: 2rem;
 	padding-left: 0;
 	padding-right: 0.25rem;
 }
@@ -393,48 +390,37 @@ td.no {
 td.no {
 	color: var(--pencil);
 	font-size: 0.875rem;
-	padding-top: 0.82rem;
+	padding-top: 0.85rem;
 }
 
 th.what {
-	width: 14.5rem;
-	padding-right: 1rem;
-	font-weight: 400;
-}
-
-tr.entry th.what a {
-	font-weight: 600;
-	font-size: 1.0625rem;
-	line-height: 1.3;
-	color: var(--ink);
-	text-decoration: underline 1px var(--rule-2);
-	text-underline-offset: 0.22em;
-}
-
-tr.entry th.what a:hover {
-	text-decoration-color: var(--ink);
+	width: 19.5rem;
+	padding-right: 1.25rem;
 }
 
 th.unit,
 td.unit {
-	width: 8rem;
+	width: 5.25rem;
 	border-right: 3px double var(--red-rule);
 }
 
 td.unit {
-	padding-top: 0.75rem;
+	padding-top: 0.78rem;
 	font-size: 0.9375rem;
+	color: var(--ink-2);
+}
+
+td.unit {
 	white-space: nowrap;
 }
 
 td.unit .u {
 	font-weight: 600;
+	color: var(--ink);
 }
 
 td.unit .dir {
-	display: block;
-	font-size: 0.8125rem;
-	line-height: 1.3;
+	margin-left: 0.35rem;
 	color: var(--ink-2);
 }
 
@@ -455,7 +441,7 @@ td.unit + td.fig-cell {
 }
 
 th.mach {
-	font-weight: 400;
+	padding-left: 0.75rem;
 }
 
 th.mach > span {
@@ -466,6 +452,7 @@ th.mach > span {
 	font-family: var(--mono);
 	font-weight: 500;
 	font-size: 0.9375rem;
+	color: var(--ink);
 }
 
 .mach .spec {
@@ -474,13 +461,62 @@ th.mach > span {
 }
 
 .mach .price {
-	margin-top: 0.1rem;
+	margin-top: 0.15rem;
+	font-size: 1rem;
+	color: var(--ink);
 	font-weight: 600;
 }
 
 .mach .per {
 	font-weight: 400;
 	color: var(--pencil);
+	font-size: 0.875rem;
+}
+
+/* the memo line under each entry: what one repetition is, the settings, and any N.B. */
+tr.entry > td.fig-cell {
+	border-bottom: 0;
+	padding-bottom: 0.15rem;
+}
+
+.ledger td.memocell {
+	padding: 0.15rem 0.75rem 0.7rem;
+	border-bottom: 1px solid var(--rule);
+	font-size: 0.8125rem;
+	line-height: 1.4;
+	color: var(--pencil);
+}
+
+tbody tr.memo:last-child > td.memocell,
+tbody tr.entry:nth-last-child(2) > * {
+	border-bottom: 0;
+}
+
+.memo-t {
+	display: block;
+}
+
+.memo-t .per-rep {
+	font-style: italic;
+	color: var(--ink-2);
+}
+
+.nb {
+	display: block;
+	max-width: 62rem;
+	margin-top: 0.35rem;
+	padding-left: 0.6rem;
+	border-left: 2px solid var(--red-rule);
+	font-size: 0.875rem;
+	line-height: 1.4;
+	color: var(--ink-2);
+}
+
+.nb-mark {
+	font-weight: 600;
+	font-variant-caps: all-small-caps;
+	letter-spacing: 0.06em;
+	color: var(--red);
 }
 
 /* section rows: the account headings */
@@ -491,6 +527,7 @@ tr.sec th {
 	font-variant-caps: all-small-caps;
 	letter-spacing: 0.1em;
 	font-size: 1.125rem;
+	color: var(--ink);
 }
 
 tr.sec td.mrep {
@@ -505,7 +542,7 @@ tr.sec td.mrep {
 
 tr.sec .roman {
 	display: inline-block;
-	min-width: 2.25rem;
+	min-width: 2rem;
 	font-weight: 400;
 	color: var(--pencil);
 }
@@ -525,16 +562,35 @@ tr.entry > * {
 	border-bottom: 1px solid var(--rule);
 }
 
-tbody tr.entry:last-child > * {
-	border-bottom: 0;
+
+th.what {
+	font-weight: 400;
+}
+
+tr.entry th.what .label {
+	display: block;
+	font-weight: 600;
+	font-size: 1.0625rem;
+	line-height: 1.3;
+}
+
+tr.entry th.what .desc {
+	display: block;
+	margin-top: 0.2rem;
+	font-size: 0.875rem;
+	line-height: 1.4;
+	color: var(--pencil);
 }
 
 /* the figures */
 td.fig-cell {
-	padding: 0.72rem 0.25rem 0.55rem 0.75rem;
+	padding-left: 0.75rem;
+	padding-right: 0.25rem;
+	padding-top: 0.72rem;
 }
 
 td.fig-cell a {
+	position: relative;
 	display: block;
 	color: var(--ink);
 	text-decoration: none;
@@ -547,9 +603,14 @@ td.fig-cell a:hover {
 	background: var(--hover);
 }
 
+td.fig-cell a:hover .runs {
+	text-decoration-thickness: 2px;
+}
+
 td.fig-cell a:hover .fig .d,
 td.fig-cell a:hover .fig .w {
-	text-decoration: underline 1px;
+	text-decoration: underline;
+	text-decoration-thickness: 1px;
 	text-underline-offset: 0.2em;
 }
 
@@ -571,13 +632,16 @@ td.fig-cell a:hover .fig .w {
 }
 
 .fig .p {
-	font-size: 0.92em;
+	font-size: 0.88em;
 	font-weight: 400;
 	color: var(--pencil);
+	letter-spacing: -0.01em;
 }
 
+
+
 .fig .p span {
-	margin-left: 0.18em;
+	margin-left: 0.2em;
 }
 
 .fig .p span:first-child {
@@ -589,7 +653,7 @@ td.fig-cell a:hover .fig .w {
 	position: relative;
 	display: block;
 	height: 5px;
-	margin: 0.45rem 0.75rem 0.1rem 0;
+	margin: 0.4rem 0.75rem 0.3rem 0;
 }
 
 .bar-len {
@@ -599,7 +663,7 @@ td.fig-cell a:hover .fig .w {
 	height: 3px;
 	width: var(--to);
 	background: var(--pencil);
-	opacity: 0.45;
+	opacity: 0.4;
 }
 
 .bar-rng {
@@ -612,8 +676,30 @@ td.fig-cell a:hover .fig .w {
 	border-radius: 1px;
 }
 
+.range {
+	display: block;
+	font-size: 0.8125rem;
+	line-height: 1.35;
+	color: var(--pencil);
+	white-space: nowrap;
+}
+
+.range .runs {
+	color: var(--link);
+	text-decoration: underline;
+	text-decoration-thickness: 1px;
+	text-underline-offset: 0.18em;
+}
+
 .mkey {
 	display: none;
+}
+
+.foot-note {
+	margin: 0.75rem 0 0;
+	max-width: 60rem;
+	font-size: 0.875rem;
+	color: var(--pencil);
 }
 
 /* the accounts, as a thumb index */
@@ -646,7 +732,6 @@ td.fig-cell a:hover .fig .w {
 
 .index-tabs .roman {
 	font-weight: 400;
-	color: var(--pencil);
 }
 
 /* on a wide screen the ledger needs no scroll box, and its column heads stay in view */
@@ -663,109 +748,41 @@ td.fig-cell a:hover .fig .w {
 
 /* ------------------------------------------------------------------ the back matter */
 
+.api + .back {
+	margin-top: 4rem;
+}
+
 .back {
 	display: grid;
-	grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr);
+	grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
 	gap: 4rem;
-	margin-top: 3.5rem;
-	padding-top: 1.5rem;
+	margin-top: 4rem;
+	padding-top: 1.75rem;
 	border-top: 1px solid var(--rule-strong);
 }
 
-.back h2 {
+.back h2,
+.api h2 {
 	font-size: 1.375rem;
 }
 
-.api-lede,
 .section-lede {
-	margin: 0.4rem 0 0.9rem;
+	margin: 0.5rem 0 1rem;
 	font-size: 0.9375rem;
 	color: var(--ink-2);
-}
-
-.api-lede .mono {
-	color: var(--ink);
-}
-
-.addr {
-	width: 100%;
-	border-collapse: collapse;
-	border-top: 3px double var(--rule-strong);
-	border-bottom: 3px double var(--rule-strong);
-}
-
-.addr th,
-.addr td {
-	padding: 0.35rem 0.75rem 0.35rem 0;
-	text-align: left;
-	vertical-align: baseline;
-	border-bottom: 1px solid var(--rule);
-}
-
-.addr th {
-	width: 7rem;
-	white-space: nowrap;
-}
-
-.addr td.mono {
-	font-size: 0.8125rem;
-	overflow-wrap: anywhere;
-}
-
-.addr td.sch {
-	width: 4rem;
-	padding-right: 0;
-	text-align: right;
-	font-size: 0.875rem;
-}
-
-.point {
-	margin: 1.5rem 0 0;
-}
-
-.point figcaption {
-	margin-bottom: 0.4rem;
-	font-size: 0.875rem;
-	color: var(--ink-2);
-}
-
-.json {
-	margin: 0;
-	padding: 0.7rem 1rem;
-	background: var(--paper-2);
-	border-left: 3px double var(--rule-2);
-	font-family: var(--mono);
-	font-size: 0.8125rem;
-	line-height: 1.6;
-	white-space: pre-wrap;
-	overflow-wrap: anywhere;
-	color: var(--ink-2);
-}
-
-.json code {
-	font: inherit;
-}
-
-.json .jk {
-	color: var(--ink);
-	font-weight: 500;
-}
-
-.json .jp {
-	color: var(--pencil);
+	max-width: 44rem;
 }
 
 .mtable {
 	width: 100%;
 	border-collapse: collapse;
 	font-size: 0.9375rem;
-	border-top: 3px double var(--rule-strong);
 	border-bottom: 3px double var(--rule-strong);
 }
 
 .mtable th,
 .mtable td {
-	padding: 0.5rem 0.75rem;
+	padding: 0.55rem 0.75rem;
 	text-align: left;
 	vertical-align: top;
 	border-bottom: 1px solid var(--rule);
@@ -776,6 +793,11 @@ td.fig-cell a:hover .fig .w {
 }
 
 .mtable thead th {
+	font-weight: 400;
+	font-variant-caps: all-small-caps;
+	letter-spacing: 0.06em;
+	color: var(--pencil);
+	font-size: 1.0625rem;
 	border-bottom: 3px double var(--rule-strong);
 	vertical-align: bottom;
 	white-space: nowrap;
@@ -794,7 +816,7 @@ td.fig-cell a:hover .fig .w {
 	white-space: nowrap;
 }
 
-.mtable td.m-price {
+.mtable td.num:last-child {
 	border-left: 3px double var(--red-rule);
 	padding-right: 0;
 	padding-left: 1rem;
@@ -809,6 +831,382 @@ td.fig-cell a:hover .fig .w {
 	font-size: 0.8125rem;
 }
 
+.provenance .chain {
+	list-style: none;
+	margin: 0.75rem 0 1.25rem;
+	padding: 0;
+	counter-reset: step;
+}
+
+.chain li {
+	display: grid;
+	grid-template-columns: 5.5rem minmax(0, 1fr);
+	gap: 1rem;
+	padding: 0.55rem 0;
+	border-bottom: 1px solid var(--rule);
+	font-size: 0.9375rem;
+	color: var(--ink-2);
+}
+
+.chain li:first-child {
+	border-top: 3px double var(--rule-strong);
+}
+
+.chain .step {
+	font-weight: 600;
+	color: var(--ink);
+	font-variant-caps: all-small-caps;
+	letter-spacing: 0.08em;
+	font-size: 1.0625rem;
+}
+
+.tally {
+	display: grid;
+	grid-template-columns: repeat(4, minmax(0, 1fr));
+	gap: 0;
+	margin: 0;
+	border-bottom: 3px double var(--rule-strong);
+}
+
+.tally > div {
+	padding: 0.4rem 0.75rem 0.5rem 0;
+	border-bottom: 1px solid var(--rule);
+}
+
+.tally > div.wide {
+	grid-column: 1 / -1;
+	border-bottom: 0;
+	display: flex;
+	gap: 1rem;
+	align-items: baseline;
+}
+
+.tally dd {
+	margin: 0;
+	font-size: 1.375rem;
+	font-weight: 600;
+}
+
+.tally .wide dd {
+	font-size: 1rem;
+	font-weight: 400;
+}
+
+.quote .mono {
+	font-style: normal;
+	padding-inline: 0.1em;
+}
+
+.quote {
+	margin: 1rem 0 0;
+	font-size: 0.875rem;
+	color: var(--pencil);
+	font-style: italic;
+}
+
+/* ------------------------------------------------------------------ for agents */
+
+.api {
+	display: grid;
+	grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+	gap: 2.5rem 4rem;
+	margin-top: 4rem;
+	padding-top: 1.75rem;
+	border-top: 1px solid var(--rule-strong);
+}
+
+.api-text p {
+	margin: 0.6rem 0 0;
+	color: var(--ink-2);
+	font-size: 1rem;
+}
+
+.api-text p.small {
+	font-size: 0.875rem;
+	color: var(--pencil);
+	font-style: italic;
+}
+
+.cmd {
+	display: flex;
+	align-items: center;
+	gap: 0.75rem;
+	padding: 0.6rem 0.75rem 0.6rem 1rem;
+	background: var(--paper-2);
+	border-left: 3px double var(--rule-2);
+	margin-bottom: 0.5rem;
+}
+
+.cmd code {
+	flex: 1;
+	min-width: 0;
+	font-family: var(--mono);
+	font-size: 0.875rem;
+	color: var(--ink);
+	white-space: nowrap;
+	overflow-x: auto;
+	scrollbar-width: thin;
+}
+
+.start-h .jump {
+	margin-left: 0.75rem;
+	font-variant-caps: normal;
+	letter-spacing: 0;
+	font-weight: 400;
+	font-size: 0.875rem;
+	color: var(--link);
+}
+
+.cmd .prompt {
+	color: var(--pencil-2);
+	user-select: none;
+}
+
+.copy {
+	flex: none;
+	font: 500 0.75rem/1 var(--mono);
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+	color: var(--ink);
+	background: transparent;
+	border: 1px solid var(--rule-2);
+	border-radius: 2px;
+	padding: 0.4rem 0.55rem;
+	cursor: pointer;
+}
+
+.copy:hover {
+	border-color: var(--ink);
+}
+
+.addr {
+	margin: 1.25rem 0 0;
+	border-top: 3px double var(--rule-strong);
+}
+
+.addr > div {
+	display: grid;
+	grid-template-columns: 11rem minmax(0, 1fr);
+	gap: 1rem;
+	padding: 0.4rem 0;
+	border-bottom: 1px solid var(--rule);
+	font-size: 0.875rem;
+}
+
+.addr dt {
+	font-size: 1rem;
+}
+
+.addr dt .aside {
+	font-variant-caps: normal;
+	letter-spacing: 0;
+	font-family: var(--mono);
+	font-size: 0.75rem;
+	display: block;
+}
+
+.addr dd {
+	margin: 0;
+	font-family: var(--mono);
+	font-size: 0.8125rem;
+	overflow-wrap: break-word;
+}
+
+.addr dd a {
+	color: var(--link);
+}
+
+.addr dd.serif-dd {
+	font-family: var(--serif);
+	font-size: 0.9375rem;
+}
+
+.addr .sep-dot {
+	color: var(--pencil);
+}
+
+/* the ways in: one entry per address, each with its command */
+.ways {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+	border-top: 3px double var(--rule-strong);
+}
+
+.ways {
+	margin-top: 1.25rem;
+}
+
+.ways li {
+	position: relative;
+	display: grid;
+	grid-template-columns: minmax(0, 1fr);
+	gap: 0.15rem;
+	padding: 0.7rem 0;
+	border-bottom: 1px solid var(--rule);
+}
+
+.way-n {
+	display: inline-block;
+	min-width: 1.25rem;
+	font-family: var(--mono);
+	font-variant-caps: normal;
+	font-weight: 400;
+	font-size: 0.875rem;
+	color: var(--pencil);
+}
+
+.ways .way-h {
+	font-variant-caps: all-small-caps;
+	letter-spacing: 0.06em;
+	font-size: 1rem;
+	font-weight: 600;
+	color: var(--ink);
+	padding-top: 0.1rem;
+}
+
+.ways .way-d {
+	padding-left: 1.25rem;
+	font-size: 0.875rem;
+	color: var(--ink-2);
+}
+
+.ways .cmd {
+	margin-left: 1.25rem;
+}
+
+.ways .cmd {
+	margin-top: 0.25rem;
+	margin-bottom: 0;
+}
+
+/* one Run, as its Series' file gives it: JSON, with the schema's words in the margin */
+.point {
+	margin: 0;
+}
+
+.point figcaption {
+	max-width: 60rem;
+	font-size: 0.875rem;
+	color: var(--pencil);
+	margin-bottom: 0.6rem;
+}
+
+.point .cap-h {
+	display: block;
+	font-size: 1.0625rem;
+	font-weight: 600;
+	color: var(--ink);
+	margin-bottom: 0.15rem;
+}
+
+.json {
+	background: var(--paper-2);
+	border-left: 3px double var(--rule-2);
+}
+
+.json-bar {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	padding: 0.45rem 0.75rem 0.35rem 1rem;
+	border-bottom: 1px solid var(--rule);
+}
+
+.json-t {
+	font-family: var(--mono);
+	font-size: 0.75rem;
+	letter-spacing: 0.06em;
+	color: var(--pencil);
+}
+
+.json-body {
+	padding: 0.5rem 1rem 0.6rem;
+}
+
+.point dl {
+	margin: 0;
+}
+
+.point .brace {
+	font-family: var(--mono);
+	font-size: 0.8125rem;
+	color: var(--pencil);
+}
+
+.point .jline {
+	padding: 0.3rem 0 0.35rem 1.25rem;
+	border-bottom: 1px solid var(--rule);
+}
+
+.point .jline:last-child {
+	border-bottom: 0;
+}
+
+.point dt,
+.point dd.v {
+	display: inline;
+	font-family: var(--mono);
+	font-size: 0.8125rem;
+	overflow-wrap: anywhere;
+}
+
+.point dd.v::before {
+	content: " ";
+}
+
+.point dt {
+	font-weight: 500;
+	color: var(--ink);
+}
+
+.point dt::before {
+	content: "\"";
+	color: var(--pencil);
+}
+
+.point dt::after {
+	content: "\":";
+	color: var(--pencil);
+}
+
+.point dd {
+	margin: 0;
+}
+
+.point dd.v {
+	color: var(--ink-2);
+}
+
+.point .comma {
+	color: var(--pencil);
+}
+
+
+.start {
+	display: flex;
+	flex-direction: column;
+	gap: 0.3rem;
+	max-width: 36rem;
+}
+
+.start .cmd code {
+	font-size: 0.8125rem;
+}
+
+.start-h {
+	font-variant-caps: all-small-caps;
+	letter-spacing: 0.06em;
+	font-size: 1.0625rem;
+	color: var(--ink-2);
+	font-weight: 600;
+}
+
+.start .cmd {
+	margin: 0;
+	padding-block: 0.4rem;
+}
+
 .ph {
 	display: none;
 }
@@ -816,8 +1214,9 @@ td.fig-cell a:hover .fig .w {
 /* ------------------------------------------------------------------ colophon */
 
 .colophon {
-	margin-top: 3.5rem;
-	padding-bottom: 2.5rem;
+	margin-top: 4rem;
+	padding-top: 1rem;
+	padding-bottom: 3rem;
 	text-align: center;
 	font-size: 0.875rem;
 	color: var(--pencil);
@@ -829,23 +1228,37 @@ td.fig-cell a:hover .fig .w {
 	height: 4px;
 	border-top: 1px solid var(--rule-strong);
 	border-bottom: 1px solid var(--rule-strong);
-	margin-bottom: 1rem;
+	margin-bottom: 1.25rem;
 }
 
 .colophon p {
-	margin: 0;
+	margin: 0.25rem 0;
 }
 
 /* ------------------------------------------------------------------ narrower screens */
 
 @media (max-width: 1100px) {
-	.masthead,
-	.back {
+	.masthead {
 		grid-template-columns: minmax(0, 1fr);
 		align-items: start;
 	}
+	.lede-col {
+		grid-template-columns: minmax(0, 1fr);
+		gap: 0.6rem;
+	}
+	.ledger-head {
+		grid-template-columns: minmax(0, 1fr);
+	}
+	.key {
+		max-width: 46rem;
+	}
+	.back,
+	.api {
+		grid-template-columns: minmax(0, 1fr);
+		gap: 3rem;
+	}
 	.ledger table {
-		min-width: 74rem;
+		min-width: 76rem;
 	}
 }
 
@@ -858,7 +1271,7 @@ td.fig-cell a:hover .fig .w {
 	.masthead {
 		padding-top: 1.1rem;
 		padding-bottom: 0.5rem;
-		gap: 0.9rem;
+		gap: 0.6rem;
 	}
 
 	h1 {
@@ -871,25 +1284,25 @@ td.fig-cell a:hover .fig .w {
 		font-size: 1rem;
 	}
 
+	.lede-col {
+		gap: 0;
+	}
+
 	.claim {
 		font-size: 1.1875rem;
 		line-height: 1.3;
-		margin: 0.6rem 0 0.9rem;
+		margin: 0.6rem 0 0.2rem;
 	}
 
-	.cmd {
-		padding: 0.35rem 0.35rem 0.35rem 0.6rem;
-		gap: 0.5rem;
+	.lede {
+		font-size: 0.9375rem;
+		line-height: 1.5;
 	}
 
-	.cmd .prompt {
+	.lede,
+	.key-row,
+	.folio .wide-only {
 		display: none;
-	}
-
-	.cmd code {
-		font-size: 0.75rem;
-		white-space: normal;
-		overflow-wrap: anywhere;
 	}
 
 	.folio {
@@ -902,73 +1315,140 @@ td.fig-cell a:hover .fig .w {
 		padding: 0.15rem 0;
 	}
 
-	.folio dt {
-		font-size: 1rem;
+	/* a command: on one line, the copy button up in its heading's line */
+	.start,
+	.ways li {
+		position: relative;
 	}
 
-	/* the ledger's head, and the five machines named once */
+	.start {
+		margin-top: 0.7rem;
+	}
+
+	.cmd {
+		display: block;
+		padding: 0.5rem 0.6rem;
+	}
+
+	.cmd .prompt {
+		display: none;
+	}
+
+	/* a long command wraps after a slash, its later lines indented under the first */
+	.cmd code,
+	.start .cmd code {
+		display: block;
+		font-size: 0.75rem;
+		white-space: normal;
+		overflow-wrap: anywhere;
+		padding-left: 2ch;
+		text-indent: -2ch;
+	}
+
+	.start .copy {
+		position: absolute;
+		top: -0.1rem;
+		right: 0;
+	}
+
+	.ways .copy {
+		position: absolute;
+		top: 0.55rem;
+		right: 0;
+	}
+
+	.ways .way-h {
+		padding-right: 4.5rem;
+	}
+
+	.ways .way-d,
+	.ways .cmd {
+		margin-left: 0;
+		padding-left: 0;
+	}
+
+	.ways .cmd {
+		padding-left: 0.6rem;
+	}
+
+	.start-h .jump {
+		display: none;
+	}
+
+	/* the ledger's head and its key */
 	.ledger {
-		padding-top: 1rem;
+		padding-top: 0.9rem;
 	}
 
 	.ledger-head {
-		display: block;
-		margin-bottom: 0.6rem;
+		gap: 0.6rem;
+		margin-bottom: 0.4rem;
 	}
 
 	.ledger-head h2 {
+		white-space: normal;
 		font-size: 1.25rem;
 	}
 
+	.ledger-head h2 .sep {
+		display: none;
+	}
+
 	.ledger-head h2 .dim {
-		font-size: 0.9375rem;
+		margin-left: 0.4rem;
+		font-size: 0.875rem;
+		font-style: italic;
 	}
 
-	.legend {
-		margin-top: 0.3rem;
+	.lh-scope {
+		margin-top: 0.15rem;
 		font-size: 0.8125rem;
-		gap: 0.15rem 0.45rem;
+		line-height: 1.45;
 	}
 
-	.lg-bar {
-		width: 2.5rem;
+	.key {
+		padding: 0.55rem 0.75rem 0.6rem 1.1rem;
 	}
 
-	.phone-key {
-		display: grid;
-		grid-template-columns: max-content minmax(0, 1fr);
-		gap: 0 0.75rem;
-		margin: 0 0 0.6rem;
-		padding: 0.35rem 0;
-		list-style: none;
-		border-top: 3px double var(--rule-strong);
-		border-bottom: 1px solid var(--rule-2);
+	.key-h {
 		font-size: 0.875rem;
 	}
 
-	.phone-key li {
-		display: contents;
+	.key-grid {
+		grid-template-columns: max-content minmax(0, 1fr);
+		gap: 0.3rem 0.75rem;
 	}
 
-	.pk-it {
-		font-family: var(--mono);
-		font-size: 0.8125rem;
-		color: var(--pencil);
-		line-height: 1.6rem;
+	.key-s .bar {
+		width: 9rem;
 	}
 
-	.pk-it b {
-		font-weight: 500;
-		color: var(--ink);
+	.key-fig .fig {
+		font-size: 0.9375rem;
 	}
 
-	.pk-p {
-		text-align: right;
-		font-weight: 600;
-		line-height: 1.6rem;
+	.key-fig .key-u {
+		display: none;
 	}
 
-	/* the accounts: a bar that stays at the top while the ledger scrolls, all five in reach */
+	.key-s.range {
+		font-size: 0.75rem;
+	}
+
+	.key-n {
+		font-size: 0.75rem;
+		line-height: 1.3;
+	}
+
+	.kn-long {
+		display: none;
+	}
+
+	.kn-short {
+		display: inline;
+	}
+
+	/* the accounts: a bar that stays at the top while the ledger scrolls */
 	.index-tabs {
 		position: sticky;
 		top: 0;
@@ -977,14 +1457,17 @@ td.fig-cell a:hover .fig .w {
 		padding: 0 var(--gutter);
 		background: var(--paper);
 		border-bottom: 1px solid var(--rule-2);
+		overflow-x: auto;
+		scrollbar-width: none;
 	}
 
 	.index-tabs ol {
-		gap: 0 1rem;
+		flex-wrap: nowrap;
+		gap: 1.1rem;
 		margin: 0;
-		padding: 0.3rem 0 0.35rem;
+		padding: 0.45rem 0 0.5rem;
+		white-space: nowrap;
 		font-size: 0.9375rem;
-		line-height: 1.6;
 	}
 
 	.ledger .scroll {
@@ -999,8 +1482,12 @@ td.fig-cell a:hover .fig .w {
 		min-width: 0;
 	}
 
+	.ledger table {
+		border-top: 0;
+	}
+
 	.ledger tbody {
-		scroll-margin-top: 3.75rem;
+		scroll-margin-top: 2.5rem;
 	}
 
 	.ledger thead {
@@ -1012,8 +1499,8 @@ td.fig-cell a:hover .fig .w {
 	}
 
 	tr.sec th {
-		padding-top: 1.1rem;
-		padding-bottom: 0.2rem;
+		padding-top: 1.25rem;
+		padding-bottom: 0.25rem;
 	}
 
 	tbody:first-of-type tr.sec th {
@@ -1026,13 +1513,8 @@ td.fig-cell a:hover .fig .w {
 
 	.ledger tr.entry {
 		display: grid;
-		grid-template-columns: 2rem minmax(0, 1fr) auto;
-		padding: 0.6rem 0 0.7rem;
-		border-bottom: 1px solid var(--rule-2);
-	}
-
-	.ledger tbody tr.entry:last-child {
-		border-bottom: 0;
+		grid-template-columns: 2rem minmax(0, 1fr) 5.25rem;
+		padding: 0.7rem 0 0;
 	}
 
 	.ledger tr.entry > * {
@@ -1042,70 +1524,76 @@ td.fig-cell a:hover .fig .w {
 	}
 
 	.ledger td.no {
+		grid-column: 1;
+		grid-row: 1;
 		padding-top: 0.15rem;
 	}
 
 	.ledger th.what {
+		grid-column: 2;
+		grid-row: 1;
 		padding-right: 0.75rem;
 	}
 
 	.ledger td.unit {
-		padding-top: 0.05rem;
+		grid-column: 3;
+		grid-row: 1;
+		padding-top: 0.1rem;
 		text-align: right;
 		font-size: 0.875rem;
 		border: 0;
 	}
 
-	.ledger td.unit .dir {
-		font-size: 0.75rem;
+	.ledger td.unit .u {
+		font-size: 0.9375rem;
 	}
 
-	/* a machine's line: its family, then the figure, the rule under it */
+
+	/* a machine's line: type and price at the left, the figure and its range at the right, the rule along the foot */
 	.ledger td.fig-cell {
 		grid-column: 2 / 4;
 		display: grid;
-		grid-template-columns: 2.5rem minmax(0, 1fr);
-		align-items: start;
+		grid-template-columns: 7rem minmax(0, 1fr);
+		align-items: stretch;
 		padding: 0;
 		border-bottom: 1px solid var(--rule);
 	}
 
-	.ledger td.fig-cell:last-child {
-		border-bottom: 0;
-	}
-
 	.ledger td.unit + td.fig-cell {
-		margin-top: 0.4rem;
+		margin-top: 0.5rem;
 		border-top: 1px solid var(--rule-2);
 	}
 
 	.ledger td.fig-cell .mkey {
 		display: block;
-		padding-top: 0.2rem;
+		padding: 0.3rem 0 0.5rem;
+		line-height: 1.35rem;
+	}
+
+	.mkey .mk-it {
+		display: block;
 		font-family: var(--mono);
 		font-size: 0.8125rem;
-		line-height: 1.35rem;
 		color: var(--ink-2);
 	}
 
+	.mkey .mk-price {
+		display: block;
+		font-size: 0.8125rem;
+		color: var(--pencil);
+	}
+
 	.ledger td.fig-cell a {
-		display: grid;
-		grid-template-columns: 10.75rem minmax(0, 1fr);
-		align-items: center;
 		margin: 0;
-		padding: 0.2rem 0 0.2rem 0.6rem;
+		padding: 0.3rem 0 0.35rem 0.65rem;
 		line-height: 1.35rem;
 		border-left: 3px double var(--red-rule);
 		border-radius: 0;
 	}
 
-	.ledger td.fig-cell .fig {
-		font-size: 0.9375rem;
-	}
-
 	.ledger td.fig-cell .bar {
 		height: 4px;
-		margin: 0 0.1rem 0 0.5rem;
+		margin: 0.2rem 0.25rem 0.15rem 0;
 	}
 
 	.bar-len {
@@ -1117,19 +1605,36 @@ td.fig-cell a:hover .fig .w {
 		height: 4px;
 	}
 
-	.back {
-		margin-top: 2.5rem;
-		gap: 2.5rem;
-	}
-
-	.addr th {
-		width: 5.75rem;
-		font-size: 1rem;
-	}
-
-	.json {
-		padding: 0.55rem 0.7rem;
+	.range {
 		font-size: 0.75rem;
+	}
+
+	.ledger tr.memo {
+		display: grid;
+		grid-template-columns: 2rem minmax(0, 1fr);
+		padding: 0.45rem 0 0.85rem;
+		border-bottom: 1px solid var(--rule-2);
+	}
+
+	tbody tr.memo:last-child {
+		border-bottom: 0;
+	}
+
+	.ledger tr.memo > td.memocell {
+		grid-column: 2;
+		padding: 0;
+		border: 0;
+		font-size: 0.75rem;
+	}
+
+	.nb {
+		font-size: 0.8125rem;
+	}
+
+	.back,
+	.api {
+		margin-top: 3rem;
+		gap: 2.5rem;
 	}
 
 	/* the machines: one record each, the price beside the type */
@@ -1146,11 +1651,15 @@ td.fig-cell a:hover .fig .w {
 		clip-path: inset(50%);
 	}
 
+	.mtable {
+		border-top: 3px double var(--rule-strong);
+	}
+
 	.mtable tr {
 		display: flex;
 		flex-wrap: wrap;
 		align-items: baseline;
-		padding: 0.55rem 0;
+		padding: 0.6rem 0;
 		border-bottom: 1px solid var(--rule);
 	}
 
@@ -1167,9 +1676,11 @@ td.fig-cell a:hover .fig .w {
 
 	.mtable .m-type {
 		flex: 1;
+		font-size: 0.9375rem;
 	}
 
-	.mtable td.m-price {
+	.mtable td.m-price,
+	.mtable td.num:last-child {
 		order: 1;
 		border: 0;
 		padding: 0;
@@ -1177,10 +1688,16 @@ td.fig-cell a:hover .fig .w {
 		font-weight: 600;
 	}
 
+	.mtable .m-price .per {
+		font-weight: 400;
+		font-size: 0.8125rem;
+		color: var(--pencil);
+	}
+
 	.mtable .m-proc {
 		order: 2;
 		flex-basis: 100%;
-		margin-top: 0.15rem;
+		margin-top: 0.2rem;
 	}
 
 	.mtable .m-proc .clock {
@@ -1206,6 +1723,42 @@ td.fig-cell a:hover .fig .w {
 	.ph {
 		display: inline;
 	}
+
+	.json-bar {
+		padding-left: 0.75rem;
+	}
+
+	.json-body {
+		padding: 0.45rem 0.75rem 0.55rem;
+	}
+
+	.point .jline {
+		padding-left: 0.75rem;
+	}
+
+	.tally {
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+	}
+
+	.tally > div.wide {
+		flex-direction: column;
+		gap: 0;
+	}
+
+	.chain li {
+		grid-template-columns: minmax(0, 1fr);
+		gap: 0.1rem;
+	}
+
+	.addr > div {
+		grid-template-columns: minmax(0, 1fr);
+		gap: 0.1rem;
+	}
+}
+
+sup {
+	line-height: 0;
+	font-size: 0.7em;
 }
 
 .nowrap {
