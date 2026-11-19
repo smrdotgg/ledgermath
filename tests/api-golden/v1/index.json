@@ -2,16 +2,17 @@
   "schema": "ledgermath.api.index/1",
   "schema_url": "https://api.ledgermath.com/v1/schemas/index.schema.json",
   "url": "https://api.ledgermath.com/v1/index.json",
-  "about": "LedgerMath runs small benchmarks on real AWS machines several times a day and keeps every execution as a Run. A Series is the Runs of one benchmark, parameter set, build, instance type and Availability Zone ID; a versioned Method turns its Runs into a Derivation. This is version 1 of the data API: static JSON files cut from the Derivations and the daily price files, each kind with a JSON schema.",
-  "versioning": "Version 1 only ever gains fields. A field, once in a v1 file, keeps its name, its type and its meaning, and a reader ignores any field it does not know: that is why no object in the schemas index, series-list and series forbids members it does not list. A new Method, or a new version of one, is a new key beside the old ones. A change that would break a reader is published as v2, beside v1. The price files are the exception: each is a price file of the Runs repository, byte for byte, and follows its own schema, ledgermath.prices/1, whose root and LedgerMath's own objects are closed (AWS's objects within it are open).",
-  "figures": "Every number is exactly as the Methods' Derivations hold it: nothing is rounded, and nothing is computed that the Derivations do not hold, apart from counts of a Series' Runs and the start times of its oldest and newest Run, taken from its points. A duration is in nanoseconds of the Run's clock unless its field's name says otherwise; a moment is a UTC time, to the nanosecond, as the Run records it.",
+  "about": "LedgerMath runs small benchmarks on real AWS machines several times a day and keeps every execution as a Run. A Series is the Runs of one benchmark, parameter set, build, instance type and Availability Zone ID; a versioned Method turns its Runs into a Derivation. This is version 1 of the data API: static JSON files cut from the Derivations and the daily price files, each kind with a JSON schema. A Series' file holds each Method's summary and its newest Runs; every Run's point is in the file of the month it started in, and a month's file, once its month has passed, does not change.",
+  "versioning": "Version 1 only ever gains fields. A field, once in a v1 file, keeps its name, its type and its meaning, and a reader ignores any field it does not know: that is why no object in the schemas index, series-list, series and series-month forbids members it does not list. A new Method, or a new version of one, is a new key beside the old ones. A change that would break a reader is published as v2, beside v1. The price files are the exception: each is a price file of the Runs repository, byte for byte, and follows its own schema, ledgermath.prices/1, whose root and LedgerMath's own objects are closed (AWS's objects within it are open).",
+  "figures": "Every number is exactly as the Methods' Derivations hold it: nothing is rounded, and nothing is computed that the Derivations do not hold, apart from counts of a Series' Runs (in all, in a month, counted and not) and the start times of its oldest and newest Run (in all, in a month), taken from its points. A duration is in nanoseconds of the Run's clock unless its field's name says otherwise; a moment is a UTC time, to the nanosecond, as the Run records it.",
   "docs": "https://example.test/docs",
-  "newest_run_started_at": "2026-11-15T04:12:00.000000000Z",
+  "newest_run_started_at": "2026-12-01T22:20:00.000000000Z",
   "series": {
     "url": "https://api.ledgermath.com/v1/series.json",
     "schema_url": "https://api.ledgermath.com/v1/schemas/series-list.schema.json",
     "count": 2,
-    "series_file_schema_url": "https://api.ledgermath.com/v1/schemas/series.schema.json"
+    "series_file_schema_url": "https://api.ledgermath.com/v1/schemas/series.schema.json",
+    "month_file_schema_url": "https://api.ledgermath.com/v1/schemas/series-month.schema.json"
   },
   "prices": {
     "schema_url": "https://api.ledgermath.com/v1/schemas/prices.schema.json",
@@ -29,10 +30,11 @@
     {"name":"index","describes":"v1/index.json","url":"https://api.ledgermath.com/v1/schemas/index.schema.json"},
     {"name":"series-list","describes":"v1/series.json","url":"https://api.ledgermath.com/v1/schemas/series-list.schema.json"},
     {"name":"series","describes":"v1/series/<id>.json","url":"https://api.ledgermath.com/v1/schemas/series.schema.json"},
+    {"name":"series-month","describes":"v1/series/<id>/<yyyy-mm>.json","url":"https://api.ledgermath.com/v1/schemas/series-month.schema.json"},
     {"name":"prices","describes":"v1/prices/<yyyy-mm-dd>.json","url":"https://api.ledgermath.com/v1/schemas/prices.schema.json"}
   ],
   "evidence": {
-    "about": "The evidence is served at the keys of LedgerMath's bucket of Runs, under the same address as the API: each point of a Series file links its Run file (evidence) and its boot's summary (boot_summary). A Run file names its binary, streams and dumps by hash, sha256:<hex>; each is a blob at blob_url_template with {hex} replaced by the 64 hex digits.",
+    "about": "The evidence is served at the keys of LedgerMath's bucket of Runs, under the same address as the API: each point links its Run file (evidence) and its boot's summary (boot_summary). A Run file names its binary, streams and dumps by hash, sha256:<hex>; each is a blob at blob_url_template with {hex} replaced by the 64 hex digits.",
     "blob_url_template": "https://api.ledgermath.com/blobs/sha256/{hex}"
   }
 }

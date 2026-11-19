@@ -13,9 +13,14 @@
   "build": "static",
   "instance_type": "c6i.8xlarge",
   "availability_zone_id": "use2-az3",
-  "runs": 4,
+  "runs": 5,
   "oldest_run_started_at": "2026-11-12T04:12:00.000000000Z",
-  "newest_run_started_at": "2026-11-15T04:12:00.000000000Z",
+  "newest_run_started_at": "2026-12-01T04:12:00.000000000Z",
+  "newest_runs": 12,
+  "months": [
+    {"month":"2026-11","url":"https://api.ledgermath.com/v1/series/0cacb5fd6fae/2026-11.json","runs":4,"oldest_run_started_at":"2026-11-12T04:12:00.000000000Z","newest_run_started_at":"2026-11-15T04:12:00.000000000Z"},
+    {"month":"2026-12","url":"https://api.ledgermath.com/v1/series/0cacb5fd6fae/2026-12.json","runs":1,"oldest_run_started_at":"2026-12-01T04:12:00.000000000Z","newest_run_started_at":"2026-12-01T04:12:00.000000000Z"}
+  ],
   "derivations": {
     "series_v1": {
       "method": {
@@ -64,48 +69,44 @@
         {"fact":"ec2_instance","what":"names the instance and holds its addresses and launch time, new on every launch"},
         {"fact":"ec2_route_tables, ec2_vpc_endpoints","what":"the EC2 API's record of the path out of the box's subnet, taken once per boot: the route tables and the VPC's endpoints, shared by every box of the stage; a failed call records its error instead"}
       ],
-      "points": [
-        {"run":"01a1cdf4-9280-7547-8128-182106f4a114","path":"runs/2026/11/12/01a1cdf4-9280-7547-8128-182106f4a114.json","sha256":"30ca30c63563bfb2875a14ee3b424a77f8c201c57ee453f6eefb46e2a01a0bd6","evidence":"https://api.ledgermath.com/runs/2026/11/12/01a1cdf4-9280-7547-8128-182106f4a114.json","boot_summary":"https://api.ledgermath.com/boots/2026/11/12/boot-2026-11-12.json","started_at":"2026-11-12T04:12:00.000000000Z","boot":"boot-2026-11-12","group":"A","counted":true,"failure":null,"samples":[{"sample":1,"ns":7000000,"repetitions":100,"ns_per_repetition":70000},{"sample":2,"ns":7001000,"repetitions":100,"ns_per_repetition":70010},{"sample":3,"ns":7002000,"repetitions":100,"ns_per_repetition":70020}],"time_per_repetition_ns":70010,"bytes_per_repetition":1073741824,"bytes_per_second":15336977917440.365},
-        {"run":"01a1d31a-ee80-7300-834a-a3d8d6605aa4","path":"runs/2026/11/13/01a1d31a-ee80-7300-834a-a3d8d6605aa4.json","sha256":"761af76d53740a0fa3561511a3b37d90bd2d8a95adfaede10ee172965de6c548","evidence":"https://api.ledgermath.com/runs/2026/11/13/01a1d31a-ee80-7300-834a-a3d8d6605aa4.json","boot_summary":null,"started_at":"2026-11-13T04:12:00.000000000Z","boot":"boot-2026-11-13","group":"A","counted":true,"failure":null,"samples":[{"sample":1,"ns":8000000,"repetitions":100,"ns_per_repetition":80000},{"sample":2,"ns":8001000,"repetitions":100,"ns_per_repetition":80010},{"sample":3,"ns":8002000,"repetitions":100,"ns_per_repetition":80020}],"time_per_repetition_ns":80010,"bytes_per_repetition":1073741824,"bytes_per_second":13420095288088.988},
-        {"run":"01a1d841-4a80-7c91-8911-5615ef5cc43e","path":"runs/2026/11/14/01a1d841-4a80-7c91-8911-5615ef5cc43e.json","sha256":"2f37127ac173b5c63f97a9c13fc5523da3c47b387e75623341e11998409b28d4","evidence":"https://api.ledgermath.com/runs/2026/11/14/01a1d841-4a80-7c91-8911-5615ef5cc43e.json","boot_summary":null,"started_at":"2026-11-14T04:12:00.000000000Z","boot":"boot-2026-11-14","group":"B","counted":true,"failure":null,"samples":[{"sample":1,"ns":9000000,"repetitions":100,"ns_per_repetition":90000},{"sample":2,"ns":9001000,"repetitions":100,"ns_per_repetition":90010},{"sample":3,"ns":9002000,"repetitions":100,"ns_per_repetition":90020}],"time_per_repetition_ns":90010,"bytes_per_repetition":1073741824,"bytes_per_second":11929139251194.312},
-        {"run":"01a1dd67-a680-7a77-8758-308276605aac","path":"runs/2026/11/15/01a1dd67-a680-7a77-8758-308276605aac.json","sha256":"82c1d924feacdc0173b138f070a0f6a7c1d50999f32b8445d5827b3e472d140d","evidence":"https://api.ledgermath.com/runs/2026/11/15/01a1dd67-a680-7a77-8758-308276605aac.json","boot_summary":null,"started_at":"2026-11-15T04:12:00.000000000Z","boot":"boot-2026-11-15","group":"A","counted":false,"failure":"line 10: the last event must be \"finished\", got \"sample_ended\"; no \"verified\" event","samples":[],"time_per_repetition_ns":null,"bytes_per_repetition":null,"bytes_per_second":null}
-      ],
+      "counted_runs": 4,
+      "failed_runs": 1,
       "percentiles": {
         "time_per_repetition_ns": {
-          "count": 3,
-          "runs": ["01a1cdf4-9280-7547-8128-182106f4a114","01a1d31a-ee80-7300-834a-a3d8d6605aa4","01a1d841-4a80-7c91-8911-5615ef5cc43e"],
-          "p5": 71010,
-          "p50": 80010,
-          "p95": 89010
+          "count": 4,
+          "p5": 70760,
+          "p50": 77510,
+          "p95": 88510
         },
         "bytes_per_second": {
-          "count": 3,
-          "runs": ["01a1cdf4-9280-7547-8128-182106f4a114","01a1d31a-ee80-7300-834a-a3d8d6605aa4","01a1d841-4a80-7c91-8911-5615ef5cc43e"],
-          "p5": 12078234854883.78,
-          "p50": 13420095288088.988,
-          "p95": 15145289654505.227
+          "count": 4,
+          "p5": 12152782656728.514,
+          "p50": 13867372160775.598,
+          "p95": 15183628584843.64
         }
       },
       "groups": [
-        {"id":"A","facts":{"binary":"sha256:e33458fddc0230fdf6f9dadb5c96fd4650e378f4c3699c17bbdfa829476ee6dd","cpuid":"canonical-json-sha256:263c45643a3172eeeb7076b0b680d3e6a0f56b94ce485296b6ed217f538ef152","image":"ami-0123456789abcdef0","kernel":"canonical-json-sha256:e301f78f48bf03417bd7df850207125d35454ac58aae4c6ce464cc29d12c177f","lscpu":"canonical-json-sha256:a425f01b72061fa0c7121174c33eacf0e936d7b709cedef21b9febe821a798ec","packages":"sha256:299901d2ddef3e7f8fefa6d3284a86a84dfe3c6b1261e21306bd12e9449d3035","process":"sha256:07b12edd9eb56ca6fde758e1bf35e481f0a87a9846fe5d9ebc202addf137a888","runner":"sha256:7ecfcd3020b2b8ae954cdf8339ed2c9dd783ac7bb5082a5013e390ecbfe09cde","samples":3,"sys_cpu":"sha256:fd5187d72b8f2ee33b3a622e24438a59d7e2db6b0ddc495096942ab75a648059"},"runs":["01a1cdf4-9280-7547-8128-182106f4a114","01a1d31a-ee80-7300-834a-a3d8d6605aa4","01a1dd67-a680-7a77-8758-308276605aac"],"percentiles":{"time_per_repetition_ns":{"count":2,"runs":["01a1cdf4-9280-7547-8128-182106f4a114","01a1d31a-ee80-7300-834a-a3d8d6605aa4"],"p5":70510,"p50":75010,"p95":79510},"bytes_per_second":{"count":2,"runs":["01a1cdf4-9280-7547-8128-182106f4a114","01a1d31a-ee80-7300-834a-a3d8d6605aa4"],"p5":13515939419556.557,"p50":14378536602764.676,"p95":15241133785972.797}}},
-        {"id":"B","facts":{"binary":"sha256:e33458fddc0230fdf6f9dadb5c96fd4650e378f4c3699c17bbdfa829476ee6dd","cpuid":"canonical-json-sha256:9a47d57666f9fc125de92df74e34f82b1f66dc53eff3eea9de614ec411e180e5","image":"ami-0123456789abcdef0","kernel":"canonical-json-sha256:e301f78f48bf03417bd7df850207125d35454ac58aae4c6ce464cc29d12c177f","lscpu":"canonical-json-sha256:178f91f5364662ab886d6864a960b8df20a8fcdd40b0b59abe7e5b5744b5c451","packages":"sha256:299901d2ddef3e7f8fefa6d3284a86a84dfe3c6b1261e21306bd12e9449d3035","process":"sha256:07b12edd9eb56ca6fde758e1bf35e481f0a87a9846fe5d9ebc202addf137a888","runner":"sha256:7ecfcd3020b2b8ae954cdf8339ed2c9dd783ac7bb5082a5013e390ecbfe09cde","samples":3,"sys_cpu":"sha256:8dac741ae66f91d4635197a51a4647fdfead223b7f178edf2828f427affa7103"},"runs":["01a1d841-4a80-7c91-8911-5615ef5cc43e"],"percentiles":{"time_per_repetition_ns":{"count":1,"runs":["01a1d841-4a80-7c91-8911-5615ef5cc43e"],"p5":90010,"p50":90010,"p95":90010},"bytes_per_second":{"count":1,"runs":["01a1d841-4a80-7c91-8911-5615ef5cc43e"],"p5":11929139251194.312,"p50":11929139251194.312,"p95":11929139251194.312}}}
-      ],
-      "differed": [
-        {"from":"01a1cdf4-9280-7547-8128-182106f4a114","to":"01a1d31a-ee80-7300-834a-a3d8d6605aa4","facts":[],"sections":[{"section":"cpuinfo","effect":"not split on","keys":null},{"section":"devices","effect":"not split on","keys":["/sys/class/nvme/nvme0/serial"]},{"section":"kernel","effect":"left out","keys":["$ uname -a"]},{"section":"memory","effect":"not split on","keys":null},{"section":"provider","effect":"not split on","keys":["http://169.254.169.254/latest/meta-data/instance-id"]}]},
-        {"from":"01a1d31a-ee80-7300-834a-a3d8d6605aa4","to":"01a1d841-4a80-7c91-8911-5615ef5cc43e","facts":["cpuid","lscpu","sys_cpu"],"sections":[{"section":"cpuid","effect":"splits","keys":["$ cpuid"]},{"section":"cpuinfo","effect":"not split on","keys":null},{"section":"devices","effect":"not split on","keys":["/sys/class/nvme/nvme0/serial"]},{"section":"kernel","effect":"left out","keys":["$ uname -a"]},{"section":"lscpu","effect":"splits","keys":["$ lscpu -J"]},{"section":"memory","effect":"not split on","keys":null},{"section":"provider","effect":"not split on","keys":["http://169.254.169.254/latest/meta-data/instance-id"]},{"section":"sys_cpu","effect":"splits","keys":["/sys/devices/system/cpu/cpu0/microcode/version"]}]},
-        {"from":"01a1d841-4a80-7c91-8911-5615ef5cc43e","to":"01a1dd67-a680-7a77-8758-308276605aac","facts":["cpuid","lscpu","sys_cpu"],"sections":[{"section":"cpuid","effect":"splits","keys":["$ cpuid"]},{"section":"cpuinfo","effect":"not split on","keys":null},{"section":"devices","effect":"not split on","keys":["/sys/class/nvme/nvme0/serial"]},{"section":"kernel","effect":"left out","keys":["$ uname -a"]},{"section":"lscpu","effect":"splits","keys":["$ lscpu -J"]},{"section":"memory","effect":"not split on","keys":null},{"section":"provider","effect":"not split on","keys":["http://169.254.169.254/latest/meta-data/instance-id"]},{"section":"sys_cpu","effect":"splits","keys":["/sys/devices/system/cpu/cpu0/microcode/version"]}]}
+        {"id":"A","facts":{"binary":"sha256:e33458fddc0230fdf6f9dadb5c96fd4650e378f4c3699c17bbdfa829476ee6dd","cpuid":"canonical-json-sha256:263c45643a3172eeeb7076b0b680d3e6a0f56b94ce485296b6ed217f538ef152","image":"ami-0123456789abcdef0","kernel":"canonical-json-sha256:e301f78f48bf03417bd7df850207125d35454ac58aae4c6ce464cc29d12c177f","lscpu":"canonical-json-sha256:a425f01b72061fa0c7121174c33eacf0e936d7b709cedef21b9febe821a798ec","packages":"sha256:299901d2ddef3e7f8fefa6d3284a86a84dfe3c6b1261e21306bd12e9449d3035","process":"sha256:07b12edd9eb56ca6fde758e1bf35e481f0a87a9846fe5d9ebc202addf137a888","runner":"sha256:7ecfcd3020b2b8ae954cdf8339ed2c9dd783ac7bb5082a5013e390ecbfe09cde","samples":3,"sys_cpu":"sha256:fd5187d72b8f2ee33b3a622e24438a59d7e2db6b0ddc495096942ab75a648059"},"percentiles":{"time_per_repetition_ns":{"count":3,"p5":70510,"p50":75010,"p95":79510},"bytes_per_second":{"count":3,"p5":13509550662626.31,"p50":14314649033462.205,"p95":15234745029042.549}}},
+        {"id":"B","facts":{"binary":"sha256:e33458fddc0230fdf6f9dadb5c96fd4650e378f4c3699c17bbdfa829476ee6dd","cpuid":"canonical-json-sha256:9a47d57666f9fc125de92df74e34f82b1f66dc53eff3eea9de614ec411e180e5","image":"ami-0123456789abcdef0","kernel":"canonical-json-sha256:e301f78f48bf03417bd7df850207125d35454ac58aae4c6ce464cc29d12c177f","lscpu":"canonical-json-sha256:178f91f5364662ab886d6864a960b8df20a8fcdd40b0b59abe7e5b5744b5c451","packages":"sha256:299901d2ddef3e7f8fefa6d3284a86a84dfe3c6b1261e21306bd12e9449d3035","process":"sha256:07b12edd9eb56ca6fde758e1bf35e481f0a87a9846fe5d9ebc202addf137a888","runner":"sha256:7ecfcd3020b2b8ae954cdf8339ed2c9dd783ac7bb5082a5013e390ecbfe09cde","samples":3,"sys_cpu":"sha256:8dac741ae66f91d4635197a51a4647fdfead223b7f178edf2828f427affa7103"},"percentiles":{"time_per_repetition_ns":{"count":1,"p5":90010,"p50":90010,"p95":90010},"bytes_per_second":{"count":1,"p5":11929139251194.312,"p50":11929139251194.312,"p95":11929139251194.312}}}
       ],
       "sections": [
-        {"section":"cpuid","runs":4,"changed_within_run":0,"pairs":3,"changed_between_runs":2,"split_on":"cpuid"},
-        {"section":"cpuinfo","runs":4,"changed_within_run":4,"pairs":3,"changed_between_runs":3,"split_on":null},
-        {"section":"devices","runs":4,"changed_within_run":0,"pairs":3,"changed_between_runs":3,"split_on":null},
-        {"section":"kernel","runs":4,"changed_within_run":0,"pairs":3,"changed_between_runs":3,"split_on":"kernel"},
-        {"section":"lscpu","runs":4,"changed_within_run":0,"pairs":3,"changed_between_runs":2,"split_on":"lscpu"},
-        {"section":"memory","runs":4,"changed_within_run":4,"pairs":3,"changed_between_runs":3,"split_on":null},
-        {"section":"packages","runs":4,"changed_within_run":0,"pairs":3,"changed_between_runs":0,"split_on":"packages"},
-        {"section":"process","runs":4,"changed_within_run":0,"pairs":3,"changed_between_runs":0,"split_on":"process"},
-        {"section":"provider","runs":4,"changed_within_run":0,"pairs":3,"changed_between_runs":3,"split_on":null},
-        {"section":"sys_cpu","runs":4,"changed_within_run":0,"pairs":3,"changed_between_runs":2,"split_on":"sys_cpu"}
+        {"section":"cpuid","runs":5,"changed_within_run":0,"pairs":4,"changed_between_runs":2,"split_on":"cpuid"},
+        {"section":"cpuinfo","runs":5,"changed_within_run":5,"pairs":4,"changed_between_runs":4,"split_on":null},
+        {"section":"devices","runs":5,"changed_within_run":0,"pairs":4,"changed_between_runs":4,"split_on":null},
+        {"section":"kernel","runs":5,"changed_within_run":0,"pairs":4,"changed_between_runs":4,"split_on":"kernel"},
+        {"section":"lscpu","runs":5,"changed_within_run":0,"pairs":4,"changed_between_runs":2,"split_on":"lscpu"},
+        {"section":"memory","runs":5,"changed_within_run":5,"pairs":4,"changed_between_runs":4,"split_on":null},
+        {"section":"packages","runs":5,"changed_within_run":0,"pairs":4,"changed_between_runs":0,"split_on":"packages"},
+        {"section":"process","runs":5,"changed_within_run":0,"pairs":4,"changed_between_runs":0,"split_on":"process"},
+        {"section":"provider","runs":5,"changed_within_run":0,"pairs":4,"changed_between_runs":4,"split_on":null},
+        {"section":"sys_cpu","runs":5,"changed_within_run":0,"pairs":4,"changed_between_runs":2,"split_on":"sys_cpu"}
+      ],
+      "newest_points": [
+        {"run":"01a1cdf4-9280-7547-8128-182106f4a114","path":"runs/2026/11/12/01a1cdf4-9280-7547-8128-182106f4a114.json","sha256":"30ca30c63563bfb2875a14ee3b424a77f8c201c57ee453f6eefb46e2a01a0bd6","evidence":"https://api.ledgermath.com/runs/2026/11/12/01a1cdf4-9280-7547-8128-182106f4a114.json","boot_summary":"https://api.ledgermath.com/boots/2026/11/12/boot-2026-11-12.json","started_at":"2026-11-12T04:12:00.000000000Z","boot":"boot-2026-11-12","group":"A","counted":true,"failure":null,"samples":[{"sample":1,"ns":7000000,"repetitions":100,"ns_per_repetition":70000},{"sample":2,"ns":7001000,"repetitions":100,"ns_per_repetition":70010},{"sample":3,"ns":7002000,"repetitions":100,"ns_per_repetition":70020}],"time_per_repetition_ns":70010,"bytes_per_repetition":1073741824,"bytes_per_second":15336977917440.365},
+        {"run":"01a1d31a-ee80-7300-834a-a3d8d6605aa4","path":"runs/2026/11/13/01a1d31a-ee80-7300-834a-a3d8d6605aa4.json","sha256":"761af76d53740a0fa3561511a3b37d90bd2d8a95adfaede10ee172965de6c548","evidence":"https://api.ledgermath.com/runs/2026/11/13/01a1d31a-ee80-7300-834a-a3d8d6605aa4.json","boot_summary":null,"started_at":"2026-11-13T04:12:00.000000000Z","boot":"boot-2026-11-13","group":"A","counted":true,"failure":null,"samples":[{"sample":1,"ns":8000000,"repetitions":100,"ns_per_repetition":80000},{"sample":2,"ns":8001000,"repetitions":100,"ns_per_repetition":80010},{"sample":3,"ns":8002000,"repetitions":100,"ns_per_repetition":80020}],"time_per_repetition_ns":80010,"bytes_per_repetition":1073741824,"bytes_per_second":13420095288088.988},
+        {"run":"01a1d841-4a80-7c91-8911-5615ef5cc43e","path":"runs/2026/11/14/01a1d841-4a80-7c91-8911-5615ef5cc43e.json","sha256":"2f37127ac173b5c63f97a9c13fc5523da3c47b387e75623341e11998409b28d4","evidence":"https://api.ledgermath.com/runs/2026/11/14/01a1d841-4a80-7c91-8911-5615ef5cc43e.json","boot_summary":null,"started_at":"2026-11-14T04:12:00.000000000Z","boot":"boot-2026-11-14","group":"B","counted":true,"failure":null,"samples":[{"sample":1,"ns":9000000,"repetitions":100,"ns_per_repetition":90000},{"sample":2,"ns":9001000,"repetitions":100,"ns_per_repetition":90010},{"sample":3,"ns":9002000,"repetitions":100,"ns_per_repetition":90020}],"time_per_repetition_ns":90010,"bytes_per_repetition":1073741824,"bytes_per_second":11929139251194.312},
+        {"run":"01a1dd67-a680-7a77-8758-308276605aac","path":"runs/2026/11/15/01a1dd67-a680-7a77-8758-308276605aac.json","sha256":"82c1d924feacdc0173b138f070a0f6a7c1d50999f32b8445d5827b3e472d140d","evidence":"https://api.ledgermath.com/runs/2026/11/15/01a1dd67-a680-7a77-8758-308276605aac.json","boot_summary":null,"started_at":"2026-11-15T04:12:00.000000000Z","boot":"boot-2026-11-15","group":"A","counted":false,"failure":"line 10: the last event must be \"finished\", got \"sample_ended\"; no \"verified\" event","samples":[],"time_per_repetition_ns":null,"bytes_per_repetition":null,"bytes_per_second":null},
+        {"run":"01a22fcd-6680-76da-8dac-cbb103294f39","path":"runs/2026/12/01/01a22fcd-6680-76da-8dac-cbb103294f39.json","sha256":"a53022c9c8081f8528239471806daf3a9035c5a7573ba7c42a19e542a00e1cf4","evidence":"https://api.ledgermath.com/runs/2026/12/01/01a22fcd-6680-76da-8dac-cbb103294f39.json","boot_summary":null,"started_at":"2026-12-01T04:12:00.000000000Z","boot":"boot-2026-12-01","group":"A","counted":true,"failure":null,"samples":[{"sample":1,"ns":7500000,"repetitions":100,"ns_per_repetition":75000},{"sample":2,"ns":7501000,"repetitions":100,"ns_per_repetition":75010},{"sample":3,"ns":7502000,"repetitions":100,"ns_per_repetition":75020}],"time_per_repetition_ns":75010,"bytes_per_repetition":1073741824,"bytes_per_second":14314649033462.205}
       ]
     }
   }

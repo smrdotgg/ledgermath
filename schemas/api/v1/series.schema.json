@@ -2,9 +2,9 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:ledgermath:api:v1:series",
   "title": "LedgerMath data API, version 1: one Series",
-  "description": "v1/series/<id>.json: one Series in full. A Series is the Runs of one benchmark, parameter set (params), build, instance type and Availability Zone ID. Under derivations, keyed <method name>_v<version>, is each Method's Derivation of it, at the same paths and in the same words as the Method's file of Derivations, with the Method's own definitions beside it: every Run's point, the percentiles and the Runs behind them, the groups its split facts make and their facts, and what differed between consecutive Runs. Each point also gives the sha256 of its Run file and the addresses of its evidence: the Run file (evidence) and its boot's summary (boot_summary). Numbers are exactly as the Derivation holds them; a duration is in nanoseconds of the Run's clock unless its field's name says otherwise. The file changes only when the Series gains a Run or a Method's words change. Version 1 only ever gains fields: a field, once in a v1 file, keeps its name, its type and its meaning, and a reader ignores any field it does not know, which is why no object in this schema forbids members it does not list. A new Method, or a new version of one, is a new key beside the old ones. A change that would break a reader is published as v2, beside v1.",
+  "description": "v1/series/<id>.json: one Series, its summary and its newest Runs. A Series is the Runs of one benchmark, parameter set (params), build, instance type and Availability Zone ID. Under derivations, keyed <method name>_v<version>, is each Method's Derivation of it, at the same paths and in the same words as the Method's file of Derivations, with the Method's own definitions beside it, less what grows with every Run: the percentiles, the groups its split facts make and their facts and figures, how often each dump section changed, how many Runs it counts and does not, and the points of the newest Runs (newest_points; as many as newest_runs says). Every Run's point, and what differed between consecutive Runs, is in the file of the month the Run started in, which months lists with its address: the Series' points are those of its month files, oldest month first. The lists of Run ids behind each percentile and in each group are not repeated; each is recovered from those points by the rule its field's description gives. Each point also gives the sha256 of its Run file and the addresses of its evidence: the Run file (evidence) and its boot's summary (boot_summary). Numbers are exactly as the Derivation holds them; a duration is in nanoseconds of the Run's clock unless its field's name says otherwise. The file changes when the Series gains a Run, a Method's words change, or a newest point's boot summary arrives. Version 1 only ever gains fields: a field, once in a v1 file, keeps its name, its type and its meaning, and a reader ignores any field it does not know, which is why no object in this schema forbids members it does not list. A new Method, or a new version of one, is a new key beside the old ones. A change that would break a reader is published as v2, beside v1.",
   "type": "object",
-  "required": ["schema", "schema_url", "index", "id", "url", "benchmark", "params", "build", "instance_type", "availability_zone_id", "runs", "oldest_run_started_at", "newest_run_started_at", "derivations"],
+  "required": ["schema", "schema_url", "index", "id", "url", "benchmark", "params", "build", "instance_type", "availability_zone_id", "runs", "oldest_run_started_at", "newest_run_started_at", "newest_runs", "months", "derivations"],
   "properties": {
     "schema": { "description": "What this file is, and which version of its shape.", "const": "ledgermath.api.series/1" },
     "schema_url": { "description": "The address of this schema.", "$ref": "#/$defs/url" },
@@ -23,6 +23,13 @@
     "runs": { "description": "Runs in the Series, counted or not.", "type": "integer", "minimum": 1 },
     "oldest_run_started_at": { "description": "When its oldest Run started.", "$ref": "#/$defs/time" },
     "newest_run_started_at": { "description": "When its newest Run started: the moment a citation of the Series as it stands names.", "$ref": "#/$defs/time" },
+    "newest_runs": { "description": "How many of the Series' newest Runs each Method's newest_points holds: this many, or every Run when the Series has fewer. The same in every Series file.", "type": "integer", "minimum": 1 },
+    "months": {
+      "description": "Every month in which a Run of the Series started (UTC, by the Run's start), oldest first, each with the address of its file. A month's file holds every point of its Runs, and changes only when a Run of that month is added or a point's boot summary arrives: once a month has passed, its file stays the same.",
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/month" }
+    },
     "derivations": {
       "description": "Each Method's Derivation of the Series, keyed <method name>_v<version>. Method series v1 derives every Series; Method requests v1 only those whose samples are requests, and its key is absent from the others.",
       "type": "object",
@@ -38,7 +45,6 @@
     "time": { "description": "UTC, to the nanosecond, as the Run records it.", "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$" },
     "number_or_null": { "anyOf": [{ "type": "number" }, { "type": "null" }] },
     "string_or_null": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
-    "run_ids": { "description": "Run ids, in time order.", "type": "array", "items": { "type": "string" } },
     "definitions": { "description": "How each number is made, in the Method's words, by name.", "type": "object", "additionalProperties": { "type": "string" } },
     "split_fact": {
       "type": "object",
@@ -58,6 +64,17 @@
       "description": "A group's split facts and their values: a blob's sha256:<hex>, a section's canonical-json-sha256:<hex>, the sample count, the image ID.",
       "type": "object",
       "additionalProperties": { "anyOf": [{ "type": "string" }, { "type": "number" }, { "type": "null" }] }
+    },
+    "month": {
+      "type": "object",
+      "required": ["month", "url", "runs", "oldest_run_started_at", "newest_run_started_at"],
+      "properties": {
+        "month": { "description": "The month, yyyy-mm, UTC.", "type": "string", "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$" },
+        "url": { "description": "The address of the month's file, v1/series/<id>/<yyyy-mm>.json.", "$ref": "#/$defs/url" },
+        "runs": { "description": "Runs of the Series that started that month, counted or not.", "type": "integer", "minimum": 1 },
+        "oldest_run_started_at": { "description": "When the oldest of them started.", "$ref": "#/$defs/time" },
+        "newest_run_started_at": { "description": "When the newest of them started.", "$ref": "#/$defs/time" }
+      }
     },
     "point_run": { "description": "The Run's id.", "type": "string" },
     "point_path": { "description": "The Run file's path in the Runs repository, runs/<yyyy>/<mm>/<dd>/<id>.json, which is also its key under the evidence's address.", "type": "string", "pattern": "^runs/[0-9]{4}/[0-9]{2}/[0-9]{2}/[^/]+\\.json$" },
@@ -79,20 +96,21 @@
       "properties": { "name": { "const": "series" }, "version": { "const": 1 } }
     },
     "series_v1": {
-      "description": "Method series, version 1: one number per Run, and the 5th, 50th and 95th percentiles across Runs, for the Series and for each group.",
+      "description": "Method series, version 1: one number per Run, and the 5th, 50th and 95th percentiles across Runs, for the Series and for each group. Its points are in the month files, under the same key.",
       "type": "object",
-      "required": ["method", "definitions", "split_on", "left_out", "not_split_on", "points", "percentiles", "groups", "differed", "sections"],
+      "required": ["method", "definitions", "split_on", "left_out", "not_split_on", "counted_runs", "failed_runs", "percentiles", "groups", "sections", "newest_points"],
       "properties": {
         "method": { "$ref": "#/$defs/method_series" },
         "definitions": { "$ref": "#/$defs/definitions" },
         "split_on": { "description": "The facts a Series is split into groups on, in order.", "type": "array", "items": { "$ref": "#/$defs/split_fact" } },
         "left_out": { "description": "What is left out of a dump section before it is compared for the split, and why.", "type": "array", "items": { "$ref": "#/$defs/left_out" } },
         "not_split_on": { "description": "Facts the Runs record that do not split a Series, and why.", "type": "array", "items": { "$ref": "#/$defs/split_fact" } },
-        "points": { "description": "Every Run of the Series, in time order.", "type": "array", "items": { "$ref": "#/$defs/series_point" } },
+        "counted_runs": { "description": "Runs this Method counts.", "type": "integer", "minimum": 0 },
+        "failed_runs": { "description": "Runs it does not count: shown in their month's file with why, in no percentile.", "type": "integer", "minimum": 0 },
         "percentiles": { "description": "Across every counted Run of the Series, whatever its group.", "$ref": "#/$defs/series_percentiles" },
         "groups": { "type": "array", "items": { "$ref": "#/$defs/series_group" } },
-        "differed": { "description": "What differed between each pair of consecutive Runs.", "type": "array", "items": { "$ref": "#/$defs/differed" } },
-        "sections": { "description": "How often each dump section's hash changed in this Series.", "type": "array", "items": { "$ref": "#/$defs/section_counts" } }
+        "sections": { "description": "How often each dump section's hash changed in this Series.", "type": "array", "items": { "$ref": "#/$defs/section_counts" } },
+        "newest_points": { "description": "The points of the Series' newest Runs (newest_runs of them, or all when there are fewer), in time order: the same points, value for value, as their month's file holds.", "type": "array", "items": { "$ref": "#/$defs/series_point" } }
       }
     },
     "series_point": {
@@ -133,24 +151,22 @@
       }
     },
     "stat": {
-      "description": "Percentiles of time per repetition across counted Runs, and the Runs they come from. Every counted Run has a time per repetition. A counted Run's time per repetition is infinite, past a double's range, when it is the mean of its two middle samples' ns_per_repetition and their sum overflows (both near the top of a double's range; no real clock comes near): JSON cannot hold it, so its point shows null, and it is counted here all the same; a percentile taken from it, or interpolated towards it, is null.",
+      "description": "Percentiles of time per repetition across counted Runs. The Runs behind it are not listed: they are the counted points of the Series (of the group, for a group's), in time order, as the month files hold them. Every counted Run has a time per repetition. A counted Run's time per repetition is infinite, past a double's range, when it is the mean of its two middle samples' ns_per_repetition and their sum overflows (both near the top of a double's range; no real clock comes near): JSON cannot hold it, so its point shows null, and it is counted here all the same; a percentile taken from it, or interpolated towards it, is null.",
       "type": "object",
-      "required": ["count", "runs", "p5", "p50", "p95"],
+      "required": ["count", "p5", "p50", "p95"],
       "properties": {
         "count": { "description": "Counted Runs.", "type": "integer", "minimum": 1 },
-        "runs": { "$ref": "#/$defs/run_ids" },
         "p5": { "description": "Null when it is infinite or undefined: taken from, or interpolated towards, an infinite time per repetition.", "$ref": "#/$defs/number_or_null" },
         "p50": { "description": "Null when it is infinite or undefined: taken from, or interpolated towards, an infinite time per repetition.", "$ref": "#/$defs/number_or_null" },
         "p95": { "description": "Null when it is infinite or undefined: taken from, or interpolated towards, an infinite time per repetition.", "$ref": "#/$defs/number_or_null" }
       }
     },
     "bytes_per_second_stat": {
-      "description": "Percentiles of bytes per second across the counted Runs that observed bytes per repetition, and the Runs they come from. A Run among them whose bytes per second is infinite, past a double's range (chiefly one whose time per repetition is 0), cannot have it written in JSON: its point shows null, it is counted here all the same, and a percentile taken from it, or interpolated towards it, is null.",
+      "description": "Percentiles of bytes per second across the counted Runs that observed bytes per repetition. The Runs behind it are not listed: they are the counted points of the Series (of the group, for a group's) whose bytes_per_repetition is not null, in time order, as the month files hold them. A Run among them whose bytes per second is infinite, past a double's range (chiefly one whose time per repetition is 0), cannot have it written in JSON: its point shows null, it is counted here all the same, and a percentile taken from it, or interpolated towards it, is null.",
       "type": "object",
-      "required": ["count", "runs", "p5", "p50", "p95"],
+      "required": ["count", "p5", "p50", "p95"],
       "properties": {
         "count": { "description": "Counted Runs that observed bytes per repetition, a Run with an infinite bytes per second included.", "type": "integer", "minimum": 1 },
-        "runs": { "$ref": "#/$defs/run_ids" },
         "p5": { "description": "Null when it is infinite or undefined: taken from, or interpolated towards, an infinite bytes per second.", "$ref": "#/$defs/number_or_null" },
         "p50": { "description": "Null when it is infinite or undefined: taken from, or interpolated towards, an infinite bytes per second.", "$ref": "#/$defs/number_or_null" },
         "p95": { "description": "Null when it is infinite or undefined: taken from, or interpolated towards, an infinite bytes per second.", "$ref": "#/$defs/number_or_null" }
@@ -166,39 +182,13 @@
       }
     },
     "series_group": {
-      "description": "The Runs whose split facts are all equal. Lettered A, B, C… in the order each first appears; groups may interleave in time.",
+      "description": "The Runs whose split facts are all equal. Lettered A, B, C… in the order each first appears; groups may interleave in time. Its Runs are not listed: they are the points whose group is its id, in time order, as the month files hold them.",
       "type": "object",
-      "required": ["id", "facts", "runs", "percentiles"],
+      "required": ["id", "facts", "percentiles"],
       "properties": {
         "id": { "type": "string" },
         "facts": { "$ref": "#/$defs/facts" },
-        "runs": { "description": "Every Run in the group, counted or not, in time order.", "$ref": "#/$defs/run_ids" },
         "percentiles": { "$ref": "#/$defs/series_percentiles" }
-      }
-    },
-    "differed": {
-      "description": "What differed between two consecutive Runs of the Series: the split facts whose values differ, and every section of the before-dump whose hash differs, split on or not.",
-      "type": "object",
-      "required": ["from", "to", "facts", "sections"],
-      "properties": {
-        "from": { "description": "The earlier Run's id.", "type": "string" },
-        "to": { "description": "The later Run's id.", "type": "string" },
-        "facts": { "type": "array", "items": { "type": "string" } },
-        "sections": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "required": ["section", "effect", "keys"],
-            "properties": {
-              "section": { "type": "string" },
-              "effect": {
-                "description": "splits: its split fact differs; left out: it is split on but differs only in what is left out; not split on: no split fact is read from it.",
-                "enum": ["splits", "left out", "not split on"]
-              },
-              "keys": { "description": "The section's top-level keys whose values differ; null when the section is not read, or is on one side only.", "anyOf": [{ "type": "array", "items": { "type": "string" } }, { "type": "null" }] }
-            }
-          }
-        }
       }
     },
     "section_counts": {
@@ -220,9 +210,9 @@
       "properties": { "name": { "const": "requests" }, "version": { "const": 1 } }
     },
     "requests_v1": {
-      "description": "Method requests, version 1: each phase of a request, across the requests, within each Run and pooled across Runs, for the Series and for each group.",
+      "description": "Method requests, version 1: each phase of a request, across the requests, within each Run and pooled across Runs, for the Series and for each group. Its points are in the month files, under the same key.",
       "type": "object",
-      "required": ["method", "definitions", "phases", "percentiles", "histogram", "request_facts", "split_on", "left_out", "recorded", "points", "pool", "groups"],
+      "required": ["method", "definitions", "phases", "percentiles", "histogram", "request_facts", "split_on", "left_out", "counted_runs", "failed_runs", "recorded", "pool", "groups", "newest_points"],
       "properties": {
         "method": { "$ref": "#/$defs/method_requests" },
         "definitions": { "$ref": "#/$defs/definitions" },
@@ -261,23 +251,24 @@
         },
         "split_on": { "description": "Method series v1's split facts, which give the same groups.", "type": "array", "items": { "$ref": "#/$defs/split_fact" } },
         "left_out": { "type": "array", "items": { "$ref": "#/$defs/left_out" } },
+        "counted_runs": { "description": "Runs this Method counts (exit 0, or 4 with failed requests).", "type": "integer", "minimum": 0 },
+        "failed_runs": { "description": "Runs it does not count: shown in their month's file with why, in no figure.", "type": "integer", "minimum": 0 },
         "recorded": { "$ref": "#/$defs/recorded" },
-        "points": { "description": "Every Run of the Series, in time order.", "type": "array", "items": { "$ref": "#/$defs/requests_point" } },
         "pool": { "description": "Every succeeded request of the Series' counted Runs, whatever their group.", "$ref": "#/$defs/pool" },
         "groups": {
           "type": "array",
           "items": {
-            "description": "Method series v1's group of the same letter: the same Runs.",
+            "description": "Method series v1's group of the same letter: the same Runs. Its Runs are not listed: they are the points whose group is its id, in time order, as the month files hold them.",
             "type": "object",
-            "required": ["id", "facts", "runs", "pool"],
+            "required": ["id", "facts", "pool"],
             "properties": {
               "id": { "type": "string" },
               "facts": { "$ref": "#/$defs/facts" },
-              "runs": { "description": "Every Run in the group, counted or not, in time order.", "$ref": "#/$defs/run_ids" },
               "pool": { "$ref": "#/$defs/pool" }
             }
           }
-        }
+        },
+        "newest_points": { "description": "The points of the Series' newest Runs (newest_runs of them, or all when there are fewer), in time order: the same points, value for value, as their month's file holds.", "type": "array", "items": { "$ref": "#/$defs/requests_point" } }
       }
     },
     "recorded": {
@@ -488,7 +479,7 @@
           ]
         },
         "through": { "description": "The Series' pooled figures through this Run; null before its first counted Run.", "anyOf": [{ "$ref": "#/$defs/pool_summary" }, { "type": "null" }] },
-        "group_through": { "description": "Its group's pooled figures through this Run, when the Series has more than one group; otherwise null.", "anyOf": [{ "$ref": "#/$defs/pool_summary" }, { "type": "null" }] }
+        "group_through": { "description": "Its group's pooled figures through this Run, once the Series has had a Run of a second group by this Run; otherwise null. As it stood through this Run, as through is, so that a later Run does not change it: requests v1's Derivation also gives it, for every point of a Series that has more than one group, on the points before the Series' first Run of a second group, where every Run is of the first group and its figures are the Series' own; the API leaves those null, and they are that point's through.", "anyOf": [{ "$ref": "#/$defs/pool_summary" }, { "type": "null" }] }
       }
     }
   }

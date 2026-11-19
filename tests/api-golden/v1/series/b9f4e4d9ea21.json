@@ -19,9 +19,14 @@
   "build": "static",
   "instance_type": "c6i.8xlarge",
   "availability_zone_id": "use2-az3",
-  "runs": 2,
+  "runs": 3,
   "oldest_run_started_at": "2026-11-12T22:20:00.000000000Z",
-  "newest_run_started_at": "2026-11-13T04:20:00.000000000Z",
+  "newest_run_started_at": "2026-12-01T22:20:00.000000000Z",
+  "newest_runs": 12,
+  "months": [
+    {"month":"2026-11","url":"https://api.ledgermath.com/v1/series/b9f4e4d9ea21/2026-11.json","runs":2,"oldest_run_started_at":"2026-11-12T22:20:00.000000000Z","newest_run_started_at":"2026-11-13T04:20:00.000000000Z"},
+    {"month":"2026-12","url":"https://api.ledgermath.com/v1/series/b9f4e4d9ea21/2026-12.json","runs":1,"oldest_run_started_at":"2026-12-01T22:20:00.000000000Z","newest_run_started_at":"2026-12-01T22:20:00.000000000Z"}
+  ],
   "derivations": {
     "series_v1": {
       "method": {
@@ -70,41 +75,41 @@
         {"fact":"ec2_instance","what":"names the instance and holds its addresses and launch time, new on every launch"},
         {"fact":"ec2_route_tables, ec2_vpc_endpoints","what":"the EC2 API's record of the path out of the box's subnet, taken once per boot: the route tables and the VPC's endpoints, shared by every box of the stage; a failed call records its error instead"}
       ],
-      "points": [
-        {"run":"01a1d1d8-aa80-7e7b-8c67-970768bc38b9","path":"runs/2026/11/12/01a1d1d8-aa80-7e7b-8c67-970768bc38b9.json","sha256":"4236579067893a648c80ffac7c839bc29b264df5607dbc02dbfa5222caa2e31e","evidence":"https://api.ledgermath.com/runs/2026/11/12/01a1d1d8-aa80-7e7b-8c67-970768bc38b9.json","boot_summary":"https://api.ledgermath.com/boots/2026/11/12/boot-2026-11-12.json","started_at":"2026-11-12T22:20:00.000000000Z","boot":"boot-2026-11-12","group":"A","counted":true,"failure":null,"samples":[{"sample":1,"ns":20000000,"repetitions":1,"ns_per_repetition":20000000},{"sample":2,"ns":20050000,"repetitions":1,"ns_per_repetition":20050000},{"sample":3,"ns":20100000,"repetitions":1,"ns_per_repetition":20100000},{"sample":4,"ns":20150000,"repetitions":1,"ns_per_repetition":20150000}],"time_per_repetition_ns":20075000,"bytes_per_repetition":null,"bytes_per_second":null},
-        {"run":"01a1d322-4180-799c-89d2-fe29b51ae67a","path":"runs/2026/11/13/01a1d322-4180-799c-89d2-fe29b51ae67a.json","sha256":"2a9aa450e3de582de8ac73e97b4123a07d14f0245ffe338892c5fd7282b4c495","evidence":"https://api.ledgermath.com/runs/2026/11/13/01a1d322-4180-799c-89d2-fe29b51ae67a.json","boot_summary":null,"started_at":"2026-11-13T04:20:00.000000000Z","boot":"boot-2026-11-13","group":"A","counted":false,"failure":"exit code 4","samples":[],"time_per_repetition_ns":null,"bytes_per_repetition":null,"bytes_per_second":null}
-      ],
+      "counted_runs": 2,
+      "failed_runs": 1,
       "percentiles": {
         "time_per_repetition_ns": {
-          "count": 1,
-          "runs": ["01a1d1d8-aa80-7e7b-8c67-970768bc38b9"],
-          "p5": 20075000,
-          "p50": 20075000,
-          "p95": 20075000
+          "count": 2,
+          "p5": 19139250,
+          "p50": 19582500,
+          "p95": 20025750
         },
         "bytes_per_second": null
       },
       "groups": [
-        {"id":"A","facts":{"binary":"sha256:a5b55c1edf767427f5df7d7a2e71444bfcdc9051a56e149c505e7b0c1792d538","cpuid":"canonical-json-sha256:263c45643a3172eeeb7076b0b680d3e6a0f56b94ce485296b6ed217f538ef152","image":"ami-0123456789abcdef0","kernel":"canonical-json-sha256:e301f78f48bf03417bd7df850207125d35454ac58aae4c6ce464cc29d12c177f","lscpu":"canonical-json-sha256:a425f01b72061fa0c7121174c33eacf0e936d7b709cedef21b9febe821a798ec","packages":"sha256:299901d2ddef3e7f8fefa6d3284a86a84dfe3c6b1261e21306bd12e9449d3035","process":"sha256:07b12edd9eb56ca6fde758e1bf35e481f0a87a9846fe5d9ebc202addf137a888","runner":"sha256:7ecfcd3020b2b8ae954cdf8339ed2c9dd783ac7bb5082a5013e390ecbfe09cde","samples":4,"sys_cpu":"sha256:fd5187d72b8f2ee33b3a622e24438a59d7e2db6b0ddc495096942ab75a648059"},"runs":["01a1d1d8-aa80-7e7b-8c67-970768bc38b9","01a1d322-4180-799c-89d2-fe29b51ae67a"],"percentiles":{"time_per_repetition_ns":{"count":1,"runs":["01a1d1d8-aa80-7e7b-8c67-970768bc38b9"],"p5":20075000,"p50":20075000,"p95":20075000},"bytes_per_second":null}}
-      ],
-      "differed": [
-        {"from":"01a1d1d8-aa80-7e7b-8c67-970768bc38b9","to":"01a1d322-4180-799c-89d2-fe29b51ae67a","facts":[],"sections":[{"section":"cpuinfo","effect":"not split on","keys":null},{"section":"devices","effect":"not split on","keys":["/sys/class/nvme/nvme0/serial"]},{"section":"kernel","effect":"left out","keys":["$ uname -a"]},{"section":"memory","effect":"not split on","keys":null},{"section":"net_counters","effect":"not split on","keys":null},{"section":"provider","effect":"not split on","keys":["http://169.254.169.254/latest/meta-data/instance-id"]}]}
+        {"id":"A","facts":{"binary":"sha256:a5b55c1edf767427f5df7d7a2e71444bfcdc9051a56e149c505e7b0c1792d538","cpuid":"canonical-json-sha256:263c45643a3172eeeb7076b0b680d3e6a0f56b94ce485296b6ed217f538ef152","image":"ami-0123456789abcdef0","kernel":"canonical-json-sha256:e301f78f48bf03417bd7df850207125d35454ac58aae4c6ce464cc29d12c177f","lscpu":"canonical-json-sha256:a425f01b72061fa0c7121174c33eacf0e936d7b709cedef21b9febe821a798ec","packages":"sha256:299901d2ddef3e7f8fefa6d3284a86a84dfe3c6b1261e21306bd12e9449d3035","process":"sha256:07b12edd9eb56ca6fde758e1bf35e481f0a87a9846fe5d9ebc202addf137a888","runner":"sha256:7ecfcd3020b2b8ae954cdf8339ed2c9dd783ac7bb5082a5013e390ecbfe09cde","samples":4,"sys_cpu":"sha256:fd5187d72b8f2ee33b3a622e24438a59d7e2db6b0ddc495096942ab75a648059"},"percentiles":{"time_per_repetition_ns":{"count":1,"p5":20075000,"p50":20075000,"p95":20075000},"bytes_per_second":null}},
+        {"id":"B","facts":{"binary":"sha256:a5b55c1edf767427f5df7d7a2e71444bfcdc9051a56e149c505e7b0c1792d538","cpuid":"canonical-json-sha256:9a47d57666f9fc125de92df74e34f82b1f66dc53eff3eea9de614ec411e180e5","image":"ami-0123456789abcdef0","kernel":"canonical-json-sha256:e301f78f48bf03417bd7df850207125d35454ac58aae4c6ce464cc29d12c177f","lscpu":"canonical-json-sha256:178f91f5364662ab886d6864a960b8df20a8fcdd40b0b59abe7e5b5744b5c451","packages":"sha256:299901d2ddef3e7f8fefa6d3284a86a84dfe3c6b1261e21306bd12e9449d3035","process":"sha256:07b12edd9eb56ca6fde758e1bf35e481f0a87a9846fe5d9ebc202addf137a888","runner":"sha256:7ecfcd3020b2b8ae954cdf8339ed2c9dd783ac7bb5082a5013e390ecbfe09cde","samples":4,"sys_cpu":"sha256:8dac741ae66f91d4635197a51a4647fdfead223b7f178edf2828f427affa7103"},"percentiles":{"time_per_repetition_ns":{"count":1,"p5":19090000,"p50":19090000,"p95":19090000},"bytes_per_second":null}}
       ],
       "sections": [
-        {"section":"cpuid","runs":2,"changed_within_run":0,"pairs":1,"changed_between_runs":0,"split_on":"cpuid"},
-        {"section":"cpuinfo","runs":2,"changed_within_run":2,"pairs":1,"changed_between_runs":1,"split_on":null},
-        {"section":"devices","runs":2,"changed_within_run":0,"pairs":1,"changed_between_runs":1,"split_on":null},
-        {"section":"ec2_route_tables","runs":2,"changed_within_run":0,"pairs":1,"changed_between_runs":0,"split_on":null},
-        {"section":"ec2_vpc_endpoints","runs":2,"changed_within_run":0,"pairs":1,"changed_between_runs":0,"split_on":null},
-        {"section":"kernel","runs":2,"changed_within_run":0,"pairs":1,"changed_between_runs":1,"split_on":"kernel"},
-        {"section":"lscpu","runs":2,"changed_within_run":0,"pairs":1,"changed_between_runs":0,"split_on":"lscpu"},
-        {"section":"memory","runs":2,"changed_within_run":2,"pairs":1,"changed_between_runs":1,"split_on":null},
-        {"section":"net_counters","runs":2,"changed_within_run":2,"pairs":1,"changed_between_runs":1,"split_on":null},
-        {"section":"network","runs":2,"changed_within_run":0,"pairs":1,"changed_between_runs":0,"split_on":null},
-        {"section":"packages","runs":2,"changed_within_run":0,"pairs":1,"changed_between_runs":0,"split_on":"packages"},
-        {"section":"process","runs":2,"changed_within_run":0,"pairs":1,"changed_between_runs":0,"split_on":"process"},
-        {"section":"provider","runs":2,"changed_within_run":0,"pairs":1,"changed_between_runs":1,"split_on":null},
-        {"section":"sys_cpu","runs":2,"changed_within_run":0,"pairs":1,"changed_between_runs":0,"split_on":"sys_cpu"}
+        {"section":"cpuid","runs":3,"changed_within_run":0,"pairs":2,"changed_between_runs":1,"split_on":"cpuid"},
+        {"section":"cpuinfo","runs":3,"changed_within_run":3,"pairs":2,"changed_between_runs":2,"split_on":null},
+        {"section":"devices","runs":3,"changed_within_run":0,"pairs":2,"changed_between_runs":2,"split_on":null},
+        {"section":"ec2_route_tables","runs":3,"changed_within_run":0,"pairs":2,"changed_between_runs":0,"split_on":null},
+        {"section":"ec2_vpc_endpoints","runs":3,"changed_within_run":0,"pairs":2,"changed_between_runs":0,"split_on":null},
+        {"section":"kernel","runs":3,"changed_within_run":0,"pairs":2,"changed_between_runs":2,"split_on":"kernel"},
+        {"section":"lscpu","runs":3,"changed_within_run":0,"pairs":2,"changed_between_runs":1,"split_on":"lscpu"},
+        {"section":"memory","runs":3,"changed_within_run":3,"pairs":2,"changed_between_runs":2,"split_on":null},
+        {"section":"net_counters","runs":3,"changed_within_run":3,"pairs":2,"changed_between_runs":2,"split_on":null},
+        {"section":"network","runs":3,"changed_within_run":0,"pairs":2,"changed_between_runs":0,"split_on":null},
+        {"section":"packages","runs":3,"changed_within_run":0,"pairs":2,"changed_between_runs":0,"split_on":"packages"},
+        {"section":"process","runs":3,"changed_within_run":0,"pairs":2,"changed_between_runs":0,"split_on":"process"},
+        {"section":"provider","runs":3,"changed_within_run":0,"pairs":2,"changed_between_runs":2,"split_on":null},
+        {"section":"sys_cpu","runs":3,"changed_within_run":0,"pairs":2,"changed_between_runs":1,"split_on":"sys_cpu"}
+      ],
+      "newest_points": [
+        {"run":"01a1d1d8-aa80-7e7b-8c67-970768bc38b9","path":"runs/2026/11/12/01a1d1d8-aa80-7e7b-8c67-970768bc38b9.json","sha256":"4236579067893a648c80ffac7c839bc29b264df5607dbc02dbfa5222caa2e31e","evidence":"https://api.ledgermath.com/runs/2026/11/12/01a1d1d8-aa80-7e7b-8c67-970768bc38b9.json","boot_summary":"https://api.ledgermath.com/boots/2026/11/12/boot-2026-11-12.json","started_at":"2026-11-12T22:20:00.000000000Z","boot":"boot-2026-11-12","group":"A","counted":true,"failure":null,"samples":[{"sample":1,"ns":20000000,"repetitions":1,"ns_per_repetition":20000000},{"sample":2,"ns":20050000,"repetitions":1,"ns_per_repetition":20050000},{"sample":3,"ns":20100000,"repetitions":1,"ns_per_repetition":20100000},{"sample":4,"ns":20150000,"repetitions":1,"ns_per_repetition":20150000}],"time_per_repetition_ns":20075000,"bytes_per_repetition":null,"bytes_per_second":null},
+        {"run":"01a1d322-4180-799c-89d2-fe29b51ae67a","path":"runs/2026/11/13/01a1d322-4180-799c-89d2-fe29b51ae67a.json","sha256":"2a9aa450e3de582de8ac73e97b4123a07d14f0245ffe338892c5fd7282b4c495","evidence":"https://api.ledgermath.com/runs/2026/11/13/01a1d322-4180-799c-89d2-fe29b51ae67a.json","boot_summary":null,"started_at":"2026-11-13T04:20:00.000000000Z","boot":"boot-2026-11-13","group":"A","counted":false,"failure":"exit code 4","samples":[],"time_per_repetition_ns":null,"bytes_per_repetition":null,"bytes_per_second":null},
+        {"run":"01a233b1-7e80-76f7-84f7-6f3e6f89cad2","path":"runs/2026/12/01/01a233b1-7e80-76f7-84f7-6f3e6f89cad2.json","sha256":"93e3981a12c00c2e3d95bcb914e5d122129a8dfa97b9db72b8f5cc043c0542a8","evidence":"https://api.ledgermath.com/runs/2026/12/01/01a233b1-7e80-76f7-84f7-6f3e6f89cad2.json","boot_summary":null,"started_at":"2026-12-01T22:20:00.000000000Z","boot":"boot-2026-12-01","group":"B","counted":true,"failure":null,"samples":[{"sample":1,"ns":19000000,"repetitions":1,"ns_per_repetition":19000000},{"sample":2,"ns":19060000,"repetitions":1,"ns_per_repetition":19060000},{"sample":3,"ns":19120000,"repetitions":1,"ns_per_repetition":19120000},{"sample":4,"ns":19180000,"repetitions":1,"ns_per_repetition":19180000}],"time_per_repetition_ns":19090000,"bytes_per_repetition":null,"bytes_per_second":null}
       ]
     },
     "requests_v1": {
@@ -176,135 +181,141 @@
         {"section":"lscpu","what":"the BogoMIPS field","why":"the kernel's delay-loop calibration at boot, from the same TSC frequency: 5799.99 and 5799.95 on those two boots"},
         {"section":"kernel","what":"the \"$ uname -a\" entry","why":"it holds the host name, which comes from the private address and is new on every launch"}
       ],
+      "counted_runs": 3,
+      "failed_runs": 0,
       "recorded": {
         "regions": [
-          {"value":"us-east-2","runs":2}
+          {"value":"us-east-2","runs":3}
         ],
         "services": [
-          {"name":"s3_fixtures","inputs":{"endpoint":"https://fixtures.s3.us-east-2.amazonaws.com","region":"us-east-2"},"runs":2}
+          {"name":"s3_fixtures","inputs":{"endpoint":"https://fixtures.s3.us-east-2.amazonaws.com","region":"us-east-2"},"runs":3}
         ],
         "without_service": 0
       },
-      "points": [
-        {"run":"01a1d1d8-aa80-7e7b-8c67-970768bc38b9","path":"runs/2026/11/12/01a1d1d8-aa80-7e7b-8c67-970768bc38b9.json","sha256":"4236579067893a648c80ffac7c839bc29b264df5607dbc02dbfa5222caa2e31e","evidence":"https://api.ledgermath.com/runs/2026/11/12/01a1d1d8-aa80-7e7b-8c67-970768bc38b9.json","boot_summary":"https://api.ledgermath.com/boots/2026/11/12/boot-2026-11-12.json","started_at":"2026-11-12T22:20:00.000000000Z","boot":"boot-2026-11-12","group":"A","counted":true,"failure":null,"exit_code":0,"counted_requests":4,"succeeded":4,"failed":0,"phases":{"dns":{"count":4,"min":200000,"max":200000,"p50":200000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":2}},"connect":{"count":4,"min":900000,"max":900000,"p50":900000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":2}},"tls":{"count":4,"min":2200000,"max":2200000,"p50":2200000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":2}},"send":{"count":4,"min":10000,"max":10000,"p50":10000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":2}},"first_byte":{"count":4,"min":16670000,"max":16820000,"p50":16745000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":2}},"headers":{"count":4,"min":8000,"max":8000,"p50":8000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":2}},"body":{"count":4,"min":12000,"max":12000,"p50":12000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":2}},"total":{"count":4,"min":20000000,"max":20150000,"p50":20075000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":2}}},"failures":[],"setups_failed":[],"warmup_failure":null,"through":{"runs":1,"requests":4,"failed":0,"phases":{"dns":{"count":4,"min":200000,"max":200000,"p50":200000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":2}},"connect":{"count":4,"min":900000,"max":900000,"p50":900000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":2}},"tls":{"count":4,"min":2200000,"max":2200000,"p50":2200000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":2}},"send":{"count":4,"min":10000,"max":10000,"p50":10000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":2}},"first_byte":{"count":4,"min":16670000,"max":16820000,"p50":16711680,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":2}},"headers":{"count":4,"min":8000,"max":8000,"p50":8000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":2}},"body":{"count":4,"min":12000,"max":12000,"p50":12000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":2}},"total":{"count":4,"min":20000000,"max":20150000,"p50":20054016,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":2}}},"failures":[]},"group_through":null},
-        {"run":"01a1d322-4180-799c-89d2-fe29b51ae67a","path":"runs/2026/11/13/01a1d322-4180-799c-89d2-fe29b51ae67a.json","sha256":"2a9aa450e3de582de8ac73e97b4123a07d14f0245ffe338892c5fd7282b4c495","evidence":"https://api.ledgermath.com/runs/2026/11/13/01a1d322-4180-799c-89d2-fe29b51ae67a.json","boot_summary":null,"started_at":"2026-11-13T04:20:00.000000000Z","boot":"boot-2026-11-13","group":"A","counted":true,"failure":null,"exit_code":4,"counted_requests":4,"succeeded":3,"failed":1,"phases":{"dns":{"count":3,"min":200000,"max":200000,"p50":200000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":2}},"connect":{"count":3,"min":900000,"max":900000,"p50":900000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":2}},"tls":{"count":3,"min":2200000,"max":2200000,"p50":2200000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":2}},"send":{"count":3,"min":10000,"max":10000,"p50":10000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":2}},"first_byte":{"count":3,"min":17670000,"max":17750000,"p50":17710000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":2}},"headers":{"count":3,"min":8000,"max":8000,"p50":8000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":2}},"body":{"count":3,"min":12000,"max":12000,"p50":12000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":2}},"total":{"count":3,"min":21000000,"max":21080000,"p50":21040000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":2}}},"failures":[{"phase":"first_byte","kind":"timeout","count":1}],"setups_failed":[],"warmup_failure":null,"through":{"runs":2,"requests":7,"failed":1,"phases":{"dns":{"count":7,"min":200000,"max":200000,"p50":200000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":4}},"connect":{"count":7,"min":900000,"max":900000,"p50":900000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":4}},"tls":{"count":7,"min":2200000,"max":2200000,"p50":2200000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":4}},"send":{"count":7,"min":10000,"max":10000,"p50":10000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":4}},"first_byte":{"count":7,"min":16670000,"max":17750000,"p50":16908288,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":4}},"headers":{"count":7,"min":8000,"max":8000,"p50":8000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":4}},"body":{"count":7,"min":12000,"max":12000,"p50":12000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":4}},"total":{"count":7,"min":20000000,"max":21080000,"p50":20054016,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":4}}},"failures":[{"phase":"first_byte","kind":"timeout","count":1}]},"group_through":null}
-      ],
       "pool": {
-        "runs": 2,
-        "requests": 7,
+        "runs": 3,
+        "requests": 11,
         "failed": 1,
         "phases": {
           "dns": {
-            "count": 7,
+            "count": 11,
             "min": 200000,
             "max": 200000,
             "p50": 200000,
-            "p90": null,
+            "p90": 200000,
             "p95": null,
             "p99": null,
             "p99.9": null,
             "at_or_above": {
-              "p50": 4
+              "p50": 6,
+              "p90": 2
             },
-            "histogram": [[801,7]]
+            "histogram": [[801,11]]
           },
           "connect": {
-            "count": 7,
+            "count": 11,
             "min": 900000,
             "max": 900000,
             "p50": 900000,
-            "p90": null,
+            "p90": 900000,
             "p95": null,
             "p99": null,
             "p99.9": null,
             "at_or_above": {
-              "p50": 4
+              "p50": 6,
+              "p90": 2
             },
-            "histogram": [[941,7]]
+            "histogram": [[941,11]]
           },
           "tls": {
-            "count": 7,
+            "count": 11,
             "min": 2200000,
             "max": 2200000,
             "p50": 2200000,
-            "p90": null,
+            "p90": 2200000,
             "p95": null,
             "p99": null,
             "p99.9": null,
             "at_or_above": {
-              "p50": 4
+              "p50": 6,
+              "p90": 2
             },
-            "histogram": [[1027,7]]
+            "histogram": [[1027,11]]
           },
           "send": {
-            "count": 7,
+            "count": 11,
             "min": 10000,
             "max": 10000,
             "p50": 10000,
-            "p90": null,
+            "p90": 10000,
             "p95": null,
             "p99": null,
             "p99.9": null,
             "at_or_above": {
-              "p50": 4
+              "p50": 6,
+              "p90": 2
             },
-            "histogram": [[526,7]]
+            "histogram": [[526,11]]
           },
           "first_byte": {
-            "count": 7,
-            "min": 16670000,
+            "count": 11,
+            "min": 15670000,
             "max": 17750000,
-            "p50": 16908288,
-            "p90": null,
+            "p50": 16711680,
+            "p90": 17694720,
             "p95": null,
             "p99": null,
             "p99.9": null,
             "at_or_above": {
-              "p50": 4
+              "p50": 6,
+              "p90": 2
             },
-            "histogram": [[1215,3],[1216,1],[1219,3]]
+            "histogram": [[1207,1],[1208,3],[1215,3],[1216,1],[1219,3]]
           },
           "headers": {
-            "count": 7,
+            "count": 11,
             "min": 8000,
             "max": 8000,
             "p50": 8000,
-            "p90": null,
+            "p90": 8000,
             "p95": null,
             "p99": null,
             "p99.9": null,
             "at_or_above": {
-              "p50": 4
+              "p50": 6,
+              "p90": 2
             },
-            "histogram": [[509,7]]
+            "histogram": [[509,11]]
           },
           "body": {
-            "count": 7,
+            "count": 11,
             "min": 12000,
             "max": 12000,
             "p50": 12000,
-            "p90": null,
+            "p90": 12000,
             "p95": null,
             "p99": null,
             "p99.9": null,
             "at_or_above": {
-              "p50": 4
+              "p50": 6,
+              "p90": 2
             },
-            "histogram": [[541,7]]
+            "histogram": [[541,11]]
           },
           "total": {
-            "count": 7,
-            "min": 20000000,
+            "count": 11,
+            "min": 19000000,
             "max": 21080000,
             "p50": 20054016,
-            "p90": null,
+            "p90": 21080000,
             "p95": null,
             "p99": null,
             "p99.9": null,
             "at_or_above": {
-              "p50": 4
+              "p50": 6,
+              "p90": 2
             },
-            "histogram": [[1228,4],[1232,3]]
+            "histogram": [[1224,3],[1225,1],[1228,4],[1232,3]]
           }
         },
         "failures": [
@@ -313,17 +324,23 @@
         "setups_failed": [],
         "by": [],
         "facts": [
-          {"fact":"address_block","values":[{"value":"3.5.0.0/16","requests":7}]},
-          {"fact":"cipher","values":[{"value":"TLS_AES_128_GCM_SHA256","requests":7}]},
-          {"fact":"tls_version","values":[{"value":"TLSv1.3","requests":7}]},
-          {"fact":"tls_group","values":[{"value":"X25519MLKEM768","requests":7}]},
-          {"fact":"method","values":[{"value":"GET","requests":7}]},
-          {"fact":"target","values":[{"value":"/http_get/v1/4096","requests":7}]},
-          {"fact":"signing","values":[{"value":"AWS4-HMAC-SHA256","requests":7}]}
+          {"fact":"address_block","values":[{"value":"3.5.0.0/16","requests":11}]},
+          {"fact":"cipher","values":[{"value":"TLS_AES_128_GCM_SHA256","requests":11}]},
+          {"fact":"tls_version","values":[{"value":"TLSv1.3","requests":11}]},
+          {"fact":"tls_group","values":[{"value":"X25519MLKEM768","requests":11}]},
+          {"fact":"method","values":[{"value":"GET","requests":11}]},
+          {"fact":"target","values":[{"value":"/http_get/v1/4096","requests":11}]},
+          {"fact":"signing","values":[{"value":"AWS4-HMAC-SHA256","requests":11}]}
         ]
       },
       "groups": [
-        {"id":"A","facts":{"binary":"sha256:a5b55c1edf767427f5df7d7a2e71444bfcdc9051a56e149c505e7b0c1792d538","cpuid":"canonical-json-sha256:263c45643a3172eeeb7076b0b680d3e6a0f56b94ce485296b6ed217f538ef152","image":"ami-0123456789abcdef0","kernel":"canonical-json-sha256:e301f78f48bf03417bd7df850207125d35454ac58aae4c6ce464cc29d12c177f","lscpu":"canonical-json-sha256:a425f01b72061fa0c7121174c33eacf0e936d7b709cedef21b9febe821a798ec","packages":"sha256:299901d2ddef3e7f8fefa6d3284a86a84dfe3c6b1261e21306bd12e9449d3035","process":"sha256:07b12edd9eb56ca6fde758e1bf35e481f0a87a9846fe5d9ebc202addf137a888","runner":"sha256:7ecfcd3020b2b8ae954cdf8339ed2c9dd783ac7bb5082a5013e390ecbfe09cde","samples":4,"sys_cpu":"sha256:fd5187d72b8f2ee33b3a622e24438a59d7e2db6b0ddc495096942ab75a648059"},"runs":["01a1d1d8-aa80-7e7b-8c67-970768bc38b9","01a1d322-4180-799c-89d2-fe29b51ae67a"],"pool":{"runs":2,"requests":7,"failed":1,"phases":{"dns":{"count":7,"min":200000,"max":200000,"p50":200000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":4},"histogram":[[801,7]]},"connect":{"count":7,"min":900000,"max":900000,"p50":900000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":4},"histogram":[[941,7]]},"tls":{"count":7,"min":2200000,"max":2200000,"p50":2200000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":4},"histogram":[[1027,7]]},"send":{"count":7,"min":10000,"max":10000,"p50":10000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":4},"histogram":[[526,7]]},"first_byte":{"count":7,"min":16670000,"max":17750000,"p50":16908288,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":4},"histogram":[[1215,3],[1216,1],[1219,3]]},"headers":{"count":7,"min":8000,"max":8000,"p50":8000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":4},"histogram":[[509,7]]},"body":{"count":7,"min":12000,"max":12000,"p50":12000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":4},"histogram":[[541,7]]},"total":{"count":7,"min":20000000,"max":21080000,"p50":20054016,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":4},"histogram":[[1228,4],[1232,3]]}},"failures":[{"phase":"first_byte","kind":"timeout","count":1}],"setups_failed":[],"by":[],"facts":[{"fact":"address_block","values":[{"value":"3.5.0.0/16","requests":7}]},{"fact":"cipher","values":[{"value":"TLS_AES_128_GCM_SHA256","requests":7}]},{"fact":"tls_version","values":[{"value":"TLSv1.3","requests":7}]},{"fact":"tls_group","values":[{"value":"X25519MLKEM768","requests":7}]},{"fact":"method","values":[{"value":"GET","requests":7}]},{"fact":"target","values":[{"value":"/http_get/v1/4096","requests":7}]},{"fact":"signing","values":[{"value":"AWS4-HMAC-SHA256","requests":7}]}]}}
+        {"id":"A","facts":{"binary":"sha256:a5b55c1edf767427f5df7d7a2e71444bfcdc9051a56e149c505e7b0c1792d538","cpuid":"canonical-json-sha256:263c45643a3172eeeb7076b0b680d3e6a0f56b94ce485296b6ed217f538ef152","image":"ami-0123456789abcdef0","kernel":"canonical-json-sha256:e301f78f48bf03417bd7df850207125d35454ac58aae4c6ce464cc29d12c177f","lscpu":"canonical-json-sha256:a425f01b72061fa0c7121174c33eacf0e936d7b709cedef21b9febe821a798ec","packages":"sha256:299901d2ddef3e7f8fefa6d3284a86a84dfe3c6b1261e21306bd12e9449d3035","process":"sha256:07b12edd9eb56ca6fde758e1bf35e481f0a87a9846fe5d9ebc202addf137a888","runner":"sha256:7ecfcd3020b2b8ae954cdf8339ed2c9dd783ac7bb5082a5013e390ecbfe09cde","samples":4,"sys_cpu":"sha256:fd5187d72b8f2ee33b3a622e24438a59d7e2db6b0ddc495096942ab75a648059"},"pool":{"runs":2,"requests":7,"failed":1,"phases":{"dns":{"count":7,"min":200000,"max":200000,"p50":200000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":4},"histogram":[[801,7]]},"connect":{"count":7,"min":900000,"max":900000,"p50":900000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":4},"histogram":[[941,7]]},"tls":{"count":7,"min":2200000,"max":2200000,"p50":2200000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":4},"histogram":[[1027,7]]},"send":{"count":7,"min":10000,"max":10000,"p50":10000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":4},"histogram":[[526,7]]},"first_byte":{"count":7,"min":16670000,"max":17750000,"p50":16908288,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":4},"histogram":[[1215,3],[1216,1],[1219,3]]},"headers":{"count":7,"min":8000,"max":8000,"p50":8000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":4},"histogram":[[509,7]]},"body":{"count":7,"min":12000,"max":12000,"p50":12000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":4},"histogram":[[541,7]]},"total":{"count":7,"min":20000000,"max":21080000,"p50":20054016,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":4},"histogram":[[1228,4],[1232,3]]}},"failures":[{"phase":"first_byte","kind":"timeout","count":1}],"setups_failed":[],"by":[],"facts":[{"fact":"address_block","values":[{"value":"3.5.0.0/16","requests":7}]},{"fact":"cipher","values":[{"value":"TLS_AES_128_GCM_SHA256","requests":7}]},{"fact":"tls_version","values":[{"value":"TLSv1.3","requests":7}]},{"fact":"tls_group","values":[{"value":"X25519MLKEM768","requests":7}]},{"fact":"method","values":[{"value":"GET","requests":7}]},{"fact":"target","values":[{"value":"/http_get/v1/4096","requests":7}]},{"fact":"signing","values":[{"value":"AWS4-HMAC-SHA256","requests":7}]}]}},
+        {"id":"B","facts":{"binary":"sha256:a5b55c1edf767427f5df7d7a2e71444bfcdc9051a56e149c505e7b0c1792d538","cpuid":"canonical-json-sha256:9a47d57666f9fc125de92df74e34f82b1f66dc53eff3eea9de614ec411e180e5","image":"ami-0123456789abcdef0","kernel":"canonical-json-sha256:e301f78f48bf03417bd7df850207125d35454ac58aae4c6ce464cc29d12c177f","lscpu":"canonical-json-sha256:178f91f5364662ab886d6864a960b8df20a8fcdd40b0b59abe7e5b5744b5c451","packages":"sha256:299901d2ddef3e7f8fefa6d3284a86a84dfe3c6b1261e21306bd12e9449d3035","process":"sha256:07b12edd9eb56ca6fde758e1bf35e481f0a87a9846fe5d9ebc202addf137a888","runner":"sha256:7ecfcd3020b2b8ae954cdf8339ed2c9dd783ac7bb5082a5013e390ecbfe09cde","samples":4,"sys_cpu":"sha256:8dac741ae66f91d4635197a51a4647fdfead223b7f178edf2828f427affa7103"},"pool":{"runs":1,"requests":4,"failed":0,"phases":{"dns":{"count":4,"min":200000,"max":200000,"p50":200000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":2},"histogram":[[801,4]]},"connect":{"count":4,"min":900000,"max":900000,"p50":900000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":2},"histogram":[[941,4]]},"tls":{"count":4,"min":2200000,"max":2200000,"p50":2200000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":2},"histogram":[[1027,4]]},"send":{"count":4,"min":10000,"max":10000,"p50":10000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":2},"histogram":[[526,4]]},"first_byte":{"count":4,"min":15670000,"max":15850000,"p50":15794176,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":2},"histogram":[[1207,1],[1208,3]]},"headers":{"count":4,"min":8000,"max":8000,"p50":8000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":2},"histogram":[[509,4]]},"body":{"count":4,"min":12000,"max":12000,"p50":12000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":2},"histogram":[[541,4]]},"total":{"count":4,"min":19000000,"max":19180000,"p50":19005440,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":2},"histogram":[[1224,3],[1225,1]]}},"failures":[],"setups_failed":[],"by":[],"facts":[{"fact":"address_block","values":[{"value":"3.5.0.0/16","requests":4}]},{"fact":"cipher","values":[{"value":"TLS_AES_128_GCM_SHA256","requests":4}]},{"fact":"tls_version","values":[{"value":"TLSv1.3","requests":4}]},{"fact":"tls_group","values":[{"value":"X25519MLKEM768","requests":4}]},{"fact":"method","values":[{"value":"GET","requests":4}]},{"fact":"target","values":[{"value":"/http_get/v1/4096","requests":4}]},{"fact":"signing","values":[{"value":"AWS4-HMAC-SHA256","requests":4}]}]}}
+      ],
+      "newest_points": [
+        {"run":"01a1d1d8-aa80-7e7b-8c67-970768bc38b9","path":"runs/2026/11/12/01a1d1d8-aa80-7e7b-8c67-970768bc38b9.json","sha256":"4236579067893a648c80ffac7c839bc29b264df5607dbc02dbfa5222caa2e31e","evidence":"https://api.ledgermath.com/runs/2026/11/12/01a1d1d8-aa80-7e7b-8c67-970768bc38b9.json","boot_summary":"https://api.ledgermath.com/boots/2026/11/12/boot-2026-11-12.json","started_at":"2026-11-12T22:20:00.000000000Z","boot":"boot-2026-11-12","group":"A","counted":true,"failure":null,"exit_code":0,"counted_requests":4,"succeeded":4,"failed":0,"phases":{"dns":{"count":4,"min":200000,"max":200000,"p50":200000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":2}},"connect":{"count":4,"min":900000,"max":900000,"p50":900000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":2}},"tls":{"count":4,"min":2200000,"max":2200000,"p50":2200000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":2}},"send":{"count":4,"min":10000,"max":10000,"p50":10000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":2}},"first_byte":{"count":4,"min":16670000,"max":16820000,"p50":16745000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":2}},"headers":{"count":4,"min":8000,"max":8000,"p50":8000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":2}},"body":{"count":4,"min":12000,"max":12000,"p50":12000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":2}},"total":{"count":4,"min":20000000,"max":20150000,"p50":20075000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":2}}},"failures":[],"setups_failed":[],"warmup_failure":null,"through":{"runs":1,"requests":4,"failed":0,"phases":{"dns":{"count":4,"min":200000,"max":200000,"p50":200000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":2}},"connect":{"count":4,"min":900000,"max":900000,"p50":900000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":2}},"tls":{"count":4,"min":2200000,"max":2200000,"p50":2200000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":2}},"send":{"count":4,"min":10000,"max":10000,"p50":10000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":2}},"first_byte":{"count":4,"min":16670000,"max":16820000,"p50":16711680,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":2}},"headers":{"count":4,"min":8000,"max":8000,"p50":8000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":2}},"body":{"count":4,"min":12000,"max":12000,"p50":12000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":2}},"total":{"count":4,"min":20000000,"max":20150000,"p50":20054016,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":2}}},"failures":[]},"group_through":null},
+        {"run":"01a1d322-4180-799c-89d2-fe29b51ae67a","path":"runs/2026/11/13/01a1d322-4180-799c-89d2-fe29b51ae67a.json","sha256":"2a9aa450e3de582de8ac73e97b4123a07d14f0245ffe338892c5fd7282b4c495","evidence":"https://api.ledgermath.com/runs/2026/11/13/01a1d322-4180-799c-89d2-fe29b51ae67a.json","boot_summary":null,"started_at":"2026-11-13T04:20:00.000000000Z","boot":"boot-2026-11-13","group":"A","counted":true,"failure":null,"exit_code":4,"counted_requests":4,"succeeded":3,"failed":1,"phases":{"dns":{"count":3,"min":200000,"max":200000,"p50":200000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":2}},"connect":{"count":3,"min":900000,"max":900000,"p50":900000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":2}},"tls":{"count":3,"min":2200000,"max":2200000,"p50":2200000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":2}},"send":{"count":3,"min":10000,"max":10000,"p50":10000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":2}},"first_byte":{"count":3,"min":17670000,"max":17750000,"p50":17710000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":2}},"headers":{"count":3,"min":8000,"max":8000,"p50":8000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":2}},"body":{"count":3,"min":12000,"max":12000,"p50":12000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":2}},"total":{"count":3,"min":21000000,"max":21080000,"p50":21040000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":2}}},"failures":[{"phase":"first_byte","kind":"timeout","count":1}],"setups_failed":[],"warmup_failure":null,"through":{"runs":2,"requests":7,"failed":1,"phases":{"dns":{"count":7,"min":200000,"max":200000,"p50":200000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":4}},"connect":{"count":7,"min":900000,"max":900000,"p50":900000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":4}},"tls":{"count":7,"min":2200000,"max":2200000,"p50":2200000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":4}},"send":{"count":7,"min":10000,"max":10000,"p50":10000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":4}},"first_byte":{"count":7,"min":16670000,"max":17750000,"p50":16908288,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":4}},"headers":{"count":7,"min":8000,"max":8000,"p50":8000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":4}},"body":{"count":7,"min":12000,"max":12000,"p50":12000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":4}},"total":{"count":7,"min":20000000,"max":21080000,"p50":20054016,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":4}}},"failures":[{"phase":"first_byte","kind":"timeout","count":1}]},"group_through":null},
+        {"run":"01a233b1-7e80-76f7-84f7-6f3e6f89cad2","path":"runs/2026/12/01/01a233b1-7e80-76f7-84f7-6f3e6f89cad2.json","sha256":"93e3981a12c00c2e3d95bcb914e5d122129a8dfa97b9db72b8f5cc043c0542a8","evidence":"https://api.ledgermath.com/runs/2026/12/01/01a233b1-7e80-76f7-84f7-6f3e6f89cad2.json","boot_summary":null,"started_at":"2026-12-01T22:20:00.000000000Z","boot":"boot-2026-12-01","group":"B","counted":true,"failure":null,"exit_code":0,"counted_requests":4,"succeeded":4,"failed":0,"phases":{"dns":{"count":4,"min":200000,"max":200000,"p50":200000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":2}},"connect":{"count":4,"min":900000,"max":900000,"p50":900000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":2}},"tls":{"count":4,"min":2200000,"max":2200000,"p50":2200000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":2}},"send":{"count":4,"min":10000,"max":10000,"p50":10000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":2}},"first_byte":{"count":4,"min":15670000,"max":15850000,"p50":15760000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":2}},"headers":{"count":4,"min":8000,"max":8000,"p50":8000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":2}},"body":{"count":4,"min":12000,"max":12000,"p50":12000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":2}},"total":{"count":4,"min":19000000,"max":19180000,"p50":19090000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":2}}},"failures":[],"setups_failed":[],"warmup_failure":null,"through":{"runs":3,"requests":11,"failed":1,"phases":{"dns":{"count":11,"min":200000,"max":200000,"p50":200000,"p90":200000,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":6,"p90":2}},"connect":{"count":11,"min":900000,"max":900000,"p50":900000,"p90":900000,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":6,"p90":2}},"tls":{"count":11,"min":2200000,"max":2200000,"p50":2200000,"p90":2200000,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":6,"p90":2}},"send":{"count":11,"min":10000,"max":10000,"p50":10000,"p90":10000,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":6,"p90":2}},"first_byte":{"count":11,"min":15670000,"max":17750000,"p50":16711680,"p90":17694720,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":6,"p90":2}},"headers":{"count":11,"min":8000,"max":8000,"p50":8000,"p90":8000,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":6,"p90":2}},"body":{"count":11,"min":12000,"max":12000,"p50":12000,"p90":12000,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":6,"p90":2}},"total":{"count":11,"min":19000000,"max":21080000,"p50":20054016,"p90":21080000,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":6,"p90":2}}},"failures":[{"phase":"first_byte","kind":"timeout","count":1}]},"group_through":{"runs":1,"requests":4,"failed":0,"phases":{"dns":{"count":4,"min":200000,"max":200000,"p50":200000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":2}},"connect":{"count":4,"min":900000,"max":900000,"p50":900000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":2}},"tls":{"count":4,"min":2200000,"max":2200000,"p50":2200000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":2}},"send":{"count":4,"min":10000,"max":10000,"p50":10000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":2}},"first_byte":{"count":4,"min":15670000,"max":15850000,"p50":15794176,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":2}},"headers":{"count":4,"min":8000,"max":8000,"p50":8000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":2}},"body":{"count":4,"min":12000,"max":12000,"p50":12000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":2}},"total":{"count":4,"min":19000000,"max":19180000,"p50":19005440,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":2}}},"failures":[]}}
       ]
     }
   }

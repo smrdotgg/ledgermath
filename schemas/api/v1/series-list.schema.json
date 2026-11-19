@@ -152,7 +152,7 @@
       "additionalProperties": { "anyOf": [{ "type": "string" }, { "type": "number" }, { "type": "boolean" }] }
     },
     "stat_summary": {
-      "description": "Percentiles of time per repetition across the Series' counted Runs. Every counted Run has a time per repetition. A counted Run's time per repetition is infinite, past a double's range, when it is the mean of its two middle samples' ns_per_repetition and their sum overflows (both near the top of a double's range; no real clock comes near): JSON cannot hold it, so its point shows null, and it is counted here all the same; a percentile taken from it, or interpolated towards it, is null. The Series' file lists the Runs behind them.",
+      "description": "Percentiles of time per repetition across the Series' counted Runs. Every counted Run has a time per repetition. A counted Run's time per repetition is infinite, past a double's range, when it is the mean of its two middle samples' ns_per_repetition and their sum overflows (both near the top of a double's range; no real clock comes near): JSON cannot hold it, so its point shows null, and it is counted here all the same; a percentile taken from it, or interpolated towards it, is null. The Runs behind them are the Series' counted points, as its month files hold them.",
       "type": "object",
       "required": ["count", "p5", "p50", "p95"],
       "properties": {
@@ -163,7 +163,7 @@
       }
     },
     "bytes_per_second_summary": {
-      "description": "Percentiles of bytes per second across the Series' counted Runs that observed bytes per repetition. A Run among them whose bytes per second is infinite, past a double's range (chiefly one whose time per repetition is 0), cannot have it written in JSON: it is counted here all the same, and a percentile taken from it, or interpolated towards it, is null. The Series' file lists the Runs behind them.",
+      "description": "Percentiles of bytes per second across the Series' counted Runs that observed bytes per repetition. A Run among them whose bytes per second is infinite, past a double's range (chiefly one whose time per repetition is 0), cannot have it written in JSON: it is counted here all the same, and a percentile taken from it, or interpolated towards it, is null. The Runs behind them are the Series' counted points whose bytes_per_repetition is not null, as its month files hold them.",
       "type": "object",
       "required": ["count", "p5", "p50", "p95"],
       "properties": {
@@ -239,7 +239,7 @@
               "properties": {
                 "method": { "$ref": "#/$defs/method_series" },
                 "counted_runs": { "description": "Runs this Method counts.", "type": "integer", "minimum": 0 },
-                "failed_runs": { "description": "Runs it does not count: shown in the Series' file with why, in no percentile.", "type": "integer", "minimum": 0 },
+                "failed_runs": { "description": "Runs it does not count: shown in their month's file with why, in no percentile.", "type": "integer", "minimum": 0 },
                 "groups": { "description": "How many groups its split facts make of the Series' Runs.", "type": "integer", "minimum": 1 },
                 "percentiles": {
                   "description": "Across every counted Run of the Series, whatever its group. time_per_repetition_ns is null when no Run counts; bytes_per_second is null when no counted Run observed bytes per repetition.",

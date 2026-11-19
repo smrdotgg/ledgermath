@@ -10,25 +10,46 @@
  * generator wrote. A passing check establishes all of this:
  *
  * - Every JSON file of the tree is strict JSON, as the strictest reader
- *   would read it (strict-json.ts): UTF-8, with no byte-order mark, and no
+ *   would read it (strict-json.ts): UTF-8, with no byte-order mark, no
  *   object holding a member name twice, so no two readers can read one file
- *   as two values.
+ *   as two values, and no number a double does not hold exactly, so no
+ *   reader's parse changes a figure.
  * - The tree holds exactly the files it should: the table of contents, the
- *   list, the four schemas, one file per Series of either file of
- *   Derivations and one per price file in the checkout; nothing else.
- * - Each schema in the tree is byte for byte this repository's, and every
- *   file matches this repository's schema of its kind: a price file as the
- *   schema is written, the API's own files with every object closed, so a
- *   field the schema does not describe is a problem here although the
- *   published schemas leave objects open for the fields v1 may gain.
+ *   list, the five schemas, one Series file per Series of either file of
+ *   Derivations, one month file per month in which a Run of that Series
+ *   started (UTC, by the Run's start), and one per price file in the
+ *   checkout; nothing else. Each is reached from the table of contents by
+ *   following the links in the files, and none is over its kind's ceiling
+ *   of bytes (CEILINGS).
+ * - Each schema in the tree is byte for byte this repository's and a valid
+ *   JSON Schema, every kind of file in the tree is described by one schema
+ *   the table of contents lists, and every file matches this repository's
+ *   schema of its kind: a price file as the schema is written, the API's own
+ *   files with every object closed, so a field the schema does not describe
+ *   is a problem here although the published schemas leave objects open for
+ *   the fields v1 may gain.
+ * - Each month file holds every point of its month's Runs, each equal to
+ *   the Derivations' (each Method's, under its key) with what the design
+ *   adds (its Run file's sha256, evidence and boot_summary) and, for
+ *   requests v1, group_through as it stood through the Run (null before the
+ *   Series' first Run of a second group, where the Derivation's is the
+ *   point's through); and every one of series v1's entries for a pair of
+ *   consecutive Runs whose later Run started that month. Each Run of a Series
+ *   is in exactly one month file, that of the month it started in; each
+ *   entry for a pair is filed under the month of its later Run.
  * - Each Series file equals what the Derivations hold for its Series: its
- *   identity, its count of Runs and the starts of its oldest and newest
- *   Run; under derivations, one key per Method that derives the Series, and
- *   under each every part of that Method's Derivation and its file's words,
- *   value for value. The only differences are those the design makes: each
- *   point gains its Run file's sha256 (the Derivation's), evidence and
- *   boot_summary, and the Derivation's series, method and runs are not
- *   repeated, being the file's head, its key and its points.
+ *   identity, its count of Runs and the starts of its oldest and newest Run;
+ *   newest_runs, the design's 12; its months, exactly the month files of the
+ *   tree, each with its address, count of Runs and oldest and newest start;
+ *   under derivations, one key per Method that derives the Series, and under
+ *   each the Method's words and its summary, value for value (the
+ *   percentiles and groups without their lists of Runs; counted and failed
+ *   Runs counted from the points); and the points of the newest 12 Runs,
+ *   equal to the same points in the month files and to the Derivations'.
+ * - What a Series file leaves out is recoverable from its month files: the
+ *   Runs behind each of series v1's percentiles are the counted points (of
+ *   the group), with a bytes_per_repetition for bytes per second; a group's
+ *   Runs are the points of its letter, under either Method.
  * - Each point's evidence is that point's: the Run file at its path is in
  *   the checkout, has the point's Run id and boot, and hashes to its sha256;
  *   evidence is that path's address; boot_summary is the address of the one
@@ -78,6 +99,8 @@ export interface CheckResult {
 	problems: string[];
 	files: number;
 	series: number;
+	/** Month files read. */
+	months: number;
 	/** Distinct Run files found in the checkout, read and hashed. */
 	runFiles: number;
 }
@@ -90,6 +113,7 @@ const ROOT = resolve(import.meta.dir, "..", "..");
 const INDEX = "v1/index.json";
 const LIST = "v1/series.json";
 const seriesFile = (id: string): string => `v1/series/${id}.json`;
+const monthFile = (id: string, month: string): string => `v1/series/${id}/${month}.json`;
 const priceFile = (date: string): string => `v1/prices/${date}.json`;
 const schemaFile = (name: string): string => `v1/schemas/${name}.schema.json`;
 /** The schemas the tree serves, in the table of contents' order: the files each describes, and the file of this repository it is. */
@@ -97,14 +121,72 @@ const SCHEMAS = [
 	{ name: "index", describes: "v1/index.json", source: "schemas/api/v1/index.schema.json", closed: true },
 	{ name: "series-list", describes: "v1/series.json", source: "schemas/api/v1/series-list.schema.json", closed: true },
 	{ name: "series", describes: "v1/series/<id>.json", source: "schemas/api/v1/series.schema.json", closed: true },
+	{ name: "series-month", describes: "v1/series/<id>/<yyyy-mm>.json", source: "schemas/api/v1/series-month.schema.json", closed: true },
 	{ name: "prices", describes: "v1/prices/<yyyy-mm-dd>.json", source: "schemas/prices.schema.json", closed: false },
 ] as const;
 type SchemaName = (typeof SCHEMAS)[number]["name"];
 const SERIES_PATH = /^v1\/series\/([^/]+)\.json$/;
+const MONTH_PATH = /^v1\/series\/([^/]+)\/([^/]+)\.json$/;
 const TREE_PRICE = /^v1\/prices\/([0-9]{4})-([0-9]{2})-([0-9]{2})\.json$/;
+const SCHEMA_PATH = /^v1\/schemas\/[^/]+\.schema\.json$/;
+/** A Run's start as the Run schema writes it: UTC, to the nanosecond; its first seven characters are its month. */
+const STARTED_AT = /^([0-9]{4}-(?:0[1-9]|1[0-2]))-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{9}Z$/;
+
+/** How many of a Series' newest Runs its Series file repeats the points of, by the design. */
+const NEWEST_RUNS = 12;
 
 /** At most this many points of one Method's part are reported as differing; then how many more. */
 const POINTS_SHOWN = 10;
+
+/**
+ * The most bytes a file of each kind may hold, chosen from the data of
+ * 2026-11-19 with room to spare, and what to do when one is hit. A ceiling is
+ * there to say a file has outgrown what a reader, an agent above all, should
+ * fetch in one request: raise it only once that is decided, not to make the
+ * check pass.
+ */
+export const CEILINGS: ReadonlyArray<{ kind: string; path: RegExp; bytes: number; whenHit: string }> = [
+	{
+		kind: "the table of contents",
+		path: /^v1\/index\.json$/,
+		bytes: 100_000,
+		whenHit:
+			"it was 4.9 KB with 9 price files on 2026-11-19, and each day's price file adds 124 bytes to its list, which brings it here about two years on; listing the price files by month, as the Series are, changes v1's shape (v2), so decide that with the maintainer",
+	},
+	{
+		kind: "the list of Series",
+		path: /^v1\/series\.json$/,
+		bytes: 1_000_000,
+		whenHit:
+			"a row is about 1 KB, so this is about 950 Series; splitting the list (by benchmark, say) changes what v1/series.json holds, a v2 change, so decide it with the maintainer",
+	},
+	{
+		kind: "a Series file",
+		path: SERIES_PATH,
+		bytes: 1_000_000,
+		whenHit:
+			"it does not grow with its Runs (302 KB at most, for http_get, on 2026-11-19), so its newest points or its summary grew: more samples or requests per Run, more groups, more values of a request fact; find which, and lower newest_runs or move the part that grew to the month files before raising this",
+	},
+	{
+		kind: "a month file",
+		path: MONTH_PATH,
+		bytes: 5_000_000,
+		whenHit:
+			"a full month at four Runs a day is about 2.7 MB for http_get (up to 22 KB a Run on 2026-11-19) and 0.56 MB for the others (up to 4.5 KB a Run); more Runs a day or larger points brought it here: a smaller unit than a month is a v2 change, so decide with the maintainer whether to raise this or split",
+	},
+	{
+		kind: "a price file",
+		path: TREE_PRICE,
+		bytes: 1_000_000,
+		whenHit: "it is the Runs repository's price file, byte for byte (39 KB on 2026-11-19): the price rules (scripts/lib/price-rules.ts) now keep far more records; look there first",
+	},
+	{
+		kind: "a schema",
+		path: SCHEMA_PATH,
+		bytes: 256_000,
+		whenHit: "the largest is 32 KB: a schema this large is past what a reader takes in; split what it describes into $defs it shares, or ask why it grew",
+	},
+];
 
 /**
  * A schema with every object that lists its properties, and says nothing of
@@ -205,6 +287,12 @@ function isInside(path: string): boolean {
 /** The name of the file at path, without .json. */
 const fileName = (path: string): string => (path.split("/").pop() ?? "").replace(/\.json$/, "");
 
+/** The files a schema's `describes` names, as a pattern: each <placeholder> one path segment's worth of characters. */
+function describedBy(describes: string): RegExp {
+	const parts = describes.split(/<[^>]+>/).map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+	return new RegExp(`^${parts.join("[^/]+")}$`);
+}
+
 /** A Run file as the checkout holds it: the sha256 of its bytes, and what they parse to, if JSON. */
 interface RunFileRead {
 	sha256: string;
@@ -214,6 +302,7 @@ interface RunFileRead {
 type SeriesDerivation = SeriesFile["derivations"][number];
 type RequestsDerivation = RequestsFile["derivations"][number];
 type CitedRun = SeriesDerivation["runs"][number];
+type AnyPoint = SeriesDerivation["points"][number] | RequestsDerivation["points"][number];
 
 export function checkApi(sources: CheckSources): CheckResult {
 	const problems: string[] = [];
@@ -222,12 +311,15 @@ export function checkApi(sources: CheckSources): CheckResult {
 	const files = listFiles(sources.tree);
 	const held = new Set(files);
 	const read = (path: string): Buffer => readFileSync(join(sources.tree, ...path.split("/")));
-	/** A file of the tree, read as strictly as its strictest reader would (strict-json.ts); undefined, and a problem, when it cannot be. */
+	/** Files of the tree that could not be read: their links are not known, so which files are reached is not either. */
+	let unreadable = 0;
+	/** A file of the tree, read as strictly as its strictest reader would, every number exactly (strict-json.ts); undefined, and a problem, when it cannot be. */
 	const parse = (path: string): unknown => {
 		try {
-			return parseStrictJson(read(path));
+			return parseStrictJson(read(path), { exactNumbers: true });
 		} catch (error) {
 			problems.push(`${path} is not strict JSON: ${error instanceof Error ? error.message : String(error)}`);
+			unreadable++;
 			return undefined;
 		}
 	};
@@ -268,11 +360,12 @@ export function checkApi(sources: CheckSources): CheckResult {
 	/** Each Series' Derivation that gives its identity and its Runs: series v1's, which derives every Series. */
 	const lead = (id: string): SeriesDerivation | RequestsDerivation => (seriesV1.get(id) ?? requestsV1.get(id)) as SeriesDerivation | RequestsDerivation;
 	const span = new Map<string, { oldest: string; newest: string }>();
+	/** Each Series' months, in order: each the indexes of the Derivation's points whose Run started that month, in the Derivation's order. */
+	const monthsOf = new Map<string, Map<string, number[]>>();
 	let newest: string | null = null;
 	for (const id of ids) {
-		const starts = lead(id)
-			.points.map((point) => point.started_at)
-			.sort(byText);
+		const points = lead(id).points;
+		const starts = points.map((point) => point.started_at).sort(byText);
 		if (starts.length === 0) {
 			problems.push(`Series ${id} has no Run in its Derivation`);
 			continue;
@@ -281,6 +374,16 @@ export function checkApi(sources: CheckSources): CheckResult {
 		const latest = starts[starts.length - 1] as string;
 		span.set(id, { oldest, newest: latest });
 		if (newest === null || byText(latest, newest) > 0) newest = latest;
+		const months = new Map<string, number[]>();
+		points.forEach((point, i) => {
+			const month = STARTED_AT.exec(point.started_at)?.[1];
+			if (month === undefined) {
+				problems.push(`Series ${id}: the Derivation's point ${i} started at ${show(point.started_at)}, not a Run's start as the Run schema writes it`);
+				return;
+			}
+			months.set(month, [...(months.get(month) ?? []), i]);
+		});
+		monthsOf.set(id, new Map([...months].sort(([a], [b]) => byText(a, b))));
 	}
 
 	// The files the tree should hold, and no others.
@@ -288,35 +391,56 @@ export function checkApi(sources: CheckSources): CheckResult {
 		.map((path) => `prices/${path}`)
 		.filter((path) => PRICE_FILE_PATH.test(path));
 	const dateOf = (path: string): string => path.replace(PRICE_FILE_PATH, "$1-$2-$3");
+	const ofWhich = (id: string): string => (seriesV1.has(id) ? "series v1" : "requests v1");
 	const expected = new Map<string, string>([
 		[INDEX, "the table of contents"],
 		[LIST, "the list of Series"],
 		...SCHEMAS.map(({ name }) => [schemaFile(name), `the schema ${name}`] as [string, string]),
-		...ids.map((id) => [seriesFile(id), `Series ${id} of ${seriesV1.has(id) ? "series v1" : "requests v1"}`] as [string, string]),
+		...ids.map((id) => [seriesFile(id), `Series ${id} of ${ofWhich(id)}`] as [string, string]),
+		...ids.flatMap((id) => [...(monthsOf.get(id)?.keys() ?? [])].map((month) => [monthFile(id, month), `the month ${month} of Series ${id}`] as [string, string])),
 		...checkoutPrices.map((path) => [priceFile(dateOf(path)), `the price file ${path}`] as [string, string]),
 	]);
 	for (const [path, what] of expected) if (!held.has(path)) problems.push(`${path} is missing: ${what} has no file in the tree`);
 	for (const path of files) {
 		if (expected.has(path)) continue;
 		const series = SERIES_PATH.exec(path);
-		problems.push(series ? `${path} is in the tree, but Series ${series[1]} is in neither file of Derivations` : `${path} is in the tree, but is no file the tree should hold`);
+		const month = MONTH_PATH.exec(path);
+		if (series) problems.push(`${path} is in the tree, but Series ${series[1]} is in neither file of Derivations`);
+		else if (month && monthsOf.has(month[1] as string)) problems.push(`${path} is in the tree, but no Run of Series ${month[1]} started in ${month[2]}`);
+		else if (month) problems.push(`${path} is in the tree, but Series ${month[1]} is in neither file of Derivations`);
+		else problems.push(`${path} is in the tree, but is no file the tree should hold`);
 	}
 
-	// The schemas: this repository's, byte for byte in the tree; and this repository's are what every file is validated against.
+	// No file over its kind's ceiling.
+	for (const path of files) {
+		const ceiling = CEILINGS.find((kind) => kind.path.test(path));
+		if (ceiling === undefined) continue;
+		const size = statSync(join(sources.tree, ...path.split("/"))).size;
+		if (size > ceiling.bytes) problems.push(`${path} is ${size} bytes, over the ceiling of ${ceiling.bytes} for ${ceiling.kind}: ${ceiling.whenHit}`);
+	}
+
+	// The schemas: this repository's, byte for byte in the tree, each a valid JSON Schema; and this repository's are what every file is validated against.
 	const ajv = new Ajv2020({ strict: true, allErrors: true });
 	const validators = new Map<SchemaName, ValidateFunction>();
 	for (const { name, source, closed } of SCHEMAS) {
 		const bytes = readFileSync(join(ROOT, source));
 		if (held.has(schemaFile(name))) {
 			if (!read(schemaFile(name)).equals(bytes)) problems.push(`${schemaFile(name)} is not byte for byte ${source} of this repository`);
-			parse(schemaFile(name));
+			const published = parse(schemaFile(name));
+			if (published !== undefined && !ajv.validateSchema(published as object)) {
+				problems.push(`${schemaFile(name)} is not a valid JSON Schema: ${ajv.errorsText(ajv.errors)}`);
+			}
 		}
-		const schema: unknown = parseStrictJson(bytes);
-		validators.set(name, ajv.compile((closed ? closeSchema(schema) : schema) as object));
+		try {
+			const schema: unknown = parseStrictJson(bytes, { exactNumbers: true });
+			validators.set(name, ajv.compile((closed ? closeSchema(schema) : schema) as object));
+		} catch (error) {
+			problems.push(`${source} of this repository is not a schema the check can use: ${error instanceof Error ? error.message : String(error)}`);
+		}
 	}
 	const validate = (path: string, value: unknown, name: SchemaName): void => {
-		const validator = validators.get(name) as ValidateFunction;
-		if (validator(value)) return;
+		const validator = validators.get(name);
+		if (validator === undefined || validator(value)) return;
 		const errors = (validator.errors ?? []).slice(0, 5).map((error) => {
 			const extra = (error.params as { additionalProperty?: string }).additionalProperty;
 			return `${error.instancePath || "/"} ${error.message ?? "is invalid"}${extra === undefined ? "" : `: ${extra}`}`;
@@ -324,14 +448,24 @@ export function checkApi(sources: CheckSources): CheckResult {
 		problems.push(`${path} does not match ${schemaFile(name)}: ${errors.join("; ")}${(validator.errors?.length ?? 0) > 5 ? `; and ${(validator.errors?.length ?? 0) - 5} more` : ""}`);
 	};
 
-	// Link fields: each names a file under the base, checked once per address.
+	// Link fields: each names a file under the base, checked once per address; and each link to a file of the tree is a step a reader can take from the file that holds it.
 	const linked = new Set<string>();
+	const steps = new Map<string, Set<string>>();
 	const link = (from: string, url: unknown, { mustBeUnderBase = true } = {}): void => {
-		if (typeof url !== "string" || linked.has(url)) return; // the schema says what type it must be
+		if (typeof url !== "string") return; // the schema says what type it must be
 		const under = url.startsWith(`${base}/`);
+		const path = under ? url.slice(base.length + 1) : "";
+		if (under && held.has(path)) {
+			let next = steps.get(from);
+			if (next === undefined) {
+				next = new Set();
+				steps.set(from, next);
+			}
+			next.add(path);
+		}
+		if (linked.has(url)) return;
 		if (!under && !mustBeUnderBase) return;
 		linked.add(url);
-		const path = under ? url.slice(base.length + 1) : "";
 		if (!under) problems.push(`${from} links ${url}, which is not under the base ${base}`);
 		else if (path.startsWith("v1/")) {
 			if (!held.has(path)) problems.push(`${from} links ${url}, which is not a file of the tree`);
@@ -424,6 +558,8 @@ export function checkApi(sources: CheckSources): CheckResult {
 	};
 
 	// The table of contents.
+	/** The schemas the table of contents lists; undefined when it could not be read. */
+	let listedSchemas: Json[] | undefined;
 	if (held.has(INDEX)) {
 		const index = parse(INDEX);
 		if (index !== undefined) {
@@ -442,7 +578,13 @@ export function checkApi(sources: CheckSources): CheckResult {
 					schema: "ledgermath.api.index/1",
 					schema_url: address(schemaFile("index")),
 					newest_run_started_at: newest,
-					series: { url: address(LIST), schema_url: address(schemaFile("series-list")), count: ids.length, series_file_schema_url: address(schemaFile("series")) },
+					series: {
+						url: address(LIST),
+						schema_url: address(schemaFile("series-list")),
+						count: ids.length,
+						series_file_schema_url: address(schemaFile("series")),
+						month_file_schema_url: address(schemaFile("series-month")),
+					},
 					schemas: SCHEMAS.filter(({ name }) => held.has(schemaFile(name))).map(({ name, describes }) => ({ name, describes, url: address(schemaFile(name)) })),
 				},
 				"the tree and the Derivations make it",
@@ -454,20 +596,237 @@ export function checkApi(sources: CheckSources): CheckResult {
 				problems.push(`${INDEX}: evidence.blob_url_template is ${show(ofEvidence.blob_url_template)}, not ${base}/blobs/sha256/{hex}`);
 			}
 			const ofSeries = ofIndex("series");
-			for (const url of [value.schema_url, value.url, ofSeries.url, ofSeries.schema_url, ofSeries.series_file_schema_url, ofPrices.schema_url]) link(INDEX, url);
+			for (const url of [value.schema_url, value.url, ofSeries.url, ofSeries.schema_url, ofSeries.series_file_schema_url, ofSeries.month_file_schema_url, ofPrices.schema_url]) link(INDEX, url);
 			if (isObject(ofPrices.newest)) link(INDEX, ofPrices.newest.url);
 			for (const entry of Array.isArray(ofPrices.files) ? ofPrices.files : []) if (isObject(entry)) link(INDEX, entry.url);
-			for (const entry of Array.isArray(value.schemas) ? value.schemas : []) if (isObject(entry)) link(INDEX, entry.url);
+			listedSchemas = (Array.isArray(value.schemas) ? value.schemas : []).filter(isObject);
+			for (const entry of listedSchemas) link(INDEX, entry.url);
 			// The schema's pattern says what an address for the docs is written as; WHATWG's URL parser must read it as https with a host too.
 			if (!isHttpsAddress(value.docs)) problems.push(`${INDEX}: docs is ${show(value.docs)}, not an absolute https address with a host`);
 			link(INDEX, value.docs, { mustBeUnderBase: false });
 		}
 	}
+	// Every file of the tree is of a kind one schema the table of contents lists describes, or is one of those schemas.
+	if (listedSchemas !== undefined) {
+		const kinds = listedSchemas.filter((entry) => typeof entry.describes === "string").map((entry) => ({ name: String(entry.name), pattern: describedBy(entry.describes as string) }));
+		const schemaFiles = new Set(listedSchemas.map((entry) => (typeof entry.url === "string" && entry.url.startsWith(`${base}/`) ? entry.url.slice(base.length + 1) : "")));
+		for (const path of files) {
+			if (schemaFiles.has(path)) continue;
+			if (SCHEMA_PATH.test(path)) {
+				problems.push(`${path} is a schema, but ${INDEX} does not list it`);
+				continue;
+			}
+			const by = kinds.filter((kind) => kind.pattern.test(path)).map((kind) => kind.name);
+			if (by.length === 0) problems.push(`${path} is of no kind of file a schema listed in ${INDEX} describes`);
+			else if (by.length > 1) problems.push(`${path} is described by ${by.length} schemas listed in ${INDEX}: ${by.join(", ")}`);
+		}
+	}
 
-	// The Series files, each against its Derivations; and what its row should say, read from the file.
+	/** A Derivation's point as the tree writes it: with its Run file's sha256 after its path, without evidence and boot_summary (checkEvidence sees to those), and requests v1's group_through as it stood through the Run. */
+	const expectedPoints = (id: string, name: string, method: SeriesDerivation | RequestsDerivation): Array<Json | undefined> => {
+		const first = method.points.findIndex((point) => point.group !== method.points[0]?.group);
+		return method.points.map((derived: AnyPoint, i) => {
+			const cited: CitedRun | undefined = method.runs[i];
+			if (cited === undefined || cited.id !== derived.run || cited.path !== derived.path) {
+				problems.push(`${name}'s Derivation of Series ${id} cites another Run at ${i} than its point ${i}`);
+				return undefined;
+			}
+			const point: Json = { ...derived, sha256: cited.sha256 };
+			if ("group_through" in derived && first >= 0 && i < first) {
+				// Before the Series' first Run of a second group the tree writes null: the Derivation's value must then be its through, or the tree would lose it.
+				if (canonical(derived.group_through) !== canonical(derived.through)) {
+					problems.push(`${name}'s Derivation of Series ${id} holds, at point ${i}, before the Series' first Run of a second group, a group_through other than its through: the tree's null would lose it`);
+				}
+				point.group_through = null;
+			}
+			return point;
+		});
+	};
+	/** Points read from the tree against the points expected of them, each compared without evidence and boot_summary; and each point's evidence. */
+	const comparePoints = (where: string, file: string, read: unknown[], want: Array<Json | undefined>, against: string, offset = 0): void => {
+		if (read.length !== want.length) problems.push(`${where}: /points has ${read.length} items, not ${want.length}, as ${against}`);
+		let differing = 0;
+		read.forEach((point, i) => {
+			const expectedPoint = want[i];
+			if (!isObject(point) || expectedPoint === undefined) return;
+			const { evidence: _evidence, boot_summary: _bootSummary, ...own } = point;
+			const found = difference(own, expectedPoint);
+			if (found !== null && ++differing <= POINTS_SHOWN) problems.push(`${where}: point ${i + offset}: ${found}, as ${against}`);
+			checkEvidence(`${where}'s point ${String(point.run)}`, point);
+			link(file, point.evidence);
+			if (point.boot_summary !== null) link(file, point.boot_summary);
+		});
+		if (differing > POINTS_SHOWN) problems.push(`${where}: and ${differing - POINTS_SHOWN} more points differ`);
+	};
+	const summaryOfStat = (stat: unknown): unknown => {
+		if (!isObject(stat)) return stat;
+		const { count, p5, p50, p95 } = stat;
+		return { count, p5, p50, p95 };
+	};
+	const percentileSummaries = (percentiles: SeriesDerivation["percentiles"]): Json => ({
+		time_per_repetition_ns: summaryOfStat(percentiles.time_per_repetition_ns),
+		bytes_per_second: summaryOfStat(percentiles.bytes_per_second),
+	});
+	const counts = (points: readonly AnyPoint[]): Json => {
+		const counted = points.filter((point) => point.counted).length;
+		return { counted_runs: counted, failed_runs: points.length - counted };
+	};
+
+	// The month files and the Series files, each against its Derivations; and what its row should say, read from the Series file.
 	const rowsOfFiles = new Map<string, Json>();
 	let seriesFiles = 0;
+	let monthFiles = 0;
 	for (const id of ids) {
+		const derivation = lead(id);
+		const ofSeries = seriesV1.get(id);
+		const ofRequests = requestsV1.get(id);
+		const months = monthsOf.get(id) ?? new Map<string, number[]>();
+		const methods: Array<{ key: string; name: string; method: SeriesDerivation | RequestsDerivation }> = [
+			...(ofSeries === undefined ? [] : [{ key: "series_v1", name: "series v1", method: ofSeries }]),
+			...(ofRequests === undefined ? [] : [{ key: "requests_v1", name: "requests v1", method: ofRequests }]),
+		];
+		const identity = {
+			benchmark: derivation.series.benchmark,
+			params: derivation.series.params,
+			build: derivation.series.build,
+			instance_type: derivation.series.instance_type,
+			availability_zone_id: derivation.series.availability_zone_id,
+		};
+		const wanted = new Map(methods.map(({ key, name, method }) => [key, expectedPoints(id, name, method)] as const));
+		/** Each Method's points as the month files hold them, by Run id, with the months each is in; whether every month file was read. */
+		const readPoints = new Map<string, Map<string, { point: Json; months: string[] }>>(methods.map(({ key }) => [key, new Map()] as const));
+		const pointsInOrder = new Map<string, Json[]>(methods.map(({ key }) => [key, []] as const));
+		let allMonthsRead = true;
+		/** Months whose file is there but could not be read: their problems are reported, and their Runs are not reported again as in no month file. */
+		const unread = new Set<string>();
+
+		// Its month files: those the Derivations make, and any other the tree holds for it.
+		const heldMonths = files
+			.map((path) => MONTH_PATH.exec(path))
+			.filter((match): match is RegExpExecArray => match !== null && match[1] === id)
+			.map((match) => match[2] as string);
+		for (const month of [...new Set([...months.keys(), ...heldMonths])].sort(byText)) {
+			const path = monthFile(id, month);
+			if (!held.has(path)) {
+				allMonthsRead = false;
+				continue;
+			}
+			const file = parse(path);
+			if (file === undefined || !isObject(file)) {
+				if (file !== undefined) validate(path, file, "series-month");
+				allMonthsRead = false;
+				unread.add(month);
+				continue;
+			}
+			monthFiles++;
+			validate(path, file, "series-month");
+			const indexes = months.get(month) ?? [];
+			const ofMonth = indexes.map((i) => derivation.points[i] as AnyPoint);
+			compare(
+				path,
+				file,
+				{
+					schema: "ledgermath.api.series-month/1",
+					schema_url: address(schemaFile("series-month")),
+					index: address(INDEX),
+					id,
+					month,
+					url: address(path),
+					series_url: address(seriesFile(id)),
+					...identity,
+					runs: indexes.length,
+					...(ofMonth.length === 0
+						? {}
+						: {
+								oldest_run_started_at: ofMonth.map((point) => point.started_at).sort(byText)[0],
+								newest_run_started_at: ofMonth.map((point) => point.started_at).sort(byText)[ofMonth.length - 1],
+							}),
+				},
+				"its Derivations and the base make it",
+			);
+			for (const url of [file.schema_url, file.index, file.url, file.series_url]) link(path, url);
+			const derivations = isObject(file.derivations) ? file.derivations : {};
+			members(`${path}: derivations`, derivations, methods.map(({ key }) => key));
+			for (const { key, name, method } of methods) {
+				const block = derivations[key];
+				if (!isObject(block)) {
+					allMonthsRead = false;
+					unread.add(month);
+					continue;
+				}
+				const where = `${path}: ${key}`;
+				members(where, block, key === "series_v1" ? ["method", "points", "differed"] : ["method", "points"]);
+				compare(where, block, { method: key === "series_v1" ? sources.series.method : sources.requests.method }, `${name}'s file of Derivations holds it`);
+				const points = Array.isArray(block.points) ? block.points : [];
+				const want = wanted.get(key) as Array<Json | undefined>;
+				comparePoints(where, path, points, indexes.map((i) => want[i]), `${name}'s Derivation of Series ${id} holds it for ${month}`);
+				const byRun = readPoints.get(key) as Map<string, { point: Json; months: string[] }>;
+				for (const point of points) {
+					if (!isObject(point) || typeof point.run !== "string") continue;
+					const known = byRun.get(point.run);
+					if (known === undefined) byRun.set(point.run, { point, months: [month] });
+					else known.months.push(month);
+					(pointsInOrder.get(key) as Json[]).push(point);
+				}
+				if (key === "series_v1") {
+					// The entry of a pair of consecutive Runs is filed under the month of its later Run.
+					const series = method as SeriesDerivation;
+					const startOf = new Map(series.points.map((point) => [point.run, point.started_at] as const));
+					const filed = series.differed.filter((entry) => STARTED_AT.exec(startOf.get(entry.to) ?? "")?.[1] === month);
+					const differed = Array.isArray(block.differed) ? block.differed : [];
+					const found = difference(differed, filed, "/differed");
+					if (found !== null) problems.push(`${where}: ${found}, as series v1's Derivation of Series ${id} holds the entries whose later Run started in ${month}`);
+					for (const entry of differed) {
+						if (!isObject(entry) || typeof entry.to !== "string") continue;
+						const later = STARTED_AT.exec(startOf.get(entry.to) ?? "")?.[1];
+						if (later !== month) problems.push(`${where}: the entry from ${named(entry.from)} to ${entry.to} is filed under ${month}, but ${entry.to} ${later === undefined ? "is no Run of the Series" : `started in ${later}`}: an entry is filed under the month of its later Run`);
+					}
+				}
+			}
+		}
+		// Each Run of the Series is in exactly one month file, that of the month it started in.
+		for (const { key, name, method } of methods) {
+			const byRun = readPoints.get(key) as Map<string, { point: Json; months: string[] }>;
+			const cited = new Set(method.points.map((point) => point.run));
+			for (const point of method.points) {
+				const month = STARTED_AT.exec(point.started_at)?.[1];
+				const found = byRun.get(point.run);
+				if (found === undefined) {
+					if (month !== undefined && held.has(monthFile(id, month)) && !unread.has(month)) problems.push(`Series ${id}: ${name}'s Run ${point.run}, which started in ${month}, is in no month file`);
+				} else if (found.months.length > 1) problems.push(`Series ${id}: ${name}'s Run ${point.run} is in ${found.months.length} month files: ${found.months.join(", ")}`);
+				else if (found.months[0] !== month) problems.push(`Series ${id}: ${name}'s Run ${point.run} started in ${month ?? show(point.started_at)}, but is in the month file of ${found.months[0]}`);
+			}
+			for (const [run, { months: where }] of byRun) if (!cited.has(run)) problems.push(`Series ${id}: the month file of ${where.join(", ")} holds a ${name} point of Run ${run}, which its Derivation does not cite`);
+		}
+		// What the Series file leaves out is what its month files' points recover.
+		if (allMonthsRead) {
+			const runsOf = (points: readonly Json[]): string[] => points.map((point) => String(point.run));
+			const recovered = (what: string, held: readonly string[] | undefined, points: readonly Json[], rule: string): void => {
+				const found = difference(held ?? [], runsOf(points));
+				if (found !== null) problems.push(`${seriesFile(id)}: ${what} lists other Runs in its Derivation than ${rule} of the month files (${found}), so the Series file cannot leave it out`);
+			};
+			if (ofSeries !== undefined) {
+				const points = pointsInOrder.get("series_v1") as Json[];
+				const timed = (members: Json[]) => members.filter((point) => point.counted === true);
+				const bytes = (members: Json[]) => members.filter((point) => point.counted === true && point.bytes_per_repetition !== null);
+				const stats = (label: string, percentiles: SeriesDerivation["percentiles"], members: Json[]): void => {
+					recovered(`series v1's ${label}percentiles of time_per_repetition_ns`, percentiles.time_per_repetition_ns?.runs, timed(members), "the counted points");
+					recovered(`series v1's ${label}percentiles of bytes_per_second`, percentiles.bytes_per_second?.runs, bytes(members), "the counted points with a bytes_per_repetition");
+				};
+				stats("", ofSeries.percentiles, points);
+				for (const group of ofSeries.groups) {
+					const ofGroup = points.filter((point) => point.group === group.id);
+					recovered(`series v1's group ${group.id}`, group.runs, ofGroup, `the points of group ${group.id}`);
+					stats(`group ${group.id}'s `, group.percentiles, ofGroup);
+				}
+			}
+			if (ofRequests !== undefined) {
+				const points = pointsInOrder.get("requests_v1") as Json[];
+				for (const group of ofRequests.groups) recovered(`requests v1's group ${group.id}`, group.runs, points.filter((point) => point.group === group.id), `the points of group ${group.id}`);
+			}
+		}
+
+		// The Series file.
 		const path = seriesFile(id);
 		if (!held.has(path)) continue;
 		const file = parse(path);
@@ -475,8 +834,11 @@ export function checkApi(sources: CheckSources): CheckResult {
 		seriesFiles++;
 		validate(path, file, "series");
 		if (!isObject(file)) continue;
-		const derivation = lead(id);
 		const times = span.get(id);
+		const monthEntries = [...months].map(([month, indexes]) => {
+			const starts = indexes.map((i) => (derivation.points[i] as AnyPoint).started_at).sort(byText);
+			return { month, url: address(monthFile(id, month)), runs: indexes.length, oldest_run_started_at: starts[0], newest_run_started_at: starts[starts.length - 1] };
+		});
 		compare(
 			path,
 			file,
@@ -486,46 +848,42 @@ export function checkApi(sources: CheckSources): CheckResult {
 				index: address(INDEX),
 				id,
 				url: address(path),
-				benchmark: derivation.series.benchmark,
-				params: derivation.series.params,
-				build: derivation.series.build,
-				instance_type: derivation.series.instance_type,
-				availability_zone_id: derivation.series.availability_zone_id,
+				...identity,
 				runs: derivation.runs.length,
 				...(times === undefined ? {} : { oldest_run_started_at: times.oldest, newest_run_started_at: times.newest }),
+				newest_runs: NEWEST_RUNS,
+				months: monthEntries,
 			},
 			"its Derivations and the base make it",
 		);
 		for (const url of [file.schema_url, file.index, file.url]) link(path, url);
+		// Its months are exactly the month files the tree holds for it.
+		const listed = (Array.isArray(file.months) ? file.months : []).filter(isObject);
+		for (const entry of listed) link(path, entry.url);
+		const listedPaths = new Set(listed.map((entry) => (typeof entry.url === "string" && entry.url.startsWith(`${base}/`) ? entry.url.slice(base.length + 1) : String(entry.url))));
+		for (const month of heldMonths) if (!listedPaths.has(monthFile(id, month))) problems.push(`${path} does not list its month file ${monthFile(id, month)} among its months`);
 		const derivations = isObject(file.derivations) ? file.derivations : {};
-		const ofSeries = seriesV1.get(id);
-		const ofRequests = requestsV1.get(id);
-		members(`${path}: derivations`, derivations, [...(ofSeries === undefined ? [] : ["series_v1"]), ...(ofRequests === undefined ? [] : ["requests_v1"])]);
-		const methods: Array<[string, SeriesDerivation | RequestsDerivation | undefined, Json, string]> = [
-			[
-				"series_v1",
-				ofSeries,
-				ofSeries === undefined
-					? {}
-					: {
+		members(`${path}: derivations`, derivations, methods.map(({ key }) => key));
+		const parts: Record<string, Json> = {
+			...(ofSeries === undefined
+				? {}
+				: {
+						series_v1: {
 							method: sources.series.method,
 							definitions: sources.series.definitions,
 							split_on: sources.series.split_on,
 							left_out: sources.series.left_out,
 							not_split_on: sources.series.not_split_on,
-							percentiles: ofSeries.percentiles,
-							groups: ofSeries.groups,
-							differed: ofSeries.differed,
+							...counts(ofSeries.points),
+							percentiles: percentileSummaries(ofSeries.percentiles),
+							groups: ofSeries.groups.map((group) => ({ id: group.id, facts: group.facts, percentiles: percentileSummaries(group.percentiles) })),
 							sections: ofSeries.sections,
 						},
-				"series v1",
-			],
-			[
-				"requests_v1",
-				ofRequests,
-				ofRequests === undefined
-					? {}
-					: {
+					}),
+			...(ofRequests === undefined
+				? {}
+				: {
+						requests_v1: {
 							method: sources.requests.method,
 							definitions: sources.requests.definitions,
 							phases: sources.requests.phases,
@@ -534,39 +892,33 @@ export function checkApi(sources: CheckSources): CheckResult {
 							request_facts: sources.requests.request_facts,
 							split_on: sources.requests.split_on,
 							left_out: sources.requests.left_out,
+							...counts(ofRequests.points),
 							recorded: ofRequests.recorded,
 							pool: ofRequests.pool,
-							groups: ofRequests.groups,
+							groups: ofRequests.groups.map((group) => ({ id: group.id, facts: group.facts, pool: group.pool })),
 						},
-				"requests v1",
-			],
-		];
-		for (const [key, method, parts, name] of methods) {
+					}),
+		};
+		for (const { key, name } of methods) {
 			const block = derivations[key];
-			if (method === undefined || !isObject(block)) continue;
+			if (!isObject(block)) continue;
 			const where = `${path}: ${key}`;
-			members(where, block, [...Object.keys(parts), "points"]);
-			compare(where, block, parts, `${name}'s Derivation of Series ${id} holds it`);
-			// Every point is the Derivation's, with what the tree adds: its Run file's sha256, as cited; and its evidence and its boot's summary, which checkEvidence reads from the checkout.
-			const points = Array.isArray(block.points) ? block.points : [];
-			if (points.length !== method.points.length) problems.push(`${where}: /points has ${points.length} items, not the ${method.points.length} of ${name}'s Derivation of Series ${id}`);
-			let differing = 0;
-			points.forEach((point: unknown, i: number) => {
-				const derived = method.points[i];
-				const cited: CitedRun | undefined = method.runs[i];
-				if (derived === undefined || !isObject(point)) return;
-				if (cited === undefined || cited.id !== derived.run || cited.path !== derived.path) {
-					problems.push(`${where}: ${name}'s Derivation of Series ${id} cites another Run at ${i} than its point ${i}`);
-					return;
-				}
-				const { evidence: _evidence, boot_summary: _bootSummary, ...own } = point;
-				const found = difference(own, { ...derived, sha256: cited.sha256 });
-				if (found !== null && ++differing <= POINTS_SHOWN) problems.push(`${where}: point ${i}: ${found}, as ${name}'s Derivation of Series ${id} holds it`);
-				checkEvidence(`${where}'s point ${String(point.run)}`, point);
-				link(path, point.evidence);
-				if (point.boot_summary !== null) link(path, point.boot_summary);
+			const expectedParts = parts[key] as Json;
+			members(where, block, [...Object.keys(expectedParts), "newest_points"]);
+			compare(where, block, expectedParts, `${name}'s Derivation of Series ${id} holds it`);
+			// The newest points: the Derivation's last NEWEST_RUNS, and the same points, value for value, as the month files hold them.
+			const newestPoints = Array.isArray(block.newest_points) ? block.newest_points : [];
+			const want = wanted.get(key) as Array<Json | undefined>;
+			const from = Math.max(want.length - NEWEST_RUNS, 0);
+			comparePoints(`${where}: newest_points`, path, newestPoints, want.slice(from), `${name}'s Derivation of Series ${id} holds its newest ${NEWEST_RUNS}`, from);
+			const byRun = readPoints.get(key) as Map<string, { point: Json; months: string[] }>;
+			newestPoints.forEach((point: unknown, i: number) => {
+				if (!isObject(point) || typeof point.run !== "string") return;
+				const inMonth = byRun.get(point.run);
+				if (inMonth === undefined) return; // reported above
+				const found = difference(point, inMonth.point);
+				if (found !== null) problems.push(`${where}: newest_points/${i}, Run ${point.run}, is not its point in the month file of ${inMonth.months[0]}: ${found}`);
 			});
-			if (differing > POINTS_SHOWN) problems.push(`${where}: and ${differing - POINTS_SHOWN} more points differ`);
 		}
 		try {
 			rowsOfFiles.set(id, rowOf(file));
@@ -650,7 +1002,7 @@ export function checkApi(sources: CheckSources): CheckResult {
 				const found = ofFile === undefined ? null : difference(row, ofFile);
 				if (found !== null) problems.push(`${LIST}: the row of Series ${id} differs from its file ${seriesFile(id)}: ${found}`);
 			}
-			for (const id of ids) if (!rowIds.has(id)) problems.push(`${LIST} has no row for Series ${id} of ${seriesV1.has(id) ? "series v1" : "requests v1"}`);
+			for (const id of ids) if (!rowIds.has(id)) problems.push(`${LIST} has no row for Series ${id} of ${ofWhich(id)}`);
 			const order = (id: string): string[] => {
 				const { series } = lead(id);
 				return [series.benchmark, series.instance_type ?? "", series.availability_zone_id ?? "", canonical(series.params), series.build, id];
@@ -679,28 +1031,33 @@ export function checkApi(sources: CheckSources): CheckResult {
 		if (value !== undefined) validate(at, value, "prices");
 	}
 
-	return { problems, files: files.length, series: seriesFiles, runFiles: [...runFiles.values()].filter((file) => file !== null).length };
+	// Every file is reached from the table of contents by following links: known only when every file could be read.
+	if (held.has(INDEX) && unreadable === 0) {
+		const reached = new Set([INDEX]);
+		const queue = [INDEX];
+		while (queue.length > 0) {
+			for (const next of steps.get(queue.pop() as string) ?? []) {
+				if (reached.has(next)) continue;
+				reached.add(next);
+				queue.push(next);
+			}
+		}
+		for (const path of files) if (!reached.has(path)) problems.push(`${path} is in the tree, but no link leads to it from ${INDEX}`);
+	}
+
+	return { problems, files: files.length, series: seriesFiles, months: monthFiles, runFiles: [...runFiles.values()].filter((file) => file !== null).length };
 }
 
 /**
  * The row a Series file makes, by the design: every field the row shares
  * with the file, with the file's value, and each Method's summary made from
- * the file's own figures (its points counted and not, its groups, and its
- * percentiles or pooled figures without the Runs or histograms behind them).
+ * the file's own: its counts of counted and failed Runs, how many groups it
+ * has, and its percentiles or pooled figures without the histograms behind
+ * them.
  */
 function rowOf(file: Json): Json {
 	const derivations = file.derivations as Json;
-	const counts = (points: Json[]): Json => {
-		const counted = points.filter((point) => point.counted === true).length;
-		return { counted_runs: counted, failed_runs: points.length - counted };
-	};
-	const summary = (stat: unknown): unknown => {
-		if (stat === null) return null;
-		const { count, p5, p50, p95 } = stat as Json;
-		return { count, p5, p50, p95 };
-	};
 	const series = derivations.series_v1 as Json;
-	const percentiles = series.percentiles as Json;
 	const row: Json = {
 		id: file.id,
 		url: file.url,
@@ -715,9 +1072,10 @@ function rowOf(file: Json): Json {
 		derivations: {
 			series_v1: {
 				method: series.method,
-				...counts(series.points as Json[]),
+				counted_runs: series.counted_runs,
+				failed_runs: series.failed_runs,
 				groups: (series.groups as unknown[]).length,
-				percentiles: { time_per_repetition_ns: summary(percentiles.time_per_repetition_ns), bytes_per_second: summary(percentiles.bytes_per_second) },
+				percentiles: series.percentiles,
 			},
 		},
 	};
@@ -726,7 +1084,8 @@ function rowOf(file: Json): Json {
 		const pool = requests.pool as Json;
 		(row.derivations as Json).requests_v1 = {
 			method: requests.method,
-			...counts(requests.points as Json[]),
+			counted_runs: requests.counted_runs,
+			failed_runs: requests.failed_runs,
 			groups: (requests.groups as unknown[]).length,
 			pool: {
 				runs: pool.runs,
@@ -742,4 +1101,62 @@ function rowOf(file: Json): Json {
 		};
 	}
 	return row;
+}
+
+/**
+ * Whether a tree keeps the promise its month files make (ADR-0030): once
+ * written, a month file changes only when a Run of its month is added, or
+ * when a point's boot summary arrives (boot_summary turns from null into an
+ * address), and is never removed. Compares every month file of the tree a
+ * reader was last served (`previous`) with the same file of this one; a file
+ * of this tree that `previous` lacks is new, and passes. A problem for every
+ * month file that changed otherwise: chiefly a Run that arrived after a later
+ * Run of its Series, which changes its own month and the cumulative figures
+ * (through, group_through, a group's letter) and pair entries of every later
+ * month, as it changes the Derivations.
+ */
+export function checkStability(previous: string, tree: string): string[] {
+	const problems: string[] = [];
+	const months = (directory: string): string[] => listFiles(directory).filter((path) => MONTH_PATH.test(path));
+	const now = new Set(months(tree));
+	const read = (directory: string, path: string): unknown => {
+		try {
+			return parseStrictJson(readFileSync(join(directory, ...path.split("/"))), { exactNumbers: true });
+		} catch (error) {
+			problems.push(`${path} of ${directory} is not strict JSON: ${error instanceof Error ? error.message : String(error)}`);
+			return undefined;
+		}
+	};
+	/** Each Method's points of a month file, by key. */
+	const pointsOf = (file: unknown): Map<string, Json[]> => {
+		const derivations = isObject(file) && isObject(file.derivations) ? file.derivations : {};
+		return new Map(Object.entries(derivations).map(([key, block]) => [key, (isObject(block) && Array.isArray(block.points) ? block.points : []).filter(isObject)] as const));
+	};
+	for (const path of months(previous)) {
+		if (!now.has(path)) {
+			problems.push(`${path} was in the previous tree and is not in this one: a month file, once written, stays`);
+			continue;
+		}
+		const before = readFileSync(join(previous, ...path.split("/")));
+		if (before.equals(readFileSync(join(tree, ...path.split("/"))))) continue;
+		const was = read(previous, path);
+		const is = read(tree, path);
+		if (was === undefined || is === undefined) continue;
+		const wasPoints = pointsOf(was);
+		const isPoints = pointsOf(is);
+		const added = [...isPoints].some(([key, points]) => {
+			const known = new Set((wasPoints.get(key) ?? []).map((point) => point.run));
+			return points.some((point) => !known.has(point.run));
+		});
+		if (added) continue;
+		// No Run of its month was added: the one change allowed is a boot summary that arrived.
+		const arrived = structuredClone(is) as Json;
+		for (const [key, points] of pointsOf(arrived)) {
+			const wasByRun = new Map((wasPoints.get(key) ?? []).map((point) => [point.run, point] as const));
+			for (const point of points) if (wasByRun.get(point.run)?.boot_summary === null && typeof point.boot_summary === "string") point.boot_summary = null;
+		}
+		const found = difference(arrived, was);
+		if (found !== null) problems.push(`${path} changed since the previous tree although no Run of its month was added: ${found}`);
+	}
+	return problems;
 }

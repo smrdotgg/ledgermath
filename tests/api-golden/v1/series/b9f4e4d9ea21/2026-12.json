@@ -1,0 +1,50 @@
+{
+  "schema": "ledgermath.api.series-month/1",
+  "schema_url": "https://api.ledgermath.com/v1/schemas/series-month.schema.json",
+  "index": "https://api.ledgermath.com/v1/index.json",
+  "id": "b9f4e4d9ea21",
+  "month": "2026-12",
+  "url": "https://api.ledgermath.com/v1/series/b9f4e4d9ea21/2026-12.json",
+  "series_url": "https://api.ledgermath.com/v1/series/b9f4e4d9ea21.json",
+  "benchmark": "http_get",
+  "params": {
+    "auth": "sigv4",
+    "budget_seconds": 240,
+    "ca_file": "/etc/pki/tls/certs/ca-bundle.crt",
+    "connection": "new",
+    "gap_mean_ms": 200,
+    "key": "http_get/v1/4096",
+    "object_bytes": 4096,
+    "resolv_conf": "/etc/resolv.conf",
+    "timeout_ms": 10000
+  },
+  "build": "static",
+  "instance_type": "c6i.8xlarge",
+  "availability_zone_id": "use2-az3",
+  "runs": 1,
+  "oldest_run_started_at": "2026-12-01T22:20:00.000000000Z",
+  "newest_run_started_at": "2026-12-01T22:20:00.000000000Z",
+  "derivations": {
+    "series_v1": {
+      "method": {
+        "name": "series",
+        "version": 1
+      },
+      "points": [
+        {"run":"01a233b1-7e80-76f7-84f7-6f3e6f89cad2","path":"runs/2026/12/01/01a233b1-7e80-76f7-84f7-6f3e6f89cad2.json","sha256":"93e3981a12c00c2e3d95bcb914e5d122129a8dfa97b9db72b8f5cc043c0542a8","evidence":"https://api.ledgermath.com/runs/2026/12/01/01a233b1-7e80-76f7-84f7-6f3e6f89cad2.json","boot_summary":null,"started_at":"2026-12-01T22:20:00.000000000Z","boot":"boot-2026-12-01","group":"B","counted":true,"failure":null,"samples":[{"sample":1,"ns":19000000,"repetitions":1,"ns_per_repetition":19000000},{"sample":2,"ns":19060000,"repetitions":1,"ns_per_repetition":19060000},{"sample":3,"ns":19120000,"repetitions":1,"ns_per_repetition":19120000},{"sample":4,"ns":19180000,"repetitions":1,"ns_per_repetition":19180000}],"time_per_repetition_ns":19090000,"bytes_per_repetition":null,"bytes_per_second":null}
+      ],
+      "differed": [
+        {"from":"01a1d322-4180-799c-89d2-fe29b51ae67a","to":"01a233b1-7e80-76f7-84f7-6f3e6f89cad2","facts":["cpuid","lscpu","sys_cpu"],"sections":[{"section":"cpuid","effect":"splits","keys":["$ cpuid"]},{"section":"cpuinfo","effect":"not split on","keys":null},{"section":"devices","effect":"not split on","keys":["/sys/class/nvme/nvme0/serial"]},{"section":"kernel","effect":"left out","keys":["$ uname -a"]},{"section":"lscpu","effect":"splits","keys":["$ lscpu -J"]},{"section":"memory","effect":"not split on","keys":null},{"section":"net_counters","effect":"not split on","keys":null},{"section":"provider","effect":"not split on","keys":["http://169.254.169.254/latest/meta-data/instance-id"]},{"section":"sys_cpu","effect":"splits","keys":["/sys/devices/system/cpu/cpu0/microcode/version"]}]}
+      ]
+    },
+    "requests_v1": {
+      "method": {
+        "name": "requests",
+        "version": 1
+      },
+      "points": [
+        {"run":"01a233b1-7e80-76f7-84f7-6f3e6f89cad2","path":"runs/2026/12/01/01a233b1-7e80-76f7-84f7-6f3e6f89cad2.json","sha256":"93e3981a12c00c2e3d95bcb914e5d122129a8dfa97b9db72b8f5cc043c0542a8","evidence":"https://api.ledgermath.com/runs/2026/12/01/01a233b1-7e80-76f7-84f7-6f3e6f89cad2.json","boot_summary":null,"started_at":"2026-12-01T22:20:00.000000000Z","boot":"boot-2026-12-01","group":"B","counted":true,"failure":null,"exit_code":0,"counted_requests":4,"succeeded":4,"failed":0,"phases":{"dns":{"count":4,"min":200000,"max":200000,"p50":200000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":2}},"connect":{"count":4,"min":900000,"max":900000,"p50":900000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":2}},"tls":{"count":4,"min":2200000,"max":2200000,"p50":2200000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":2}},"send":{"count":4,"min":10000,"max":10000,"p50":10000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":2}},"first_byte":{"count":4,"min":15670000,"max":15850000,"p50":15760000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":2}},"headers":{"count":4,"min":8000,"max":8000,"p50":8000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":2}},"body":{"count":4,"min":12000,"max":12000,"p50":12000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":2}},"total":{"count":4,"min":19000000,"max":19180000,"p50":19090000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":2}}},"failures":[],"setups_failed":[],"warmup_failure":null,"through":{"runs":3,"requests":11,"failed":1,"phases":{"dns":{"count":11,"min":200000,"max":200000,"p50":200000,"p90":200000,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":6,"p90":2}},"connect":{"count":11,"min":900000,"max":900000,"p50":900000,"p90":900000,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":6,"p90":2}},"tls":{"count":11,"min":2200000,"max":2200000,"p50":2200000,"p90":2200000,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":6,"p90":2}},"send":{"count":11,"min":10000,"max":10000,"p50":10000,"p90":10000,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":6,"p90":2}},"first_byte":{"count":11,"min":15670000,"max":17750000,"p50":16711680,"p90":17694720,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":6,"p90":2}},"headers":{"count":11,"min":8000,"max":8000,"p50":8000,"p90":8000,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":6,"p90":2}},"body":{"count":11,"min":12000,"max":12000,"p50":12000,"p90":12000,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":6,"p90":2}},"total":{"count":11,"min":19000000,"max":21080000,"p50":20054016,"p90":21080000,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":6,"p90":2}}},"failures":[{"phase":"first_byte","kind":"timeout","count":1}]},"group_through":{"runs":1,"requests":4,"failed":0,"phases":{"dns":{"count":4,"min":200000,"max":200000,"p50":200000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":2}},"connect":{"count":4,"min":900000,"max":900000,"p50":900000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":2}},"tls":{"count":4,"min":2200000,"max":2200000,"p50":2200000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":2}},"send":{"count":4,"min":10000,"max":10000,"p50":10000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":2}},"first_byte":{"count":4,"min":15670000,"max":15850000,"p50":15794176,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":2}},"headers":{"count":4,"min":8000,"max":8000,"p50":8000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":2}},"body":{"count":4,"min":12000,"max":12000,"p50":12000,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":2}},"total":{"count":4,"min":19000000,"max":19180000,"p50":19005440,"p90":null,"p95":null,"p99":null,"p99.9":null,"at_or_above":{"p50":2}}},"failures":[]}}
+      ]
+    }
+  }
+}
