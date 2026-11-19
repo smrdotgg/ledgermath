@@ -19,7 +19,7 @@ interface Step {
 }
 
 interface Workflow {
-	on: { schedule: Array<{ cron: string }>; workflow_dispatch: unknown };
+	on: { schedule: Array<{ cron: string }>; workflow_dispatch: { inputs?: Record<string, { description?: string; type?: string; default?: unknown }> } | null };
 	permissions: Record<string, string>;
 	concurrency: { group: string; "cancel-in-progress": boolean };
 	jobs: Record<string, { env?: Record<string, string>; steps: Step[] }>;
@@ -107,6 +107,7 @@ describe("the runs workflow", () => {
 	});
 
 	test("builds the data API's files after the page when both Methods succeeded, checks them against the tree the last successful run kept, and keeps only a checked tree, as the artifact api, for a week, uploading nothing else", () => {
+		const text = readFileSync(join(ROOT, ".github", "workflows", "runs.yml"), "utf8");
 		const derive = steps.find((step) => step.id === "derive") as Step;
 		const pageUpload = steps.find((step) => step.uses?.startsWith("actions/upload-artifact@") && step.with?.name === "page") as Step;
 		const build = steps.find((step) => step.run?.includes("scripts/build-api.ts")) as Step;
@@ -128,11 +129,17 @@ describe("the runs workflow", () => {
 		expect(previous.id).toBe("api-previous");
 		expect(previous.if).toBe("${{ !cancelled() && steps.api.outcome == 'success' }}");
 		expect(previous.env).toEqual({ GH_TOKEN: "${{ github.token }}" });
-		// The check compares with it, and is told there may be none only when the fetch said so: a fetch that failed stops the check.
+		// The check compares with it. It is told a new baseline is declared only by a human, through the workflow_dispatch input new_baseline: no step's output, nothing automatic.
 		expect(command(check)).toBe(
 			"bun scripts/check-api.ts --tree api --derivations page/derivations.json --requests-derivations page/requests-derivations.json --runs ledgermath-runs " +
-				"--previous api-previous ${{ steps.api-previous.outputs.comparable == 'false' && '--allow-no-previous' || '' }}",
+				"--previous api-previous ${{ inputs.new_baseline == true && '--allow-no-previous' || '' }}",
 		);
+		expect(workflow.on.workflow_dispatch?.inputs?.new_baseline).toMatchObject({ type: "boolean", default: false });
+		expect(workflow.on.workflow_dispatch?.inputs?.new_baseline?.description).toContain("new baseline");
+		// The only command the flag is written in, and no step decides it.
+		expect(runs.join("\n").split("--allow-no-previous").length).toBe(2);
+		expect(text).not.toContain("outputs.comparable");
+		expect(text).not.toMatch(/GITHUB_OUTPUT/);
 		expect(build.id).toBe("api");
 		expect(build.if).toBe("${{ !cancelled() && steps.derive.outcome == 'success' }}");
 		expect(check.id).toBe("api-check");
@@ -143,7 +150,6 @@ describe("the runs workflow", () => {
 		// The same pinned action as the page's artifact.
 		expect(upload.uses).toBe(pageUpload.uses as string);
 		// Nothing is served or published from this workflow: no copy to a bucket, no deploy, no new permission.
-		const text = readFileSync(join(ROOT, ".github", "workflows", "runs.yml"), "utf8");
 		expect(text).not.toMatch(/aws s3 (cp|sync)|s3:\/\/|sst deploy|vercel/i);
 		expect(workflow.permissions).toEqual({ contents: "read", "id-token": "write", issues: "write", actions: "read" });
 	});

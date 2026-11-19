@@ -2042,7 +2042,7 @@ step, and it goes public only on the maintainer's go.
 
 | Path | Holds |
 |------|-------|
-| `v1/index.json` | The table of contents: the list's address, every price file held with the newest marked, the schemas, the docs, and the template of a blob's address |
+| `v1/index.json` | The table of contents: the list's address, every price file held with the newest marked, the schemas, the docs, the template of a blob's address, and `layout`, the number of the way the files are written |
 | `v1/series.json` | One row per Series, each on a line of its own: what it is, how many Runs, its oldest and newest Run, a summary of each Method's Derivation under `derivations.<method>_v<version>`, and the `url` of its file. Above the rows, each Method's own words, with the Run files it could not read (`methods.<method>_v<version>.unreadable`) |
 | `v1/series/<id>.json` | One Series: each Method's summary at the Derivations' own paths (percentiles, groups and their facts and figures, section counts, `counted_runs`, `failed_runs`), with the Method's definitions; the points of its newest 12 Runs (`newest_points`; `newest_runs` says how many); and `months`, each month a Run of it started in, oldest first, with the month file's `url`, its Runs, its first and last start, and the month file's `sha256` and size in `bytes` |
 | `v1/series/<id>/<yyyy-mm>.json` | One month of a Series: every point of the Runs that started that month (UTC), each Method's under its key, and series v1's `differed` entry for each pair of consecutive Runs whose later Run started that month. Every point gives its Run file's `sha256`, `evidence` (the Run file's address) and `boot_summary` (its boot's, or null when the Runs repository has none) |
@@ -2072,32 +2072,69 @@ address is `--base`, so a private or test address can stand in.
   letter, counted or not (then filtered the same way, for a group's percentile), in order of
   start, then Run id, and the build refuses Derivations where that is not so. In place of
   requests v1's `group_through` the month files hold `group_through_as_of_run`, the group's
-  figures as they stood through each Run, which no later Run changes. It is null before the
+  figures as they stood through each Run, which no Run that started later changes (one that
+  started earlier and arrives late can: cause (c) below). It is null before the
   Series' first Run of a second group, and for a group with no counted Run yet (though
   `through` then holds the other groups' figures); the Derivation's `group_through` is that
   point's `through` for exactly the points before the first point of a second group, in a
   Series of more than one group, and this field for every other point.
-- **When a month file changes.** A month file's bytes change only when (a) a Run that
-  started in that month is added, (b) a boot summary that was missing arrives, (c) a Run
-  arrives late, having started before a Run of the Series already in the files, in that
-  month or an earlier one, or (d) a Method first applies to the Series; otherwise they do
-  not change. A past month is therefore not immutable: each entry of the Series file's
-  months gives its month file's sha256 and size in bytes, so a reader holding a copy can
-  tell whether it is current, and fetches the file again only when the sha256 differs. (a)
-  brings the Run's point, its pair entry, and the month's count and span; (b) turns a
-  point's `boot_summary` from null into its address, and nothing else; (c) does what (a)
-  does and, in that month and every later one, may change the later points' group and
-  requests v1's `through` and `group_through_as_of_run`, and the pair entry of the Run right
-  after it; (d) adds the Method's block to every month file of the Series. The last two are
-  what the Methods produce, and the tree neither changes them nor hides them. `check-api.ts
-  --previous DIR` holds a tree to this against the tree before it: every month file of `DIR`
-  must be in it, byte for byte or changed only for those causes, both files laid out exactly
-  as their values are, no published Run gone; it lists each changed month file by cause. A
-  previous tree that is missing, empty or of another layout (other schemas, another base) is
-  an error unless `--allow-no-previous` says there may be none, for the first build of a
-  layout. The `runs` workflow fetches the artifact `api` of its last successful run on main
-  (`scripts/previous-api.ts`), compares with it, and says in the step's summary when there
-  is none of this layout and why; a tree it could not download fails the step.
+- **When a month file changes.** For a given layout (the layout of v1/index.json), a month
+  file's bytes change only when (a) a Run that started in that month is added, (b) a boot
+  summary that was missing arrives, (c) a Run arrives late, having started before a Run of
+  the Series already in the files, in that month or an earlier one, or (d) a Method first
+  applies to the Series; otherwise they do not change. These four are the only causes for a
+  given layout: layout increases when LedgerMath changes how the files are written, and
+  only then may a file's bytes change without one of them. A past month is therefore not
+  immutable: each entry of the Series file's months gives its month file's sha256 and size
+  in bytes, so a reader holding a copy can tell whether it is current, and fetches the file
+  again only when the sha256 differs. (a) brings the Run's point, its pair entry, and the
+  month's count and span; (b) turns a point's `boot_summary` from null into its address,
+  and nothing else; (c) does what (a) does and, in that month and every later one, may
+  change in the later points only what depends on earlier Runs: their group and requests
+  v1's `through` and `group_through_as_of_run` (`through`'s counts rise by exactly what the
+  late Runs it pools add, and not at all when none of them is counted), and the pair entry
+  of the Run right after it then comes from the late Run; (d) adds the Method's block to
+  every month file of the Series. The last two are what the Methods produce, and the tree
+  neither changes them nor hides them.
+- **The layout is a number.** `layout` in `v1/index.json` is `LAYOUT` in
+  `scripts/lib/api.ts`: raise it whenever the build changes how it writes the files (the
+  order of a file's fields, their white space, a field every file of a kind gains). Editing
+  a schema's words does not raise it. The golden test fails on any change to the bytes and
+  says so: if the change is on purpose, raise `layout`.
+- **The gate against the tree before.** `check-api.ts --previous DIR` holds a tree to the
+  contract against the tree before it. A previous tree of the same layout and base is
+  compared strictly, always: it must be whole (every month file its Series files list
+  there, with the size and sha256 listed, and nothing more), or it is an error, not a
+  baseline; every Series and month file of it must be in the new tree, each month file byte
+  for byte or changed only for the four causes, no published Run gone. After a late Run, a
+  later point may change only the fields `LATE_RUN_MAY_CHANGE` lists (its group, requests
+  v1's `through` and `group_through_as_of_run`), and the pair entry of the Run right after
+  it only its earlier Run and what it compares; `through`'s counts are held, on every point
+  after a late Run, to exactly what the counted late Runs add (none at all when none is
+  counted), as their points state it. **What the gate cannot establish** is that a changed
+  cumulative percentile (of `through` or `group_through_as_of_run`), or a changed letter,
+  is right: that is the Method's doing, and the check against the Derivations establishes
+  only that the tree equals them; the check's output says so with every comparison. It
+  lists each changed month file by cause.
+- **A new baseline is declared by a human, never granted.** A previous tree that is
+  missing, empty, of another layout or built for another base fails the check, unless
+  `--allow-no-previous` declares a new baseline. The `runs` workflow passes it only from
+  its `workflow_dispatch` input `new_baseline`, so the first scheduled run after `layout`
+  is raised, or after the artifact `api` expired (it is kept 7 days), fails until the
+  maintainer starts a run by hand with that input; the step's summary says so. Even then,
+  when the previous tree can be read well enough to list the Series and Runs it published
+  (its month files, or, in the layout before the split, its Series files' `points`), none
+  of them may be missing, and the check says how many it compared. The workflow fetches the
+  artifact `api` of the latest successful run on main created before it
+  (`scripts/previous-api.ts`), and says what it found in the step's summary; a tree it
+  could not download, or a reply it cannot read, fails the step.
+- **When the gate fails on a real late Run** of a kind the allowance does not cover, the
+  tree is not kept, and the next run fails the same way against the same earlier tree. The
+  new-baseline input is not the fix (it does not apply to a tree of the same layout): find
+  the field that changed; if the Method's definition makes it depend on earlier Runs, add it
+  to `LATE_RUN_MAY_CHANGE` in `scripts/lib/api-check.ts`, with its consequence check where
+  one can be made, and to cause (c) everywhere the contract is written, in a reviewed
+  change; if it does not, the Method or the tree is wrong.
 - **Each Method's part is labelled.** The 25 `http_get` Series carry both `series_v1` and
   `requests_v1`, each with its `method`; the others carry `series_v1` only.
 - **`v1` only ever gains fields.** The API's own schemas forbid no member they do not list, so
@@ -2133,16 +2170,20 @@ bun scripts/build-api.ts --derivations /tmp/page/derivations.json \
 bun scripts/check-api.ts --tree /tmp/api --derivations /tmp/page/derivations.json \
   --requests-derivations /tmp/page/requests-derivations.json --runs /tmp/ledgermath-runs
 # And that every month file of the tree before it, in /tmp/api-before, changed only for one of the four causes
-# (add --allow-no-previous only for the first build of a layout, when there is no such tree):
+# (--allow-no-previous declares a new baseline: only by hand, for the first build of a new layout, or with no tree kept):
 bun scripts/check-api.ts --tree /tmp/api --derivations /tmp/page/derivations.json \
   --requests-derivations /tmp/page/requests-derivations.json --runs /tmp/ledgermath-runs --previous /tmp/api-before
 ```
 
 The build writes only into a new or empty directory. The check reads back what was written and
-compares it, by its own reading of the design and never by calling the build, with the
+compares it, by its own reading of the design and never by calling the build (but for the
+build's serialiser, to hold each file to the one text the build writes for its value), with the
 Derivations, the Runs repository and this repository's schemas. A passing check establishes
 that every file of the tree is strict JSON (UTF-8 with no byte-order mark, no object holding a
-member name twice, no number a double does not hold exactly), that the tree holds exactly the
+member name twice, no number a double does not hold exactly), that every file the build writes
+is byte for byte what the build writes for the value it parses to (a reordered object, a space
+or a respelt number fails, the values unchanged), that `v1/index.json` gives this build's
+`layout`, that the tree holds exactly the
 files it should, each reached from `v1/index.json` by its links, none over its ceiling, each
 matching this repository's schema of its kind (the API's own closed, so an undescribed field
 fails) and of a kind the table of contents lists a schema for, with the schemas byte for byte

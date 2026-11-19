@@ -18,12 +18,12 @@ import type { DerivationsFile as RequestsFile } from "../methods/requests/v1/out
 import type { DerivationsFile as SeriesFile } from "../methods/v1/output";
 import {
 	type ApiSources,
-	apiJson,
 	buildApi,
 	DEFAULT_BASE,
 	ABOUT,
 	EVIDENCE,
 	FIGURES,
+	LAYOUT,
 	MONTH_CONTRACT,
 	MONTHS,
 	monthPath,
@@ -34,8 +34,9 @@ import {
 	readPriceFiles,
 	seriesPath,
 	VERSIONING,
+	writerForm,
 } from "../scripts/lib/api";
-import { CEILINGS, checkApi, checkStability, laidOut } from "../scripts/lib/api-check";
+import { CEILINGS, checkApi, checkStability, NOT_ESTABLISHED } from "../scripts/lib/api-check";
 import { type ApiFixture, type LongFixture, makeApiFixture, makeLongFixture } from "./api-fixtures";
 
 setDefaultTimeout(120_000);
@@ -179,8 +180,9 @@ describe("a month file's bytes change only for the four causes", () => {
 	test("the contract is published word for word in the table of contents, both Series schemas, ADR-0030 and the README", () => {
 		const flat = (value: string): string => value.replace(/\s+/g, " ");
 		const contract = flat(MONTH_CONTRACT);
-		expect(contract).toContain("(a) a Run that started in that month is added, (b) a boot summary that was missing arrives, (c) a Run arrives late");
+		expect(contract).toContain("For a given layout (the layout of v1/index.json), a month file's bytes change only when (a) a Run that started in that month is added, (b) a boot summary that was missing arrives, (c) a Run arrives late");
 		expect(contract).toContain("or (d) a Method first applies to the Series; otherwise they do not change.");
+		expect(contract).toContain("These four are the only causes for a given layout: layout increases when LedgerMath changes how the files are written, and only then may a file's bytes change without one of them.");
 		const index = json(tree, "v1/index.json");
 		expect(index.months).toBe(MONTHS);
 		expect(index.months).toContain(MONTH_CONTRACT);
@@ -188,7 +190,15 @@ describe("a month file's bytes change only for the four causes", () => {
 		const schema = (name: string): Json => JSON.parse(readFileSync(join(ROOT, "schemas", "api", "v1", `${name}.schema.json`), "utf8"));
 		expect(schema("series-month").description).toContain(MONTH_CONTRACT);
 		expect(schema("series").properties.months.description).toContain(MONTH_CONTRACT);
-		expect(schema("index").properties.months.description).toContain("four causes");
+		expect(schema("index").properties.months.description).toContain("for a given layout, for four causes only");
+		// The layout itself: in the table of contents, described by its schema.
+		expect(index.layout).toBe(LAYOUT);
+		expect(Object.keys(index).indexOf("layout")).toBe(Object.keys(index).indexOf("months") + 1);
+		expect(schema("index").required).toContain("layout");
+		expect(schema("index").properties.layout).toMatchObject({ type: "integer", minimum: 1 });
+		expect(schema("index").properties.layout.description).toContain("It increases when LedgerMath changes how the files are written");
+		expect(schema("index").properties.layout.description).toContain("for a given layout, those four are the only causes");
+		expect(schema("index").properties.layout.description).toContain("Editing a schema's words does not change it");
 		expect(flat(readFileSync(join(ROOT, "docs", "adr", "0030-the-data-api-is-static-files-cut-from-the-derivations.md"), "utf8"))).toContain(contract);
 		expect(flat(readFileSync(join(ROOT, "README.md"), "utf8"))).toContain(contract);
 		// And no published words still say a past month never changes.
@@ -381,39 +391,52 @@ describe("the check against the tree before (--previous)", () => {
 		cpSync(from, copy, { recursive: true });
 		return copy;
 	};
+	/** A copy of a tree with one month file changed, written as the build writes it, and its Series file's entry for it updated: only what `change` did differs. */
 	const edited = (from: string, path: string, change: (value: Json) => void): string => {
 		const copy = copyOf(from);
 		const value = JSON.parse(readFileSync(join(copy, path), "utf8"));
 		change(value);
-		// Laid out as the build lays it out, members in the order they were read: only what `change` did differs.
-		writeFileSync(join(copy, path), laidOut(value));
+		writeFileSync(join(copy, path), writerForm(path, value));
+		const [, id, month] = /^v1\/series\/([^/]+)\/([^/]+)\.json$/.exec(path) as RegExpExecArray;
+		const series = JSON.parse(readFileSync(join(copy, seriesPath(id as string)), "utf8"));
+		const entry = (series.months as Json[]).find((one) => one.month === month) as Json;
+		const bytes = readFileSync(join(copy, path));
+		entry.sha256 = createHash("sha256").update(bytes).digest("hex");
+		entry.bytes = bytes.length;
+		writeFileSync(join(copy, seriesPath(id as string)), writerForm(seriesPath(id as string), series));
 		return copy;
 	};
 	const unexplained = (path: string, what: string): string => `${path} changed since the previous tree in a way none of the four causes explains: ${what}`;
+	const refusal = (why: string): string =>
+		`no previous tree of this layout to compare this one with: ${why}. Only a human may declare a new baseline (--allow-no-previous; in the runs workflow, its input new_baseline), for the first build of a new layout or once the last tree kept has expired`;
 
-	test("is an error when the previous tree is missing, empty, or of another layout (other schemas, another base), unless there may explicitly be none", () => {
+	test("is an error when the previous tree is missing, empty, not a tree, of another layout or built for another base, unless a human declared a new baseline", () => {
 		const missing = join(tmpdir(), "api-no-such-tree");
 		const empty = mkdtempSync(join(tmpdir(), "api-empty-"));
 		const notTree = mkdtempSync(join(tmpdir(), "api-not-tree-"));
 		writeFileSync(join(notTree, "hello.txt"), "hello\n");
-		const schemas = copyOf(directory);
-		writeFileSync(join(schemas, "v1/schemas/series-month.schema.json"), `${readFileSync(join(schemas, "v1/schemas/series-month.schema.json"), "utf8")} `);
+		const layout = copyOf(directory);
+		writeFileSync(join(layout, "v1/index.json"), writerForm("v1/index.json", { ...JSON.parse(readFileSync(join(layout, "v1/index.json"), "utf8")), layout: LAYOUT + 1 }));
 		const elsewhere = writeTree(buildApi({ ...sourcesOf(fixture), base: "https://staging.example.test" }));
 		const cases: Array<[string, string]> = [
 			[missing, `${missing} does not exist`],
 			[empty, `${empty} is empty`],
 			[notTree, `${notTree} holds no v1/index.json, so it is not a tree of the data API`],
-			[schemas, `${schemas} is a tree of another layout: its schemas are not this tree's (v1/schemas/series-month.schema.json differ)`],
-			[elsewhere, `${elsewhere} is a tree of another layout: it was built for https://staging.example.test/v1/index.json, this tree for "${DEFAULT_BASE}/v1/index.json"`],
+			[layout, `${layout} is a tree of layout ${LAYOUT + 1}, this tree of layout ${LAYOUT}`],
+			[elsewhere, `${elsewhere} was built for https://staging.example.test, this tree for ${DEFAULT_BASE}`],
 		];
 		for (const [previous, why] of cases) {
 			const refused = checkStability(previous, directory);
-			expect([refused.compared, refused.none, refused.problems]).toEqual([false, why, [`no previous tree to compare this one with: ${why}; a build without one must say so explicitly, and is right only for the first build of a layout`]]);
-			const allowed = checkStability(previous, directory, { mayBeNone: true });
-			expect([allowed.compared, allowed.none, allowed.problems]).toEqual([false, why, []]);
+			expect([refused.compared, refused.none, refused.problems]).toEqual([false, why, [refusal(why)]]);
+			const declared = checkStability(previous, directory, { newBaseline: true });
+			expect([declared.compared, declared.none, declared.problems]).toEqual([false, why, []]);
 		}
-		// Allowed to be none, a comparable tree is compared all the same.
-		expect(checkStability(writeTree(beforeTree), directory, { mayBeNone: true }).compared).toBe(true);
+		// A schema's bytes are not the layout: a previous tree whose schema's words differ is compared.
+		const schemas = copyOf(directory);
+		writeFileSync(join(schemas, "v1/schemas/series-month.schema.json"), `${readFileSync(join(schemas, "v1/schemas/series-month.schema.json"), "utf8")} `);
+		expect([checkStability(schemas, directory).compared, checkStability(schemas, directory).problems]).toEqual([true, []]);
+		// A new baseline declared, a tree of this layout is compared all the same.
+		expect(checkStability(writeTree(beforeTree), directory, { newBaseline: true }).compared).toBe(true);
 	});
 
 	test("fails a month file whose bytes changed with no value: one space appended, alone or beside a boot summary that arrived", () => {
@@ -421,14 +444,19 @@ describe("the check against the tree before (--previous)", () => {
 		const spaced = copyOf(directory);
 		writeFileSync(join(spaced, nov), `${readFileSync(join(spaced, nov), "utf8")} `);
 		const size = (tree.get(nov) as Uint8Array).length;
-		expect(checkStability(directory, spaced).problems).toEqual([unexplained(nov, `this file: its bytes are not the layout of its value: they first differ at byte ${size} (line ${text(tree, nov).split("\n").length}), " " where the layout has ""`)]);
+		expect(checkStability(directory, spaced).problems).toEqual([
+			unexplained(
+				nov,
+				`this file is not what the build writes for its own values (its members in the build's order, its white space, numbers and strings as the build writes them): it first differs at character ${size} (line ${text(tree, nov).split("\n").length}), " " where the build writes ""`,
+			),
+		]);
 		const boots = new Map(readBootSummaries(fixture.runs));
 		boots.set("boot-2026-11-13", "boots/2026/11/13/boot-2026-11-13.json");
 		const arrived = writeTree(buildApi(sourcesOf(fixture, boots)));
 		const memory = monthPath(fixture.memory, "2026-11");
 		expect(checkStability(directory, arrived).problems).toEqual([]);
 		writeFileSync(join(arrived, memory), readFileSync(join(arrived, memory), "utf8").replace('"boot_summary":null', '"boot_summary": null'));
-		expect(checkStability(directory, arrived).problems).toEqual([expect.stringMatching(new RegExp(`^${memory} changed since the previous tree in a way none of the four causes explains: this file: its bytes are not the layout of its value`))]);
+		expect(checkStability(directory, arrived).problems).toEqual([expect.stringMatching(new RegExp(`^${memory} changed since the previous tree in a way none of the four causes explains: this file is not what the build writes for its own values`))]);
 	});
 
 	test("fails what none of the causes explains: a figure edited, a boot summary gone, a head field, a block gone, a published Run gone, a month gone", async () => {
@@ -476,13 +504,18 @@ describe("the check against the tree before (--previous)", () => {
 		);
 	});
 
-	test("is the command's --previous, which lists each changed month file by cause, and --allow-no-previous, which says plainly that nothing was compared", async () => {
+	test("is the command's --previous, which lists each changed month file by cause and what it cannot establish, and --allow-no-previous, which says plainly that nothing was compared", async () => {
 		const args = ["scripts/check-api.ts", "--tree", directory, "--derivations", fixture.derivationsPath, "--requests-derivations", fixture.requestsPath, "--runs", fixture.runs];
-		const passed = Bun.spawnSync([process.execPath, ...args, "--previous", writeTree(beforeTree)], { cwd: ROOT });
+		const summary = join(mkdtempSync(join(tmpdir(), "api-summary-")), "summary");
+		const passed = Bun.spawnSync([process.execPath, ...args, "--previous", writeTree(beforeTree)], { cwd: ROOT, env: { ...process.env, GITHUB_STEP_SUMMARY: summary } });
 		expect(passed.stderr.toString()).toBe("");
 		expect(passed.exitCode).toBe(0);
-		expect(passed.stdout.toString()).toContain("3 month files in both, 3 the same byte for byte, 0 changed for a cause, 2 new");
+		expect(passed.stdout.toString()).toContain(`(layout ${LAYOUT} here, ${LAYOUT} there): 3 month files in both, 3 the same byte for byte, 0 changed for a cause, 2 new`);
+		expect(passed.stdout.toString()).toContain(`  ${NOT_ESTABLISHED}\n`);
 		expect(passed.stdout.toString()).toContain("no past month changed since");
+		// The same words in the step's summary.
+		expect(readFileSync(summary, "utf8")).toContain("### The data API against the tree before");
+		expect(readFileSync(summary, "utf8")).toContain(NOT_ESTABLISHED);
 		// A tree whose November gained a Run: listed under (a).
 		const more = await makeApiFixture({ nextMonth: true, extraSyscallRun: true });
 		const moreTree = writeTree(buildApi(sourcesOf(more)));
@@ -496,11 +529,15 @@ describe("the check against the tree before (--previous)", () => {
 		const missing = join(tmpdir(), "api-no-such-tree");
 		const refused = Bun.spawnSync([process.execPath, ...args, "--previous", missing], { cwd: ROOT });
 		expect(refused.exitCode).toBe(1);
-		expect(refused.stderr.toString()).toContain(`no previous tree to compare this one with: ${missing} does not exist`);
-		const allowed = Bun.spawnSync([process.execPath, ...args, "--previous", missing, "--allow-no-previous"], { cwd: ROOT });
+		expect(refused.stderr.toString()).toContain(refusal(`${missing} does not exist`));
+		const declaredSummary = join(mkdtempSync(join(tmpdir(), "api-summary-")), "summary");
+		const allowed = Bun.spawnSync([process.execPath, ...args, "--previous", missing, "--allow-no-previous"], { cwd: ROOT, env: { ...process.env, GITHUB_STEP_SUMMARY: declaredSummary } });
 		expect(allowed.exitCode).toBe(0);
-		expect(allowed.stdout.toString()).toContain(`past months: not compared, there being no previous tree of this layout (${missing} does not exist)`);
-		expect(allowed.stdout.toString()).toContain("past months not compared (no previous tree of this layout, which --allow-no-previous allowed)");
+		expect(allowed.stdout.toString()).toContain(`past months: not compared with ${missing}: ${missing} does not exist (layout ${LAYOUT} here)`);
+		expect(allowed.stdout.toString()).toContain("  a new baseline was declared by hand (--allow-no-previous): this tree is the baseline the next is compared with");
+		expect(allowed.stdout.toString()).toContain("  published Series and Runs: none to compare, there being no previous tree to read");
+		expect(allowed.stdout.toString()).toContain("past months not compared (a new baseline, declared by --allow-no-previous), no published Series or Run missing");
+		expect(readFileSync(declaredSummary, "utf8")).toContain("a new baseline was declared by hand (--allow-no-previous)");
 		const alone = Bun.spawnSync([process.execPath, ...args, "--allow-no-previous"], { cwd: ROOT });
 		expect(alone.exitCode).toBe(2);
 	});
@@ -618,7 +655,7 @@ describe("the check keeps up with the months", () => {
 	const edit = (path: string, change: (value: Json) => void) => (copy: string) => {
 		const value = JSON.parse(readFileSync(join(copy, path), "utf8"));
 		change(value);
-		writeFileSync(join(copy, path), apiJson(value));
+		writeFileSync(join(copy, path), writerForm(path, value));
 	};
 	const nov = (id: string): string => monthPath(id, "2026-11");
 	const dec = (id: string): string => monthPath(id, "2026-12");
@@ -715,16 +752,21 @@ describe("the check keeps up with the months", () => {
 			["a price file", 1_000_000],
 			["a schema", 256_000],
 		]);
-		// White space after the value: still the same JSON, and as many bytes as wanted.
+		// White space after the value: still the same JSON, and as many bytes as wanted; and no longer what the build writes for it.
 		const pad = (path: string, bytes: number) => (copy: string) => writeFileSync(join(copy, path), Buffer.concat([readFileSync(join(copy, path)), Buffer.alloc(bytes, 0x20)]));
+		const notWritten = (path: string) => expect.stringMatching(new RegExp(`^${path.replaceAll(".", "\\.")} is not what the build writes for its own values`));
 		const index = check(pad("v1/index.json", 100_000));
 		const size = (tree.get("v1/index.json") as Uint8Array).length + 100_000;
-		expect(index).toEqual([`v1/index.json is ${size} bytes, over the ceiling of 100000 for the table of contents: ${CEILINGS[0]?.whenHit}`]);
+		expect(index).toEqual([`v1/index.json is ${size} bytes, over the ceiling of 100000 for the table of contents: ${CEILINGS[0]?.whenHit}`, notWritten("v1/index.json")]);
 		const series = check(pad(seriesPath(fixture.memory), 1_000_000));
-		expect(series).toEqual([expect.stringMatching(new RegExp(`^${seriesPath(fixture.memory)} is [0-9]+ bytes, over the ceiling of 1000000 for a Series file: the number of points in it is bounded \\(newest_runs\\)`))]);
+		expect(series).toEqual([
+			expect.stringMatching(new RegExp(`^${seriesPath(fixture.memory)} is [0-9]+ bytes, over the ceiling of 1000000 for a Series file: the number of points in it is bounded \\(newest_runs\\)`)),
+			notWritten(seriesPath(fixture.memory)),
+		]);
 		const month = check(pad(dec(fixture.http), 5_000_000));
 		expect(month).toEqual([
 			expect.stringMatching(new RegExp(`^${dec(fixture.http)} is [0-9]+ bytes, over the ceiling of 5000000 for a month file: `)),
+			notWritten(dec(fixture.http)),
 			// Padded, its bytes are no longer those its Series file gives.
 			expect.stringMatching(new RegExp(`^${seriesPath(fixture.http)}: /months/1/sha256 is `)),
 		]);

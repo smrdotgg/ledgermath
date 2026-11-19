@@ -1104,4 +1104,21 @@ A migrated benchmark is done only when **all** of these hold:
   artifact `api` (kept 7 days) and says in its summary when there is none. The check also
   takes a point's month from its Run file's own `started_at`. On page-3 to page-4 every one
   of the 187 month files changed, each for (a) only.
+- **2026-11-19** — After a second review of #69, three ways the gate passed a tree it should
+  refuse are closed. Every file the build writes must be, byte for byte, the build's writing
+  of its own parsed value (`writerForm()`), so reversed members of a `through` no longer pass
+  as a late Run's doing. A late Run excuses, in the points after it, only the fields listed
+  as depending on earlier Runs (`LATE_RUN_MAY_CHANGE`), and requests v1's `through` counts
+  are held to exactly what the late Runs add, so a `runs` of 999 fails; that a changed
+  percentile is right is said, in the output and the docs, to be the Method's and beyond the
+  gate. The layout is a number (`LAYOUT`, `layout` in `v1/index.json`), not the schemas'
+  bytes, so a newline in a schema no longer turns the comparison off; a previous tree of the
+  same layout must be whole and is always compared; with none, or another layout, only the
+  workflow's `new_baseline` input, by hand, passes, and still nothing published may be
+  missing (read from month files or, in the layout before the split, from Series files'
+  points). The previous tree is the latest successful run created before this one, and a
+  malformed reply is an error. On real data: page-3 to page-4 compares as 187 month files
+  changed for (a); a counted late Run simulated in an `http_get` Series passes as (c) with
+  its counts exact, and fails with `runs` 999. The first scheduled run after the merge fails
+  on purpose (the kept tree has no layout) until it is run by hand with `new_baseline`.
 - _(agents: append your entry here, one per merged benchmark)_

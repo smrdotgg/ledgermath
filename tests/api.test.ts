@@ -16,6 +16,7 @@ import {
 	readBootSummaries,
 	readPriceFiles,
 	seriesPath,
+	writerForm,
 } from "../scripts/lib/api";
 import { checkApi, closeSchema, difference } from "../scripts/lib/api-check";
 import { ADDRESS_PARAM, type ApiFixture, makeApiFixture, OVERFLOW_X } from "./api-fixtures";
@@ -375,10 +376,11 @@ describe("the check fails loudly", () => {
 		change(copy, runs);
 		return checkApi({ tree: copy, runs, base: options.base ?? DEFAULT_BASE, series: options.series ?? fixture.series, requests: fixture.requests }).problems;
 	}
+	/** A file of a copy changed by `change`, written as the build writes it (writerForm()), so a test of a rule sees only that rule's problems. */
 	const edit = (path: string, change: (value: Json) => void) => (copy: string) => {
 		const value = JSON.parse(readFileSync(join(copy, path), "utf8"));
 		change(value);
-		writeFileSync(join(copy, path), apiJson(value));
+		writeFileSync(join(copy, path), writerForm(path, value));
 		keepEntry(copy, path);
 	};
 	/**
@@ -395,7 +397,7 @@ describe("the check fails loudly", () => {
 		const bytes = readFileSync(join(copy, path));
 		entry.sha256 = createHash("sha256").update(bytes).digest("hex");
 		entry.bytes = bytes.length;
-		writeFileSync(at, apiJson(series));
+		writeFileSync(at, writerForm(seriesPath(month[1] as string), series));
 	};
 
 	test("when a file does not match its schema: a field the schema does not describe, or one of the wrong type", () => {

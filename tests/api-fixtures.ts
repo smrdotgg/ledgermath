@@ -44,6 +44,12 @@
  * the second group has no counted Run, so its point's group_through is null
  * while its through holds the first group's figures.
  *
+ * With `lateFailedRequestsRun`, after those, a Run more of http_get that
+ * started on 2026-11-20 on the first processor and exited 1, a request
+ * having failed: neither Method counts it. It arrives after December's Run,
+ * joins group A, and changes only December's pair entry: December's group,
+ * through and group_through_as_of_run stay as they were.
+ *
  * With `small`, no syscall Series, and the other Runs with three counted
  * samples each where they had ten, and four requests and three where they had
  * forty and thirty-nine: the tree tests/api-golden.test.ts keeps a copy of,
@@ -123,7 +129,18 @@ function overflowStream(): string {
 }
 
 export async function makeApiFixture(
-	options: { extraSyscallRun?: boolean; edges?: boolean; small?: boolean; nextMonth?: boolean; lateRun?: boolean; lateRequestsRun?: boolean; methodLater?: boolean; methodLaterRun?: boolean; failedSecondGroup?: boolean } = {},
+	options: {
+		extraSyscallRun?: boolean;
+		edges?: boolean;
+		small?: boolean;
+		nextMonth?: boolean;
+		lateRun?: boolean;
+		lateRequestsRun?: boolean;
+		methodLater?: boolean;
+		methodLaterRun?: boolean;
+		failedSecondGroup?: boolean;
+		lateFailedRequestsRun?: boolean;
+	} = {},
 ): Promise<ApiFixture> {
 	const samples = (ns: number): number[] => Array.from({ length: options.small ? 3 : 10 }, (_, i) => ns + i * 1000);
 	const requestsOf = (n: number): number => (options.small ? n - 36 : n);
@@ -188,6 +205,13 @@ export async function makeApiFixture(
 			processor: "Intel(R) Xeon(R) Platinum 8259CL",
 			exit: { code: 1 },
 			stream: { connection: "new", requests: rampRequests(requestsOf(40), 20_000_000, 50_000) },
+		});
+	}
+	if (options.lateFailedRequestsRun) {
+		requestRun(made, {
+			startedAt: "2026-11-20T22:20:00Z",
+			exit: { code: 1 },
+			stream: { connection: "new", requests: [...rampRequests(requestsOf(39), 18_000_000, 70_000), { fail: { phase: "first_byte", error: "timeout" } }] },
 		});
 	}
 

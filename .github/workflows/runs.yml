@@ -23,7 +23,17 @@ on:
   schedule:
     - cron: "40 22 * * *" # half an hour after the 22:10 boot
     - cron: "0 */6 * * *"
+  # new_baseline is a human's declaration, by hand, that this run's data API
+  # tree is a new baseline: there is no earlier tree of its layout to compare
+  # it with (the first build after LAYOUT was raised, or the last tree kept
+  # expired). It is the only source of the check's --allow-no-previous;
+  # nothing automatic grants it, so a scheduled run with no such tree fails.
   workflow_dispatch:
+    inputs:
+      new_baseline:
+        description: "Declare this run's data API tree a new baseline: past months are not compared (no published Series or Run may be missing all the same)"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -147,13 +157,11 @@ jobs:
           bun scripts/build-api.ts --derivations page/derivations.json
           --requests-derivations page/requests-derivations.json --runs ledgermath-runs --out api
 
-      # The tree the last successful run on main kept. There may be none of
-      # this layout: no earlier successful run, one from before the data API,
-      # an artifact that expired, or a tree of other schemas (the first build
-      # after the layout changed). The script says which in the step's summary,
-      # and only then is the check told there may be none. A tree that could
-      # not be fetched fails this step, and the check does not run: it is not a
-      # tree that does not exist.
+      # The tree kept by the latest successful run on main created before this
+      # one. There may be none: no such run, one from before the data API, an
+      # artifact that expired. The script says which in the step's summary,
+      # and decides nothing. A tree that could not be fetched fails this step,
+      # and the check does not run: it is not a tree that does not exist.
       - name: Fetch the data API's files the last successful run kept
         id: api-previous
         if: ${{ !cancelled() && steps.api.outcome == 'success' }}
@@ -163,13 +171,17 @@ jobs:
           bun scripts/previous-api.ts --repository "$GITHUB_REPOSITORY" --workflow runs.yml
           --branch main --run-id "$GITHUB_RUN_ID" --tree api --out api-previous
 
+      # A previous tree of this layout is compared strictly, always. With none,
+      # or one of another layout, the check fails unless a human started this
+      # run with the input new_baseline, the only source of
+      # --allow-no-previous; the check's summary says which.
       - name: Check the data API's files
         id: api-check
         if: ${{ !cancelled() && steps.api.outcome == 'success' && steps.api-previous.outcome == 'success' }}
         run: >-
           bun scripts/check-api.ts --tree api --derivations page/derivations.json
           --requests-derivations page/requests-derivations.json --runs ledgermath-runs
-          --previous api-previous ${{ steps.api-previous.outputs.comparable == 'false' && '--allow-no-previous' || '' }}
+          --previous api-previous ${{ inputs.new_baseline == true && '--allow-no-previous' || '' }}
 
       - name: Keep the data API's files
         if: ${{ !cancelled() && steps.api-check.outcome == 'success' }}

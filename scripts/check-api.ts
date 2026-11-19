@@ -11,18 +11,24 @@
  *   --requests-derivations FILE  Method requests v1's
  *   --runs DIR                   the Runs repository checkout whose evidence it links
  *   --base URL                   the address it was built for (default https://api.ledgermath.com)
- *   --previous DIR               the tree before this one, which readers were last served: every month
- *                                file of it must be in this tree, byte for byte or changed only for
- *                                the four causes ADR-0030 gives (checkStability). One that is missing,
- *                                empty or of another layout (other schemas, another base) is a problem
- *   --allow-no-previous          says there may be no previous tree of this layout: for the first
- *                                build of a layout only. The output then says plainly that past months
- *                                were not compared, and a tree that passes the rest exits 0
+ *   --previous DIR               the tree before this one, which readers were last served. Of this
+ *                                layout (v1/index.json's layout) and base, it must be whole, and every
+ *                                month file of it must be in this tree, byte for byte or changed only
+ *                                for the four causes ADR-0030 gives (checkStability). One that is
+ *                                missing, empty, of another layout or built for another base is a problem
+ *   --allow-no-previous          a human's declaration of a new baseline: for the first build of a new
+ *                                layout, or once the last tree kept has expired. Nothing automatic may
+ *                                pass it (the runs workflow passes it only from its input new_baseline).
+ *                                A previous tree of this layout is compared all the same; one of another
+ *                                layout is not, but every Series and Run it published must still be here
  *
  * Prints every problem and exits 1 when there is any; 0 when there is none.
- * With --previous, it also lists each month file that changed, by cause.
+ * With --previous, it also lists each month file that changed, by cause, and
+ * what the comparison cannot establish, and writes the same to the step's
+ * summary ($GITHUB_STEP_SUMMARY) when there is one.
  */
 
+import { appendFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 
 import type { DerivationsFile as RequestsFile } from "../methods/requests/v1/output";
@@ -62,9 +68,14 @@ function main(): void {
 	});
 	let stability: StabilityResult | undefined;
 	if (values.previous !== undefined) {
-		stability = checkStability(values.previous, values.tree, { mayBeNone: values["allow-no-previous"] === true });
+		stability = checkStability(values.previous, values.tree, { newBaseline: values["allow-no-previous"] === true });
 		result.problems.push(...stability.problems);
-		for (const line of describeStability(stability, values.previous)) console.log(line);
+		const lines = describeStability(stability, values.previous);
+		for (const line of lines) console.log(line);
+		if (process.env.GITHUB_STEP_SUMMARY) {
+			const problems = stability.problems.length === 0 ? "" : `\n${stability.problems.length} problem${stability.problems.length === 1 ? "" : "s"} with the tree before, the first: ${stability.problems[0]}\n`;
+			appendFileSync(process.env.GITHUB_STEP_SUMMARY, `### The data API against the tree before\n\n\`\`\`\n${lines.join("\n")}\n\`\`\`\n${problems}`);
+		}
 	}
 	const took = Math.round(performance.now() - started);
 	if (result.problems.length > 0) {
@@ -75,7 +86,7 @@ function main(): void {
 	}
 	console.log(
 		`data API v1: ${result.files} files checked, ${result.series} Series in ${result.months} month files, ${result.runFiles} Run files cited and found with their id, boot, start and sha256, ` +
-			`${stability === undefined ? "" : stability.compared ? `no past month changed since ${values.previous} but for a cause, ` : "past months not compared (no previous tree of this layout, which --allow-no-previous allowed), "}no problem (${took} ms)`,
+			`${stability === undefined ? "" : stability.compared ? `no past month changed since ${values.previous} but for a cause, ` : "past months not compared (a new baseline, declared by --allow-no-previous), no published Series or Run missing, "}no problem (${took} ms)`,
 	);
 }
 

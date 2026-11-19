@@ -8,15 +8,18 @@
  * a diff of the copies. The schemas and the price files, which the build
  * copies, are compared with what it copies them from.
  *
- * To change the bytes on purpose, write the copies anew and review their diff:
+ * To change the bytes on purpose, raise LAYOUT in scripts/lib/api.ts when
+ * the build now writes the files otherwise (not when only the fixture's data
+ * changed), write the copies anew and review their diff:
  *     LEDGERMATH_WRITE_GOLDEN=1 bun test tests/api-golden.test.ts
+ * The test's failure says the same.
  */
 
 import { expect, setDefaultTimeout, test } from "bun:test";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
 
-import { API_SCHEMAS, buildApi, DEFAULT_BASE, priceDate, readApiSchemas, readBootSummaries, readPriceFiles } from "../scripts/lib/api";
+import { API_SCHEMAS, buildApi, DEFAULT_BASE, LAYOUT, priceDate, readApiSchemas, readBootSummaries, readPriceFiles } from "../scripts/lib/api";
 import { makeApiFixture } from "./api-fixtures";
 
 setDefaultTimeout(60_000);
@@ -62,12 +65,36 @@ test("every file the build writes from the small fixture is, byte for byte, its 
 			writeFileSync(join(GOLDEN, path), bytes);
 		}
 	}
-	expect(listFiles(GOLDEN)).toEqual([...written.keys()].sort());
-	for (const [path, bytes] of written) {
-		// As text, so a difference shows as a diff; then as bytes, so nothing a text comparison could blur passes.
-		const golden = readFileSync(join(GOLDEN, path));
-		expect(`${path}:\n${new TextDecoder().decode(bytes)}`).toBe(`${path}:\n${golden.toString("utf8")}`);
-		expect(Buffer.from(bytes).equals(golden)).toBe(true);
+	const kept = listFiles(GOLDEN);
+	const differing = [...written].filter(([path, bytes]) => !kept.includes(path) || !Buffer.from(bytes).equals(readFileSync(join(GOLDEN, path))));
+	const stale = kept.filter((path) => !written.has(path));
+	if (differing.length > 0 || stale.length > 0) {
+		// As text, so the first difference shows as a diff.
+		let diff = "";
+		const first = differing[0];
+		if (first !== undefined) {
+			try {
+				expect(`${first[0]}:\n${new TextDecoder().decode(first[1])}`).toBe(`${first[0]}:\n${kept.includes(first[0]) ? readFileSync(join(GOLDEN, first[0]), "utf8") : "(no copy)"}`);
+			} catch (error) {
+				diff = error instanceof Error ? error.message : String(error);
+			}
+		}
+		throw new Error(
+			[
+				`The build no longer writes the bytes kept in tests/api-golden/: ${[...differing.map(([path]) => path), ...stale.map((path) => `${path} (no longer written)`)].join(", ")}.`,
+				CHOICE,
+				diff === "" ? "" : `The first difference:\n${diff}`,
+			].join("\n\n"),
+		);
 	}
 	expect(written.size).toBeGreaterThanOrEqual(4);
 });
+
+/** What a developer whose change made the golden test fail must choose between. */
+const CHOICE = [
+	"Choose one:",
+	`- The build now writes the files otherwise on purpose (a schema's properties reordered, a field every file of a kind gains, other white space or spelling): raise LAYOUT in scripts/lib/api.ts by one (it is ${LAYOUT}), so that no reader or check takes the new bytes for one of the four causes a month file changes for; then write the copies anew and review their diff. The runs workflow then compares the next tree with nothing until the maintainer starts it by hand with the input new_baseline.`,
+	"- Only the fixture's data changed (tests/api-fixtures.ts, or what a Method derives from it), not how the build writes them: write the copies anew without raising LAYOUT, and review their diff.",
+	"- Neither: the change to the bytes is a mistake.",
+	"Write the copies anew with: LEDGERMATH_WRITE_GOLDEN=1 bun test tests/api-golden.test.ts",
+].join("\n");

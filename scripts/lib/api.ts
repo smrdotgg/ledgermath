@@ -29,15 +29,15 @@
  *
  * The same inputs give the same bytes, file for file, whatever order the
  * Series, price files or boot summaries come in, and whatever order the
- * members of their objects come in (apiJson), and no clock is read. A month
- * file's bytes change only for the four causes MONTH_CONTRACT names: a Run
- * of its month added, a missing boot summary arriving, a Run arriving late
- * (before a Run of its Series already in the files) in its month or an
- * earlier one, a Method first applying to its Series. requests v1's
- * group_through is written as it stood through each Run, as
- * group_through_as_of_run (asOfRun()), so that a Run that splits a Series is
- * none of them. scripts/check-api.ts --previous holds a tree to that against
- * the tree before it.
+ * members of their objects come in (apiJson), and no clock is read: a file's
+ * bytes are writerForm() of its own value. For a given LAYOUT, a month file's
+ * bytes change only for the four causes MONTH_CONTRACT names: a Run of its
+ * month added, a missing boot summary arriving, a Run arriving late (before a
+ * Run of its Series already in the files) in its month or an earlier one, a
+ * Method first applying to its Series. requests v1's group_through is written
+ * as it stood through each Run, as group_through_as_of_run (asOfRun()), so
+ * that a Run that splits a Series is none of them. scripts/check-api.ts
+ * --previous holds a tree to that against the tree before it.
  */
 
 import { createHash } from "node:crypto";
@@ -62,6 +62,25 @@ export const DEFAULT_DOCS = "https://github.com/smrdotgg/ledgermath/blob/main/RE
  * days at four Runs a day. Each Series file names it (newest_runs).
  */
 export const NEWEST_RUNS = 12;
+
+/**
+ * How the files are written, as a number, in v1/index.json (layout). Raise it
+ * by one whenever this writer changes how it writes the files, whatever the
+ * change: the order of a file's fields (the order of its schema's
+ * properties), the white space or line breaks between them, a field that
+ * every file of a kind gains, the spelling of a value. Such a change may
+ * change the bytes of any file without one of the four causes MONTH_CONTRACT
+ * gives, and for a given layout nothing else may. Editing a schema's words
+ * does not change it; neither do the data. tests/api-golden.test.ts fails on
+ * any change to the bytes the build writes, and says so.
+ *
+ * The runs workflow compares each tree with the one before only when both are
+ * of one layout; a tree of a new layout is compared with nothing until a
+ * human starts the workflow by hand declaring a new baseline (its input
+ * new_baseline), and even then no Series and no Run the tree before published
+ * may be missing from it.
+ */
+export const LAYOUT = 1;
 
 /** Each kind of file's schema: its name in the tree, and where it is kept in this repository. */
 export const API_SCHEMAS = [
@@ -124,9 +143,10 @@ export const ABOUT =
  * ADR-0030 and the README, and held to by scripts/check-api.ts --previous.
  */
 export const MONTH_CONTRACT =
-	"A month file's bytes change only when (a) a Run that started in that month is added, (b) a boot summary that was missing arrives, " +
+	"For a given layout (the layout of v1/index.json), a month file's bytes change only when (a) a Run that started in that month is added, (b) a boot summary that was missing arrives, " +
 	"(c) a Run arrives late, having started before a Run of the Series already in the files, in that month or an earlier one, " +
 	"or (d) a Method first applies to the Series; otherwise they do not change. " +
+	"These four are the only causes for a given layout: layout increases when LedgerMath changes how the files are written, and only then may a file's bytes change without one of them. " +
 	"A past month is therefore not immutable: each entry of the Series file's months gives its month file's sha256 and size in bytes, " +
 	"so a reader holding a copy can tell whether it is current, and fetches the file again only when the sha256 differs.";
 export const MONTHS =
@@ -135,8 +155,9 @@ export const MONTHS =
 	MONTH_CONTRACT +
 	" What each cause changes: (a) the month gains the Run's point, its pair entry and its count and span; " +
 	"(b) the point's boot_summary turns from null into the summary's address, and nothing else; " +
-	"(c) as (a), and in that month and every later one the points after the late Run may change their group, and requests v1's through and group_through_as_of_run, " +
-	"and the pair entry of the Run right after it changes; " +
+	"(c) as (a), and in that month and every later one the points after the late Run may change only what depends on earlier Runs: their group, and requests v1's through and group_through_as_of_run " +
+	"(through's counts rise by exactly what the late Runs it pools add, and not at all when none of them is counted), " +
+	"and the pair entry of the Run right after it then comes from the late Run; " +
 	"(d) the Method's block appears, under its key, in every month file of the Series.";
 export const EVIDENCE =
 	"The evidence is served under the same address as the API: each point links its Run file (evidence), at runs/<yyyy>/<mm>/<dd>/<id>.json, " +
@@ -213,6 +234,49 @@ export function readBootSummaries(runs: string): Map<string, string> {
 /** The schemas, as this repository keeps them. */
 export function readApiSchemas(): Map<SchemaName, Uint8Array> {
 	return new Map(API_SCHEMAS.map(({ name, source }) => [name, new Uint8Array(readFileSync(join(ROOT, source)))] as const));
+}
+
+/** The schemas of the files the build writes (every kind but the price files, which it copies). */
+export type WrittenSchema = Exclude<SchemaName, "prices">;
+/** Each written kind's schema, parsed: what fixes the order of the members of its files' objects (apiJson). */
+export type Shapes = Readonly<Record<WrittenSchema, Json>>;
+
+/** The schemas of the written kinds, parsed. */
+export function apiShapes(schemas: ReadonlyMap<SchemaName, Uint8Array>): Shapes {
+	const shape = (name: WrittenSchema): Json => {
+		const bytes = schemas.get(name);
+		if (bytes === undefined) throw new Error(`no schema ${name}`);
+		const schema: unknown = JSON.parse(new TextDecoder().decode(bytes));
+		if (!isJson(schema)) throw new Error(`the schema ${name} is not a JSON object`);
+		return schema;
+	};
+	return { index: shape("index"), "series-list": shape("series-list"), series: shape("series"), "series-month": shape("series-month") };
+}
+
+/** The schema a file of the tree is written by, from its path; undefined for a file the build copies (a price file, a schema) or no file of the tree. */
+export function writtenSchemaOf(path: string): WrittenSchema | undefined {
+	if (path === INDEX_PATH) return "index";
+	if (path === LIST_PATH) return "series-list";
+	if (/^v1\/series\/[^/]+\.json$/.test(path)) return "series";
+	if (/^v1\/series\/[^/]+\/[^/]+\.json$/.test(path)) return "series-month";
+	return undefined;
+}
+
+let repositoryShapes: Shapes | undefined;
+
+/**
+ * The text the build writes for a file of the tree holding `value`: apiJson
+ * with the schema of the file's kind. Whatever order `value`'s members come
+ * in and however its numbers were spelled, the text is the one the build
+ * writes for that value, so a file whose bytes are not this text for its own
+ * parsed value is not as the build wrote it (scripts/lib/api-check.ts holds
+ * every written file to it). `shapes` defaults to this repository's schemas.
+ */
+export function writerForm(path: string, value: unknown, shapes?: Shapes): string {
+	const name = writtenSchemaOf(path);
+	if (name === undefined) throw new Error(`${path} is not a file the build writes: a price file and a schema are copied, byte for byte`);
+	const used = shapes ?? (repositoryShapes ??= apiShapes(readApiSchemas()));
+	return apiJson(value, used[name]);
 }
 
 /**
@@ -293,9 +357,9 @@ interface Linked {
 
 type ApiSeriesPoint = Pick<SeriesPoint, "run" | "path"> & Linked & Omit<SeriesPoint, "run" | "path">;
 /**
- * A point of requests v1 as the tree writes it: group_through, which a later
- * Run can change, is written as it stood through the point's own Run, under
- * its own name (asOfRun()).
+ * A point of requests v1 as the tree writes it: group_through, which a Run
+ * that started later can change, is written as it stood through the point's
+ * own Run, under its own name (asOfRun()).
  */
 type AsOfRunPoint = Omit<RequestsPoint, "group_through"> & { group_through_as_of_run: RequestsPoint["group_through"] };
 type ApiRequestsPoint = Pick<AsOfRunPoint, "run" | "path"> & Linked & Omit<AsOfRunPoint, "run" | "path">;
@@ -329,14 +393,7 @@ export function buildApi(sources: ApiSources): Map<string, Uint8Array> {
 	const encoder = new TextEncoder();
 	const files = new Map<string, string | Uint8Array>();
 	/** Each of the API's own schemas, parsed: it fixes the order of the members of its files' objects (apiJson). */
-	const shape = (name: Exclude<SchemaName, "prices">): Json => {
-		const bytes = sources.schemas.get(name);
-		if (bytes === undefined) throw new Error(`no schema ${name}`);
-		const schema: unknown = JSON.parse(new TextDecoder().decode(bytes));
-		if (!isJson(schema)) throw new Error(`the schema ${name} is not a JSON object`);
-		return schema;
-	};
-	const shapes = { index: shape("index"), "series-list": shape("series-list"), series: shape("series"), "series-month": shape("series-month") };
+	const shapes = apiShapes(sources.schemas);
 	// The docs' address is the one link the build is given whole: refuse it unless it is what the index schema allows.
 	const docsPattern = ((shapes.index.properties as Json | undefined)?.docs as Json | undefined)?.pattern;
 	if (typeof docsPattern !== "string") throw new Error("the schema index gives no pattern for docs");
@@ -581,6 +638,7 @@ export function buildApi(sources: ApiSources): Map<string, Uint8Array> {
 			versioning: VERSIONING,
 			figures: FIGURES,
 			months: MONTHS,
+			layout: LAYOUT,
 			docs: sources.docs,
 			newest_run_started_at: newest,
 			series: {
@@ -671,7 +729,7 @@ function recoverable(id: string, derivation: SeriesDerivation, ofRequests: Reque
  * it stood through that point's Run, named group_through_as_of_run, since it
  * is not always the Derivation's group_through. The Method writes a point's
  * group's pooled figures only when the Series has more than one group, so
- * when a later Run first brings a second group, every earlier point's
+ * when a Run that started later first brings a second group, every earlier point's
  * group_through turns from null into its group's figures, and would change
  * the month files of every earlier month. Before that first Run of a second
  * group, though, every Run is of the first group, and its group's figures are
