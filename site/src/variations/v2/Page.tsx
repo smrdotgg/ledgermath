@@ -1,8 +1,8 @@
 // Design v2, "Terminal": the home page as a manual page. Monospace, one accent, figures printed
 // in full and aligned on the decimal point. Every figure comes from ../../data as the snapshot
 // holds it (see ../README.md); the only arithmetic is a change of unit, done by its helpers.
-// Round 3: the page says as little as a man page can. The figures carry it; everything else is
-// a link.
+// The spare form: the name, the command, one line of status, the figures. Everything else is a
+// link.
 import "./page.css";
 import {
 	type ByteUnit,
@@ -161,19 +161,6 @@ function Status() {
 			</span>,
 		],
 		["prices", <a href={links.prices}>{snapshot.priceDate}</a>],
-		[
-			"method",
-			<>
-				{snapshot.methods.map((m, i) => (
-					<>
-						{i ? " " : ""}
-						<a href={links.seriesList} class="nb">
-							{m.name} v{m.version}
-						</a>
-					</>
-				))}
-			</>,
-		],
 	];
 	return (
 		<dl class="kv">
@@ -192,7 +179,7 @@ function DataTable() {
 	return (
 		<div class="scroll" role="region" aria-label="The headline figures: 14 benchmarks on 5 machine types" tabindex="0">
 			<table class="data">
-				<caption class="sr">Median of each Series' counted Runs; each links its Series file.</caption>
+				<caption class="sr">Median of counted Runs</caption>
 				<colgroup>
 					<col class="c-unit" />
 					{machines.map(() => (
@@ -293,51 +280,10 @@ function DataTable() {
 	);
 }
 
-function Machines() {
-	return (
-		<table class="machines">
-			<thead>
-				<tr>
-					<th scope="col">type</th>
-					<th scope="col" class="r">
-						vCPU
-					</th>
-					<th scope="col" class="r">
-						memory
-					</th>
-					<th scope="col">processor</th>
-					<th scope="col" class="r">
-						$/hour
-					</th>
-				</tr>
-			</thead>
-			<tbody>
-				{machines.map((m) => (
-					<tr>
-						<th scope="row">{m.instanceType}</th>
-						<td class="r">{m.vcpu}</td>
-						<td class="r">{m.memory}</td>
-						<td class="proc">{m.processor}</td>
-						<td class="r price" title={`${m.price.description} (as the price file writes it: ${m.price.usdPerHour})`}>
-							{formatUsd(m.price.usdPerHour).full}
-						</td>
-					</tr>
-				))}
-			</tbody>
-		</table>
-	);
-}
-
 // ---------------------------------------------------------------- the page
 
 export default function Page() {
 	const title = "LEDGERMATH(5)";
-	const files: [string, string, string][] = [
-		[links.index, path(links.index), "start here"],
-		[links.seriesList, path(links.seriesList), `every Series, ${formatCount(snapshot.seriesCount).full}`],
-		[links.seriesFile(headline[0]!.cells[0]!.series), path(links.seriesFilePattern), "each Run, with evidence"],
-		[links.prices, "/v1/prices/<date>.json", "AWS prices, daily"],
-	];
 	return (
 		<div class="term">
 			<header class="manhead">
@@ -355,10 +301,6 @@ export default function Page() {
 							<h1 id="name-h">
 								<span class="acc">ledgermath</span> <span class="dash">—</span> measured AWS machine figures, as JSON for agents, each with its evidence
 							</h1>
-							<p class="lede">
-								{formatCount(snapshot.benchmarkCount).full} benchmarks × {formatCount(snapshot.machineCount).full} machine types, four times a day, on
-								freshly booted machines.
-							</p>
 						</div>
 					</section>
 
@@ -373,7 +315,6 @@ export default function Page() {
 								</span>
 							</code>
 						</div>
-						<p class="syn-note">Point your agent here. Every figure links its Runs and their evidence.</p>
 					</Section>
 				</div>
 
@@ -381,17 +322,7 @@ export default function Page() {
 					<Status />
 				</Section>
 
-				<Section
-					id="data"
-					title="DATA"
-					sub={
-						<nav class="jump" aria-label="Benchmark groups">
-							{SECTION_ORDER.map((section) => (
-								<a href={`#${sectionId(section)}`}>{section.toLowerCase()}</a>
-							))}
-						</nav>
-					}
-				>
+				<Section id="data" title="DATA">
 					<div class="key">
 						<span class="nb">
 							<span class="dir">↑</span> higher is better
@@ -415,29 +346,6 @@ export default function Page() {
 				</Section>
 
 				<div class="foot">
-				<Section id="machines" title="MACHINES" sub={<a href={links.prices}>On-Demand, {snapshot.priceDate}</a>}>
-					<Machines />
-				</Section>
-
-				<Section id="files" title="FILES" sub={<span class="nb">https://{API_HOST}</span>}>
-					<dl class="files">
-						{files.map(([href, shown, what]) => (
-							<div>
-								<dt>
-									<a href={href}>{shown}</a>
-								</dt>
-								<dd>{what}</dd>
-							</div>
-						))}
-						<div>
-							<dt>
-								<span class="nb">{path(links.evidenceBlobTemplate)}</span>
-							</dt>
-							<dd>the evidence</dd>
-						</div>
-					</dl>
-				</Section>
-
 				<Section id="see-also" title="SEE ALSO">
 					<p class="xref">
 						{links.schemas.map((s) => (
