@@ -13,7 +13,6 @@ import {
 	formatRate,
 	formatUsd,
 	headline,
-	headlineSeries,
 	leadFigure,
 	links,
 	machines,
@@ -102,7 +101,7 @@ const seriesCount = formatCount(snapshot.seriesCount).full;
 const method = snapshot.methods[0]!;
 const price = (usd: Parameters<typeof formatUsd>[0]) => `$${formatUsd(usd).full}`;
 
-/** On a phone a machine's line names it by its family, which is unique among the five; the key above the ledger gives the full type. */
+/** On a phone a machine's line names it by its family, which is unique among the five; the machines table gives the full type. */
 const family = (instanceType: string) => instanceType.split(".")[0]!;
 
 /** An address, with a place to break after each slash so it wraps where a reader expects. */
@@ -133,10 +132,6 @@ const ADDRESSES: { label: string; href: string; shown: string; schema?: string }
 	{ label: "Evidence", href: links.evidenceBlobTemplate, shown: rel(links.evidenceBlobTemplate) },
 ];
 
-const POINT_SHOWN = ["run", "started_at", "counted", "failure", "time_per_repetition_ns", "evidence", "boot_summary"] as const;
-const example = seriesFileContents.point.example;
-const sample = seriesFileContents.sample;
-
 export default function Page() {
 	let entryNo = 0;
 	return (
@@ -154,9 +149,6 @@ export default function Page() {
 						<span class="start-h">Point an agent at it</span>
 						<div class="cmd">
 							<code>
-								<span class="prompt" aria-hidden="true">
-									${" "}
-								</span>
 								curl <Url href={links.index} />
 							</code>
 							<button type="button" class="copy" data-copy={`curl ${links.index}`} aria-label="Copy the command" hidden>
@@ -175,24 +167,11 @@ export default function Page() {
 						</dd>
 					</div>
 					<div>
-						<dt>Oldest Run</dt>
-						<dd>
-							<time datetime={oldest.iso} title={oldest.full}>
-								{oldest.longDate}, {oldest.minute} UTC
-							</time>
-						</dd>
-					</div>
-					<div>
 						<dt>Runs</dt>
 						<dd>
-							{runs} <span class="aside">in</span> <a href={links.seriesList}>{seriesCount} Series</a>
+							<span title={`Since ${oldest.full}; boots at ${RUN_TIMES.join(", ")} UTC`}>{runs}</span> <span class="aside">in</span>{" "}
+							<a href={links.seriesList}>{seriesCount} Series</a>
 							<span class="aside">, {formatCount(snapshot.failedRuns).full} failed</span>
-						</dd>
-					</div>
-					<div>
-						<dt>Boots</dt>
-						<dd>
-							{RUN_TIMES.join(" · ")} <span class="aside">UTC</span>
 						</dd>
 					</div>
 					<div>
@@ -223,36 +202,16 @@ export default function Page() {
 							</span>
 						</h2>
 						<p class="legend">
-							<span class="lg-bar" aria-hidden="true">
-								<span class="bar-len" />
-								<span class="bar-rng" />
+							<span class="lg-item">
+								<span class="lg-len" aria-hidden="true" />
+								0–median
 							</span>
-							<span>
-								0 to median, <b>p5–p95</b>
-							</span>
-							<span class="lg-sep" aria-hidden="true">
-								·
-							</span>
-							<span>a figure opens its Runs</span>
-							<span class="lg-sep" aria-hidden="true">
-								·
-							</span>
-							<span>
-								{formatCount(headlineSeries.length).full} of {seriesCount} Series, by a <a href={links.docs}>written rule</a>
+							<span class="lg-item">
+								<span class="lg-rng" aria-hidden="true" />
+								p5–p95
 							</span>
 						</p>
 					</div>
-					<ul class="phone-key" aria-label="The machines, cheapest first">
-						{machines.map((m) => (
-							<li>
-								<span class="pk-it">
-									<b>{family(m.instanceType)}</b>
-									{m.instanceType.slice(family(m.instanceType).length)}
-								</span>
-								<span class="pk-p">{price(m.price.usdPerHour)}/h</span>
-							</li>
-						))}
-					</ul>
 					<nav class="index-tabs" aria-label="The ledger's accounts">
 						<ol>
 							{SECTIONS.map((s, i) => (
@@ -296,20 +255,9 @@ export default function Page() {
 								return (
 									<tbody id={sectionId(section)} class="acct">
 										<tr class="sec">
-											<th scope="colgroup" colspan={3}>
+											<th scope="colgroup" colspan={3 + machines.length}>
 												<span class="roman">{ROMAN[s]}.</span> {section}
 											</th>
-											{machines.map((m) => (
-												<td class="mrep" aria-hidden="true">
-													{s > 0 ? (
-														<>
-															{m.instanceType} <span class="mrep-p">{price(m.price.usdPerHour)}</span>
-														</>
-													) : (
-														""
-													)}
-												</td>
-											))}
 										</tr>
 										{rows.map(({ row, i }) => {
 											entryNo += 1;
@@ -327,12 +275,9 @@ export default function Page() {
 														</a>
 													</th>
 													<td class="unit">
-														<span class="u">{unit}</span>
-														<span class="dir">
-															<span class="arrow" aria-hidden="true">
-																{higher ? "↑" : "↓"}{" "}
-															</span>
-															{higher ? "higher" : "lower"} is better
+														<span class="u">{unit}</span>{" "}
+														<span class="arrow" role="img" aria-label={`${higher ? "higher" : "lower"} is better`} title={`${higher ? "Higher" : "Lower"} is better`}>
+															{higher ? "↑" : "↓"}
 														</span>
 													</td>
 													{row.cells.map((cell, k) => {
@@ -344,7 +289,7 @@ export default function Page() {
 																</span>
 																<a
 																	href={links.seriesFile(cell.series)}
-																	title={`${cell.machine.instanceType}: median ${x.p50.full} ${unit}; 5th percentile ${x.p5.full}, 95th ${x.p95.full}; ${x.count} counted Runs. As the Derivation holds it: ${x.p50.source}.`}
+																	title={`${cell.machine.instanceType}: median of ${x.count} counted Runs ${x.p50.full} ${unit}; 5th percentile ${x.p5.full}, 95th ${x.p95.full}. As the Derivation holds it: ${x.p50.source}.`}
 																>
 																	<Written full={x.p50.full} />
 																	<Rule x={x} scale={scale} />
@@ -366,7 +311,7 @@ export default function Page() {
 					<section class="api" aria-labelledby="api-h">
 						<h2 id="api-h">For agents and developers</h2>
 						<p class="api-lede">
-							Static JSON at <span class="mono">{API}</span>: every Series, every Run with its evidence, the day's prices, and a schema for each file.
+							Static JSON at <span class="mono">{API}</span>, a schema for each file.
 						</p>
 						<table class="addr">
 							<tbody>
@@ -389,41 +334,9 @@ export default function Page() {
 								</tr>
 							</tbody>
 						</table>
-						<figure class="point">
-							<figcaption>
-								One Run of <span class="mono">{sample.benchmark}</span> on <span class="mono">{sample.instanceType}</span>, from{" "}
-								<a href={sample.url}>its Series' file</a>
-							</figcaption>
-							<pre class="json">
-								<code>
-									{"{\n"}
-									{POINT_SHOWN.map((name, i) => {
-										const value = example[name];
-										const text = JSON.stringify(value);
-										const isLink = typeof value === "string" && /^https:\/\//.test(value);
-										return (
-											<>
-												{"  "}
-												<span class="jk">"{name}"</span>
-												<span class="jp">: </span>
-												{isLink ? (
-													<a href={value as string}>
-														"<Url href={value as string} />"
-													</a>
-												) : (
-													<span class="jv">{text}</span>
-												)}
-												<span class="jp">{i < POINT_SHOWN.length - 1 ? ",\n" : "\n"}</span>
-											</>
-										);
-									})}
-									{"}"}
-								</code>
-							</pre>
-						</figure>
 					</section>
 
-					<section class="machines" aria-labelledby="machines-h">
+					<section class="machines" id="machines" aria-labelledby="machines-h">
 						<h2 id="machines-h">The machines</h2>
 						<p class="section-lede">
 							AWS On-Demand Linux, per hour, as of{" "}
