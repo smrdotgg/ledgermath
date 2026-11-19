@@ -30,7 +30,7 @@ export const PRODUCTION_STAGE = "production-runs";
  * the schedule to the production account"); it stays smr-runs until then, so
  * that deploying smr-runs changes nothing it already has.
  */
-export const SCHEDULED_STAGE: string = "smr-runs";
+export const SCHEDULED_STAGE: string = "production-runs";
 
 /** The AWS CLI profile of each account. */
 export const PROFILES = {

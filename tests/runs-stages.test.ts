@@ -147,7 +147,7 @@ describe("the one scheduled stage", () => {
 	test("is smr-runs until the cutover", () => {
 		// The cutover changes SCHEDULED_STAGE to production-runs, and this line with it
 		// (README, "Moving the schedule to the production account"). No other test names it.
-		expect(SCHEDULED_STAGE).toBe("smr-runs");
+		expect(SCHEDULED_STAGE).toBe("production-runs");
 		expect(isScheduledStage(SCHEDULED_STAGE)).toBe(true);
 		for (const stage of UNSCHEDULED) expect(isScheduledStage(stage)).toBe(false);
 	});
