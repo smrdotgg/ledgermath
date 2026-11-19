@@ -238,7 +238,7 @@ function Facts() {
 					<dt>Runs kept</dt>
 					<dd>
 						<a href={links.seriesList}>
-							{formatCount(snapshot.runCount).full} <span class="facts-s">in {formatCount(snapshot.seriesCount).full} Series</span>
+							{formatCount(snapshot.runCount).full}
 						</a>
 					</dd>
 				</div>
@@ -375,8 +375,8 @@ function FigureTable() {
 }
 
 // The trail: the poster's own Series file, cut down to the poster's figure and the first of its Runs. Its
-// p50 is the poster's figure in nanoseconds per repetition, the same digits; its count is the poster's count
-// of Runs; the Run's own figure and the address of its evidence follow, exactly as the file holds them.
+// p50 is the poster's figure per repetition; the line under it, outside the JSON, is the module's one exact
+// division that makes it the poster's figure. Then one Run's own figure and its evidence, as the file holds them.
 const J = (v: unknown) => JSON.stringify(v);
 const walkKey = heroRow.choice.lead === "rate" ? "bytes_per_second" : "time_per_repetition_ns";
 const walkP = heroCell.series.derivations.series_v1.percentiles[walkKey]!;
@@ -385,27 +385,17 @@ const excerptHead = [
 	`{ "id": ${J(heroCell.series.id)},`,
 	`  "instance_type": ${J(heroCell.series.instance_type)},`,
 	`  "derivations": { "series_v1": {`,
-	`    "percentiles": { ${J(walkKey)}: {`,
-	`      "count": ${J(walkP.count)},`,
-	`      "p5": ${J(walkP.p5)},`,
-	`      "p50": `,
+	`   "percentiles": {`,
+	`    ${J(walkKey)}: {`,
+	`     "count": ${J(walkP.count)},`,
+	`     "p5": ${J(walkP.p5)},`,
+	`     "p50": `,
 ].join("\n");
 const excerptP50 = J(walkP.p50);
-const excerptMid = [
-	`,`,
-	`      "p95": ${J(walkP.p95)} } },`,
-	`    "points": [ {`,
-	`      "run": ${J(run.run)},`,
-	`      "started_at": ${J(run.started_at)},`,
-	`      "counted": ${J(run.counted)},`,
-	`      ${J(walkKey)}: ${J(run[walkKey])},`,
-	`      "evidence":`,
-	`        `,
-].join("\n");
-const excerptEvidence = J(run.evidence);
-const excerptBoot = [`,`, `      "boot_summary":`, `        `].join("\n");
-const excerptBootUrl = J(run.boot_summary);
-const excerptTail = ` },\n      … ] } } }`;
+const excerptMid = [`     "p95": ${J(walkP.p95)} } },`, `   "points": [ {`, `     ${J(walkKey)}: ${J(run[walkKey])},`, `     "evidence":`].join("\n");
+/** The evidence address, with places it may break: after the host's directory and after the date. */
+const evidenceParts = J(run.evidence).split(/(?<=\/runs\/|\/\d\d\/\d\d\/)/);
+const excerptTail = `   }, … ] } } }`;
 
 /** The API's three files under its one base address. */
 const BASE = links.index.slice(0, links.index.lastIndexOf("/") + 1);
@@ -474,11 +464,25 @@ function Api() {
 					<pre class="json" role="region" tabindex="0" aria-label={`An excerpt of series/${heroCell.series.id}.json`}>
 						<code>
 							{excerptHead}
-							<b class="json-hit">{excerptP50}</b>
+							<b class="json-hit">{excerptP50}</b>,
+							{heroRow.choice.per && (
+								<span class="json-note">
+									÷ {formatCount(heroRow.choice.per.count).full} {heroRow.choice.per.of}s{" "}
+									<span class="nowrap">
+										= <b>{heroShown.full}</b> {heroShown.unit}
+									</span>
+								</span>
+							)}
+							{heroRow.choice.per ? "" : "\n"}
 							{excerptMid}
-							<a href={run.evidence}>{excerptEvidence}</a>
-							{excerptBoot}
-							{run.boot_summary ? <a href={run.boot_summary}>{excerptBootUrl}</a> : excerptBootUrl}
+							<a class="json-url" href={run.evidence}>
+								{evidenceParts.map((p, i) => (
+									<>
+										{i > 0 && <wbr />}
+										{p}
+									</>
+								))}
+							</a>
 							{excerptTail}
 						</code>
 					</pre>
@@ -492,6 +496,9 @@ function Footer() {
 	return (
 		<footer class="foot grid">
 			<div class="foot-name">LedgerMath</div>
+			<a class="foot-lic" href="third-party-notices.txt">
+				Licences
+			</a>
 		</footer>
 	);
 }
