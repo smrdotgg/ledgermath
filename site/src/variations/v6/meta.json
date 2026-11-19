@@ -1,4 +1,4 @@
 {
 	"name": "Instrument panel",
-	"idea": "Range bars and dot plots first, small multiples per benchmark, exact numbers inline."
+	"idea": "Small multiples: each benchmark a chart placing the five machines on one exact scale, median dot and p5–p95 bar, the figure printed beside each mark; zoomed scales say so."
 }
