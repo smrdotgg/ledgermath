@@ -64,12 +64,11 @@ function unitWords(u: RowUnit): string {
 
 /**
  * The unit as a row shows it: a time is the time of one repetition, the row's own action ("Hash 64 bytes with
- * SHA-256", 571 ns), so the bare unit says it; the title gives "per repetition" and what one repetition is. The one
- * row whose figure is a part of a repetition (mutex, per critical section) keeps its "per" in sight.
+ * SHA-256", 571 ns), so the bare unit says it; the title gives "per repetition" and what one repetition is. The mutex
+ * row's "per critical section" is in its title, on the traced card and in the JSON's division line.
  */
 function rowUnitShort(u: RowUnit): string {
 	if (u.kind === "rate") return `${u.unit}/s`;
-	if (u.per) return `${u.unit} per ${u.per.of}`;
 	return u.unit;
 }
 
@@ -343,18 +342,18 @@ function Hero() {
 		<section class="hero" aria-labelledby="claim">
 			<div class="wrap hero-grid">
 				<div class="hero-top">
-					<p class="eyebrow">AWS server benchmarks as JSON, for agents</p>
+					<p class="eyebrow">AWS {snapshot.region} server benchmarks as JSON, for agents</p>
 					<h1 id="claim">Server numbers you can trace to their runs.</h1>
 					{/* the cadence beside the newest Run; the claim and the card say the rest */}
 					<div class="fresh">
 						<p class="fresh-line">
-							<span>Booted four times a day</span>
 							<span>
 								newest run{" "}
 								<time datetime={newest.iso} title={newest.full}>
 									{newest.date} {newest.minute} UTC
 								</time>
 							</span>
+							<span>booted four times a day</span>
 							<span>
 								<a href={links.seriesList}>{runs.full} runs</a>, {failed.full} failed
 							</span>
@@ -493,7 +492,7 @@ function SpreadKey() {
 				less is faster
 			</span>
 			<span class="key-item">
-				<b class="kg-bold">bold</b> digits: same at p5 and p95
+				<b class="kg-bold">full-tone</b> digits: same at p5 and p95
 			</span>
 		</p>
 	);

@@ -39,7 +39,7 @@
 	--ink: #17160f;
 	--ink-2: #45423a;
 	--ink-3: #65615a;
-	--tail: #5a564e;
+	--tail: #757064;
 	--rule: #dcd6c8;
 	--rule-2: #c9c2b1;
 	--accent: #b83d0f;
@@ -62,17 +62,18 @@
 		--ink: #f2eee4;
 		--ink-2: #c9c3b6;
 		--ink-3: #a29c8e;
-		--tail: #b9b3a5;
+		--tail: #8e887b;
 		--rule: #2c2a23;
 		--rule-2: #3d3a31;
 		--accent: #ff8a5b;
 		--accent-ink: #1a0d06;
 		--accent-soft: #3a1e12;
-		--band: #1a1914;
-		--band-2: #22201a;
+		/* the API band in a rust-dark of its own, so data, API and machines stay three surfaces as in light */
+		--band: #22170f;
+		--band-2: #2c1f16;
 		--band-ink: #f2eee4;
-		--band-ink-2: #b7b1a3;
-		--band-rule: #36332b;
+		--band-ink-2: #c4bcad;
+		--band-rule: #4a3324;
 		--band-accent: #ff8a5b;
 		--shadow: 0 1px 0 rgba(0, 0, 0, 0.3), 0 16px 40px -16px rgba(0, 0, 0, 0.7);
 	}
@@ -535,7 +536,7 @@ h1 {
 	color: var(--ink);
 }
 .sh-tail {
-	color: var(--ink-2);
+	color: var(--tail);
 }
 
 /* the Series' facts, two set lines between two rules */
@@ -755,6 +756,11 @@ table.spec {
 	--bar: color-mix(in srgb, var(--ink) 34%, var(--card));
 	--whisk: var(--ink);
 }
+@media (prefers-color-scheme: dark) {
+	:root {
+		--bar: color-mix(in srgb, var(--ink) 52%, var(--card));
+	}
+}
 .numbers {
 	padding: 1.5rem 0 5rem;
 }
@@ -831,7 +837,7 @@ table.ht {
 	font: 500 0.75rem/1.4 var(--mono);
 	letter-spacing: 0.08em;
 	text-transform: uppercase;
-	color: var(--ink-3);
+	color: var(--ink-2);
 	padding-left: 1.4rem;
 }
 .ht thead th.col-machine {
@@ -952,10 +958,16 @@ a.cell:focus-visible {
 	min-width: var(--iw, 1ch);
 	text-align: right;
 }
-/* the digits p5 and p95 share in the bolder weight; the rest dark too, so the magnitude reads whole */
+/* the digits p5 and p95 share in full ink and the bolder weight; the rest a clear step paler, still every digit */
 .x-tail {
-	color: var(--ink-2);
+	color: var(--tail);
 	font-weight: 400;
+}
+/* a figure is a link: a faint dotted rule under its digits, as under the hero's run count */
+.cell .exact {
+	text-decoration: underline dotted var(--rule);
+	text-decoration-thickness: 1px;
+	text-underline-offset: 3px;
 }
 /* every figure is a link; its bar is the rule under it, and the digits take the accent on hover and focus */
 a.cell:hover .exact,
@@ -1340,12 +1352,9 @@ pre {
 		font-size: 0.875rem;
 	}
 	/* three facts, three lines, no dots left hanging at a line's end */
+	/* two lines: the newest Run, then the cadence and the count */
 	.fresh-line {
-		flex-direction: column;
-		row-gap: 0.1rem;
-	}
-	.fresh-line > span:not(:last-child)::after {
-		display: none;
+		row-gap: 0.15rem;
 	}
 	.machines {
 		padding: 3rem 0;
