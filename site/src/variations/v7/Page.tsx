@@ -33,21 +33,8 @@ import {
 const newest = formatMoment(snapshot.newestRunStartedAt);
 const oldest = formatMoment(snapshot.oldestRunStartedAt);
 const pricesFetched = formatMoment(snapshot.pricesFetchedAt);
+/** The four scheduled boots of each day, UTC. */
 const BOOTS = ["04:10", "10:10", "16:10", "22:10"];
-const dayAt = (hhmm: string) => {
-	const [h, m] = hhmm.split(":").map(Number) as [number, number];
-	return `${((h * 60 + m) / 1440) * 100}%`;
-};
-
-/** A moment to the second; its title and datetime keep every digit. */
-function When(props: { at: ReturnType<typeof formatMoment> }) {
-	const m = props.at;
-	return (
-		<time datetime={m.iso} title={m.full}>
-			{m.date} {m.second} UTC
-		</time>
-	);
-}
 
 // ---------------------------------------------------------------- one unit per table row
 
@@ -99,6 +86,7 @@ function spread(fig: Fig): [Shown, Shown] {
 const askedSeries = series.find((row) => row.id === seriesFileContents.sample.id)!;
 const askedRow = headline.find((row) => row.cells.some((cell) => cell.series.id === askedSeries.id));
 if (!askedRow) throw new Error(`the sample Series ${askedSeries.id} is not a headline figure`);
+const askedMethod = askedRow.choice.readme;
 const ASKED_MACHINE = askedSeries.instance_type;
 const askedIndex = askedRow.cells.findIndex((cell) => cell.series.id === askedSeries.id);
 const askedFig = rowFigures(askedRow)[askedIndex]!;
@@ -143,21 +131,22 @@ const SECTIONS: Section[] = ["Memory", "Compute", "Operating system", "Disk", "N
 const sectionId = (s: Section) => `group-${s.toLowerCase().replace(/ /g, "-")}`;
 
 /**
- * Every digit of a figure, its first four significant digits set heavier so a row scans, the
- * integer part in a box of fixed width so the decimal points line up down a column.
+ * How many decimals of a row's figures are set heavier: down to the place where its widest figure
+ * has four significant digits, the same place for every figure in the row, so the heavy digits end
+ * in one column and read as the row rounded.
  */
-function Exact(props: { full: string }) {
+function heavyPlaces(figs: Fig[]): number {
+	return Math.max(0, 4 - Math.max(...figs.map((f) => f.shown.full.split(".")[0]!.length)));
+}
+
+/**
+ * Every digit of a figure, its digits down to the row's heavy place set heavier so a row scans,
+ * the integer part in a box of fixed width so the decimal points line up down a column.
+ */
+function Exact(props: { full: string; places: number }) {
 	const full = props.full;
-	let k = full.length;
-	for (let i = 0, sig = 0; i < full.length; i++) {
-		const c = full[i]!;
-		if (c >= "0" && c <= "9" && (sig > 0 || c !== "0")) sig++;
-		if (sig === 4) {
-			k = i + 1;
-			break;
-		}
-	}
 	const dot = full.includes(".") ? full.indexOf(".") : full.length;
+	const k = Math.min(full.length, props.places > 0 ? dot + 1 + props.places : dot);
 	const cut = (from: number, to: number) => [full.slice(from, Math.max(from, Math.min(k, to))), full.slice(Math.max(from, Math.min(k, to)), to)] as const;
 	const [intHeavy, intLight] = cut(0, dot);
 	const [fracHeavy, fracLight] = cut(dot, full.length);
@@ -250,8 +239,8 @@ export default function Page() {
 							<span class="h1-line">Measured AWS server benchmarks, for AI agents to cite.</span>
 						</h1>
 						<p class="lede">
-							{formatCount(snapshot.benchmarkCount).full} benchmarks on {formatCount(snapshot.machineCount).full} freshly booted machine types in {snapshot.region}, four
-							times a day. Every Run kept, with its evidence.
+							{formatCount(snapshot.benchmarkCount).full} benchmarks on {formatCount(snapshot.machineCount).full} freshly booted machine types in {snapshot.region}, at {BOOTS.slice(0, -1).join(", ")} and {BOOTS.at(-1)}&nbsp;UTC.
+							Every Run kept, with its evidence.
 						</p>
 						<div class="way-in" id="api">
 							<div class="way-row" data-copy-block="the index command">
@@ -274,26 +263,54 @@ export default function Page() {
 						</p>
 					</div>
 
-					<dl class="facts-line">
-							<div>
-								<dt>Newest Run</dt>
-								<dd>
-									<a href="#provenance">
-										<time datetime={newest.iso} title={newest.full}>
-											{newest.date} <span class="nowrap">{newest.minute} UTC</span>
-										</time>
-									</a>
-								</dd>
-							</div>
-							<div>
-								<dt>Prices</dt>
-								<dd>
-									<a href={links.prices} title={`AWS On-Demand prices, copied ${pricesFetched.full}`}>
-										{snapshot.priceDate}
-									</a>
-								</dd>
-							</div>
-						</dl>
+					{/* Freshness and provenance, one line under the hero: each fact links to the file that
+					    states it, and each count says what it counts. */}
+					<dl class="facts-line" id="provenance" aria-label="Provenance">
+						<div>
+							<dt>Newest Run</dt>
+							<dd>
+								<a href={links.index} title={`index.json: newest_run_started_at, ${newest.full}`}>
+									<time datetime={newest.iso}>
+										{newest.date} <span class="nowrap">{newest.minute} UTC</span>
+									</time>
+								</a>
+							</dd>
+						</div>
+						<div>
+							<dt>Oldest Run</dt>
+							<dd>
+								<a href={links.seriesList} title={`series.json: the least oldest_run_started_at, ${oldest.full}`}>
+									<time datetime={oldest.iso}>
+										{oldest.date} <span class="nowrap">{oldest.minute} UTC</span>
+									</time>
+								</a>
+							</dd>
+						</div>
+						<div>
+							<dt>Runs, all {formatCount(snapshot.seriesCount).full} Series</dt>
+							<dd>
+								<a href={links.seriesList} title="series.json: the sum of every Series' runs">
+									{formatCount(snapshot.runCount).full}
+								</a>
+							</dd>
+						</div>
+						<div>
+							<dt>Failed</dt>
+							<dd>
+								<a href={links.seriesList} title="series.json: the sum of every Series' failed_runs">
+									{formatCount(snapshot.failedRuns).full}
+								</a>
+							</dd>
+						</div>
+						<div>
+							<dt>Prices</dt>
+							<dd>
+								<a href={links.prices} title={`AWS On-Demand prices, copied ${pricesFetched.full}`}>
+									{snapshot.priceDate}
+								</a>
+							</dd>
+						</div>
+					</dl>
 
 					<section class="exchange" id="example" aria-labelledby="exchange-title">
 						<h2 id="exchange-title" class="sr-only">
@@ -305,7 +322,7 @@ export default function Page() {
 							</span>
 							<blockquote class="question">
 								<p>
-									On <span class="nowrap">{ASKED_MACHINE}</span>, how long is one uncontended mutex lock and unlock, and the hourly price?
+									What do one uncontended mutex critical section and one hour of <span class="nowrap">{ASKED_MACHINE}</span> cost?
 								</p>
 							</blockquote>
 						</div>
@@ -336,14 +353,16 @@ export default function Page() {
 								path={`/series/${askedSeriesIndex}/derivations/series_v1/percentiles/time_per_repetition_ns/p50`}
 							>
 								{askedRaw}&nbsp;÷&nbsp;
-								<abbr title={`${formatCount(askedPer.count).full} ${askedPer.of}s in one repetition`}>{formatCount(askedPer.count).full}</abbr>
+								<a href={askedMethod} title={`${formatCount(askedPer.count).full} ${askedPer.of}s in one repetition: the benchmark's Method`}>
+									{formatCount(askedPer.count).full}
+								</a>
 							</Source>
 							<Source href={askedSeries.url} field="points[0].evidence" path="/derivations/series_v1/points/0/evidence">
 								<a href={askedRun.evidence} title={`Run ${askedRun.run}, ${askedRunAt.full}`}>
-									Example Run {askedRunAt.date}
+									Run {askedRunAt.date}
 								</a>
 							</Source>
-							<Source href={links.prices} field="…/pricePerUnit/USD" path={askedMachine.price.path.pointer}>
+							<Source href={links.prices} field={`${askedMachine.price.path.sku} › … › USD`} path={askedMachine.price.path.pointer}>
 								"{askedMachine.price.usdPerHour}"
 							</Source>
 						</ol>
@@ -433,6 +452,7 @@ export default function Page() {
 											const figs = rowFigures(row);
 											const max = Math.max(...figs.map((f) => Math.max(f.p5.value, f.p95.value)));
 											const up = row.choice.lead === "rate";
+											const places = heavyPlaces(figs);
 											return (
 												<tr class="row" style={intWidth(figs)}>
 													<th scope="row" class="bench">
@@ -466,7 +486,7 @@ export default function Page() {
 																		title={cellTitle(fig, cell.series)}
 																		aria-label={`${cell.machine.instanceType}: median ${fig.shown.full} ${fig.shown.unit} of ${formatCount(fig.count).full} Runs, its Series file`}
 																	>
-																		<Exact full={fig.shown.full} />
+																		<Exact full={fig.shown.full} places={places} />
 																	</a>
 																</span>
 																<Bar fig={fig} max={max} />
@@ -483,47 +503,6 @@ export default function Page() {
 					</div>
 				</section>
 
-				<section id="provenance" class="provenance wrap" aria-labelledby="provenance-title">
-					<h2 id="provenance-title">Provenance</h2>
-					<div class="day">
-						<span class="day-label">scheduled boots, UTC</span>
-						<div class="day-line">
-							{BOOTS.map((t) => (
-								<span class="boot" style={{ left: dayAt(t) }}>
-									<span class="boot-dot" aria-hidden="true" />
-									<span class="boot-time">{t}</span>
-								</span>
-							))}
-							<span class="newest" style={{ left: dayAt(newest.minute) }}>
-								<span class="newest-label">
-									newest Run{" "}
-									<time datetime={newest.iso} title={newest.full}>
-										{newest.minute}
-									</time>
-								</span>
-								<span class="newest-tick" aria-hidden="true" />
-							</span>
-						</div>
-					</div>
-					<dl class="facts">
-						<div>
-							<dt>Runs</dt>
-							<dd>
-								{formatCount(snapshot.runCount).full}
-							</dd>
-						</div>
-						<div>
-							<dt>Oldest Run</dt>
-							<dd>
-								<When at={oldest} />
-							</dd>
-						</div>
-						<div>
-							<dt>Failed Runs</dt>
-							<dd>{formatCount(snapshot.failedRuns).full}</dd>
-						</div>
-					</dl>
-				</section>
 			</main>
 
 			<footer class="footer">
