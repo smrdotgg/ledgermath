@@ -1056,4 +1056,18 @@ A migrated benchmark is done only when **all** of these hold:
   move showed (the launch function's log group, the names of production's launch
   schedules, how long `verify` takes, a group check that also reads the requests Series,
   the two new `sst-env.d.ts` files, and dated figures for the buckets).
+- **2026-11-19** — The data API, first slice (#64, ADR-0030). `scripts/build-api.ts` cuts
+  the two files of Derivations and the price files into a tree of static JSON files, laid
+  out as `https://api.ledgermath.com` will serve it: `v1/index.json`, `v1/series.json` (one
+  row per Series), `v1/series/<id>.json` (each Method's Derivation in full, every point
+  linking its Run file), `v1/prices/<yyyy-mm-dd>.json` and `v1/schemas/`.
+  `scripts/check-api.ts` checks what was written. The `runs` workflow builds and checks it
+  after the page, and keeps it as the artifact `api`. Nothing is served or public, and the
+  workflow uploads nothing anywhere else. On the data of 2026-11-19, 187 Series: the list is
+  193 KB, a Series file 124 to 791 KB, and three builds gave the same bytes. Chosen while
+  building: each Method's part keyed `<name>_v<version>`; samples kept in the Series file;
+  no time of generation in any file, the newest Run's start instead; a point's
+  `boot_summary` linked when the Runs repository holds it; blob addresses as a template in
+  the table of contents, since Run files name blobs by hash. The lookup tool and the skill
+  still read the files of Derivations.
 - _(agents: append your entry here, one per merged benchmark)_

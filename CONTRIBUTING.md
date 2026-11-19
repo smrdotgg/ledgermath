@@ -104,7 +104,8 @@ Once a version's Derivations are published, it is never edited: a change to what
 is a new version in its own directory (`methods/v2/` beside `methods/v1/` for `series`,
 `methods/requests/v2/` for `requests`), with its own `output.ts`, and `scripts/derive.ts`,
 the page (`scripts/build-page.ts`) and the lookup tool (`scripts/lib/ledger-data.ts`, which
-reads version 1 of each only) learn to choose it. A record kept of a stream is keyed by the
+reads version 1 of each only) learn to choose it. The data API (`scripts/lib/api.ts`) gives
+it a key of its own, `series_v2` beside `series_v1`, never in its place (ADR-0030). A record kept of a stream is keyed by the
 digest of the code that made it (`methods/records.ts`), so any change to that code makes
 every stream be read again once, and records kept by other code are never read. A stored Run is never touched. The pull request says what the new
 version does differently and shows it on the Runs: what it splits or counts that the old
