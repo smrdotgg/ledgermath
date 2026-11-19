@@ -1,7 +1,7 @@
-// Design v4, "Departure board": the home page as a station board. One line of what it is, the
-// clock (the newest Run, the four daily rounds, the day's price file), then the board itself:
-// fourteen rows, five machine types, every figure exact, its p5 to p95 drawn like a platform
-// strip. Few words: the board reads itself, and everything longer is a link away.
+// Design v4, "Departure board", spare form: the home page as a station board with almost no
+// words. One line of what it is and one command; the clock (the newest Run, the four daily
+// rounds, the day's price file); then the board: fourteen rows, five machine types, every figure
+// exact, its p5 to p95 drawn like a platform strip. Everything else is a link in the footer.
 // Rendered once at build time; client.ts only adds copy buttons.
 import "./page.css";
 import {
@@ -21,7 +21,6 @@ import {
 	links,
 	machines,
 	roundSignificant,
-	seriesFileContents,
 	snapshot,
 } from "../../data";
 
@@ -141,31 +140,14 @@ export default function Page() {
 	const oldest = formatMoment(snapshot.oldestRunStartedAt);
 	const fetched = formatMoment(snapshot.pricesFetchedAt);
 	const runs = formatCount(snapshot.runCount).full;
-	const seriesCount = formatCount(snapshot.seriesCount).full;
 	const failed = formatCount(snapshot.failedRuns).full;
-	const benchmarksN = formatCount(snapshot.benchmarkCount).full;
-	const machinesN = formatCount(snapshot.machineCount).full;
-	const seriesV1 = snapshot.methods.find((m) => m.key === "series_v1")!;
-	const requestsV1 = snapshot.methods.find((m) => m.key === "requests_v1");
 	const sections = sectionsInOrder();
 	let rowNumber = 0;
 	const roundOfNewest = ROUNDS.reduce((acc, t, i) => (t <= newest.minute ? i : acc), ROUNDS.length - 1);
 
-	// The sample Series file the snapshot keeps: which board row and machine it is.
-	const sample = seriesFileContents.sample;
-	const point = seriesFileContents.point.example;
-	const sampleRowIndex = headline.findIndex((r) => r.cells.some((cell) => cell.series.id === sample.id));
-	const sampleRow = headline[sampleRowIndex];
-	const sampleCode = sampleRow ? `${SECTION_CODE[sampleRow.choice.section]} ${String(sampleRowIndex + 1).padStart(2, "0")}` : "";
-	const samplePrepared = sampleRow ? prepareRow(sampleRow).cells.find((p) => p.cell.series.id === sample.id) : undefined;
-	const pointTime = formatDuration(point.time_per_repetition_ns!);
-	const J = (v: unknown) => JSON.stringify(v);
 
 	return (
 		<>
-			<a class="skip" href="#board">
-				Skip to the board
-			</a>
 			<header class="band">
 				<div class="band-in">
 					<a class="brand" href="#top" aria-label="LedgerMath, top of the page">
@@ -177,8 +159,6 @@ export default function Page() {
 						<span class="brand-name">LedgerMath</span>
 					</a>
 					<nav aria-label="Site">
-						<a href="#board">Board</a>
-						<a href="#api">API</a>
 						<a href={links.docs}>Docs</a>
 					</nav>
 					<span class="band-region">
@@ -195,15 +175,24 @@ export default function Page() {
 							<h1 id="title">
 								<span class="h1-a">Fresh AWS machines,</span> <span class="h1-hi">measured four times a day.</span>
 							</h1>
-							<p class="lede">
-								{benchmarksN} benchmarks on {machinesN} freshly booted machine types. Every Run kept with its evidence; every figure in JSON, for AI agents
-								to cite.
-							</p>
 							<div class="cmd" data-copy-wrap>
 								<code data-copy>
 									<Curl href={links.index} />
 								</code>
 							</div>
+							{/* the rest of the way in, folded */}
+								<details class="api-fold" id="api">
+									<summary>API files</summary>
+									<ol class="term">
+										{[links.index, links.seriesList, links.seriesFile(headline[0]!.cells[0]!.series), links.prices].map((href) => (
+											<li data-copy-wrap>
+												<code data-copy>
+													<Curl href={href} />
+												</code>
+											</li>
+										))}
+									</ol>
+								</details>
 						</div>
 
 						<div class="panel">
@@ -249,10 +238,6 @@ export default function Page() {
 									<dd>{failed}</dd>
 								</div>
 								<div>
-									<dt>Series</dt>
-									<dd>{seriesCount}</dd>
-								</div>
-								<div>
 									<dt>Since</dt>
 									<dd title={oldest.full}>{oldest.date}</dd>
 								</div>
@@ -272,10 +257,10 @@ export default function Page() {
 				<section class="board-sec" id="board" aria-labelledby="board-title">
 					<div class="sec-head">
 						<h2 id="board-title">
-							<span class="h2-code">01</span> The board
+							The board
 						</h2>
-						<span class="key" aria-hidden="true">
-							<span class="key-strip">
+						<span class="key">
+							<span class="key-strip" aria-hidden="true">
 								<span class="key-0">0</span>
 								<i class="strip-span" style={{ left: "38%", width: "40%" }} />
 								<i class="strip-post" style={{ left: "55%" }} />
@@ -288,6 +273,9 @@ export default function Page() {
 								<span class="key-l key-p95" style={{ left: "78%" }}>
 									p95
 								</span>
+							</span>
+							<span class="key-dir">
+								<b class="up">↑</b> higher · <b class="down">↓</b> lower is faster
 							</span>
 						</span>
 						<nav class="jump" aria-label="Board sections">
@@ -328,7 +316,7 @@ export default function Page() {
 									<th scope="colgroup" colspan={machines.length + 1}>
 										<span class="badge">{SECTION_CODE[g.section]}</span>
 										<span class="sec-name">{g.section}</span>
-										{g.section === "Disk" && <span class="sec-note">root EBS gp3 volume on all five</span>}
+										{g.section === "Disk" && <span class="sec-note">gp3 root volume</span>}
 									</th>
 								</tr>
 								{g.rows.map((row) => {
@@ -348,8 +336,13 @@ export default function Page() {
 														{p.unit}
 														{c.per && <span class="what-per"> per {formatCount(c.per.count).full}</span>}
 													</span>
-													<span class={`what-dir ${up ? "up" : "down"}`} title={up ? "Higher is faster" : "Lower is faster"}>
-														<span aria-hidden="true">{up ? "↑" : "↓"}</span> faster
+													<span
+														class={`what-dir ${up ? "up" : "down"}`}
+														role="img"
+														aria-label={up ? "higher is faster" : "lower is faster"}
+														title={up ? "Higher is faster" : "Lower is faster"}
+													>
+														{up ? "↑" : "↓"}
 													</span>
 												</span>
 												<a class="what-label" href={c.readme} title={`${c.what} ${c.setting}.`}>
@@ -386,117 +379,6 @@ export default function Page() {
 					</table>
 				</section>
 
-				{/* ------------------------------------------------ the way in */}
-				<section class="api-sec" id="api" aria-labelledby="api-title">
-					<div class="sec-head">
-						<h2 id="api-title">
-							<span class="h2-code">02</span> For agents
-						</h2>
-						<p class="sec-sub">Fetch the index, then the Series you need; cite each figure by its file's address.</p>
-					</div>
-
-					<div class="api-grid">
-						<ol class="term">
-							<li data-copy-wrap>
-								<span class="term-c"># index</span>
-								<code data-copy>
-									<Curl href={links.index} />
-								</code>
-							</li>
-							<li data-copy-wrap>
-								<span class="term-c"># all {seriesCount} Series</span>
-								<code data-copy>
-									<Curl href={links.seriesList} />
-								</code>
-							</li>
-							<li data-copy-wrap>
-								<span class="term-c">
-									# {sampleCode} · {sample.instanceType}
-								</span>
-								<code data-copy>
-									<Curl href={sample.url} />
-								</code>
-							</li>
-							<li data-copy-wrap>
-								<span class="term-c"># prices · {snapshot.priceDate}</span>
-								<code data-copy>
-									<Curl href={links.prices} />
-								</code>
-							</li>
-						</ol>
-
-						<div class="api-side">
-							<table class="files">
-								<thead>
-									<tr>
-										<th scope="col">File</th>
-										<th scope="col">Schema</th>
-									</tr>
-								</thead>
-								<tbody>
-									{links.schemas.map((s) => (
-										<tr>
-											<th scope="row">
-												<code>{s.describes}</code>
-											</th>
-											<td>
-												<a href={s.url}>{s.name}</a>
-											</td>
-										</tr>
-									))}
-									<tr>
-										<th scope="row">
-											<code>{links.evidenceBlobTemplate.replace("https://api.ledgermath.com/", "")}</code>
-										</th>
-										<td>evidence</td>
-									</tr>
-								</tbody>
-							</table>
-
-							<details class="fold">
-								<summary>One Run, in its Series file</summary>
-								<p class="fold-l">
-									<code>v1/series/{sample.id}.json</code> · excerpt, samples omitted
-								</p>
-								<pre class="resp">
-									<code>
-										<span class="j-k">"benchmark"</span>: <span class="j-s">{J(sample.benchmark)}</span>,{"\n"}
-										<span class="j-k">"instance_type"</span>: <span class="j-s">{J(sample.instanceType)}</span>,{"\n"}
-										<span class="j-k">"run"</span>: <span class="j-s">{J(point.run)}</span>,{"\n"}
-										<span class="j-k">"started_at"</span>: <span class="j-s">{J(point.started_at)}</span>,{"\n"}
-										<span class="j-k">"counted"</span>: <span class="j-n">{J(point.counted)}</span>,{"\n"}
-										<span class="j-k">"time_per_repetition_ns"</span>: <mark class="j-n">{J(point.time_per_repetition_ns)}</mark>,{"\n"}
-										<span class="j-k">"evidence"</span>: <a href={point.evidence}>{J(point.evidence)}</a>
-									</code>
-								</pre>
-								{samplePrepared && (
-									<p class="fold-l">
-										This Run: {group(pointTime.full, ",", " ")} {pointTime.unit}. Its Series' median ({sampleCode}, {sample.instanceType}):{" "}
-										{group(samplePrepared.p50.full, ",", " ")} {samplePrepared.p50.unit}.
-									</p>
-								)}
-							</details>
-
-							<details class="fold">
-								<summary>Where each price is read</summary>
-								<dl class="ptr">
-									{machines.map((m) => (
-										<div>
-											<dt>{m.instanceType}</dt>
-											<dd>
-												<code>{m.price.path.pointer}</code>
-											</dd>
-										</div>
-									))}
-								</dl>
-							</details>
-
-							<p class="api-docs">
-								<a href={links.docs}>API documentation →</a>
-							</p>
-						</div>
-					</div>
-				</section>
 			</main>
 
 			<footer class="foot">
@@ -513,13 +395,12 @@ export default function Page() {
 						As of <time datetime={newest.iso}>{newest.full}</time>
 					</span>
 					<span class="foot-links">
-						<a href={links.seriesList}>
-							Methods: series v{seriesV1.version}
-							{requestsV1 ? `, requests v${requestsV1.version}` : ""}
-						</a>
+						<a href={links.index}>index</a>
+						<a href={links.seriesList}>series</a>
 						<a href={links.prices}>prices</a>
+						<a href={links.schema.index}>schemas</a>
 						<a href={links.docs}>docs</a>
-						<a href="third-party-notices.txt">Font licences</a>
+						<a href="third-party-notices.txt">fonts</a>
 					</span>
 				</div>
 			</footer>
