@@ -553,7 +553,7 @@ thead th {
 }
 
 .corner {
-	width: 31%;
+	width: 25%;
 	padding-left: 0 !important;
 	padding-right: 32px;
 }
@@ -600,34 +600,64 @@ thead th {
 	font-variant-numeric: tabular-nums;
 }
 
-tr.group th {
-	padding: 34px 0 10px;
+tr.group th,
+tr.group td {
+	padding: 40px 0 8px;
 	border-bottom: 1px solid var(--ink);
+	vertical-align: bottom;
+}
+
+tr.group th {
+	padding-right: 32px;
+}
+
+/* The machine names again at every group, so a column never loses its name. */
+.group-m {
+	padding-left: 20px !important;
+	text-align: right;
+	font-size: 13px;
+	font-weight: 700;
+	letter-spacing: -0.005em;
+	white-space: nowrap;
+}
+
+/* The first group sits right under the header row, which already names them. */
+tbody:first-of-type .group-m {
+	visibility: hidden;
+}
+
+.group-up {
+	margin-left: 14px;
+	font-size: 12px;
+	font-weight: 500;
+	color: var(--muted);
+	text-decoration-color: var(--hair);
 }
 
 .group-name {
 	display: block;
-	font-size: 13px;
-	font-weight: 700;
-	letter-spacing: 0.01em;
+	font-size: 15px;
+	font-weight: 750;
+	letter-spacing: -0.01em;
 }
 
 .group-note {
 	display: block;
 	max-width: 62em;
-	margin-top: 4px;
-	font-size: 13.5px;
+	margin-top: 6px;
+	font-size: 13px;
 	line-height: 1.4;
 	font-weight: 450;
 }
 
-tbody:first-of-type tr.group th {
+tbody:first-of-type tr.group th,
+tbody:first-of-type tr.group td {
 	padding-top: 22px;
 }
 
 tr.row th,
 tr.row td {
-	padding: 16px 0 18px 12px;
+	padding: 16px 0 18px 20px;
 	border-bottom: 1px solid var(--hair);
 }
 
@@ -653,7 +683,7 @@ tr.row:target th .row-label {
 	flex-wrap: wrap;
 	gap: 2px 10px;
 	margin-top: 5px;
-	font-size: 12.5px;
+	font-size: 13px;
 	font-weight: 650;
 	line-height: 1.35;
 }
@@ -682,57 +712,128 @@ tr.row:target th .row-label {
 	color: var(--muted);
 }
 
+.row-set summary {
+	cursor: pointer;
+	width: fit-content;
+	text-decoration: underline;
+	text-decoration-color: var(--hair);
+	text-underline-offset: 0.2em;
+}
+
+.row-set summary:focus-visible {
+	outline: 3px solid var(--red);
+	outline-offset: 2px;
+}
+
+.row-set[open] summary {
+	margin-bottom: 2px;
+}
+
 td {
 	text-align: right;
 }
 
-.v,
-.x,
-.r,
-.each {
-	display: block;
-	font-variant-numeric: tabular-nums;
-}
-
-.v {
-	font-size: 27px;
-	font-weight: 620;
-	letter-spacing: -0.03em;
-	line-height: 1.05;
+/*
+ * One exact figure per cell, every digit: the integer part and the compared digits strong, the
+ * rest light, all on one baseline. The row sets the widths (--wi, --wh, --wt), so the five
+ * figures of a row share one decimal point.
+ */
+.fig {
+	display: inline-flex;
+	align-items: baseline;
+	justify-content: flex-end;
 	white-space: nowrap;
+	font-variant-numeric: tabular-nums;
+	text-decoration: none;
+	line-height: 1.1;
 }
 
-.u {
-	display: inline-block;
-	min-width: 2.2em;
-	margin-left: 0.25em;
+.fi,
+.fh {
+	font-size: 21px;
+	font-weight: 640;
+	letter-spacing: -0.01em;
+}
+
+.fi {
+	min-width: var(--wi);
+	text-align: right;
+}
+
+.ft {
+	min-width: var(--wt);
 	text-align: left;
-	font-size: 13px;
+	font-size: 12.5px;
 	font-weight: 500;
 	letter-spacing: 0;
 	color: var(--muted);
-}
-
-.x {
-	margin-top: 7px;
-	font-size: 12.5px;
-	line-height: 1.3;
-	color: var(--ink);
-	overflow-wrap: anywhere;
+	text-decoration-line: underline;
 	text-decoration-color: var(--hair);
-	text-underline-offset: 0.22em;
+	text-underline-offset: 0.25em;
 }
 
-.x:hover {
+.fig:hover .ft,
+.fig:focus-visible .ft {
+	color: var(--ink);
 	text-decoration-color: currentColor;
+}
+
+.fig:hover .fi,
+.fig:hover .fh {
+	text-decoration: underline;
+	text-decoration-thickness: 2px;
+}
+
+/* The bar: zero to the median, on one zero-based scale per row; the bracket spans p5 to p95. */
+.bar {
+	position: relative;
+	display: block;
+	height: 9px;
+	margin: 8px 0 0 auto;
+	width: 100%;
+	max-width: 168px;
+}
+
+.bar::before {
+	content: "";
+	position: absolute;
+	inset: 4px 0 auto;
+	height: 1px;
+	background: var(--hair);
+}
+
+.bar-f {
+	position: absolute;
+	left: 0;
+	top: 3px;
+	height: 3px;
+	background: var(--ink);
+}
+
+.bar-s {
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	min-width: 2px;
+	border-inline: 1.5px solid var(--ink);
+}
+
+.bar-s::before {
+	content: "";
+	position: absolute;
+	inset: 4px 0 auto;
+	height: 1px;
+	background: var(--ink);
 }
 
 .r,
 .each {
+	display: block;
 	margin-top: 6px;
-	font-size: 11.5px;
-	line-height: 1.35;
+	font-size: 12px;
+	line-height: 1.4;
 	color: var(--muted);
+	font-variant-numeric: tabular-nums;
 }
 
 .r > span {
@@ -744,13 +845,13 @@ td {
 	font-weight: 600;
 }
 
+/* The poster's figure, in the table: marked by the red rule above it, set in ink like the rest. */
 td.hero-cell {
 	box-shadow: inset 0 3px 0 var(--red);
 }
 
-td.hero-cell .v,
-td.hero-cell .x {
-	color: var(--red);
+td.hero-cell .bar-f {
+	background: var(--red);
 }
 
 /* ---------------------------------------------------------------- evidence */
@@ -889,10 +990,22 @@ td.hero-cell .x {
 	padding-top: 12px;
 }
 
+.walk-lede {
+	margin-top: 12px;
+	font-size: 16px;
+	line-height: 1.45;
+	max-width: 44em;
+}
+
+.walk-fig {
+	font-weight: 650;
+	font-variant-numeric: tabular-nums;
+}
+
 .walk {
 	display: grid;
 	gap: 28px;
-	margin-top: 22px;
+	margin-top: 24px;
 }
 
 .walk li {
@@ -1046,9 +1159,27 @@ td.hero-cell .x {
 	color: var(--muted);
 }
 
+.m-path {
+	margin-top: 2px;
+}
+
+.m-path summary {
+	cursor: pointer;
+	width: fit-content;
+	text-decoration: underline;
+	text-decoration-color: var(--hair);
+	text-underline-offset: 0.2em;
+}
+
+.m-path summary:focus-visible {
+	outline: 3px solid var(--red);
+	outline-offset: 2px;
+}
+
 .m-ptr {
+	display: block;
+	margin-top: 4px;
 	font-size: 11px;
-	opacity: 0.9;
 }
 
 /* ---------------------------------------------------------------- footer */
@@ -1362,12 +1493,23 @@ td.hero-cell .x {
 	}
 
 	tr.group th {
-		padding: 30px 0 8px;
+		padding: 34px 0 8px;
 		border-bottom: 2px solid var(--ink);
 	}
 
+	tr.group td.group-m {
+		display: none;
+	}
+
 	.group-name {
-		font-size: 14px;
+		display: flex;
+		justify-content: space-between;
+		align-items: baseline;
+		font-size: 17px;
+	}
+
+	.group-up {
+		font-size: 13px;
 	}
 
 	tbody:first-of-type tr.group th {
@@ -1389,45 +1531,57 @@ td.hero-cell .x {
 		padding: 0 0 10px;
 	}
 
+	/* One machine type per line: its name and the exact figure, then the spread under its bar. */
 	tr.row td {
 		display: grid;
 		grid-template-columns: minmax(0, 1fr) auto;
 		grid-template-areas:
 			"m v"
-			"r x";
-		align-items: baseline;
+			"r b";
+		align-items: center;
 		column-gap: 12px;
+		row-gap: 2px;
 		border-top: 1px solid var(--hair);
-		padding: 8px 0 7px;
+		padding: 6px 0 7px;
 	}
 
 	tr.row td::before {
 		content: attr(data-m);
 		grid-area: m;
+		align-self: last baseline;
 		font-size: 14px;
 		font-weight: 650;
 		text-align: left;
 	}
 
-	.v {
+	.fig {
 		grid-area: v;
-		font-size: 21px;
+		align-self: last baseline;
 	}
 
-	.x {
-		grid-area: x;
-		margin-top: 2px;
+	.fi,
+	.fh {
+		font-size: 20px;
+	}
+
+	.ft {
 		font-size: 12px;
+	}
+
+	.bar {
+		grid-area: b;
+		margin: 0;
+		width: 150px;
 	}
 
 	.r {
 		grid-area: r;
-		margin-top: 2px;
+		margin-top: 0;
 		display: flex;
 		flex-wrap: wrap;
 		column-gap: 0.4em;
 		text-align: left;
-		font-size: 11px;
+		font-size: 11.5px;
 	}
 
 	.r > span + span::before {
@@ -1442,11 +1596,17 @@ td.hero-cell .x {
 		grid-column: 1 / -1;
 		margin-top: 2px;
 		font-size: 11.5px;
+		text-align: left;
 	}
 
 	tr.row td.hero-cell {
 		box-shadow: inset 3px 0 0 var(--red);
 		padding-left: 10px;
+	}
+
+	.json {
+		white-space: pre-wrap;
+		overflow-wrap: anywhere;
 	}
 
 	.stat {
