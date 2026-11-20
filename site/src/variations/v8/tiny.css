@@ -1,0 +1,526 @@
+/* Design v8, "Editorial landing", tiny forms. Fraunces for the voice and the figure, Inter, Plex Mono for the machine's words. */
+
+@font-face {
+	font-family: "Fraunces";
+	src: url("./fonts/fraunces-latin-600-normal.woff2") format("woff2");
+	font-weight: 600;
+	font-style: normal;
+	font-display: swap;
+}
+@font-face {
+	font-family: "Inter";
+	src: url("./fonts/inter-latin-wght-normal.woff2") format("woff2");
+	font-weight: 100 900;
+	font-style: normal;
+	font-display: swap;
+}
+@font-face {
+	font-family: "Plex Mono";
+	src: url("./fonts/ibm-plex-mono-latin-400-normal.woff2") format("woff2");
+	font-weight: 400;
+	font-display: swap;
+}
+@font-face {
+	font-family: "Plex Mono";
+	src: url("./fonts/ibm-plex-mono-latin-500-normal.woff2") format("woff2");
+	font-weight: 500;
+	font-display: swap;
+}
+
+:root {
+	color-scheme: light dark;
+	--serif: "Fraunces", Georgia, "Times New Roman", serif;
+	--sans: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+	--mono: "Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+
+	--paper: #f6f4ee;
+	--card: #fffefa;
+	--ink: #17160f;
+	--ink-2: #45423a;
+	--ink-3: #65615a;
+	--tail: #757064;
+	--rule: #dcd6c8;
+	--rule-2: #c9c2b1;
+	--accent: #b83d0f;
+	--bar: color-mix(in srgb, var(--ink) 34%, var(--card));
+	--shadow: 0 1px 0 rgba(23, 22, 15, 0.04), 0 18px 48px -18px rgba(23, 22, 15, 0.22);
+}
+
+@media (prefers-color-scheme: dark) {
+	:root {
+		--paper: #100f0c;
+		--card: #1a1914;
+		--ink: #f2eee4;
+		--ink-2: #c9c3b6;
+		--ink-3: #a29c8e;
+		--tail: #8e887b;
+		--rule: #2c2a23;
+		--rule-2: #3d3a31;
+		--accent: #ff8a5b;
+		--bar: color-mix(in srgb, var(--ink) 52%, var(--card));
+		--shadow: 0 1px 0 rgba(0, 0, 0, 0.3), 0 20px 48px -18px rgba(0, 0, 0, 0.75);
+	}
+}
+
+*,
+*::before,
+*::after {
+	box-sizing: border-box;
+}
+
+html {
+	-webkit-text-size-adjust: 100%;
+}
+
+body {
+	margin: 0;
+	min-height: 100vh;
+	display: flex;
+	flex-direction: column;
+	background:
+		radial-gradient(ellipse 55% 60% at 80% 35%, color-mix(in srgb, var(--accent) 8%, transparent), transparent 70%) fixed,
+		var(--paper);
+	color: var(--ink);
+	font: 400 1.0625rem/1.6 var(--sans);
+	-webkit-font-smoothing: antialiased;
+}
+
+h1,
+p,
+figure {
+	margin: 0;
+}
+
+a {
+	color: inherit;
+	text-decoration-color: color-mix(in srgb, currentColor 35%, transparent);
+	text-underline-offset: 0.2em;
+	text-decoration-thickness: 1px;
+}
+a:hover {
+	text-decoration-color: currentColor;
+}
+a:focus-visible,
+button:focus-visible {
+	outline: 2px solid var(--accent);
+	outline-offset: 3px;
+	border-radius: 4px;
+}
+
+.mono {
+	font-family: var(--mono);
+	letter-spacing: -0.01em;
+}
+
+.wrap {
+	width: 100%;
+	max-width: 76rem;
+	margin: 0 auto;
+	padding: 0 2rem;
+}
+
+/* ------------------------------------------------------------- the stage: name, figure, way in */
+
+.stage {
+	flex: 1;
+	display: flex;
+	align-items: center;
+	padding: 2.5rem 0 1.5rem;
+}
+
+.name {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.6rem;
+	font: 600 1.75rem/1 var(--serif);
+	letter-spacing: -0.015em;
+}
+
+.mark {
+	width: 1.9rem;
+	height: 1.9rem;
+	flex: none;
+}
+.mark-box {
+	fill: var(--ink);
+}
+.mark-line {
+	stroke: var(--paper);
+	stroke-width: 1.8;
+	stroke-linecap: round;
+}
+.mark-accent {
+	stroke: var(--accent);
+	stroke-width: 1.8;
+	stroke-linecap: round;
+}
+
+/* the traced figure: a card with the accent rule down its left edge */
+.traced {
+	position: relative;
+	margin-top: 2.25rem;
+	background: var(--card);
+	border: 1px solid var(--rule);
+	border-radius: 16px;
+	padding: 2.25rem 3rem 2rem;
+	box-shadow: var(--shadow);
+	overflow: hidden;
+}
+.traced::before {
+	content: "";
+	position: absolute;
+	inset: 0 auto 0 0;
+	width: 4px;
+	background: var(--accent);
+}
+
+.what {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: baseline;
+	gap: 0 0.75rem;
+	font: 500 1.375rem/1.3 var(--sans);
+}
+.what a {
+	text-decoration: none;
+}
+.what a:hover {
+	color: var(--accent);
+	text-decoration: underline;
+}
+.what .mono {
+	font-size: 1.25rem;
+	font-weight: 400;
+	color: var(--ink-2);
+}
+.dot {
+	width: 0.6rem;
+	height: 0.6rem;
+	border-radius: 50%;
+	background: var(--accent);
+	align-self: center;
+}
+
+/* every digit at one size: the ones p5 and p95 share in ink, the rest and the unit quieter */
+.big {
+	margin-top: 0.6rem;
+	font: 600 clamp(1.5rem, 6.3vw, 6.4rem) / 1 var(--serif);
+	letter-spacing: -0.035em;
+	font-variant-numeric: lining-nums tabular-nums;
+	white-space: nowrap;
+}
+.b-tail {
+	color: var(--tail);
+}
+
+/* the strip: p5 to p95 on a zoomed scale, its exact ends under their ticks */
+.strip {
+	position: relative;
+	margin-top: 1.6rem;
+	height: 4rem;
+	font: 400 1rem/1 var(--mono);
+}
+.st-draw {
+	position: absolute;
+	left: 0;
+	right: 0;
+	top: 0;
+	height: 16px;
+}
+.st-axis {
+	position: absolute;
+	left: 0;
+	right: 0;
+	top: 7px;
+	border-top: 1.5px dashed var(--rule-2);
+}
+.st-span {
+	position: absolute;
+	top: 6px;
+	height: 3.5px;
+	left: var(--p5);
+	width: calc(var(--p95) - var(--p5));
+	background: var(--ink);
+	border-radius: 2px;
+}
+.st-tick {
+	position: absolute;
+	top: 0;
+	width: 2px;
+	height: 16px;
+	margin-left: -1px;
+	background: var(--ink);
+}
+.st-t5 {
+	left: var(--p5);
+}
+.st-t95 {
+	left: var(--p95);
+}
+.st-dot {
+	position: absolute;
+	top: 1px;
+	left: var(--p50);
+	width: 14px;
+	height: 14px;
+	margin-left: -7px;
+	border-radius: 50%;
+	background: var(--accent);
+	box-shadow: 0 0 0 3px var(--card);
+}
+/* the axis break: two slanted strokes at the left end, the chart's own sign that it does not start at 0 */
+.st-break {
+	position: absolute;
+	z-index: 1;
+	left: 0.6rem;
+	top: -1px;
+	width: 7px;
+	height: 18px;
+	background: var(--card);
+	border-inline: 2px solid var(--ink-3);
+	transform: skewX(-24deg);
+}
+.st-l {
+	position: absolute;
+	top: 1.85rem;
+	transform: translateX(-50%);
+	white-space: nowrap;
+	color: var(--ink);
+}
+.st-l5 {
+	left: var(--p5);
+}
+.st-l95 {
+	left: var(--p95);
+}
+.pct {
+	color: var(--ink-3);
+	margin-right: 0.15em;
+}
+
+/* the trail: the Series, a line, one of its Runs' evidence */
+.trail {
+	margin-top: 1.4rem;
+	padding-top: 1.4rem;
+	border-top: 1px solid var(--rule);
+	display: flex;
+	align-items: center;
+	gap: 0.9rem;
+}
+.tr-stop {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.7rem;
+	color: var(--accent);
+	text-decoration: none;
+	flex: none;
+}
+.tr-stop:hover .tr-text > .mono {
+	text-decoration: underline;
+}
+.tr-dot {
+	width: 0.85rem;
+	height: 0.85rem;
+	border-radius: 50%;
+	border: 2px solid var(--accent);
+	background: var(--card);
+	flex: none;
+}
+.tr-dot.tr-end {
+	background: var(--accent);
+}
+.tr-text {
+	display: grid;
+	line-height: 1.25;
+}
+.tr-text > .mono {
+	font-size: 1rem;
+	font-weight: 500;
+	text-decoration-thickness: 1px;
+	text-underline-offset: 0.2em;
+}
+.tr-sub {
+	font: 400 0.875rem/1.3 var(--mono);
+	color: var(--ink-2);
+}
+/* a short arrow from the Series to its Run: the two are one step apart */
+.tr-line {
+	position: relative;
+	flex: 0 1 5rem;
+	min-width: 1.75rem;
+	height: 2px;
+	margin-inline: 0.3rem;
+	background: var(--accent);
+}
+.tr-line::after {
+	content: "";
+	position: absolute;
+	right: -1px;
+	top: -4px;
+	width: 8px;
+	height: 8px;
+	border-top: 2px solid var(--accent);
+	border-right: 2px solid var(--accent);
+	transform: rotate(45deg);
+}
+
+/* the way in: the API's address, one copy mark beside it */
+.way {
+	margin-top: 1.5rem;
+	display: flex;
+	align-items: center;
+	gap: 0.75rem;
+	max-width: max-content;
+	background: var(--card);
+	border: 1px solid var(--rule-2);
+	border-radius: 999px;
+	padding: 0.7rem 0.8rem 0.7rem 1.4rem;
+	box-shadow: var(--shadow);
+}
+.addr {
+	font-size: 1rem;
+	font-weight: 500;
+	overflow-wrap: anywhere;
+	color: var(--ink);
+}
+.copy {
+	flex: none;
+	display: inline-grid;
+	place-items: center;
+	width: 2rem;
+	height: 2rem;
+	padding: 0;
+	border: 1px solid var(--rule-2);
+	border-radius: 999px;
+	background: transparent;
+	color: var(--ink);
+	cursor: pointer;
+}
+.copy:hover {
+	border-color: var(--ink-3);
+}
+.copy svg {
+	width: 1rem;
+	height: 1rem;
+	fill: none;
+	stroke: currentColor;
+	stroke-width: 1.4;
+	stroke-linecap: round;
+	stroke-linejoin: round;
+}
+
+/* ------------------------------------------------------------- footer: the font licences, as a mark */
+
+.foot {
+	padding: 0 0 1.5rem;
+}
+.foot .wrap {
+	display: flex;
+	justify-content: flex-end;
+}
+.notice {
+	display: inline-grid;
+	place-items: center;
+	width: 1.75rem;
+	height: 1.75rem;
+	border-radius: 50%;
+	font: 500 0.95rem/1 var(--sans);
+	color: var(--ink-3);
+	text-decoration: none;
+	border: 1px solid var(--rule-2);
+}
+.notice:hover {
+	color: var(--ink);
+	border-color: var(--ink-3);
+}
+
+/* ------------------------------------------------------------- phone */
+
+@media (max-width: 46rem) {
+	.wrap {
+		padding: 0 1rem;
+	}
+	.stage {
+		align-items: flex-start;
+		padding: 1.5rem 0 1.5rem;
+	}
+	.name {
+		font-size: 1.4rem;
+	}
+	.mark {
+		width: 1.55rem;
+		height: 1.55rem;
+	}
+	.traced {
+		margin-top: 1.5rem;
+		padding: 1.4rem 1.15rem 1.3rem 1.35rem;
+		border-radius: 14px;
+	}
+	.what {
+		font-size: 1.125rem;
+	}
+	.what .mono {
+		font-size: 1rem;
+	}
+	.big {
+		font-size: 7.1vw;
+		letter-spacing: -0.04em;
+	}
+	.strip {
+		margin-top: 1.1rem;
+		height: 2.6rem;
+		font-size: 0.72rem;
+		letter-spacing: -0.03em;
+	}
+	.st-l {
+		top: 1.55rem;
+	}
+	.st-l5 {
+		left: 0;
+		transform: none;
+	}
+	.st-l95 {
+		left: auto;
+		right: 0;
+		transform: none;
+	}
+	/* the trail runs down on a phone: Series, arrow, Run */
+	.trail {
+		flex-direction: column;
+		align-items: flex-start;
+		gap: 0.35rem;
+		margin-top: 1rem;
+		padding-top: 1.1rem;
+	}
+	.tr-line {
+		flex: none;
+		width: 2px;
+		min-width: 0;
+		height: 1.1rem;
+		margin: 0 0 0 calc(0.425rem - 1px);
+	}
+	.tr-line::after {
+		right: auto;
+		top: auto;
+		left: -3px;
+		bottom: 0;
+		transform: rotate(135deg);
+	}
+	.tr-stop {
+		gap: 0.5rem;
+	}
+	.tr-text > .mono {
+		font-size: 0.875rem;
+	}
+	.tr-sub {
+		font-size: 0.75rem;
+	}
+	.way {
+		max-width: none;
+		border-radius: 14px;
+		padding: 0.65rem 0.65rem 0.65rem 1rem;
+	}
+	.addr {
+		font-size: 0.8125rem;
+	}
+}
