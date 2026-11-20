@@ -267,19 +267,15 @@ export default function Page() {
 								<td class="corner" />
 								{machines.map((m) => (
 									<th scope="col" class="col-m">
-										<details class="tap">
-											<summary class="col-m-price" title={m.price.description}>
-												{tag(m.price.usdPerHour)}
-											</summary>
-											<span class="tap-body">
-												<a class="col-m-name" href={links.prices}>
-													{m.instanceType}
-												</a>
-												<span class="col-m-spec">
-													{m.vcpu} vCPU, {m.memory}
-												</span>
-											</span>
-										</details>
+										<span class="col-m-name">{m.instanceType}</span>
+										<a class="col-m-price" href={links.prices} title={`${m.price.description}, AWS price list of ${snapshot.priceDate}`}>
+											{tag(m.price.usdPerHour)}
+										</a>
+										{/* the price list's own facts, each set tight against its unit */}
+										<span class="col-m-spec">
+											<span>{`${m.vcpu}vCPU`}</span>
+											<span>{m.memory.replace(/\s+/g, "")}</span>
+										</span>
 									</th>
 								))}
 							</tr>

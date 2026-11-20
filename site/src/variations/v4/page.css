@@ -1562,35 +1562,24 @@ mark.j-n {
 	border-radius: 4px 0 0 0;
 }
 .board thead th.col-m {
-	padding: 0.7rem 0.75rem;
-}
-.col-m .col-m-price {
-	margin: 0;
-	font-size: 1rem;
-	padding: 0.28rem 0.45rem 0.24rem;
-}
-.col-m .col-m-price::after {
-	content: "";
-	display: inline-block;
-	width: 0;
-	height: 0;
-	margin-left: 0.45rem;
-	vertical-align: 0.12em;
-	border: 0.28em solid transparent;
-	border-top-color: currentColor;
-	border-bottom: 0;
-}
-.col-m .tap[open] .col-m-price::after {
-	border-top: 0;
-	border-bottom: 0.28em solid currentColor;
-}
-.col-m .tap-body {
-	padding-top: 0.5rem;
+	padding: 0.75rem 0.75rem 0.7rem;
 }
 .col-m .col-m-name {
-	color: var(--head-ink);
+	font-size: 1.15rem;
+}
+.col-m .col-m-price {
+	margin-top: 0.45rem;
+	font-size: 0.95rem;
+	padding: 0.24rem 0.4rem 0.2rem;
+	text-decoration: none;
+}
+.col-m a.col-m-price:hover {
 	text-decoration: underline;
-	text-decoration-color: rgb(255 255 255 / 0.35);
+}
+.col-m .col-m-spec {
+	display: flex;
+	gap: 0.7rem;
+	margin-top: 0.5rem;
 }
 
 /* the row heads: the number and its direction, which open to the benchmark */
@@ -1703,40 +1692,34 @@ mark.j-n {
 	.board-sec > .key .key-strip {
 		flex: 0 0 11rem;
 	}
-	/* the roster: one price tag per line, each opening to its machine */
+	/* the roster: one machine per line, its price tag (the tag that names its line below), its size */
 	.board .corner {
 		display: none;
 	}
 	.board thead {
-		padding: 0.5rem 0;
-		display: grid;
-	}
-	.board thead tr {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 0.4rem;
-		padding: 0 0.75rem 0 0.9rem;
+		padding: 0.55rem 0;
 	}
 	.board thead th.col-m {
-		display: block;
-		padding: 0.15rem 0;
-	}
-	.col-m .col-m-price {
-		font-size: 0.8rem;
-	}
-	.col-m .tap[open] {
-		flex-basis: 100%;
-	}
-	.col-m .tap-body {
-		display: flex;
-		gap: 0.6rem;
-		padding: 0.35rem 0 0.2rem;
+		display: grid;
+		grid-template-columns: 6.6rem 5.4rem minmax(0, 1fr);
+		align-items: center;
+		column-gap: 0.6rem;
+		padding: 0.2rem 0.75rem 0.2rem 0.9rem;
 	}
 	.col-m .col-m-name {
+		order: 0;
 		font-size: 0.85rem;
 	}
+	.col-m .col-m-price {
+		justify-self: start;
+		margin: 0;
+		font-size: 0.72rem;
+		padding: 0.14rem 0.28rem;
+	}
 	.col-m .col-m-spec {
-		display: inline;
+		margin: 0;
+		gap: 0.5rem;
+		font-size: 0.72rem;
 	}
 	.board .what {
 		display: block;
