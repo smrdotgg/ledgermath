@@ -125,15 +125,43 @@ button:focus-visible {
 	flex: 1;
 	display: flex;
 	align-items: center;
-	padding: 2.5rem 0 1.5rem;
+	padding: 2rem 0 1.5rem;
 }
 
+.head {
+	padding: 1.6rem 0 0;
+}
 .name {
 	display: inline-flex;
 	align-items: center;
-	gap: 0.6rem;
-	font: 600 1.75rem/1 var(--serif);
+	gap: 0.55rem;
+	font: 600 1.3rem/1 var(--serif);
 	letter-spacing: -0.015em;
+	text-decoration: none;
+}
+.name .mark {
+	width: 1.5rem;
+	height: 1.5rem;
+}
+
+/* the claim at the left, the way in at its right, on the claim's last line */
+.lead {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) auto;
+	align-items: end;
+	gap: 1.25rem 3rem;
+}
+.claim {
+	font: 600 clamp(2.3rem, 1.2rem + 2.3vw, 3.3rem) / 1.04 var(--serif);
+	letter-spacing: -0.028em;
+	text-wrap: balance;
+}
+.lead .way {
+	margin-top: 0;
+	margin-bottom: 0.3rem;
+}
+.nw {
+	white-space: nowrap;
 }
 
 .mark {
@@ -542,12 +570,31 @@ button:focus-visible {
 		align-items: flex-start;
 		padding: 1.5rem 0 1.5rem;
 	}
-	.name {
-		font-size: 1.4rem;
+	.head {
+		padding-top: 1.1rem;
 	}
-	.mark {
-		width: 1.55rem;
-		height: 1.55rem;
+	.name {
+		font-size: 1.15rem;
+	}
+	.name .mark {
+		width: 1.3rem;
+		height: 1.3rem;
+	}
+	.lead {
+		grid-template-columns: minmax(0, 1fr);
+	}
+	.claim {
+		font-size: 2.15rem;
+	}
+	/* the run count takes a line of its own, with no dot left in front of it */
+	.tr-count {
+		display: block;
+	}
+	.tr-count .sep {
+		display: none;
+	}
+	.lead .way {
+		margin-bottom: 0;
 	}
 	.traced {
 		margin-top: 1.5rem;

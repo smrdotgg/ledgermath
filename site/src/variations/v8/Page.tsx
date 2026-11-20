@@ -2,7 +2,7 @@
 // Every figure comes from src/data as the snapshot holds it; see ../README.md. A figure's unit shares its text node
 // with its last digits, so the unit is part of the figure, never a word of its own.
 import "./tiny.css";
-import { type DurationUnit, formatDurationPerUnit, formatMoment, formatUsd, headline, leadFigure, links, seriesFileContents } from "../../data";
+import { type DurationUnit, formatCount, formatDurationPerUnit, formatMoment, formatUsd, headline, leadFigure, links, seriesFileContents } from "../../data";
 
 // ------------------------------------------------------------------ the traced figure
 
@@ -19,6 +19,7 @@ const point = seriesFileContents.point.example;
 const runAt = formatMoment(point.started_at);
 const oldest = formatMoment(cell.series.oldest_run_started_at);
 const newest = formatMoment(cell.series.newest_run_started_at);
+const derivation = cell.series.derivations.series_v1;
 
 /** Where the median's digits stop agreeing with p5 and p95: the head is what all three share. */
 function split(mid: string, lo: string, hi: string): [string, string] {
@@ -148,7 +149,15 @@ function Traced() {
 					<span class="tr-text">
 						<span class="mono">{cell.series.id}</span>
 						<span class="tr-sub">
-							<time datetime={oldest.iso}>{oldest.date}</time> – <time datetime={newest.iso}>{newest.date}</time>
+							<span class="nw">
+								<time datetime={oldest.iso}>{oldest.date}</time> – <time datetime={newest.iso}>{newest.date}</time>
+							</span>{" "}
+							<span class="nw tr-count">
+								<span class="sep" aria-hidden="true">
+									·{" "}
+								</span>
+								{formatCount(derivation.counted_runs).full} runs, {formatCount(derivation.failed_runs).full} failed
+							</span>
 						</span>
 					</span>
 				</a>
@@ -196,14 +205,21 @@ function Way() {
 export default function Page() {
 	return (
 		<>
-			<main class="stage">
+			<header class="head">
 				<div class="wrap">
-					<h1 class="name">
+					<a class="name" href="./" title="LedgerMath, home">
 						<Mark />
 						LedgerMath
-					</h1>
+					</a>
+				</div>
+			</header>
+			<main class="stage">
+				<div class="wrap">
+					<div class="lead">
+						<h1 class="claim">Server numbers you can trace to their runs.</h1>
+						<Way />
+					</div>
 					<Traced />
-					<Way />
 				</div>
 			</main>
 			<footer class="foot">
