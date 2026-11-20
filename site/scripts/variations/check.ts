@@ -18,7 +18,7 @@
  *     images), is under 300 KB (300,000 bytes) compressed: text files are weighed gzipped at
  *     level 9, as a host would send them, everything else as it is.
  *  7. With JavaScript off the page reads the same: every line of text holding a digit that the
- *     page shows with JavaScript on, it shows with JavaScript off, and it holds at least 200
+ *     page shows with JavaScript on, it shows with JavaScript off, and it holds at least 20
  *     characters of text.
  *
  * It also prints, not as a check, the page's words that are not figures: those a visitor reads
@@ -191,7 +191,7 @@ try {
 			.map((line) => line.replace(/\s+/g, " ").trim())
 			.filter((line) => /\d/.test(line) && !have.has(line));
 		const problems = [
-			...(text.replace(/\s+/g, " ").trim().length < 200 ? [`with JavaScript off the page shows only ${text.trim().length} characters of text`] : []),
+			...(text.replace(/\s+/g, " ").trim().length < 20 ? [`with JavaScript off the page shows only ${text.trim().length} characters of text`] : []),
 			...missing.slice(0, 10).map((line) => `shown only with JavaScript on: ${JSON.stringify(line)}`),
 			...[...new Set(watch.problems)].map((p) => `with JavaScript off: ${p}`),
 		];

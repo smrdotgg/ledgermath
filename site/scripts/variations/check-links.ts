@@ -4,7 +4,7 @@
  *
  *  - every same-origin <a href> on the picker (DIR/index.html) names a file in DIR: a page
  *    (an address ending in "/", or a directory) must have its index.html;
- *  - each such page holds at least 200 characters of text in its body outside its scripts;
+ *  - each such page holds at least 20 characters of text in its body outside its scripts;
  *  - every stylesheet, script, font, image and other file the page loads is in DIR at the address
  *    the page asks for. Addresses are resolved as a browser resolves them: against the page's
  *    <base href> if it has one, else against the page's own address; a stylesheet's url() and
@@ -34,7 +34,7 @@ import { extname, join, relative, resolve, sep } from "node:path";
 import { bodyText, cssReferences, decodeEntities, jsReferences, srcsetUrls } from "../check-output";
 
 const ORIGIN = "https://host.invalid";
-const MIN_TEXT = 200;
+const MIN_TEXT = 20; // low on purpose: the forms with under 5 words hold little but a name and figures
 const LOADING_RELS = new Set(["stylesheet", "preload", "modulepreload", "prefetch", "icon", "apple-touch-icon", "apple-touch-icon-precomposed", "mask-icon", "manifest"]);
 const SRC_ELEMENTS = new Set(["img", "source", "audio", "video", "track", "iframe", "embed", "input", "script"]);
 const FONT = /\.(woff2?|ttf|otf|eot)$/i;

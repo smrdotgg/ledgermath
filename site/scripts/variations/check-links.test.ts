@@ -47,7 +47,7 @@ describe("checkLinks", () => {
 
 	test("an empty page fails", () => {
 		const dir = site({ "index.html": picker("/v1/"), "v1/index.html": page("", "<p>Hi</p>") });
-		expect(checkLinks(dir).problems).toEqual(["/v1/ is empty: under 200 characters of text in its body outside its scripts"]);
+		expect(checkLinks(dir).problems).toEqual(["/v1/ is empty: under 20 characters of text in its body outside its scripts"]);
 	});
 
 	test("a missing stylesheet, a missing font inside a stylesheet and a missing image fail", () => {
