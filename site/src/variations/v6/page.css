@@ -236,7 +236,7 @@ h1 {
 	overflow: hidden;
 }
 .card {
-	padding: 14px 18px 14px;
+	padding: 14px 16px 14px;
 	border-right: 1px solid var(--line);
 	border-bottom: 1px solid var(--line);
 	min-width: 0;
@@ -271,21 +271,31 @@ h1 {
 .lbl > summary {
 	list-style: none;
 	cursor: pointer;
-	display: inline-block;
+	display: inline-flex;
+	align-items: baseline;
+	gap: 8px;
+	white-space: nowrap;
+}
+/* The benchmark's own name: the summary that opens to its label in words. */
+.bn {
+	font: 600 0.76rem/1 var(--mono);
+	color: var(--ink);
+	padding: 3px 0;
+	text-decoration: underline dotted 1.5px color-mix(in srgb, var(--faint) 55%, transparent);
+	text-underline-offset: 4px;
+}
+.lbl > summary:hover .bn,
+.lbl[open] > summary .bn {
+	color: var(--accent-ink);
+	text-decoration: underline 1.5px var(--accent);
 }
 .lbl > summary::-webkit-details-marker {
 	display: none;
 }
 .idx {
-	font: 650 0.8rem/1 var(--mono);
+	font: 650 0.74rem/1 var(--mono);
 	color: var(--accent-ink);
 	padding: 3px 0;
-	text-decoration: underline dotted 1.5px color-mix(in srgb, var(--accent) 55%, transparent);
-	text-underline-offset: 4px;
-}
-.lbl > summary:hover,
-.lbl[open] > summary {
-	text-decoration: underline 1.5px var(--accent);
 }
 .lpop {
 	position: absolute;
@@ -416,12 +426,13 @@ h1 {
 	white-space: nowrap;
 }
 
-/* The arrow beside each chart's count: the way that is faster. The key above the panel says so once. */
+/* The arrow at the end of each chart's title: the way that is faster. The key above the panel says so once. */
 .dir {
 	font: 600 0.82rem/1 var(--mono);
 	color: var(--accent-ink);
 }
-.card-h .n {
+.card-h > .dir,
+.card-h > .n {
 	margin-left: auto;
 }
 .key {
@@ -456,13 +467,6 @@ h1 {
 }
 .ph a:hover {
 	text-decoration: underline;
-}
-.card-h .lim {
-	align-self: center;
-	margin-right: auto;
-}
-.card-h:has(.lim) .n {
-	margin-left: 0;
 }
 
 /* One machine across the whole panel: hovering any of its rows lights the same row in every chart. */

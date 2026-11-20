@@ -188,11 +188,11 @@ function Figure(props: { m: Point; row: number; unit: string; pad: string; last:
 }
 
 /** A chart's number, which opens to what the chart measures, in the data's words, with a link to its documentation. */
-function Label(props: { idx: string; children: JSX.Element; ariaLabel: string }) {
+function Label(props: { idx: string; name: string; children: JSX.Element; ariaLabel: string }) {
 	return (
 		<details class="lbl" name="lbl">
-			<summary class="idx" aria-label={props.ariaLabel}>
-				{props.idx}
+			<summary aria-label={props.ariaLabel}>
+				<span class="idx">{props.idx}</span> <span class="bn">{props.name}</span>
 			</summary>{" "}
 			<div class="lpop">{props.children}</div>
 		</details>
@@ -214,28 +214,24 @@ function Card(props: { inst: Instrument; index: number }) {
 	return (
 		<article class="card" id={`b-${c.benchmark}`} aria-labelledby={id}>
 			<header class="card-h">
-				<Label idx={pad(props.index)} ariaLabel={`${pad(props.index)}: ${c.label}`}>
+				<Label idx={pad(props.index)} name={c.benchmark} ariaLabel={`${pad(props.index)} ${c.benchmark}: ${c.label}`}>
 					<h2 id={id}>
 						<a href={c.readme} title={`${c.what} ${c.setting}.`}>
 							{c.label}
 						</a>
 					</h2>{" "}
-					{c.per ? (
-						<span class="lm">
-							<span class="lu">{unit}</span>
-						</span>
-					) : null}
+					<span class="lm">
+						<span class="n" title={`Runs counted: ${inst.marks.map((m) => `${m.instanceType} ${m.runs}`).join(", ")}`}>
+							n {fewest === most ? fewest : `${fewest}–${most}`}
+						</span>{" "}
+						{c.per ? <span class="lu">{unit}</span> : null}{" "}
+						{limit ? (
+							<a class="lim" href={c.readme} title={limit.title}>
+								{limit.tag}
+							</a>
+						) : null}
+					</span>
 				</Label>{" "}
-				{limit ? (
-					<>
-						<a class="lim" href={c.readme} title={limit.title}>
-							{limit.tag}
-						</a>{" "}
-					</>
-				) : null}
-				<span class="n" title={`Runs counted: ${inst.marks.map((m) => `${m.instanceType} ${m.runs}`).join(", ")}`}>
-					n {fewest === most ? fewest : `${fewest}–${most}`}
-				</span>{" "}
 				<span class="dir" role="img" aria-label={c.lead === "rate" ? "More is faster" : "Less is faster"} title={c.lead === "rate" ? "More is faster" : "Less is faster"}>
 					{c.lead === "rate" ? "→" : "←"}
 				</span>
