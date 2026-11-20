@@ -1,6 +1,7 @@
 // Design v3, "Paper": LedgerMath's home page as a one-page data report, a research letter.
-// Form "under-30": at most twenty-nine words a visitor reads. The paper keeps its title, its dateline
-// (with the Region and the failed Runs), the way in, and Table 1 whole with its caption (every digit,
+// Form "under-50": at most forty-nine words a visitor reads. The paper keeps its title, its abstract
+// in one sentence, its dateline (with the Region and the failed Runs), the way in, and Table 1 whole
+// with its caption and which way is faster (every digit,
 // a p5–p95 bar per cell, each machine and its hourly price over its column, each row named by its
 // benchmark as the API names it). What a row measures, in words, waits behind a tap on its name;
 // a machine's vCPU, memory and processor behind a tap on the machine's.
@@ -169,6 +170,10 @@ export default function Page() {
 					<header class="front">
 						<div class="front-title">
 							<h1>LedgerMath</h1>
+							<p class="lede">
+								Measured figures for AI agents choosing infrastructure, served as <a href={links.seriesList}>JSON</a> with{" "}
+								<a href={rows[0]!.cells[0]!.url}>each Run's evidence</a>.
+							</p>
 							<p class="dateline">
 								<span class="dl-dates">
 									<time datetime={oldest.iso} title={`First Run, ${oldest.full}`}>
@@ -201,9 +206,19 @@ export default function Page() {
 
 					{/* ---------------------------------------------------- Table 1: its caption, its groups, its figures */}
 					<section class="results" aria-labelledby="s1">
-						<h2 id="s1" class="t-title">
-							<span class="tlabel">Table 1.</span> Medians of Runs
-						</h2>
+						<div class="t-head">
+							<h2 id="s1" class="t-title">
+								<span class="tlabel">Table 1.</span> Medians of Runs
+							</h2>
+							<p class="t-dir">
+								<span>
+									<span class="dir">↑</span> higher is faster
+								</span>
+								<span>
+									<span class="dir">↓</span> lower is faster
+								</span>
+							</p>
+						</div>
 						<div class="table-wrap t1-wrap" role="region" aria-label="Table 1" tabindex="0">
 							<table class="t1">
 								<thead>
@@ -219,9 +234,6 @@ export default function Page() {
 												<span class="tip-body">
 													<span>
 														<KeyBar /> median, p5–p95; one scale per benchmark, from 0
-													</span>
-													<span>
-														<span class="dir">↑</span> higher is faster · <span class="dir">↓</span> lower is faster
 													</span>
 													<span>
 														$/h, Linux On-Demand, {machines[0]!.region} ·{" "}
