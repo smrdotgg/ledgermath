@@ -1463,3 +1463,319 @@ mark.j-n {
 		scroll-behavior: auto;
 	}
 }
+
+/* ================================================================ the forms with almost no words:
+   the name in place of a headline, the board's rows and columns named on a tap */
+
+.name {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.18em;
+	align-self: flex-start;
+	padding: 0.08em 0.22em 0.02em 0.16em;
+	background: var(--signal);
+	color: var(--signal-ink);
+	font: 900 clamp(3.2rem, 7.4vw, 7rem) / 0.9 var(--display);
+	letter-spacing: 0.01em;
+	text-transform: uppercase;
+}
+.name .brand-mark {
+	grid-template-columns: repeat(3, 0.2em);
+	gap: 0.05em;
+	height: 0.62em;
+	margin-bottom: 0.06em;
+}
+.name .brand-mark i {
+	background: currentColor;
+}
+.name .brand-mark i:nth-child(2) {
+	margin-top: 0.16em;
+}
+.name .brand-mark i:nth-child(3) {
+	margin-top: 0.08em;
+}
+.head-id .cmd {
+	margin-top: 1.5rem;
+	font-size: 1.05rem;
+}
+.cmd.bare code {
+	padding-left: 0;
+}
+.cmd.bare code::before {
+	content: none;
+}
+.cmd a {
+	color: inherit;
+	text-decoration-color: var(--term-dim);
+}
+.cmd a:hover {
+	text-decoration-color: var(--term-accent);
+}
+
+/* the panel without labels: the clock and its date and region, the four rounds beneath */
+.panel .clock {
+	grid-template-columns: auto 1fr;
+	grid-template-areas: "t d";
+}
+.panel .round-list {
+	padding-top: 0.75rem;
+	border-top: 1px solid var(--p-rule);
+}
+.panel .flap {
+	width: 2.6rem;
+	height: 3.4rem;
+	font-size: 3.1rem;
+}
+.panel .flap-colon {
+	font-size: 2.2rem;
+}
+
+/* the key, alone above the board's right edge: zero, the span, the median */
+.board-sec > .key {
+	justify-content: flex-end;
+	padding: 1.4rem 0 0.9rem;
+}
+.board-sec > .key .key-strip {
+	flex: 0 0 13rem;
+	margin: 0 0 0 1rem;
+}
+.key-l-mid {
+	font-weight: 800;
+}
+
+/* a tap target that opens to name what it heads */
+.tap > summary {
+	list-style: none;
+	cursor: pointer;
+}
+.tap > summary::-webkit-details-marker {
+	display: none;
+}
+.tap-body {
+	display: block;
+}
+
+/* the column heads: the price tag, which opens to the machine */
+.board .corner {
+	width: 4.6rem;
+	background: var(--head);
+	border-radius: 4px 0 0 0;
+}
+.board thead th.col-m {
+	padding: 0.7rem 0.75rem;
+}
+.col-m .col-m-price {
+	margin: 0;
+	font-size: 1rem;
+	padding: 0.28rem 0.45rem 0.24rem;
+}
+.col-m .col-m-price::after {
+	content: "";
+	display: inline-block;
+	width: 0;
+	height: 0;
+	margin-left: 0.45rem;
+	vertical-align: 0.12em;
+	border: 0.28em solid transparent;
+	border-top-color: currentColor;
+	border-bottom: 0;
+}
+.col-m .tap[open] .col-m-price::after {
+	border-top: 0;
+	border-bottom: 0.28em solid currentColor;
+}
+.col-m .tap-body {
+	padding-top: 0.5rem;
+}
+.col-m .col-m-name {
+	color: var(--head-ink);
+	text-decoration: underline;
+	text-decoration-color: rgb(255 255 255 / 0.35);
+}
+
+/* the row heads: the number and its direction, which open to the benchmark */
+.board .what {
+	position: relative;
+	padding: 0.7rem 0.5rem 0.7rem 1.1rem;
+	vertical-align: top !important;
+}
+.what .badge {
+	display: inline-flex;
+	align-items: baseline;
+	gap: 0.3rem;
+	font-size: 1.05rem;
+}
+.what .badge::after {
+	content: "";
+	width: 0;
+	height: 0;
+	border: 0.26em solid transparent;
+	border-left-color: var(--ink-3);
+	border-right: 0;
+	align-self: center;
+}
+.dir {
+	font-weight: 800;
+	color: var(--ink-2);
+}
+/* opened, the name lies over the row like a destination card */
+.what .tap[open] .tap-body {
+	position: absolute;
+	z-index: 3;
+	left: 100%;
+	top: 0.35rem;
+	padding: 0.45rem 0.7rem;
+	background: var(--head);
+	color: var(--head-ink);
+	border-left: 4px solid var(--sec);
+	border-radius: 2px;
+	box-shadow:
+		0 0 0 1px var(--rule-strong),
+		0 8px 20px -8px rgb(0 0 0 / 0.5);
+	white-space: nowrap;
+}
+.what .tap[open] .what-label {
+	color: var(--head-ink);
+	font-size: 0.95rem;
+	text-decoration: underline;
+	text-decoration-color: rgb(255 255 255 / 0.35);
+}
+.what .tap[open] .badge::after {
+	border-left-color: var(--sec);
+}
+/* the section: its colour at the left, a heavier rule where it begins */
+.row.first > * {
+	border-top: 2px solid var(--rule-strong);
+}
+.fig a {
+	padding: 0.7rem 0.75rem;
+}
+
+/* the copy button: a mark, named for screen readers */
+.copy {
+	display: inline-grid;
+	place-items: center;
+	width: 2rem;
+	height: 2rem;
+	padding: 0;
+}
+.copy svg {
+	width: 1rem;
+	height: 1rem;
+}
+
+.foot-in {
+	padding-top: 1.1rem;
+	padding-bottom: 1.1rem;
+}
+.foot-brand .brand-mark {
+	height: 1.2rem;
+}
+.foot-mark {
+	display: inline-grid;
+	place-items: center;
+	width: 2.75rem;
+	height: 2.75rem;
+	border: 1px solid rgb(255 255 255 / 0.3);
+	border-radius: 4px;
+}
+.foot-mark:hover {
+	border-color: var(--signal);
+	color: var(--signal);
+}
+
+@media (max-width: 960px) {
+	.name {
+		font-size: clamp(2.6rem, 15vw, 5rem);
+	}
+	.head-id .cmd {
+		margin-top: 1rem;
+		font-size: 0.92rem;
+	}
+	.panel .flap {
+		width: 2.1rem;
+		height: 2.8rem;
+		font-size: 2.6rem;
+	}
+	.board-sec > .key {
+		padding: 1.1rem 0 0.7rem;
+	}
+	.board-sec > .key .key-strip {
+		flex: 0 0 11rem;
+	}
+	/* the roster: one price tag per line, each opening to its machine */
+	.board .corner {
+		display: none;
+	}
+	.board thead {
+		padding: 0.5rem 0;
+		display: grid;
+	}
+	.board thead tr {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.4rem;
+		padding: 0 0.75rem 0 0.9rem;
+	}
+	.board thead th.col-m {
+		display: block;
+		padding: 0.15rem 0;
+	}
+	.col-m .col-m-price {
+		font-size: 0.8rem;
+	}
+	.col-m .tap[open] {
+		flex-basis: 100%;
+	}
+	.col-m .tap-body {
+		display: flex;
+		gap: 0.6rem;
+		padding: 0.35rem 0 0.2rem;
+	}
+	.col-m .col-m-name {
+		font-size: 0.85rem;
+	}
+	.col-m .col-m-spec {
+		display: inline;
+	}
+	.board .what {
+		display: block;
+		padding: 0.6rem 0.75rem 0.25rem 0.9rem;
+	}
+	.what .tap[open] {
+		display: flex;
+		align-items: center;
+		gap: 0.6rem;
+	}
+	.what .tap[open] .tap-body {
+		position: static;
+		display: inline-block;
+		padding: 0.3rem 0.6rem;
+		white-space: normal;
+	}
+	.fig a {
+		grid-template-columns: 5.4rem minmax(0, 1fr) 2.6rem;
+		column-gap: 0.6rem;
+		padding: 0.25rem 0.75rem 0.25rem 0.9rem;
+	}
+	.fig a .fig-t {
+		font-size: 0.66rem;
+	}
+	.fig a .fig-v .g {
+		margin-left: 0.15em;
+	}
+	.fig-m {
+		justify-self: start;
+		padding: 0.12rem 0.25rem;
+		background: var(--signal);
+		color: var(--signal-ink);
+		border-radius: 2px;
+		font: 700 0.7rem/1 var(--mono);
+	}
+	.row.first > * {
+		border-top: 0;
+	}
+	.row.first > .what {
+		border-top: 2px solid var(--rule-strong) !important;
+	}
+}

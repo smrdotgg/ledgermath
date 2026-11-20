@@ -1,7 +1,8 @@
-// Design v4, "Departure board": the home page as a station board. One line of what it is, the
-// clock (the newest Run, the four daily rounds, the day's price file), then the board itself:
-// fourteen rows, five machine types, every figure exact, its p5 to p95 drawn like a platform
-// strip. Few words: the board reads itself, and everything longer is a link away.
+// Design v4, "Departure board", form under-05: the board with almost no words. The name, the
+// clock (the newest Run and the four daily rounds as split-flap tiles), the API's address, then
+// the whole board: fourteen numbered rows, five columns headed by their hourly price, every figure
+// exact with its unit set tight against it. A row's number and a column's price open on a tap to
+// say what they are; every figure links to its Series, each Run with its evidence.
 // Rendered once at build time; client.ts only adds copy buttons.
 import "./page.css";
 import {
@@ -10,7 +11,6 @@ import {
 	type HeadlineRow,
 	type Section,
 	type Shown,
-	formatCount,
 	formatDuration,
 	formatDurationPerUnit,
 	formatMoment,
@@ -21,7 +21,6 @@ import {
 	leadFigure,
 	links,
 	machines,
-	seriesFileContents,
 	snapshot,
 } from "../../data";
 
@@ -40,17 +39,14 @@ const minutes = (hhmm: string) => {
 	return h! * 60 + m!;
 };
 
-/**
- * A curl command whose only break is between the host and the path, so a narrow screen puts
- * "v1/…" on a line of its own instead of breaking inside it. The text copies exactly.
- */
-function Curl(props: { href: string }) {
-	const cut = props.href.indexOf("/", "https://".length) + 1;
+/** The brand's mark: three bars, like a board's columns. */
+function Mark() {
 	return (
-		<>
-			<span class="u-host">curl {props.href.slice(0, cut)}</span>
-			<span class="u-path">{props.href.slice(cut)}</span>
-		</>
+		<span class="brand-mark" aria-hidden="true">
+			<i />
+			<i />
+			<i />
+		</span>
 	);
 }
 
@@ -68,19 +64,6 @@ function Flaps(props: { text: string }) {
 				),
 			)}
 		</span>
-	);
-}
-
-/** A number of the worked example in two cells, the whole part and the rest, so a column of them stands on the point. */
-function Num(props: { text: string; mark?: boolean }) {
-	const dot = props.text.indexOf(".");
-	const w = dot < 0 ? props.text : props.text.slice(0, dot);
-	const rest = dot < 0 ? "" : props.text.slice(dot);
-	return (
-		<>
-			<td class="sum-w">{props.mark ? <mark>{w}</mark> : w}</td>
-			<td class="sum-f">{props.mark ? <mark>{rest}</mark> : rest}</td>
-		</>
 	);
 }
 
@@ -112,29 +95,43 @@ function cut(full: string, places: number) {
 const whole = (head: string) => (head.includes(".") ? head.slice(0, head.indexOf(".")) : head);
 
 /**
- * One exact figure as one unbroken run of digits: no space in the text (it copies as one number),
- * the groups of three set apart by a sliver of margin, the head bold and every further digit lighter.
- * The whole part is set right-aligned in a box as wide as the row's widest, so the row's five
- * decimal points stand at one place in their cells (and in one column on the phone).
+ * One exact figure as one unbroken run of digits, its unit set tight against its last digit (in the
+ * same text, so it reads and copies as one figure): the head bold, every further digit lighter, the
+ * groups of three set apart by a sliver of margin. The whole part is right-aligned in a box as wide
+ * as the row's widest, so the row's five decimal points stand at one place.
  */
-function Figure(props: { head: string; headMore: string[]; tail: string[]; wholeWidth: number }) {
+function Figure(props: { head: string; headMore: string[]; tail: string[]; wholeWidth: number; unit: string }) {
+	// Every piece of the figure in order; the unit joins the text of the last one (one text node,
+	// so it is never set apart from its digits).
 	const w = whole(props.head);
+	const pieces: { text: string; kind: string }[] = [
+		{ text: w, kind: "w" },
+		{ text: props.head.slice(w.length), kind: "rest" },
+		...props.headMore.map((text) => ({ text, kind: "more" })),
+		...props.tail.map((text) => ({ text, kind: "tail" })),
+	].filter((p) => p.text !== "");
+	pieces[pieces.length - 1]!.text += props.unit;
+	const of = (kind: string) => pieces.filter((p) => p.kind === kind);
 	return (
 		<span class="fig-v">
 			<span class="fig-h">
 				<span class="fig-w" style={{ "--w": props.wholeWidth }}>
-					{w}
+					{of("w")[0]!.text}
 				</span>
-				{props.head.slice(w.length)}
-				{props.headMore.map((g) => (
-					<span class="g">{g}</span>
+				{of("rest").map((p) => (
+					<span>{p.text}</span>
+				))}
+				{of("more").map((p) => (
+					<span class="g">{p.text}</span>
 				))}
 			</span>
-			<span class="fig-t">
-				{props.tail.map((g) => (
-					<span class="g">{g}</span>
-				))}
-			</span>
+			{of("tail").length > 0 && (
+				<span class="fig-t">
+					{of("tail").map((p) => (
+						<span class="g">{p.text}</span>
+					))}
+				</span>
+			)}
 		</span>
 	);
 }
@@ -191,93 +188,38 @@ function Strip(props: { from: number; to: number; at: number }) {
 	);
 }
 
+/** A machine's price tag, "$0.096/h": the figure that heads its column and names its line on the phone. */
+const tag = (usdPerHour: string) => `$${formatUsd(usdPerHour, { per: "hour" }).full}/h`;
+
 export default function Page() {
 	const newest = formatMoment(snapshot.newestRunStartedAt);
-	const oldest = formatMoment(snapshot.oldestRunStartedAt);
-	const fetched = formatMoment(snapshot.pricesFetchedAt);
-	const runs = formatCount(snapshot.runCount).full;
-	const seriesCount = formatCount(snapshot.seriesCount).full;
-	const failed = formatCount(snapshot.failedRuns).full;
-	const seriesV1 = snapshot.methods.find((m) => m.key === "series_v1")!;
-	const requestsV1 = snapshot.methods.find((m) => m.key === "requests_v1");
 	const sections = sectionsInOrder();
 	let rowNumber = 0;
 	// The round the newest Run belongs to: the last scheduled time at or before it.
 	const roundOfNewest = ROUNDS.reduce((acc, t, i) => (minutes(t) <= minutes(newest.minute) ? i : acc), ROUNDS.length - 1);
-	// Each machine's Run count, said once in its column heading: the count most of its fourteen figures
-	// share. A figure that stands on another count says so in its own cell.
-	const columnN = machines.map((_, j) => {
-		const counts = headline.map((row) => leadFigure(row.choice, row.cells[j]!.series).count);
-		const tally = new Map<number, number>();
-		for (const n of counts) tally.set(n, (tally.get(n) ?? 0) + 1);
-		return [...tally].reduce((a, b) => (b[1] > a[1] ? b : a))[0];
-	});
-
-	// The sample Series file the snapshot keeps: which board row and machine it is.
-	const sample = seriesFileContents.sample;
-	const point = seriesFileContents.point.example;
-	const sampleRowIndex = headline.findIndex((r) => r.cells.some((cell) => cell.series.id === sample.id));
-	const sampleRow = headline[sampleRowIndex];
-	const sampleCode = sampleRow ? String(sampleRowIndex + 1).padStart(2, "0") : "";
-	const samplePrepared = sampleRow ? prepareRow(sampleRow).cells.find((p) => p.cell.series.id === sample.id) : undefined;
-	const pointTime = sampleRow?.choice.per ? formatDurationPerUnit(point.time_per_repetition_ns!, sampleRow.choice.per, { unit: samplePrepared?.p50.unit as DurationUnit }) : formatDuration(point.time_per_repetition_ns!);
-	const J = (v: unknown) => JSON.stringify(v);
-
-	// The index is the hero's command; here, the route from one board figure to its evidence first.
-	const api: { note: string; href: string; schema?: string }[] = [
-		{ note: `${sampleCode} · ${sample.instanceType}`, href: sample.url, schema: links.schema.series },
-		{ note: `all ${seriesCount} Series`, href: links.seriesList, schema: links.schema.seriesList },
-	];
-	// The divisor of the worked example, in the row's own words: "10,000 critical sections".
-	const perWords = sampleRow?.choice.per ? sampleRow.choice.repetition.split(", ")[0]! : "";
+	const index = links.index;
 
 	return (
 		<>
-			<a class="skip" href="#board">
-				Skip to the board
-			</a>
-			<header class="band">
-				<div class="band-in">
-					<a class="brand" href="#top" aria-label="LedgerMath, top of the page">
-						<span class="brand-mark" aria-hidden="true">
-							<i />
-							<i />
-							<i />
-						</span>
-						<span class="brand-name">LedgerMath</span>
-					</a>
-					<nav aria-label="Site">
-						<a href="#board">Board</a>
-						<a href="#api">API</a>
-						<a href={links.docs}>Docs</a>
-					</nav>
-				</div>
-			</header>
-
 			<main id="top">
-				{/* ------------------------------------------------ what this is, then the clock */}
+				{/* ------------------------------------------------ the name, the way in, the clock */}
 				<section class="head" aria-labelledby="title">
 					<div class="head-in">
 						<div class="head-id">
-							<h1 id="title">
-								<span class="h1-a">Fresh AWS machines,</span> <span class="h1-hi">measured four times a day.</span>
+							<h1 id="title" class="name">
+								<Mark />
+								<span class="name-t">LedgerMath</span>
 							</h1>
-							<p class="lede">
-								Every Run kept with its evidence, in JSON for AI agents.
-							</p>
-							<div class="cmd" data-copy-wrap>
-								<code data-copy>
-									<Curl href={links.index} />
+							<div class="cmd bare" data-copy-wrap>
+								<code data-copy={index}>
+									<a href={index}>{index.replace("https://", "")}</a>
 								</code>
 							</div>
 						</div>
 
 						<div class="panel">
 							<p class="clock">
-								<span class="p-label" id="clock-label">
-									Newest Run
-								</span>
-								<time datetime={newest.iso} title={newest.full} class="clock-time">
+								<time datetime={newest.iso} title={`Newest Run: ${newest.full}`} class="clock-time">
 									<Flaps text={newest.minute} />
 									<span class="sr">{newest.minute}</span>
 									<span class="clock-utc">UTC</span>
@@ -288,144 +230,102 @@ export default function Page() {
 								</span>
 							</p>
 
-							<div class="rounds">
-								<span class="p-label" id="rounds-label">
-									Daily, UTC
-								</span>
-								{/* the schedule; the round the newest Run belongs to is lit, and the clock above gives its exact minute */}
-								<ol class="round-list" aria-labelledby="rounds-label">
-									{ROUNDS.map((t, i) => (
-										<li class={i === roundOfNewest ? "round on" : "round"} aria-current={i === roundOfNewest ? "true" : undefined}>
-											{t}
-										</li>
-									))}
-								</ol>
-							</div>
-
-							<dl class="tally">
-								<div>
-									<dt>Runs</dt>
-									<dd>{runs}</dd>
-								</div>
-								<div>
-									<dt>Failed</dt>
-									<dd>{failed}</dd>
-								</div>
-								<div>
-									<dt>Since</dt>
-									<dd title={oldest.full}>{oldest.date}</dd>
-								</div>
-							</dl>
+							{/* the schedule; the round the newest Run belongs to is lit */}
+							<ol class="round-list" aria-label="Daily rounds, UTC">
+								{ROUNDS.map((t, i) => (
+									<li class={i === roundOfNewest ? "round on" : "round"} aria-current={i === roundOfNewest ? "true" : undefined}>
+										{t}
+									</li>
+								))}
+							</ol>
 						</div>
 					</div>
 				</section>
 
 				{/* ------------------------------------------------ the board */}
-				<section class="board-sec" id="board" aria-labelledby="board-title">
-					<div class="sec-head">
-						<h2 id="board-title">The board</h2>
-						<div class="key">
-							<a class="key-strip" href={links.seriesList} title={seriesV1.definitions.percentiles}>
-								<span class="key-end key-0">0</span>
-								<i class="strip-span" style={{ left: "36%", width: "36%" }} />
-								<i class="strip-post" style={{ left: "52%" }} />
-								<span class="key-l" style={{ left: "36%" }}>
-									p5
-								</span>
-								<span class="key-l" style={{ left: "52%" }}>
-									median
-								</span>
-								<span class="key-l" style={{ left: "72%" }}>
-									p95
-								</span>
-								<span class="key-end key-max">benchmark max</span>
-							</a>
-							<span class="key-marks">
-								<span class="key-mark">
-									<b>n</b> = Runs
-								</span>
-								<span class="key-mark">
-									<b>↑↓</b> faster
-								</span>
+				<section class="board-sec" id="board" aria-label="The board">
+					<div class="key" aria-hidden="true">
+						<span class="key-strip">
+							<span class="key-end key-0">0</span>
+							<i class="strip-span" style={{ left: "30%", width: "44%" }} />
+							<i class="strip-post" style={{ left: "50%" }} />
+							<span class="key-l" style={{ left: "30%" }}>
+								p5
 							</span>
-						</div>
+							<span class="key-l key-l-mid" style={{ left: "50%" }}>
+								p50
+							</span>
+							<span class="key-l" style={{ left: "74%" }}>
+								p95
+							</span>
+						</span>
 					</div>
 
-					<table class="board" aria-labelledby="board-title">
+					<table class="board" aria-label="Fourteen benchmarks on five AWS machine types, median of every Run">
 						<thead>
 							<tr>
-								<th scope="col" class="corner">
-									<span class="corner-l">Prices</span>
-									<a href={links.prices} title={`AWS On-Demand, copied ${fetched.full}`}>
-										AWS On-Demand · {snapshot.priceDate}
-									</a>
-									<span class="corner-n">n</span>
-								</th>
-								{machines.map((m, j) => {
-									const price = formatUsd(m.price.usdPerHour, { per: "hour" });
-									return (
-										<th scope="col" class="col-m">
-											<span class="col-m-name">{m.instanceType}</span>
-											<span class="col-m-price" title={`${m.price.description}: ${price.source}`}>
-												${price.full}
-												<small>/h</small>
+								<td class="corner" />
+								{machines.map((m) => (
+									<th scope="col" class="col-m">
+										<details class="tap">
+											<summary class="col-m-price" title={m.price.description}>
+												{tag(m.price.usdPerHour)}
+											</summary>
+											<span class="tap-body">
+												<a class="col-m-name" href={links.prices}>
+													{m.instanceType}
+												</a>
+												<span class="col-m-spec">
+													{m.vcpu} vCPU, {m.memory}
+												</span>
 											</span>
-											<span class="col-m-spec">
-												<span>{m.vcpu} vCPU</span> <span>{m.memory}</span>
-											</span>
-											<span class="col-m-n">
-												<span class="n-eq">n=</span>
-												{formatCount(columnN[j]!).full}
-											</span>
-										</th>
-									);
-								})}
+										</details>
+									</th>
+								))}
 							</tr>
 						</thead>
 						{sections.map((g) => {
 							const prepared = g.rows.map(prepareRow);
 							return (
-								<tbody class={SECTION_CLASS[g.section]} id={`b-${SECTION_CLASS[g.section]}`}>
-									<tr class="sec-row">
-										<th scope="rowgroup" colspan={machines.length + 1} class="sec-what">
-											<span class="sec-name">{g.section}</span>
-											{g.section === "Disk" && <span class="sec-note">root EBS gp3 volume on all five</span>}
-										</th>
-									</tr>
+								<tbody class={SECTION_CLASS[g.section]}>
 									{g.rows.map((row, r) => {
 										rowNumber += 1;
 										const n = String(rowNumber).padStart(2, "0");
 										const c = row.choice;
 										const p = prepared[r]!;
 										const up = c.lead === "rate";
-										const unitTitle = `${up ? "Higher" : "Lower"} is faster${c.per ? `; per ${c.per.of} (one repetition is ${formatCount(c.per.count).full})` : ""}`;
 										return (
-											<tr class="row">
+											<tr class={r === 0 ? "row first" : "row"}>
 												<th scope="row" class="what">
-													<span class="what-in">
-													<span class="badge">{n}</span>
-													<a class="what-label" href={c.readme} title={`${c.what} ${c.setting}.`}>
-														{c.label}
-													</a>
-													<span class="what-unit" title={unitTitle}>
-														{p.unit} <b class={up ? "up" : "down"}>{up ? "↑" : "↓"}</b>
-													</span>
-													</span>
+													<details class="tap">
+														<summary class="badge" title={c.label}>
+															{n}
+															<b class="dir" aria-label={up ? "higher is faster" : "lower is faster"}>
+																{up ? "↑" : "↓"}
+															</b>
+														</summary>
+														<span class="tap-body">
+															<a class="what-label" href={c.readme}>
+																{c.label}
+															</a>
+														</span>
+													</details>
 												</th>
-												{p.cells.map(({ cell, f, p50, p5, p95, head, headMore, tail, at }, j) => {
+												{p.cells.map(({ cell, f, p50, p5, p95, head, headMore, tail, at }) => {
 													const t = formatMoment(cell.series.newest_run_started_at);
 													const m = cell.machine.instanceType;
 													return (
 														<td class="fig">
 															<a
 																href={links.seriesFile(cell.series)}
-																title={`${m}: median ${p50.full} ${p50.unit} · p5 ${p5.full} · p95 ${p95.full} · ${formatCount(f.count).full} Runs, newest ${t.full} · ${cell.series.id}.json`}
+																title={`${c.label} · ${m}: median ${p50.full} ${p50.unit} · p5 ${p5.full} · p95 ${p95.full} · ${f.count} Runs, newest ${t.full}`}
 															>
-																{/* the machine, the column heading's twin: shown only on the phone, where the columns become lines */}
-																<span class="fig-m">{m}</span>
-																<Figure head={head} headMore={headMore} tail={tail} wholeWidth={p.wholeWidth} />
+																{/* the column's price tag again: shown only on the phone, where the columns become lines */}
+																<span class="fig-m" aria-hidden="true">
+																	{tag(cell.machine.price.usdPerHour)}
+																</span>
+																<Figure head={head} headMore={headMore} tail={tail} wholeWidth={p.wholeWidth} unit={p.unit} />
 																<Strip from={at(f.p5)} to={at(f.p95)} at={at(f.p50)} />
-																{f.count !== columnN[j] && <span class="fig-n">n={formatCount(f.count).full}</span>}
 															</a>
 														</td>
 													);
@@ -438,103 +338,19 @@ export default function Page() {
 						})}
 					</table>
 				</section>
-
-				{/* ------------------------------------------------ the way in */}
-				<section class="api-sec" id="api" aria-labelledby="api-title">
-					<div class="sec-head">
-						<h2 id="api-title">For agents</h2>
-						<a class="api-docs" href={links.docs}>
-							API documentation →
-						</a>
-					</div>
-
-					<div class="api-grid">
-						<ol class="term">
-							{api.map((a) => (
-								<li data-copy-wrap>
-									<span class="term-c">
-										# {a.note}
-										{a.schema && <a href={a.schema}>schema</a>}
-									</span>
-									<code data-copy>
-										<Curl href={a.href} />
-									</code>
-								</li>
-							))}
-						</ol>
-
-						<div class="api-side">
-							<p class="fold-l">
-								<code>
-									<span class="badge">{sampleCode}</span> {sampleRow?.choice.label} · <a href={sample.url}>{sample.instanceType}</a>
-								</code>
-							</p>
-							<pre class="resp" tabindex="0">
-								<code>
-									<span class="j-k">"run"</span>: <span class="j-s">{J(point.run)}</span>,{"\n"}
-									<span class="j-k">"counted"</span>: <span class="j-n">{J(point.counted)}</span>,{"\n"}
-									<span class="j-k">"time_per_repetition_ns"</span>: <mark class="j-n">{J(point.time_per_repetition_ns)}</mark>,{"\n"}
-									<span class="j-k">"evidence"</span>: <a href={point.evidence}>{J(point.evidence)}</a>
-								</code>
-							</pre>
-							{/* the sum, set like a ledger: the highlighted field, the divisor with its source, this Run, the board's median */}
-							{samplePrepared && sampleRow && (
-								<table class="sum" role="presentation">
-									<tbody>
-										<tr>
-											<td class="sum-l" />
-											<Num text={J(point.time_per_repetition_ns)} mark />
-											<td>ns</td>
-										</tr>
-										{sampleRow.choice.per && (
-											<tr>
-												<td class="sum-l">÷</td>
-												<Num text={formatCount(sampleRow.choice.per.count).full} />
-												<td>
-													<a href={sampleRow.choice.readme}>{perWords.replace(/^[\d,]+ /, "")}</a>
-												</td>
-											</tr>
-										)}
-										<tr class="sum-eq">
-											<td class="sum-l">This Run</td>
-											<Num text={group(pointTime.full, ",", " ")} />
-											<td>{pointTime.unit}</td>
-										</tr>
-										<tr>
-											<td class="sum-l">
-												<a href={sample.url}>Median</a>
-											</td>
-											<Num text={group(samplePrepared.p50.full, ",", " ")} />
-											<td>
-												{samplePrepared.p50.unit} <span class="sum-n">n={formatCount(samplePrepared.f.count).full}</span>
-											</td>
-										</tr>
-									</tbody>
-								</table>
-							)}
-						</div>
-					</div>
-				</section>
 			</main>
 
 			<footer class="foot">
 				<div class="foot-in">
-					<span class="foot-brand">
-						<span class="brand-mark" aria-hidden="true">
-							<i />
-							<i />
-							<i />
-						</span>
-						LedgerMath
+					<span class="foot-brand" aria-hidden="true">
+						<Mark />
 					</span>
 					<span class="foot-links">
-						<a href={links.seriesList}>
-							Methods: series v{seriesV1.version}
-							{requestsV1 ? `, requests v${requestsV1.version}` : ""}
+						<a class="foot-mark" href="third-party-notices.txt" aria-label="Font licences" title="Font licences">
+							<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+								<path d="M3 13 7 3h2l4 10h-2l-1-2.6H6L5 13H3Zm3.6-4.4h2.8L8 4.9 6.6 8.6Z" fill="currentColor" />
+							</svg>
 						</a>
-						<a href={links.prices}>prices</a>
-						<a href={links.docs}>docs</a>
-						<a href="third-party-notices.txt">Font licences</a>
 					</span>
 				</div>
 			</footer>
