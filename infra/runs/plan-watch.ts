@@ -1,12 +1,12 @@
 /**
- * The public-blobs watch: every WATCH_SCHEDULE, whether anyone deploys or
+ * The public API's watch: every WATCH_SCHEDULE, whether anyone deploys or
  * not, it asks AWS whether an ACTIVE plan covers the stage's distribution,
  * and disables the distribution if not. It fails closed: when it cannot tell,
  * it records that on the distribution (a tag), and when it cannot tell and
  * finds that tag already there (left by an earlier run that could not tell
  * either, not necessarily the last run), it disables it. It does nothing to a
- * disabled distribution; while PUBLIC_BLOBS.state is "off", or on any stage
- * but PUBLIC_BLOBS.stage, it does not exist.
+ * disabled distribution; while PUBLIC_API.state is "off", or on any stage
+ * but PUBLIC_API.stage, it does not exist.
  *
  * It polls, so it cannot make uncovered delivery impossible. From the moment
  * a plan stops covering the distribution to the moment no edge serves it,
@@ -24,7 +24,7 @@
  * CloudFront answers none of them, the run fails, and the distribution goes
  * on as it is.
  *
- * A "closed" distribution (enabled but serving no blob, before its plan is
+ * A "closed" distribution (enabled but serving nothing, before its plan is
  * attached) is left alone for CLOSED_GRACE_MINUTES after its last change, so
  * that the plan can be attached; after that it is disabled too if still no
  * plan covers it.
@@ -174,7 +174,7 @@ export async function watchOnce(clients: WatchClients, config: WatchConfig, now:
 		if (age < CLOSED_GRACE_MS) {
 			const left = Math.ceil((CLOSED_GRACE_MS - age) / 60_000);
 			const why = verdict === null ? `AWS could not be asked (${failure})` : verdict.reason;
-			return { action: "none", reason: `closed, serving no blob, and not yet covered: ${why}; left alone ${left} more minutes, then disabled by the next run unless a plan covers it`, warnings };
+			return { action: "none", reason: `closed, serving nothing, and not yet covered: ${why}; left alone ${left} more minutes, then disabled by the next run unless a plan covers it`, warnings };
 		}
 	}
 

@@ -106,7 +106,7 @@ describe("the runs workflow", () => {
 		expect(steps.indexOf(alarm)).toBeGreaterThan(steps.indexOf(page));
 	});
 
-	test("builds the data API's files after the page when both Methods succeeded, checks them against the tree the last successful run kept, and keeps only a checked tree, as the artifact api, for a week, uploading nothing else", () => {
+	test("builds the data API's files after the page when both Methods succeeded, checks them against the tree the last successful run kept, and keeps only a checked tree, as the artifact api, for a week", () => {
 		const text = readFileSync(join(ROOT, ".github", "workflows", "runs.yml"), "utf8");
 		const derive = steps.find((step) => step.id === "derive") as Step;
 		const pageUpload = steps.find((step) => step.uses?.startsWith("actions/upload-artifact@") && step.with?.name === "page") as Step;
@@ -149,9 +149,43 @@ describe("the runs workflow", () => {
 		expect(upload.with).toEqual({ name: "api", path: "api/", "if-no-files-found": "error", "retention-days": 7 as unknown as string });
 		// The same pinned action as the page's artifact.
 		expect(upload.uses).toBe(pageUpload.uses as string);
-		// Nothing is served or published from this workflow: no copy to a bucket, no deploy, no new permission.
+		// Nothing is served or published from this workflow: no copy with the AWS CLI, no deploy, no new permission.
 		expect(text).not.toMatch(/aws s3 (cp|sync)|s3:\/\/|sst deploy|vercel/i);
 		expect(workflow.permissions).toEqual({ contents: "read", "id-token": "write", issues: "write", actions: "read" });
+	});
+
+	test("uploads the checked tree to the private API bucket only after the check passed and once API_BUCKET is set, then checks what the bucket holds; without it, says so in the summary and fails nothing", () => {
+		const check = steps.find((step) => step.id === "api-check") as Step;
+		const keep = steps.find((step) => step.uses?.startsWith("actions/upload-artifact@") && step.with?.name === "api") as Step;
+		const upload = steps.find((step) => step.run?.includes("scripts/upload-api.ts")) as Step;
+		const verify = steps.find((step) => step.run?.includes("scripts/check-api-bucket.ts")) as Step;
+		const absent = steps.find((step) => step.name === "Say that there is no API bucket to upload to") as Step;
+		const alarm = steps.find((step) => step.run?.includes("scripts/alarm.ts")) as Step;
+		for (const script of ["upload-api", "check-api-bucket"]) expect(existsSync(join(ROOT, "scripts", `${script}.ts`))).toBe(true);
+		const order = [check, keep, upload, verify, absent, alarm].map((step) => steps.indexOf(step));
+		expect(order.every((position) => position >= 0)).toBe(true);
+		expect([...order].sort((a, b) => a - b)).toEqual(order);
+
+		const command = (step: Step): string => (step.run as string).replace(/\s+/g, " ").trim();
+		expect(job.env?.API_BUCKET).toBe("${{ vars.API_BUCKET }}");
+		// Only a tree the check passed, and only into the bucket the variable names.
+		expect(upload.id).toBe("api-upload");
+		expect(upload.if).toBe("${{ !cancelled() && steps.api-check.outcome == 'success' && vars.API_BUCKET != '' }}");
+		expect(command(upload)).toBe('bun scripts/upload-api.ts --tree api --bucket "$API_BUCKET"');
+		// The bucket is checked after every upload that succeeded.
+		expect(verify.if).toBe("${{ !cancelled() && steps.api-upload.outcome == 'success' }}");
+		expect(command(verify)).toBe('bun scripts/check-api-bucket.ts --tree api --bucket "$API_BUCKET"');
+		// With no bucket yet, the summary says so, and nothing fails.
+		expect(absent.if).toBe("${{ !cancelled() && steps.api-check.outcome == 'success' && vars.API_BUCKET == '' }}");
+		expect(absent.run).toContain('>> "$GITHUB_STEP_SUMMARY"');
+		expect(absent.run).toContain("Not uploaded: the repository variable API_BUCKET is not set.");
+		expect(absent.run).not.toMatch(/exit [1-9]|false$/m);
+		// No other step names the API bucket, and none of these comes before the check.
+		const naming = steps.filter((step) => JSON.stringify(step).includes("API_BUCKET"));
+		expect(naming).toEqual([upload, verify, absent]);
+		for (const step of naming) expect(steps.indexOf(step)).toBeGreaterThan(steps.indexOf(check));
+		// The role it writes with is the one the workflow already assumes: no other credentials.
+		expect(steps.filter((step) => step.uses?.startsWith("aws-actions/configure-aws-credentials@")).length).toBe(1);
 	});
 
 	test("tells the alarm whether this pass's copy and push succeeded", () => {

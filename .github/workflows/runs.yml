@@ -5,9 +5,10 @@
 # Derivations as an artifact, builds the data API's static files, checks them
 # against the Derivations and against the files the last successful run kept
 # (fetched with this run's token, which may therefore read Actions), keeps them
-# as a second artifact for a week, and opens (or comments on) one issue when a
-# watched Series has had no Run for 48 hours, or the newest price file
-# (prices.yml) is more than 48 hours old.
+# as a second artifact for a week, uploads the checked files to the stage's
+# private API bucket and checks what the bucket then holds, and opens (or
+# comments on) one issue when a watched Series has had no Run for 48 hours, or
+# the newest price file (prices.yml) is more than 48 hours old.
 #
 # It needs, in this repository's settings (README, "The Runs repository, the
 # Method and the page"):
@@ -15,8 +16,13 @@
 #   variable RUNS_BUCKET           the scheduled stage's bucket output
 #   secret   RUNS_REPO_DEPLOY_KEY  the private half of a deploy key of
 #                                  smrdotgg/ledgermath-runs with write access
+# and, once the scheduled stage is deployed with an API bucket (README, "The
+# data API", "The API bucket"):
+#   variable API_BUCKET            the scheduled stage's apiBucket output; while
+#                                  it is not set, nothing is uploaded and the
+#                                  step summary says so
 # infra/runs/stages.ts names the scheduled stage; the README ("Moving the
-# schedule to the production account") says when the two variables change.
+# schedule to the production account") says when the variables change.
 name: runs
 
 on:
@@ -52,6 +58,7 @@ jobs:
     timeout-minutes: 30
     env:
       RUNS_BUCKET: ${{ vars.RUNS_BUCKET }}
+      API_BUCKET: ${{ vars.API_BUCKET }}
     steps:
       # The whole history, so the alarm can be told when schedule.json last
       # changed.
@@ -148,8 +155,8 @@ jobs:
       # a point cites with its sha256; and every month file against the tree
       # the last successful run kept, which it may differ from only for the
       # four causes ADR-0030 gives (rule 9). Only a checked tree is kept, as
-      # the artifact api, for a week (the next runs need only the latest);
-      # nothing is uploaded anywhere else.
+      # the artifact api, for a week (the next runs need only the latest),
+      # and only a checked tree is uploaded to the API bucket, below.
       - name: Build the data API's files
         id: api
         if: ${{ !cancelled() && steps.derive.outcome == 'success' }}
@@ -191,6 +198,37 @@ jobs:
           path: api/
           if-no-files-found: error
           retention-days: 7
+
+      # The checked tree, to the stage's private API bucket (ADR-0031): only
+      # after the check passed, and only once the repository variable
+      # API_BUCKET names the bucket (the stage's apiBucket output, set after
+      # the deploy that made it). It writes only the files whose SHA-256 or
+      # headers differ from the bucket's: schemas first, then month files and
+      # price files, then Series files, then the list, then the table of
+      # contents, each phase whole before the next; it deletes nothing. The
+      # bucket grants nothing to anyone until the public API is turned on
+      # (infra/runs/public-blobs.ts, PUBLIC_API), so nothing here is public.
+      - name: Upload the data API's files to the API bucket
+        id: api-upload
+        if: ${{ !cancelled() && steps.api-check.outcome == 'success' && vars.API_BUCKET != '' }}
+        run: bun scripts/upload-api.ts --tree api --bucket "$API_BUCKET"
+
+      # What the bucket holds under v1/ is exactly the tree just built: the
+      # same files, each with its SHA-256, size and headers.
+      - name: Check that the API bucket holds the data API's files
+        if: ${{ !cancelled() && steps.api-upload.outcome == 'success' }}
+        run: bun scripts/check-api-bucket.ts --tree api --bucket "$API_BUCKET"
+
+      # Until the stage is deployed with an API bucket and API_BUCKET is set,
+      # the upload is not an error: the summary says it did not happen.
+      - name: Say that there is no API bucket to upload to
+        if: ${{ !cancelled() && steps.api-check.outcome == 'success' && vars.API_BUCKET == '' }}
+        run: |
+          {
+            echo "### The data API's files to the API bucket"
+            echo
+            echo "Not uploaded: the repository variable API_BUCKET is not set. It is the scheduled stage's apiBucket output, set once the stage is deployed with the API bucket (README, \"The data API\", \"The API bucket\")."
+          } >> "$GITHUB_STEP_SUMMARY"
 
       # Even when the copy, the Method or the page failed. When the copy or
       # its push failed, the Runs repository may be behind the bucket, and the

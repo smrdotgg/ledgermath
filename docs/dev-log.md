@@ -1121,4 +1121,30 @@ A migrated benchmark is done only when **all** of these hold:
   changed for (a); a counted late Run simulated in an `http_get` Series passes as (c) with
   its counts exact, and fails with `runs` 999. The first scheduled run after the merge fails
   on purpose (the kept tree has no layout) until it is run by hand with `new_baseline`.
+- **2026-11-20** — The data API's serving, built and off (#64, slice 3; ADR-0031). One
+  host, `https://api.ledgermath.com`: `/v1/…` from a new private API bucket, exactly as the
+  build writes the tree, and `/runs/…`, `/boots/…`, `/blobs/sha256/…` from the Runs bucket at
+  its own keys, through CloudFront on the Free flat-rate plan with Origin Access Control;
+  nothing else of either bucket is reachable, and a test routes every kind of key, spelt as an
+  attacker might, through the behaviours and the grants to show it. It grew from public blobs
+  (2026-11-14), which nothing ever deployed: the plan, the states, the guard and the watch are
+  kept; the switch is now `PUBLIC_API` (typed to `production-runs`, and refusing any other
+  stage instead of ignoring it), the stage makes the certificate, its DNS validation and the
+  `A`/`AAAA` alias records in the delegated zone `Z03039811C7UWLHZE7CZQ` (replacing the
+  `domain` setting), the total WAF limit counts every request rather than `/blobs/` alone,
+  and the blob request function is gone. The plan allows only managed policies, so the
+  tree's `Content-Type: application/json` and `Cache-Control: public, max-age=300` are on its
+  objects, set by the upload; CORS comes from the managed response-headers policy; the
+  evidence's `immutable` and its JSON type come from the one viewer-response function; the
+  default behaviour's function answers 404. Five minutes for the whole tree because no
+  address in `v1/` is named by its content and a month file must not outlive the Series file
+  listing its sha256. **Running now:** the `runs` workflow uploads the checked tree to the API
+  bucket once the repository variable `API_BUCKET` is set (writing only files whose SHA-256,
+  which S3 verifies and keeps, or headers differ; schemas, then month and price files, Series
+  files, the list, the table of contents; deleting nothing), then checks that the bucket
+  holds exactly the tree; while the variable is unset the step summary says so. The
+  workflow's role gets a second policy, `RunsApiUploadPolicy` (list the API bucket, read and
+  write its `v1/*`), and still cannot write to the Runs bucket. Not deployed; `sst diff` was
+  not run, the AWS login having expired. A deploy of a `-runs` stage now creates the API
+  bucket and that policy, and nothing of the serving.
 - _(agents: append your entry here, one per merged benchmark)_
