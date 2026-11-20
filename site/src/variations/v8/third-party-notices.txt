@@ -1,14 +1,18 @@
-Third-party files served with this page (design v8)
+Third-party files served with this page (design v8, "dt-wild")
 
-1. Fraunces, 600 (fonts/fraunces-latin-600-normal.woff2)
-   Copyright 2020 The Fraunces Project Authors (https://github.com/undercasetype/Fraunces)
-2. Inter, variable weight (fonts/inter-latin-wght-normal.woff2)
-   Copyright (c) 2016 The Inter Project Authors (https://github.com/rsms/inter)
-3. IBM Plex Mono, 400 and 500 (fonts/ibm-plex-mono-latin-*-normal.woff2)
+1. Datatype, variable font (fonts/Datatype.woff2), served unmodified
+   Author: Frank Tisellano
+   Source: https://github.com/franktisellano/datatype
+
+   Copyright 2026 The Datatype Project Authors (https://github.com/franktisellano/datatype)
+
+   This font includes glyphs from IBM Plex™ Mono:
    Copyright 2017 IBM Corp. with Reserved Font Name "Plex"
 
-Each is licensed under the SIL Open Font License, Version 1.1, copied below.
-It is also available with a FAQ at https://openfontlicense.org
+This Font Software is licensed under the SIL Open Font License, Version 1.1.
+This license is copied below, and is also available with a FAQ at:
+https://openfontlicense.org
+
 
 -----------------------------------------------------------
 SIL OPEN FONT LICENSE Version 1.1 - 26 February 2007
@@ -23,7 +27,7 @@ with others.
 
 The OFL allows the licensed fonts to be used, studied, modified and
 redistributed freely as long as they are not sold by themselves. The
-fonts, including any derivative works, can be bundled, embedded, 
+fonts, including any derivative works, can be bundled, embedded,
 redistributed and/or sold with any software provided that any reserved
 names are not used by derivative works. The fonts and derivatives,
 however, cannot be released under any other type of license. The
