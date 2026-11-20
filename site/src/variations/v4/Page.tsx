@@ -208,6 +208,7 @@ export default function Page() {
 	const newest = formatMoment(snapshot.newestRunStartedAt);
 	const oldest = formatMoment(snapshot.oldestRunStartedAt);
 	const runs = formatCount(snapshot.runCount).full;
+	const failed = formatCount(snapshot.failedRuns).full;
 	const sections = sectionsInOrder();
 	let rowNumber = 0;
 	// The round the newest Run belongs to: the last scheduled time at or before it.
@@ -257,7 +258,13 @@ export default function Page() {
 
 							<p class="tally">
 								<span>
-									<span class="tally-l">Runs</span> <b title={`${runs} Runs since ${oldest.full}`}>{runs}</b>
+									<span class="tally-l">Runs</span> <b>{runs}</b>
+								</span>
+								<span>
+									<span class="tally-l">Failed</span> <b>{failed}</b>
+								</span>
+								<span>
+									<span class="tally-l">Since</span> <b title={oldest.full}>{oldest.date}</b>
 								</span>
 							</p>
 						</div>
@@ -306,11 +313,6 @@ export default function Page() {
 							const prepared = g.rows.map(prepareRow);
 							return (
 								<tbody class={SECTION_CLASS[g.section]}>
-									<tr class="sec-row">
-										<th scope="rowgroup" colspan={machines.length + 1} class="sec-what">
-											{g.section}
-										</th>
-									</tr>
 									{g.rows.map((row, r) => {
 										rowNumber += 1;
 										const n = String(rowNumber).padStart(2, "0");
@@ -318,11 +320,12 @@ export default function Page() {
 										const p = prepared[r]!;
 										const up = c.lead === "rate";
 										return (
-											<tr class="row">
+											<tr class={r === 0 ? "row first" : "row"}>
 												<th scope="row" class="what">
 													<details class="tap">
 														<summary class="badge" title={c.label}>
 															{n}
+															<span class="what-id">{c.benchmark}</span>
 															<b class="dir" aria-label={up ? "higher is faster" : "lower is faster"}>
 																{up ? "↑" : "↓"}
 															</b>
