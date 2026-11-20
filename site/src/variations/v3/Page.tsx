@@ -1,7 +1,8 @@
 // Design v3, "Paper": LedgerMath's home page as a one-page data report, a research letter.
-// Form "under-05": at most four words a visitor reads. The paper keeps its title, its dateline,
-// the way in, and Table 1 whole (every digit, a p5–p95 bar per cell, the hourly price over each
-// column). What each row and column is waits behind a tap: the row's number, the column's price.
+// Form "under-10": at most nine words a visitor reads. The paper keeps its title, its dateline,
+// the way in, and Table 1 whole (every digit, a p5–p95 bar per cell, each machine and its hourly
+// price over its column). What each row measures waits behind a tap on its number; a machine's
+// vCPU, memory and processor behind a tap on its name.
 // Every figure comes from ../../data exactly as the snapshot holds it; nothing is rounded, ranked or computed.
 import "./page.css";
 import {
@@ -100,7 +101,8 @@ const chOf = (text: string) => [...text].reduce((w, c) => w + (c === NNBSP ? 0.5
 const parts = rows.flatMap((r) => r.cells.map((c) => ({ ...split(c.p50.full), unit: r.unit })));
 /** One width for the whole part and one for the tail (its unit included) across Table 1, so every decimal point lines up down a column. */
 const INT_CH = Math.max(...parts.map((p) => chOf(p.int)));
-const TAIL_CH = Math.max(...parts.map((p) => chOf(p.tail) + p.unit.length));
+// A unit's letters are wider than a digit: 1.5ch more, so the longest tail stays inside its box.
+const TAIL_CH = Math.max(...parts.map((p) => chOf(p.tail) + p.unit.length)) + 1.5;
 
 /** An exact figure, its decimal point in the same place in every cell: full weight to the third decimal, lighter after,
  *  and its unit set tight against its last digit, part of the figure. */
@@ -222,11 +224,11 @@ export default function Page() {
 										{machines.map((m) => (
 											<th scope="col" class="c-m">
 												<details class="tip">
-													<summary aria-label={`${price(m)} ${m.instanceType}`} title={m.price.description}>
+													<summary title={m.price.description}>
+														<span class="m-name">{m.instanceType}</span>
 														<span class="m-price">{price(m)}</span>
 													</summary>
 													<span class="tip-body">
-														<span class="m-name">{m.instanceType}</span>
 														<span class="m-spec">
 															{m.vcpu} vCPU · {m.memory}
 														</span>

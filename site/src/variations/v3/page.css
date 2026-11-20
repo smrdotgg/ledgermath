@@ -309,23 +309,29 @@ td {
 	padding-right: 0;
 	line-height: 1.25;
 }
-/* each column's price: the way to what the machine is */
+/* each machine's head: its name, its price under it */
+.c-m .tip > summary {
+	flex-direction: column;
+	align-items: flex-start;
+	gap: 0.1rem;
+}
+/* each machine's hourly price */
 .m-price {
 	font-weight: 700;
 	font-size: 1.02rem;
 	color: var(--ink);
-	text-decoration: underline dotted color-mix(in srgb, currentColor 55%, transparent);
-	text-decoration-thickness: 1px;
-	text-underline-offset: 0.25em;
-}
-.tip > summary:hover .m-price,
-.tip[open] > summary .m-price {
-	color: var(--accent);
 }
 .m-name {
 	font-family: var(--mono);
-	font-size: 0.92rem;
+	font-size: 0.95rem;
 	color: var(--ink);
+	text-decoration: underline dotted color-mix(in srgb, currentColor 45%, transparent);
+	text-decoration-thickness: 1px;
+	text-underline-offset: 0.3em;
+}
+.tip > summary:hover .m-name,
+.tip[open] > summary .m-name {
+	color: var(--accent);
 }
 
 /* the groups (memory, compute, the system, disk, network) set apart by space and a hairline, not named */
@@ -563,12 +569,22 @@ td {
 		flex: 0 0 100%;
 		padding: 0.45rem 0 0.35rem;
 	}
+	/* one line per machine: its name, then its price, the label each figure below carries */
 	.t1 thead th.c-m {
-		flex: 0 0 auto;
-		padding: 0.1rem 0;
+		flex: 0 0 100%;
+		padding: 0.12rem 0;
 	}
-	.t1 thead th.c-m:has(.tip[open]) {
-		flex-basis: 100%;
+	.t1 thead th.c-m + th.c-m {
+		border-top: 1px solid var(--grid);
+	}
+	.c-m .tip > summary {
+		flex-direction: row;
+		align-items: baseline;
+		gap: 0;
+	}
+	.c-m .m-name {
+		width: 8rem;
+		font-size: 0.82rem;
 	}
 	.m-price {
 		font-size: 0.86rem;
