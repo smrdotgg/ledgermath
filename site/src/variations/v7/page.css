@@ -226,6 +226,17 @@ h1 {
 	background: var(--accent-wash);
 	border-color: var(--accent);
 }
+.ans {
+	flex-wrap: wrap;
+}
+.per {
+	flex-basis: 100%;
+	margin: 4px 0 6px 12px;
+	font-family: var(--serif);
+	font-size: 24px;
+	line-height: 1.1;
+	color: var(--ink-2);
+}
 .when {
 	margin-top: 4px;
 	padding-left: 12px;
@@ -255,6 +266,16 @@ h1 {
 .prompt {
 	color: var(--term-dim);
 	user-select: none;
+}
+.way-cmd {
+	min-width: 0;
+	font-family: inherit;
+	font-size: inherit;
+	color: var(--term-ink);
+}
+.cont {
+	display: none;
+	color: var(--term-dim);
 }
 .way-url {
 	min-width: 0;
@@ -358,10 +379,32 @@ h1 {
 		padding-left: 8px;
 		font-size: 13px;
 	}
+	.per {
+		margin: 2px 0 2px 8px;
+		font-size: 19px;
+	}
+	/* the command in two lines, the address the whole width of the block under the copy button */
 	.way {
-		padding: 15px 54px 15px 16px;
-		font-size: 14px;
-		gap: 8px;
+		display: block;
+		padding: 12px 14px 13px;
+		font-size: 13px;
+		line-height: 1.85;
+	}
+	.prompt {
+		margin-right: 8px;
+	}
+	.cont {
+		display: inline;
+	}
+	.way-url {
+		display: block;
+	}
+	.copy-btn {
+		top: 9px;
+		right: 9px;
+		transform: none;
+		width: 30px;
+		height: 30px;
 	}
 	.copy-btn {
 		right: 9px;

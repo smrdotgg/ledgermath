@@ -60,7 +60,7 @@ export default function Page() {
 							Q
 						</span>
 						<p class="question" id="question">
-							<span class="nowrap">{ASKED_MACHINE}</span> mutex?
+							<span class="nowrap">{ASKED_MACHINE}:</span> mutex, price?
 						</p>
 					</div>
 					<div class="turn turn-a">
@@ -74,6 +74,9 @@ export default function Page() {
 								</strong>
 								<Cite n={1} href={links.seriesList} source={`v1/series.json, ${askedSeries.id} p50 (${p50Path})`} />
 								<Cite n={2} href={askedSeries.url} source={`v1/series/${askedSeries.id}.json: every Run's figure and evidence`} />
+								<span class="per" title={askedRow.choice.repetition}>
+									per {askedPer.of}
+								</span>
 							</p>
 							<p class="ans">
 								<strong class="fig" title={`${askedMachine.price.description}`}>{`$${askedPrice.full}/h`}</strong>
@@ -88,10 +91,19 @@ export default function Page() {
 					</div>
 				</section>
 
-				<div class="way" data-copy-block="the index address">
-					<a class="way-url" href={links.index} data-copy={links.index}>
-						{links.index.replace(/^https:\/\//, "")}
-					</a>
+				<div class="way" data-copy-block="the index command">
+					<span class="prompt" aria-hidden="true">
+						$
+					</span>
+					<code class="way-cmd" data-copy={`curl ${links.index}`}>
+						curl
+						<span class="cont" aria-hidden="true">
+							{" \\"}
+						</span>{" "}
+						<a class="way-url" href={links.index}>
+							{links.index}
+						</a>
+					</code>
 				</div>
 			</main>
 
