@@ -36,6 +36,8 @@
 	--term-ink: #ece7dc;
 	--term-dim: #a49e91;
 	--term-accent: #f2896b;
+	--band: rgb(178 58 28 / 0.42);
+	--bar: #9d978a;
 	--shadow: 0 1px 0 rgb(0 0 0 / 0.03), 0 18px 48px -24px rgb(60 40 20 / 0.3);
 }
 
@@ -60,6 +62,8 @@
 		--term-ink: #ece7dc;
 		--term-dim: #9a9488;
 		--term-accent: #f08465;
+		--band: rgb(240 132 101 / 0.5);
+		--bar: #67625a;
 		--shadow: 0 1px 0 rgb(255 255 255 / 0.02), 0 18px 48px -24px rgb(0 0 0 / 0.85);
 	}
 }
@@ -362,6 +366,154 @@ h1 {
 	height: 16px;
 }
 
+/* ------------------------------------------------------------ the asked figure's row, on every machine */
+
+.row {
+	margin-top: 12px;
+}
+.row-head {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: baseline;
+	justify-content: space-between;
+	gap: 8px 24px;
+	padding-bottom: 12px;
+	border-bottom: 2px solid var(--ink);
+}
+.row-title {
+	margin: 0;
+	font-family: var(--serif);
+	font-weight: 400;
+	font-size: 30px;
+	line-height: 1.1;
+	letter-spacing: -0.01em;
+}
+.row-title a {
+	text-decoration: none;
+}
+.row-title a:hover {
+	text-decoration: underline;
+	text-decoration-color: var(--accent);
+	text-decoration-thickness: 1px;
+}
+.key {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+	display: flex;
+	gap: 20px;
+	font-family: var(--mono);
+	font-size: 12.5px;
+	color: var(--ink-2);
+}
+.key li {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+.key-tick {
+	width: 3px;
+	height: 14px;
+	border-radius: 1px;
+	background: var(--ink);
+}
+.key-band {
+	width: 22px;
+	height: 12px;
+	border-radius: 2px;
+	background: var(--band);
+}
+.cells {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+	display: grid;
+	grid-template-columns: repeat(5, minmax(0, 1fr));
+	border-bottom: 1px solid var(--rule-2);
+}
+.cell {
+	position: relative;
+	display: grid;
+	align-content: start;
+	gap: 2px;
+	padding: 14px 10px 16px;
+	font-family: var(--mono);
+	font-size: 11.5px;
+}
+.cell + .cell {
+	border-left: 1px solid var(--rule);
+}
+.cell.is-asked {
+	box-shadow: inset 0 0 0 1px var(--accent-line);
+	border-radius: 3px;
+}
+.cell-type {
+	font-size: 13.5px;
+	font-weight: 600;
+}
+.cell-price {
+	font-size: 12px;
+	color: var(--muted);
+}
+.cell-fig {
+	margin-top: 12px;
+	font-size: 11.5px;
+	font-weight: 600;
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+	text-underline-offset: 0.28em;
+}
+.ref {
+	position: absolute;
+	top: 6px;
+	right: 8px;
+	font-family: var(--serif);
+	font-size: 18px;
+	line-height: 1;
+	color: var(--accent-ink);
+	text-decoration: none;
+}
+.ref:hover {
+	text-decoration: underline;
+}
+
+/* A figure drawn to its row's scale from zero: a light track, a line out to the median with a tick
+   at its end, and the 5th to 95th percentile as a band, never narrower than the tick. */
+.bar {
+	position: relative;
+	display: block;
+	height: 12px;
+	margin-top: 8px;
+	background: linear-gradient(var(--rule), var(--rule)) left center / 100% 4px no-repeat;
+	border-radius: 2px;
+}
+.bar-p50 {
+	position: absolute;
+	z-index: 1;
+	left: 0;
+	top: 5px;
+	height: 2px;
+	background: var(--bar);
+}
+.bar-p50::after {
+	content: "";
+	position: absolute;
+	right: -1.5px;
+	top: -6px;
+	width: 3px;
+	height: 14px;
+	border-radius: 1px;
+	background: var(--ink);
+}
+.bar-span {
+	position: absolute;
+	top: 0;
+	height: 12px;
+	transform: translateX(-50%);
+	background: var(--band);
+	border-radius: 2px;
+}
+
 /* ------------------------------------------------------------ foot */
 
 .foot {
@@ -498,5 +650,41 @@ h1 {
 	}
 	.foot {
 		height: 56px;
+	}
+	.row-title {
+		font-size: 25px;
+	}
+	/* one line per machine: its type and price, then its figure and its bar */
+	.cells {
+		grid-template-columns: minmax(0, 1fr);
+	}
+	/* the figure's column as wide as the longest figure, so every bar starts and ends in the same place */
+	.cell {
+		grid-template-columns: 20ch minmax(64px, 1fr);
+		align-items: center;
+		column-gap: 12px;
+		padding: 10px 34px 11px 8px;
+		font-size: 12.5px;
+	}
+	.cell-fig {
+		font-size: 12.5px;
+	}
+	.cell + .cell {
+		border-left: 0;
+		border-top: 1px solid var(--rule);
+	}
+	.cell-price {
+		justify-self: end;
+	}
+	.cell-fig {
+		margin-top: 0;
+	}
+	.bar {
+		margin-top: 0;
+	}
+	.ref {
+		top: 50%;
+		transform: translateY(-50%);
+		right: 10px;
 	}
 }

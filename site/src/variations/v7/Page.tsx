@@ -4,7 +4,20 @@
 // figure is the data module's, exactly; every mark carries its source in its accessible name.
 import "./page.css";
 import type { JSX } from "@solidjs/web";
-import { formatCount, formatDurationPerUnit, formatMoment, formatUsd, headline, links, machineOf, series, seriesFileContents } from "../../data";
+import {
+	durationUnit,
+	formatCount,
+	formatDurationPerUnit,
+	formatMoment,
+	formatUsd,
+	headline,
+	leadFigure,
+	links,
+	machineOf,
+	type Shown,
+	series,
+	seriesFileContents,
+} from "../../data";
 
 // ---------------------------------------------------------------- the exchange's facts
 
@@ -33,6 +46,48 @@ const askedDerivation = askedSeries.derivations.series_v1;
 const askedRun = seriesFileContents.point.example;
 const askedRunAt = formatMoment(askedRun.started_at);
 const p50Path = `/series/${askedSeriesIndex}/derivations/series_v1/percentiles/time_per_repetition_ns/p50`;
+
+// ---------------------------------------------------------------- the asked figure's row, on every machine
+
+type Fig = { shown: Shown; p5: Shown; p95: Shown; count: number };
+
+/** The row's figures, each of one critical section, all in the unit its smallest reads at least 1 in, divided exactly by the data module's helper. */
+const rowFigs: Fig[] = (() => {
+	const figures = askedRow.cells.map((cell) => leadFigure(askedRow.choice, cell.series));
+	const unit = durationUnit(formatDurationPerUnit(Math.min(...figures.map((f) => f.p50)), askedPer).value);
+	return figures.map((f) => ({
+		shown: formatDurationPerUnit(f.p50, askedPer, { unit }),
+		p5: formatDurationPerUnit(f.p5, askedPer, { unit }),
+		p95: formatDurationPerUnit(f.p95, askedPer, { unit }),
+		count: f.count,
+	}));
+})();
+const rowMax = Math.max(...rowFigs.map((f) => Math.max(f.p5.value, f.p95.value)));
+
+/** A figure's 5th to 95th percentile span, low to high. */
+function spread(fig: Fig): [Shown, Shown] {
+	return fig.p5.value <= fig.p95.value ? [fig.p5, fig.p95] : [fig.p95, fig.p5];
+}
+
+/** What stands behind a cell, in its figure's title: its Runs and their dates, its p5 to p95, its field in the Series list. */
+function cellTitle(fig: Fig, cell: (typeof askedRow.cells)[number]): string {
+	const [lo, hi] = spread(fig);
+	const from = formatMoment(cell.series.oldest_run_started_at).date;
+	const to = formatMoment(cell.series.newest_run_started_at).date;
+	return `${cell.machine.instanceType}: median of ${formatCount(fig.count).full} Runs, ${from} to ${to}\np5–p95 ${lo.full} – ${hi.full} ${fig.shown.unit}\nseries.json: ${fig.shown.source}\nOpen: this Series' Runs and evidence`;
+}
+
+/** A figure's median and its 5th to 95th percentile span, drawn to the row's scale from zero. */
+function Bar(props: { fig: Fig }) {
+	const pct = (v: number) => `${((v / rowMax) * 100).toFixed(2)}%`;
+	const [lo, hi] = spread(props.fig);
+	return (
+		<span class="bar" aria-hidden="true">
+			<span class="bar-p50" style={{ width: pct(props.fig.shown.value) }} />
+			<span class="bar-span" style={{ left: pct((lo.value + hi.value) / 2), width: `max(6px, ${pct(hi.value - lo.value)})` }} />
+		</span>
+	);
+}
 
 /** A numbered mark that cites one file: its number shown, the file and the field in its name; it leads to its line of the sources. */
 function Cite(props: { n: number; href: string; source: string }) {
@@ -150,6 +205,57 @@ export default function Page() {
 						</a>
 					</code>
 				</div>
+
+				<section class="row" aria-labelledby="row-title">
+					<div class="row-head">
+						<h2 id="row-title" class="row-title">
+							<a href={askedRow.choice.readme} title={askedRow.choice.setting}>
+								{askedRow.choice.label}
+							</a>
+						</h2>
+						<ul class="key" aria-label="Key">
+							<li>
+								<span class="key-tick" aria-hidden="true" />
+								p50
+							</li>
+							<li>
+								<span class="key-band" aria-hidden="true" />
+								p5–p95
+							</li>
+						</ul>
+					</div>
+					<ul class="cells">
+						{askedRow.cells.map((cell, i) => {
+							const fig = rowFigs[i]!;
+							const asked = cell.series.id === askedSeries.id;
+							const price = formatUsd(cell.machine.price.usdPerHour, { per: "hour" });
+							return (
+								<li class={asked ? "cell is-asked" : "cell"}>
+									<span class="cell-type" title={`${cell.machine.processor}, ${cell.machine.vcpu} vCPU, ${cell.machine.memory}`}>
+										{cell.machine.instanceType}
+									</span>
+									<span class="cell-price" title={cell.machine.price.description}>
+										{`$${price.full}/h`}
+									</span>
+									<a
+										class="cell-fig"
+										href={links.seriesFile(cell.series)}
+										title={cellTitle(fig, cell)}
+										aria-label={`${cell.machine.instanceType}: ${fig.shown.full}${fig.shown.unit}, median of ${formatCount(fig.count).full} Runs; its Series file`}
+									>
+										{`${fig.shown.full}${fig.shown.unit}`}
+									</a>
+									<Bar fig={fig} />
+									{asked ? (
+										<a class="ref" href="#question" aria-label="A, the example answer above" title="The example answer">
+											A
+										</a>
+									) : null}
+								</li>
+							);
+						})}
+					</ul>
+				</section>
 			</main>
 
 			<footer class="foot">
