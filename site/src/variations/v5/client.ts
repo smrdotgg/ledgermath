@@ -1,4 +1,4 @@
-// Design v5: a copy button on every command. The page reads the same without it.
+// Design v5, "Ward monitors": a copy button beside the records desk's address. The page reads the same without it.
 for (const box of document.querySelectorAll<HTMLElement>("[data-copy]")) {
 	const text = box.dataset.copy;
 	if (!text || !navigator.clipboard) continue;

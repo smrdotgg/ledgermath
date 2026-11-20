@@ -1,1367 +1,830 @@
-/* Design v5, "Swiss poster". One family, one grid, one accent, few words. */
+/* Design v5, form "dt-vitals": a ward of bedside monitors. One font, Datatype, for letters and charts. */
 
 @font-face {
-	font-family: "Inter v5";
-	src: url("./fonts/inter-latin-wght.woff2") format("woff2");
+	font-family: "Datatype";
+	src: url("./fonts/Datatype.woff2") format("woff2");
 	font-weight: 100 900;
-	font-style: normal;
+	font-stretch: 50% 150%;
 	font-display: swap;
 }
 
 :root {
 	color-scheme: light dark;
-	--paper: #f3f2ee;
-	--ink: #0d0d0c;
-	--muted: #4f4d48;
-	--tail: #57554f;
-	--hair: #c7c4bb;
-	--red: #c4141c;
-	--frame: #0d0d0c;
-	--code-bg: #0d0d0c;
-	--code-fg: #f3f2ee;
-	--code-muted: #a3a097;
-	--code-line: #0d0d0c;
-
-	--m: 48px; /* page margin */
-	--g: 24px; /* column gap */
-	--cols: 12;
-	--sans: "Inter v5", "Helvetica Neue", Helvetica, Arial, sans-serif;
-	--mono: ui-monospace, "SF Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace;
+	/* the ward's wall, by day */
+	--wall: #dce7e1;
+	--wall-2: #cddbd4;
+	--ink: #0e1d17;
+	--muted: #34493f;
+	--sign: #0f5a3c;
+	--sign-ink: #ffffff;
+	--bezel: #2a2f2d;
+	--bezel-edge: #4a514e;
+	--link: #0b4f8a;
+	/* the monitor's colours: the same by day and by night, because a screen is a screen */
+	--screen: #000000;
+	--screen-ink: #e8eeeb;
+	--screen-dim: #9fb0a8;
+	--green: #3dff8e;
+	--red: #ff6b6b;
+	--cyan: #45e6ff;
+	--yellow: #ffe34d;
+	--magenta: #ff86f3;
+	--white: #f4f4f4;
+	--paper: #fbfaf5;
+	--paper-ink: #1a1a1a;
+	--paper-rule: #c9d3dd;
+	--board: #82562c;
 }
 
 @media (prefers-color-scheme: dark) {
 	:root {
-		--paper: #0f0f0e;
-		--ink: #f1efe9;
-		--muted: #b3b0a8;
-		--tail: #aeaba3;
-		--hair: #3a3934;
-		--red: #ff4f44;
-		--frame: #ff4f44;
-		--code-bg: #191917;
-		--code-fg: #f1efe9;
-		--code-muted: #a3a097;
-		--code-line: #45443e;
+		/* the night shift: lights down, screens up */
+		--wall: #070b09;
+		--wall-2: #0f1513;
+		--ink: #d3dfd9;
+		--muted: #9fb3a9;
+		--sign: #0d3a28;
+		--sign-ink: #d9f5e6;
+		--bezel: #1a1e1d;
+		--bezel-edge: #2c3230;
+		--link: #8cc8ff;
+		--paper: #e9e6dc;
+		--board: #5c3f22;
 	}
 }
 
-*,
-*::before,
-*::after {
+* {
 	box-sizing: border-box;
 }
 
 html {
-	-webkit-text-size-adjust: 100%;
-	text-size-adjust: 100%;
+	background: var(--wall);
 }
 
 body {
 	margin: 0;
-	background: var(--paper);
 	color: var(--ink);
-	font-family: var(--sans);
-	font-size: 16px;
+	background: radial-gradient(ellipse at 50% 0%, var(--wall-2), var(--wall) 70%);
+	font-family: "Datatype", ui-monospace, monospace;
+	font-feature-settings: "liga" 1, "calt" 1;
+	font-variant-ligatures: common-ligatures contextual;
+	font-size: 15px;
 	line-height: 1.45;
-	-webkit-font-smoothing: antialiased;
-	text-rendering: optimizeLegibility;
+	min-height: 100vh;
+}
+
+a {
+	color: var(--link);
 }
 
 p,
 h1,
 h2,
-h3,
-dl,
-dd,
-ol,
-ul,
-pre,
-figure {
+h3 {
 	margin: 0;
-	padding: 0;
 }
 
-ol,
-ul {
-	list-style: none;
-}
+/* ---------------------------------------------------------------- charts */
 
-a {
-	color: inherit;
-	text-decoration-line: underline;
-	text-decoration-thickness: 1px;
-	text-underline-offset: 0.2em;
-}
-
-a:hover {
-	text-decoration-thickness: 2px;
-}
-
-a:focus-visible,
-[tabindex]:focus-visible {
-	outline: 3px solid var(--red);
-	outline-offset: 2px;
-}
-
-code,
-pre {
-	font-family: var(--mono);
-}
-
-.nowrap {
+.chart {
+	display: inline-flex;
+	align-items: flex-end;
 	white-space: nowrap;
-}
-
-.sr {
-	position: absolute;
-	width: 1px;
-	height: 1px;
-	overflow: hidden;
-	clip-path: inset(50%);
-	white-space: nowrap;
-}
-
-.mono {
-	font-family: var(--mono);
-	font-size: 12.5px;
-	overflow-wrap: anywhere;
-}
-
-/* ---------------------------------------------------------------- the grid */
-
-.grid {
-	display: grid;
-	grid-template-columns: repeat(var(--cols), minmax(0, 1fr));
-	column-gap: var(--g);
-	padding-inline: var(--m);
-}
-
-.grid > * {
-	min-width: 0;
-}
-
-/* ---------------------------------------------------------------- masthead */
-
-.mast {
-	border-top: 12px solid var(--frame);
-	padding-block: 18px 0;
-	font-size: 14px;
-	line-height: 1.35;
-	align-items: baseline;
-}
-
-.mast-name {
-	grid-column: 1 / span 3;
-	font-size: 22px;
-	font-weight: 750;
-	letter-spacing: -0.03em;
+	letter-spacing: 0;
 	line-height: 1;
 }
 
-.mast-name a {
-	text-decoration: none;
+.dt {
+	font-family: "Datatype", monospace;
+	font-feature-settings: "liga" 1, "calt" 1;
+	font-variant-ligatures: common-ligatures contextual;
+	letter-spacing: 0;
 }
 
-.mast-cell {
-	grid-column: 4 / span 5;
-	font-variant-numeric: tabular-nums;
-	font-weight: 600;
+.tone-green {
+	color: var(--green);
+}
+.tone-red {
+	color: var(--red);
+}
+.tone-cyan {
+	color: var(--cyan);
+}
+.tone-yellow {
+	color: var(--yellow);
+}
+.tone-magenta {
+	color: var(--magenta);
+}
+.tone-white {
+	color: var(--white);
 }
 
-.mast-k {
-	color: var(--muted);
-	margin-right: 6px;
-}
+/* ---------------------------------------------------------------- the ward sign */
 
-.mast-t {
-	word-spacing: 0.4em;
-}
-
-.mast-nav {
-	grid-column: 10 / span 3;
-	display: flex;
-	justify-content: flex-end;
-	gap: 4px 18px;
-	font-weight: 600;
-}
-
-/* ---------------------------------------------------------------- poster */
-
-.poster {
-	padding-top: 36px;
-	align-items: start;
-}
-
-.headline {
-	grid-column: 1 / span 8;
-	grid-row: 1;
-	font-size: clamp(2.6rem, 5.8vw, 6.2rem);
-	font-weight: 760;
-	line-height: 0.93;
-	letter-spacing: -0.048em;
-	text-wrap: balance;
-	margin-top: -0.06em;
-}
-
-.intro {
-	grid-column: 9 / span 4;
-	grid-row: 1;
-	align-self: start;
-	padding-top: 6px;
-	font-size: 16px;
-	line-height: 1.45;
+.ward {
+	max-width: 1400px;
+	margin: 0 auto;
+	padding: 28px 16px 8px;
 	display: grid;
-	grid-template-columns: minmax(0, 1fr);
-	gap: 16px;
+	gap: 14px 40px;
+	grid-template-columns: 1fr;
 }
 
-/* A command: dark on light, and dark with a rule on dark, never the brightest thing on the page. */
-.cmd {
-	position: relative;
-	background: var(--code-bg);
-	color: var(--code-fg);
-	border: 1px solid var(--code-line);
+.sign {
+	justify-self: start;
+	background: var(--sign);
+	color: var(--sign-ink);
+	padding: 6px 14px;
+	border-radius: 4px;
+	font-weight: 600;
+	letter-spacing: 0.08em;
+	font-size: 13px;
 }
 
-.cmd code {
-	display: block;
-	font-size: 12px;
-	line-height: 1.4;
-	padding: 12px 14px;
-	white-space: nowrap;
-	overflow-x: auto;
+.sign span {
+	font-weight: 800;
+	margin-right: 0.4em;
 }
 
-.prompt {
-	color: var(--code-muted);
-	user-select: none;
+.ward h1 {
+	font-size: clamp(44px, 9vw, 96px);
+	font-weight: 700;
+	font-stretch: 80%;
+	line-height: 0.95;
+	letter-spacing: -0.02em;
 }
 
-/* The copy button, added by client.ts, inside the command's box at its right edge. */
+.lede {
+	max-width: 34em;
+	font-size: clamp(14px, 3.8vw, 17px);
+	color: var(--muted);
+}
+
+.blank {
+	color: #4b555c;
+	font-style: italic;
+}
+
+.board {
+	background: #fdfdfb;
+	color: #14202b;
+	border: 8px solid #b9c2c8;
+	border-radius: 6px;
+	padding: 12px 16px;
+	display: grid;
+	gap: 4px;
+	font-size: 14px;
+	box-shadow: 0 6px 18px rgb(0 0 0 / 0.15);
+}
+
+@media (prefers-color-scheme: dark) {
+	.board {
+		background: #dfe3e0;
+		border-color: #59615d;
+	}
+}
+
+.board .bk {
+	display: inline-block;
+	min-width: 6.5em;
+	color: #a3171b;
+	font-weight: 700;
+}
+
+.desk {
+	display: grid;
+	gap: 6px;
+}
+
+.deskhead {
+	font-size: 13px;
+	letter-spacing: 0.06em;
+	text-transform: uppercase;
+	color: var(--muted);
+}
+
+.addr {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	flex-wrap: wrap;
+	background: var(--screen);
+	border: 6px solid var(--bezel);
+	border-radius: 8px;
+	padding: 10px 14px;
+	font-size: clamp(15px, 4.2vw, 20px);
+	font-weight: 600;
+	overflow-wrap: anywhere;
+}
+
+.addr a {
+	color: var(--green);
+	text-decoration-thickness: 1px;
+	text-underline-offset: 4px;
+}
+
 .copy {
-	position: absolute;
-	top: 50%;
-	right: 8px;
-	transform: translateY(-50%);
-	font: 600 12px/1 var(--sans);
-	color: var(--code-fg);
-	background: var(--code-bg);
-	border: 1px solid var(--code-muted);
-	padding: 6px 9px;
+	font: inherit;
+	font-size: 13px;
+	background: transparent;
+	color: var(--green);
+	border: 1px solid var(--green);
+	border-radius: 4px;
+	padding: 2px 10px;
 	cursor: pointer;
 }
 
-.copy:hover {
-	border-color: var(--code-fg);
+.notice {
+	font-weight: 700;
+	font-size: 16px;
+	letter-spacing: 0.02em;
 }
 
-.copy:focus-visible {
-	outline: 3px solid var(--red);
-	outline-offset: 2px;
+@media (min-width: 900px) {
+	.ward {
+		grid-template-columns: 1.3fr 1fr;
+		align-items: start;
+	}
+	.sign,
+	.ward h1,
+	.lede,
+	.notice {
+		grid-column: 1;
+	}
+	.board {
+		grid-column: 2;
+		grid-row: 1 / span 3;
+		align-self: end;
+	}
+	.desk {
+		grid-column: 2;
+		grid-row: 4 / span 2;
+	}
 }
 
-/* The command scrolls in its own box, ending before the button, never under it. */
-[data-copy].has-copy code {
-	margin-right: 64px;
+/* ---------------------------------------------------------------- the beds */
+
+main {
+	max-width: 1400px;
+	margin: 0 auto;
+	padding: 18px 16px 32px;
 }
 
-/* The poster's figure runs the full measure, under the headline and the facts both. */
-.hero {
-	grid-column: 1 / -1;
-	grid-row: 2;
-	margin-top: 26px;
+.beds {
+	display: grid;
+	gap: 22px;
+	grid-template-columns: 1fr;
 }
 
-.hero-kicker {
-	font-size: 17px;
-	font-weight: 560;
-	letter-spacing: -0.015em;
-	line-height: 1.2;
-	border-top: 4px solid var(--red);
-	padding-top: 10px;
-	margin-bottom: 10px;
+@media (min-width: 760px) {
+	.beds {
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+	}
 }
 
-.hero-kicker-b {
-	font-weight: 750;
-	text-decoration: none;
+@media (min-width: 1180px) {
+	.beds {
+		grid-template-columns: repeat(3, minmax(0, 1fr));
+	}
 }
 
-.hero-kicker-b:hover {
-	text-decoration: underline;
+.bed {
+	display: grid;
+	gap: 0;
+	align-content: start;
+	min-width: 0;
 }
 
-.hero-kicker-sep {
-	color: var(--red);
-	font-weight: 400;
+.monitor {
+	container-type: inline-size;
+	background: var(--screen);
+	color: var(--screen-ink);
+	border: 12px solid var(--bezel);
+	border-bottom-width: 22px;
+	border-radius: 16px;
+	box-shadow:
+		inset 0 0 0 1px #111,
+		0 0 0 1px var(--bezel-edge),
+		0 14px 30px rgb(0 0 0 / 0.28);
+	padding: 8px 10px 6px;
+	display: grid;
+	gap: 6px;
+	position: relative;
+	min-width: 0;
 }
 
-.hero-kicker-m {
-	color: var(--muted);
-	white-space: nowrap;
-}
-
-/*
- * The poster's figure, in the table's own form, on one baseline: the compared digits enormous, every
- * other digit touching them at half their size, the same red, so the whole reads as one number; then
- * the unit, in ink.
- */
-.hero-figure {
+.topbar {
 	display: flex;
 	flex-wrap: wrap;
 	align-items: baseline;
-	color: var(--red);
-	white-space: nowrap;
-	font-size: clamp(4.5rem, 8vw, 7.4rem);
-	line-height: 0.8;
-	font-variant-numeric: tabular-nums;
-}
-
-.hero-head {
-	font-weight: 780;
-	letter-spacing: -0.06em;
-	margin-left: -0.045em;
-}
-
-.hero-tail {
-	font-size: 0.5em;
-	font-weight: 380;
-	letter-spacing: -0.045em;
-	margin-left: 0.02em;
-}
-
-.hero-unit {
-	font-size: 0.26em;
-	font-weight: 720;
-	letter-spacing: -0.03em;
-	line-height: 1;
-	color: var(--ink);
-	margin-left: 0.4em;
-}
-
-/* Freshness and provenance: a small grid of facts under the command, each a link to its file. */
-.facts {
-	display: grid;
-	grid-template-columns: repeat(2, minmax(0, 1fr));
-	gap: 12px var(--g);
-	margin-top: 8px;
-}
-
-.facts > div {
-	border-top: 2px solid var(--ink);
-	padding-top: 6px;
-}
-
-.facts dt {
+	gap: 2px 12px;
+	border-bottom: 1px solid #1f2a25;
+	padding-bottom: 5px;
 	font-size: 12px;
+	color: var(--screen-dim);
+}
+
+.topbar h2 {
+	font-size: 16px;
 	font-weight: 700;
-	color: var(--muted);
+	color: var(--screen-ink);
+	margin-right: auto;
 }
 
-.facts dd {
-	margin-top: 1px;
-	font-size: 17px;
-	font-weight: 680;
-	letter-spacing: -0.02em;
-	line-height: 1.2;
-	font-variant-numeric: tabular-nums;
+.bedno {
+	background: var(--screen-ink);
+	color: var(--screen);
+	padding: 0 6px;
+	border-radius: 3px;
+	font-size: 13px;
+	margin-right: 4px;
 }
 
-.facts-s {
+.clock {
+	color: var(--screen-ink);
+}
+
+.channel {
+	min-width: 0;
+}
+
+.chlabel,
+.leadoff {
+	font-size: 11px;
+	color: var(--screen-dim);
+	line-height: 1.3;
+}
+
+.chlabel > span:first-child,
+.leadoff > span:first-child {
+	font-weight: 700;
+}
+
+.zoom {
+	display: inline-block;
+	color: var(--screen);
+	background: var(--cyan);
+	padding: 0 5px;
+	border-radius: 2px;
+	font-weight: 700;
+}
+
+.trace {
+	position: relative;
+	overflow: hidden;
+	padding: 4px 0 2px;
+	border-bottom: 1px dashed #17201c;
+}
+
+/* A chart's ink fills the top 0.8em of its glyph box, whatever its values: the rest is empty. */
+.trace .chart {
+	width: 100%;
+	height: 0.86em;
+	align-items: flex-start;
+	justify-content: space-between;
+	text-shadow:
+		0 0 4px currentColor,
+		0 0 12px color-mix(in srgb, currentColor 55%, transparent);
+}
+
+/* Measured: 14 points are 2.24em wide at wdth 60, so two beats at 21cqi fill 94% of the screen. */
+.ecg .chart {
+	font-size: 21cqi;
 	font-weight: 500;
+	font-stretch: 60%;
 }
 
-/* ---------------------------------------------------------------- section heads */
-
-section + section {
-	margin-top: 88px;
+/* Two lines of 17 points, about 3.5em each at wdth 66: together the screen's width. */
+.pleth .chart {
+	font-size: 13.5cqi;
+	font-weight: 400;
+	font-stretch: 66%;
+	justify-content: flex-start;
 }
 
-/* The table follows the poster's facts closely, so the first screen shows the grid begin. */
-.poster + section {
-	margin-top: 32px;
+.pleth {
+	min-height: calc(36px + 12.5cqi);
+	display: grid;
+	align-content: center;
 }
 
-.sec-head {
-	align-items: end;
-	row-gap: 0;
-	margin-bottom: 16px;
-}
-
-.sec-head::before {
+/* the sweep: a monitor's eraser bar crossing the trace */
+.trace::after {
 	content: "";
-	grid-column: 1 / -1;
-	height: 4px;
-	background: var(--ink);
-	margin-bottom: 14px;
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	left: -14%;
+	width: 12%;
+	background: linear-gradient(to right, rgb(0 0 0 / 0), #000 45%, #000);
+	animation: sweep 4.6s linear infinite;
+	pointer-events: none;
 }
 
-.sec-no {
-	grid-column: 1 / span 1;
-	align-self: start;
-	font-size: 14px;
-	font-weight: 700;
-	font-variant-numeric: tabular-nums;
-	padding-top: 0.4em;
+.pleth .trace::after {
+	animation-duration: 7s;
 }
 
-.sec-head h2 {
-	grid-column: 2 / span 6;
-	align-self: start;
-	font-size: clamp(1.8rem, 2.6vw, 2.4rem);
-	font-weight: 760;
-	line-height: 1;
-	letter-spacing: -0.04em;
+@keyframes sweep {
+	to {
+		left: 102%;
+	}
 }
 
-.sec-lede,
-.sec-side {
-	grid-column: 9 / span 4;
-	font-size: 15px;
-	line-height: 1.4;
-}
-
-.sec-side .sec-lede {
-	grid-column: auto;
-}
-
-/* The drawn key: the two marks of a cell, named once. */
-.key {
+.leadoff {
+	align-self: stretch;
+	align-content: center;
+	padding: 10px 0 9px;
+	border-bottom: 1px dashed #17201c;
 	display: flex;
 	flex-wrap: wrap;
-	gap: 6px 22px;
-	margin-top: 10px;
-	font-size: 13px;
-	font-weight: 600;
-	font-variant-numeric: tabular-nums;
+	gap: 4px 10px;
+	align-items: baseline;
 }
 
-.key-i {
-	display: inline-flex;
+.off {
+	color: var(--screen);
+	background: var(--yellow);
+	font-weight: 800;
+	padding: 0 6px;
+	border-radius: 2px;
+	letter-spacing: 0.08em;
+	animation: blink 1.4s steps(1) infinite;
+}
+
+@keyframes blink {
+	50% {
+		background: transparent;
+		color: var(--yellow);
+	}
+}
+
+.leadoff a {
+	color: var(--cyan);
+	overflow-wrap: anywhere;
+}
+
+.params {
+	display: grid;
+	grid-template-columns: repeat(3, minmax(0, 1fr));
+	gap: 1px;
+	background: #1c2622;
+	border: 1px solid #1c2622;
+}
+
+.param {
+	background: var(--screen);
+	padding: 5px 7px 6px;
+	display: grid;
+	gap: 0;
+	min-width: 0;
+}
+
+.ptag {
+	font-size: 12px;
+	font-weight: 700;
+	display: flex;
 	align-items: center;
+	gap: 5px;
+}
+
+.punit {
+	margin-left: auto;
+	font-weight: 400;
+	font-size: 11px;
+}
+
+.pval {
+	font-size: clamp(22px, 8.2cqi, 40px);
+	font-weight: 600;
+	font-stretch: 75%;
+	line-height: 1.05;
+	font-variant-numeric: tabular-nums;
+	text-shadow: 0 0 10px color-mix(in srgb, currentColor 45%, transparent);
+	display: flex;
+	align-items: center;
+	gap: 6px;
+}
+
+.plim {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0 8px;
+	font-size: 10.5px;
+	line-height: 1.3;
+}
+
+.psub {
+	font-size: 10.5px;
+	color: var(--screen-dim);
+	line-height: 1.25;
+}
+
+.pulse {
+	width: 7px;
+	height: 7px;
+	border-radius: 50%;
+	background: currentColor;
+	box-shadow: 0 0 6px currentColor;
+	animation: pulse 1s ease-out infinite;
+}
+
+@keyframes pulse {
+	0%,
+	100% {
+		opacity: 0.25;
+	}
+	12% {
+		opacity: 1;
+	}
+}
+
+.kept .chart.pie {
+	font-size: 0.85em;
+}
+
+.statusbar {
+	display: flex;
+	flex-wrap: wrap;
+	justify-content: space-between;
+	gap: 2px 10px;
+	font-size: 10.5px;
+	color: var(--screen-dim);
+	letter-spacing: 0.03em;
+}
+
+/* ---------------------------------------------------------------- bed 6 */
+
+.standby {
+	height: 100%;
+	align-content: start;
+}
+
+.nopatient {
+	display: grid;
+	gap: 10px;
+	align-content: center;
+	justify-items: center;
+	text-align: center;
+	padding: 24px 8px;
+	font-size: 12px;
+	color: var(--screen-dim);
+	min-height: 220px;
+}
+
+.np {
+	font-size: clamp(24px, 9cqi, 40px);
+	font-weight: 700;
+	font-stretch: 70%;
+	letter-spacing: 0.12em;
+	color: var(--screen-dim);
+	border: 2px solid var(--screen-dim);
+	padding: 2px 14px;
+}
+
+.nextround {
+	color: var(--green);
+	font-size: 13px;
+}
+
+.nextround b {
+	white-space: pre;
+	font-size: 15px;
+}
+
+/* ---------------------------------------------------------------- the chart at the foot of the bed */
+
+.clip {
+	margin: -4px 18px 0;
+	position: relative;
+}
+
+.clip summary {
+	list-style: none;
+	cursor: pointer;
+	background: var(--board);
+	color: #fff8ee;
+	border-radius: 0 0 8px 8px;
+	padding: 14px 14px 9px;
+	font-size: 13px;
+	font-weight: 600;
+	text-align: center;
+	position: relative;
+}
+
+.clip summary::-webkit-details-marker {
+	display: none;
+}
+
+.clip summary::after {
+	content: " ▾";
+}
+
+.clip[open] summary::after {
+	content: " ▴";
+}
+
+.clipbar {
+	position: absolute;
+	top: 3px;
+	left: 50%;
+	width: 64px;
+	height: 7px;
+	margin-left: -32px;
+	border-radius: 3px;
+	background: linear-gradient(#e6e9ec, #9aa3aa);
+}
+
+.paper {
+	background: var(--paper);
+	color: var(--paper-ink);
+	padding: 12px 12px 14px;
+	border: 1px solid #c8c3b4;
+	border-top: 0;
+	font-size: 12px;
+	display: grid;
+	gap: 10px;
+	background-image: repeating-linear-gradient(to bottom, transparent 0 21px, var(--paper-rule) 21px 22px);
+}
+
+.paper a {
+	color: #0a4a85;
+}
+
+.band {
+	margin: 0;
+	display: grid;
+	gap: 2px;
+}
+
+.band div {
+	display: grid;
+	grid-template-columns: 6.5em 1fr;
 	gap: 8px;
 }
 
-/* Jump links to the five sections: on a phone only, where the table is long. */
-.jump {
-	display: none;
+.band dt {
+	color: #8a1c1c;
+	font-weight: 700;
 }
 
-.km {
-	position: relative;
-	display: inline-block;
-	width: 28px;
-	height: 9px;
-}
-
-.km-f::before {
-	content: "";
-	position: absolute;
-	inset: 3px 0 auto;
-	height: 3px;
-	background: var(--ink);
-}
-
-.km-s {
-	width: 16px;
-	border-inline: 1.5px solid var(--ink);
-}
-
-.km-s::before {
-	content: "";
-	position: absolute;
-	inset: 4px 0 auto;
-	height: 1px;
-	background: var(--ink);
-}
-
-/* ---------------------------------------------------------------- the table */
-
-.table-box {
-	padding-inline: var(--m);
-}
-
-table {
-	width: 100%;
-	border-collapse: separate;
-	border-spacing: 0;
-	table-layout: fixed;
-}
-
-th,
-td {
-	text-align: left;
-	vertical-align: top;
-	font-weight: inherit;
-}
-
-/* The machines: name, size, processor and hourly price, over their column. */
-/* One header for the whole table, kept in view while the rows scroll under it. */
-.figures thead th {
-	position: sticky;
-	top: 0;
-	z-index: 2;
-	background: var(--paper);
-	padding: 12px 0 10px 12px;
-	vertical-align: bottom;
-	border-bottom: 2px solid var(--ink);
-}
-
-.corner {
-	width: 24%;
-	padding-left: 0 !important;
-	font-size: 12px;
-	font-weight: 600;
-	color: var(--muted);
-}
-
-/* Each label level with the line it names: the Run counts' line, then the prices' line. */
-.corner span {
-	display: block;
-	white-space: nowrap;
-}
-
-.corner-runs {
-	line-height: 1.35;
-}
-
-.corner-price {
-	margin-top: 4px;
-	line-height: 20.4px; /* the price's 17px × 1.2 */
-}
-
-.mach span,
-.mach a {
-	display: block;
-}
-
-/* Names on one line at the top, prices on one line at the bottom, however the processors wrap. */
-.figures thead th.mach {
-	text-align: right;
-	vertical-align: top;
-}
-
-.mach-name {
-	font-size: 19px;
-	font-weight: 720;
-	letter-spacing: -0.02em;
-	line-height: 1.1;
-	margin-bottom: 3px;
-}
-
-.mach-spec,
-.mach-proc,
-.mach-runs,
-.mach-price {
-	font-size: 12px;
-	line-height: 1.35;
-	font-variant-numeric: tabular-nums;
-	white-space: nowrap;
-}
-
-.mach-spec,
-.mach-proc {
-	color: var(--muted);
-}
-
-/* The Run counts carry weight, as their label in the corner does, so the two read as one line. */
-.mach-runs {
-	font-weight: 640;
-}
-
-.mach-price {
-	margin-top: 4px;
-	font-size: 17px;
-	font-weight: 680;
-	letter-spacing: -0.02em;
-	text-decoration-color: var(--hair);
-}
-
-tr.group th,
-tr.group td {
-	padding: 36px 0 8px;
-	border-bottom: 1px solid var(--ink);
-	vertical-align: bottom;
-}
-
-.group-h {
-	font-size: 15px;
-	font-weight: 750;
-	letter-spacing: -0.01em;
-	white-space: nowrap;
-}
-
-.group-note {
-	font-weight: 500;
-	color: var(--muted);
-}
-
-/* A machine type's name inside each cell: shown on a phone only, where the cells stack. */
-.cm {
-	display: none;
-}
-
-tbody:first-of-type tr.group th,
-tbody:first-of-type tr.group td {
-	padding-top: 12px;
-}
-
-tr.row th,
-tr.row td {
-	padding: 14px 0 15px 14px;
-	border-bottom: 1px solid var(--hair);
-	vertical-align: middle;
-}
-
-tr.row th {
-	padding-left: 0;
-	padding-right: 24px;
-}
-
-tr.row:target th .row-label {
-	color: var(--red);
-}
-
-.row-label {
-	display: block;
-	font-size: 17px;
-	font-weight: 680;
-	letter-spacing: -0.018em;
-	line-height: 1.2;
-	text-decoration: none;
-}
-
-.row-label:hover {
-	text-decoration: underline;
-}
-
-.row-fig {
-	display: flex;
-	flex-wrap: wrap;
-	gap: 0 10px;
-	margin-top: 3px;
-	font-size: 13px;
-	font-weight: 650;
-	line-height: 1.35;
-}
-
-.row-dir {
-	font-weight: 500;
-	color: var(--muted);
-}
-
-td {
-	text-align: right;
-}
-
-/*
- * One exact figure per cell, every digit: the integer part and the compared digits strong, the
- * rest lighter, on one baseline. The row sets the widths (--wi, --wt), so the five figures of a
- * row share one decimal point. A hairline under the strong digits: each figure opens its Series.
- */
-.fig {
-	display: inline-flex;
-	align-items: baseline;
-	justify-content: flex-end;
-	white-space: nowrap;
-	font-variant-numeric: tabular-nums;
-	text-decoration: none;
-	line-height: 1.1;
-}
-
-.fi,
-.fh {
-	font-size: 21px;
-	font-weight: 640;
-	letter-spacing: -0.01em;
-}
-
-.fi {
-	min-width: var(--wi);
-	text-align: right;
-}
-
-.ft {
-	min-width: var(--wt);
-	text-align: left;
-	font-size: 14px;
-	font-weight: 450;
-	letter-spacing: -0.02em;
-	color: var(--tail);
-}
-
-/* Each figure opens its Series: the compared digits carry the prices' quiet underline; the whole value darkens it on hover. */
-.fi,
-.fh {
-	text-decoration: underline;
-	text-decoration-color: var(--hair);
-	text-decoration-thickness: 1px;
-	text-underline-offset: 0.18em;
-}
-
-.fig:hover .fi,
-.fig:hover .fh,
-.fig:focus-visible .fi,
-.fig:focus-visible .fh {
-	text-decoration-color: currentColor;
-}
-
-.fig:hover .ft,
-.fig:focus-visible .ft {
-	color: var(--ink);
-}
-
-/* The bar: zero to the median, on one zero-based scale per row; the bracket spans p5 to p95. */
-/*
- * The bar: zero to the median, a 4px rule, on one zero-based scale per row. The bracket spans p5 to
- * p95: two tall hairline caps, so even a narrow interval reads as two lines, never a block.
- */
-.bar {
-	position: relative;
-	display: block;
-	height: 9px;
-	margin: 9px 0 0 auto;
-	width: 100%;
-	max-width: 168px;
-}
-
-.bar::before {
-	content: "";
-	position: absolute;
-	inset: 4px 0 auto;
-	height: 1px;
-	background: var(--hair);
-}
-
-.bar-f {
-	position: absolute;
-	left: 0;
-	top: 2.5px;
-	height: 4px;
-	background: var(--ink);
-}
-
-.bar-s {
-	position: absolute;
-	top: -4px;
-	bottom: -4px;
-	min-width: 3px;
-	border-inline: 1px solid var(--ink);
-}
-
-.bar-s::before {
-	content: "";
-	position: absolute;
-	inset: 8px 0 auto;
-	height: 1px;
-	background: var(--ink);
-}
-
-/* The poster's figure, in the table: a red rule over the cell's own column, from the figure's edge to the bar's. */
-td.hero-cell {
-	background: linear-gradient(var(--red), var(--red)) no-repeat right top / min(168px, calc(100% - 14px)) 3px;
-}
-
-/* ---------------------------------------------------------------- API */
-
-.api-main {
-	grid-column: 1 / span 5;
-}
-
-.api-walk {
-	grid-column: 6 / span 7;
-}
-
-/* The base address once, its three files under it. */
-.addr {
-	background: var(--code-bg);
-	color: var(--code-fg);
-	border: 1px solid var(--code-line);
-	font-family: var(--mono);
-	font-size: 15px;
-	line-height: 1.5;
-	padding: 18px 20px 20px;
-}
-
-.addr-base {
+.band dd {
+	margin: 0;
 	overflow-wrap: anywhere;
 }
 
-.addr-files {
-	margin-top: 6px;
-	display: grid;
-	gap: 4px;
+.obs {
+	overflow-x: auto;
+	background: var(--paper);
 }
 
-.addr-files li {
-	display: flex;
-	flex-wrap: wrap;
-	align-items: baseline;
-	gap: 0 24px;
-	padding-left: 2ch;
+.obs:focus-visible {
+	outline: 2px solid #0a4a85;
 }
 
-.addr-files a {
-	min-width: 24ch;
-	text-decoration-color: var(--code-muted);
+.obs table {
+	border-collapse: collapse;
+	font-size: 11px;
+	white-space: nowrap;
 }
 
-.addr-what {
-	font-family: var(--sans);
-	font-size: 13px;
-	color: var(--code-muted);
-}
-
-.walk-h {
-	margin-bottom: 12px;
-	font-size: 13px;
-	font-weight: 700;
-	border-top: 2px solid var(--ink);
-	padding-top: 10px;
-}
-
-.walk-h .mono {
-	font-size: 12.5px;
-	font-weight: 600;
-}
-
-.walk-sep {
-	color: var(--red);
+.obs th,
+.obs td {
+	text-align: left;
+	padding: 2px 8px 2px 0;
+	border-bottom: 1px solid #ddd8c8;
 	font-weight: 400;
 }
 
-/* Long addresses wrap inside the excerpt, indented under their key, so the column never scrolls. */
-.json {
-	border-left: 4px solid var(--red);
-	padding: 4px 0 4px 16px;
-	font-size: 12px;
-	line-height: 1.6;
-	white-space: pre-wrap;
-	overflow-wrap: anywhere;
-}
-
-/* The p50: the poster's figure, the same digits in nanoseconds per repetition. */
-.json-hit {
+.obs thead th {
 	font-weight: 700;
-	color: var(--red);
+	color: #8a1c1c;
 }
 
-.json a {
-	text-decoration-color: var(--hair);
+.sig {
+	font-size: 11px;
+	color: #3d3d3d;
 }
 
-/* Not part of the file: the one exact division from the p50 above to the poster's figure, in the poster's red. */
-.json-note {
-	display: block;
-	padding-left: 5ch;
-	color: var(--red);
-	user-select: none;
-}
+/* ---------------------------------------------------------------- the central station */
 
-.json-note b {
-	font-weight: 700;
-}
-
-/* The evidence address on its own lines, under its key; it breaks only after "runs/" and after the date. */
-.json-url {
-	display: block;
-	padding-left: 7ch;
-	overflow-wrap: normal;
-}
-
-.api-lede {
-	margin-bottom: 14px;
-	font-size: 15px;
-}
-
-.api-side {
-	margin-top: 28px;
+.station {
+	margin-top: 40px;
 	display: grid;
-	grid-template-columns: minmax(0, 1fr);
 	gap: 18px;
-	align-content: start;
-	font-size: 14.5px;
-	line-height: 1.45;
 }
 
-.api-side > div {
-	border-top: 2px solid var(--ink);
-	padding-top: 8px;
-}
-
-.api-side dt {
-	font-size: 12px;
+.station h2 {
+	font-size: 26px;
 	font-weight: 700;
+	display: flex;
+	flex-wrap: wrap;
+	align-items: baseline;
+	gap: 4px 16px;
+}
+
+.station h2 span {
+	font-size: 14px;
+	font-weight: 400;
 	color: var(--muted);
-	margin-bottom: 4px;
 }
 
-.api-side .mono {
-	font-size: 12px;
+.ward-section {
+	display: grid;
+	gap: 8px;
 }
 
-.api-run {
-	display: block;
+.ward-section h3 {
+	font-size: 13px;
+	letter-spacing: 0.1em;
+	text-transform: uppercase;
+	color: var(--muted);
+}
+
+.tiles {
+	display: grid;
+	gap: 10px;
+	grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr));
+}
+
+.tile {
+	background: var(--screen);
+	color: var(--screen-ink);
+	border: 6px solid var(--bezel);
+	border-radius: 10px;
+	padding: 8px 10px;
+	display: grid;
+	gap: 6px;
+}
+
+.tlabel {
+	font-size: 12.5px;
 	font-weight: 600;
+	line-height: 1.3;
+}
+
+.tunit {
+	color: var(--screen-dim);
+	font-weight: 400;
+}
+
+.tbody {
+	display: flex;
+	align-items: flex-end;
+	justify-content: space-between;
+	gap: 12px;
+}
+
+.bars {
+	font-size: 72px;
+	font-weight: 500;
+	font-stretch: 140%;
+	text-shadow: 0 0 8px color-mix(in srgb, currentColor 50%, transparent);
+}
+
+.tfigs {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+	font-size: 12px;
+	line-height: 1.35;
+	text-align: right;
 	font-variant-numeric: tabular-nums;
 }
 
-.api-tpl {
-	display: block;
-	margin-top: 2px;
+.tbed {
+	color: var(--screen-dim);
+}
+
+.legend {
+	font-size: 13px;
 	color: var(--muted);
 }
 
-.api-links {
-	display: flex;
-	flex-wrap: wrap;
-	gap: 2px 18px;
-	font-weight: 600;
+.legend b {
+	color: var(--ink);
 }
 
-/* ---------------------------------------------------------------- footer */
+/* ---------------------------------------------------------------- the foot of the page */
 
 .foot {
-	margin-top: 88px;
-	border-top: 12px solid var(--frame);
-	padding-block: 18px 24px;
-	font-size: 14px;
-	line-height: 1.45;
-	align-items: baseline;
-}
-
-.foot-name {
-	grid-column: 1 / span 3;
-	font-size: 22px;
-	font-weight: 750;
-	letter-spacing: -0.03em;
-	line-height: 1;
-}
-
-/* The font's licence travels with the page: one word, at the grid's right edge. */
-.foot-lic {
-	grid-column: -4 / -1;
-	justify-self: end;
+	max-width: 1400px;
+	margin: 0 auto;
+	padding: 18px 16px 40px;
+	border-top: 1px solid color-mix(in srgb, var(--ink) 20%, transparent);
+	display: grid;
+	gap: 6px;
 	font-size: 13px;
-	font-weight: 600;
+	color: var(--muted);
 }
 
-/* ---------------------------------------------------------------- middle widths */
-
-@media (max-width: 1100px) {
-	:root {
-		--m: 32px;
-		--g: 20px;
-	}
-
-	.headline,
-	.hero {
-		grid-column: 1 / -1;
-	}
-
-	.intro {
-		grid-column: 1 / span 8;
-		grid-row: 2;
-		margin-top: 32px;
-	}
-
-	.hero {
-		grid-row: 3;
-	}
-
-	.sec-head h2 {
-		grid-column: 2 / span 11;
-	}
-
-	.sec-lede,
-	.sec-side {
-		grid-column: 2 / span 8;
-		margin-top: 14px;
-	}
-
-	.api-main,
-	.api-walk {
-		grid-column: 1 / -1;
-	}
-
-	.api-walk {
-		margin-top: 40px;
-	}
-}
-
-/* ---------------------------------------------------------------- phone */
-
-@media (max-width: 760px) {
-	:root {
-		--m: 16px;
-		--g: 12px;
-		--cols: 4;
-	}
-
-	.mast {
-		border-top-width: 8px;
-		padding-top: 14px;
-		row-gap: 6px;
-		font-size: 13px;
-	}
-
-	.mast-name {
-		grid-column: 1 / span 2;
-		font-size: 20px;
-	}
-
-	.mast-nav {
-		grid-column: 3 / span 2;
-		gap: 4px 12px;
-		font-size: 13px;
-	}
-
-	.mast-cell {
-		grid-column: 1 / -1;
-		grid-row: 2;
-	}
-
-	.poster {
-		padding-top: 32px;
-	}
-
-	.headline {
-		font-size: clamp(2.5rem, 12.4vw, 3.4rem);
-		letter-spacing: -0.05em;
-	}
-
-	.intro {
-		grid-column: 1 / -1;
-		margin-top: 18px;
-		font-size: 15px;
-		gap: 14px;
-	}
-
-	/* The whole command shows: "curl" and Copy on the first line, the address whole on the second. */
-	.cmd code {
-		font-size: 11.5px;
-		line-height: 1.5;
-		padding: 12px;
-		white-space: normal;
-	}
-
-	.cmd-url {
-		display: block;
-		margin-top: 4px;
-		white-space: nowrap;
-		overflow-x: auto;
-	}
-
-	[data-copy].has-copy code {
-		margin-right: 0;
-	}
-
-	.copy {
-		top: 7px;
-		transform: none;
-		font-size: 11px;
-		padding: 5px 8px;
-	}
-
-	.hero {
-		margin-top: 40px;
-	}
-
-	.hero-kicker {
-		font-size: 16px;
-		margin-bottom: 14px;
-	}
-
-	/* The digits on one line, at half size the tail still touching; the unit on its own line under them. */
-	.hero-figure {
-		font-size: 14.6vw;
-		row-gap: 10px;
-	}
-
-	.hero-tail {
-		font-size: 0.44em;
-	}
-
-	.hero-unit {
-		flex-basis: 100%;
-		margin-left: 0;
-		font-size: 19px;
-	}
-
-	.jump {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 6px 10px;
-		margin-top: 14px;
-		font-size: 13px;
-		font-weight: 600;
-		letter-spacing: -0.01em;
-	}
-
-	.poster + section {
-		margin-top: 36px;
-	}
-
-	.facts {
-		margin-top: 6px;
-	}
-
-	.facts dd {
-		font-size: 14px;
-		letter-spacing: -0.03em;
-	}
-
-	.facts time {
-		white-space: nowrap;
-	}
-
-	section + section {
-		margin-top: 72px;
-	}
-
-	.sec-head {
-		grid-template-columns: auto minmax(0, 1fr);
-		column-gap: 12px;
-		margin-bottom: 18px;
-	}
-
-	.sec-no {
-		grid-column: 1;
-		padding-top: 0.35em;
-	}
-
-	.sec-head h2 {
-		grid-column: 2;
-	}
-
-	.sec-lede,
-	.sec-side {
-		grid-column: 1 / -1;
-		margin-top: 10px;
-		font-size: 14px;
-	}
-
-	/* The table becomes one block per benchmark: its name, then one line per machine type. */
-	.figures table,
-	.figures thead,
-	.figures tbody,
-	.figures tr,
-	.figures th,
-	.figures td {
-		display: block;
-		width: auto;
-	}
-
-	/* The machine row becomes a short list of the five machines: name, size, hourly price. */
-	.figures thead tr {
-		border-bottom: 2px solid var(--ink);
-		margin-bottom: 28px;
-	}
-
-	.figures thead th {
-		position: static;
-		border-bottom: 0;
-		padding: 0;
-	}
-
-	/* The corner becomes the list's column heads, over the Run counts and the prices. */
-	.figures thead th.corner {
-		display: grid;
-		grid-template-columns: 96px minmax(0, 1fr) auto;
-		column-gap: 10px;
-		padding-bottom: 6px !important;
-		border-bottom: 2px solid var(--ink);
-	}
-
-	.corner-runs {
-		grid-column: 2;
-	}
-
-	.corner-price {
-		grid-column: 3;
-		margin-top: 0;
-		line-height: 1.35;
-		text-align: right;
-	}
-
-	.figures thead th.mach {
-		display: grid;
-		grid-template-columns: 96px minmax(0, 1fr) auto;
-		align-items: baseline;
-		column-gap: 10px;
-		text-align: left;
-		padding: 6px 0;
-		border-top: 1px solid var(--hair);
-	}
-
-	.figures thead th.corner + th.mach {
-		border-top: 0;
-	}
-
-	.mach-name {
-		grid-row: 1 / span 2;
-		font-size: 14px;
-		margin: 0;
-	}
-
-	.mach-proc {
-		display: none !important;
-	}
-
-	.mach-spec {
-		grid-column: 2;
-		grid-row: 1;
-	}
-
-	.mach-runs {
-		grid-column: 2;
-		grid-row: 2;
-	}
-
-	.figures thead th.mach .mach-price {
-		grid-column: 3;
-		grid-row: 1 / span 2;
-		margin: 0;
-		font-size: 15px;
-		text-align: right;
-	}
-
-	tr.group th {
-		padding: 30px 0 6px;
-		border-bottom: 2px solid var(--ink);
-		font-size: 17px;
-	}
-
-	tr.group td.group-m {
+@media (prefers-reduced-motion: reduce) {
+	.trace::after {
 		display: none;
 	}
-
-	tbody:first-of-type tr.group th {
-		padding-top: 0;
-	}
-
-	tr.row {
-		padding: 12px 0 4px;
-		border-bottom: 1px solid var(--ink);
-	}
-
-	tr.row th,
-	tr.row td {
-		border: 0;
-		padding: 0;
-	}
-
-	tr.row th {
-		display: flex !important;
-		justify-content: space-between;
-		align-items: baseline;
-		gap: 12px;
-		padding: 0 0 6px;
-	}
-
-	.row-label {
-		font-size: 16px;
-	}
-
-	.row-fig {
-		margin: 0;
-		flex: none;
-		flex-wrap: nowrap;
-		white-space: nowrap;
-		justify-content: flex-end;
-		text-align: right;
-		font-size: 12px;
-	}
-
-	/* One machine type per line: name, bar, exact figure. */
-	tr.row td {
-		display: grid;
-		grid-template-columns: 82px minmax(0, 1fr) auto;
-		align-items: center;
-		column-gap: 10px;
-		border-top: 1px solid var(--hair);
-		padding: 5px 0;
-	}
-
-	.cm {
-		display: block;
-		grid-column: 1;
-		grid-row: 1;
-		font-size: 13px;
-		font-weight: 600;
-		text-align: left;
-	}
-
-	.fig {
-		grid-column: 3;
-		grid-row: 1;
-	}
-
-	.fi,
-	.fh {
-		font-size: 17px;
-	}
-
-	.ft {
-		font-size: 12px;
-		letter-spacing: -0.03em;
-	}
-
-	.bar {
-		grid-column: 2;
-		grid-row: 1;
-		margin: 0;
-		max-width: none;
-	}
-
-	/* The mark indents the name only, so this line's bar keeps the same scale as its neighbours'. */
-	tr.row td.hero-cell {
-		background: none;
-		box-shadow: inset 3px 0 0 var(--red);
-	}
-
-	tr.row td.hero-cell .cm {
-		padding-left: 8px;
-	}
-
-	.addr {
-		font-size: 12.5px;
-		padding: 14px;
-	}
-
-	.addr-files li {
-		gap: 0 12px;
-		padding-left: 1ch;
-	}
-
-	.addr-files a {
-		min-width: 0;
-	}
-
-	/* Every line of the excerpt fits a phone whole; the evidence address breaks at its slashes. */
-	.json {
-		font-size: 11px;
-		padding-left: 10px;
-	}
-
-	.json-url {
-		padding-left: 5ch;
-	}
-
-	.mast-t {
-		word-spacing: 0.2em;
-	}
-
-	.foot {
-		margin-top: 72px;
-		border-top-width: 8px;
-	}
-
-	.foot-name {
-		grid-column: 1 / span 2;
-	}
-
-	.foot-lic {
-		grid-column: 3 / span 2;
+	.off,
+	.pulse {
+		animation: none;
 	}
 }

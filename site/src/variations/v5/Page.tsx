@@ -1,5 +1,6 @@
-// Design v5, "Swiss poster": one grotesque, one strict grid, one accent colour, few words.
-// Every figure comes from ../../data exactly as the snapshot holds it (see ../README.md).
+// Design v5, form "dt-vitals": a hospital ward of five bedside monitors, one per AWS machine type.
+// Every figure comes from ../../data exactly as the snapshot holds it (see ../README.md). Every
+// chart is drawn by the Datatype font from those figures, scaled here in code, never by hand.
 import "./page.css";
 import {
 	durationUnit,
@@ -13,34 +14,29 @@ import {
 	leadFigure,
 	links,
 	machines,
-	seriesFileContents,
 	snapshot,
 	type DurationUnit,
 	type HeadlineRow,
+	type Machine,
 	type Section,
 	type Shown,
 } from "../../data";
+// The one Series whose every Run the snapshot keeps (mutex on c8i.2xlarge): the only Run-by-Run trace there is.
+import { seriesFileSample } from "../../data/snapshot";
 
 // ---------------------------------------------------------------- figures
 
-type Lead = ReturnType<typeof leadFigure>;
 type RowUnit = { kind: "rate"; unit: "B" | "kB" | "MB" | "GB" | "TB" } | { kind: "time"; unit: DurationUnit };
 
-/**
- * One unit for a whole row, so its five figures read against each other: the unit the
- * largest of them would take on its own. Where a repetition holds many units of work (the
- * mutex), the row is set in the time of one, divided exactly by the module. Only the unit is
- * chosen here.
- */
+/** One unit for a whole headline row, the one its largest p50 takes, so five figures read against each other. */
 function rowUnit(row: HeadlineRow): RowUnit {
-	const leads = row.cells.map((cell) => leadFigure(row.choice, cell.series));
-	const largest = leads.reduce((a, b) => (b.p50 > a.p50 ? b : a));
-	if (row.choice.lead === "rate") return { kind: "rate", unit: formatRate(largest.p50).unit.replace("/s", "") as "GB" };
-	if (row.choice.per) return { kind: "time", unit: formatDurationPerUnit(largest.p50, row.choice.per).unit as DurationUnit };
-	return { kind: "time", unit: durationUnit(largest.p50) };
+	const largest = Math.max(...row.cells.map((cell) => leadFigure(row.choice, cell.series).p50));
+	if (row.choice.lead === "rate") return { kind: "rate", unit: formatRate(largest).unit.replace("/s", "") as "GB" };
+	if (row.choice.per) return { kind: "time", unit: formatDurationPerUnit(largest, row.choice.per).unit as DurationUnit };
+	return { kind: "time", unit: durationUnit(largest) };
 }
 
-/** A figure of the row, in the row's unit; the time of one unit of work where the row has `per`. */
+/** A figure of the row in the row's unit: the time of one unit of work where the row has `per` (mutex). */
 function show(row: HeadlineRow, value: number): Shown {
 	const u = rowUnit(row);
 	if (u.kind === "rate") return formatRate(value, { unit: u.unit });
@@ -48,471 +44,414 @@ function show(row: HeadlineRow, value: number): Shown {
 	return formatDuration(value, { unit: u.unit });
 }
 
-/** Places after the point that give `full` four significant digits. */
-function placesFor(full: string): number {
-	const [int = "", frac = ""] = full.replace("-", "").split(".");
-	if (/[1-9]/.test(int)) return Math.max(0, 4 - int.replace(/^0+/, "").length);
-	const zeros = frac.search(/[1-9]/);
-	return zeros < 0 ? 0 : zeros + 4;
+const unitOf = (row: HeadlineRow) => show(row, leadFigure(row.choice, row.cells[0]!.series).p50).unit;
+const rowOf = (benchmark: string) => {
+	const row = headline.find((r) => r.choice.benchmark === benchmark);
+	if (!row) throw new Error(`no headline row for ${benchmark}`);
+	return row;
+};
+const cellOf = (row: HeadlineRow, m: Machine) => row.cells.find((cell) => cell.machine === m)!;
+
+/** Heights from zero for a chart that compares machines: the row's largest is 100, the others in proportion. */
+function fromZero(values: number[]): number[] {
+	const largest = Math.max(...values);
+	return values.map((v) => Math.round((100 * v) / largest));
 }
 
-/** One count of places for the whole row: enough for its smallest figure to keep four significant digits. */
-function rowPlaces(row: HeadlineRow): number {
-	return Math.max(...row.cells.map((cell) => placesFor(show(row, leadFigure(row.choice, cell.series).p50).full)));
+/** Heights between a set's lowest and highest value (0 to 100): a zoomed chart, which must say so on itself. */
+function zoomed(values: number[]): number[] {
+	const lo = Math.min(...values);
+	const hi = Math.max(...values);
+	return values.map((v) => (hi === lo ? 50 : Math.round((100 * (v - lo)) / (hi - lo))));
 }
 
-/**
- * The exact figure, cut into three for setting: the integer part, the point and the digits a
- * reader compares (to the row's places), and the rest. Nothing is rounded: read together they
- * are `full`, every digit.
- */
-function split(full: string, places: number): { int: string; head: string; tail: string } {
-	const [int = "", frac] = full.split(".");
-	if (frac === undefined) return { int, head: "", tail: "" };
-	return { int, head: "." + frac.slice(0, places), tail: frac.slice(places) };
+const line = (values: number[]) => `{l:${values.join(",")}}`;
+const bars = (values: number[]) => `{b:${values.join(",")}}`;
+const pie = (value: number) => `{p:${value}}`;
+
+/** A figure as a short form, with every digit one hover away. */
+function Fig(props: { s: Shown; unit?: boolean; class?: string }) {
+	return (
+		<span class={props.class} title={`${props.s.full} ${props.s.unit}`}>
+			{props.s.short}
+			{props.unit === false ? "" : ` ${props.s.unit}`}
+		</span>
+	);
 }
 
-/** Per row: the widest integer part and tail, so the five figures share one decimal point. */
-function rowWidths(row: HeadlineRow, places: number): { int: number; tail: number } {
-	const parts = row.cells.map((cell) => split(show(row, leadFigure(row.choice, cell.series).p50).full, places));
-	return { int: Math.max(...parts.map((p) => p.int.length)), tail: Math.max(...parts.map((p) => p.tail.length)) };
+/** A chart drawn by the font: a picture to a screen reader, with a short text alternative. */
+function Chart(props: { code: string | string[]; label: string; class?: string }) {
+	const codes = Array.isArray(props.code) ? props.code : [props.code];
+	return (
+		<span class={`chart ${props.class ?? ""}`} role="img" aria-label={props.label}>
+			{codes.map((code) => (
+				<span class="dt" aria-hidden="true">
+					{code}
+				</span>
+			))}
+		</span>
+	);
 }
 
-/** The widest tail in the whole table: one slot for every tail, so every head ends on one line per column. */
-const TAIL = Math.max(...headline.map((row) => rowWidths(row, rowPlaces(row)).tail));
+// ---------------------------------------------------------------- the ward
 
-/** The largest p95 of a row: the end of its zero-based scale, so every bracket fits. */
-function rowMax(row: HeadlineRow): number {
-	return Math.max(...row.cells.map((cell) => leadFigure(row.choice, cell.series).p95));
-}
-
-const pct = (v: number, max: number) => `${((v / max) * 100).toFixed(3)}%`;
-
-const SECTIONS: Section[] = ["Memory", "Compute", "Operating system", "Disk", "Network"];
-
-/** What a section measured where its name alone does not say (the headline rule's own words). */
-const SECTION_NOTE: Partial<Record<Section, string>> = { Disk: "root EBS gp3 volume" };
-
-const sectionId = (s: Section) => `s-${s.toLowerCase().replaceAll(" ", "-")}`;
-
-const anchor = (row: HeadlineRow) => `b-${row.choice.benchmark.replaceAll("_", "-")}`;
-
-/** The row's unit as its label shows it, once. */
-function unitLabel(row: HeadlineRow): string {
-	const unit = show(row, leadFigure(row.choice, row.cells[0]!.series).p50).unit;
-	return row.choice.per ? `${unit} per ${row.choice.per.of}` : unit;
-}
-
-/** Every written value of a cell, for the visitor who hovers: exact p5, p50, p95 and the count. */
-function cellTitle(row: HeadlineRow, lead: Lead, machine: string): string {
-	const s = (v: number) => show(row, v).full;
-	return `${machine}, ${unitLabel(row)}\np50 ${s(lead.p50)}\np5 ${s(lead.p5)}\np95 ${s(lead.p95)}\n${lead.count} Runs`;
-}
-
-// The poster's figure: the one headline cell whose Series file the snapshot keeps, so the page can follow
-// it all the way down, from this figure to its Series, to one of its Runs, to that Run's evidence.
-const heroRow = headline.find((row) => row.cells.some((cell) => cell.series.id === seriesFileContents.sample.id))!;
-const heroCell = heroRow.cells.find((cell) => cell.series.id === seriesFileContents.sample.id)!;
-const heroLead = leadFigure(heroRow.choice, heroCell.series);
-const heroShown = show(heroRow, heroLead.p50);
-const heroSplit = split(heroShown.full, rowPlaces(heroRow));
-
+const ROUNDS = ["04:10", "10:10", "16:10", "22:10"];
 const newest = formatMoment(snapshot.newestRunStartedAt);
-const pricesFetched = formatMoment(snapshot.pricesFetchedAt);
+const oldest = formatMoment(snapshot.oldestRunStartedAt);
+const shortDay = (m: ReturnType<typeof formatMoment>) => m.longDate.replace(/ \d{4}$/, "").replace(/(\w{3})\w+$/, "$1");
 
-function price(m: (typeof machines)[number]): Shown {
-	return formatUsd(m.price.usdPerHour, { per: "hour" });
-}
+/** The five numbers a bedside monitor shows big, each a headline row, in a monitor's own colours. */
+const VITALS: { benchmark: string; tag: string; sub: string; tone: string }[] = [
+	{ benchmark: "hash", tag: "HASH", sub: "SHA-256 · 64 B", tone: "green" },
+	{ benchmark: "syscall", tag: "SYS", sub: "one getpid", tone: "red" },
+	{ benchmark: "disk_read_io_uring", tag: "SAT", sub: "4 KiB read · 64 queued", tone: "cyan" },
+	{ benchmark: "http_get", tag: "RESP", sub: "GET 4 KiB from S3", tone: "yellow" },
+	{ benchmark: "memory_read", tag: "MEM", sub: "read 1 GiB in order", tone: "magenta" },
+];
 
-/** The fewest and most Runs behind a machine type's 14 figures, as they stand: "34–36", or one count where all agree. */
-function runsOf(instanceType: string): string {
-	const counts = headline.map((row) => leadFigure(row.choice, row.cells.find((c) => c.machine.instanceType === instanceType)!.series).count);
-	const lo = Math.min(...counts);
-	const hi = Math.max(...counts);
-	return lo === hi ? formatCount(lo).full : `${formatCount(lo).full}–${formatCount(hi).full}`;
-}
+const mutexRow = rowOf("mutex");
+const samplePoints = seriesFileSample.derivations.series_v1.points.filter((p) => p.time_per_repetition_ns !== null);
+const sampleTimes = samplePoints.map((p) => p.time_per_repetition_ns!);
+const sampleZoom = zoomed(sampleTimes);
+// The font draws at most 20 points a line: 33 Runs as two lines that share the Run where they meet.
+const half = Math.ceil(sampleZoom.length / 2);
+const sampleCodes = [line(sampleZoom.slice(0, half)), line(sampleZoom.slice(half - 1))];
+const sampleLo = formatDurationPerUnit(Math.min(...sampleTimes), mutexRow.choice.per!);
+const sampleHi = formatDurationPerUnit(Math.max(...sampleTimes), mutexRow.choice.per!);
 
-/** The processor in one short line: AWS's words, without "Processor" and "Scalable". */
-const proc = (p: string) => p.replace(/ Processor$/, "").replace(" Scalable ", " ");
+function Monitor(props: { m: Machine; bed: number }) {
+	const m = props.m;
+	const runs = m.series.reduce((t, r) => t + r.runs, 0);
+	const counted = m.series.reduce((t, r) => t + r.derivations.series_v1.counted_runs, 0);
+	const failed = m.series.reduce((t, r) => t + r.derivations.series_v1.failed_runs, 0);
+	const admitted = formatMoment(m.series.map((r) => r.oldest_run_started_at).sort()[0]!);
+	const last = formatMoment(m.series.map((r) => r.newest_run_started_at).sort().at(-1)!);
+	const beat = headline.map((row) => fromZero(row.cells.map((cell) => leadFigure(row.choice, cell.series).p50))[row.cells.indexOf(cellOf(row, m))]!);
+	const mutexCell = cellOf(mutexRow, m);
+	const hasSample = mutexCell.series.id === seriesFileSample.id;
+	const id = `bed-${props.bed}`;
+	const price = formatUsd(m.price.usdPerHour);
 
-const faster = (row: HeadlineRow) => (row.choice.lead === "rate" ? "↑ faster" : "↓ faster");
-
-// ---------------------------------------------------------------- parts
-
-function Masthead() {
 	return (
-		<header class="mast grid">
-			<div class="mast-name">
-				<a href="#top">LedgerMath</a>
-			</div>
-			<p class="mast-cell">
-				<span class="mast-k">Boots</span> <span class="mast-t">04:10 10:10 16:10 22:10</span> UTC
-			</p>
-			<nav class="mast-nav" aria-label="On this page">
-				<a href="#figures">Figures</a>
-				<a href="#api">API</a>
-			</nav>
-		</header>
-	);
-}
-
-function Poster() {
-	return (
-		<section class="poster grid" aria-labelledby="top">
-			<h1 id="top" class="headline">
-				AWS machines, measured four times a&nbsp;day.
-			</h1>
-			<div class="intro">
-				<p>
-					{formatCount(snapshot.benchmarkCount).full} benchmarks on {formatCount(snapshot.machineCount).full} freshly booted machine types in{" "}
-					<span class="nowrap">{snapshot.region}</span>. Every Run kept with its evidence, published as JSON for agents.
-				</p>
-				<div class="cmd" data-copy={`curl ${links.index}`}>
-					<code tabindex="0">
-						<span class="prompt" aria-hidden="true">
-							${" "}
-						</span>
-						curl <span class="cmd-url">{links.index}</span>
-					</code>
+		<section class="bed" aria-labelledby={id}>
+			<div class="monitor">
+				<div class="topbar">
+					<h2 id={id}>
+						<span class="bedno">BED {props.bed}</span> <span class="who">{m.instanceType}</span>
+					</h2>
+					<span class="dims">
+						{m.vcpu} vCPU · {m.memory}
+					</span>
+					<span class="clock" title={last.full}>
+						LAST OBS {last.minute}
+					</span>
 				</div>
-				<Facts />
-			</div>
 
-			<div class="hero" role="group" aria-labelledby="hero-k">
-				<p id="hero-k" class="hero-kicker">
-					<a class="hero-kicker-b" href={`#${anchor(heroRow)}`}>
-						{heroRow.choice.label}
-					</a>
-					<span class="hero-kicker-sep" aria-hidden="true">
-						{" "}
-						/{" "}
-					</span>
-					<span>{heroCell.machine.instanceType}</span>
-					<span class="hero-kicker-sep" aria-hidden="true">
-						{" "}
-						/{" "}
-					</span>
-					<span class="hero-kicker-m">p50 of {formatCount(heroLead.count).full} Runs</span>
-					<span class="hero-kicker-sep" aria-hidden="true">
-						{" "}
-						/{" "}
-					</span>
-					<a class="hero-kicker-m" href="#trail">
-						to its evidence ↓
-					</a>
-				</p>
-				{/* The table's own form, set enormous: the compared digits, every other digit on the same baseline, the unit. */}
-				<p class="hero-figure">
-					<span class="sr">
-						{heroShown.full} {heroShown.unit}
-					</span>
-					<span class="hero-head" aria-hidden="true">
-						{heroSplit.int}
-						{heroSplit.head}
-					</span>
-					<span class="hero-tail" aria-hidden="true">
-						{heroSplit.tail}
-					</span>
-					<span class="hero-unit" aria-hidden="true">
-						{unitLabel(heroRow)}
-					</span>
-				</p>
-			</div>
-		</section>
-	);
-}
+				<div class="channel ecg">
+					<p class="chlabel">
+						<span class="tone-green">LEADS 1–14</span> <span>each benchmark’s p50 · ward’s largest = top</span>
+					</p>
+					<div class="trace">
+						<Chart
+							class="tone-green"
+							code={[line(beat), line(beat)]}
+							label={`Bed ${props.bed}'s 14 headline figures, one point per benchmark in the chart's order, each as a share of the largest of the five machines (drawn twice). Exact figures are in the chart at the foot of the bed.`}
+						/>
+					</div>
+				</div>
 
-/** Freshness and provenance, beside the headline: each fact a link to its file where it has one. */
-function Facts() {
-	return (
-		<dl class="facts">
-				<div>
-					<dt>Newest Run started</dt>
-					<dd>
-						<time datetime={newest.iso} title={newest.full}>
-							{newest.date} {newest.minute} UTC
-						</time>
-					</dd>
+				<div class="channel pleth">
+					{hasSample ? (
+						<>
+							<p class="chlabel">
+								<span class="tone-cyan">MUTEX · EACH RUN</span> <span>{samplePoints.length} Runs, {shortDay(formatMoment(samplePoints[0]!.started_at))}–{shortDay(formatMoment(samplePoints.at(-1)!.started_at))}</span>{" "}
+								<span class="zoom">
+									ZOOMED <Fig s={sampleLo} unit={false} />–<Fig s={sampleHi} /> per critical section
+								</span>
+							</p>
+							<div class="trace">
+								<Chart
+									class="tone-cyan"
+									code={sampleCodes}
+									label={`Every Run of this Series, oldest first: the time of one critical section, zoomed between its lowest, ${sampleLo.full} ns, and its highest, ${sampleHi.full} ns.`}
+								/>
+							</div>
+						</>
+					) : (
+						<p class="leadoff">
+							<span class="tone-cyan">MUTEX · EACH RUN</span> <span class="off">LEAD OFF</span>{" "}
+							<a href={links.seriesFile(mutexCell.series)}>trace at /v1/series/{mutexCell.series.id}.json</a>
+						</p>
+					)}
 				</div>
-				<div>
-					<dt>Runs kept</dt>
-					<dd>
-						<a href={links.seriesList}>
-							{formatCount(snapshot.runCount).full}
-						</a>
-					</dd>
-				</div>
-				<div>
-					<dt>Methods</dt>
-					<dd>
-						<a href={links.docs}>{snapshot.methods.map((m) => `${m.name} v${m.version}`).join(", ")}</a>
-					</dd>
-				</div>
-				<div>
-					<dt>AWS prices</dt>
-					<dd>
-						<a href={links.prices}>
-							<time datetime={pricesFetched.iso} title={pricesFetched.full}>
-								{snapshot.priceDate}
-							</time>
-						</a>
-					</dd>
-				</div>
-			</dl>
-	);
-}
 
-/** A drawn key: the two marks every cell carries, each named once. */
-function Key() {
-	return (
-		<p class="key">
-			<span class="key-i">
-				<span class="km km-f" aria-hidden="true" />0 to p50
-			</span>
-			<span class="key-i">
-				<span class="km km-s" aria-hidden="true" />
-				p5 to p95
-			</span>
-		</p>
-	);
-}
-
-function FigureTable() {
-	return (
-		<section id="figures" class="figures" aria-labelledby="figures-h">
-			<div class="sec-head grid">
-				<p class="sec-no" aria-hidden="true">
-					01
-				</p>
-				<h2 id="figures-h">The figures</h2>
-				<div class="sec-side">
-					<Key />
-					<nav class="jump" aria-label="Sections of the figures">
-						{SECTIONS.map((s) => (
-							<a href={`#${sectionId(s)}`}>{s}</a>
-						))}
-					</nav>
-				</div>
-			</div>
-
-			<div class="table-box" role="region" aria-label="The figures, 14 benchmarks by 5 machine types">
-				<table style={{ "--wt": `${TAIL}ch` }}>
-					<thead>
-						<tr>
-							{/* The labels of the machine header's lines, each level with its line. */}
-							<th scope="col" class="corner">
-								<span class="corner-runs">Runs per figure</span>
-								<span class="corner-price">On-Demand, cheapest first</span>
-							</th>
-							{machines.map((m) => (
-								<th scope="col" class="mach">
-									<span class="mach-name">{m.instanceType}</span>
-									<span class="mach-spec">
-										{m.vcpu} vCPU · {m.memory}
+				<div class="params">
+					{VITALS.map((v) => {
+						const row = rowOf(v.benchmark);
+						const f = leadFigure(row.choice, cellOf(row, m).series);
+						return (
+							<div class={`param tone-${v.tone}`}>
+								<div class="ptag">
+									{v.tag} {v.tone === "green" ? <span class="pulse" aria-hidden="true" /> : null}
+									<span class="punit">p50 · {unitOf(row)}</span>
+								</div>
+								<div class="pval">
+									<Fig s={show(row, f.p50)} unit={false} />
+								</div>
+								<div class="plim">
+									<span>
+										p95 <Fig s={show(row, f.p95)} unit={false} />
 									</span>
-									<span class="mach-proc">{proc(m.processor)}</span>
-									<span class="mach-runs">{runsOf(m.instanceType)}</span>
-									<a class="mach-price" href={links.prices} title={`$${price(m).full} an hour: ${m.price.path.pointer}`}>
-										${price(m).full}/h
-									</a>
-								</th>
-							))}
-						</tr>
-					</thead>
-					{SECTIONS.map((section) => (
-						<tbody>
-							<tr class="group" id={sectionId(section)}>
-								<th scope="rowgroup" colspan={machines.length + 1} class="group-h">
-									{section}
-									{SECTION_NOTE[section] && <span class="group-note"> · {SECTION_NOTE[section]}</span>}
-								</th>
-							</tr>
-							{headline
-								.filter((row) => row.choice.section === section)
-								.map((row) => {
-									const places = rowPlaces(row);
-									const w = rowWidths(row, places);
-									const max = rowMax(row);
+									<span>
+										p5 <Fig s={show(row, f.p5)} unit={false} />
+									</span>
+								</div>
+								<div class="psub">{v.sub}</div>
+							</div>
+						);
+					})}
+					<div class="param tone-white kept">
+						<div class="ptag">KEPT</div>
+						<div class="pval">
+							<Chart class="pie" code={pie(Math.round((100 * counted) / runs))} label={`${formatCount(counted).full} of ${formatCount(runs).full} Runs counted`} />
+							<span>{formatCount(runs).full}</span>
+						</div>
+						<div class="plim">
+							<span>counted {formatCount(counted).full}</span>
+							<span>failed {formatCount(failed).full}</span>
+						</div>
+						<div class="psub">Runs on file</div>
+					</div>
+				</div>
+
+				<p class="statusbar">
+					<span>ADMITTED {shortDay(admitted)} {admitted.minute} UTC</span>
+					<span>CYCLE AUTO 6 h</span>
+					<span>ALARMS: NONE SET</span>
+				</p>
+			</div>
+
+			<details class="clip">
+				<summary>
+					<span class="clipbar" aria-hidden="true" />
+					Chart at the foot of the bed
+				</summary>
+				<div class="paper">
+					<dl class="band">
+						<div>
+							<dt>Patient</dt>
+							<dd>{m.instanceType}</dd>
+						</div>
+						<div>
+							<dt>Processor</dt>
+							<dd>
+								{m.processor}, {m.clockSpeed}
+							</dd>
+						</div>
+						<div>
+							<dt>Storage</dt>
+							<dd>{m.storage}</dd>
+						</div>
+						<div>
+							<dt>Network</dt>
+							<dd>{m.network}</dd>
+						</div>
+						<div>
+							<dt>Ward</dt>
+							<dd>
+								{m.region}, {m.availabilityZoneIds.join(", ")}
+							</dd>
+						</div>
+						<div>
+							<dt>Charges</dt>
+							<dd title={m.price.description}>
+								{price.full} USD per hour, On-Demand <a href={links.prices}>price file {snapshot.priceDate}</a>
+							</dd>
+						</div>
+						<div>
+							<dt>Admitted</dt>
+							<dd>{admitted.full}</dd>
+						</div>
+						<div>
+							<dt>Last obs</dt>
+							<dd>{last.full}</dd>
+						</div>
+					</dl>
+					<div class="obs" role="region" aria-label={`Bed ${props.bed}'s figures`} tabindex="0">
+						<table>
+							<thead>
+								<tr>
+									<th scope="col">Lead</th>
+									<th scope="col">Benchmark</th>
+									<th scope="col">p50</th>
+									<th scope="col">p5</th>
+									<th scope="col">p95</th>
+									<th scope="col">Runs</th>
+								</tr>
+							</thead>
+							<tbody>
+								{headline.map((row, i) => {
+									const cell = cellOf(row, m);
+									const f = leadFigure(row.choice, cell.series);
+									const unit = show(row, f.p50).unit;
 									return (
-										<tr class="row" id={anchor(row)} style={{ "--wi": `${w.int}ch` }}>
+										<tr>
+											<td>{i + 1}</td>
 											<th scope="row">
-												<a class="row-label" href={row.choice.readme}>
-													{row.choice.label}
-												</a>
-												<span class="row-fig">
-													<span class="row-unit">{unitLabel(row)}</span>
-													<span class="row-dir">{faster(row)}</span>
-												</span>
+												<a href={links.seriesFile(cell.series)}>{row.choice.label}</a>
 											</th>
-											{row.cells.map((cell) => {
-												const lead = leadFigure(row.choice, cell.series);
-												const f = split(show(row, lead.p50).full, places);
-												const isHero = cell.series === heroCell.series;
-												return (
-													<td class={isHero ? "hero-cell" : undefined}>
-														<span class="cm">{cell.machine.instanceType}</span>
-														<a class="fig" href={links.seriesFile(cell.series)} title={cellTitle(row, lead, cell.machine.instanceType)}>
-															<span class="fi">{f.int}</span>
-															<span class="fh">{f.head}</span>
-															<span class="ft">{f.tail}</span>
-														</a>
-														<span class="bar" aria-hidden="true">
-															<span class="bar-f" style={{ width: pct(lead.p50, max) }} />
-															<span class="bar-s" style={{ left: pct(lead.p5, max), right: `calc(100% - ${pct(lead.p95, max)})` }} />
-														</span>
-													</td>
-												);
-											})}
+											<td>
+												{show(row, f.p50).full} {unit}
+											</td>
+											<td>{show(row, f.p5).full}</td>
+											<td>{show(row, f.p95).full}</td>
+											<td>{formatCount(cell.series.runs).full}</td>
 										</tr>
 									);
 								})}
-						</tbody>
-					))}
-				</table>
-			</div>
-		</section>
-	);
-}
-
-// The trail: the poster's own Series file, cut down to the poster's figure and the first of its Runs. Its
-// p50 is the poster's figure per repetition; the line under it, outside the JSON, is the module's one exact
-// division that makes it the poster's figure. Then one Run's own figure and its evidence, as the file holds them.
-const J = (v: unknown) => JSON.stringify(v);
-const walkKey = heroRow.choice.lead === "rate" ? "bytes_per_second" : "time_per_repetition_ns";
-const walkP = heroCell.series.derivations.series_v1.percentiles[walkKey]!;
-const run = seriesFileContents.point.example;
-const excerptHead = [
-	`{ "id": ${J(heroCell.series.id)},`,
-	`  "instance_type": ${J(heroCell.series.instance_type)},`,
-	`  "derivations": { "series_v1": {`,
-	`   "percentiles": {`,
-	`    ${J(walkKey)}: {`,
-	`     "count": ${J(walkP.count)},`,
-	`     "p5": ${J(walkP.p5)},`,
-	`     "p50": `,
-].join("\n");
-const excerptP50 = J(walkP.p50);
-const excerptMid = [`     "p95": ${J(walkP.p95)} } },`, `   "points": [ {`, `     ${J(walkKey)}: ${J(run[walkKey])},`, `     "evidence":`].join("\n");
-/** The evidence address, with places it may break: after the host's directory and after the date. */
-const evidenceParts = J(run.evidence).split(/(?<=\/runs\/|\/\d\d\/\d\d\/)/);
-const excerptTail = `   }, … ] } } }`;
-
-/** The API's three files under its one base address. */
-const BASE = links.index.slice(0, links.index.lastIndexOf("/") + 1);
-const files = [
-	{ url: links.index, what: "contents" },
-	{ url: links.seriesList, what: "every Series" },
-	{ url: links.prices, what: "AWS prices" },
-];
-
-function Api() {
-	return (
-		<section id="api" class="api" aria-labelledby="api-h">
-			<div class="sec-head grid">
-				<p class="sec-no" aria-hidden="true">
-					02
-				</p>
-				<h2 id="api-h">The API</h2>
-			</div>
-
-			<div class="grid">
-				<div class="api-main">
-					<p class="api-lede">Static JSON, version 1. It only gains fields.</p>
-					<div class="addr">
-						<p class="addr-base">{BASE}</p>
-						<ul class="addr-files">
-							{files.map((f) => (
-								<li>
-									<a href={f.url}>{f.url.slice(BASE.length)}</a>
-									<span class="addr-what">{f.what}</span>
-								</li>
-							))}
-						</ul>
+							</tbody>
+						</table>
 					</div>
-
-					<dl class="api-side">
-						<div>
-							<dt>Schemas</dt>
-							<dd class="api-links">
-								{links.schemas.map((s) => (
-									<a href={s.url}>{s.name}</a>
-								))}
-							</dd>
-						</div>
-						<div>
-							<dt>Docs</dt>
-							<dd>
-								<a href={links.docs}>{links.docs.replace("https://", "")}</a>
-							</dd>
-						</div>
-					</dl>
+					<p class="sig">Times are one repetition (mutex: one critical section). Each benchmark name opens its Series in the API.</p>
 				</div>
-
-				<div class="api-walk" id="trail">
-					<h3 class="walk-h">
-						<a href={`#${anchor(heroRow)}`}>
-							{heroRow.choice.label}, {heroCell.machine.instanceType}
-						</a>
-						<span class="walk-sep" aria-hidden="true">
-							{" "}
-							/{" "}
-						</span>
-						<a class="mono" href={links.seriesFile(heroCell.series)}>
-							series/{heroCell.series.id}.json
-						</a>
-					</h3>
-					<pre class="json" role="region" tabindex="0" aria-label={`An excerpt of series/${heroCell.series.id}.json`}>
-						<code>
-							{excerptHead}
-							<b class="json-hit">{excerptP50}</b>,
-							{heroRow.choice.per && (
-								<span class="json-note">
-									÷ {formatCount(heroRow.choice.per.count).full} {heroRow.choice.per.of}s{" "}
-									<span class="nowrap">
-										= <b>{heroShown.full}</b> {heroShown.unit}
-									</span>
-								</span>
-							)}
-							{heroRow.choice.per ? "" : "\n"}
-							{excerptMid}
-							<a class="json-url" href={run.evidence}>
-								{evidenceParts.map((p, i) => (
-									<>
-										{i > 0 && <wbr />}
-										{p}
-									</>
-								))}
-							</a>
-							{excerptTail}
-						</code>
-					</pre>
-				</div>
-			</div>
+			</details>
 		</section>
 	);
 }
 
-function Footer() {
+const SECTIONS: Section[] = ["Memory", "Compute", "Operating system", "Disk", "Network"];
+
+function Station() {
 	return (
-		<footer class="foot grid">
-			<div class="foot-name">LedgerMath</div>
-			<a class="foot-lic" href="third-party-notices.txt">
-				Licences
-			</a>
-		</footer>
+		<section class="station" aria-labelledby="station">
+			<h2 id="station">
+				Central station <span>all five beds, one benchmark at a time · bars from zero</span>
+			</h2>
+			{SECTIONS.map((section) => (
+				<div class="ward-section">
+					<h3>{section}</h3>
+					<div class="tiles">
+						{headline
+							.filter((row) => row.choice.section === section)
+							.map((row) => {
+								const p50s = row.cells.map((cell) => leadFigure(row.choice, cell.series).p50);
+								const unit = unitOf(row);
+								return (
+									<div class="tile">
+										<p class="tlabel">
+											{row.choice.label}
+											{row.choice.per ? " (one critical section)" : ""} <span class="tunit">{unit}, p50</span>
+										</p>
+										<div class="tbody">
+											<Chart
+												class="tone-green bars"
+												code={bars(fromZero(p50s))}
+												label={`${row.choice.label}, p50 on beds 1 to 5, from zero: ${row.cells.map((cell, i) => `${cell.machine.instanceType} ${show(row, p50s[i]!).full} ${unit}`).join("; ")}`}
+											/>
+											<ol class="tfigs">
+												{row.cells.map((cell, i) => (
+													<li>
+														<span class="tbed">{i + 1}</span> <Fig s={show(row, p50s[i]!)} unit={false} />
+													</li>
+												))}
+											</ol>
+										</div>
+									</div>
+								);
+							})}
+					</div>
+				</div>
+			))}
+			<p class="legend">
+				Beds:{" "}
+				{machines.map((m, i) => (
+					<span>
+						<b>{i + 1}</b> {m.instanceType}{" "}
+					</span>
+				))}
+				· Taller means more bytes per second, or a longer time.
+			</p>
+		</section>
 	);
 }
 
 export default function Page() {
 	return (
 		<>
-			<Masthead />
+			<header class="ward">
+				<p class="sign">
+					<span>WARD</span> {snapshot.region} · {machines[0]!.availabilityZoneIds.join(", ")}
+				</p>
+				<h1>LedgerMath</h1>
+				<p class="lede">
+					Five AWS machines under observation. Each booted fresh four times a day, measured by {snapshot.benchmarkCount} benchmarks, every Run kept with its evidence.
+				</p>
+				<p class="notice">The monitor reports. It does not diagnose.</p>
+				<div class="desk">
+					<p class="deskhead">Records desk · open to agents at any hour</p>
+					<p class="addr" data-copy={links.index}>
+						<a href={links.index}>{links.index.replace("https://", "")}</a>
+					</p>
+				</div>
+				<div class="board">
+					<p>
+						<span class="bk">ROUNDS</span> {ROUNDS.join(" · ")} UTC
+					</p>
+					<p>
+						<span class="bk">ON FILE</span> {formatCount(snapshot.runCount).full} Runs · {formatCount(snapshot.failedRuns).full} failed
+					</p>
+					<p>
+						<span class="bk">SINCE</span> <span title={oldest.full}>{oldest.longDate}</span>
+					</p>
+					<p>
+						<span class="bk">LAST OBS</span>{" "}
+						<span title={newest.full}>
+							{newest.longDate} {newest.minute} UTC
+						</span>
+					</p>
+					<p>
+						<span class="bk">DIAGNOSIS</span> <span class="blank">not given</span>
+					</p>
+				</div>
+			</header>
+
 			<main>
-				<Poster />
-				<FigureTable />
-				<Api />
+				<div class="beds">
+					{machines.map((m, i) => (
+						<Monitor m={m} bed={i + 1} />
+					))}
+					<section class="bed vacant" aria-labelledby="bed-6">
+						<div class="monitor standby">
+							<div class="topbar">
+								<h2 id="bed-6">
+									<span class="bedno">BED 6</span> <span class="who">vacant</span>
+								</h2>
+							</div>
+							<div class="nopatient">
+								<div class="np">NO PATIENT</div>
+								<p>
+									{snapshot.machineCount} machine types are measured. This bed stays empty.
+								</p>
+								<p class="nextround">
+									ROUNDS <b>{ROUNDS.join("  ")}</b> UTC
+								</p>
+								<p>A fresh boot each round, {snapshot.benchmarkCount} benchmarks on it, every Run kept.</p>
+							</div>
+						</div>
+					</section>
+				</div>
+				<Station />
 			</main>
-			<Footer />
+
+			<footer class="foot">
+				<p>
+					<a href={links.index}>index.json</a> · <a href={links.seriesList}>series.json</a> ({formatCount(snapshot.seriesCount).full} Series) · <a href={links.prices}>prices {snapshot.priceDate}</a> ·{" "}
+					<a href={links.docs}>docs</a>
+				</p>
+				<p>
+					Snapshot of {newest.longDate}. Prices: AWS On-Demand, Linux, {snapshot.region}. Type: <a href="third-party-notices.txt">Datatype</a>.
+				</p>
+			</footer>
 		</>
 	);
 }
