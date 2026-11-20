@@ -1,4 +1,4 @@
-/* Design v3, "Paper": a one-page data report, set like a research letter. */
+/* Design v3, "Paper": a one-page data report, set like a research letter. Form "under-05". */
 
 @font-face {
 	font-family: "STIX Two Text";
@@ -35,13 +35,14 @@
 	--to: #9a9488;
 	--range: #45423c;
 	--median: #1d1c1a;
-	/* the digits past the third decimal: smaller than the lead, near its ink */
+	/* the digits past the third decimal, and the unit: smaller than the lead, near its ink */
 	--tail: #3b3833;
 	/* the axis: a hairline, fainter than every mark on it */
 	--track: #d6d0c4;
 	--grid: #ddd7ca;
 	--tint: #f3efe6;
 	--code-bg: #f3efe6;
+	--card: #fffefb;
 	--serif: "STIX Two Text", Charter, "Bitstream Charter", Georgia, "Times New Roman", serif;
 	--mono: "Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
 	--wide: 80rem;
@@ -56,7 +57,6 @@
 		--hair: #3a3833;
 		--rule: #ebe6db;
 		--accent: #f08e74;
-		/* the same three tones, light on dark: line from zero dimmest, error bar brighter, tick brightest */
 		--to: #8a8479;
 		--range: #d2ccbf;
 		--median: #fff4e6;
@@ -65,6 +65,7 @@
 		--grid: #45423c;
 		--tint: #1c1b19;
 		--code-bg: #1f1e1b;
+		--card: #1f1e1b;
 	}
 }
 
@@ -101,7 +102,8 @@ a:hover {
 }
 a:focus-visible,
 [tabindex]:focus-visible,
-summary:focus-visible {
+summary:focus-visible,
+button:focus-visible {
 	outline: 2px solid var(--accent);
 	outline-offset: 2px;
 }
@@ -109,19 +111,8 @@ code,
 pre {
 	font-family: var(--mono);
 }
-i {
-	font-style: italic;
-}
-.vh {
-	position: absolute;
-	width: 1px;
-	height: 1px;
-	overflow: hidden;
-	clip-path: inset(50%);
-	white-space: nowrap;
-}
 
-/* ---------------------------------------------------------------- front matter: one left edge, the table's */
+/* ---------------------------------------------------------------- front matter: the title, its dateline, the way in */
 
 main {
 	padding: 0 1rem 2.5rem;
@@ -131,103 +122,51 @@ article {
 	margin: 0 auto;
 }
 .front {
-	padding: 2.6rem 0 0.9rem;
-	border-bottom: 1px solid var(--hair);
-}
-.front p {
-	margin: 0;
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) minmax(0, 30rem);
+	gap: 1rem 2.5rem;
+	align-items: end;
+	padding: 3.2rem 0 1.6rem;
 }
 h1 {
-	max-width: 46rem;
 	margin: 0;
-	font-weight: 500;
-	font-size: clamp(1.8rem, 1.2rem + 2vw, 2.35rem);
-	line-height: 1.12;
-	letter-spacing: -0.012em;
-	text-wrap: balance;
-}
-.h1-name {
 	font-weight: 700;
+	font-size: clamp(2.6rem, 1.6rem + 3vw, 3.6rem);
+	line-height: 1;
+	letter-spacing: -0.02em;
 }
-.affil {
-	margin-top: 0.55rem !important;
-	font-size: 0.95rem;
-	color: var(--ink-2);
-}
-.dates {
+.dateline {
 	display: flex;
 	flex-wrap: wrap;
-	gap: 0.3rem 1.8rem;
-	margin: 0.35rem 0 0;
-	font-size: 0.9rem;
+	align-items: baseline;
+	gap: 0.2rem 0.5rem;
+	margin: 0.75rem 0 0;
+	font-family: var(--mono);
+	font-size: 0.82rem;
 	color: var(--ink-2);
 }
-.dates div {
-	display: flex;
-	gap: 0.45rem;
-	align-items: baseline;
-}
-.dates dt {
-	font-style: italic;
-}
-.dates dd {
-	margin: 0;
-	font-family: var(--mono);
-	font-size: 0.9em;
+.dateline a {
 	color: var(--ink);
-}
-/* the values that go somewhere (the index, the price file, the Series list): a hairline, not a dotted row */
-.dates a {
-	text-decoration-color: color-mix(in srgb, currentColor 22%, transparent);
+	text-decoration-color: color-mix(in srgb, currentColor 30%, transparent);
 	text-underline-offset: 0.28em;
 }
+.dateline .sep,
+.dateline .dash {
+	color: var(--ink-3);
+}
 
-/* ---------------------------------------------------------------- abstract and the way in */
-
-.opening {
-	display: grid;
-	grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-	gap: 2.5rem;
-	padding: 0.95rem 0 0;
-	align-items: start;
-}
-/* the command's first line level with the Abstract's */
 .availability {
-	margin-top: -0.25rem;
-}
-.abstract p {
-	margin: 0;
-	max-width: 34rem;
-	font-size: 1.04rem;
-	line-height: 1.55;
-	text-wrap: pretty;
-}
-/* the rubric: the paper's own labels (Abstract, Table 1., Listing 1., the reference numbers) in its one red */
-.runin {
-	margin-right: 0.55rem;
-	color: var(--accent);
-	font-size: 0.95rem;
-	font-weight: 700;
-	font-variant-caps: all-small-caps;
-	letter-spacing: 0.12em;
-}
-.cite {
-	color: var(--ink-2);
-	text-decoration-color: color-mix(in srgb, currentColor 45%, transparent);
-	white-space: nowrap;
-}
-.availability {
+	position: relative;
 	font-size: 0.9rem;
 }
 .code {
 	margin: 0;
 	padding: 0.6rem 0.75rem;
 	background: var(--code-bg);
-	border-left: 2px solid var(--ink-3);
+	border-left: 2px solid var(--accent);
 	line-height: 1.6;
 	font-size: 0.8rem;
 	color: var(--ink);
-	position: relative;
 	overflow-x: auto;
 }
 .code code {
@@ -237,61 +176,83 @@ h1 {
 	color: var(--ink-3);
 	user-select: none;
 }
+.availability .code {
+	padding-right: 3rem;
+}
+.availability .copy-slot {
+	position: absolute;
+	right: 0.45rem;
+	top: 50%;
+	transform: translateY(-50%);
+}
 .copy {
-	display: block;
-	font: 0.7rem/1 var(--mono);
+	display: grid;
+	place-items: center;
+	width: 1.9rem;
+	height: 1.9rem;
+	padding: 0;
 	color: var(--ink-2);
 	background: var(--paper);
 	border: 1px solid var(--hair);
-	padding: 0.3rem 0.45rem;
 	cursor: pointer;
+}
+.copy svg {
+	width: 0.95rem;
+	height: 0.95rem;
+	fill: none;
+	stroke: currentColor;
+	stroke-width: 1.3;
 }
 .copy:hover {
 	color: var(--accent);
 	border-color: currentColor;
 }
-.availability {
+
+/* ---------------------------------------------------------------- a tap-open note: a row's number, a column's price, the key */
+
+.tip {
 	position: relative;
 }
-.availability .copy-slot {
+.tip > summary {
+	display: inline-flex;
+	align-items: baseline;
+	gap: 0.35rem;
+	cursor: pointer;
+	list-style: none;
+	width: fit-content;
+}
+.tip > summary::-webkit-details-marker {
+	display: none;
+}
+/* the note itself: a card laid over the table, like a footnote opened in place */
+.tip-body {
 	position: absolute;
-	right: 0.5rem;
-	top: 50%;
-	transform: translateY(-50%);
-}
-.availability .code {
-	padding-right: 4rem;
-}
-
-/* ---------------------------------------------------------------- sections */
-
-.sec {
-	padding-top: 2.2rem;
-}
-.sec.results {
-	padding-top: 1.5rem;
-}
-.sec h2 {
-	margin: 0 0 0.5rem;
-	font-size: 1.35rem;
-	font-weight: 600;
-	line-height: 1.2;
-}
-/* Table 1's title is the section's heading, set as a caption */
-.sec h2.t-title {
-	margin: 0;
-	font-size: 1rem;
+	z-index: 5;
+	top: calc(100% + 0.3rem);
+	left: -0.6rem;
+	display: grid;
+	gap: 0.15rem;
+	width: max-content;
+	max-width: 19rem;
+	padding: 0.5rem 0.7rem 0.55rem;
+	background: var(--card);
+	border: 1px solid var(--hair);
+	border-top: 2px solid var(--rule);
+	box-shadow: 0 0.4rem 1.2rem color-mix(in srgb, var(--ink) 12%, transparent);
+	font-size: 0.88rem;
 	font-weight: 400;
-	line-height: 1.4;
+	line-height: 1.35;
 	color: var(--ink-2);
+	white-space: normal;
+	text-align: left;
 }
-.tlabel {
-	font-weight: 700;
-	color: var(--accent);
-	margin-right: 0.15rem;
+.tip-key .tip-body > span {
+	display: flex;
+	align-items: center;
+	gap: 0.45rem;
 }
 
-/* ---------------------------------------------------------------- tables: booktabs */
+/* ---------------------------------------------------------------- Table 1: booktabs */
 
 .table-wrap {
 	overflow-x: auto;
@@ -306,148 +267,115 @@ td {
 	text-align: left;
 	vertical-align: top;
 }
-
-/* ---------------------------------------------------------------- Table 1 */
-
+/* room under the last rows for a note opened there */
 .t1-wrap {
-	margin-top: 0.55rem;
+	padding-bottom: 9rem;
+	margin-bottom: -9rem;
 }
 .t1 {
-	min-width: 60rem;
+	min-width: 56rem;
 	table-layout: fixed;
 	border-top: 2px solid var(--rule);
 	border-bottom: 2px solid var(--rule);
 }
 .t1 thead > tr > * {
 	border-bottom: 1px solid var(--rule);
-	vertical-align: top;
-	padding-top: 0.55rem;
+	vertical-align: bottom;
+	padding-top: 0.6rem;
 	padding-bottom: 0.45rem;
+	font-weight: 400;
 }
 .t1 .c-op {
-	width: 20.5%;
+	width: 4.2rem;
 	padding-left: 0;
 }
-/* the stub of the head: how to read a cell, and where the prices come from */
 .t1 thead th.stub {
 	padding-left: 0;
-	text-indent: 0;
-	font-weight: 400;
-	font-size: 0.88rem;
-	line-height: 1.35;
-	color: var(--ink-2);
-}
-.key-item {
-	display: flex;
-	align-items: baseline;
-	gap: 0.45rem;
-}
-.key-item + .key-item {
-	margin-top: 0.15rem;
-}
-.key-dir {
-	flex-wrap: wrap;
-	gap: 0 0.9rem;
 }
 .key-bar {
-	width: 2.6rem;
+	width: 2.4rem;
 	flex: none;
 	align-self: center;
 }
-/* level with the machines' prices, the second line of each head */
-.key-price {
-	padding-top: 1.2rem;
-	margin-bottom: 0.7rem;
-	font-style: italic;
-	font-size: 0.88rem;
-	line-height: 1.25;
+.tip-key > summary {
+	align-items: center;
+	color: var(--ink-2);
 }
-/* each machine's head, flush left over its bars' zero */
+.tip-key > summary .key-bar {
+	width: 1.6rem;
+}
 .t1 thead th.c-m {
-	text-align: left;
-	line-height: 1.25;
 	padding-left: 0.9rem;
 	padding-right: 0;
-	font-weight: 400;
+	line-height: 1.25;
+}
+/* each column's price: the way to what the machine is */
+.m-price {
+	font-weight: 700;
+	font-size: 1.02rem;
+	color: var(--ink);
+	text-decoration: underline dotted color-mix(in srgb, currentColor 55%, transparent);
+	text-decoration-thickness: 1px;
+	text-underline-offset: 0.25em;
+}
+.tip > summary:hover .m-price,
+.tip[open] > summary .m-price {
+	color: var(--accent);
 }
 .m-name {
-	display: block;
 	font-family: var(--mono);
-	font-size: 0.95rem;
+	font-size: 0.92rem;
 	color: var(--ink);
 }
-.m-spec,
-.m-proc {
-	display: block;
-	font-size: 0.88rem;
-	color: var(--ink-2);
+
+/* the groups (memory, compute, the system, disk, network) set apart by space and a hairline, not named */
+.t1 tbody.sect > tr:first-child > * {
+	padding-top: 0.75rem;
 }
-.m-proc {
-	text-wrap: balance;
+.t1 tbody.sect + tbody.sect > tr:first-child > * {
+	border-top: 1px solid var(--ink-3);
 }
-.m-price {
-	display: block;
-	width: fit-content;
-	margin-bottom: 0.1rem;
-	font-weight: 700;
-	font-size: 0.98rem;
-	line-height: 1.25;
-	color: var(--ink);
-	text-decoration: none;
-}
-.m-price:hover {
-	text-decoration: underline;
-}
-.t1 tr.group th {
-	padding: 0.5rem 0 0.1rem;
-	font-weight: 600;
-	font-style: italic;
-	font-size: 0.94rem;
-	color: var(--ink);
-	border-bottom: 1px solid var(--hair);
-}
-.group-note {
-	font-weight: 400;
-	color: var(--ink-2);
-}
-.t1 tbody tr:not(.group) > * {
+.t1 tbody tr > * {
 	padding-top: 0.32rem;
 	padding-bottom: 0.32rem;
 }
-.t1 tbody tr:not(.group) + tr:not(.group) > * {
+.t1 tbody tr + tr > * {
 	border-top: 1px solid var(--grid);
 }
-.t1 tbody tr:not(.group):hover > * {
+.t1 tbody tr:hover > * {
 	background: var(--tint);
 }
 .t1 th.c-op {
 	font-weight: 400;
 	line-height: 1.25;
 }
+/* a row's number: the rubric red of a reference, the way to what the row measures */
+.rn {
+	min-width: 1.2rem;
+	color: var(--accent);
+	font-weight: 700;
+	font-size: 1rem;
+	text-decoration: underline dotted color-mix(in srgb, currentColor 55%, transparent);
+	text-decoration-thickness: 1px;
+	text-underline-offset: 0.25em;
+}
+.dir {
+	font-weight: 600;
+	color: var(--ink-2);
+}
 .op-label {
 	font-weight: 600;
-	font-size: 1.02rem;
-	text-decoration: none;
-}
-.op-label:hover {
-	text-decoration: underline;
+	font-size: 0.98rem;
+	color: var(--ink);
 }
 .op-unit {
-	display: block;
-	font-size: 0.88rem;
 	color: var(--ink-2);
-	white-space: nowrap;
 }
 /* a cell's machine, written out where the cell stands alone (the phone); the column head says it on a desk */
 .c-mlab {
 	display: none;
 }
-.dir {
-	font-weight: 600;
-	color: var(--ink);
-}
 .t1 td.c-fig {
-	text-align: left;
 	padding-right: 0.3rem;
 	padding-left: 0.9rem;
 	white-space: nowrap;
@@ -463,7 +391,7 @@ td {
 	text-decoration-thickness: 1px;
 	text-underline-offset: 0.2em;
 }
-/* an exact figure: the whole part right-aligned, the point and three decimals, then every further digit, lighter */
+/* an exact figure: the whole part right-aligned, the point and three decimals, then every further digit and the unit, lighter */
 .x {
 	display: inline-flex;
 	align-items: baseline;
@@ -479,7 +407,6 @@ td {
 	font-size: 1.12rem;
 	font-weight: 600;
 }
-/* the figure is the way to its Series: no rule at rest (seventy of them would be a field of lines), red and underlined on hover and focus */
 .x-tail {
 	display: inline-block;
 	text-align: left;
@@ -490,8 +417,7 @@ td {
 .t1 td.c-fig > a:hover .x-tail {
 	color: inherit;
 }
-/* the median to scale within its row, as a figure in a paper draws it: a bar from zero on a hairline axis,
-   p5–p95 as an error bar (a line with end caps), and the median's tick, the tallest and darkest mark */
+/* the median to scale within its row: a bar from zero on a hairline axis, p5–p95 as an error bar, the median's tick */
 .bar {
 	display: block;
 	height: 11px;
@@ -525,247 +451,55 @@ td {
 	margin-top: 0;
 }
 
-/* ---------------------------------------------------------------- references: the API's files */
-
-.reflist {
-	list-style: none;
-	margin: 0;
-	padding: 0;
-	font-size: 0.92rem;
-	border-top: 2px solid var(--rule);
-	border-bottom: 2px solid var(--rule);
-}
-/* the references beside Listing 1: the addresses, and what one of them returns */
-.refs-body {
-	display: grid;
-	grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-	gap: 0 2.5rem;
-	align-items: start;
-}
-.reflist li {
-	display: grid;
-	grid-template-columns: 2.1rem minmax(0, 1fr);
-	gap: 0 0.6rem;
-	align-items: baseline;
-	padding: 0.4rem 0;
-}
-.reflist li + li {
-	border-top: 1px solid var(--grid);
-}
-.ref-n {
-	grid-row: 1 / span 2;
-	color: var(--accent);
-}
-/* a whole address to copy: the host light, the path in ink */
-.ref-file {
-	font-family: var(--mono);
-	font-size: 0.82rem;
-	overflow-wrap: anywhere;
-	text-decoration-color: color-mix(in srgb, currentColor 30%, transparent);
-}
-.addr-host {
-	color: var(--ink-3);
-}
-/* the path breaks from its host, never inside itself */
-.addr-path {
-	white-space: nowrap;
-}
-.ref-what {
-	grid-column: 2;
-	font-size: 0.88rem;
-	line-height: 1.35;
-	color: var(--ink-2);
-}
-.listing {
-	margin: 0;
-}
-.listing figcaption {
-	margin: 0 0 0.5rem;
-	padding-top: 0.25rem;
-	font-size: 1rem;
-	line-height: 1.4;
-	color: var(--ink-2);
-}
-.listing .code {
-	border-top: 2px solid var(--rule);
-	border-left: 0;
-	padding: 0.7rem 0.8rem;
-}
-
-/* a passage folded behind its label: the ranges and counts, Listing 1 */
-.fold {
-	margin-top: 0.8rem;
-}
-.fold > summary {
-	cursor: pointer;
-	font-size: 0.9rem;
-	color: var(--ink-2);
-	list-style: none;
-	width: fit-content;
-}
-.fold > summary::-webkit-details-marker {
-	display: none;
-}
-.fold > summary::before {
-	content: "▸";
-	display: inline-block;
-	width: 1rem;
-	color: var(--ink-3);
-}
-.fold[open] > summary::before {
-	content: "▾";
-}
-.fold[open] > summary {
-	margin-bottom: 0.5rem;
-}
-.json {
-	font-size: 0.74rem;
-	line-height: 1.55;
-}
-.json mark {
-	background: color-mix(in srgb, var(--accent) 18%, transparent);
-	color: var(--ink);
-	padding: 0 0.1rem;
-}
-
-/* ---------------------------------------------------------------- the ranges and counts, opened in place above Table 1 */
-
-.s1-details {
-	margin-top: 0.15rem;
-}
-.s1-details > summary {
-	font-size: 0.86rem;
-}
-.s1 {
-	min-width: 62rem;
-	font-size: 0.8rem;
-	line-height: 1.3;
-	border-top: 2px solid var(--rule);
-	border-bottom: 2px solid var(--rule);
-}
-.s1 thead th {
-	border-bottom: 1px solid var(--rule);
-	font-family: var(--mono);
-	font-weight: 400;
-	font-size: 0.78rem;
-	text-align: right;
-}
-.s1 tbody tr + tr > * {
-	border-top: 1px solid var(--grid);
-}
-.s1 th.s1-b {
-	padding-left: 1.1rem;
-	text-indent: -1.1rem;
-	width: 13rem;
-	font-weight: 600;
-	font-size: 0.84rem;
-}
-.s1-unit {
-	display: block;
-	text-indent: 0;
-	font-weight: 400;
-	font-style: italic;
-	color: var(--ink-2);
-}
-.s1-c {
-	text-align: right;
-	white-space: nowrap;
-}
-.s1-c:last-child {
-	padding-right: 0;
-}
-.s1-x {
-	display: block;
-	color: var(--ink-2);
-}
-.s1-mid {
-	color: var(--ink);
-	font-weight: 600;
-	text-decoration: none;
-}
-.s1-mid:hover {
-	text-decoration: underline;
-}
-.s1-n {
-	display: block;
-	color: var(--ink-3);
-	font-size: 0.74rem;
-}
-
 /* ---------------------------------------------------------------- colophon */
 
 .colophon {
-	border-top: 1px solid var(--hair);
-	padding: 1rem;
+	padding: 1.2rem 1rem 1.6rem;
 }
 .colophon p {
 	max-width: var(--wide);
 	margin: 0 auto;
-	font-size: 0.82rem;
+	font-size: 0.9rem;
 	color: var(--ink-2);
 }
-.wordmark-sm {
-	font-weight: 700;
-	color: var(--ink);
+.mark {
+	text-decoration: none;
+	color: var(--ink-3);
 }
 
 /* ---------------------------------------------------------------- narrower screens */
 
 @media (max-width: 999px) {
-	.opening,
-	.refs-body {
+	.front {
 		grid-template-columns: minmax(0, 1fr);
-		gap: 1rem;
 	}
 }
 
-/* Phone: Table 1's head becomes the list of machines; each benchmark a block, a line per machine. */
+/* Phone: Table 1's head becomes the list of prices; each benchmark a block, a line per machine, named by its price. */
 @media (max-width: 640px) {
 	body {
 		font-size: 1.0625rem;
 	}
 	.front {
-		padding-top: 1.1rem;
-		padding-bottom: 0.7rem;
+		padding: 1.6rem 0 1.1rem;
+		gap: 0.9rem;
 	}
 	h1 {
-		font-size: 1.55rem;
+		font-size: 2.4rem;
 	}
-	.affil {
-		margin-top: 0.4rem !important;
-		font-size: 0.8rem;
-	}
-	.dates {
-		display: grid;
-		grid-template-columns: auto auto;
-		justify-content: start;
-		gap: 0.1rem 1.1rem;
-		font-size: 0.78rem;
-	}
-	.dates div {
-		display: block;
-	}
-	.dates dt {
-		font-size: 0.95em;
-	}
-	.opening {
-		gap: 0.7rem;
-		padding-top: 0.7rem;
-	}
-	.abstract p {
-		font-size: 0.95rem;
-		line-height: 1.5;
+	.dateline {
+		font-size: 0.72rem;
+		margin-top: 0.55rem;
 	}
 	.availability {
 		display: flex;
 		align-items: stretch;
-		margin-top: 0;
 	}
 	.availability .code {
 		flex: 1;
 		min-width: 0;
-		padding: 0.55rem 0.4rem;
-		font-size: 0.64rem;
+		padding: 0.6rem 0.5rem;
+		font-size: 0.62rem;
 	}
 	.availability .copy-slot {
 		position: static;
@@ -773,28 +507,19 @@ td {
 		display: flex;
 	}
 	.availability .copy {
-		border-left: 0;
+		height: auto;
+		width: 2.4rem;
+		border: 0;
 		background: var(--code-bg);
-		padding: 0 0.5rem;
 	}
 	.availability .prompt {
 		display: none;
 	}
-	.sec.results {
-		padding-top: 1.1rem;
-	}
-	.sec {
-		padding-top: 1.6rem;
-	}
-	.sec h2 {
-		font-size: 1.25rem;
-	}
-	.sec h2.t-title {
-		font-size: 0.92rem;
-	}
 
 	.t1-wrap {
 		overflow: visible;
+		padding-bottom: 0;
+		margin-bottom: 0;
 	}
 	.t1,
 	.t1 thead,
@@ -812,97 +537,72 @@ td {
 	.t1 .c-op {
 		width: auto;
 	}
+	/* on a phone a note opens in place, pushing what follows down */
+	.tip-body {
+		position: static;
+		margin: 0.3rem 0 0.2rem;
+		max-width: none;
+		width: auto;
+		box-shadow: none;
+		border-top-width: 1px;
+	}
 
-	/* the head: the key, then one line per machine */
+	/* the head: the key, then the five prices in a row that wraps; a machine's note opens on a line of its own */
+	.t1 thead tr {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0 1.1rem;
+		padding-bottom: 0.4rem;
+		border-bottom: 1px solid var(--rule);
+	}
 	.t1 thead > tr > * {
 		border-bottom: 0;
 		padding: 0;
 	}
 	.t1 thead th.stub {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 0.1rem 1rem;
-		padding: 0.45rem 0 0.4rem;
-		border-bottom: 1px solid var(--rule);
-		font-size: 0.76rem;
+		flex: 0 0 100%;
+		padding: 0.45rem 0 0.35rem;
 	}
-	.key-item + .key-item {
-		margin-top: 0;
-	}
-	/* the prices' label over the prices, apart from the chart's key */
-	.key-price {
-		order: 3;
-		flex-basis: 100%;
-		justify-content: flex-end;
-		padding-top: 0.25rem;
-		margin-bottom: -0.2rem;
-		font-size: 0.76rem;
-	}
-	/* one line per machine; the processor stays on the desktop head */
 	.t1 thead th.c-m {
-		display: grid;
-		grid-template-columns: 6.9rem minmax(0, 1fr) auto;
-		column-gap: 0.5rem;
-		align-items: baseline;
-		padding: 0.12rem 0;
-		border-bottom: 1px solid var(--grid);
+		flex: 0 0 auto;
+		padding: 0.1rem 0;
 	}
-	.t1 thead th.c-m:last-child {
-		border-bottom: 1px solid var(--rule);
-	}
-	.m-name {
-		grid-column: 1;
-		grid-row: 1;
-		font-size: 0.78rem;
-	}
-	.m-spec {
-		grid-column: 2;
-		grid-row: 1;
-	}
-	.m-proc {
-		display: none;
+	.t1 thead th.c-m:has(.tip[open]) {
+		flex-basis: 100%;
 	}
 	.m-price {
-		grid-column: 3;
-		grid-row: 1;
-		margin: 0;
-		font-size: 0.8rem;
+		font-size: 0.86rem;
 	}
 
-	.t1 tr.group th {
-		padding-top: 0.8rem;
-		border-bottom: 2px solid var(--rule);
+	.t1 tbody.sect > tr:first-child > * {
+		padding-top: 0;
 	}
-	.t1 tbody tr:not(.group) {
-		padding: 0.5rem 0 0.4rem;
+	.t1 tbody.sect + tbody.sect > tr:first-child {
+		border-top: 2px solid var(--rule);
 	}
-	.t1 tbody tr:not(.group) + tr:not(.group) {
+	.t1 tbody.sect + tbody.sect > tr:first-child > * {
+		border-top: 0;
+	}
+	.t1 tbody tr {
+		padding: 0.5rem 0 0.45rem;
+	}
+	.t1 tbody tr + tr {
 		border-top: 1px solid var(--hair);
 	}
-	.t1 tbody tr:not(.group) + tr:not(.group) > *,
-	.t1 tbody tr:not(.group) > * {
+	.t1 tbody tr + tr > *,
+	.t1 tbody tr > * {
 		border-top: 0;
 		padding: 0;
 	}
-	.t1 tbody tr:not(.group):hover > * {
+	.t1 tbody tr:hover > * {
 		background: none;
 	}
-	.t1 tbody tr:not(.group) > th.c-op {
-		padding: 0 0 0.2rem;
+	.t1 tbody tr > th.c-op {
+		padding: 0 0 0.15rem;
 	}
-	.op-label {
-		font-size: 1rem;
-	}
-	.op-unit {
-		font-size: 0.82rem;
-	}
-	.op-unit {
-		display: inline;
-		margin-left: 0.4rem;
-	}
-	.t1 tbody tr:not(.group) > td.c-fig {
+	.t1 tbody tr > td.c-fig {
 		display: grid;
-		grid-template-columns: 5.3rem minmax(0, 1fr) auto;
+		grid-template-columns: 4.3rem minmax(0, 1fr) auto;
 		align-items: center;
 		column-gap: 0.5rem;
 		padding: 0.04rem 0;
@@ -911,8 +611,8 @@ td {
 		display: block;
 		grid-column: 1;
 		grid-row: 1;
-		font-family: var(--mono);
-		font-size: 0.72rem;
+		font-size: 0.78rem;
+		font-weight: 600;
 		color: var(--ink-2);
 	}
 	.t1 td.c-fig > a {
@@ -926,23 +626,9 @@ td {
 	}
 	.x-int,
 	.x-head {
-		font-size: 1rem;
+		font-size: 0.97rem;
 	}
 	.x-tail {
-		font-size: 0.82rem;
-	}
-
-	.reflist li {
-		grid-template-columns: 1.8rem minmax(0, 1fr);
-		gap: 0 0.4rem;
-	}
-	.ref-file {
-		font-size: 0.74rem;
-	}
-	.ref-what {
-		font-size: 0.84rem;
-	}
-	.json {
-		font-size: 0.66rem;
+		font-size: 0.76rem;
 	}
 }
