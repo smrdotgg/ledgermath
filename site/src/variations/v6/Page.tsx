@@ -1,518 +1,424 @@
-// Design v6, "Instrument panel": every headline figure drawn to exact scale beside the others,
-// one small chart per benchmark, the exact figure printed beside each mark. Words are kept to
-// labels; the figures, the marks and the links carry the page.
+// Experiment dt-receipt: the home page as a shop's till receipt, printed in Datatype (whose
+// letters are IBM Plex Mono's, a receipt printer's own). The machines are the price list, the
+// benchmarks are the line items, each item's barcode is a Datatype bar chart of its five figures
+// drawn from zero, and tapping a barcode "scans" it: every digit. The total is not computed,
+// because the data holds none.
 import "./page.css";
-import { formatCount, formatMoment, formatUsd, headline, links, machines, snapshot } from "../../data";
-import { headTail, padFor } from "./digits";
-import { at, instrument, type Instrument, type Mark as Point, type Scale, width, zeroScale } from "./scale";
-
-const ROW = 24;
-const AXIS = 22;
-
-/** The plot of one chart: gridlines, a track per machine, the p5–p95 bar with caps and the median dot. */
-function Plot(props: { inst: Instrument; scale: Scale }) {
-	const s = props.scale;
-	const n = props.inst.marks.length;
-	const base = n * ROW;
-	return (
-		<svg class="plot" aria-hidden="true" width="100%" height={base + AXIS}>
-			{s.ticks.map((t) => (
-				<line class={t.value === 0 ? "grid zero" : "grid"} x1={at(s, t.value)} x2={at(s, t.value)} y1="0" y2={base} />
-			))}
-			{props.inst.marks.map((m, i) => {
-				const y = i * ROW + ROW / 2;
-				return (
-					<g class="mark">
-						<line class="track" x1="0" x2="100%" y1={y} y2={y} />
-						<rect class="range" x={at(s, m.p5.value)} width={width(s, m.p5.value, m.p95.value)} y={y - 1.5} height="3" />
-						<line class="cap" x1={at(s, m.p5.value)} x2={at(s, m.p5.value)} y1={y - 4.5} y2={y + 4.5} />
-						<line class="cap" x1={at(s, m.p95.value)} x2={at(s, m.p95.value)} y1={y - 4.5} y2={y + 4.5} />
-						<circle class="median" cx={at(s, m.p50.value)} cy={y} r="4.25" />
-					</g>
-				);
-			})}
-			<line class="axis" x1="0" x2="100%" y1={base + 0.5} y2={base + 0.5} />
-			{s.ticks.map((t) => (
-				<line class="tick" x1={at(s, t.value)} x2={at(s, t.value)} y1={base} y2={base + 4} />
-			))}
-			{/* Every label centred on its own tick, the end ones included: the plot lets them overhang its edges. */}
-			{s.ticks.map((t) =>
-				t.label === "" ? null : (
-					<text class="tl" x={at(s, t.value)} y={base + 16} text-anchor="middle">
-						{t.label}
-					</text>
-				),
-			)}
-			{s.zoomed ? <path class="break" d={`M -5 ${base + 4} l 3 -8 m 3 8 l 3 -8`} /> : null}
-		</svg>
-	);
-}
+import {
+	type ByteUnit,
+	durationUnit,
+	formatCount,
+	formatDuration,
+	formatDurationPerUnit,
+	formatMoment,
+	formatRate,
+	formatUsd,
+	type HeadlineRow,
+	headline,
+	leadFigure,
+	links,
+	machines,
+	type Section,
+	type Shown,
+	snapshot,
+} from "../../data";
+import { seriesFileSample } from "../../data/snapshot";
 
 /**
- * From zero, where the zoomed window sits: the whole scale, the window as a box (never thinner than
- * the eye can see), the five medians as dots, and two lines opening from the box to the ends of the
- * zoomed axis above, so the strip reads as the chart's magnifier without a caption.
+ * Groups of values as Datatype bar charts on one scale from zero: the largest value of all the
+ * groups becomes 100, every other in proportion, so the groups compare.
  */
-function Strip(props: { inst: Instrument; zoom: Scale }) {
-	const z = props.inst.zero;
-	const lo = at(z, props.zoom.lo);
-	const hi = at(z, props.zoom.hi);
-	const mid = at(z, (props.zoom.lo + props.zoom.hi) / 2);
-	const thin = (props.zoom.hi - props.zoom.lo) / (z.hi - z.lo) < 0.03;
-	const Y = 14;
+function fromZero(groups: number[][]): string[] {
+	const max = Math.max(...groups.flat());
+	return groups.map((g) => `{b:${g.map((v) => Math.round((v / max) * 100)).join(",")}}`);
+}
+const bars = (values: number[]) => fromZero([values])[0]!;
+/** "c8i.2xlarge" to "c8i": the name with its size left out, for the digits under a barcode. */
+const family = (instanceType: string) => instanceType.split(".")[0]!;
+
+type Item = {
+	row: HeadlineRow;
+	unit: string;
+	cells: { instanceType: string; url: string; runs: number; p5: Shown; p50: Shown; p95: Shown }[];
+	charts: string[];
+};
+
+/** One line item: the five p50s in one unit (the unit of the largest), and its barcode. */
+function item(row: HeadlineRow): Item {
+	const leads = row.cells.map((c) => leadFigure(row.choice, c.series));
+	const max = Math.max(...leads.map((l) => l.p50));
+	let unit: string;
+	let show: (n: number) => Shown;
+	if (row.choice.lead === "rate") {
+		const u = formatRate(max).unit.replace("/s", "") as ByteUnit;
+		unit = `${u}/s`;
+		show = (n) => formatRate(n, { unit: u });
+	} else if (row.choice.per) {
+		const per = row.choice.per;
+		const u = formatDurationPerUnit(max, per).unit as ReturnType<typeof durationUnit>;
+		unit = `${u} per ${per.of}`;
+		show = (n) => formatDurationPerUnit(n, per, { unit: u });
+	} else {
+		const u = durationUnit(max);
+		unit = u;
+		show = (n) => formatDuration(n, { unit: u });
+	}
+	return {
+		row,
+		unit,
+		cells: row.cells.map((c, i) => ({
+			instanceType: c.machine.instanceType,
+			url: c.series.url,
+			runs: c.series.runs,
+			p5: show(leads[i]!.p5),
+			p50: show(leads[i]!.p50),
+			p95: show(leads[i]!.p95),
+		})),
+		charts: fromZero(leads.map((l) => [l.p5, l.p50, l.p95])),
+	};
+}
+
+const items = headline.map(item);
+const sections = [...new Set(headline.map((r) => r.choice.section))] as Section[];
+const newest = formatMoment(snapshot.newestRunStartedAt);
+const newestTime = newest.full.split(" ")[1]!;
+const zones = [...new Set(machines.flatMap((m) => m.availabilityZoneIds))].sort();
+const prices = machines.map((m) => ({ m, usd: formatUsd(m.price.usdPerHour) }));
+
+// The receipt's own barcode: the newest 20 Runs of the Series whose file the snapshot keeps as a sample.
+const sample = seriesFileSample;
+const samplePer = headline.find((r) => r.choice.benchmark === sample.benchmark)?.choice.per;
+const runs = sample.derivations.series_v1.points.slice(-20).map((p) => ({
+	at: formatMoment(p.started_at),
+	ns: p.time_per_repetition_ns!,
+	shown: samplePer ? formatDurationPerUnit(p.time_per_repetition_ns!, samplePer, { unit: "ns" }) : formatDuration(p.time_per_repetition_ns!),
+	evidence: p.evidence,
+}));
+
+const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+
+/** A figure as a price: the short form on the paper, every digit in its title. */
+function Fig(props: { s: Shown }) {
 	return (
-		<svg class="strip" aria-hidden="true" width="100%" height={Y + 8}>
-			<line class="lens" x1="0" x2={thin ? mid : lo} y1="0" y2={Y - 5} />
-			<line class="lens" x1="100%" x2={thin ? mid : hi} y1="0" y2={Y - 5} />
-			<line class="axis" x1="0" x2="100%" y1={Y + 0.5} y2={Y + 0.5} />
-			<line class="axis" x1="0.5" x2="0.5" y1={Y - 3} y2={Y + 4} />
-			<line class="axis" x1="100%" x2="100%" y1={Y - 3} y2={Y + 4} />
-			{thin ? (
-				// A window narrower than a pixel or two is drawn as a narrow tick, not a box that would widen it.
-				<svg x={mid} y={Y - 5} width="1" height="11" overflow="visible">
-					<rect class="window thin" x="-1" width="2" y="0" height="11" />
-				</svg>
-			) : (
-				<rect class="window" x={lo} width={width(z, props.zoom.lo, props.zoom.hi)} y={Y - 5} height="11" />
-			)}
-			{props.inst.marks.map((m) => (
-				<circle class="median small" cx={at(z, m.p50.value)} cy={Y + 0.5} r="2" />
-			))}
-		</svg>
+		<span class="fig" title={`${props.s.full} ${props.s.unit}`}>
+			{props.s.short}
+		</span>
 	);
 }
 
-/** An address that may break only after a slash (a phone wraps it there, under a hanging indent); copied, it is whole. */
-function Url(props: { text: string }) {
-	const parts = props.text.split(/(?<=[^/]\/)(?=[^/])/);
+/** A Datatype chart, hidden from assistive technology, with a short text alternative. */
+function Code(props: { chart: string; label: string; class?: string }) {
 	return (
-		<>
-			{parts.map((p, i) => (
-				<>
-					{i > 0 ? <wbr /> : null}
-					{p}
-				</>
-			))}
-		</>
+		<span class={`code ${props.class ?? ""}`} role="img" aria-label={props.label}>
+			<span class="dt" aria-hidden="true">
+				{props.chart}
+			</span>
+		</span>
 	);
 }
 
-/** A machine's name as its family (in ink) and its size (lighter; a phone shows the family alone, keyed by the Machines panel). */
-function Name(props: { type: string }) {
-	const dot = props.type.indexOf(".");
-	return dot < 0 ? (
-		<>{props.type}</>
-	) : (
-		<>
-			<span class="fam">{props.type.slice(0, dot)}</span>
-			<span class="sz">{props.type.slice(dot)}</span>
-		</>
-	);
-}
-
-/** Whether the families alone tell the five machines apart; if not, a phone keeps the whole names. */
-const familiesUnique = new Set(machines.map((m) => m.instanceType.split(".")[0])).size === machines.length;
-
-const pad = (i: number) => String(i + 1).padStart(2, "0");
-
-/** Significant digits in a figure as shown ("0.0175" has 3, "858" has 3, "10.00" has 4). */
-const significantIn = (text: string) => text.replace(/[^\d]/g, "").replace(/^0+/, "").length;
-
-/** Every digit of a figure, the ones the chart prints in full ink and the rest lighter. */
-function Digits(props: { text: string; shown: string }) {
-	const [head, tail] = headTail(props.text, Math.max(1, significantIn(props.shown)));
+/** A barcode: one Datatype chart per machine, all on one scale, the machine's family printed under it like a barcode's digits. */
+function Barcode(props: { charts: string[]; names: string[]; label: string; class?: string }) {
 	return (
-		<>
-			<span class="hd">{head}</span>
-			{tail ? <span class="tt">{tail}</span> : null}
-		</>
-	);
-}
-
-/**
- * Where a row measures the volume rather than the machine, as the data module's reason for
- * disk_read_io_uring's settings says: its tag, in the data's own words (the volume is "gp3" in each
- * choice's `what`), and the reason in full for its title.
- */
-function limitOf(benchmark: string): { tag: string; title: string } | null {
-	const reason = headline.find((r) => r.choice.benchmark === "disk_read_io_uring")?.choice.reason ?? "";
-	if (!/IOPS limit/.test(reason) || !/throughput limit is what disk_read_sequential/.test(reason)) return null;
-	if (benchmark === "disk_read_io_uring" || benchmark === "disk_read_sequential") return { tag: "gp3 limit", title: reason };
-	return null;
-}
-
-/**
- * One median, rounded to the chart's decimals; opened, every digit of its p5, median and p95, the Runs
- * counted, and its Series file (each Run with its evidence). Only one is open at a time.
- */
-function Figure(props: { m: Point; row: number; unit: string; pad: string; last: boolean }) {
-	const m = props.m;
-	const all = [m.p5.full, m.p50.full, m.p95.full];
-	const cells: [string, string, string][] = [
-		["p95", m.p95.full, m.p95.short],
-		["p50", m.p50.full, m.p50.short],
-		["p5", m.p5.full, m.p5.short],
-	];
-	return (
-		<details class={props.last ? "fig up" : "fig"} name="fig" style={`grid-row:${props.row}`}>
-			<summary class="v" style={props.pad} title={`${m.instanceType}, ${props.unit}: median ${m.p50.full}, ${m.runs} Runs`}>
-				{m.p50.short}
-			</summary>
-			<div class="pop">
-				{cells.map(([k, v, shown]) => (
-					<>
-						<span class="k">{k}</span>
-						<span class={k === "p50" ? "x med" : "x"} style={padFor(v, all)}>
-							<Digits text={v} shown={shown} />
-						</span>
-					</>
-				))}
-				<span class="k">n</span>
-				<span class="x" style={padFor(String(m.runs), all)}>
-					{m.runs}
+		<span class={`barcode ${props.class ?? ""}`} role="img" aria-label={props.label}>
+			{props.charts.map((chart, i) => (
+				<span class="slot" aria-hidden="true">
+					<span class="dt">{chart}</span>
+					<span class="digits">{family(props.names[i]!)}</span>
 				</span>
-				<a class="go" href={m.url} title="Its Series file: every Run, each with its evidence">
-					Runs ↗
-				</a>
-			</div>
-		</details>
+			))}
+		</span>
 	);
 }
 
-function Card(props: { inst: Instrument; index: number }) {
-	const inst = props.inst;
-	const c = inst.row.choice;
-	const zoom = inst.zoom;
-	const scale = zoom ?? inst.zero;
-	const limit = limitOf(c.benchmark);
-	const texts = inst.marks.map((m) => m.p50.short);
-	const unit = c.per ? `${inst.unit} / ${c.per.of}` : inst.unit;
-	const runs = inst.marks.map((m) => m.runs);
-	const fewest = Math.min(...runs);
-	const most = Math.max(...runs);
+/** The words under a barcode: "scan" while it is folded, "scanned" once it is open. */
+function Hint(props: { keys: string }) {
 	return (
-		<article class="card" id={`b-${c.benchmark}`} aria-labelledby={`h-${c.benchmark}`}>
-			<header class="card-h">
-				<span class="idx">{pad(props.index)}</span>
-				<h3 id={`h-${c.benchmark}`}>
-					<a href={c.readme} title={`${c.what} ${c.setting}.`}>
-						{c.label}
-					</a>
+		<span class="hint" aria-hidden="true">
+			{props.keys}
+			<span class="shut">scan</span>
+			<span class="opened">scanned</span>
+		</span>
+	);
+}
+
+function LineItem(props: { it: Item }) {
+	const c = props.it.row.choice;
+	const id = `i-${c.benchmark}`;
+	return (
+		<article class="item" aria-labelledby={id}>
+			<div class="ihead">
+				<h3 id={id}>
+					<a href={c.readme}>{c.label}</a>
 				</h3>
-				{limit ? (
-					<a class="lim" href={c.readme} title={limit.title}>
-						{limit.tag}
-					</a>
-				) : null}
-				<span class="n" title={`Runs counted: ${inst.marks.map((m) => `${m.instanceType} ${m.runs}`).join(", ")}`}>
-					n {fewest === most ? fewest : `${fewest}–${most}`}
-				</span>
-				<span class="unit" title={unit}>
-					{inst.unit}
-				</span>
-			</header>
-			<div class={["chart", familiesUnique ? "" : "whole", zoom ? "zoomed" : ""].filter(Boolean).join(" ")} style={`--n:${inst.marks.length}`}>
-				<Plot inst={inst} scale={scale} />
-				{inst.marks.map((m, i) => (
-					<>
-						<span class="m" style={`grid-row:${i + 1}`}>
-							<Name type={m.instanceType} />
-						</span>
-						<Figure m={m} row={i + 1} unit={unit} pad={padFor(m.p50.short, texts)} last={i >= inst.marks.length - 2} />
-					</>
-				))}
-				<span class="dir" title={c.lead === "rate" ? "More is faster" : "Less is faster"}>
-					{c.lead === "rate" ? "faster →" : "← faster"}
-				</span>
-				{zoom ? (
-					<span class="zoom" title={`The axis starts at ${zoom.ticks[0]!.label} ${inst.unit}. From zero, all five sit inside the box.`}>
-						<span class="z0">0</span>
-						<Strip inst={inst} zoom={zoom} />
-						<span class="zmax">{inst.zero.ticks[inst.zero.ticks.length - 1]!.label}</span>
-					</span>
-				) : null}
+				<span class="unit">{props.it.unit}</span>
 			</div>
+			<ul class="lines">
+				{props.it.cells.map((cell) => (
+					<li>
+						<span class="m">{cell.instanceType}</span>
+						<span class="lead" aria-hidden="true" />
+						<Fig s={cell.p50} />
+					</li>
+				))}
+			</ul>
+			<details class="scan">
+				<summary>
+					<Barcode
+						charts={props.it.charts}
+						names={props.it.cells.map((cell) => cell.instanceType)}
+						label="Barcode: for each machine in the order above, three bars, its p5, p50 and p95, all from zero on one scale. Scan for every digit."
+					/>
+					<Hint keys="p5 p50 p95 · " />
+				</summary>
+				<div class="scanned">
+					<p class="setting">
+						{props.it.unit} · {c.setting}
+					</p>
+					{props.it.cells.map((cell) => (
+						<dl>
+							<dt>
+								{cell.instanceType} · <a href={cell.url}>{formatCount(cell.runs).full} Runs</a>
+							</dt>
+							<dd>
+								<span>p5</span> {cell.p5.full}
+							</dd>
+							<dd class="p50">
+								<span>p50</span> {cell.p50.full}
+							</dd>
+							<dd>
+								<span>p95</span> {cell.p95.full}
+							</dd>
+						</dl>
+					))}
+				</div>
+			</details>
 		</article>
 	);
 }
 
-function Mark() {
-	return (
-		<svg class="logo" viewBox="0 0 28 28" width="28" height="28" aria-hidden="true">
-			<rect x="0.5" y="0.5" width="27" height="27" rx="6" class="logo-box" />
-			<line x1="6" x2="22" y1="10" y2="10" class="logo-range" />
-			<line x1="6" x2="6" y1="7" y2="13" class="logo-range" />
-			<line x1="22" x2="22" y1="7" y2="13" class="logo-range" />
-			<circle cx="15" cy="10" r="3" class="logo-dot" />
-			<line x1="4" x2="24" y1="20.5" y2="20.5" class="logo-axis" />
-			<line x1="4" x2="4" y1="18" y2="23" class="logo-axis" />
-			<line x1="14" x2="14" y1="19" y2="22" class="logo-axis" />
-			<line x1="24" x2="24" y1="19" y2="22" class="logo-axis" />
-		</svg>
-	);
-}
-
-/** The four boots a day, UTC. */
-const BOOTS = ["04:10", "10:10", "16:10", "22:10"] as const;
+const oldest = formatMoment(snapshot.oldestRunStartedAt);
 
 export default function Page() {
-	const instruments = headline.map(instrument);
-	const newest = formatMoment(snapshot.newestRunStartedAt);
-	const runs = formatCount(snapshot.runCount).full;
-	const failed = formatCount(snapshot.failedRuns).full;
-	const prices = machines.map((m) => formatUsd(m.price.usdPerHour, { per: "hour" }));
-	const priceScale = zeroScale(Math.max(...prices.map((p) => p.value)), 3);
-
-	// The API example: the first chart's c8i.2xlarge Series, its row of series.json, a few fields kept.
-	const hero = instruments[0]!;
-	const ex = hero.marks.findIndex((m) => m.instanceType === "c8i.2xlarge");
-	const exMark = hero.marks[ex < 0 ? 0 : ex]!;
-	const row = hero.row.cells[ex < 0 ? 0 : ex]!.series;
-	const d = row.derivations.series_v1;
-	// One object of that row, as the file holds it: the figure's percentiles in bytes per second.
-	const excerpt = `"bytes_per_second": ${JSON.stringify(d.percentiles.bytes_per_second, null, 2)}`;
-	const tokens = [...excerpt.matchAll(/("(?:[^"\\]|\\.)*")(?=\s*:)|("(?:[^"\\]|\\.)*")|(-?\d[\d.eE+-]*)|([^"\d-]+|-)/g)].map(([text, key, str, num]) => ({
-		kind: key ? "k" : str ? "s" : num ? "n" : "",
-		text,
-	}));
-
-	const agentPrompt = `LedgerMath measures ${machines.length} AWS EC2 machine types in ${snapshot.region}, ${headline.length} benchmarks each, four times a day, and publishes the figures with AWS's On-Demand prices as static JSON. Start at ${links.index}. ${links.seriesList} lists every Series with its p5, p50 and p95. Prices: ${links.prices}. Cite each figure's Series file (${links.seriesFilePattern}), which lists every Run behind it with a link to its evidence. Do not state a figure the API does not give.`;
-
 	return (
-		<>
-			<header class="top">
-				<div class="wrap top-in">
-					<a class="brand" href="#top" aria-label="LedgerMath, top of the page">
-						<Mark />
-						<span>LedgerMath</span>
-					</a>
-					<nav aria-label="On this page">
-						<a href="#charts">Charts</a>
-						<a href="#machines">Machines</a>
-						<a href="#api">API</a>
-					</nav>
-				</div>
-			</header>
+		<div class="counter">
+			<div class="till">
+			<div class="printer" aria-hidden="true">
+				<span class="led" />
+				<span class="slot" />
+			</div>
+			<div class="paper">
+				<header class="top">
+					<h1 class="store">LedgerMath</h1>
+					<p class="tag">AWS servers, benchmarked</p>
+					<p class="web">
+						<a href={links.index}>api.ledgermath.com</a>
+						<span class="copyable" data-copy={links.index} />
+					</p>
+					<p class="small">
+						{snapshot.region} · {zones.join(" ")}
+					</p>
+					<p class="small">open 04:10 · 10:10 · 16:10 · 22:10 UTC</p>
+				</header>
 
-			<main id="top">
-				<section class="hero wrap" aria-labelledby="h1">
-					<h1 id="h1">Five AWS machine types, measured four times a day, every figure with its evidence.</h1>
-					<div class="hero-r">
-						<p class="lede">{headline.length} benchmarks on each freshly booted machine, published with AWS's prices as a static JSON API for AI agents.</p>
-						<div class="cmd">
-							<span class="prompt" aria-hidden="true">$</span>
-							<code data-copy tabindex="0">
-								curl <Url text={links.index} />
-							</code>
-						</div>
-					</div>
-				</section>
-
-				<section class="facts" aria-labelledby="h-fresh">
-					<div class="wrap">
-						<h2 id="h-fresh" class="vh">Freshness and provenance</h2>
-						<dl class="ro">
+				<main>
+					<section class="sale" aria-labelledby="h-sale">
+						<h2 id="h-sale" class="vh">
+							This sale
+						</h2>
+						<p class="rule" aria-hidden="true" />
+						<dl class="kv">
 							<div>
-								<dt>Newest Run</dt>
-								<dd>
-									<time datetime={newest.iso} title={newest.full}>
-										<b>{newest.minute}</b> UTC {newest.date}
-									</time>
-								</dd>
-							</div>
-							<div class="boots">
-								<dt>Boots, UTC</dt>
-								<dd>{BOOTS.join(" ")}</dd>
+								<dt>Date</dt>
+								<dd>{newest.date}</dd>
 							</div>
 							<div>
-								<dt>Runs</dt>
-								<dd>
-									<a href={links.seriesList} title="Every Series, each listing its Runs">
-										<b>{runs}</b>
-									</a>{" "}
-									{failed} failed
-								</dd>
+								<dt>Time</dt>
+								<dd title={newest.full}>{newestTime}</dd>
+							</div>
+							<div class="note">
+								<dt>of the newest Run</dt>
+								<dd>UTC, to the ns</dd>
 							</div>
 							<div>
-								<dt>Region</dt>
-								<dd>
-									<b>{snapshot.region}</b>
-								</dd>
+								<dt>Runs kept</dt>
+								<dd>{formatCount(snapshot.runCount).full}</dd>
 							</div>
 							<div>
-								<dt>Prices</dt>
+								<dt>Series</dt>
 								<dd>
-									<a href={links.prices}>{snapshot.priceDate}</a>
+									<a href={links.seriesList}>{formatCount(snapshot.seriesCount).full}</a>
 								</dd>
 							</div>
 						</dl>
-					</div>
-				</section>
+						<p class="rule" aria-hidden="true" />
+					</section>
 
-				<section class="wrap block" id="charts" aria-labelledby="h-charts">
-					<div class="block-head">
-						<h2 id="h-charts">
-							{headline.length} benchmarks <span class="x">×</span> {machines.length} machines
+					<section class="dept" aria-labelledby="h-prices">
+						<h2 id="h-prices">Price list</h2>
+						<p class="sub">
+							On-Demand Linux, per hour, <a href={links.prices}>{snapshot.priceDate}</a>
+						</p>
+						<ul class="prices">
+							{prices.map(({ m, usd }) => (
+								<li>
+									<div class="pline">
+										<span class="m">{m.instanceType}</span>
+										<span class="lead" aria-hidden="true" />
+										<span class="qty">1 hr @</span>
+										<span class="fig" title={m.price.description}>
+											${usd.full}
+										</span>
+									</div>
+									<p class="spec">
+										{m.vcpu} vCPU · {m.memory} · {m.processor}
+									</p>
+								</li>
+							))}
+						</ul>
+						<details class="scan">
+							<summary>
+								<Barcode
+									class="single"
+									charts={fromZero(machines.map((m) => [Number(m.price.usdPerHour)]))}
+									names={machines.map((m) => m.instanceType)}
+									label="Barcode: the five hourly prices above as bars, in the same order, from zero. Scan for every digit."
+								/>
+								<Hint keys="" />
+							</summary>
+							<div class="scanned">
+								{machines.map((m) => (
+									<dl>
+										<dt>{m.instanceType}</dt>
+										<dd class="p50">
+											{m.price.path.field} {m.price.usdPerHour}
+										</dd>
+										<dd>{m.price.description}</dd>
+									</dl>
+								))}
+							</div>
+						</details>
+					</section>
+
+					<p class="legend">every figure: p50 of every Run</p>
+
+					{sections.map((section) => (
+						<section class="dept" aria-labelledby={`h-${slug(section)}`}>
+							<h2 id={`h-${slug(section)}`}>{section}</h2>
+							{items
+								.filter((it) => it.row.choice.section === section)
+								.map((it) => (
+									<LineItem it={it} />
+								))}
+						</section>
+					))}
+
+					<section class="totals" aria-labelledby="h-total">
+						<p class="rule double" aria-hidden="true" />
+						<dl class="kv big">
+							<div>
+								<dt>Subtotal</dt>
+								<dd class="blank">--.--</dd>
+							</div>
+							<div>
+								<dt>Tax</dt>
+								<dd class="blank">--.--</dd>
+							</div>
+						</dl>
+						<h2 id="h-total" class="total">
+							<span>Total</span>
+							<span class="nc">not computed</span>
 						</h2>
-						<p class="key">
-							<span>
-								<svg width="14" height="12" aria-hidden="true">
-									<circle class="median" cx="7" cy="6" r="4.25" />
-								</svg>
-								median
-							</span>
-							<span>
-								<svg width="26" height="12" aria-hidden="true">
-									<rect class="range" x="2" y="4.5" width="22" height="3" />
-									<line class="cap" x1="2" x2="2" y1="1.5" y2="10.5" />
-									<line class="cap" x1="24" x2="24" y1="1.5" y2="10.5" />
-								</svg>
-								p5–p95
-							</span>
-							<span>
-								<svg width="16" height="12" aria-hidden="true">
-									<path class="break" d="M 3 11 l 3 -9 m 3 9 l 3 -9" />
-								</svg>
-								axis not from 0
-							</span>
+						<p class="why">A total is a computed figure. The data holds none.</p>
+						<p class="rule double" aria-hidden="true" />
+						<dl class="kv">
+							<div>
+								<dt>Paid in</dt>
+								<dd>{formatCount(snapshot.runCount).full} Runs</dd>
+							</div>
+							<div class="note">
+								<dt>counted</dt>
+								<dd>{formatCount(snapshot.countedRuns).full}</dd>
+							</div>
+							<div class="note">
+								<dt>failed, kept</dt>
+								<dd>{formatCount(snapshot.failedRuns).full}</dd>
+							</div>
+						</dl>
+						<p class="rule" aria-hidden="true" />
+						<h2 class="policy">Returns</h2>
+						<p class="why">Every figure links its Runs. Every Run, its evidence. Keep your receipt; we keep ours.</p>
+					</section>
+				</main>
+
+				<footer class="bottom">
+					<p class="thanks">
+						<span>Thank you</span>
+						<span>come again</span>
+					</p>
+					<p class="small">04:10 · 10:10 · 16:10 · 22:10 UTC</p>
+					<div class="loyalty">
+						<p class="offer">Loyalty offer: for agents</p>
+						<p class="small">every figure as JSON, each with its source</p>
+						<p class="url">
+							<code data-copy={links.index}>{links.index}</code>
 						</p>
 					</div>
-					<div class="grid">
-						<article class="card price" id="machines" aria-labelledby="h-machines">
-							<header class="card-h">
-								<span class="idx">$</span>
-								<h3 id="h-machines">
-									<a href={links.prices}>Machines, On-Demand</a>
-								</h3>
-							</header>
-							<table class="mt">
-								<thead>
-									<tr>
-										<th scope="col">
-											<span class="vh">Machine</span>
-										</th>
-										<th scope="col">vCPU</th>
-										<th scope="col">GiB</th>
-										<th scope="col">$ / hour</th>
-										<th scope="col" class="pb">
-											<span class="vh">Price drawn to scale</span>
-										</th>
-									</tr>
-								</thead>
-								<tbody>
-									{machines.map((m, i) => (
-										<tr>
-											<th scope="row" title={m.processor}>
-												<Name type={m.instanceType} />
-											</th>
-											<td>{m.vcpu}</td>
-											<td>{m.memory.replace(/ GiB$/, "")}</td>
-											<td class="pc" title={`${m.price.description} · ${m.price.path.pointer}`}>
-												<span style={padFor(prices[i]!.full, prices.map((p) => p.full))}>${prices[i]!.full}</span>
-											</td>
-											<td class="pb">
-												<svg class="pbar" aria-hidden="true" width="100%" height="10">
-													<rect class="bar" x="0" y="2" width={width(priceScale, 0, prices[i]!.value)} height="6" />
-												</svg>
-											</td>
-										</tr>
-									))}
-								</tbody>
-							</table>
-						</article>
-						{instruments.map((inst, i) => (
-							<Card inst={inst} index={i} />
-						))}
-					</div>
-				</section>
-
-				<section class="band" id="api" aria-labelledby="h-api">
-					<div class="wrap api">
-						<div class="api-l">
-							<div class="api-h">
-								<h2 id="h-api">The API</h2>
-								<a href={links.docs}>Docs</a>
-							</div>
-							<p class="schemas">
-								<span class="lbl">Schemas</span>
-								{links.schemas.map((s) => (
-									<a href={s.url}>
-										<code>{s.name}</code>
-									</a>
-								))}
+					<details class="scan receipt-code">
+						<summary>
+							<Code
+								class="big"
+								chart={bars(runs.map((r) => r.ns))}
+								label={`Barcode: the newest ${runs.length} Runs of ${sample.benchmark} on ${sample.instance_type} as bars, from zero. Scan for every digit.`}
+							/>
+							<span class="num">{sample.id}</span>
+						</summary>
+						<div class="scanned">
+							<p class="setting">
+								<a href={sample.url}>
+									{sample.benchmark} · {sample.instance_type}
+								</a>
+								, newest {runs.length} Runs, {samplePer ? `ns per ${samplePer.of}` : ""}
 							</p>
-							<p class="schemas">
-								<span class="lbl">Methods</span>
-								{snapshot.methods.map((m) => (
-									<a href={links.docs}>
-										<code>
-											{m.name} v{m.version}
-										</code>
-									</a>
+							<ol class="runs">
+								{runs.map((r) => (
+									<li>
+										<a href={r.evidence}>{r.at.date.slice(5)} {r.at.minute}</a> {r.shown.full}
+									</li>
 								))}
-							</p>
-							<details class="agent" id="agent">
-								<summary>Prompt for your agent</summary>
-								<p data-copy tabindex="0">
-									{agentPrompt}
-								</p>
-							</details>
+							</ol>
 						</div>
-						<div class="term" role="group" aria-label="Commands">
-							<ul class="cmds">
-								<li>
-									<p class="c"># every Series, with p5, p50, p95</p>
-									<div class="line">
-										<code data-copy tabindex="0">
-											curl <Url text={links.seriesList} />
-										</code>
-									</div>
-									<figure class="sample">
-										<figcaption>
-											<a href={`#b-${hero.row.choice.benchmark}`}>
-												{pad(0)} {exMark.instanceType} <b>{exMark.p50.full}</b> {hero.unit}
-											</a>
-										</figcaption>
-										<pre tabindex="0" role="region" aria-label={`From series.json: ${row.benchmark} on ${row.instance_type}`}>
-											<code>{tokens.map((t) => (t.kind === "" ? t.text : <span class={t.kind}>{t.text}</span>))}</code>
-										</pre>
-									</figure>
-								</li>
-								<li>
-									<p class="c">
-										# {pad(0)} {exMark.instanceType}: Runs, evidence
-									</p>
-									<div class="line">
-										<code data-copy tabindex="0">
-											curl <Url text={exMark.url} />
-										</code>
-									</div>
-								</li>
-								<li>
-									<p class="c"># prices, {snapshot.priceDate}</p>
-									<div class="line">
-										<code data-copy tabindex="0">
-											curl <Url text={links.prices} />
-										</code>
-									</div>
-								</li>
-							</ul>
-						</div>
-					</div>
-				</section>
-			</main>
-
-			<footer class="foot">
-				<div class="wrap foot-in">
-					<span class="brand small">
-						<Mark />
-						<span>LedgerMath</span>
-					</span>
-					<p>
-						<a href={links.index}>api.ledgermath.com</a> · <a href={links.docs}>Docs</a> · <a href="third-party-notices.txt">Notices</a>
+					</details>
+					<p class="small">
+						<a href={links.docs}>docs</a> · <a href="third-party-notices.txt">font</a>
 					</p>
-				</div>
-			</footer>
-		</>
+				</footer>
+			</div>
+			</div>
+
+			<aside class="spike" aria-labelledby="h-spike">
+				<h2 id="h-spike">Old receipts</h2>
+				<ol>
+					{links.priceFiles.map((file) => (
+						<li>
+							<a href={file.url}>
+								<span>prices</span> <span>{file.date}</span>
+							</a>
+						</li>
+					))}
+				</ol>
+			</aside>
+
+			<div class="card" aria-hidden="true">
+				<p class="card-brand">LedgerMath</p>
+				<p class="card-kind">loyalty card · for agents</p>
+				<p class="card-chip" />
+				<p class="card-num">api.ledgermath.com</p>
+				<p class="card-row">
+					<span>/v1/index.json</span>
+					<span>runs since {oldest.date}</span>
+				</p>
+			</div>
+		</div>
 	);
 }

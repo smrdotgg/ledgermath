@@ -1,4 +1,4 @@
 {
-	"name": "Instrument panel",
-	"idea": "Small multiples: each benchmark a chart placing the five machines on one exact scale, median dot and p5–p95 bar, the figure printed beside each mark; zoomed scales say so."
+	"name": "dt-receipt: Till receipt",
+	"idea": "The home page as a long thermal till receipt in Datatype: machines as the price list, benchmarks as line items, bar charts as barcodes you scan for every digit, and a total not computed."
 }

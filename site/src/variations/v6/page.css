@@ -1,95 +1,399 @@
+/* dt-receipt: a thermal till receipt on a shop counter, printed in Datatype. */
 @font-face {
-	font-family: "Geist";
-	src: url("./fonts/geist.woff2") format("woff2");
+	font-family: "Datatype";
+	src: url("./fonts/Datatype.woff2") format("woff2");
 	font-weight: 100 900;
-	font-display: swap;
-}
-@font-face {
-	font-family: "Geist Mono";
-	src: url("./fonts/geist-mono.woff2") format("woff2");
-	font-weight: 100 900;
+	font-stretch: 50% 150%;
 	font-display: swap;
 }
 
 :root {
 	color-scheme: light dark;
-	--bg: #f3f2ee;
-	--panel: #fdfcf9;
-	--ink: #121418;
-	--ink-2: #343940;
-	--muted: #50565f;
-	--faint: #6b717a;
-	--line: #d9d6cd;
-	--grid: #e9e6de;
-	--track: #efeee9;
-	--accent: #c43d0a;
-	--accent-ink: #a8340a;
-	--range: #59636f;
-	--bar: #7d8794;
-	--window: rgba(196, 61, 10, 0.14);
-	--band: #101317;
-	--band-panel: #171b21;
-	--band-ink: #eceef1;
-	--band-muted: #a3abb6;
-	--band-line: #2a3038;
-	--band-accent: #ff9b5c;
-	--sans: "Geist", ui-sans-serif, system-ui, sans-serif;
-	--mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace;
+	--counter: #cfc8bb;
+	--counter-2: #c4bcae;
+	--paper: #fdfcf7;
+	--paper-edge: #ecebe4;
+	--ink: #232327;
+	--ink-soft: #55555d;
+	--shadow: rgb(60 48 30 / 0.28);
+	--printer: #2b2b30;
+	--printer-2: #3a3a41;
+	--led: #3fbf6a;
 }
-
 @media (prefers-color-scheme: dark) {
 	:root {
-		--bg: #0b0d10;
-		--panel: #111419;
-		--ink: #eceef1;
-		--ink-2: #c9ced5;
-		--muted: #a0a8b3;
-		--faint: #8a939f;
-		--line: #262b33;
-		--grid: #242932;
-		--track: #1a1e25;
-		--accent: #ff8a3d;
-		--accent-ink: #ffa366;
-		--range: #aeb8c5;
-		--bar: #6f7b8a;
-		--window: rgba(255, 138, 61, 0.18);
-		--band: #14181e;
-		--band-panel: #0b0d10;
+		--counter: #17181b;
+		--counter-2: #1f2024;
+		--paper: #eceae2;
+		--paper-edge: #d9d6cc;
+		--ink: #1e1e22;
+		--ink-soft: #4c4c54;
+		--shadow: rgb(0 0 0 / 0.6);
+		--printer: #050506;
+		--printer-2: #2a2a30;
 	}
 }
 
 * {
 	box-sizing: border-box;
 }
-html {
-	scroll-behavior: smooth;
-	-webkit-text-size-adjust: 100%;
-}
+html,
 body {
 	margin: 0;
-	background: var(--bg);
-	color: var(--ink);
-	font: 400 1rem/1.5 var(--sans);
-	font-feature-settings: "ss01", "cv11";
-	-webkit-font-smoothing: antialiased;
 }
+body {
+	background: var(--counter);
+	background-image:
+		radial-gradient(circle at 20% 30%, var(--counter-2) 0 1px, transparent 1.5px),
+		radial-gradient(circle at 70% 80%, var(--counter-2) 0 1px, transparent 1.5px);
+	background-size:
+		7px 7px,
+		11px 11px;
+	font-family: "Datatype", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+	font-variant-ligatures: none;
+	color: var(--ink);
+	overflow-x: clip;
+}
+
+.counter {
+	--fs: clamp(12.5px, 3.45vw, 17px);
+	font-size: var(--fs);
+	line-height: 1.45;
+	padding: 0 12px 64px;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+}
+
+/* ------------------------------------------------------------------ the printer */
+.printer {
+	position: relative;
+	z-index: 2;
+	width: min(100%, 30em);
+	height: 3.2em;
+	margin-top: 1.2em;
+	background: linear-gradient(var(--printer-2), var(--printer));
+	border-radius: 0.9em 0.9em 0.35em 0.35em;
+	box-shadow: 0 0.5em 1.2em var(--shadow);
+}
+.printer .slot {
+	position: absolute;
+	left: 1.1em;
+	right: 1.1em;
+	bottom: 0.5em;
+	height: 0.45em;
+	border-radius: 0.3em;
+	background: #000;
+}
+.printer .led {
+	position: absolute;
+	right: 1.4em;
+	top: 0.8em;
+	width: 0.55em;
+	height: 0.55em;
+	border-radius: 50%;
+	background: var(--led);
+	box-shadow: 0 0 0.6em var(--led);
+	animation: blink 1.6s steps(2, jump-none) infinite;
+}
+@keyframes blink {
+	50% {
+		opacity: 0.25;
+	}
+}
+
+/* ------------------------------------------------------------------ the paper */
+.paper {
+	position: relative;
+	z-index: 1;
+	width: min(100%, 27em);
+	margin-top: -0.9em;
+	padding: 2.2em 1.35em 2.6em;
+	background: var(--paper);
+	box-shadow:
+		0 0.15em 0.3em var(--shadow),
+		0.6em 1.4em 2em -0.8em var(--shadow);
+	animation: print 2.4s steps(24, end) both;
+	transform-origin: top center;
+}
+/* the curl: shade at both edges, under the printer's lip and where the end of the roll lifts */
+.paper::before {
+	content: "";
+	position: absolute;
+	inset: 0;
+	z-index: -1;
+	pointer-events: none;
+	background:
+		linear-gradient(90deg, rgb(0 0 0 / 0.07), transparent 5%, transparent 95%, rgb(0 0 0 / 0.07)),
+		linear-gradient(rgb(0 0 0 / 0.08), transparent 2.5em),
+		linear-gradient(0deg, rgb(0 0 0 / 0.07), transparent 5em);
+}
+/* the torn bottom edge */
+.paper::after {
+	content: "";
+	position: absolute;
+	left: 0;
+	right: 0;
+	bottom: -0.6em;
+	height: 0.6em;
+	background:
+		linear-gradient(135deg, var(--paper) 0.42em, transparent 0) 0 0 / 0.84em 0.6em repeat-x,
+		linear-gradient(225deg, var(--paper) 0.42em, transparent 0) 0 0 / 0.84em 0.6em repeat-x;
+}
+@keyframes print {
+	from {
+		clip-path: inset(0 -2em 100% -2em);
+		translate: 0 -2em;
+	}
+	to {
+		clip-path: inset(0 -2em -3em -2em);
+		translate: 0 0;
+	}
+}
+.till {
+	width: 100%;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+}
+@media (min-width: 900px) {
+	.counter {
+		--fs: 20px;
+		padding-bottom: 120px;
+	}
+	.paper {
+		rotate: -0.6deg;
+	}
+}
+
+/* ------------------------------------------------------------------ the spike of old receipts:
+   the daily price files */
+.spike {
+	position: relative;
+	margin-top: 3.5em;
+	width: 15em;
+	font-size: 0.82em;
+	text-align: center;
+	padding-top: 2.4em;
+}
+.spike::before {
+	/* the rod */
+	content: "";
+	position: absolute;
+	left: 50%;
+	top: 0;
+	bottom: -0.6em;
+	width: 0.22em;
+	margin-left: -0.11em;
+	border-radius: 0.2em 0.2em 0 0;
+	background: linear-gradient(90deg, #6d6d73, #d3d3d8, #6d6d73);
+}
+.spike::after {
+	/* the base */
+	content: "";
+	position: absolute;
+	left: 50%;
+	bottom: -1.1em;
+	width: 7em;
+	margin-left: -3.5em;
+	height: 0.6em;
+	border-radius: 50%;
+	background: #3a3a40;
+	box-shadow: 0 0.3em 0.6em var(--shadow);
+}
+.spike h2 {
+	position: relative;
+	z-index: 1;
+	display: inline-block;
+	text-transform: uppercase;
+	letter-spacing: 0.1em;
+	background: var(--paper);
+	color: var(--ink);
+	padding: 0.1em 0.6em;
+	margin-bottom: 0.6em;
+	text-shadow: 0.045em 0 0 currentColor;
+	box-shadow: 0 0.1em 0.3em var(--shadow);
+}
+.spike ol {
+	position: relative;
+	display: flex;
+	flex-direction: column-reverse;
+}
+.spike li {
+	position: relative;
+	margin-top: -0.15em;
+	background: var(--paper);
+	box-shadow: 0 0.1em 0.35em var(--shadow);
+	padding: 0.55em 0.6em;
+	rotate: calc(var(--r, 0) * 1deg);
+}
+.spike li:nth-child(3n + 1) {
+	--r: -3;
+}
+.spike li:nth-child(3n + 2) {
+	--r: 2.5;
+}
+.spike li:nth-child(4n) {
+	--r: -1;
+	translate: 0.4em 0;
+}
+.spike li:nth-child(5n) {
+	--r: 4;
+	translate: -0.5em 0;
+}
+.spike li::before {
+	/* the hole where the rod goes through */
+	content: "";
+	position: absolute;
+	left: 50%;
+	top: 50%;
+	width: 0.5em;
+	height: 0.5em;
+	margin: -0.25em 0 0 -0.25em;
+	border-radius: 50%;
+	background: #8a8a90;
+	box-shadow: inset 0 0 0 0.12em #c6c6cb;
+}
+.spike a {
+	display: flex;
+	justify-content: space-between;
+	gap: 2.5em;
+	color: var(--ink);
+	text-decoration: none;
+}
+.spike a:hover span:last-child {
+	text-decoration: underline;
+}
+.spike a span:first-child {
+	text-transform: uppercase;
+	color: var(--ink-soft);
+}
+
+/* ------------------------------------------------------------------ the loyalty card */
+.card {
+	display: none;
+}
+@media (min-width: 1150px) {
+	.counter {
+		display: grid;
+		grid-template-columns: 1fr auto 1fr;
+		align-items: start;
+		column-gap: 3em;
+	}
+	.till {
+		grid-column: 2;
+		grid-row: 1;
+		width: 30em;
+	}
+	.spike {
+		grid-column: 1;
+		grid-row: 1;
+		justify-self: end;
+		position: sticky;
+		top: 4em;
+		margin-top: 9em;
+		rotate: 2deg;
+	}
+	.card {
+		grid-column: 3;
+		grid-row: 1;
+		justify-self: start;
+		position: sticky;
+		top: 7em;
+		margin-top: 13em;
+		display: flex;
+		flex-direction: column;
+		width: 18.5em;
+		aspect-ratio: 85.6 / 54;
+		padding: 1em 1.15em;
+		font-size: 0.8em;
+		border-radius: 0.9em;
+		color: #f4f1e8;
+		background:
+			radial-gradient(circle at 85% 0%, rgb(255 255 255 / 0.18), transparent 45%),
+			repeating-linear-gradient(135deg, rgb(255 255 255 / 0.035) 0 0.3em, transparent 0.3em 0.6em),
+			#1e3a34;
+		box-shadow:
+			0 0.2em 0.4em rgb(0 0 0 / 0.25),
+			0.8em 1.2em 2em -0.6em var(--shadow);
+		rotate: 7deg;
+	}
+	.card p {
+		margin: 0;
+	}
+	.card-brand {
+		font-size: 1.35em;
+		text-transform: uppercase;
+		text-shadow: 0.045em 0 0 currentColor;
+	}
+	.card-kind {
+		text-transform: uppercase;
+		font-size: 0.78em;
+		letter-spacing: 0.14em;
+	}
+	.card-chip {
+		width: 2.6em;
+		height: 1.9em;
+		margin: 0.7em 0 0.5em !important;
+		border-radius: 0.35em;
+		background: linear-gradient(135deg, #e3c56d, #b8973f 60%, #e9d48f);
+	}
+	.card-num {
+		font-size: 1.22em;
+		letter-spacing: 0.05em;
+		text-shadow: 0.045em 0 0 currentColor;
+	}
+	.card-row {
+		margin-top: auto !important;
+		display: flex;
+		justify-content: space-between;
+		gap: 1em;
+		font-size: 0.74em;
+		letter-spacing: 0.06em;
+	}
+}
+@media (prefers-reduced-motion: reduce) {
+	.paper,
+	.printer .led {
+		animation: none;
+	}
+}
+
+/* ------------------------------------------------------------------ text */
 a {
 	color: inherit;
-	text-decoration-color: color-mix(in srgb, var(--accent) 70%, transparent);
-	text-decoration-thickness: 1px;
-	text-underline-offset: 3px;
+	text-decoration: underline dotted 1px;
+	text-underline-offset: 0.2em;
 }
 a:hover {
-	color: var(--accent-ink);
+	text-decoration-style: solid;
 }
-code {
-	font-family: var(--mono);
-	font-size: 0.92em;
+a:focus-visible,
+summary:focus-visible,
+button:focus-visible {
+	outline: 2px solid var(--ink);
+	outline-offset: 2px;
 }
-.wrap {
-	max-width: 1392px;
-	margin: 0 auto;
-	padding: 0 40px;
+p,
+h1,
+h2,
+h3,
+dl,
+dd,
+ul,
+ol {
+	margin: 0;
+	padding: 0;
+}
+ul,
+ol {
+	list-style: none;
+}
+h1,
+h2,
+h3 {
+	font-size: inherit;
+	font-weight: inherit;
 }
 .vh {
 	position: absolute;
@@ -99,920 +403,411 @@ code {
 	clip-path: inset(50%);
 	white-space: nowrap;
 }
-.dim {
-	color: var(--muted);
-	font-weight: 400;
+.small,
+.sub,
+.spec,
+.legend {
+	color: var(--ink-soft);
+	font-size: 0.86em;
+}
+.fig,
+.kv dd {
+	font-variant-numeric: tabular-nums;
+}
+/* Datatype's letters come in one weight, so bold is done as a thermal printer does it: by
+   striking each letter twice, a hair apart. */
+.store,
+.tag,
+.web,
+.dept > h2,
+.ihead h3,
+.fig,
+.sale dd[title],
+.total,
+.policy,
+.thanks,
+.offer,
+.url code,
+.scanned dt,
+.scanned dd.p50 {
+	text-shadow: 0.045em 0 0 currentColor;
+}
+.store {
+	text-shadow:
+		0.03em 0 0 currentColor,
+		0.06em 0 0 currentColor;
 }
 
-/* ------------------------------------------------------------ top bar */
-
+/* the header, as a till prints it: double width, bold, centred */
 .top {
-	border-bottom: 1px solid var(--line);
-	background: var(--bg);
+	text-align: center;
 }
-.top-in {
-	display: flex;
-	align-items: center;
-	gap: 32px;
-	height: 56px;
-}
-.brand {
-	display: inline-flex;
-	align-items: center;
-	gap: 10px;
-	font-weight: 650;
-	font-size: 1.06rem;
-	letter-spacing: -0.01em;
-	text-decoration: none;
-}
-.logo-box {
-	fill: var(--panel);
-	stroke: var(--ink);
-}
-.logo-range {
-	stroke: var(--range);
-	stroke-width: 1.5;
-}
-.logo-dot {
-	fill: var(--accent);
-}
-.logo-axis {
-	stroke: var(--ink);
-	stroke-width: 1.25;
-}
-.top nav {
-	display: flex;
-	gap: 22px;
-	margin-left: auto;
-	font-size: 0.875rem;
-}
-.top nav a {
-	text-decoration: none;
-	color: var(--ink-2);
-}
-.top nav a:hover {
-	color: var(--ink);
-}
-
-/* ------------------------------------------------------------ hero */
-
-.hero {
-	display: grid;
-	grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
-	gap: 64px;
-	align-items: end;
-	padding-top: 44px;
-	padding-bottom: 36px;
-}
-h1 {
-	margin: 0;
-	font-size: clamp(2rem, 3.6vw, 3.3rem);
-	line-height: 1.03;
-	font-weight: 620;
-	letter-spacing: -0.034em;
-	text-wrap: balance;
-}
-.lede {
-	margin: 0 0 16px;
-	font-size: 1.06rem;
-	line-height: 1.5;
-	color: var(--ink-2);
-	text-wrap: pretty;
-}
-.cmd {
-	border: 1px solid var(--band-line);
-	display: flex;
-	align-items: center;
-	gap: 12px;
-	padding: 12px 14px 12px 16px;
-	background: var(--band);
-	color: var(--band-ink);
-	border-radius: 10px;
-	font: 0.85rem/1.4 var(--mono);
-}
-.cmd code {
-	font-size: inherit;
-	white-space: nowrap;
-	flex: 1;
-	min-width: 0;
-	overflow-x: auto;
-	scrollbar-width: none;
-}
-.prompt {
-	color: var(--band-accent);
-}
-.btn {
-	display: inline-block;
-	margin-top: 12px;
-	padding: 9px 15px;
-	border-radius: 8px;
-	border: 1px solid var(--ink);
-	color: var(--ink);
-	font-size: 0.88rem;
-	font-weight: 550;
-	text-decoration: none;
-}
-.btn:hover {
-	background: var(--ink);
-	color: var(--bg);
-}
-
-/* ------------------------------------------------------------ facts */
-
-.facts {
-	border-top: 1px solid var(--line);
-	border-bottom: 1px solid var(--line);
-	background: var(--panel);
-}
-.ro {
-	display: flex;
-	margin: 0;
-	font: 0.8rem/1.3 var(--mono);
-	color: var(--ink-2);
-}
-.ro > div {
-	flex: 1 1 auto;
-	padding: 14px 20px;
-	border-left: 1px solid var(--line);
-	display: flex;
-	flex-direction: column;
-	justify-content: center;
-	gap: 4px;
-	white-space: nowrap;
-}
-.ro > div:first-child {
-	border-left: 0;
-	padding-left: 0;
-}
-.ro > div:last-child {
-	padding-right: 0;
-}
-.ro dt {
-	font-size: 0.72rem;
-	letter-spacing: 0.05em;
+.store {
+	font-size: 2.05em;
+	line-height: 1.1;
 	text-transform: uppercase;
-	color: var(--ink-2);
+	transform: scaleY(1.45);
+	margin: 0.2em 0 0.35em;
 }
-.ro dd {
-	margin: 0;
-}
-.ro b {
+.tag {
 	font-weight: 600;
-	font-size: 1.05rem;
-	color: var(--ink);
+	text-transform: uppercase;
+	letter-spacing: 0.08em;
+	font-size: 0.92em;
 }
-.ro a:has(b) {
-	text-decoration: none;
-}
-.ro a b {
-	text-decoration: underline 1px color-mix(in srgb, var(--accent) 70%, transparent);
-	text-underline-offset: 3px;
-}
-
-/* ------------------------------------------------------------ charts */
-
-.block {
-	padding-top: 40px;
-	padding-bottom: 48px;
-}
-.block-head {
+.web {
+	margin: 0.55em 0 0.35em;
+	font-weight: 700;
+	font-size: 1.12em;
 	display: flex;
+	justify-content: center;
 	align-items: baseline;
-	justify-content: space-between;
-	gap: 12px 32px;
+	gap: 0.5em;
 	flex-wrap: wrap;
-	margin-bottom: 16px;
-}
-h2 {
-	margin: 0;
-	font-size: 1.6rem;
-	line-height: 1.15;
-	font-weight: 620;
-	letter-spacing: -0.025em;
-}
-h2 .x {
-	color: var(--muted);
-	font-weight: 400;
-}
-.key {
-	display: flex;
-	flex-wrap: wrap;
-	gap: 6px 20px;
-	margin: 0;
-	font: 0.78rem/1 var(--mono);
-	color: var(--ink-2);
-}
-.key span {
-	display: inline-flex;
-	align-items: center;
-	gap: 7px;
-}
-
-.grid {
-	display: grid;
-	grid-template-columns: repeat(3, minmax(0, 1fr));
-	border: 1px solid var(--line);
-	border-radius: 14px;
-	background: var(--panel);
-	overflow: hidden;
-}
-.card {
-	padding: 16px 20px 16px;
-	border-right: 1px solid var(--line);
-	border-bottom: 1px solid var(--line);
-	min-width: 0;
-	margin: 0 -1px -1px 0;
-	/* Header, chart and tags each take a row shared across the grid's row, so charts line up beside each other. */
-	display: grid;
-	grid-template-columns: minmax(0, 1fr);
-	grid-row: span 3;
-	grid-template-rows: subgrid;
-	row-gap: 0;
-	align-content: start;
-}
-.card-h {
-	display: flex;
-	align-items: baseline;
-	gap: 10px;
-	margin-bottom: 10px;
-}
-.idx {
-	font: 600 0.72rem/1 var(--mono);
-	color: var(--accent-ink);
-	flex: none;
-	min-width: 1.4em;
-}
-h3 {
-	margin: 0;
-	font-size: 0.98rem;
-	line-height: 1.25;
-	font-weight: 600;
-	letter-spacing: -0.01em;
-}
-h3 a {
-	text-decoration: none;
-}
-h3 a:hover {
-	text-decoration: underline;
-}
-
-.card-h h3 {
-	flex: 1 1 auto;
-	min-width: 0;
-	text-wrap: balance;
-}
-.card-h .n {
-	flex: none;
-	font: 450 0.72rem/1 var(--mono);
-	color: var(--muted);
-	white-space: nowrap;
-}
-.card-h .unit {
-	flex: none;
-	font: 600 0.78rem/1 var(--mono);
-	color: var(--ink);
-	white-space: nowrap;
-}
-.dir {
-	grid-row: axis;
-	grid-column: 1;
-	align-self: start;
-	padding-top: 6px;
-	font: 500 0.75rem/1 var(--mono);
-	color: var(--ink-2);
-	white-space: nowrap;
-}
-/* The volume's limit, a tag beside the unit: these two charts measure the gp3 volume, not the machine. */
-.card-h .lim {
-	flex: none;
-	align-self: center;
-	padding: 3px 6px;
-	border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--line));
-	border-radius: 4px;
-	font: 500 0.68rem/1 var(--mono);
-	color: var(--accent-ink);
-	text-decoration: none;
-	white-space: nowrap;
-}
-.card-h .lim:hover {
-	background: var(--window);
-}
-.chart {
-	--row: 24px;
-	display: grid;
-	grid-template-columns: 6.2em minmax(0, 1fr) minmax(4.2em, max-content);
-	grid-template-rows: repeat(var(--n), var(--row)) [axis] 22px [zoom] auto;
-	column-gap: 12px;
-}
-.plot {
-	grid-column: 2;
-	grid-row: 1 / zoom;
-	display: block;
-	overflow: visible;
-}
-.m,
-.v {
-	align-self: center;
-	font: 450 0.75rem/1 var(--mono);
-	white-space: nowrap;
-}
-.m {
-	grid-column: 1;
-	color: var(--ink-2);
-}
-.v {
-	grid-column: 3;
-	text-align: right;
-	font-weight: 600;
-	font-size: 0.8rem;
-	font-variant-numeric: tabular-nums;
-	color: var(--ink);
-	/* Each figure is a link to its Series file: a neutral hairline under its digits only (the padding that
-	   lines it up on the point stays bare), so the orange belongs to the medians. */
-	text-decoration: underline 1px var(--line);
-	text-underline-offset: 4px;
-}
-a.v:hover,
-a.v:focus-visible {
-	color: var(--accent-ink);
-	text-decoration: underline 1.5px var(--accent);
-}
-
-.plot line {
-	shape-rendering: crispEdges;
-}
-.plot .grid {
-	stroke: var(--grid);
-}
-.plot .grid.zero {
-	stroke: var(--line);
-}
-.track {
-	stroke: var(--track);
-}
-.range {
-	fill: var(--range);
-}
-.cap {
-	stroke: var(--range);
-	stroke-width: 1.5;
-}
-.bar {
-	fill: var(--bar);
-}
-.median {
-	fill: var(--accent);
-	stroke: var(--panel);
-	stroke-width: 1.5;
-}
-.median.small {
-	stroke-width: 0.75;
-}
-.axis {
-	stroke: var(--ink-2);
-}
-.tick {
-	stroke: var(--ink-2);
-}
-.tl {
-	font: 500 0.75rem var(--mono);
-	fill: var(--ink-2);
-	font-variant-numeric: tabular-nums;
-}
-.break {
-	stroke: var(--accent);
-	stroke-width: 1.5;
-	fill: none;
-}
-.mark:hover .track {
-	stroke: var(--line);
-}
-
-/* The strip from zero takes the chart's last row, in the plot's own column, so its ends sit under the plot's. */
-.zoom {
-	display: contents;
-}
-.zoom .z0,
-.zoom .zmax {
-	grid-row: zoom;
-	align-self: end;
-	text-align: right;
-	padding-bottom: 4px;
-	font: 500 0.75rem/1 var(--mono);
-	color: var(--ink-2);
-}
-.zoom .z0 {
-	grid-column: 1;
-	padding-bottom: 0;
-	transform: translateY(4px);
-}
-/* The strip's own end label, set just past its end tick rather than under the column of figures. */
-.zoom .zmax {
-	grid-column: 3;
-	text-align: left;
-	margin-left: -6px;
-	padding-bottom: 0;
-	transform: translateY(4px);
-}
-.strip {
-	grid-row: zoom;
-	grid-column: 2;
-	display: block;
-	overflow: visible;
-	margin-top: 4px;
-}
-.window.thin {
-	fill: var(--accent);
-	stroke: none;
-}
-.lens {
-	stroke: var(--accent);
-	stroke-width: 1;
-	stroke-dasharray: 2 3;
-	opacity: 0.7;
-}
-.window {
-	fill: var(--window);
-	stroke: var(--accent);
-	stroke-width: 1;
-}
-
-/* the machines card */
-
-.mt {
-	width: 100%;
-	border-collapse: collapse;
-	font: 450 0.75rem/1 var(--mono);
-	font-variant-numeric: tabular-nums;
-	margin-top: 2px;
-}
-.mt th,
-.mt td {
-	height: 24px;
-	padding: 0 0 0 10px;
-	text-align: right;
-	white-space: nowrap;
-}
-.mt thead th {
-	height: 18px;
-	vertical-align: top;
-	font-weight: 500;
-	font-size: 0.68rem;
-	color: var(--muted);
-}
-.mt tbody th {
-	text-align: left;
-	padding-left: 0;
-	font-weight: 450;
-	color: var(--ink-2);
-	width: 6.2em;
-}
-.mt td {
-	color: var(--ink);
-}
-.mt td.pc {
-	font-weight: 600;
-	font-size: 0.8rem;
-}
-.mt .pb {
-	width: 40%;
-	padding-left: 14px;
-}
-.pbar {
-	display: block;
-}
-
-/* every digit: a median opens, beside itself and over the plot, to its exact p95, p50 and p5, its Runs and its Series */
-
-.fig {
-	grid-column: 3;
-	align-self: center;
-	position: relative;
-	justify-self: end;
-}
-.fig > summary {
-	display: block;
-	list-style: none;
-	cursor: pointer;
-}
-.fig > summary::-webkit-details-marker {
-	display: none;
-}
-.fig > summary:hover,
-.fig > summary:focus-visible,
-.fig[open] > summary {
-	color: var(--accent-ink);
-	text-decoration: underline 1.5px var(--accent);
-}
-.pop {
-	position: absolute;
-	z-index: 3;
-	right: calc(100% + 10px);
-	top: -10px;
-	display: grid;
-	grid-template-columns: auto auto;
-	gap: 3px 14px;
-	padding: 10px 12px;
-	background: var(--panel);
-	border: 1px solid var(--line);
-	border-radius: 8px;
-	box-shadow: 0 6px 24px rgba(0, 0, 0, 0.14);
-	font: 450 0.74rem/1.35 var(--mono);
-	font-variant-numeric: tabular-nums;
-	white-space: nowrap;
-}
-.fig.up .pop {
-	top: auto;
-	bottom: -10px;
-}
-.pop .k {
-	color: var(--muted);
-}
-.pop .x {
-	text-align: right;
-	color: var(--ink-2);
-}
-.pop .x.med {
-	color: var(--ink);
-	font-weight: 600;
-}
-.pop .go {
-	grid-column: 1 / -1;
-	justify-self: end;
-	margin-top: 4px;
-	font-weight: 600;
-	color: var(--accent-ink);
-	text-underline-offset: 3px;
-}
-.tt {
-	color: var(--faint);
-	font-weight: 400;
-}
-
-/* a machine's family in ink, its size lighter */
-.sz {
-	color: var(--muted);
-}
-.mt tbody th .fam,
-.chart .fam {
-	color: var(--ink);
-}
-
-/* ------------------------------------------------------------ API band */
-
-.band {
-	background: var(--band);
-	color: var(--band-ink);
-	--accent-ink: var(--band-accent);
-}
-.api {
-	display: grid;
-	grid-template-columns: minmax(0, 1fr) minmax(0, 1.35fr);
-	gap: 56px;
-	padding-top: 52px;
-	padding-bottom: 56px;
-	align-items: start;
-}
-.api-h {
-	display: flex;
-	align-items: baseline;
-	gap: 18px;
-}
-.api-h a {
-	font-size: 0.9rem;
-	color: var(--band-ink);
-}
-.api-l p {
-	margin: 12px 0 0;
-	color: var(--band-muted);
-	max-width: 30em;
-}
-.schemas {
-	display: flex;
-	flex-wrap: wrap;
-	gap: 6px 14px;
-	font-size: 0.85rem;
-}
-.schemas .lbl {
-	color: var(--band-muted);
-}
-.schemas a {
-	color: var(--band-ink);
-}
-.agent {
-	margin-top: 22px;
-	border: 1px solid var(--band-line);
-	border-radius: 10px;
-	background: var(--band-panel);
-}
-.agent summary {
-	cursor: pointer;
-	padding: 11px 14px;
-	font-weight: 600;
-	font-size: 0.9rem;
-}
-.agent p {
-	margin: 0;
-	padding: 0 14px 12px;
-	font: 0.78rem/1.6 var(--mono);
-	color: var(--band-ink);
-	overflow-wrap: anywhere;
-}
-.agent .copy {
-	margin: 0 14px 14px;
-}
-.term {
-	background: var(--band-panel);
-	border: 1px solid var(--band-line);
-	border-radius: 12px;
-	min-width: 0;
-}
-.cmds {
-	list-style: none;
-	margin: 0;
-	padding: 18px 22px;
-	display: grid;
-	gap: 16px;
-	font: 0.8rem/1.6 var(--mono);
-}
-.cmds li {
-	min-width: 0;
-}
-.cmds .c {
-	margin: 0;
-	color: var(--band-muted);
-}
-.cmds code {
-	font-size: inherit;
-}
-.line {
-	display: flex;
-	align-items: flex-start;
-	gap: 10px;
-}
-/* Each command stays whole on one line and scrolls sideways inside its row when it is longer. */
-.line code {
-	flex: 1 1 auto;
-	min-width: 0;
-	white-space: nowrap;
-	overflow-x: auto;
-	scrollbar-width: none;
-}
-.line .copy {
-	flex: none;
-	margin: 2px 0 0 auto;
-}
-.cmds pre {
-	margin: 10px 0 0;
-	padding: 12px 14px;
-	border-radius: 8px;
-	background: color-mix(in srgb, var(--band-line) 45%, transparent);
-	overflow-x: auto;
-	font: 0.74rem/1.6 var(--mono);
-	color: var(--band-muted);
-}
-.cmds pre code {
-	overflow-wrap: normal;
-}
-/* The sample names the chart row it is: the same median, the digits the chart rounds. */
-.sample {
-	margin: 10px 0 0;
-}
-.sample figcaption {
-	font: 0.72rem/1 var(--mono);
-	color: var(--band-muted);
-	margin-bottom: -2px;
-}
-.sample figcaption a {
-	text-decoration: none;
-}
-.sample figcaption b {
-	color: var(--band-accent);
-	font-weight: 600;
-	text-decoration: underline 1px color-mix(in srgb, var(--band-accent) 50%, transparent);
-	text-underline-offset: 3px;
-}
-.sample pre {
-	margin-top: 8px;
-}
-.cmds .s {
-	color: var(--band-ink);
-}
-.cmds .n {
-	color: var(--band-accent);
-}
-:focus-visible {
-	outline: 2px solid var(--accent);
-	outline-offset: 2px;
-}
-.band :focus-visible,
-.cmd :focus-visible {
-	outline-color: var(--band-accent);
 }
 .copy {
-	font: 500 0.68rem/1 var(--mono);
-	margin-left: 10px;
-	padding: 4px 7px;
-	border-radius: 5px;
-	border: 1px solid var(--band-line);
+	font: inherit;
+	font-size: 0.78em;
+	font-weight: 600;
+	color: var(--ink);
 	background: transparent;
-	color: var(--band-muted);
+	border: 0;
+	padding: 0.1em 0.2em;
 	cursor: pointer;
-	vertical-align: 1px;
 }
 .copy:hover {
-	color: var(--band-ink);
-	border-color: var(--band-muted);
-}
-.cmd .copy {
-	margin-left: auto;
-	flex: none;
+	background: var(--ink);
+	color: var(--paper);
 }
 
-/* ------------------------------------------------------------ footer */
-
-.foot {
-	padding: 22px 0 28px;
-	font-size: 0.82rem;
-	color: var(--muted);
+/* dashed and double rules, as the printer draws them */
+.rule {
+	border-top: 2px dashed var(--ink);
+	margin: 0.9em 0;
+	opacity: 0.9;
 }
-.foot-in {
+.rule.double {
+	border-top: 3px double var(--ink);
+	height: 0;
+}
+
+/* key ... value lines */
+.kv > div {
 	display: flex;
-	align-items: center;
 	justify-content: space-between;
-	gap: 16px;
-	flex-wrap: wrap;
+	gap: 1em;
 }
-.foot p {
-	margin: 0;
+.kv dt {
+	text-transform: uppercase;
 }
-.brand.small {
-	font-size: 0.9rem;
+.kv dd {
+	text-align: right;
+}
+.kv .note {
+	color: var(--ink-soft);
+	font-size: 0.86em;
+	padding-left: 1.2em;
+}
+.kv .note dt {
+	text-transform: none;
+}
+.sale dd[title] {
+	font-size: 1.12em;
+}
+
+/* departments */
+.dept {
+	margin-top: 1.4em;
+}
+.dept > h2 {
+	text-align: center;
+	font-weight: 700;
+	text-transform: uppercase;
+	letter-spacing: 0.12em;
+	margin-bottom: 0.3em;
+}
+.dept > h2::before,
+.dept > h2::after {
+	content: " ** ";
+	letter-spacing: 0;
+}
+.dept > .sub {
+	text-align: center;
+	margin-bottom: 0.5em;
+}
+.legend {
+	text-align: center;
+	margin-top: 1.4em;
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+	border: 1px solid var(--ink-soft);
+	padding: 0.25em 0.4em;
+}
+
+/* item lines with dotted leaders */
+.prices li + li {
+	margin-top: 0.35em;
+}
+.pline,
+.lines li {
+	display: flex;
+	align-items: baseline;
+	gap: 0.35em;
+}
+.lead {
+	flex: 1;
+	min-width: 1em;
+	border-bottom: 2px dotted var(--ink-soft);
+	translate: 0 -0.3em;
+}
+.qty {
+	color: var(--ink-soft);
+	font-size: 0.86em;
+}
+.fig {
+	font-weight: 600;
+}
+.spec {
+	padding-left: 1.2em;
+}
+
+.item {
+	margin-top: 1em;
+}
+.ihead {
+	display: flex;
+	justify-content: space-between;
+	align-items: baseline;
+	gap: 0.8em;
+	border-bottom: 1px solid var(--ink);
+	margin-bottom: 0.2em;
+}
+.ihead h3 {
+	font-weight: 700;
+}
+.ihead h3 a {
+	text-decoration: none;
+}
+.ihead h3 a:hover {
+	text-decoration: underline;
+}
+.unit {
+	font-size: 0.86em;
+	color: var(--ink-soft);
+	text-align: right;
+	flex: none;
+	max-width: 50%;
+}
+.lines li {
+	padding-left: 0.6em;
+}
+
+/* barcodes: Datatype bar charts, tapped to scan */
+.scan {
+	margin-top: 0.35em;
+}
+.scan > summary {
+	list-style: none;
+	cursor: pointer;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 0.1em;
+}
+.scan > summary::-webkit-details-marker {
+	display: none;
+}
+.code {
+	display: block;
+	line-height: 1;
+}
+.dt {
+	font-family: "Datatype", ui-monospace, monospace;
+	font-feature-settings:
+		"liga" 1,
+		"calt" 1;
+	font-variant-ligatures: common-ligatures contextual;
+	letter-spacing: 0;
+	white-space: nowrap;
 	color: var(--ink);
 }
-.brand.small .logo {
-	width: 22px;
-	height: 22px;
+/* An item's barcode: five clusters (p5 p50 p95 of each machine) across the paper, stretched
+   upward alike, so every bar keeps its proportion to zero. */
+.barcode {
+	display: flex;
+	justify-content: space-between;
+	align-items: flex-end;
+	width: 100%;
+	padding: 0 0.3em;
+}
+.barcode .slot {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+}
+.barcode .dt {
+	display: block;
+	font-size: 2.5em;
+	line-height: 1;
+	font-weight: 330;
+	font-stretch: 74%;
+	transform: scaleY(1.8);
+	transform-origin: bottom;
+	margin-top: 0.8em;
+}
+.barcode.single .dt {
+	font-weight: 600;
+	font-stretch: 60%;
+}
+.digits {
+	font-size: 0.72em;
+	letter-spacing: 0.12em;
+	margin-top: 0.15em;
+}
+.hint {
+	font-size: 0.72em;
+	letter-spacing: 0.3em;
+	text-transform: uppercase;
+	color: var(--ink-soft);
+}
+.hint .opened,
+.scan[open] .hint .shut {
+	display: none;
+}
+.scan[open] .hint .opened {
+	display: inline;
+}
+.scanned {
+	text-align: left;
+	margin: 0.4em 0 0.2em;
+	padding: 0.5em 0.6em;
+	border: 1px dashed var(--ink-soft);
+	font-size: 0.82em;
+	overflow-wrap: anywhere;
+}
+.scanned .setting {
+	color: var(--ink-soft);
+}
+.scanned dl {
+	margin-top: 0.45em;
+}
+.scanned dt {
+	font-weight: 700;
+}
+.scanned dd {
+	padding-left: 1em;
+	font-variant-numeric: tabular-nums;
+}
+.scanned dd span {
+	display: inline-block;
+	width: 2.6em;
+	color: var(--ink-soft);
+}
+.scanned dd.p50 {
+	font-weight: 700;
 }
 
-/* ------------------------------------------------------------ narrower */
+/* totals */
+.totals {
+	margin-top: 1.6em;
+}
+.kv.big {
+	font-size: 1.05em;
+}
+.blank {
+	color: var(--ink-soft);
+}
+.total {
+	display: flex;
+	justify-content: space-between;
+	align-items: baseline;
+	gap: 0.6em;
+	flex-wrap: wrap;
+	font-weight: 800;
+	font-size: 1.55em;
+	text-transform: uppercase;
+	margin: 0.2em 0 0.1em;
+}
+/* a rubber stamp, in red ink, added by hand after printing */
+.total .nc {
+	--stamp: #b0201a;
+	color: var(--stamp);
+	font-size: 0.66em;
+	border: 3px double var(--stamp);
+	border-radius: 0.2em;
+	padding: 0.1em 0.4em;
+	rotate: -4deg;
+	letter-spacing: 0.06em;
+	text-shadow: 0.045em 0 0 currentColor;
+}
+.why {
+	font-size: 0.86em;
+	color: var(--ink-soft);
+}
+.policy {
+	font-weight: 700;
+	text-transform: uppercase;
+}
 
-@media (max-width: 1180px) {
-	.grid {
-		grid-template-columns: repeat(2, minmax(0, 1fr));
-	}
-	.ro {
-		flex-wrap: wrap;
-	}
-	.ro > div {
-		flex: 1 1 30%;
-		border-left: 0;
-		padding-left: 0;
-	}
+/* footer */
+.bottom {
+	margin-top: 1.6em;
+	text-align: center;
 }
-@media (max-width: 860px) {
-	.hero,
-	.api {
-		grid-template-columns: minmax(0, 1fr);
-		gap: 24px;
-	}
+.thanks {
+	font-weight: 800;
+	text-transform: uppercase;
+	font-size: 1.3em;
+	line-height: 1.2;
+	display: flex;
+	flex-direction: column;
 }
-@media (max-width: 640px) {
-	.wrap {
-		padding: 0 16px;
-	}
-	.top nav {
-		gap: 16px;
-	}
-	.hero {
-		padding-top: 26px;
-		padding-bottom: 24px;
-		gap: 16px;
-	}
-	h1 {
-		font-size: 1.62rem;
-		line-height: 1.06;
-	}
-	.btn {
-		margin-top: 10px;
-		padding: 7px 12px;
-		font-size: 0.84rem;
-	}
-	.ro > div {
-		white-space: normal;
-	}
-	.lede {
-		font-size: 1rem;
-	}
-	/* The command keeps the box's whole width on one line; the copy button, when there is one, takes the line below, at the right. */
-	.cmd {
-		flex-wrap: wrap;
-		font-size: 0.68rem;
-		padding: 12px 10px 8px 12px;
-		gap: 6px 8px;
-	}
-	.cmd code {
-		flex-basis: calc(100% - 2em);
-	}
-	.cmds li {
-		position: relative;
-	}
-	.cmds .c {
-		padding-right: 52px;
-	}
-	/* On a phone each copy button sits on its command's comment line, so the command has the full width. */
-	.line .copy {
-		position: absolute;
-		top: 0;
-		right: 0;
-		margin: 0;
-	}
-	/* Two columns: Newest Run and Runs share the first line, the boots the second, Region and Prices the third. */
-	.ro {
-		display: grid;
-		grid-template-columns: repeat(2, minmax(0, 1fr));
-		column-gap: 12px;
-	}
-	.ro > div {
-		grid-column: span 1;
-		order: 2;
-		justify-content: flex-start;
-	}
-	.ro > div:nth-child(1),
-	.ro > div:nth-child(3) {
-		order: 0;
-	}
-	.ro > .boots {
-		grid-column: 1 / -1;
-		order: 1;
-		flex-direction: row;
-		align-items: baseline;
-		gap: 12px;
-		border-top: 1px solid var(--line);
-		border-bottom: 1px solid var(--line);
-	}
-	.block {
-		padding-top: 28px;
-		padding-bottom: 32px;
-	}
-	h2 {
-		font-size: 1.35rem;
-	}
-	.grid {
-		grid-template-columns: minmax(0, 1fr);
-		margin: 0 -16px;
-		border-radius: 0;
-		border-left: 0;
-		border-right: 0;
-	}
-	.card {
-		padding: 12px 16px 10px;
-		border-right: 0;
-	}
-	.card-h {
-		margin-bottom: 6px;
-	}
-	.card-h h3 {
-		white-space: normal;
-	}
-	/* The family alone names a machine in the charts (the Machines panel above keys it), so the plots get the width. */
-	/* The label column is as wide as "faster →", the widest thing in it. */
-	.chart {
-		grid-template-columns: 3.6em minmax(0, 1fr) minmax(4em, max-content);
-		column-gap: 10px;
-	}
-	.chart .dir {
-		font-size: 0.72rem;
-	}
-	/* A zoomed axis starts with a long label, centred on the plot's edge: room for its half too. */
-	.chart.zoomed {
-		grid-template-columns: 4.8em minmax(0, 1fr) minmax(4em, max-content);
-	}
-	.chart .sz {
-		display: none;
-	}
-	.chart.whole {
-		grid-template-columns: 6.4em minmax(0, 1fr) minmax(4em, max-content);
-	}
-	.chart.whole .sz {
-		display: inline;
-	}
-	.ro > div {
-		padding: 8px 0;
-	}
-	/* A long command wraps after a slash, under a hanging indent, rather than running off the edge. */
-	.line code {
-		white-space: normal;
-		overflow-wrap: normal;
-		padding-left: 2ch;
-		text-indent: -2ch;
-	}
-	.api {
-		padding-top: 36px;
-		padding-bottom: 40px;
-	}
-	.cmds {
-		padding: 14px;
-		font-size: 0.74rem;
-	}
+.thanks span + span::before {
+	content: "~ ";
+}
+.thanks span + span::after {
+	content: " ~";
+}
+.loyalty {
+	margin: 1.1em 0;
+	padding: 0.7em 0.6em;
+	border: 2px dashed var(--ink);
+	border-radius: 0.5em;
+}
+.offer {
+	font-weight: 800;
+	text-transform: uppercase;
+}
+.url {
+	margin-top: 0.4em;
+	display: flex;
+	justify-content: center;
+	align-items: baseline;
+	flex-wrap: wrap;
+	gap: 0.3em;
+}
+.url code {
+	font: inherit;
+	font-size: 0.86em;
+	font-weight: 700;
+	overflow-wrap: anywhere;
+}
+.receipt-code .big .dt {
+	display: block;
+	font-size: 2.2em;
+	font-weight: 230;
+	font-stretch: 120%;
+	transform: scaleY(2.4);
+	transform-origin: bottom;
+	margin-top: 1.5em;
+}
+.num {
+	letter-spacing: 0.35em;
+	font-size: 0.9em;
+}
+.runs li {
+	font-variant-numeric: tabular-nums;
+}
+.bottom .small:last-child {
+	margin-top: 1em;
 }
