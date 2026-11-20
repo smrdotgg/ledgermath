@@ -3,7 +3,8 @@
 // the API file it came from, the dates of the Runs behind it, and the address to start from. Every
 // figure is the data module's, exactly; every mark carries its source in its accessible name.
 import "./page.css";
-import { formatDurationPerUnit, formatMoment, formatUsd, headline, links, machineOf, series, seriesFileContents } from "../../data";
+import type { JSX } from "@solidjs/web";
+import { formatCount, formatDurationPerUnit, formatMoment, formatUsd, headline, links, machineOf, series, seriesFileContents } from "../../data";
 
 // ---------------------------------------------------------------- the exchange's facts
 
@@ -28,16 +29,40 @@ const askedPrice = formatUsd(askedMachine.price.usdPerHour, { per: "hour" });
 const askedOldest = formatMoment(askedSeries.oldest_run_started_at);
 const askedNewest = formatMoment(askedSeries.newest_run_started_at);
 const askedSeriesIndex = series.indexOf(askedSeries);
+const askedDerivation = askedSeries.derivations.series_v1;
+const askedRun = seriesFileContents.point.example;
+const askedRunAt = formatMoment(askedRun.started_at);
 const p50Path = `/series/${askedSeriesIndex}/derivations/series_v1/percentiles/time_per_repetition_ns/p50`;
 
-/** A numbered mark that cites one file: its number shown, the file and the field in its name. */
+/** A numbered mark that cites one file: its number shown, the file and the field in its name; it leads to its line of the sources. */
 function Cite(props: { n: number; href: string; source: string }) {
 	return (
 		<sup class="cite-sup">
-			<a class="cite" href={props.href} aria-label={`Source ${props.n}: ${props.source}`} title={props.source}>
+			<a class="cite" href={`#src-${props.n}`} aria-label={`Source ${props.n}: ${props.source}`} title={props.source}>
 				{props.n}
 			</a>
 		</sup>
+	);
+}
+
+/**
+ * One line of the sources: its number, the file (a link, its path shown without the host), the
+ * field in it (its whole path in the title), and what the answer took from there.
+ */
+function Source(props: { n: number; href: string; field: string; path: string; children: JSX.Element }) {
+	return (
+		<li class="src" id={`src-${props.n}`}>
+			<span class="src-n" aria-hidden="true">
+				{props.n}
+			</span>
+			<a class="src-file" href={props.href}>
+				{props.href.replace(/^https:\/\/[^/]+\//, "")}
+			</a>
+			<code class="src-field" title={props.path}>
+				{props.field}
+			</code>
+			<span class="src-val">{props.children}</span>
+		</li>
 	);
 }
 
@@ -83,12 +108,32 @@ export default function Page() {
 								<Cite n={3} href={links.prices} source={`v1/prices/${askedMachine.price.path.file.split("/").pop()}, ${askedMachine.price.path.pointer}`} />
 							</p>
 							<p class="when" title={`Runs from ${askedOldest.full} to ${askedNewest.full}`}>
-								<time datetime={askedOldest.iso}>{askedOldest.date}</time>
-								<span class="dash">–</span>
-								<time datetime={askedNewest.iso}>{askedNewest.date}</time>
+								Median of {formatCount(askedFigure.count).full} Runs,{" "}
+								<span class="nowrap">
+									<time datetime={askedOldest.iso}>{askedOldest.date}</time>
+									<span class="dash">–</span>
+									<time datetime={askedNewest.iso}>{askedNewest.date}</time>,
+								</span>{" "}
+								{formatCount(askedDerivation.failed_runs).full} failed
 							</p>
 						</div>
 					</div>
+					<ol class="srcs" aria-label="Sources">
+						<Source n={1} href={links.seriesList} field={`${askedSeries.id} › p50`} path={p50Path}>
+							{`${askedTime.source.replace(/ ns$/, "")}`}&nbsp;÷&nbsp;
+							<a href={askedRow.choice.readme} title={`${formatCount(askedPer.count).full} ${askedPer.of}s in one repetition: the benchmark's Method`}>
+								{formatCount(askedPer.count).full}
+							</a>
+						</Source>
+						<Source n={2} href={askedSeries.url} field="points[0].evidence" path="/derivations/series_v1/points/0/evidence">
+							<a href={askedRun.evidence} title={`An example Run's evidence: Run ${askedRun.run}, ${askedRunAt.full}`}>
+								{askedRunAt.date}
+							</a>
+						</Source>
+						<Source n={3} href={links.prices} field={`${askedMachine.price.path.sku} › … › USD`} path={askedMachine.price.path.pointer}>
+							{`"${askedMachine.price.usdPerHour}"`}
+						</Source>
+					</ol>
 				</section>
 
 				<div class="way" data-copy-block="the index command">
