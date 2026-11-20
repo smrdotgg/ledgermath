@@ -226,6 +226,9 @@ export default function Page() {
 								<Mark />
 								<span class="name-t">LedgerMath</span>
 							</h1>
+							<p class="lede">
+								<b>Fresh AWS machines, measured four times a day.</b> Every Run kept with its evidence.
+							</p>
 							<div class="cmd" data-copy-wrap>
 								<code data-copy={`curl ${index}`}>
 									<Curl href={index} />
@@ -313,6 +316,11 @@ export default function Page() {
 							const prepared = g.rows.map(prepareRow);
 							return (
 								<tbody class={SECTION_CLASS[g.section]}>
+									<tr class="sec-row">
+										<th scope="rowgroup" colspan={machines.length + 1} class="sec-what">
+											{g.section}
+										</th>
+									</tr>
 									{g.rows.map((row, r) => {
 										rowNumber += 1;
 										const n = String(rowNumber).padStart(2, "0");
@@ -320,7 +328,7 @@ export default function Page() {
 										const p = prepared[r]!;
 										const up = c.lead === "rate";
 										return (
-											<tr class={r === 0 ? "row first" : "row"}>
+											<tr class="row">
 												<th scope="row" class="what">
 													<details class="tap">
 														<summary class="badge" title={c.label}>
@@ -372,6 +380,9 @@ export default function Page() {
 						<Mark />
 					</span>
 					<span class="foot-links">
+						<a class="foot-docs" href={links.docs}>
+							docs
+						</a>
 						<a class="foot-mark" href="third-party-notices.txt" aria-label="Font licences" title="Font licences">
 							<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
 								<path d="M3 13 7 3h2l4 10h-2l-1-2.6H6L5 13H3Zm3.6-4.4h2.8L8 4.9 6.6 8.6Z" fill="currentColor" />

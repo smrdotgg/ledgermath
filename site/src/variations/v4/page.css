@@ -1498,6 +1498,23 @@ mark.j-n {
 	margin-top: 1.5rem;
 	font-size: 1.05rem;
 }
+.head-id .lede {
+	margin: 1.1rem 0 0;
+	max-width: 40rem;
+	font-size: 1.2rem;
+}
+.head-id .lede b {
+	color: var(--ink);
+	font-weight: 700;
+}
+.foot-links {
+	align-items: center;
+}
+.foot-docs {
+	font: 700 0.85rem/1 var(--mono);
+	letter-spacing: 0.08em;
+	text-transform: uppercase;
+}
 .cmd.bare code {
 	padding-left: 0;
 }
@@ -1809,8 +1826,19 @@ mark.j-n {
 		column-gap: 0.6rem;
 		padding: 0.25rem 0.75rem 0.25rem 0.9rem;
 	}
+	.board .fig a {
+		padding: 0.25rem 0.75rem 0.25rem 0.9rem;
+	}
 	.fig a .fig-t {
 		font-size: 0.66rem;
+	}
+	.fig a .fig-h {
+		font-size: 0.9rem;
+	}
+	.head-id .lede {
+		margin-top: 0.8rem;
+		font-size: 1rem;
+		line-height: 1.45;
 	}
 	.fig a .fig-v .g {
 		margin-left: 0.15em;
