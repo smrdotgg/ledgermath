@@ -1,16 +1,24 @@
 Third-party files served with this page
+=======================================
 
-1. Source Serif 4 (fonts/source-serif-4-latin-wght-normal.woff2, fonts/source-serif-4-latin-wght-italic.woff2)
-   Copyright 2014-2021 Adobe (http://www.adobe.com/), with Reserved Font Name 'Source'.
-   Latin subset as packaged by Fontsource (@fontsource-variable/source-serif-4 5.3.1).
+Datatype
+--------
+File:    Datatype.woff2 (the variable font, served unchanged)
+Author:  Frank Tisellano
+Source:  https://github.com/franktisellano/datatype
+Licence: SIL Open Font License, Version 1.1 (full text below)
 
-2. IBM Plex Mono (fonts/ibm-plex-mono-latin-400-normal.woff2, fonts/ibm-plex-mono-latin-500-normal.woff2)
-   Copyright 2017 IBM Corp. All rights reserved.
-   Latin subset as packaged by Fontsource (@fontsource/ibm-plex-mono 5.3.0).
+Copyright 2026 The Datatype Project Authors (https://github.com/franktisellano/datatype)
 
-Both are licensed under the SIL Open Font License, Version 1.1, reproduced below.
+This font includes glyphs from IBM Plex™ Mono:
+Copyright 2017 IBM Corp. with Reserved Font Name "Plex"
 
-----------------------------------------------------------------------
+This Font Software is licensed under the SIL Open Font License, Version 1.1.
+This license is copied below, and is also available with a FAQ at:
+https://openfontlicense.org
+
+
+-----------------------------------------------------------
 SIL OPEN FONT LICENSE Version 1.1 - 26 February 2007
 -----------------------------------------------------------
 
