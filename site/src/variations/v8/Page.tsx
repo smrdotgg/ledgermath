@@ -2,7 +2,7 @@
 // Every figure comes from src/data as the snapshot holds it; see ../README.md. A figure's unit shares its text node
 // with its last digits, so the unit is part of the figure, never a word of its own.
 import "./tiny.css";
-import { type DurationUnit, formatDurationPerUnit, formatMoment, headline, leadFigure, links, seriesFileContents } from "../../data";
+import { type DurationUnit, formatDurationPerUnit, formatMoment, formatUsd, headline, leadFigure, links, seriesFileContents } from "../../data";
 
 // ------------------------------------------------------------------ the traced figure
 
@@ -55,6 +55,77 @@ function Strip() {
 	);
 }
 
+/**
+ * Every digit of a figure, the integer part right-aligned so the decimal points of a column line up; the digits its
+ * p5 and p95 share in ink, the rest quieter. The unit joins the last digits in one text node.
+ */
+function Exact(props: { full: string; lo: string; hi: string; unit: string }) {
+	const [int = "", frac] = props.full.split(".");
+	const [h] = split(props.full, props.lo, props.hi);
+	const fracText = frac === undefined ? "" : `.${frac}`;
+	const headInt = h.slice(0, int.length);
+	const tailInt = int.slice(headInt.length);
+	const headFrac = h.length > int.length ? h.slice(int.length) : "";
+	const tailFrac = fracText.slice(headFrac.length);
+	const last = tailFrac ? "tf" : headFrac ? "hf" : tailInt ? "ti" : "hi";
+	const u = (part: string, text: string) => (part === last ? `${text}${props.unit}` : text);
+	return (
+		<span class="exact">
+			<span class="x-int">
+				{headInt ? <span class="x-head">{u("hi", headInt)}</span> : null}
+				{tailInt ? <span class="x-tail">{u("ti", tailInt)}</span> : null}
+			</span>
+			<span class="x-frac">
+				{headFrac ? <span class="x-head">{u("hf", headFrac)}</span> : null}
+				{tailFrac ? <span class="x-tail">{u("tf", tailFrac)}</span> : null}
+			</span>
+		</span>
+	);
+}
+
+/** The traced benchmark on every machine: hourly price, every digit, and the median as a bar from 0 with its p5 to p95. */
+function Machines() {
+	const figures = row.cells.map((c) => leadFigure(row.choice, c.series));
+	const max = Math.max(...figures.map((f) => f.p95));
+	const shown = figures.map((f) => ({
+		p50: formatDurationPerUnit(f.p50, per, { unit }),
+		p5: formatDurationPerUnit(f.p5, per, { unit }),
+		p95: formatDurationPerUnit(f.p95, per, { unit }),
+	}));
+	const iw = Math.max(...shown.map((s) => s.p50.full.split(".")[0]!.length));
+	const fw = Math.max(...shown.map((s) => (s.p50.full.split(".")[1] ?? "").length + 1)) + unit.length;
+	const at = (v: number) => `${((v / max) * 100).toFixed(2)}%`;
+	return (
+		<ul class="mx" style={{ "--iw": `${iw}ch`, "--fw": `${fw}ch` }}>
+			{row.cells.map((c, i) => {
+				const f = figures[i]!;
+				const s = shown[i]!;
+				const price = formatUsd(c.machine.price.usdPerHour).full;
+				return (
+					<li class={c === cell ? "is-traced" : undefined}>
+						<span class="mx-m mono">{c.machine.instanceType}</span>
+						<span class="mx-p mono" title={`${c.machine.price.description}. In the price file at ${c.machine.price.path.pointer}`}>
+							{`$${price}/h`}
+						</span>
+						<a class="mx-v" href={links.seriesFile(c.series)} title={`${row.choice.label} on ${c.machine.instanceType}: ${s.p50.full} ${unit} per ${per.of}, the median of ${f.count} counted runs. 5th percentile ${s.p5.full}, 95th ${s.p95.full}.`}>
+							<Exact full={s.p50.full} lo={s.p5.full} hi={s.p95.full} unit={unit} />
+						</a>
+						<span
+							class="mx-bar"
+							role="img"
+							aria-label={`Bar: median ${s.p50.full} ${unit}, drawn from 0. Whisker: 5th to 95th percentile, ${s.p5.full} to ${s.p95.full} ${unit}`}
+							title={`bar: median from 0 · whisker: p5 ${s.p5.full} to p95 ${s.p95.full}`}
+							style={{ "--p5": at(f.p5), "--p50": at(f.p50), "--p95": at(f.p95) }}>
+							<span class="mx-fill" />
+							<span class="mx-whisk" />
+						</span>
+					</li>
+				);
+			})}
+		</ul>
+	);
+}
+
 function Traced() {
 	return (
 		<figure class="traced" aria-labelledby="traced-what">
@@ -70,6 +141,7 @@ function Traced() {
 				<span class="b-tail">{`${tail}${p50.unit}`}</span>
 			</div>
 			<Strip />
+			<Machines />
 			<p class="trail">
 				<a href={links.seriesFile(cell.series)} class="tr-stop" title={`Series ${cell.series.id}: every run of this figure, ${oldest.date} to ${newest.date}`}>
 					<span class="tr-dot" aria-hidden="true" />

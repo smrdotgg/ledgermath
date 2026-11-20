@@ -298,6 +298,104 @@ button:focus-visible {
 	margin-right: 0.15em;
 }
 
+/* the same benchmark on every machine: type, hourly price, every digit, the median as a bar from 0 and its p5 to p95 */
+.mx {
+	margin: 1.4rem 0 0;
+	padding: 0.9rem 0 0;
+	list-style: none;
+	border-top: 1px solid var(--rule);
+	display: grid;
+	grid-template-columns: max-content max-content max-content minmax(6rem, 1fr);
+	column-gap: 2rem;
+}
+.mx > li {
+	position: relative;
+	display: grid;
+	grid-column: 1 / -1;
+	grid-template-columns: subgrid;
+	align-items: center;
+	padding: 0.42rem 0;
+}
+.mx-m {
+	font-size: 1rem;
+	font-weight: 500;
+}
+.mx-p {
+	font-size: 0.9375rem;
+	color: var(--ink-2);
+	text-align: right;
+}
+.mx-v {
+	text-decoration: none;
+	border-radius: 4px;
+}
+.mx-v:hover .exact {
+	color: var(--accent);
+}
+.mx-v:hover .x-tail {
+	color: inherit;
+}
+.exact {
+	display: inline-flex;
+	font: 500 1rem/1.3 var(--mono);
+	letter-spacing: -0.02em;
+	color: var(--ink);
+	white-space: nowrap;
+}
+.x-int {
+	display: inline-block;
+	min-width: var(--iw, 1ch);
+	text-align: right;
+}
+.x-frac {
+	display: inline-block;
+	min-width: var(--fw, 1ch);
+}
+.x-tail {
+	color: var(--tail);
+	font-weight: 400;
+}
+/* the figure traced above carries the card's dot */
+.mx > li.is-traced::before {
+	content: "";
+	position: absolute;
+	left: -1.1rem;
+	top: 50%;
+	width: 0.5rem;
+	height: 0.5rem;
+	margin-top: -0.25rem;
+	border-radius: 50%;
+	background: var(--accent);
+}
+.mx > li.is-traced .mx-m {
+	color: var(--accent);
+}
+.mx-bar {
+	position: relative;
+	height: 10px;
+}
+.mx-fill {
+	position: absolute;
+	left: 0;
+	top: 3px;
+	height: 4px;
+	width: var(--p50);
+	border-radius: 0 1px 1px 0;
+	background: var(--bar);
+}
+.mx > li.is-traced .mx-fill {
+	background: var(--accent);
+}
+.mx-whisk {
+	position: absolute;
+	top: 0;
+	height: 10px;
+	left: var(--p5);
+	width: max(2px, calc(var(--p95) - var(--p5)));
+	border-inline: 2px solid var(--ink);
+	background: linear-gradient(var(--ink), var(--ink)) center / 100% 1.5px no-repeat;
+}
+
 /* the trail: the Series, a line, one of its Runs' evidence */
 .trail {
 	margin-top: 1.4rem;
@@ -483,6 +581,51 @@ button:focus-visible {
 		left: auto;
 		right: 0;
 		transform: none;
+	}
+	/* a machine in two lines: type over price at the left, the figure over its bar at the right */
+	.mx {
+		margin-top: 1rem;
+		padding-top: 0.6rem;
+		grid-template-columns: max-content minmax(0, 1fr);
+		column-gap: 1rem;
+	}
+	.mx > li {
+		grid-template-columns: subgrid;
+		grid-template-rows: auto auto;
+		row-gap: 0;
+		padding: 0.3rem 0;
+	}
+	.mx-m {
+		grid-area: 1 / 1;
+		font-size: 0.875rem;
+		line-height: 1.3;
+	}
+	.mx-p {
+		grid-area: 2 / 1;
+		font-size: 0.75rem;
+		line-height: 1.3;
+		text-align: left;
+	}
+	.mx-v {
+		grid-area: 1 / 2;
+	}
+	.mx-bar {
+		grid-area: 2 / 2;
+		height: 8px;
+	}
+	.mx-fill {
+		top: 2px;
+		height: 3.5px;
+	}
+	.mx-whisk {
+		height: 8px;
+	}
+	.exact {
+		font-size: 0.875rem;
+	}
+	.mx > li.is-traced::before {
+		left: -0.95rem;
+		top: 0.95rem;
 	}
 	/* the trail runs down on a phone: Series, arrow, Run */
 	.trail {
