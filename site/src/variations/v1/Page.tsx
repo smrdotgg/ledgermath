@@ -26,7 +26,7 @@ import {
 } from "../../data";
 
 /** The form's budget: visible words that are not figures stay under it. */
-const FORM = 5 as 5 | 10 | 20 | 30 | 50;
+const FORM = 10 as 5 | 10 | 20 | 30 | 50;
 const has = (budget: 10 | 20 | 30 | 50) => FORM >= budget;
 
 // ------------------------------------------------------------------ figures, written out
@@ -159,7 +159,7 @@ function MachineHead(props: { k: number }) {
 	);
 	if (has(10)) {
 		return (
-			<th scope="col" class="mach">
+			<th scope="col" class="mach named">
 				<span class="it" title={`${m.processor}, ${m.clockSpeed}; network ${m.network}`}>
 					{m.instanceType}
 				</span>
@@ -216,7 +216,7 @@ export default function Page() {
 				<section class="ledger" aria-label="The ledger: 14 benchmarks on 5 machine types">
 					<div class="scroll" tabindex="0" role="region" aria-label="The ledger, scrollable">
 						<table>
-							<thead id="machines">
+							<thead id="machines" class={has(10) ? "key-first" : undefined}>
 								<tr>
 									<th scope="col" class="what">
 										<details class="note legend">

@@ -767,6 +767,48 @@ td.fig-cell a:hover .fig .w {
 		border-bottom: 0;
 	}
 
+	/* once the machines are named, the key comes first: each line below is keyed by its machine's price */
+	.ledger thead.key-first {
+		order: 0;
+		margin: 0 0 0.5rem;
+	}
+
+	.ledger thead.key-first tr {
+		display: flex;
+		flex-direction: column;
+		border-top: 0;
+	}
+
+	.ledger thead.key-first th.what {
+		order: 1;
+		border-bottom: 0;
+		border-top: 1px solid var(--rule);
+	}
+
+	.ledger thead th.mach.named {
+		display: grid;
+		grid-template-columns: 7rem minmax(0, 1fr) auto;
+		align-items: baseline;
+		column-gap: 0.6rem;
+		padding: 0.3rem 0;
+	}
+
+	.ledger thead th.mach.named > span {
+		display: block;
+	}
+
+	.ledger thead th.mach.named > .mrow {
+		display: flex;
+	}
+
+	th.mach.named .it {
+		font-size: 0.8125rem;
+	}
+
+	th.mach.named .mrow {
+		gap: 0.6rem;
+	}
+
 	th.mach summary,
 	th.mach.named {
 		display: grid;
