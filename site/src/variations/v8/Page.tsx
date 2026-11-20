@@ -2,7 +2,7 @@
 // Every figure comes from src/data as the snapshot holds it; see ../README.md. A figure's unit shares its text node
 // with its last digits, so the unit is part of the figure, never a word of its own.
 import "./tiny.css";
-import { type DurationUnit, formatCount, formatDurationPerUnit, formatMoment, formatUsd, headline, leadFigure, links, seriesFileContents } from "../../data";
+import { type DurationUnit, formatCount, formatDurationPerUnit, formatMoment, formatUsd, headline, leadFigure, links, seriesFileContents, snapshot } from "../../data";
 
 // ------------------------------------------------------------------ the traced figure
 
@@ -20,6 +20,7 @@ const runAt = formatMoment(point.started_at);
 const oldest = formatMoment(cell.series.oldest_run_started_at);
 const newest = formatMoment(cell.series.newest_run_started_at);
 const derivation = cell.series.derivations.series_v1;
+const latest = formatMoment(snapshot.newestRunStartedAt);
 
 /** Where the median's digits stop agreeing with p5 and p95: the head is what all three share. */
 function split(mid: string, lo: string, hi: string): [string, string] {
@@ -222,10 +223,30 @@ export default function Page() {
 			<main class="stage">
 				<div class="wrap">
 					<div class="lead">
-						<h1 class="claim">Server numbers you can trace to their runs.</h1>
+						<div class="lead-text">
+							<p class="eyebrow">AWS {snapshot.region} server benchmarks as JSON, for agents</p>
+							<h1 class="claim">Server numbers you can trace to their runs.</h1>
+							<p class="fresh">
+								<span>
+									newest run{" "}
+									<time datetime={latest.iso} title={latest.full}>
+										{latest.date} {latest.minute} UTC
+									</time>
+								</span>
+								<span>booted four times a day</span>
+								<span>
+									<a href={links.seriesList}>{formatCount(snapshot.runCount).full} runs</a>, {formatCount(snapshot.failedRuns).full} failed
+								</span>
+							</p>
+						</div>
 						<Way />
 					</div>
 					<Traced />
+					<p class="all">
+						<a href={links.seriesList}>
+							All {formatCount(snapshot.seriesCount).full} Series <span aria-hidden="true">→</span>
+						</a>
+					</p>
 				</div>
 			</main>
 			<footer class="foot">

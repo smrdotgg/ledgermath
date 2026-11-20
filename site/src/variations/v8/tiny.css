@@ -149,7 +149,7 @@ button:focus-visible {
 	display: grid;
 	grid-template-columns: minmax(0, 1fr) auto;
 	align-items: end;
-	gap: 1.25rem 3rem;
+	gap: 1.25rem 2rem;
 }
 .claim {
 	font: 600 clamp(2.3rem, 1.2rem + 2.3vw, 3.3rem) / 1.04 var(--serif);
@@ -159,6 +159,44 @@ button:focus-visible {
 .lead .way {
 	margin-top: 0;
 	margin-bottom: 0.3rem;
+}
+.eyebrow {
+	margin-bottom: 0.9rem;
+	font: 500 0.75rem/1.4 var(--mono);
+	letter-spacing: 0.08em;
+	text-transform: uppercase;
+	color: var(--ink-3);
+}
+/* the newest Run, the cadence and the count, one line of facts */
+.fresh {
+	margin-top: 0.9rem;
+	display: flex;
+	flex-wrap: wrap;
+	align-items: baseline;
+	font-size: 0.875rem;
+	color: var(--ink-2);
+}
+.fresh > span {
+	white-space: nowrap;
+}
+/* the dot trails its fact, so a wrapped line never starts with one */
+.fresh > span:not(:last-child)::after {
+	content: "·";
+	display: inline-block;
+	margin: 0 0.55rem;
+	color: var(--ink-3);
+}
+.fresh time {
+	color: var(--ink);
+	font-weight: 500;
+}
+.all {
+	margin-top: 1rem;
+	font-size: 0.9375rem;
+}
+.all a {
+	color: var(--accent);
+	font-weight: 500;
 }
 .nw {
 	white-space: nowrap;
@@ -614,6 +652,11 @@ button:focus-visible {
 	}
 	.lead .way {
 		margin-bottom: 0;
+	}
+	/* the eyebrow on one line at 390 px */
+	.eyebrow {
+		font-size: 0.65rem;
+		letter-spacing: 0.05em;
 	}
 	.traced {
 		margin-top: 1.5rem;
