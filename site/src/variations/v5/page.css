@@ -175,10 +175,92 @@ button:focus-visible,
 
 /* ---------------------------------------------------------------- the table */
 
-.table-box {
+.figures {
 	grid-row: 5;
 	margin-top: 64px;
+}
+
+.table-box {
 	overflow-x: auto;
+}
+
+.figs tbody tr.sec > * {
+	border-top: 2px solid var(--ink);
+}
+
+.lab-per {
+	display: block;
+	font-size: 12px;
+	font-weight: 500;
+	color: var(--muted);
+}
+
+/* The other three rows: a drawn plus and the count, opening the same columns below. */
+.more summary {
+	display: inline-flex;
+	align-items: center;
+	gap: 10px;
+	margin-top: 16px;
+	padding: 4px 0;
+	list-style: none;
+	cursor: pointer;
+	font-size: 19px;
+	font-weight: 700;
+	font-variant-numeric: tabular-nums;
+}
+
+.more summary::-webkit-details-marker {
+	display: none;
+}
+
+.more summary:focus-visible {
+	outline: 3px solid var(--red);
+	outline-offset: 3px;
+}
+
+.more-mark {
+	position: relative;
+	width: 28px;
+	height: 28px;
+	border: 2px solid var(--ink);
+	border-radius: 50%;
+}
+
+.more-mark::before,
+.more-mark::after {
+	content: "";
+	position: absolute;
+	left: 50%;
+	top: 50%;
+	width: 12px;
+	height: 2px;
+	background: var(--ink);
+	transform: translate(-50%, -50%);
+}
+
+.more-mark::after {
+	transform: translate(-50%, -50%) rotate(90deg);
+}
+
+.more[open] .more-mark::after {
+	display: none;
+}
+
+.more summary:hover .more-mark {
+	background: var(--ink);
+}
+
+.more summary:hover .more-mark::before,
+.more summary:hover .more-mark::after {
+	background: var(--paper);
+}
+
+.more .table-box {
+	margin-top: 12px;
+}
+
+.mach-name-s {
+	font-size: 15px;
 }
 
 .figs {
@@ -313,6 +395,13 @@ button:focus-visible,
 	align-self: end;
 }
 
+.way-k {
+	margin-bottom: 8px;
+	font-size: 13px;
+	font-weight: 600;
+	color: var(--muted);
+}
+
 .cmd {
 	display: flex;
 	align-items: center;
@@ -437,7 +526,7 @@ button:focus-visible,
 	}
 
 	/* The table scrolls in its own box, the benchmarks' names held at the left. */
-	.table-box {
+	.figures {
 		margin-top: 48px;
 	}
 
