@@ -3,7 +3,7 @@
 // almost no words. A chart's number opens what it measures; a figure opens its machine and every digit.
 import type { JSX } from "@solidjs/web";
 import "./page.css";
-import { formatMoment, formatUsd, headline, links, machines, snapshot } from "../../data";
+import { formatCount, formatMoment, formatUsd, headline, links, machines, snapshot } from "../../data";
 import { headTail, padFor, trimZeros } from "./digits";
 import { at, instrument, type Instrument, type Mark as Point, type Scale, width, zeroScale } from "./scale";
 
@@ -220,17 +220,19 @@ function Card(props: { inst: Instrument; index: number }) {
 							{c.label}
 						</a>
 					</h2>{" "}
-					{c.per || limit ? (
+					{c.per ? (
 						<span class="lm">
-							{c.per ? <span class="lu">{unit}</span> : null}{" "}
-							{limit ? (
-								<a class="lim" href={c.readme} title={limit.title}>
-									{limit.tag}
-								</a>
-							) : null}
+							<span class="lu">{unit}</span>
 						</span>
 					) : null}
 				</Label>{" "}
+				{limit ? (
+					<>
+						<a class="lim" href={c.readme} title={limit.title}>
+							{limit.tag}
+						</a>{" "}
+					</>
+				) : null}
 				<span class="n" title={`Runs counted: ${inst.marks.map((m) => `${m.instanceType} ${m.runs}`).join(", ")}`}>
 					n {fewest === most ? fewest : `${fewest}–${most}`}
 				</span>{" "}
@@ -265,14 +267,13 @@ function Prices() {
 	return (
 		<article class="card price" id="machines" aria-labelledby="h-machines">
 			<header class="card-h">
-				<Label idx="$" ariaLabel="Machines, AWS On-Demand prices">
-					<h2 id="h-machines">
-						<a href={links.prices}>AWS On-Demand prices</a>
-					</h2>{" "}
-					<span class="lm">
-						<a href={links.prices}>{snapshot.priceDate}</a>
-					</span>
-				</Label>
+				<span class="idx plain">$</span>{" "}
+				<h2 id="h-machines" class="ph">
+					<a href={links.prices} title={`The price file of ${snapshot.priceDate}`}>
+						AWS On-Demand
+					</a>
+				</h2>{" "}
+				<span class="n">{snapshot.priceDate}</span>
 			</header>
 			<div class="chart named" style={`--n:${machines.length}`}>
 				{machines.map((m, i) => (
@@ -359,24 +360,56 @@ export default function Page() {
 								curl {links.index}
 							</code>
 						</div>
-						<a class="when" href={links.seriesList} aria-label={`${newest.date} ${newest.minute}UTC, the newest Run: every Series, each listing its Runs with their evidence`}>
+						<p class="when">
 							<svg class="clock" viewBox="0 0 14 14" width="14" height="14" aria-hidden="true">
 								<circle cx="7" cy="7" r="6" />
 								<path d="M7 3.5V7l2.5 1.5" />
-							</svg>
-							<time datetime={newest.iso} title={newest.full}>
+							</svg>{" "}
+							<time datetime={newest.iso} title={`Newest Run: ${newest.full}`}>
 								{newest.date} <b>{`${newest.minute}UTC`}</b>
-							</time>
-						</a>
+							</time>{" "}
+							<span class="sep" aria-hidden="true">
+								·
+							</span>{" "}
+							<a href={links.seriesList} title="Every Series, each listing its Runs with their evidence">
+								<b>{formatCount(snapshot.runCount).full}</b> Runs
+							</a>{" "}
+							<span class="sep" aria-hidden="true">
+								·
+							</span>{" "}
+							<span>{snapshot.region}</span>
+						</p>
 					</div>
 				</section>
 
 				<section class="wrap block" aria-label="Every headline figure">
 					<p class="key">
-						<span class="dir" aria-hidden="true">
-							→
+						<span>
+							<svg width="12" height="12" aria-hidden="true">
+								<circle class="median" cx="6" cy="6" r="4.25" />
+							</svg>{" "}
+							median
 						</span>{" "}
-						faster
+						<span>
+							<svg width="26" height="12" aria-hidden="true">
+								<rect class="range" x="2" y="4.5" width="22" height="3" />
+								<line class="cap" x1="2" x2="2" y1="1.5" y2="10.5" />
+								<line class="cap" x1="24" x2="24" y1="1.5" y2="10.5" />
+							</svg>{" "}
+							p5–p95
+						</span>{" "}
+						<span>
+							<svg width="14" height="12" aria-hidden="true">
+								<path class="break" d="M 2 11 l 3 -9 m 3 9 l 3 -9" />
+							</svg>{" "}
+							zoomed
+						</span>{" "}
+						<span>
+							<span class="dir" aria-hidden="true">
+								→
+							</span>{" "}
+							faster
+						</span>
 					</p>
 					<div class="board">
 						<Prices />

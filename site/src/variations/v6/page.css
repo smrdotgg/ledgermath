@@ -194,17 +194,20 @@ h1 {
 	border-color: #a3abb6;
 }
 .when {
-	display: inline-flex;
+	display: flex;
+	flex-wrap: wrap;
 	align-items: center;
-	gap: 8px;
-	font: 450 0.85rem/1 var(--mono);
+	gap: 6px 10px;
+	margin: 0;
+	font: 450 0.85rem/1.2 var(--mono);
 	color: var(--ink-2);
-	text-decoration: none;
 	padding-right: 4px;
 }
-.when time {
-	text-decoration: underline 1px color-mix(in srgb, var(--accent) 70%, transparent);
+.when a {
 	text-underline-offset: 4px;
+}
+.sep {
+	color: var(--faint);
 }
 .when b {
 	font-weight: 600;
@@ -423,12 +426,43 @@ h1 {
 }
 .key {
 	display: flex;
+	flex-wrap: wrap;
 	justify-content: flex-end;
-	align-items: baseline;
-	gap: 6px;
+	align-items: center;
+	gap: 8px 20px;
 	margin: 0 4px 10px;
 	font: 450 0.78rem/1 var(--mono);
 	color: var(--ink-2);
+}
+.key > span {
+	display: inline-flex;
+	align-items: center;
+	gap: 7px;
+}
+/* The machines' card's title, set where a chart's number would open its label. */
+.idx.plain {
+	text-decoration: none;
+	cursor: default;
+}
+.ph {
+	margin: 0 auto 0 0;
+	font-size: 0.9rem;
+	line-height: 1.2;
+	font-weight: 620;
+	letter-spacing: -0.01em;
+}
+.ph a {
+	text-decoration: none;
+}
+.ph a:hover {
+	text-decoration: underline;
+}
+.card-h .lim {
+	align-self: center;
+	margin-right: auto;
+}
+.card-h:has(.lim) .n {
+	margin-left: 0;
 }
 
 /* One machine across the whole panel: hovering any of its rows lights the same row in every chart. */
@@ -644,6 +678,15 @@ h1 {
 	}
 	.cmd code {
 		flex: 1;
+	}
+	.when {
+		font-size: 0.72rem;
+		gap: 6px 7px;
+	}
+	.key {
+		justify-content: flex-start;
+		gap: 8px 16px;
+		margin: 0 0 12px;
 	}
 	.block {
 		padding-bottom: 24px;
