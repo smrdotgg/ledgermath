@@ -82,7 +82,6 @@ a:hover {
 }
 
 a:focus-visible,
-summary:focus-visible,
 button:focus-visible,
 [tabindex]:focus-visible {
 	outline: 3px solid var(--red);
@@ -115,6 +114,7 @@ button:focus-visible,
 	line-height: 0.86;
 }
 
+/* What the figure is, on the red rule: benchmark / machine / statistic / date. */
 .kicker {
 	grid-row: 3;
 	margin-top: 56px;
@@ -123,29 +123,35 @@ button:focus-visible,
 	font-size: 22px;
 	font-weight: 700;
 	letter-spacing: -0.015em;
-	line-height: 1.2;
+	line-height: 1.3;
+	font-variant-numeric: tabular-nums;
 }
 
-/* ---------------------------------------------------------------- the figure, which opens */
-
-.hero {
-	grid-row: 4;
+.kicker-b {
+	text-decoration-thickness: 2px;
 }
+
+.kicker-m {
+	font-weight: 500;
+	color: var(--muted);
+}
+
+.sep {
+	color: var(--red);
+	font-weight: 500;
+}
+
+/* ---------------------------------------------------------------- the figure */
 
 .hero-figure {
+	grid-row: 4;
 	display: flex;
 	flex-wrap: wrap;
 	align-items: baseline;
 	column-gap: 0.12em;
 	margin-top: 22px;
-	list-style: none;
-	cursor: pointer;
 	color: var(--red);
 	font-variant-numeric: tabular-nums;
-}
-
-.hero-figure::-webkit-details-marker {
-	display: none;
 }
 
 .hero-head {
@@ -162,79 +168,6 @@ button:focus-visible,
 	font-weight: 400;
 	line-height: 1;
 	letter-spacing: -0.01em;
-}
-
-/* A drawn plus, turning to a minus when the figure is open. */
-.hero-plus {
-	position: relative;
-	align-self: flex-end;
-	margin-bottom: 0.04em;
-	width: 44px;
-	height: 44px;
-	margin-left: 18px;
-	border: 2px solid var(--ink);
-	border-radius: 50%;
-	flex: none;
-}
-
-.hero-plus::before,
-.hero-plus::after {
-	content: "";
-	position: absolute;
-	left: 50%;
-	top: 50%;
-	width: 18px;
-	height: 2px;
-	background: var(--ink);
-	transform: translate(-50%, -50%);
-}
-
-.hero-plus::after {
-	transform: translate(-50%, -50%) rotate(90deg);
-}
-
-.hero[open] .hero-plus::after {
-	display: none;
-}
-
-.hero-figure:hover .hero-plus {
-	background: var(--ink);
-}
-
-.hero-figure:hover .hero-plus::before,
-.hero-figure:hover .hero-plus::after {
-	background: var(--paper);
-}
-
-.hero-open {
-	display: grid;
-	grid-template-columns: repeat(4, minmax(0, 1fr));
-	gap: 0 var(--g);
-	margin-top: 24px;
-	font-size: 15px;
-	line-height: 1.35;
-}
-
-.hero-open > div {
-	padding-top: 8px;
-	border-top: 2px solid var(--ink);
-}
-
-.hero-open dt {
-	font-size: 13px;
-	font-weight: 600;
-	color: var(--muted);
-}
-
-.hero-open dd {
-	font-weight: 600;
-	font-variant-numeric: tabular-nums;
-	overflow-wrap: anywhere;
-}
-
-.hero-pct {
-	display: block;
-	font-weight: 400;
 }
 
 /* ---------------------------------------------------------------- the way in */
@@ -315,11 +248,6 @@ button:focus-visible,
 	.cmd {
 		grid-column: 1 / -1;
 	}
-
-	.hero-open {
-		grid-template-columns: repeat(2, minmax(0, 1fr));
-		row-gap: 16px;
-	}
 }
 
 @media (max-width: 640px) {
@@ -364,15 +292,4 @@ button:focus-visible,
 		top: 8px;
 		right: 8px;
 	}
-
-	.hero-plus {
-		width: 36px;
-		height: 36px;
-		margin-left: 12px;
-	}
-
-	.hero-open {
-		grid-template-columns: minmax(0, 1fr);
-	}
-
 }

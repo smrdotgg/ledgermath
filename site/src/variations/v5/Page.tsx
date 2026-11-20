@@ -1,7 +1,6 @@
 // Design v5, "Swiss poster": one grotesque, one strict grid, one accent colour. This form keeps under
-// five words: the name, one exact figure set enormous, the machine it was measured on, and the way in.
-// What the figure is opens from the figure itself. Every figure comes from ../../data exactly as the
-// snapshot holds it (see ../README.md).
+// ten words: the name, one exact figure set enormous with what it is above it, and the way in.
+// Every figure comes from ../../data exactly as the snapshot holds it (see ../README.md).
 import "./page.css";
 import { formatCount, formatMoment, formatRate, headline, leadFigure, links, type HeadlineRow, type Shown } from "../../data";
 
@@ -19,6 +18,7 @@ const cell = row.cells[0]!;
 const lead = leadFigure(row.choice, cell.series);
 const fig = show(row, lead.p50);
 const newest = formatMoment(cell.series.newest_run_started_at);
+const oldest = formatMoment(cell.series.oldest_run_started_at);
 
 /** The exact figure cut in two for setting, nothing rounded: four significant digits large, the rest beside them. */
 function split(full: string): { head: string; tail: string } {
@@ -28,50 +28,10 @@ function split(full: string): { head: string; tail: string } {
 }
 const cut = split(fig.full);
 
-// ---------------------------------------------------------------- the page
+/** Every written value of the figure, for the visitor who hovers. */
+const exact = `p50 ${fig.full} ${fig.unit}\np5 ${show(row, lead.p5).full}\np95 ${show(row, lead.p95).full}\n${lead.count} counted Runs, ${oldest.full} to ${newest.full}`;
 
-function Figure() {
-	return (
-		<details class="hero">
-			{/* The figure is the summary. The unit shares one text with the last digits, so it reads, and counts, as part of the figure. */}
-			<summary class="hero-figure">
-				<span class="hero-head">{cut.head}</span>
-				<span class="hero-tail">{`${cut.tail}${fig.unit}`}</span>
-				<span class="hero-plus" aria-hidden="true" />
-			</summary>
-			<dl class="hero-open">
-				<div>
-					<dt>Benchmark</dt>
-					<dd>
-						<a href={row.choice.readme}>{row.choice.label}</a>
-					</dd>
-				</div>
-				<div>
-					<dt>Figure</dt>
-					<dd>
-						p50 of {formatCount(lead.count).full} counted Runs
-						<span class="hero-pct">p5 {`${show(row, lead.p5).full}${fig.unit}`}</span>
-						<span class="hero-pct">p95 {`${show(row, lead.p95).full}${fig.unit}`}</span>
-					</dd>
-				</div>
-				<div>
-					<dt>Newest Run</dt>
-					<dd>
-						<time datetime={newest.iso}>
-							{newest.date} {newest.minute} UTC
-						</time>
-					</dd>
-				</div>
-				<div>
-					<dt>Evidence</dt>
-					<dd>
-						<a href={links.seriesFile(cell.series)}>every Run, with its evidence</a>
-					</dd>
-				</div>
-			</dl>
-		</details>
-	);
-}
+// ---------------------------------------------------------------- the page
 
 export default function Page() {
 	return (
@@ -79,9 +39,37 @@ export default function Page() {
 			<main class="poster">
 				<h1 class="name">LedgerMath</h1>
 				<p class="kicker">
-					<span class="kicker-m">{cell.machine.instanceType}</span>
+					<a class="kicker-b" href={row.choice.readme}>
+						{row.choice.label}
+					</a>
+					<span class="sep" aria-hidden="true">
+						{" "}
+						/{" "}
+					</span>
+					<span>{cell.machine.instanceType}</span>
+					<span class="sep" aria-hidden="true">
+						{" "}
+						/{" "}
+					</span>
+					<span class="kicker-m">
+						p50 of{" "}
+						<a href={links.seriesFile(cell.series)} title={exact}>
+							{formatCount(lead.count).full} Runs
+						</a>
+					</span>
+					<span class="sep" aria-hidden="true">
+						{" "}
+						/{" "}
+					</span>
+					<time class="kicker-m" datetime={newest.iso} title={`Newest Run started ${newest.full}`}>
+						{newest.date}
+					</time>
 				</p>
-				<Figure />
+				{/* The unit shares one text with the last digits, so it reads, and counts, as part of the figure. */}
+				<p class="hero-figure">
+					<span class="hero-head">{cut.head}</span>
+					<span class="hero-tail">{`${cut.tail}${fig.unit}`}</span>
+				</p>
 				<div class="cmd" data-copy={`curl ${links.index}`}>
 					<code tabindex="0">
 						<span class="prompt" aria-hidden="true">
