@@ -31,7 +31,7 @@ const FORM = {
 	/** The five machine types by name, over their columns. */
 	machineNames: true,
 	/** The five groups of benchmarks, as section heads. */
-	sections: false,
+	sections: true,
 	/** Each benchmark's own name, at its row. */
 	benchmarkNames: false,
 };
@@ -256,6 +256,13 @@ function DataTable() {
 						const each = c.per ? ` per ${c.per.of}` : "";
 						return (
 							<tbody class={i === 0 ? "bench first" : "bench"}>
+								{FORM.sections && i === 0 ? (
+									<tr class="sect">
+										<th colspan={machines.length + 1} scope="rowgroup">
+											<span class="sect-name">{section}</span>
+										</th>
+									</tr>
+								) : null}
 								<tr class="figs">
 									<th scope="row" class="rl">
 										<RowHead row={row} />{" "}

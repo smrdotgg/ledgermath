@@ -425,6 +425,28 @@ table {
 	border-top: 0;
 }
 
+/* A group's name, where the form has room for it: a manual page's section head. */
+.data .sect th {
+	text-align: left;
+	font-weight: 400;
+	padding: 28px 0 6px;
+	border-bottom: 1px solid var(--rule-2);
+}
+.data thead + tbody .sect th {
+	padding-top: 16px;
+}
+.sect-name {
+	color: var(--acc);
+	font-weight: 600;
+	letter-spacing: 0.08em;
+	text-transform: uppercase;
+}
+.data tbody.first .sect + .figs th,
+.data tbody.first .sect + .figs td {
+	padding-top: 10px;
+	border-top: 0;
+}
+
 /* A figure is a link to its Series, every Run behind it: it says so under the pointer or focus. */
 .fig {
 	display: inline-block;
@@ -634,7 +656,7 @@ table {
 	}
 	.data thead th:not(.corner) {
 		display: grid;
-		grid-template-columns: 12ch minmax(0, 1fr) auto;
+		grid-template-columns: 13ch minmax(0, 1fr) auto;
 		column-gap: 1ch;
 		align-items: baseline;
 		padding: 4px 0;
@@ -683,6 +705,25 @@ table {
 	.data thead + tbody.first .figs {
 		margin-top: 0;
 	}
+	.data tbody.first .sect + .figs {
+		margin-top: 0;
+		border-top: 0;
+	}
+	.data tbody.first .sect + .figs td {
+		padding: 2px 0;
+	}
+	.data tbody.first .sect + .figs th {
+		padding: 0 0 6px;
+	}
+	.data thead th:not(.corner) .m-name {
+		font-size: 13.5px;
+	}
+	.data .sect th {
+		padding: 24px 0 4px;
+	}
+	.data thead + tbody .sect th {
+		padding-top: 4px;
+	}
 	.data .figs th,
 	.data .figs td,
 	.data tbody.first .figs th,
@@ -713,6 +754,10 @@ table {
 	.data tbody.bench .figs td,
 	.data thead + tbody.bench .figs td {
 		padding: 2px 0;
+	}
+	.data tbody.bench .figs th.rl,
+	.data thead + tbody.bench .figs th.rl {
+		padding: 0 0 6px;
 	}
 	.m-lbl {
 		display: block;
