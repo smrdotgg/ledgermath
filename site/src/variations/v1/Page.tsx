@@ -26,7 +26,7 @@ import {
 } from "../../data";
 
 /** The form's budget: visible words that are not figures stay under it. */
-const FORM = 10 as 5 | 10 | 20 | 30 | 50;
+const FORM = 20 as 5 | 10 | 20 | 30 | 50;
 const has = (budget: 10 | 20 | 30 | 50) => FORM >= budget;
 
 // ------------------------------------------------------------------ figures, written out
@@ -201,6 +201,7 @@ export default function Page() {
 					<p class="folio">
 						<time datetime={newest.iso} title={newest.full}>
 							<span class="date">{newest.date}</span> <span class="clock">{newest.minute}</span>
+							{has(20) ? <span class="tz"> UTC</span> : ""}
 						</time>
 						<span class="sep" aria-hidden="true">
 							·
@@ -219,6 +220,13 @@ export default function Page() {
 							<thead id="machines" class={has(10) ? "key-first" : undefined}>
 								<tr>
 									<th scope="col" class="what">
+										{has(20) ? (
+											<a class="where" href={links.prices} title={`AWS's On-Demand prices, copied ${snapshot.priceDate}`}>
+												<span>{snapshot.region}</span> <span>AWS</span> <span>On-Demand</span>
+											</a>
+										) : (
+											""
+										)}
 										<details class="note legend">
 											<summary aria-label="How to read a figure" title="How to read a figure">
 												<span class="lg-rule lg-zero" aria-hidden="true">
@@ -245,6 +253,15 @@ export default function Page() {
 								const rows = headline.map((row, i) => ({ row, i })).filter(({ row }) => row.choice.section === section);
 								return (
 									<tbody class="acct">
+										{has(20) ? (
+											<tr class="sec">
+												<th scope="colgroup" colspan={1 + machines.length}>
+													{section}
+												</th>
+											</tr>
+										) : (
+											""
+										)}
 										{rows.map(({ row, i }) => {
 											const c = row.choice;
 											const xs = cells[i]!;

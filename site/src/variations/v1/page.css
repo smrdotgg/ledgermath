@@ -320,14 +320,19 @@ details.note > .pop a {
 .ledger thead th {
 	vertical-align: bottom;
 	padding-top: 0.5rem;
-	padding-bottom: 0.7rem;
-	border-bottom: 3px double var(--rule-strong);
+	padding-bottom: 0.8rem;
+	border-bottom: 0;
+	/* the double rule under the heads, drawn inside the cells so a sticky head keeps it */
+	box-shadow:
+		inset 0 -1px 0 var(--rule-strong),
+		inset 0 -2px 0 var(--paper),
+		inset 0 -3px 0 var(--rule-strong);
 	background: var(--paper);
 }
 
 /* the number column, behind the ledger's red margin: two ruled lines, kept red in both modes */
 th.what {
-	width: 5.25rem;
+	width: 6.75rem;
 	padding-left: 0;
 	padding-right: 0.75rem;
 	font-weight: 400;
@@ -414,6 +419,48 @@ thead th.what {
 
 .legend .pop {
 	font-weight: 400;
+}
+
+/* where the prices come from, in the corner beside them */
+.where {
+	display: block;
+	margin-bottom: 0.45rem;
+	font-size: 0.9375rem;
+	line-height: 1.2;
+	font-variant-caps: all-small-caps;
+	letter-spacing: 0.05em;
+	font-weight: 500;
+	color: var(--ink-2);
+	text-decoration: none;
+}
+
+.where > span {
+	display: block;
+	white-space: nowrap;
+}
+
+.where:hover {
+	color: var(--link);
+	text-decoration: underline 1px;
+}
+
+/* section rows: the account headings */
+tr.sec th {
+	padding: 1.25rem 0 0.35rem;
+	border-bottom: 1px solid var(--rule-2);
+	font-weight: 600;
+	font-variant-caps: all-small-caps;
+	letter-spacing: 0.1em;
+	font-size: 1.125rem;
+	color: var(--ink-2);
+}
+
+tbody.acct:first-of-type tr.sec th {
+	padding-top: 0.75rem;
+}
+
+tbody.acct + tbody.acct > tr.sec:first-child > * {
+	border-top: 0;
 }
 
 th.mach,
@@ -747,6 +794,10 @@ td.fig-cell a:hover .fig .w {
 		border-bottom: 3px double var(--rule-strong);
 	}
 
+	.ledger thead th {
+		box-shadow: none;
+	}
+
 	.ledger thead th.what {
 		display: block;
 		width: auto;
@@ -781,8 +832,18 @@ td.fig-cell a:hover .fig .w {
 
 	.ledger thead.key-first th.what {
 		order: 1;
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 1rem;
 		border-bottom: 0;
 		border-top: 1px solid var(--rule);
+	}
+
+	.ledger thead th.what .where {
+		display: flex;
+		gap: 0.5rem;
+		margin: 0;
 	}
 
 	.ledger thead th.mach.named {
@@ -846,6 +907,25 @@ td.fig-cell a:hover .fig .w {
 	tbody.acct + tbody.acct {
 		margin-top: 1rem;
 		border-top: 1px solid var(--rule-2);
+	}
+
+	.ledger tr.sec,
+	.ledger tr.sec th {
+		display: block;
+	}
+
+	.ledger tbody.acct:has(> tr.sec) {
+		margin-top: 0;
+		border-top: 0;
+	}
+
+	.ledger tr.sec th {
+		padding: 1.4rem 0 0.25rem;
+	}
+
+	.ledger tbody.acct:first-of-type tr.sec th {
+		padding-top: 0.6rem;
+		border-top: 0;
 	}
 
 	.ledger tr.entry {
