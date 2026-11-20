@@ -28,11 +28,11 @@ for (const el of document.querySelectorAll<HTMLElement>("[data-copy]")) {
 	});
 	el.after(button);
 }
-// An opened median closes on a click elsewhere or on Escape (without JavaScript, on its own figure or by opening another).
+// An opened median or chart label closes on a click elsewhere or on Escape (without JavaScript, on itself or by opening another).
 const closeFigures = (except?: Element | null) => {
-	for (const d of document.querySelectorAll<HTMLDetailsElement>("details.fig[open]")) if (d !== except) d.open = false;
+	for (const d of document.querySelectorAll<HTMLDetailsElement>("details.fig[open], details.lbl[open]")) if (d !== except) d.open = false;
 };
-document.addEventListener("click", (e) => closeFigures(e.target instanceof Element ? e.target.closest("details.fig") : null));
+document.addEventListener("click", (e) => closeFigures(e.target instanceof Element ? e.target.closest("details.fig, details.lbl") : null));
 document.addEventListener("keydown", (e) => {
 	if (e.key === "Escape") closeFigures();
 });
