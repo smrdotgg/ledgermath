@@ -1,4 +1,4 @@
 {
-	"name": "Paper",
-	"idea": "The home page as a one-page journal data report: a one-line abstract, Table 1 in booktabs with every digit and a p5–p95 bar in each cell, the API as references."
+	"name": "Datatype: the weather",
+	"idea": "Local TV weather for us-east-2: five machines as five towns on the map, real medians read out like temperatures, a five-day lookback (never a forecast), and the price as the pressure chart."
 }

@@ -1,4 +1,4 @@
-// Adds a "copy" button to each command block; the command reads and selects the same without it.
+// Adds a "copy" button to the data feed's address; the address reads and selects the same without it.
 for (const pre of document.querySelectorAll<HTMLPreElement>("pre[data-copy]")) {
 	const button = document.createElement("button");
 	button.type = "button";
@@ -13,6 +13,5 @@ for (const pre of document.querySelectorAll<HTMLPreElement>("pre[data-copy]")) {
 		}
 		setTimeout(() => (button.textContent = "copy"), 1600);
 	});
-	// Beside its block's heading where there is a place for it, else in the block.
-	(pre.parentElement?.querySelector(".copy-slot") ?? pre).append(button);
+	pre.prepend(button);
 }
