@@ -132,8 +132,8 @@ function Traced() {
 		<figure class="traced" aria-labelledby="traced-what">
 			<p class="what" id="traced-what">
 				<span class="dot" aria-hidden="true" />
-				<a href={row.choice.readme} title={`${row.choice.label}: ${row.choice.what}`}>
-					mutex
+				<a href={row.choice.readme} title={row.choice.what}>
+					{row.choice.label}
 				</a>
 				<span class="mono">{cell.machine.instanceType}</span>
 			</p>
@@ -141,13 +141,16 @@ function Traced() {
 				<span class="b-head">{head}</span>
 				<span class="b-tail">{`${tail}${p50.unit}`}</span>
 			</div>
+			<p class="unit">per {per.of}, median</p>
 			<Strip />
 			<Machines />
 			<p class="trail">
 				<a href={links.seriesFile(cell.series)} class="tr-stop" title={`Series ${cell.series.id}: every run of this figure, ${oldest.date} to ${newest.date}`}>
 					<span class="tr-dot" aria-hidden="true" />
 					<span class="tr-text">
-						<span class="mono">{cell.series.id}</span>
+						<span class="tr-k">
+							Series <span class="mono">{cell.series.id}</span>
+						</span>
 						<span class="tr-sub">
 							<span class="nw">
 								<time datetime={oldest.iso}>{oldest.date}</time> – <time datetime={newest.iso}>{newest.date}</time>
@@ -165,11 +168,11 @@ function Traced() {
 				<a href={point.evidence} class="tr-stop" title={`One run’s evidence: run ${point.run}, started ${runAt.date} ${runAt.minute} UTC`}>
 					<span class="tr-dot tr-end" aria-hidden="true" />
 					<span class="tr-text">
-						<span class="mono">
-							<time datetime={runAt.iso}>{runAt.date}</time>
-						</span>
+						<span class="tr-k">evidence</span>
 						<span class="tr-sub">
-							<time datetime={runAt.iso}>{runAt.minute}</time>
+							<time datetime={runAt.iso}>
+								{runAt.date} {runAt.minute}
+							</time>
 						</span>
 					</span>
 				</a>
@@ -193,11 +196,14 @@ function Mark() {
 
 function Way() {
 	return (
-		<div class="way" data-copy={links.index}>
-			{/* one text node, so an address is one word; a zero-width space lets a phone break it after the host */}
-			<a class="addr mono" href={links.index}>
-				{links.index.replace("https://api.ledgermath.com/", "https://api.ledgermath.com/​")}
-			</a>
+		<div class="way" data-copy={`curl ${links.index}`}>
+			<code class="mono">
+				<span class="cmd">curl</span>{" "}
+				{/* one text node, so an address is one word; a zero-width space lets a phone break it after the host */}
+				<a class="addr" href={links.index}>
+					{links.index.replace("https://api.ledgermath.com/", "https://api.ledgermath.com/​")}
+				</a>
+			</code>
 		</div>
 	);
 }

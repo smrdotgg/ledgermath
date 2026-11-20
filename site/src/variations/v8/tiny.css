@@ -441,9 +441,6 @@ button:focus-visible {
 	text-decoration: none;
 	flex: none;
 }
-.tr-stop:hover .tr-text > .mono {
-	text-decoration: underline;
-}
 .tr-dot {
 	width: 0.85rem;
 	height: 0.85rem;
@@ -459,11 +456,33 @@ button:focus-visible {
 	display: grid;
 	line-height: 1.25;
 }
-.tr-text > .mono {
-	font-size: 1rem;
-	font-weight: 500;
+.tr-k {
+	font: 600 1rem/1.3 var(--sans);
 	text-decoration-thickness: 1px;
 	text-underline-offset: 0.2em;
+}
+.tr-k .mono {
+	font-family: var(--mono);
+	font-weight: 500;
+	font-size: 0.95em;
+}
+.tr-stop:hover .tr-k {
+	text-decoration: underline;
+}
+
+/* what the big figure is per, and which statistic */
+.unit {
+	margin-top: 0.45rem;
+	font: 500 1.125rem/1.3 var(--sans);
+	color: var(--ink-2);
+}
+
+.way code {
+	font-size: 1rem;
+	overflow-wrap: anywhere;
+}
+.cmd {
+	color: var(--ink-3);
 }
 .tr-sub {
 	font: 400 0.875rem/1.3 var(--mono);
@@ -699,8 +718,14 @@ button:focus-visible {
 	.tr-stop {
 		gap: 0.5rem;
 	}
-	.tr-text > .mono {
-		font-size: 0.875rem;
+	.tr-k {
+		font-size: 0.9375rem;
+	}
+	.unit {
+		font-size: 0.9375rem;
+	}
+	.way code {
+		font-size: 0.8125rem;
 	}
 	.tr-sub {
 		font-size: 0.75rem;
