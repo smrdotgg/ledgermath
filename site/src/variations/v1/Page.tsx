@@ -26,7 +26,7 @@ import {
 } from "../../data";
 
 /** The form's budget: visible words that are not figures stay under it. */
-const FORM = 20 as 5 | 10 | 20 | 30 | 50;
+const FORM = 30 as 5 | 10 | 20 | 30 | 50;
 const has = (budget: 10 | 20 | 30 | 50) => FORM >= budget;
 
 // ------------------------------------------------------------------ figures, written out
@@ -206,6 +206,18 @@ export default function Page() {
 						<span class="sep" aria-hidden="true">
 							·
 						</span>
+						{has(30) ? (
+							<>
+								<a href={links.seriesList} title={`In ${formatCount(snapshot.seriesCount).full} Series`}>
+									{`${formatCount(snapshot.runCount).full} Runs`}
+								</a>
+								<span class="sep" aria-hidden="true">
+									·
+								</span>
+							</>
+						) : (
+							""
+						)}
 						<a href={sampleRun.evidence ?? links.evidenceBlobTemplate} title={`Run ${sampleRun.run}: its binary, streams and dumps by sha256`}>
 							evidence
 						</a>
@@ -222,18 +234,27 @@ export default function Page() {
 									<th scope="col" class="what">
 										{has(20) ? (
 											<a class="where" href={links.prices} title={`AWS's On-Demand prices, copied ${snapshot.priceDate}`}>
-												<span>{snapshot.region}</span> <span>AWS</span> <span>On-Demand</span>
+												{has(30) ? (
+													<>
+														<span>{snapshot.region}</span> <span>AWS On-Demand</span>
+													</>
+												) : (
+													<>
+														<span>{snapshot.region}</span> <span>AWS</span> <span>On-Demand</span>
+													</>
+												)}
 											</a>
 										) : (
 											""
 										)}
 										<details class="note legend">
-											<summary aria-label="How to read a figure" title="How to read a figure">
+											<summary aria-label={has(30) ? undefined : "How to read a figure"} title="How to read a figure">
 												<span class="lg-rule lg-zero" aria-hidden="true">
 													<span class="lg-len" />
 													<span class="lg-rng" />
 													<span class="lg-mid" />
 												</span>
+												{has(30) ? <span class="lg-words">median p5–p95</span> : ""}
 											</summary>
 											<span class="pop">
 												<span class="lg-item">median, p5–p95</span>
@@ -253,7 +274,7 @@ export default function Page() {
 								const rows = headline.map((row, i) => ({ row, i })).filter(({ row }) => row.choice.section === section);
 								return (
 									<tbody class="acct">
-										{has(20) ? (
+										{has(20) && !has(30) ? (
 											<tr class="sec">
 												<th scope="colgroup" colspan={1 + machines.length}>
 													{section}
@@ -277,6 +298,7 @@ export default function Page() {
 																<span class="arrow" role="img" aria-label={`${higher ? "higher" : "lower"} is better`} title={`${higher ? "Higher" : "Lower"} is better`}>
 																	{higher ? "↑" : "↓"}
 																</span>
+																{has(30) ? <span class="id">{c.benchmark}</span> : ""}
 															</summary>
 															<span class="pop">
 																<a href={c.readme} title={`${c.what} ${c.setting}.`}>
