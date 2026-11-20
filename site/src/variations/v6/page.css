@@ -224,7 +224,8 @@ h1 {
 }
 .board {
 	display: grid;
-	grid-template-columns: repeat(5, minmax(0, 1fr));
+	/* The first column, the machines' card's, is wider: it holds their names as well as a plot. */
+	grid-template-columns: minmax(0, 1.3fr) repeat(4, minmax(0, 1fr));
 	border: 1px solid var(--line);
 	border-radius: 14px;
 	background: var(--panel);
@@ -332,6 +333,24 @@ h1 {
 	grid-template-rows: repeat(var(--n), var(--row)) [axis] 22px [zoom] auto;
 	column-gap: 12px;
 }
+/* The machines' card names its rows, the same rows every chart takes. */
+.chart.named {
+	grid-template-columns: max-content minmax(0, 1fr) minmax(3.6em, max-content);
+}
+.chart.named .plot,
+.chart.named .ax {
+	grid-column: 2;
+}
+.chart.named .fig {
+	grid-column: 3;
+}
+.m {
+	grid-column: 1;
+	align-self: center;
+	font: 450 0.75rem/1 var(--mono);
+	white-space: nowrap;
+	color: var(--ink-2);
+}
 .plot {
 	grid-column: 1;
 	grid-row: 1 / zoom;
@@ -420,6 +439,13 @@ h1 {
 .board:has(.r5:hover) .mark.r5 .track {
 	stroke: var(--hl);
 	stroke-width: 20;
+}
+.board:has(.r1:hover) .m.r1 *,
+.board:has(.r2:hover) .m.r2 *,
+.board:has(.r3:hover) .m.r3 *,
+.board:has(.r4:hover) .m.r4 *,
+.board:has(.r5:hover) .m.r5 * {
+	color: var(--accent-ink);
 }
 
 /* the figures: a median, opened, gives its machine, every digit and its Runs */
@@ -580,12 +606,12 @@ h1 {
 
 @media (max-width: 1180px) {
 	.board {
-		grid-template-columns: repeat(3, minmax(0, 1fr));
+		grid-template-columns: minmax(0, 1.3fr) repeat(2, minmax(0, 1fr));
 	}
 }
 @media (max-width: 860px) {
 	.board {
-		grid-template-columns: repeat(2, minmax(0, 1fr));
+		grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
 	}
 	.hero-r {
 		align-items: flex-start;

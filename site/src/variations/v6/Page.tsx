@@ -54,8 +54,9 @@ function Plot(props: { inst: Instrument; scale: Scale }) {
  * The axis's figures, each centred on its tick, the unit set tight against the last one (a figure with
  * its unit, as the chart's own label), so the chart says what it counts without a word.
  */
-function Axis(props: { scale: Scale; unit: string; prefix?: string }) {
-	const labelled = props.scale.ticks.filter((t) => t.label !== "");
+function Axis(props: { scale: Scale; unit: string; prefix?: string; ends?: boolean }) {
+	const all = props.scale.ticks.filter((t) => t.label !== "");
+	const labelled = props.ends ? [all[0]!, all[all.length - 1]!] : all;
 	const last = labelled[labelled.length - 1];
 	return (
 		<span class="ax">
@@ -273,7 +274,14 @@ function Prices() {
 					</span>
 				</Label>
 			</header>
-			<div class="chart" style={`--n:${machines.length}`}>
+			<div class="chart named" style={`--n:${machines.length}`}>
+				{machines.map((m, i) => (
+					<>
+						<span class={`m r${i + 1}`} style={`grid-row:${i + 1}`} title={m.processor}>
+							<Name type={m.instanceType} />
+						</span>{" "}
+					</>
+				))}
 				<svg class="plot" aria-hidden="true" width="100%" height={machines.length * ROW + AXIS}>
 					{scale.ticks.map((t) => (
 						<line class={t.value === 0 ? "grid zero" : "grid"} x1={at(scale, t.value)} x2={at(scale, t.value)} y1="0" y2={machines.length * ROW} />
@@ -308,7 +316,7 @@ function Prices() {
 						</div>
 					</details>
 				))}
-				<Axis scale={scale} unit="/hour" prefix="$" />
+				<Axis scale={scale} unit="/hour" prefix="$" ends />
 			</div>
 		</article>
 	);
