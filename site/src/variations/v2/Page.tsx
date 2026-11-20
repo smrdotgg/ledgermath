@@ -29,7 +29,7 @@ import {
 /** What this form shows in words. Each larger form turns one more of these on. */
 const FORM = {
 	/** The five machine types by name, over their columns. */
-	machineNames: false,
+	machineNames: true,
 	/** The five groups of benchmarks, as section heads. */
 	sections: false,
 	/** Each benchmark's own name, at its row. */
@@ -227,7 +227,7 @@ function DataTable() {
 							<Key />{" "}
 						</th>
 						{machines.map((m) => (
-							<th scope="col" aria-label={m.instanceType}>
+							<th scope="col" aria-label={FORM.machineNames ? undefined : m.instanceType}>
 								{FORM.machineNames ? <span class="m-name">{m.instanceType}</span> : null}{" "}
 								<span class="m-price">
 									<Price m={m} />
@@ -264,11 +264,7 @@ function DataTable() {
 										<td>
 											{/* Which machine, for the phone, where the columns become lines. */}
 											<span class="m-lbl">
-												{FORM.machineNames ? (
-													cell.machine.instanceType
-												) : (
-													<span title={cell.machine.instanceType}>${formatUsd(cell.machine.price.usdPerHour).full}/h</span>
-												)}
+												<span title={cell.machine.instanceType}>${formatUsd(cell.machine.price.usdPerHour).full}/h</span>
 											</span>{" "}
 											<a
 												href={links.seriesFile(cell.series)}

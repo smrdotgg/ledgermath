@@ -269,9 +269,13 @@ table {
 .m-name {
 	color: var(--fg);
 	font-weight: 600;
+	font-size: 15px;
 }
 .m-price {
-	font-size: 15px;
+	font-size: 13.5px;
+}
+.m-name + .m-price .price {
+	font-weight: 400;
 }
 .m-spec {
 	color: var(--fg-2);
@@ -616,19 +620,47 @@ table {
 		min-width: 0;
 		width: auto;
 	}
-	.data colgroup,
-	.data thead th:not(.corner) {
+	.data colgroup {
 		display: none;
 	}
 	.data thead {
 		display: block;
 	}
+	/* The column heads become the key to the machines, one line each: name, size, price. The
+	   lines below name a machine by its price. */
+	.data thead tr {
+		display: flex;
+		flex-direction: column;
+	}
+	.data thead th:not(.corner) {
+		display: grid;
+		grid-template-columns: 12ch minmax(0, 1fr) auto;
+		column-gap: 1ch;
+		align-items: baseline;
+		padding: 4px 0;
+		border-bottom: 1px solid var(--rule);
+		position: static;
+	}
+	.data thead th:not(.corner) .m-name {
+		grid-column: 1;
+	}
+	.data thead th:not(.corner) .m-spec {
+		grid-column: 2;
+		grid-row: 1;
+	}
+	.data thead th:not(.corner) .m-price {
+		grid-column: 3;
+		grid-row: 1;
+		font-size: 13px;
+	}
 	.data thead th.corner {
+		order: 2;
 		display: flex;
 		flex-wrap: wrap;
 		align-items: center;
 		gap: 6px 3ch;
-		padding: 0 0 8px;
+		padding: 18px 0 8px;
+		position: static;
 	}
 	.key {
 		grid-template-columns: 2ch auto 5ch auto;
