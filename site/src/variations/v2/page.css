@@ -678,6 +678,10 @@ table {
 		align-items: center;
 		padding: 2px 0;
 	}
+	.data tbody.bench .figs td,
+	.data thead + tbody.bench .figs td {
+		padding: 2px 0;
+	}
 	.m-lbl {
 		display: block;
 		font-size: 12.5px;
