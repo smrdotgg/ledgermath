@@ -26,7 +26,7 @@ import {
 } from "../../data";
 
 /** The form's budget: visible words that are not figures stay under it. */
-const FORM = 30 as 5 | 10 | 20 | 30 | 50;
+const FORM = 50 as 5 | 10 | 20 | 30 | 50;
 const has = (budget: 10 | 20 | 30 | 50) => FORM >= budget;
 
 // ------------------------------------------------------------------ figures, written out
@@ -138,6 +138,17 @@ function CopyMark() {
 	);
 }
 
+/** The pencil rule as it is drawn under a figure, small: zero tick, line to the median, p5–p95 in ink, the median notch. */
+function LegendMark() {
+	return (
+		<span class="lg-rule lg-zero" aria-hidden="true">
+			<span class="lg-len" />
+			<span class="lg-rng" />
+			<span class="lg-mid" />
+		</span>
+	);
+}
+
 function MachineHead(props: { k: number }) {
 	const m = machines[props.k]!;
 	const [mem = "", memUnit = ""] = m.memory.split(" ");
@@ -190,7 +201,9 @@ export default function Page() {
 	return (
 		<>
 			<header class="masthead">
-				<h1>LedgerMath</h1>
+				<h1>
+					LedgerMath{has(50) ? <span class="sub">A book of record for cloud servers</span> : ""}
+				</h1>
 				<div class="start">
 					<div class="cmd">
 						<code tabindex="0">{`curl ${links.index}`}</code>
@@ -198,6 +211,17 @@ export default function Page() {
 							<CopyMark />
 						</button>
 					</div>
+					{has(50) ? (
+						<p class="for">
+							Static JSON for AI agents
+							<span class="sep" aria-hidden="true">
+								·
+							</span>
+							<a href={links.docs}>docs</a>
+						</p>
+					) : (
+						""
+					)}
 					<p class="folio">
 						<time datetime={newest.iso} title={newest.full}>
 							<span class="date">{newest.date}</span> <span class="clock">{newest.minute}</span>
@@ -206,9 +230,19 @@ export default function Page() {
 						<span class="sep" aria-hidden="true">
 							·
 						</span>
+						{has(50) ? (
+							<>
+								<span>four times a day</span>
+								<span class="sep" aria-hidden="true">
+									·
+								</span>
+							</>
+						) : (
+							""
+						)}
 						{has(30) ? (
 							<>
-								<a href={links.seriesList} title={`In ${formatCount(snapshot.seriesCount).full} Series`}>
+								<a class="nowrap" href={links.seriesList} title={`In ${formatCount(snapshot.seriesCount).full} Series`}>
 									{`${formatCount(snapshot.runCount).full} Runs`}
 								</a>
 								<span class="sep" aria-hidden="true">
@@ -227,6 +261,28 @@ export default function Page() {
 
 			<main>
 				<section class="ledger" aria-label="The ledger: 14 benchmarks on 5 machine types">
+					{has(50) ? (
+						<p class="legend-rest">
+							<span class="lg-item">
+								<span class="lg-rule lg-zero" aria-hidden="true">
+									<span class="lg-len lg-full" />
+								</span>
+								from 0, per row
+							</span>
+							<span class="lg-item">
+								<span class="lg-rule lg-short" aria-hidden="true">
+									<span class="lg-rng lg-full" />
+									<span class="lg-mid" />
+								</span>
+								median p5–p95
+							</span>
+							<span class="lg-item">
+								<i class="nn">n</i> counted Runs
+							</span>
+						</p>
+					) : (
+						""
+					)}
 					<div class="scroll" tabindex="0" role="region" aria-label="The ledger, scrollable">
 						<table>
 							<thead id="machines" class={has(10) ? "key-first" : undefined}>
@@ -247,23 +303,23 @@ export default function Page() {
 										) : (
 											""
 										)}
-										<details class="note legend">
-											<summary aria-label={has(30) ? undefined : "How to read a figure"} title="How to read a figure">
-												<span class="lg-rule lg-zero" aria-hidden="true">
-													<span class="lg-len" />
-													<span class="lg-rng" />
-													<span class="lg-mid" />
+										{has(50) ? (
+											""
+										) : (
+											<details class="note legend">
+												<summary aria-label={has(30) ? undefined : "How to read a figure"} title="How to read a figure">
+													<LegendMark />
+													{has(30) ? <span class="lg-words">median p5–p95</span> : ""}
+												</summary>
+												<span class="pop">
+													<span class="lg-item">median, p5–p95</span>
+													<span class="lg-item">rule from 0, per row</span>
+													<span class="lg-item">
+														<i class="nn">n</i> counted Runs
+													</span>
 												</span>
-												{has(30) ? <span class="lg-words">median p5–p95</span> : ""}
-											</summary>
-											<span class="pop">
-												<span class="lg-item">median, p5–p95</span>
-												<span class="lg-item">rule from 0, per row</span>
-												<span class="lg-item">
-													<i class="nn">n</i> counted Runs
-												</span>
-											</span>
-										</details>
+											</details>
+										)}
 									</th>
 									{machines.map((_, k) => (
 										<MachineHead k={k} />
