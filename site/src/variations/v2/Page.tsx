@@ -9,6 +9,7 @@ import {
 	type ByteUnit,
 	type DurationUnit,
 	durationUnit,
+	formatCount,
 	formatDuration,
 	formatDurationPerUnit,
 	formatMoment,
@@ -34,6 +35,8 @@ const FORM = {
 	sections: true,
 	/** Each benchmark's own name, at its row. */
 	benchmarkNames: true,
+	/** A line under the name, what the page holds and for whom; the status written out; the qualifiers of a row or a group. */
+	prose: true,
 };
 
 const newest = formatMoment(snapshot.newestRunStartedAt);
@@ -192,7 +195,7 @@ function RowHead(props: { row: HeadlineRow }) {
 	const c = props.row.choice;
 	const up = c.lead === "rate";
 	const tag = SECTION_TAG[c.section];
-	return (
+	const note = (
 		<details class="note">
 			<summary title={`${c.label}: open for its name`}>
 				{FORM.benchmarkNames ? <code class="b-id">{c.benchmark}</code> : null}{" "}
@@ -205,10 +208,19 @@ function RowHead(props: { row: HeadlineRow }) {
 				<a href={c.readme} class="b-label">
 					{c.label}
 				</a>{" "}
-				{c.per ? <span class="b-per">per {c.per.of}</span> : null}{" "}
-				{tag ? <span class="b-per">{tag}</span> : null}
+				{c.per && !FORM.prose ? <span class="b-per">per {c.per.of}</span> : null}{" "}
+				{tag && !FORM.prose ? <span class="b-per">{tag}</span> : null}
 			</span>
 		</details>
+	);
+	// The time of one critical section, not of one repetition: said where the figures are.
+	return c.per && FORM.prose ? (
+		<>
+			{note}{" "}
+			<span class="per">per {c.per.of}</span>
+		</>
+	) : (
+		note
 	);
 }
 
@@ -261,6 +273,7 @@ function DataTable() {
 									<tr class="sect">
 										<th colspan={machines.length + 1} scope="rowgroup">
 											<span class="sect-name">{section}</span>
+											{FORM.prose && SECTION_TAG[section] ? <span class="sect-tag"> {SECTION_TAG[section]}</span> : null}
 										</th>
 									</tr>
 								) : null}
@@ -320,7 +333,9 @@ export default function Page() {
 						(5)
 					</span>
 				</h1>{" "}
+				{FORM.prose ? <p class="tagline">AWS machine benchmarks as JSON for agents</p> : null}{" "}
 				<p class="when">
+					{FORM.prose ? <span class="k">latest Run </span> : null}
 					<time datetime={newest.iso} title={`The newest Run started ${newest.full}`}>
 						<span class="hi">{newest.date}</span>
 						<span class="t">T</span>
@@ -330,6 +345,24 @@ export default function Page() {
 					<a href={example.evidence} title={`One Run's evidence: Run ${example.run}, started ${example.started_at}, sha256 ${example.sha256}. ${links.evidenceAbout}`}>
 						evidence
 					</a>
+					{FORM.prose ? (
+						<span class="status">
+							{" "}
+							<a href={links.seriesList} class="nb" title={`${formatCount(snapshot.runCount).full} Runs kept since ${snapshot.oldestRunStartedAt}, ${formatCount(snapshot.failedRuns).full} failed: every Series lists them`}>
+								<span class="hi">{formatCount(snapshot.runCount).full}</span> Runs
+							</a>{" "}
+							<span class="sep" aria-hidden="true">
+								·
+							</span>{" "}
+							<span class="nb">{snapshot.region}</span>{" "}
+							<span class="sep" aria-hidden="true">
+								·
+							</span>{" "}
+							<a href={links.prices} class="nb" title="AWS's public On-Demand prices, the day's price file">
+								On-Demand {snapshot.priceDate}
+							</a>
+						</span>
+					) : null}
 				</p>
 			</header>{" "}
 			<main>

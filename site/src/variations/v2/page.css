@@ -174,6 +174,53 @@ code {
 .when .t {
 	color: var(--dim);
 }
+/* With a line under the name, the header is two columns: the name and its line; the status. */
+.top:has(.tagline) {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) auto;
+	align-items: end;
+}
+.tagline {
+	grid-column: 1;
+	margin: 0;
+	font-size: 20px;
+	line-height: 1.35;
+	color: var(--fg-2);
+}
+.top:has(.tagline) .when {
+	grid-column: 2;
+	grid-row: 1 / span 2;
+	text-align: right;
+	line-height: 1.8;
+}
+.when .k {
+	color: var(--dim);
+}
+.status {
+	display: block;
+}
+.status a {
+	color: var(--fg-2);
+}
+.status a:hover {
+	color: var(--acc);
+}
+.sep {
+	margin: 0 0.6ch;
+	color: var(--dim);
+}
+/* A row's qualifier, under its switch: what each of its figures is the time of. */
+.per {
+	display: block;
+	margin-top: 4px;
+	font-size: 12px;
+	color: var(--dim);
+}
+.sect-tag {
+	margin-left: 2ch;
+	color: var(--dim);
+	letter-spacing: 0;
+}
 
 /* The one command: a prompt, curl, the index's address. The copy button is client.ts's. */
 .cmd {
@@ -626,6 +673,30 @@ table {
 	}
 	.when {
 		font-size: 13px;
+	}
+	.top:has(.tagline) {
+		display: flex;
+		align-items: flex-start;
+	}
+	.tagline {
+		margin-top: -2px;
+		font-size: 14px;
+	}
+	.status {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0 2.5ch;
+	}
+	.status .sep {
+		display: none;
+	}
+	.top:has(.tagline) .when {
+		text-align: left;
+		line-height: 1.7;
+	}
+	.per {
+		display: inline;
+		margin-left: 2ch;
 	}
 	/* The command on two lines, the address whole on the second; the copy button on the first. */
 	.cmd {
