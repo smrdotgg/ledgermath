@@ -1,4 +1,4 @@
 {
-	"name": "Terminal",
-	"idea": "The home page as a man page: monospace, one accent, copyable curl lines, every figure printed to its last digit and aligned on the decimal point."
+	"name": "dt-terminal",
+	"idea": "A trading-desk terminal that takes itself far too seriously: bid p5, mid p50, ask p95, a Datatype chart in every cell, and the gravity of a bond desk applied to a mutex."
 }
