@@ -1,11 +1,9 @@
-// Design v1, "Ledger": the home page as a book of record. One ruled table is the page: one
-// column per machine type, one entry per benchmark, every figure written out to its last digit
-// (the first three decimal places in ink, the rest in pencil) and decimal-aligned down its column.
-// Under each figure a pencil rule drawn from zero, on one scale per row, with the figure's p5–p95 in
-// ink and its median a notch: a drawing that never makes 0.2% look like more. Each column head holds
-// its machine's usual count of Runs; a cell names its own only where it differs. On a phone the
-// machines' key closes the ledger, so the first figures come first. Few words: the figures are the page, and everything else is a
-// link. No best, no ranking, no ties.
+// Design v1, "Ledger", in its tiny forms: the home page as a book of record with almost no words. The figures
+// are the page: one column per machine type, one entry per benchmark, every figure written out to its last
+// digit (three places in ink, the rest in pencil) with its unit set against it. Under each figure a pencil
+// rule drawn from zero on one scale per row. What a row or a column is opens on a tap (a closed <details>),
+// so nothing a visitor can see is left unnamed. FORM sets the budget of visible words; each larger form adds
+// the next most useful words. No best, no ranking, no ties.
 import "./page.css";
 import {
 	durationUnit,
@@ -26,6 +24,10 @@ import {
 	type Section,
 	type Shown,
 } from "../../data";
+
+/** The form's budget: visible words that are not figures stay under it. */
+const FORM = 5 as 5 | 10 | 20 | 30 | 50;
+const has = (budget: 10 | 20 | 30 | 50) => FORM >= budget;
 
 // ------------------------------------------------------------------ figures, written out
 
@@ -54,18 +56,18 @@ function rowCells(row: HeadlineRow): Cell[] {
 }
 
 const cells = headline.map(rowCells);
-/** The widest whole part of a row's figures, in digits: one benchmark's figures line up on the point, and no other's push them in. */
+/** The widest whole part of a row's figures, in digits: one benchmark's figures line up on the point. */
 const wholeDigits = (xs: Cell[]) => Math.max(...xs.map((c) => c.p50.full.split(".")[0]!.length));
 
 /**
- * A figure as a ledger writes it: whole part right-aligned, three places in ink, the rest in pencil, in strict
- * threes from the point, the last group as short as it falls, so every column's tails keep one rhythm.
+ * A figure as a ledger writes it: whole part right-aligned, three places in ink, the rest in pencil in threes,
+ * and its unit set tight against the last digits, in one piece of text, as a figure and its unit are one thing.
  */
-function Written(props: { full: string; inkPlaces?: number }) {
+function Written(props: { full: string; unit: string }) {
 	const [whole = "0", fraction = ""] = props.full.split(".");
-	const places = props.inkPlaces ?? 3;
-	const ink = fraction.slice(0, places);
-	const pencil = fraction.slice(places).match(/\d{1,3}/g) ?? [];
+	const ink = fraction.slice(0, 3);
+	const pencil = fraction.slice(3).match(/\d{1,3}/g) ?? [];
+	const last = pencil.pop();
 	return (
 		<span class="fig">
 			<span class="w">{whole}</span>
@@ -74,15 +76,13 @@ function Written(props: { full: string; inkPlaces?: number }) {
 				{pencil.map((g) => (
 					<span>{g}</span>
 				))}
+				<span class="tail">{`${last ?? ""}${props.unit}`}</span>
 			</span>
 		</span>
 	);
 }
 
-/**
- * The pencil rule under a figure, drawn from zero so that figures 0.2% apart look 0.2% apart: a zero
- * tick, a pencil line from zero to the median, the 5th to 95th percentile in ink on it, the median a red notch.
- */
+/** The pencil rule under a figure, drawn from zero: a zero tick, a line to the median, p5–p95 in ink, the median a red notch. */
 function Rule(props: { x: Cell; hi: number }) {
 	const pct = (v: number) => `${(props.hi > 0 ? (v / props.hi) * 100 : 0).toFixed(3)}%`;
 	return (
@@ -100,29 +100,25 @@ const rowTop = (xs: Cell[]) => Math.max(...xs.map((x) => x.p95.value));
 
 /** Each machine's usual count of counted Runs, written once in its column head; a cell names its count only where it differs. */
 const usualCount = machines.map((_, k) => {
-	const counts = cells.map((xs) => xs[k]!.count);
 	const tally = new Map<number, number>();
-	for (const c of counts) tally.set(c, (tally.get(c) ?? 0) + 1);
+	for (const xs of cells) tally.set(xs[k]!.count, (tally.get(xs[k]!.count) ?? 0) + 1);
 	return [...tally.entries()].sort((a, b) => b[1] - a[1])[0]![0];
 });
 
 // ------------------------------------------------------------------ the page
 
 const SECTIONS: Section[] = ["Memory", "Compute", "Operating system", "Disk", "Network"];
-const ROMAN = ["I", "II", "III", "IV", "V"];
-const RUN_TIMES = ["04:10", "10:10", "16:10", "22:10"];
-const sectionId = (s: Section) => `s-${s.toLowerCase().replace(/ /g, "-")}`;
-
 const newest = formatMoment(snapshot.newestRunStartedAt);
-const oldest = formatMoment(snapshot.oldestRunStartedAt);
-const runs = formatCount(snapshot.runCount).full;
-const seriesCount = formatCount(snapshot.seriesCount).full;
-const method = snapshot.methods[0]!;
 const price = (usd: Parameters<typeof formatUsd>[0]) => `$${formatUsd(usd).full}`;
-/** One real Run, as a Series file holds it: its evidence and its boot's summary, to show what "kept with its evidence" means. */
 const sampleRun = seriesFileContents.point.example;
+const two = (i: number) => String(i + 1).padStart(2, "0");
 
-/** The tally beside each figure: the counted Runs behind it, in pencil, inside the figure's link to its Series. */
+/** A size such as "8 GiB" or "2 vCPU", the unit set tight against its number, one piece of text. */
+function Tight(props: { n: string; unit: string }) {
+	return <span class="tight">{`${props.n}${props.unit}`}</span>;
+}
+
+/** The tally: counted Runs behind a figure, in pencil. */
 function Tally(props: { count: number }) {
 	return (
 		<span class="n">
@@ -132,232 +128,159 @@ function Tally(props: { count: number }) {
 	);
 }
 
-/** An address, with a place to break after each slash so it wraps where a reader expects. */
-function Url(props: { href: string }) {
-	const parts = props.href.split(/(?<=\/)/);
+/** Two sheets, the copy mark. */
+function CopyMark() {
 	return (
-		<>
-			{parts.map((part, i) => (
-				<>
-					<span class="nowrap">{part}</span>
-					{i < parts.length - 1 ? <wbr /> : ""}
-				</>
-			))}
-		</>
+		<svg class="copy-mark" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+			<rect x="5.5" y="5.5" width="8" height="8" rx="1" fill="none" stroke="currentColor" />
+			<path d="M10.5 3.5v-1a1 1 0 0 0-1-1h-6a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h1" fill="none" stroke="currentColor" />
+		</svg>
 	);
 }
 
-const API = "https://api.ledgermath.com/";
-const rel = (url: string) => url.replace(API, "");
-const schemaOf = (name: string) => links.schemas.find((s) => s.name === name)!.url;
-
-/**
- * The API's addresses, one column each, like the ledger's machines: the name, the schema it follows, the file.
- * Every one is a real address a reader can open (the masthead links one Run's evidence).
- */
-const ADDRESSES: { label: string; href: string; shown: string; schema?: string }[] = [
-	{ label: "Index", href: links.index, shown: rel(links.index), schema: schemaOf("index") },
-	{ label: "All Series", href: links.seriesList, shown: rel(links.seriesList), schema: schemaOf("series-list") },
-	{ label: "One Series", href: seriesFileContents.sample.url, shown: rel(seriesFileContents.sample.url), schema: schemaOf("series") },
-	{ label: "Prices", href: links.prices, shown: rel(links.prices), schema: schemaOf("prices") },
-	{ label: "Docs", href: links.docs, shown: links.docs.replace("https://", "") },
-];
+function MachineHead(props: { k: number }) {
+	const m = machines[props.k]!;
+	const [mem = "", memUnit = ""] = m.memory.split(" ");
+	const spec = (
+		<span class="spec">
+			<Tight n={m.vcpu} unit="vCPU" /> · <Tight n={mem} unit={memUnit} />
+		</span>
+	);
+	const priceLine = (
+		<span class="mrow">
+			<span class="price" title={`${m.price.description}; SKU ${m.price.sku}`}>
+				{price(m.price.usdPerHour)}
+				<span class="per">/h</span>
+			</span>
+			<span title={`${usualCount[props.k]} counted Runs behind each figure in this column, unless its cell says otherwise`}>
+				<Tally count={usualCount[props.k]!} />
+			</span>
+		</span>
+	);
+	if (has(10)) {
+		return (
+			<th scope="col" class="mach">
+				<span class="it" title={`${m.processor}, ${m.clockSpeed}; network ${m.network}`}>
+					{m.instanceType}
+				</span>
+				{spec}
+				{priceLine}
+			</th>
+		);
+	}
+	// Below ten words the column is its price and size; its name opens on a tap.
+	return (
+		<th scope="col" class="mach" aria-label={m.instanceType}>
+			<details class="note">
+				<summary>
+					{priceLine}
+					{spec}
+				</summary>
+				<span class="pop">
+					<a class="it" href={links.prices} title={`${m.processor}, ${m.clockSpeed}`}>
+						{m.instanceType}
+					</a>
+				</span>
+			</details>
+		</th>
+	);
+}
 
 export default function Page() {
 	return (
 		<>
 			<header class="masthead">
-				<div class="title">
-					<h1>
-						LedgerMath<span class="sub">A book of record for cloud servers</span>
-					</h1>
-					<p class="claim">
-						{formatCount(snapshot.machineCount).full} AWS machine types, benchmarked four times a day. Every Run kept with its evidence, published as static
-						JSON for AI agents.
-					</p>
-					<div class="start">
-						<span class="start-h">Point an agent at it</span>
-						<button type="button" class="copy" data-copy={`curl ${links.index}`} aria-label="Copy the command" hidden>
-							Copy
+				<h1>LedgerMath</h1>
+				<div class="start">
+					<div class="cmd">
+						<code tabindex="0">{`curl ${links.index}`}</code>
+						<button type="button" class="copy" data-copy={`curl ${links.index}`} aria-label="Copy the command" title="Copy the command" hidden>
+							<CopyMark />
 						</button>
-						<div class="cmd">
-							<code tabindex="0">
-								curl <Url href={links.index} />
-							</code>
-						</div>
 					</div>
+					<p class="folio">
+						<time datetime={newest.iso} title={newest.full}>
+							<span class="date">{newest.date}</span> <span class="clock">{newest.minute}</span>
+						</time>
+						<span class="sep" aria-hidden="true">
+							·
+						</span>
+						<a href={sampleRun.evidence ?? links.evidenceBlobTemplate} title={`Run ${sampleRun.run}: its binary, streams and dumps by sha256`}>
+							evidence
+						</a>
+					</p>
 				</div>
-				<dl class="folio" aria-label="The state of the book">
-					<div>
-						<dt>Newest Run</dt>
-						<dd>
-							<time datetime={newest.iso} title={newest.full}>
-								{newest.longDate}, {newest.minute} UTC
-							</time>
-						</dd>
-					</div>
-					<div>
-						<dt>Runs</dt>
-						<dd>
-							<a href={links.seriesList} title={`Since ${oldest.full}; boots at ${RUN_TIMES.join(", ")} UTC`}>
-								{runs}
-							</a>
-							<span class="aside">
-								{" "}
-								in {seriesCount} Series · {formatCount(snapshot.failedRuns).full} failed
-							</span>
-						</dd>
-					</div>
-					<div>
-						<dt>One Run</dt>
-						<dd>
-							<a href={sampleRun.evidence ?? links.evidenceBlobTemplate} title={`Run ${sampleRun.run}: its binary, streams and dumps by sha256`}>
-								evidence
-							</a>
-							<span class="aside"> · </span>
-							<a href={sampleRun.boot_summary ?? links.evidenceBlobTemplate}>boot summary</a>
-						</dd>
-					</div>
-					<div>
-						<dt>Prices</dt>
-						<dd>
-							AWS On-Demand{" "}
-							<span class="aside">
-								· copied{" "}
-								<a href={links.prices} class="nowrap">
-									{snapshot.priceDate}
-								</a>
-							</span>
-						</dd>
-					</div>
-					<div>
-						<dt>Where</dt>
-						<dd>
-							{snapshot.region} <span class="aside">· {machines[0]!.availabilityZoneIds.join(", ")}</span>
-						</dd>
-					</div>
-					<div>
-						<dt>Method</dt>
-						<dd>
-							<a href={links.docs}>
-								{method.name} v{method.version}
-							</a>
-							<span class="aside"> · median of counted Runs</span>
-						</dd>
-					</div>
-				</dl>
 			</header>
 
 			<main>
-				<section class="ledger" aria-labelledby="ledger-h">
-					<div class="ledger-head">
-						<h2 id="ledger-h">
-							The ledger{" "}
-							<span class="dim">
-								{formatCount(headline.length).full} benchmarks × <a href="#machines">{formatCount(machines.length).full} machines</a>
-							</span>
-						</h2>
-						<p class="legend">
-							<span class="lg-item">
-								<span class="lg-rule lg-zero" aria-hidden="true">
-									<span class="lg-len" />
-								</span>
-								from 0, per row
-							</span>
-							<span class="lg-item">
-								<span class="lg-rule" aria-hidden="true">
-									<span class="lg-rng" />
-								</span>
-								p5–p95
-							</span>
-							<span class="lg-item">
-								<span class="lg-rule" aria-hidden="true">
-									<span class="lg-mid" />
-								</span>
-								median
-							</span>
-							<span class="lg-item">
-								<span class="n" aria-hidden="true">
-									<i>n</i>
-								</span>
-								counted Runs
-							</span>
-						</p>
-					</div>
+				<section class="ledger" aria-label="The ledger: 14 benchmarks on 5 machine types">
 					<div class="scroll" tabindex="0" role="region" aria-label="The ledger, scrollable">
 						<table>
 							<thead id="machines">
 								<tr>
 									<th scope="col" class="what">
-										Benchmark
-									</th>
-									<th scope="col" class="unit">
-										Unit
-									</th>
-									{machines.map((m, k) => (
-										<th scope="col" class="mach">
-											<span class="it" title={`${m.processor}, ${m.clockSpeed}; network ${m.network}`}>
-												{m.instanceType}
-											</span>
-											<span class="spec">
-												{m.vcpu} vCPU · {m.memory}
-											</span>
-											<span class="mrow">
-												<a class="price" href={links.prices} title={`${m.price.description}; SKU ${m.price.sku}; at ${m.price.path.pointer}`}>
-													{price(m.price.usdPerHour)}
-													<span class="per">/h</span>
-												</a>
-												<span title={`${usualCount[k]} counted Runs behind each figure in this column, unless its cell says otherwise`}>
-													<Tally count={usualCount[k]!} />
+										<details class="note legend">
+											<summary aria-label="How to read a figure" title="How to read a figure">
+												<span class="lg-rule lg-zero" aria-hidden="true">
+													<span class="lg-len" />
+													<span class="lg-rng" />
+													<span class="lg-mid" />
+												</span>
+											</summary>
+											<span class="pop">
+												<span class="lg-item">median, p5–p95</span>
+												<span class="lg-item">rule from 0, per row</span>
+												<span class="lg-item">
+													<i class="nn">n</i> counted Runs
 												</span>
 											</span>
-										</th>
+										</details>
+									</th>
+									{machines.map((_, k) => (
+										<MachineHead k={k} />
 									))}
 								</tr>
 							</thead>
-							{SECTIONS.map((section, s) => {
+							{SECTIONS.map((section) => {
 								const rows = headline.map((row, i) => ({ row, i })).filter(({ row }) => row.choice.section === section);
 								return (
-									<tbody id={sectionId(section)} class="acct">
-										<tr class="sec">
-											<th scope="colgroup" colspan={2 + machines.length}>
-												<span class="roman">{ROMAN[s]}.</span> {section}
-												{section === "Disk" ? <span class="sec-note"> · root EBS gp3 volume</span> : ""}
-											</th>
-										</tr>
+									<tbody class="acct">
 										{rows.map(({ row, i }) => {
 											const c = row.choice;
 											const xs = cells[i]!;
-											const unit = xs[0]!.p50.unit;
 											const top = rowTop(xs);
 											const higher = c.lead === "rate";
-											// Where any cell in the row names its count, every cell keeps the count's room, so all five rules share one width.
 											const tallied = xs.some((x, k) => x.count !== usualCount[k]);
 											return (
 												<tr class="entry" style={{ "--whole": `${wholeDigits(xs)}ch` }}>
-													<th scope="row" class="what">
-														<a href={c.readme} title={`${c.what} ${c.setting}.`}>
-															{c.label}
-														</a>
+													<th scope="row" class="what" aria-label={c.label}>
+														<details class="note">
+															<summary>
+																<span class="no">{two(i)}</span>
+																<span class="arrow" role="img" aria-label={`${higher ? "higher" : "lower"} is better`} title={`${higher ? "Higher" : "Lower"} is better`}>
+																	{higher ? "↑" : "↓"}
+																</span>
+															</summary>
+															<span class="pop">
+																<a href={c.readme} title={`${c.what} ${c.setting}.`}>
+																	{c.label}
+																</a>
+															</span>
+														</details>
 													</th>
-													<td class="unit">
-														<span class="u">{unit}</span>{" "}
-														<span class="arrow" role="img" aria-label={`${higher ? "higher" : "lower"} is better`} title={`${higher ? "Higher" : "Lower"} is better`}>
-															{higher ? "↑" : "↓"}
-														</span>
-													</td>
 													{row.cells.map((cell, k) => {
 														const x = xs[k]!;
 														return (
 															<td class="fig-cell">
 																<span class="mkey" aria-hidden="true">
-																	{cell.machine.instanceType}
+																	{price(cell.machine.price.usdPerHour)}
+																	<span class="per">/h</span>
 																</span>
 																<a
 																	href={links.seriesFile(cell.series)}
-																	title={`${cell.machine.instanceType}: median of ${x.count} counted Runs ${x.p50.full} ${unit}; 5th percentile ${x.p5.full}, 95th ${x.p95.full}. As the Derivation holds it: ${x.p50.source}.`}
+																	title={`${c.label}, ${cell.machine.instanceType}: median of ${x.count} counted Runs ${x.p50.full} ${x.p50.unit}; 5th percentile ${x.p5.full}, 95th ${x.p95.full}. As the Derivation holds it: ${x.p50.source}.`}
 																>
-																	<Written full={x.p50.full} />
+																	<Written full={x.p50.full} unit={x.p50.unit} />
 																	<span class="line">
 																		<Rule x={x} hi={top} />
 																		{x.count !== usualCount[k] ? <Tally count={x.count} /> : tallied ? <span class="n" /> : ""}
@@ -375,33 +298,12 @@ export default function Page() {
 						</table>
 					</div>
 				</section>
-
-				<section class="api" aria-labelledby="api-h">
-					<h2 id="api-h">For agents and developers</h2>
-					<ul class="addr">
-						{ADDRESSES.map((a) => (
-							<li>
-								<span class="al">{a.label}</span>
-								{a.schema ? (
-									<a class="sch" href={a.schema} aria-label={`${a.label} schema`}>
-										schema
-									</a>
-								) : (
-									""
-								)}
-								<a class="mono" href={a.href}>
-									<Url href={a.shown} />
-								</a>
-							</li>
-						))}
-					</ul>
-				</section>
 			</main>
 
 			<footer class="colophon">
-				<p>
-					LedgerMath · <a href="third-party-notices.txt">Notices</a>
-				</p>
+				<a href="third-party-notices.txt" class="mark" aria-label="Third-party notices" title="Third-party notices">
+					©
+				</a>
 			</footer>
 		</>
 	);
