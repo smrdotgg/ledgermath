@@ -154,6 +154,10 @@ h1 {
 .dateline .dash {
 	color: var(--ink-3);
 }
+.dl-dates {
+	display: inline-flex;
+	gap: 0.5rem;
+}
 
 .availability {
 	position: relative;
@@ -301,7 +305,7 @@ td {
 	font-weight: 400;
 }
 .t1 .c-op {
-	width: 4.2rem;
+	width: 12.6rem;
 	padding-left: 0;
 }
 .t1 thead th.stub {
@@ -349,22 +353,12 @@ td {
 	color: var(--accent);
 }
 
-/* each group's name, a run-in head over its rows */
-.t1 tr.group th {
-	padding: 0.55rem 0 0.1rem;
-	font-weight: 600;
-	font-style: italic;
-	font-size: 0.94rem;
-	color: var(--ink);
-	border-bottom: 1px solid var(--hair);
+/* the groups (memory, compute, the system, disk, network) set apart by space and a darker rule; the names say the rest */
+.t1 tbody.sect > tr:first-child > * {
+	padding-top: 0.7rem;
 }
-.t1 tr.group summary {
-	text-decoration: underline dotted color-mix(in srgb, currentColor 45%, transparent);
-	text-decoration-thickness: 1px;
-	text-underline-offset: 0.25em;
-}
-.t1 tr.group .tip-body {
-	font-style: italic;
+.t1 tbody.sect + tbody.sect > tr:first-child > * {
+	border-top: 1px solid var(--ink-3);
 }
 .t1 tbody tr:not(.group) > * {
 	padding-top: 0.32rem;
@@ -380,15 +374,18 @@ td {
 	font-weight: 400;
 	line-height: 1.25;
 }
-/* a row's number: the rubric red of a reference, the way to what the row measures */
-.rn {
-	min-width: 1.2rem;
-	color: var(--accent);
-	font-weight: 700;
-	font-size: 1rem;
-	text-decoration: underline dotted color-mix(in srgb, currentColor 55%, transparent);
+/* a row's benchmark, as the API names it: the way to what the row measures, in words */
+.op-id {
+	font-family: var(--mono);
+	font-size: 0.84rem;
+	color: var(--ink);
+	text-decoration: underline dotted color-mix(in srgb, currentColor 45%, transparent);
 	text-decoration-thickness: 1px;
-	text-underline-offset: 0.25em;
+	text-underline-offset: 0.3em;
+}
+.tip > summary:hover .op-id,
+.tip[open] > summary .op-id {
+	color: var(--accent);
 }
 .dir {
 	font-weight: 600;
@@ -522,6 +519,13 @@ td {
 		font-size: 0.72rem;
 		margin-top: 0.55rem;
 	}
+	/* the dates on a line of their own, the Runs and the Region under them */
+	.dl-dates {
+		flex-basis: 100%;
+	}
+	.sep-dates {
+		display: none;
+	}
 	.availability {
 		display: flex;
 		align-items: stretch;
@@ -615,9 +619,8 @@ td {
 		font-size: 0.86rem;
 	}
 
-	.t1 tr.group th {
-		padding-top: 0.9rem;
-		border-bottom: 2px solid var(--rule);
+	.t1 tbody.sect + tbody.sect > tr:first-child {
+		border-top: 2px solid var(--rule);
 	}
 	.t1 tbody tr:not(.group) {
 		padding: 0.5rem 0 0.45rem;

@@ -1,9 +1,9 @@
 // Design v3, "Paper": LedgerMath's home page as a one-page data report, a research letter.
-// Form "under-20": at most nineteen words a visitor reads. The paper keeps its title, its dateline,
-// the way in, and Table 1 whole with its caption and its five groups (every digit, a p5–p95 bar per
-// cell, each machine and its hourly price over its column). What each row measures waits behind a
-// tap on its number; a machine's vCPU, memory and processor behind a tap on its name; where Disk
-// and Network are measured behind a tap on the group.
+// Form "under-30": at most twenty-nine words a visitor reads. The paper keeps its title, its dateline
+// (with the Region and the failed Runs), the way in, and Table 1 whole with its caption (every digit,
+// a p5–p95 bar per cell, each machine and its hourly price over its column, each row named by its
+// benchmark as the API names it). What a row measures, in words, waits behind a tap on its name;
+// a machine's vCPU, memory and processor behind a tap on the machine's.
 // Every figure comes from ../../data exactly as the snapshot holds it; nothing is rounded, ranked or computed.
 import "./page.css";
 import {
@@ -84,8 +84,6 @@ const SECTIONS: Section[] = ["Memory", "Compute", "Operating system", "Disk", "N
 // A label, never a sentence: where the two groups that are not the machine itself are measured.
 const GROUP_NOTE: Partial<Record<Section, string>> = { Disk: "root volume, EBS gp3", Network: "S3, same Region" };
 const bySection = SECTIONS.map((section) => ({ section, rows: rows.filter((r) => r.row.choice.section === section) }));
-/** Each row's number in Table 1, counted down the table across its groups. */
-const number = new Map(rows.map((r, i) => [r, i + 1]));
 
 /** A narrow no-break space: SI's thin gap between groups of three, so a group never stands apart from its run. */
 const NNBSP = " ";
@@ -158,6 +156,7 @@ const newest = formatMoment(snapshot.newestRunStartedAt);
 const oldest = formatMoment(snapshot.oldestRunStartedAt);
 const fetched = formatMoment(snapshot.pricesFetchedAt);
 const runs = formatCount(snapshot.runCount);
+const failed = formatCount(snapshot.failedRuns);
 const price = (m: Machine) => `$${formatUsd(m.price.usdPerHour).full}/h`;
 
 // ---------------------------------------------------------------- the page
@@ -171,17 +170,23 @@ export default function Page() {
 						<div class="front-title">
 							<h1>LedgerMath</h1>
 							<p class="dateline">
-								<time datetime={oldest.iso} title={`First Run, ${oldest.full}`}>
-									{oldest.date} {oldest.minute}
-								</time>
-								<span class="dash">–</span>
-								<a href={links.index} title={`Latest Run, ${newest.full}`}>
-									<time datetime={newest.iso}>
-										{newest.date} {newest.minute}
+								<span class="dl-dates">
+									<time datetime={oldest.iso} title={`First Run, ${oldest.full}`}>
+										{oldest.date} {oldest.minute}
 									</time>
+									<span class="dash">–</span>
+									<a href={links.index} title={`Latest Run, ${newest.full}`}>
+										<time datetime={newest.iso}>
+											{newest.date} {newest.minute}
+										</time>
+									</a>
+								</span>
+								<span class="sep sep-dates">·</span>
+								<a href={links.seriesList}>
+									{runs.full} Runs, {failed.full} failed
 								</a>
 								<span class="sep">·</span>
-								<a href={links.seriesList}>{runs.full} Runs</a>
+								<span>{snapshot.region}</span>
 							</p>
 						</div>
 						<div class="availability" aria-label="The API's index" role="group">
@@ -247,24 +252,12 @@ export default function Page() {
 								</thead>
 								{bySection.map((s) => (
 									<tbody class="sect">
-										<tr class="group">
-											<th scope="colgroup" colspan={1 + machines.length}>
-												{GROUP_NOTE[s.section] ? (
-													<details class="tip">
-														<summary>{s.section}</summary>
-														<span class="tip-body">{GROUP_NOTE[s.section]}</span>
-													</details>
-												) : (
-													s.section
-												)}
-											</th>
-										</tr>
 										{s.rows.map((r) => (
 											<tr id={`t1-${r.row.choice.benchmark}`}>
 												<th scope="row" class="c-op">
 													<details class="tip">
-														<summary aria-label={`${number.get(r)} ${r.row.choice.label}`}>
-															<span class="rn">{number.get(r)}</span>
+														<summary>
+															<span class="op-id">{r.row.choice.benchmark}</span>
 															<span class="dir" aria-hidden="true">
 																{r.dir === "up" ? "↑" : "↓"}
 															</span>
@@ -274,6 +267,7 @@ export default function Page() {
 																{r.row.choice.label}
 															</a>
 															<span class="op-unit">{r.unitLong}</span>
+															{GROUP_NOTE[s.section] ? <span class="op-unit">{GROUP_NOTE[s.section]}</span> : ""}
 														</span>
 													</details>
 												</th>
