@@ -11,6 +11,7 @@ import {
 	type HeadlineRow,
 	type Section,
 	type Shown,
+	formatCount,
 	formatDuration,
 	formatDurationPerUnit,
 	formatMoment,
@@ -47,6 +48,18 @@ function Mark() {
 			<i />
 			<i />
 		</span>
+	);
+}
+
+/** A curl command; the address, one unbroken piece of text, is a link. */
+function Curl(props: { href: string }) {
+	return (
+		<>
+			{"curl "}
+			<a class="u-path" href={props.href}>
+				{props.href}
+			</a>
+		</>
 	);
 }
 
@@ -193,6 +206,8 @@ const tag = (usdPerHour: string) => `$${formatUsd(usdPerHour, { per: "hour" }).f
 
 export default function Page() {
 	const newest = formatMoment(snapshot.newestRunStartedAt);
+	const oldest = formatMoment(snapshot.oldestRunStartedAt);
+	const runs = formatCount(snapshot.runCount).full;
 	const sections = sectionsInOrder();
 	let rowNumber = 0;
 	// The round the newest Run belongs to: the last scheduled time at or before it.
@@ -210,15 +225,16 @@ export default function Page() {
 								<Mark />
 								<span class="name-t">LedgerMath</span>
 							</h1>
-							<div class="cmd bare" data-copy-wrap>
-								<code data-copy={index}>
-									<a href={index}>{index.replace("https://", "")}</a>
+							<div class="cmd" data-copy-wrap>
+								<code data-copy={`curl ${index}`}>
+									<Curl href={index} />
 								</code>
 							</div>
 						</div>
 
 						<div class="panel">
 							<p class="clock">
+								<span class="p-label">Newest Run</span>
 								<time datetime={newest.iso} title={`Newest Run: ${newest.full}`} class="clock-time">
 									<Flaps text={newest.minute} />
 									<span class="sr">{newest.minute}</span>
@@ -238,6 +254,12 @@ export default function Page() {
 									</li>
 								))}
 							</ol>
+
+							<p class="tally">
+								<span>
+									<span class="tally-l">Runs</span> <b title={`${runs} Runs since ${oldest.full}`}>{runs}</b>
+								</span>
+							</p>
 						</div>
 					</div>
 				</section>
@@ -284,6 +306,11 @@ export default function Page() {
 							const prepared = g.rows.map(prepareRow);
 							return (
 								<tbody class={SECTION_CLASS[g.section]}>
+									<tr class="sec-row">
+										<th scope="rowgroup" colspan={machines.length + 1} class="sec-what">
+											{g.section}
+										</th>
+									</tr>
 									{g.rows.map((row, r) => {
 										rowNumber += 1;
 										const n = String(rowNumber).padStart(2, "0");
@@ -291,7 +318,7 @@ export default function Page() {
 										const p = prepared[r]!;
 										const up = c.lead === "rate";
 										return (
-											<tr class={r === 0 ? "row first" : "row"}>
+											<tr class="row">
 												<th scope="row" class="what">
 													<details class="tap">
 														<summary class="badge" title={c.label}>
