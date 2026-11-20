@@ -33,7 +33,7 @@ const FORM = {
 	/** The five groups of benchmarks, as section heads. */
 	sections: true,
 	/** Each benchmark's own name, at its row. */
-	benchmarkNames: false,
+	benchmarkNames: true,
 };
 
 const newest = formatMoment(snapshot.newestRunStartedAt);
@@ -195,12 +195,13 @@ function RowHead(props: { row: HeadlineRow }) {
 	return (
 		<details class="note">
 			<summary title={`${c.label}: open for its name`}>
+				{FORM.benchmarkNames ? <code class="b-id">{c.benchmark}</code> : null}{" "}
 				<span class="dir" role="img" aria-label={`${c.label}, ${up ? "higher is better" : "lower is better"}`}>
 					{up ? "↑" : "↓"}
 				</span>
 			</summary>
 			<span class="note-body">
-				<code class="b-id">{c.benchmark}</code>{" "}
+				{FORM.benchmarkNames ? null : <code class="b-id">{c.benchmark}</code>}{" "}
 				<a href={c.readme} class="b-label">
 					{c.label}
 				</a>{" "}

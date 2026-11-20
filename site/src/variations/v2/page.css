@@ -124,7 +124,7 @@ code {
 	font-weight: 400;
 }
 .fu::first-letter {
-	margin-right: 0.6ch;
+	margin-right: 0.5ch;
 	font-style: normal;
 }
 .fu-lead::first-letter {
@@ -243,7 +243,27 @@ table {
 	table-layout: fixed;
 }
 .data .c-head {
-	width: 13ch;
+	width: 26ch;
+}
+.rl .note summary {
+	white-space: nowrap;
+	font-size: 12px;
+	padding: 0 5px;
+}
+.rl .note summary::before {
+	margin-right: 0.8ch;
+}
+.rl .note summary .b-id {
+	margin-right: 0.8ch;
+}
+/* A benchmark's name in its row's switch: the name a Series file and the documentation use. */
+.note summary .b-id {
+	margin-right: 1ch;
+	color: var(--fg);
+	font-weight: 600;
+}
+.note[open] summary .b-id {
+	color: var(--acc);
 }
 
 .data thead th {
@@ -453,7 +473,7 @@ table {
 	white-space: pre;
 	color: var(--fg);
 	text-decoration: none;
-	font-size: 14px;
+	font-size: 13.5px;
 }
 .fig:hover,
 .fig:focus-visible {
