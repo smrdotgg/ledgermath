@@ -1,5 +1,13 @@
 /* The Opening Boot: a business-news broadcast. The idea is a dark studio screen, so light and dark are the same. */
 
+@font-face {
+	font-family: "Datatype";
+	src: url("./fonts/Datatype.woff2") format("woff2");
+	font-weight: 100 900;
+	font-stretch: 50% 150%;
+	font-display: swap;
+}
+
 :root {
 	--ink: #f2f5fb;
 	--muted: #b4c3df;
