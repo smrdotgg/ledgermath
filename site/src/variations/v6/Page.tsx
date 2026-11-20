@@ -224,14 +224,16 @@ function Card(props: { inst: Instrument; index: number }) {
 						<span class="n" title={`Runs counted: ${inst.marks.map((m) => `${m.instanceType} ${m.runs}`).join(", ")}`}>
 							n {fewest === most ? fewest : `${fewest}–${most}`}
 						</span>{" "}
-						{c.per ? <span class="lu">{unit}</span> : null}{" "}
-						{limit ? (
-							<a class="lim" href={c.readme} title={limit.title}>
-								{limit.tag}
-							</a>
-						) : null}
+						{c.per ? <span class="lu">{unit}</span> : null}
 					</span>
 				</Label>{" "}
+				{limit ? (
+					<>
+						<a class="lim" href={c.readme} title={limit.title}>
+							{limit.tag}
+						</a>{" "}
+					</>
+				) : null}
 				<span class="dir" role="img" aria-label={c.lead === "rate" ? "More is faster" : "Less is faster"} title={c.lead === "rate" ? "More is faster" : "Less is faster"}>
 					{c.lead === "rate" ? "→" : "←"}
 				</span>
@@ -338,6 +340,8 @@ function Mark() {
 export default function Page() {
 	const instruments = headline.map(instrument);
 	const newest = formatMoment(snapshot.newestRunStartedAt);
+	// The third command: chart 01's c8i.2xlarge Series file, each Run with its evidence.
+	const exMark = instruments[0]!.marks.find((m) => m.instanceType === "c8i.2xlarge") ?? instruments[0]!.marks[0]!;
 
 	return (
 		<>
@@ -357,22 +361,19 @@ export default function Page() {
 							</code>
 						</div>
 						<p class="when">
-							<svg class="clock" viewBox="0 0 14 14" width="14" height="14" aria-hidden="true">
-								<circle cx="7" cy="7" r="6" />
-								<path d="M7 3.5V7l2.5 1.5" />
-							</svg>{" "}
-							<time datetime={newest.iso} title={`Newest Run: ${newest.full}`}>
-								{newest.date} <b>{`${newest.minute}UTC`}</b>
-							</time>{" "}
-							<span class="sep" aria-hidden="true">
-								·
+							<span>
+								<svg class="clock" viewBox="0 0 14 14" width="14" height="14" aria-hidden="true">
+									<circle cx="7" cy="7" r="6" />
+									<path d="M7 3.5V7l2.5 1.5" />
+								</svg>{" "}
+								<span class="lb">Newest Run</span>{" "}
+								<time datetime={newest.iso} title={newest.full}>
+									{newest.date} <b>{`${newest.minute}UTC`}</b>
+								</time>
 							</span>{" "}
 							<a href={links.seriesList} title="Every Series, each listing its Runs with their evidence">
 								<b>{formatCount(snapshot.runCount).full}</b> Runs
 							</a>{" "}
-							<span class="sep" aria-hidden="true">
-								·
-							</span>{" "}
 							<span>{snapshot.region}</span>
 						</p>
 					</div>
@@ -412,6 +413,36 @@ export default function Page() {
 						{instruments.map((inst, i) => (
 							<Card inst={inst} index={i} />
 						))}
+					</div>
+				</section>
+
+				<section class="band" aria-labelledby="h-api">
+					<div class="wrap api">
+						<div class="api-h">
+							<h2 id="h-api">API</h2> <a href={links.docs}>Docs</a>
+						</div>
+						<ul class="cmds">
+							<li>
+								<p class="c"># every Series</p>{" "}
+								<code data-copy tabindex="0">
+									curl {links.seriesList}
+								</code>
+							</li>
+							<li>
+								<p class="c"># prices</p>{" "}
+								<code data-copy tabindex="0">
+									curl {links.prices}
+								</code>
+							</li>
+							<li>
+								<p class="c">
+									# {pad(0)} {exMark.instanceType}: Runs, evidence
+								</p>{" "}
+								<code data-copy tabindex="0">
+									curl {exMark.url}
+								</code>
+							</li>
+						</ul>
 					</div>
 				</section>
 			</main>

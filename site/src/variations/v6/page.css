@@ -203,11 +203,87 @@ h1 {
 	color: var(--ink-2);
 	padding-right: 4px;
 }
+.when {
+	column-gap: 18px;
+}
+.when > * {
+	display: inline-flex;
+	align-items: center;
+	gap: 8px;
+	white-space: nowrap;
+}
 .when a {
+	display: inline;
 	text-underline-offset: 4px;
 }
-.sep {
-	color: var(--faint);
+.when .lb {
+	color: var(--muted);
+}
+
+/* ------------------------------------------------------------ the API */
+
+.band {
+	background: var(--band);
+	color: var(--band-ink);
+}
+.api {
+	display: grid;
+	grid-template-columns: auto minmax(0, 1fr);
+	gap: 20px 56px;
+	align-items: start;
+	padding-top: 32px;
+	padding-bottom: 36px;
+}
+.api-h {
+	display: flex;
+	align-items: baseline;
+	gap: 16px;
+}
+.api-h h2 {
+	margin: 0;
+	font-size: 1.5rem;
+	line-height: 1;
+	font-weight: 640;
+	letter-spacing: -0.03em;
+}
+.api-h a {
+	font-size: 0.9rem;
+	text-decoration-color: color-mix(in srgb, var(--band-accent) 70%, transparent);
+}
+.api-h a:hover {
+	color: var(--band-accent);
+}
+.band :focus-visible {
+	outline-color: var(--band-accent);
+}
+/* Three commands as a terminal's rows: the comment, the command, its copy button. */
+.cmds {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+	display: grid;
+	grid-template-columns: max-content minmax(0, max-content) auto;
+	justify-content: start;
+	gap: 10px 28px;
+	align-items: baseline;
+	font: 0.82rem/1.55 var(--mono);
+}
+.cmds li {
+	display: contents;
+}
+.cmds .c {
+	margin: 0;
+	color: #a3abb6;
+}
+.cmds .copy {
+	align-self: center;
+}
+/* Each command wraps where it must, under a hanging indent; copied, it is whole. */
+.cmds code {
+	font-size: inherit;
+	overflow-wrap: anywhere;
+	padding-left: 2ch;
+	text-indent: -2ch;
 }
 .when b {
 	font-weight: 600;
@@ -435,6 +511,21 @@ h1 {
 .card-h > .n {
 	margin-left: auto;
 }
+/* The two charts that measure the volume carry its tag beside their name, on a line of its own where the name leaves no room. */
+.card-h {
+	flex-wrap: wrap;
+	row-gap: 6px;
+}
+.card-h > .lim {
+	order: 5;
+	margin-left: 26px;
+}
+.card-h:has(> .lim)::after {
+	content: "";
+	order: 4;
+	flex-basis: 100%;
+	height: 0;
+}
 .key {
 	display: flex;
 	flex-wrap: wrap;
@@ -627,7 +718,7 @@ h1 {
 /* ------------------------------------------------------------ footer */
 
 .foot {
-	padding: 0 0 28px;
+	padding: 14px 0 22px;
 }
 .foot-in {
 	display: flex;
@@ -645,6 +736,9 @@ h1 {
 @media (max-width: 1180px) {
 	.board {
 		grid-template-columns: minmax(0, 1.3fr) repeat(2, minmax(0, 1fr));
+	}
+	.api {
+		grid-template-columns: minmax(0, 1fr);
 	}
 }
 @media (max-width: 860px) {
@@ -691,6 +785,23 @@ h1 {
 		justify-content: flex-start;
 		gap: 8px 16px;
 		margin: 0 0 12px;
+	}
+	/* On a phone each comment takes its own line above its command. */
+	.cmds {
+		grid-template-columns: minmax(0, 1fr) auto;
+		gap: 0 10px;
+		font-size: 0.74rem;
+	}
+	.cmds .c {
+		grid-column: 1 / -1;
+		margin-top: 12px;
+	}
+	.cmds li:first-child .c {
+		margin-top: 0;
+	}
+	.api {
+		padding-top: 26px;
+		padding-bottom: 28px;
 	}
 	.block {
 		padding-bottom: 24px;
