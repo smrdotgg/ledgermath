@@ -1,11 +1,10 @@
-// Design v7, "Agent conversation": the page opens on a question a developer puts to their
-// agent and the agent's answer, every figure in it cited to the API file and field it came
-// from. Then the same numbers for the reader: the headline table (its column heads are the
-// machines and their prices), the way in, and where the figures come from. Every figure is the
-// data module's, exactly. The page says as little as it can: figures, what they are of, and how
-// to get them.
+// Design v7, form "dt-bulletin": the statistical bulletin of the Permanent Directorate of
+// Machine Arithmetic, an imaginary and very grave institution that reports LedgerMath's
+// figures with the solemnity of an interest-rate decision. A crest, a release number, an
+// embargo (the newest Run's start, to the nanosecond), numbered paragraphs that say almost
+// nothing, and tables with a chart in every row, drawn by the Datatype font from the data
+// module's figures. Every figure is the module's, exactly; every chart is scaled in code here.
 import "./page.css";
-import type { JSX } from "@solidjs/web";
 import {
 	type ByteUnit,
 	durationUnit,
@@ -19,24 +18,60 @@ import {
 	type HeadlineRow,
 	leadFigure,
 	links,
-	machineOf,
 	machines,
 	type Section,
-	series,
 	seriesFileContents,
 	type Shown,
 	snapshot,
 } from "../../data";
+import { seriesFileSample } from "../../data/snapshot";
 
-// ---------------------------------------------------------------- the exchange's facts
+// ---------------------------------------------------------------- the facts of the release
 
 const newest = formatMoment(snapshot.newestRunStartedAt);
 const oldest = formatMoment(snapshot.oldestRunStartedAt);
-const pricesFetched = formatMoment(snapshot.pricesFetchedAt);
-/** The four scheduled boots of each day, UTC. */
+const runs = formatCount(snapshot.runCount);
+const failed = formatCount(snapshot.failedRuns);
 const BOOTS = ["04:10", "10:10", "16:10", "22:10"];
 
-// ---------------------------------------------------------------- one unit per table row
+// ---------------------------------------------------------------- scaling for the font
+
+/** Whole numbers 0–100 for the font, from zero: the largest becomes 100, the rest in proportion. */
+function fromZero(values: number[]): number[] {
+	const max = Math.max(...values);
+	return values.map((v) => (max > 0 ? Math.round((v / max) * 100) : 0));
+}
+
+/** Whole numbers 0–100 stretched between the lowest and the highest: a zoomed drawing, and labelled so. */
+function zoomed(values: number[]): number[] {
+	const min = Math.min(...values);
+	const max = Math.max(...values);
+	return values.map((v) => (max > min ? Math.round(((v - min) / (max - min)) * 100) : 50));
+}
+
+const bars = (values: number[]) => `{b:${values.join(",")}}`;
+const line = (values: number[]) => `{l:${values.join(",")}}`;
+const pie = (value: number) => `{p:${value}}`;
+
+/** A chart drawn by the font: a picture to a screen reader, with a short text alternative. */
+function Chart(props: { text: string; label: string; class?: string }) {
+	return (
+		<span class={`chart ${props.class ?? ""}`} role="img" aria-label={props.label}>
+			<span aria-hidden="true">{props.text}</span>
+		</span>
+	);
+}
+
+/** A figure in its short form, the full one in its title (and in Annex A). */
+function Fig(props: { shown: Shown }) {
+	return (
+		<span class="fig" title={`${props.shown.full} ${props.shown.unit}`}>
+			{props.shown.short}
+		</span>
+	);
+}
+
+// ---------------------------------------------------------------- Table 1: one unit per row
 
 const SI_RATE: [number, ByteUnit][] = [
 	[1e12, "TB"],
@@ -46,483 +81,371 @@ const SI_RATE: [number, ByteUnit][] = [
 	[0, "B"],
 ];
 
-type Fig = { shown: Shown; p5: Shown; p95: Shown; count: number };
+type Cell = { p50: Shown; p5: Shown; p95: Shown; raw: number };
 
-/**
- * The figures of a row, all in one unit: the one its smallest figure reads at least 1 in, so the
- * row compares at a glance. Where one repetition is a power-of-ten count of something smaller
- * (mutex), the figures are of one of those, divided exactly by the data module's helper.
- */
-function rowFigures(row: HeadlineRow): Fig[] {
+/** A row's five figures in one unit (the one its smallest reads at least 1 in). Mutex is per critical section, divided by the module's helper. */
+function rowCells(row: HeadlineRow): { cells: Cell[]; unit: string } {
 	const figures = row.cells.map((cell) => leadFigure(row.choice, cell.series));
 	const least = Math.min(...figures.map((f) => f.p50));
+	let cells: Cell[];
 	if (row.choice.lead === "rate") {
 		const unit = SI_RATE.find(([floor]) => least >= floor)![1];
-		return figures.map((f) => ({ shown: formatRate(f.p50, { unit }), p5: formatRate(f.p5, { unit }), p95: formatRate(f.p95, { unit }), count: f.count }));
-	}
-	const per = row.choice.per;
-	if (per) {
+		cells = figures.map((f) => ({ p50: formatRate(f.p50, { unit }), p5: formatRate(f.p5, { unit }), p95: formatRate(f.p95, { unit }), raw: f.p50 }));
+	} else if (row.choice.per) {
+		const per = row.choice.per;
 		const unit = durationUnit(formatDurationPerUnit(least, per).value);
-		return figures.map((f) => ({
-			shown: formatDurationPerUnit(f.p50, per, { unit }),
-			p5: formatDurationPerUnit(f.p5, per, { unit }),
-			p95: formatDurationPerUnit(f.p95, per, { unit }),
-			count: f.count,
-		}));
+		cells = figures.map((f) => ({ p50: formatDurationPerUnit(f.p50, per, { unit }), p5: formatDurationPerUnit(f.p5, per, { unit }), p95: formatDurationPerUnit(f.p95, per, { unit }), raw: f.p50 }));
+	} else {
+		const unit = durationUnit(least);
+		cells = figures.map((f) => ({ p50: formatDuration(f.p50, { unit }), p5: formatDuration(f.p5, { unit }), p95: formatDuration(f.p95, { unit }), raw: f.p50 }));
 	}
-	const unit = durationUnit(least);
-	return figures.map((f) => ({ shown: formatDuration(f.p50, { unit }), p5: formatDuration(f.p5, { unit }), p95: formatDuration(f.p95, { unit }), count: f.count }));
+	return { cells, unit: cells[0]!.p50.unit };
 }
 
-/** A figure's 5th to 95th percentile span, low to high. */
-function spread(fig: Fig): [Shown, Shown] {
-	return fig.p5.value <= fig.p95.value ? [fig.p5, fig.p95] : [fig.p95, fig.p5];
-}
+const table1 = headline.map((row, i) => {
+	const { cells, unit } = rowCells(row);
+	return { n: i + 1, row, cells, unit, chart: bars(fromZero(cells.map((c) => c.raw))) };
+});
 
-// ---------------------------------------------------------------- the exchange's facts
+const sections: Section[] = [...new Set(headline.map((row) => row.choice.section))];
 
-// The exchange asks about the one Series whose own file the snapshot keeps, so its answer can be
-// cited all the way down: the figure in series.json, the Series file, one Run's evidence.
-const askedSeries = series.find((row) => row.id === seriesFileContents.sample.id)!;
-const askedRow = headline.find((row) => row.cells.some((cell) => cell.series.id === askedSeries.id));
-if (!askedRow) throw new Error(`the sample Series ${askedSeries.id} is not a headline figure`);
-const askedMethod = askedRow.choice.readme;
-const ASKED_MACHINE = askedSeries.instance_type;
-const askedIndex = askedRow.cells.findIndex((cell) => cell.series.id === askedSeries.id);
-const askedFig = rowFigures(askedRow)[askedIndex]!;
-const askedPer: { count: number; of: string } =
-	askedRow.choice.per ??
-	(() => {
-		throw new Error("the exchange's answer expects a figure per critical section");
-	})();
-const askedMachine = machineOf(ASKED_MACHINE);
-const askedPrice = formatUsd(askedMachine.price.usdPerHour, { per: "hour" });
-const askedDerivation = askedSeries.derivations.series_v1;
-const askedOldest = formatMoment(askedSeries.oldest_run_started_at);
-const askedNewest = formatMoment(askedSeries.newest_run_started_at);
-const askedRun = seriesFileContents.point.example;
-const askedRunAt = formatMoment(askedRun.started_at);
-const askedSeriesIndex = series.indexOf(askedSeries);
-const askedRaw = askedFig.shown.source.replace(/ ns$/, "");
+// ---------------------------------------------------------------- Figure 2: the longest-watched indicator
 
-/** The widest integer part in a row, so its figures' decimal points line up down a column. */
-function intWidth(figs: Fig[]): string {
-	return `--int: ${Math.max(...figs.map((f) => f.shown.full.split(".")[0]!.length))}ch`;
-}
+const per = headline.find((row) => row.choice.benchmark === seriesFileContents.sample.benchmark)?.choice.per;
+const watched = seriesFileSample.derivations.series_v1.points.filter((p) => p.counted && p.time_per_repetition_ns !== null).slice(-20);
+const watchedNs = watched.map((p) => p.time_per_repetition_ns!);
+const asShown = (ns: number) => (per ? formatDurationPerUnit(ns, per, { unit: "ns" }) : formatDuration(ns));
+const watchedLow = asShown(Math.min(...watchedNs));
+const watchedHigh = asShown(Math.max(...watchedNs));
+const watchedFirst = formatMoment(watched[0]!.started_at);
+const watchedLast = formatMoment(watched.at(-1)!.started_at);
 
-/**
- * What stands behind a cell, in its figure's title: its Runs and their dates, its p5 to p95, and
- * its field in the Series list. The figure itself links to the Series' own file, every Run's
- * figure and evidence.
- */
-function cellTitle(fig: Fig, series: HeadlineRow["cells"][number]["series"]): string {
-	const [lo, hi] = spread(fig);
-	const from = formatMoment(series.oldest_run_started_at).date;
-	const to = formatMoment(series.newest_run_started_at).date;
-	return `Median of ${formatCount(fig.count).full} Runs, ${from} to ${to}\np5–p95 ${lo.full} – ${hi.full} ${fig.shown.unit}\nseries.json: ${fig.shown.source}\nOpen: this Series' Runs and evidence`;
-}
+// ---------------------------------------------------------------- Table 3: rates
 
-/** A few words on a group whose figures come from something the machines share. */
-const GROUP_NOTE: Partial<Record<Section, string>> = {
-	Disk: "the root EBS gp3 volume",
-	Network: "S3, same Region",
-};
-const SECTIONS: Section[] = ["Memory", "Compute", "Operating system", "Disk", "Network"];
-const sectionId = (s: Section) => `group-${s.toLowerCase().replace(/ /g, "-")}`;
-
-/**
- * How many decimals of a row's figures are set heavier: down to the place where its widest figure
- * has four significant digits, the same place for every figure in the row, so the heavy digits end
- * in one column and read as the row rounded.
- */
-function heavyPlaces(figs: Fig[]): number {
-	return Math.max(0, 4 - Math.max(...figs.map((f) => f.shown.full.split(".")[0]!.length)));
-}
-
-/**
- * Every digit of a figure, its digits down to the row's heavy place set heavier so a row scans,
- * the integer part in a box of fixed width so the decimal points line up down a column.
- */
-function Exact(props: { full: string; places: number }) {
-	const full = props.full;
-	const dot = full.includes(".") ? full.indexOf(".") : full.length;
-	const k = Math.min(full.length, props.places > 0 ? dot + 1 + props.places : dot);
-	const cut = (from: number, to: number) => [full.slice(from, Math.max(from, Math.min(k, to))), full.slice(Math.max(from, Math.min(k, to)), to)] as const;
-	const [intHeavy, intLight] = cut(0, dot);
-	const [fracHeavy, fracLight] = cut(dot, full.length);
-	return (
-		<span class="x">
-			<span class="x-int">
-				<b>{intHeavy}</b>
-				{intLight ? <span class="x-t">{intLight}</span> : null}
-			</span>
-			<span class="x-frac">
-				{fracHeavy ? <b>{fracHeavy}</b> : null}
-				{fracLight ? <span class="x-t">{fracLight}</span> : null}
-			</span>
-		</span>
-	);
-}
-
-/** A figure's median and its 5th to 95th percentile span, drawn to the row's scale from zero. */
-function Bar(props: { fig: Fig; max: number }) {
-	const pct = (v: number) => `${((v / props.max) * 100).toFixed(2)}%`;
-	const [lo, hi] = spread(props.fig);
-	return (
-		<span class="bar" aria-hidden="true">
-			<span class="bar-p50" style={{ width: pct(props.fig.shown.value) }} />
-			<span class="bar-span" style={{ left: pct((lo.value + hi.value) / 2), width: `max(6px, ${pct(hi.value - lo.value)})` }} />
-		</span>
-	);
-}
-
-/** A URL as text that breaks only after a slash, never inside its scheme and host. */
-function Breakable(props: { text: string }) {
-	const parts = props.text.split(/(?<=[^/:]\/)/);
-	return (
-		<>
-			{parts.map((part, i) => (
-				<>
-					{part}
-					{i < parts.length - 1 ? <wbr /> : null}
-				</>
-			))}
-		</>
-	);
-}
-
-/**
- * One citation, on one line: the file (a link, its path shown without the host), the field in
- * it (its whole path in the title), and what the answer took from there.
- */
-function Source(props: { href: string; field: string; path: string; children: JSX.Element }) {
-	const file = props.href.replace(/^https:\/\/[^/]+\//, "");
-	return (
-		<li class="src">
-			<a class="src-file" href={props.href}>
-				<Breakable text={file} />
-			</a>
-			<code class="src-field" title={props.path}>
-				{props.field}
-			</code>
-			<span class="src-val">{props.children}</span>
-		</li>
-	);
-}
+const prices = machines.map((m) => formatUsd(m.price.usdPerHour, { per: "hour" }));
+const priceBars = fromZero(prices.map((p) => p.value));
 
 // ---------------------------------------------------------------- the page
 
 export default function Page() {
 	return (
-		<>
-			<header class="masthead">
-				<div class="wrap masthead-row">
-					<a href="#top" class="wordmark">
-						<span class="wordmark-glyph" aria-hidden="true">
-							L
+		<div class="sheet">
+			<header class="mast">
+				<div class="mast-top">
+					<span class="brand">LedgerMath</span>
+					<span class="class-mark">Classification: Public. Thoroughly.</span>
+				</div>
+
+				<div class="crest-row">
+					<div class="seal" role="img" aria-label="The crest: the five hourly prices as bars, to scale">
+						<svg viewBox="0 0 200 200" aria-hidden="true" class="seal-ring">
+							<defs>
+								<path id="arc-top" d="M 36 138 A 74 74 0 1 1 164 138" />
+								<path id="arc-bottom" d="M 18 100 A 82 82 0 0 0 182 100" />
+							</defs>
+							<circle cx="100" cy="100" r="96" />
+							<circle cx="100" cy="100" r="90" class="thin" />
+							<circle cx="100" cy="100" r="58" class="thin" />
+							<text>
+								<textPath href="#arc-top" startOffset="50%" text-anchor="middle">
+									DIRECTORATE OF MACHINE ARITHMETIC
+								</textPath>
+							</text>
+							<text>
+								<textPath href="#arc-bottom" startOffset="50%" text-anchor="middle">
+									★ NIHIL NISI MENSUM ★
+								</textPath>
+							</text>
+						</svg>
+						<span class="seal-bars chart" aria-hidden="true">
+							{bars(priceBars)}
 						</span>
-						LedgerMath
-					</a>
-					<nav aria-label="On this page" class="nav">
-						<a href="#numbers">Numbers</a>
-						<a href="#api">API</a>
-						<a href="#provenance">Provenance</a>
-					</nav>
+					</div>
+
+					<div class="mast-words">
+						<p class="issuer">The Permanent Directorate of Machine Arithmetic</p>
+						<h1>
+							Statistical Bulletin
+							<span class="release">
+								Release No. {runs.full}
+								<a href="#n1" class="fn" aria-label="note 1">
+									1
+								</a>
+							</span>
+						</h1>
+						<dl class="embargo">
+							<div>
+								<dt>Embargoed until</dt>
+								<dd title={newest.full}>
+									{newest.second}
+									<span class="nanos">{newest.iso.slice(19, -1)}</span> UTC, {newest.longDate}
+									<a href="#n2" class="fn" aria-label="note 2">
+										2
+									</a>
+								</dd>
+							</div>
+							<div>
+								<dt>Period</dt>
+								<dd title={`${oldest.full} to ${newest.full}`}>
+									{oldest.longDate} to {newest.longDate}
+								</dd>
+							</div>
+						</dl>
+					</div>
+					<p class="stamp">
+						Embargo
+						<br />
+						lifted
+					</p>
 				</div>
 			</header>
 
-			<main id="top">
-				<section class="hero wrap" aria-labelledby="title">
-					<div class="hero-text">
-						<h1 id="title">
-							<span class="sr-only">LedgerMath: </span>
-							<span class="h1-line">Measured AWS server benchmarks, for AI agents to cite.</span>
-						</h1>
-						<p class="lede">
-							{formatCount(snapshot.benchmarkCount).full} benchmarks on {formatCount(snapshot.machineCount).full} freshly booted machine types in {snapshot.region}, at {BOOTS.slice(0, -1).join(", ")} and {BOOTS.at(-1)}&nbsp;UTC.
-							Every Run kept, with its evidence.
-						</p>
-						<div class="way-in" id="api">
-							<div class="way-row" data-copy-block="the index command">
-								<span class="way-tag">shell</span>
-								<pre tabindex="0">
-									<code data-copy>
-										curl <Breakable text={links.index} />
-									</code>
-								</pre>
-							</div>
-							<div class="way-row" data-copy-block="the agent prompt">
-								<span class="way-tag">agent</span>
-								<p data-copy>
-									Read <Breakable text={links.index} /> and cite each figure's file and field.
-								</p>
-							</div>
-						</div>
-						<p class="way-note">
-							Static JSON, no key. <a href={links.docs}>Docs</a>
-						</p>
-					</div>
+			<main>
+				<section class="decision" aria-labelledby="decision-h">
+					<p class="kicker">Decision</p>
+					<h2 id="decision-h">The machines have been measured.</h2>
+					<p class="dek">No further action is contemplated.</p>
 
-					{/* Freshness and provenance, one line under the hero: each fact links to the file that
-					    states it, and each count says what it counts. */}
-					<dl class="facts-line" id="provenance" aria-label="Provenance">
-						<div>
-							<dt>Newest Run</dt>
-							<dd>
-								<a href={links.index} title={`index.json: newest_run_started_at, ${newest.full}`}>
-									<time datetime={newest.iso}>
-										{newest.date} <span class="nowrap">{newest.minute} UTC</span>
-									</time>
-								</a>
-							</dd>
-						</div>
-						<div>
-							<dt>Oldest Run</dt>
-							<dd>
-								<a href={links.seriesList} title={`series.json: the least oldest_run_started_at, ${oldest.full}`}>
-									<time datetime={oldest.iso}>
-										{oldest.date} <span class="nowrap">{oldest.minute} UTC</span>
-									</time>
-								</a>
-							</dd>
-						</div>
-						<div>
-							<dt>Runs, all {formatCount(snapshot.seriesCount).full} Series</dt>
-							<dd>
-								<a href={links.seriesList} title="series.json: the sum of every Series' runs">
-									{formatCount(snapshot.runCount).full}
-								</a>
-							</dd>
-						</div>
-						<div>
-							<dt>Failed</dt>
-							<dd>
-								<a href={links.seriesList} title="series.json: the sum of every Series' failed_runs">
-									{formatCount(snapshot.failedRuns).full}
-								</a>
-							</dd>
-						</div>
-						<div>
-							<dt>Prices</dt>
-							<dd>
-								<a href={links.prices} title={`AWS On-Demand prices, copied ${pricesFetched.full}`}>
-									{snapshot.priceDate}
-								</a>
-							</dd>
-						</div>
-					</dl>
-
-					<section class="exchange" id="example" aria-labelledby="exchange-title">
-						<h2 id="exchange-title" class="sr-only">
-							Example
-						</h2>
-						<div class="turn turn-q">
-							<span class="mark" aria-hidden="true">
-								Q
-							</span>
-							<blockquote class="question">
-								<p>
-									What do one uncontended mutex critical section and one hour of <span class="nowrap">{ASKED_MACHINE}</span> cost?
-								</p>
-							</blockquote>
-						</div>
-						<div class="turn turn-a">
-							<span class="mark" aria-hidden="true">
-								A
-							</span>
-							<blockquote class="answer">
-								<p class="ans">
-									<strong class="fig">
-										{askedFig.shown.full}&nbsp;{askedFig.shown.unit}
-									</strong>{" "}
-									<span class="nowrap">per {askedPer.of}</span>
-								</p>
-								<p class="answer-sub">
-									Median of {formatCount(askedFig.count).full} Runs, <time datetime={askedOldest.iso}>{askedOldest.date}</time> to{" "}
-									<time datetime={askedNewest.iso}>{askedNewest.date}</time>, {formatCount(askedDerivation.failed_runs).full} failed
-								</p>
-								<p class="ans">
-									<strong class="fig">${askedPrice.full}</strong> per instance-hour
-								</p>
-							</blockquote>
-						</div>
-						<ol class="srcs" aria-label="Sources">
-							<Source
-								href={links.seriesList}
-								field={`${askedSeries.id} › p50`}
-								path={`/series/${askedSeriesIndex}/derivations/series_v1/percentiles/time_per_repetition_ns/p50`}
-							>
-								{askedRaw}&nbsp;÷&nbsp;
-								<a href={askedMethod} title={`${formatCount(askedPer.count).full} ${askedPer.of}s in one repetition: the benchmark's Method`}>
-									{formatCount(askedPer.count).full}
-								</a>
-							</Source>
-							<Source href={askedSeries.url} field="points[0].evidence" path="/derivations/series_v1/points/0/evidence">
-								<a href={askedRun.evidence} title={`Run ${askedRun.run}, ${askedRunAt.full}`}>
-									Run {askedRunAt.date}
-								</a>
-							</Source>
-							<Source href={links.prices} field={`${askedMachine.price.path.sku} › … › USD`} path={askedMachine.price.path.pointer}>
-								"{askedMachine.price.usdPerHour}"
-							</Source>
-						</ol>
-					</section>
-				</section>
-
-				<section id="numbers" class="numbers wrap" aria-labelledby="numbers-title">
-					<div class="numbers-head">
-						<h2 id="numbers-title">
-							{formatCount(headline.length).full} benchmarks × {formatCount(machines.length).full} machines
-						</h2>
-						<ul class="key" aria-label="Key">
-							<li>
-								<span class="key-bar bar" aria-hidden="true">
-									<span class="bar-p50" style={{ width: "100%" }} />
-								</span>
-								median
-							</li>
-							<li>
-								<span class="key-bar key-band bar" aria-hidden="true">
-									<span class="bar-span" style={{ left: "50%", width: "100%" }} />
-								</span>
-								p5–p95
-							</li>
-							<li>each benchmark from 0</li>
-							<li>
-								<span class="dir">↑</span> higher is faster
-							</li>
-							<li>
-								<span class="dir">↓</span> lower is faster
-							</li>
-						</ul>
-					</div>
-
-					<nav class="jump" aria-label="Benchmark groups">
-						{SECTIONS.map((section) => (
-							<a href={`#${sectionId(section)}`}>{section === "Operating system" ? "OS" : section}</a>
-						))}
-					</nav>
-
-					<div class="table-box" role="region" aria-label="The headline figures, 14 benchmarks on 5 machine types" tabindex="0">
-						<table class="headline">
-							<colgroup>
-								<col class="col-bench" />
-								{machines.map(() => (
-									<col class="col-machine" />
-								))}
-							</colgroup>
-							<thead>
-								<tr>
-									<th scope="col" class="th-corner">
-										<a href={links.prices} title={`AWS On-Demand prices, copied ${pricesFetched.full}`}>
-											On-Demand, {snapshot.region}
-										</a>
-									</th>
-									{machines.map((m) => {
-										const price = formatUsd(m.price.usdPerHour, { per: "hour" });
-										return (
-											<th scope="col" class="th-machine">
-												<span class="th-code">{m.instanceType.split(".")[0]}</span>
-												<span class="th-type" title={`${m.processor}, ${m.clockSpeed}`}>
-													{m.instanceType}
-												</span>
-												<span class="th-spec">
-													{m.vcpu}&thinsp;vCPU · {m.memory}
-												</span>
-												<span class="th-price" title={`${m.price.description} · ${m.price.path.pointer}`}>
-													${price.full}/h
-												</span>
-											</th>
-										);
-									})}
-								</tr>
-							</thead>
-							{SECTIONS.map((section) => {
-								const rows = headline.filter((row) => row.choice.section === section);
-								const note = GROUP_NOTE[section];
-								return (
-									<tbody id={sectionId(section)}>
-										<tr class="section-row">
-											<th scope="colgroup" colspan={machines.length + 1}>
-												{section}
-												{note ? <span class="section-note"> · {note}</span> : null}
-											</th>
-										</tr>
-										{rows.map((row) => {
-											const figs = rowFigures(row);
-											const max = Math.max(...figs.map((f) => Math.max(f.p5.value, f.p95.value)));
-											const up = row.choice.lead === "rate";
-											const places = heavyPlaces(figs);
-											return (
-												<tr class="row" style={intWidth(figs)}>
-													<th scope="row" class="bench">
-														<a class="bench-label" href={row.choice.readme} title={row.choice.setting}>
-															{row.choice.label}
-														</a>
-														<span class="bench-unit">
-															<span class="dir" role="img" aria-label={up ? "higher is faster" : "lower is faster"} title={up ? "higher is faster" : "lower is faster"}>
-																{up ? "↑" : "↓"}
-															</span>
-															{figs[0]!.shown.unit}
-														</span>
-													</th>
-													{row.cells.map((cell, i) => {
-														const fig = figs[i]!;
-														const asked = row === askedRow && cell.machine.instanceType === ASKED_MACHINE;
-														return (
-															<td class={asked ? "fig-cell is-asked" : "fig-cell"}>
-																<span class="cell-code" aria-hidden="true">
-																	{cell.machine.instanceType.split(".")[0]}
-																</span>
-																{asked ? (
-																	<a class="ref" href="#example" aria-label="A, the example answer above" title="The example answer">
-																		A
-																	</a>
-																) : null}
-																<span class="cell-fig">
-																	<a
-																		class="fig-link"
-																		href={links.seriesFile(cell.series)}
-																		title={cellTitle(fig, cell.series)}
-																		aria-label={`${cell.machine.instanceType}: median ${fig.shown.full} ${fig.shown.unit} of ${formatCount(fig.count).full} Runs, its Series file`}
-																	>
-																		<Exact full={fig.shown.full} places={places} />
-																	</a>
-																</span>
-																<Bar fig={fig} max={max} />
-															</td>
-														);
-													})}
-												</tr>
-											);
-										})}
-									</tbody>
-								);
-							})}
-						</table>
-					</div>
-				</section>
-
-			</main>
-
-			<footer class="footer">
-				<div class="wrap footer-row">
-					<strong>LedgerMath</strong>
-					<ul>
+					<ul class="headline-figs">
 						<li>
-							<a href={links.docs}>Docs</a>
+							<strong>{snapshot.benchmarkCount}</strong> benchmarks
 						</li>
 						<li>
-							<a href={links.seriesList} title={snapshot.methods.map((m) => `${m.name} v${m.version}`).join(", ")}>
-								Methods
-							</a>
+							<strong>{snapshot.machineCount}</strong> AWS machine types, <span class="nowrap">{snapshot.region}</span>
 						</li>
 						<li>
-							<a href="third-party-notices.txt">Font notices</a>
+							<strong>{runs.full}</strong> Runs, every one kept
+						</li>
+						<li class="nil">
+							<Chart text={pie(0)} label={`An empty pie: ${failed.full} failed Runs`} class="pie" />
+							<span>
+								<strong>{failed.full}</strong> failed
+							</span>
 						</li>
 					</ul>
+
+					<div class="access" data-copy-block="the API address">
+						<p class="access-label">Means of access, for agents and other competent persons</p>
+						<code data-copy>{links.index}</code>
+					</div>
+				</section>
+
+				<section class="paras" aria-labelledby="paras-h">
+					<h2 id="paras-h" class="sr">Statement</h2>
+					<ol>
+						<li>
+							The Directorate boots five AWS machine types four times daily, at {BOOTS.slice(0, 3).join(", ")} and {BOOTS[3]} UTC, and runs {snapshot.benchmarkCount} benchmarks on each,
+							freshly booted.
+						</li>
+						<li>Every Run is kept, with its evidence. Figures are derived by published Methods.</li>
+						<li>
+							Of {runs.full} Runs, {failed.full} failed. The Directorate has no comment.
+						</li>
+						<li>The Directorate expresses no view as to which machine is preferable. It holds no views. It holds figures.</li>
+						<li>
+							Prices are AWS's public On-Demand rates. The Directorate notes them. It does not set them.
+						</li>
+					</ol>
+				</section>
+
+				<section class="table-sec" aria-labelledby="t1-h">
+					<h2 id="t1-h">
+						<span class="tno">Table 1</span> Selected indicators
+					</h2>
+					<p class="tsub">Median of counted Runs. Bars drawn from zero, one per machine, in column order.</p>
+					<div class="scroll" tabindex="0" role="region" aria-label="Table 1, scrolls sideways">
+						<table class="t1">
+							<thead>
+								<tr>
+									<th scope="col" class="num">
+										No.
+									</th>
+									<th scope="col">Indicator</th>
+									<th scope="col">Chart</th>
+									{machines.map((m) => (
+										<th scope="col" class="mcol">
+											{m.instanceType}
+										</th>
+									))}
+									<th scope="col">Unit</th>
+								</tr>
+							</thead>
+							{sections.map((section) => (
+								<tbody>
+									<tr class="sec-row">
+										<th scope="colgroup" colspan={4 + machines.length}>
+											{section}
+										</th>
+									</tr>
+									{table1
+										.filter((t) => t.row.choice.section === section)
+										.map((t) => (
+											<tr>
+												<td class="num">{t.n}</td>
+												<th scope="row" class="ind">
+													{t.row.choice.label}
+												</th>
+												<td class="chart-cell">
+													<Chart text={t.chart} label={`Five bars from zero, ${t.unit}`} />
+												</td>
+												{t.cells.map((c) => (
+													<td class="val">
+														<Fig shown={c.p50} />
+													</td>
+												))}
+												<td class="unit">{t.unit}</td>
+											</tr>
+										))}
+								</tbody>
+							))}
+						</table>
+					</div>
+					<p class="tnote">
+						Row 8 is per critical section. The Directorate draws attention to rows 10 to 13 and declines to elaborate.
+					</p>
+				</section>
+
+				<section class="fig2" aria-labelledby="f2-h">
+					<h2 id="f2-h">
+						<span class="tno">Figure 2</span> The Directorate's most closely watched indicator
+					</h2>
+					<p class="tsub">
+						Lock and unlock a mutex, {seriesFileContents.sample.instanceType}, per critical section: the last {watched.length} Runs, {watchedFirst.date} to {watchedLast.date}.
+					</p>
+					<div class="twin">
+						<figure>
+							<Chart text={line(fromZero(watchedNs))} label={`Line of ${watched.length} Runs drawn from zero: nearly flat`} class="spark" />
+							<figcaption>
+								<strong>2a.</strong> To scale, from zero.
+							</figcaption>
+						</figure>
+						<figure class="zoom">
+							<span class="zoom-tag">Zoomed</span>
+							<span class="axis hi" title={`${watchedHigh.full} ${watchedHigh.unit}`}>
+								{watchedHigh.short} {watchedHigh.unit}
+							</span>
+							<Chart text={line(zoomed(watchedNs))} label={`The same ${watched.length} Runs, zoomed from lowest to highest`} class="spark" />
+							<span class="axis lo" title={`${watchedLow.full} ${watchedLow.unit}`}>
+								{watchedLow.short} {watchedLow.unit}
+							</span>
+							<figcaption>
+								<strong>2b.</strong> The same, zoomed, for readers who require excitement.
+							</figcaption>
+						</figure>
+					</div>
+				</section>
+
+				<section class="table-sec" aria-labelledby="t3-h">
+					<h2 id="t3-h">
+						<span class="tno">Table 3</span> Rates
+					</h2>
+					<p class="tsub">On-Demand, Linux, {snapshot.region}, per hour, {snapshot.priceDate}. Bars from zero.</p>
+					<div class="scroll" tabindex="0" role="region" aria-label="Table 3, scrolls sideways">
+						<table class="t3">
+							<thead>
+								<tr>
+									<th scope="col">Machine</th>
+									<th scope="col">vCPU</th>
+									<th scope="col">Memory</th>
+									<th scope="col">Chart</th>
+									<th scope="col" class="val">
+										USD/hour
+									</th>
+								</tr>
+							</thead>
+							<tbody>
+								{machines.map((m, i) => (
+									<tr>
+										<th scope="row">
+											<span class="mono">{m.instanceType}</span>
+											<span class="proc">{m.processor}</span>
+										</th>
+										<td class="mono">{m.vcpu}</td>
+										<td class="mono">{m.memory}</td>
+										<td class="chart-cell">
+											<Chart text={bars([priceBars[i]!])} label="One bar, from zero" class="one" />
+										</td>
+										<td class="val">
+											<span class="fig" title={m.price.description}>
+												{prices[i]!.full}
+											</span>
+										</td>
+									</tr>
+								))}
+							</tbody>
+						</table>
+					</div>
+					<p class="tnote">Unchanged by the Directorate, which was not consulted.</p>
+				</section>
+
+				<section class="annex" aria-labelledby="annex-h">
+					<h2 id="annex-h" class="sr">Annexes</h2>
+					<details>
+						<summary>Annex A. Every digit the Directorate possesses</summary>
+						<p class="tsub">Table 1 again, in full: 5th, 50th and 95th percentiles of counted Runs.</p>
+						<div class="scroll" tabindex="0" role="region" aria-label="Annex A, scrolls sideways">
+							<table class="ta">
+								<thead>
+									<tr>
+										<th scope="col">No.</th>
+										<th scope="col">Machine</th>
+										<th scope="col">p5</th>
+										<th scope="col">p50</th>
+										<th scope="col">p95</th>
+										<th scope="col">Unit</th>
+									</tr>
+								</thead>
+								<tbody>
+									{table1.flatMap((t) =>
+										t.cells.map((c, j) => (
+											<tr class={j === 0 ? "first" : ""}>
+												<td class="num">{j === 0 ? t.n : ""}</td>
+												<th scope="row" class="mono">
+													{machines[j]!.instanceType}
+												</th>
+												<td class="mono">{c.p5.full}</td>
+												<td class="mono strong">{c.p50.full}</td>
+												<td class="mono">{c.p95.full}</td>
+												<td class="unit">{t.unit}</td>
+											</tr>
+										)),
+									)}
+								</tbody>
+							</table>
+						</div>
+					</details>
+					<details>
+						<summary>Annex B. Figure 2, as numbers</summary>
+						<ol class="runs">
+							{watched.map((p) => {
+								const s = asShown(p.time_per_repetition_ns!);
+								return (
+									<li>
+										<span class="mono">{formatMoment(p.started_at).full}</span> <span class="mono strong">{s.full}</span> {s.unit}
+									</li>
+								);
+							})}
+						</ol>
+					</details>
+				</section>
+			</main>
+
+			<footer class="foot">
+				<div class="signed">
+					<span class="for">For the Directorate</span>
+					<Chart text={line(zoomed(watchedNs))} label="A signature: Figure 2b again, zoomed" class="sig" />
+					<span class="sig-note">Signature: Figure 2b, zoomed.</span>
 				</div>
+				<ol class="notes">
+					<li id="n1">Numbered after the Runs it reports. The Directorate does not invent numbers, including its own.</li>
+					<li id="n2">The start of the newest Run. The Directorate saw no reason to round it.</li>
+					<li>The crest is the five hourly prices, cheapest first, to scale. Nothing more dignified was available.</li>
+				</ol>
+				<p class="colophon">
+					Issued for <strong>LedgerMath</strong>: measured AWS benchmarks, every figure with its source, as JSON at <a href={links.index}>api.ledgermath.com</a>.{" "}
+					<a href={links.docs}>Documentation</a>. Charts set in Datatype (<a href="third-party-notices.txt">notices</a>). Next release within six hours, without ceremony.
+				</p>
 			</footer>
-		</>
+		</div>
 	);
 }

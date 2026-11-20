@@ -1,18 +1,21 @@
 Third-party files served with this page
 =======================================
 
-1. Inter (fonts/inter-latin-var.woff2), the Latin subset of the variable font.
-   Copyright (c) 2016 The Inter Project Authors (https://github.com/rsms/inter)
+1. Datatype (fonts/Datatype.woff2), the variable font, served unchanged.
+   By Frank Tisellano. Source: https://github.com/franktisellano/datatype
 
-2. Geist Mono (fonts/geist-mono-var.woff2), subset to Latin characters.
-   Copyright (c) 2023 Vercel, in collaboration with basement.studio
+   Copyright 2026 The Datatype Project Authors (https://github.com/franktisellano/datatype)
 
-3. DM Serif Display, Regular (fonts/dm-serif-display.woff2), subset to Latin characters.
+   This font includes glyphs from IBM Plex™ Mono:
+   Copyright 2017 IBM Corp. with Reserved Font Name "Plex"
+
+2. DM Serif Display, Regular (fonts/dm-serif-display.woff2), subset to Latin characters.
    Copyright 2014 - 2017 Adobe Systems Incorporated (http://www.adobe.com/), with Reserved Font Name 'Source'.
    Copyright 2019 Google LLC. Designed by Colophon Foundry and Frank Grießhammer.
 
 Each is licensed under the SIL Open Font License, Version 1.1, copied below.
 This license is also available with a FAQ at: https://openfontlicense.org
+
 
 -----------------------------------------------------------
 SIL OPEN FONT LICENSE Version 1.1 - 26 February 2007
@@ -53,7 +56,7 @@ new environment.
 "Author" refers to any designer, engineer, programmer, technical
 writer or other person who contributed to the Font Software.
 
-PERMISSION AND CONDITIONS
+PERMISSION & CONDITIONS
 Permission is hereby granted, free of charge, to any person obtaining
 a copy of the Font Software, to use, study, copy, merge, embed, modify,
 redistribute, and sell modified and unmodified copies of the Font
