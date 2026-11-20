@@ -252,6 +252,21 @@ h1 {
 	gap: 0.45rem;
 }
 
+/* ---------------------------------------------------------------- Table 1: its caption */
+
+.t-title {
+	margin: 0 0 0.5rem;
+	font-size: 1rem;
+	font-weight: 400;
+	line-height: 1.4;
+	color: var(--ink-2);
+}
+.tlabel {
+	font-weight: 700;
+	color: var(--accent);
+	margin-right: 0.15rem;
+}
+
 /* ---------------------------------------------------------------- Table 1: booktabs */
 
 .table-wrap {
@@ -334,21 +349,31 @@ td {
 	color: var(--accent);
 }
 
-/* the groups (memory, compute, the system, disk, network) set apart by space and a hairline, not named */
-.t1 tbody.sect > tr:first-child > * {
-	padding-top: 0.75rem;
+/* each group's name, a run-in head over its rows */
+.t1 tr.group th {
+	padding: 0.55rem 0 0.1rem;
+	font-weight: 600;
+	font-style: italic;
+	font-size: 0.94rem;
+	color: var(--ink);
+	border-bottom: 1px solid var(--hair);
 }
-.t1 tbody.sect + tbody.sect > tr:first-child > * {
-	border-top: 1px solid var(--ink-3);
+.t1 tr.group summary {
+	text-decoration: underline dotted color-mix(in srgb, currentColor 45%, transparent);
+	text-decoration-thickness: 1px;
+	text-underline-offset: 0.25em;
 }
-.t1 tbody tr > * {
+.t1 tr.group .tip-body {
+	font-style: italic;
+}
+.t1 tbody tr:not(.group) > * {
 	padding-top: 0.32rem;
 	padding-bottom: 0.32rem;
 }
-.t1 tbody tr + tr > * {
+.t1 tbody tr:not(.group) + tr:not(.group) > * {
 	border-top: 1px solid var(--grid);
 }
-.t1 tbody tr:hover > * {
+.t1 tbody tr:not(.group):hover > * {
 	background: var(--tint);
 }
 .t1 th.c-op {
@@ -590,33 +615,28 @@ td {
 		font-size: 0.86rem;
 	}
 
-	.t1 tbody.sect > tr:first-child > * {
-		padding-top: 0;
+	.t1 tr.group th {
+		padding-top: 0.9rem;
+		border-bottom: 2px solid var(--rule);
 	}
-	.t1 tbody.sect + tbody.sect > tr:first-child {
-		border-top: 2px solid var(--rule);
-	}
-	.t1 tbody.sect + tbody.sect > tr:first-child > * {
-		border-top: 0;
-	}
-	.t1 tbody tr {
+	.t1 tbody tr:not(.group) {
 		padding: 0.5rem 0 0.45rem;
 	}
-	.t1 tbody tr + tr {
+	.t1 tbody tr:not(.group) + tr:not(.group) {
 		border-top: 1px solid var(--hair);
 	}
-	.t1 tbody tr + tr > *,
-	.t1 tbody tr > * {
+	.t1 tbody tr:not(.group) + tr:not(.group) > *,
+	.t1 tbody tr:not(.group) > * {
 		border-top: 0;
 		padding: 0;
 	}
-	.t1 tbody tr:hover > * {
+	.t1 tbody tr:not(.group):hover > * {
 		background: none;
 	}
-	.t1 tbody tr > th.c-op {
+	.t1 tbody tr:not(.group) > th.c-op {
 		padding: 0 0 0.15rem;
 	}
-	.t1 tbody tr > td.c-fig {
+	.t1 tbody tr:not(.group) > td.c-fig {
 		display: grid;
 		grid-template-columns: 4.3rem minmax(0, 1fr) auto;
 		align-items: center;

@@ -1,8 +1,9 @@
 // Design v3, "Paper": LedgerMath's home page as a one-page data report, a research letter.
-// Form "under-10": at most nine words a visitor reads. The paper keeps its title, its dateline,
-// the way in, and Table 1 whole (every digit, a p5–p95 bar per cell, each machine and its hourly
-// price over its column). What each row measures waits behind a tap on its number; a machine's
-// vCPU, memory and processor behind a tap on its name.
+// Form "under-20": at most nineteen words a visitor reads. The paper keeps its title, its dateline,
+// the way in, and Table 1 whole with its caption and its five groups (every digit, a p5–p95 bar per
+// cell, each machine and its hourly price over its column). What each row measures waits behind a
+// tap on its number; a machine's vCPU, memory and processor behind a tap on its name; where Disk
+// and Network are measured behind a tap on the group.
 // Every figure comes from ../../data exactly as the snapshot holds it; nothing is rounded, ranked or computed.
 import "./page.css";
 import {
@@ -80,6 +81,8 @@ const rows: Row[] = headline.map((row) => {
 });
 
 const SECTIONS: Section[] = ["Memory", "Compute", "Operating system", "Disk", "Network"];
+// A label, never a sentence: where the two groups that are not the machine itself are measured.
+const GROUP_NOTE: Partial<Record<Section, string>> = { Disk: "root volume, EBS gp3", Network: "S3, same Region" };
 const bySection = SECTIONS.map((section) => ({ section, rows: rows.filter((r) => r.row.choice.section === section) }));
 /** Each row's number in Table 1, counted down the table across its groups. */
 const number = new Map(rows.map((r, i) => [r, i + 1]));
@@ -191,8 +194,11 @@ export default function Page() {
 						</div>
 					</header>
 
-					{/* ---------------------------------------------------- Table 1, nothing but its figures at rest */}
-					<section class="results">
+					{/* ---------------------------------------------------- Table 1: its caption, its groups, its figures */}
+					<section class="results" aria-labelledby="s1">
+						<h2 id="s1" class="t-title">
+							<span class="tlabel">Table 1.</span> Medians of Runs
+						</h2>
 						<div class="table-wrap t1-wrap" role="region" aria-label="Table 1" tabindex="0">
 							<table class="t1">
 								<thead>
@@ -241,6 +247,18 @@ export default function Page() {
 								</thead>
 								{bySection.map((s) => (
 									<tbody class="sect">
+										<tr class="group">
+											<th scope="colgroup" colspan={1 + machines.length}>
+												{GROUP_NOTE[s.section] ? (
+													<details class="tip">
+														<summary>{s.section}</summary>
+														<span class="tip-body">{GROUP_NOTE[s.section]}</span>
+													</details>
+												) : (
+													s.section
+												)}
+											</th>
+										</tr>
 										{s.rows.map((r) => (
 											<tr id={`t1-${r.row.choice.benchmark}`}>
 												<th scope="row" class="c-op">
