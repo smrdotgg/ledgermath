@@ -155,7 +155,8 @@ export function instrument(row: HeadlineRow): Instrument {
 	const crowded = (max - min) / zero.hi < CROWDED;
 	const zoom = crowded ? zoomScale(min, max) : null;
 
-	// Every digit first; then one count of decimals for the whole chart, so its figures line up on the point.
+	// Every digit first; then one count of decimals for the whole chart: enough for four significant digits
+	// in its largest median, more only where two medians that differ would print the same.
 	const marks: Mark[] = raw.map((r) => ({
 		instanceType: r.cell.machine.instanceType,
 		url: r.cell.series.url,
@@ -166,7 +167,7 @@ export function instrument(row: HeadlineRow): Instrument {
 	}));
 	const decimalsShown = placesFor(
 		marks.map((m) => m.p50.full),
-		crowded ? 6 : 4,
+		4,
 	);
 	for (const m of marks)
 		for (const f of [m.p5, m.p50, m.p95]) {
@@ -193,15 +194,15 @@ function significantFor(full: string, places: number): number {
 
 /**
  * One count of decimals for a chart: enough for its largest median to show `significant` digits, and
- * up to two more while two medians that differ would print the same.
+ * up to three more while two medians that differ would print the same.
  */
 function placesFor(fulls: string[], significant: number): number {
 	const largest = Math.max(...fulls.map(magnitude));
 	const base = Math.max(0, significant - largest);
-	for (let places = base; places < base + 2; places++) {
+	for (let places = base; places < base + 3; places++) {
 		const shown = fulls.map((f) => roundSignificant(f, significantFor(f, places)));
 		const clash = shown.some((s, i) => shown.some((t, j) => j > i && s === t && fulls[i] !== fulls[j]));
 		if (!clash) return places;
 	}
-	return base + 2;
+	return base + 3;
 }

@@ -3,11 +3,13 @@
 // labels; the figures, the marks and the links carry the page.
 import "./page.css";
 import { formatCount, formatMoment, formatUsd, headline, links, machines, snapshot } from "../../data";
-import { headTail, padFor } from "./digits";
+import { headTail, padFor, trimZeros } from "./digits";
 import { at, instrument, type Instrument, type Mark as Point, type Scale, width, zeroScale } from "./scale";
 
 const ROW = 24;
 const AXIS = 22;
+/** Of the plot's width, how far a cap may sit from the median and still lie under its dot (4 px of a ~200 px plot). */
+const HIDDEN = 0.02;
 
 /** The plot of one chart: gridlines, a track per machine, the p5–p95 bar with caps and the median dot. */
 function Plot(props: { inst: Instrument; scale: Scale }) {
@@ -21,12 +23,19 @@ function Plot(props: { inst: Instrument; scale: Scale }) {
 			))}
 			{props.inst.marks.map((m, i) => {
 				const y = i * ROW + ROW / 2;
+				// A p5–p95 that the median's dot covers is not drawn: its caps would only fleck the dot's edge.
+				const span = s.hi - s.lo;
+				const hidden = (m.p50.value - m.p5.value) / span < HIDDEN && (m.p95.value - m.p50.value) / span < HIDDEN;
 				return (
 					<g class="mark">
 						<line class="track" x1="0" x2="100%" y1={y} y2={y} />
-						<rect class="range" x={at(s, m.p5.value)} width={width(s, m.p5.value, m.p95.value)} y={y - 1.5} height="3" />
-						<line class="cap" x1={at(s, m.p5.value)} x2={at(s, m.p5.value)} y1={y - 4.5} y2={y + 4.5} />
-						<line class="cap" x1={at(s, m.p95.value)} x2={at(s, m.p95.value)} y1={y - 4.5} y2={y + 4.5} />
+						{hidden ? null : (
+							<>
+								<rect class="range" x={at(s, m.p5.value)} width={width(s, m.p5.value, m.p95.value)} y={y - 1.5} height="3" />
+								<line class="cap" x1={at(s, m.p5.value)} x2={at(s, m.p5.value)} y1={y - 4.5} y2={y + 4.5} />
+								<line class="cap" x1={at(s, m.p95.value)} x2={at(s, m.p95.value)} y1={y - 4.5} y2={y + 4.5} />
+							</>
+						)}
 						<circle class="median" cx={at(s, m.p50.value)} cy={y} r="4.25" />
 					</g>
 				);
@@ -97,7 +106,7 @@ function Url(props: { text: string }) {
 	);
 }
 
-/** A machine's name as its family (in ink) and its size (lighter; a phone shows the family alone, keyed by the Machines panel). */
+/** A machine's name as its family (in ink) and its size (lighter), whole at every width. */
 function Name(props: { type: string }) {
 	const dot = props.type.indexOf(".");
 	return dot < 0 ? (
@@ -109,9 +118,6 @@ function Name(props: { type: string }) {
 		</>
 	);
 }
-
-/** Whether the families alone tell the five machines apart; if not, a phone keeps the whole names. */
-const familiesUnique = new Set(machines.map((m) => m.instanceType.split(".")[0])).size === machines.length;
 
 const pad = (i: number) => String(i + 1).padStart(2, "0");
 
@@ -156,7 +162,7 @@ function Figure(props: { m: Point; row: number; unit: string; pad: string; last:
 	return (
 		<details class={props.last ? "fig up" : "fig"} name="fig" style={`grid-row:${props.row}`}>
 			<summary class="v" style={props.pad} title={`${m.instanceType}, ${props.unit}: median ${m.p50.full}, ${m.runs} Runs`}>
-				{m.p50.short}
+				{trimZeros(m.p50.short)}
 			</summary>
 			<div class="pop">
 				{cells.map(([k, v, shown]) => (
@@ -185,7 +191,7 @@ function Card(props: { inst: Instrument; index: number }) {
 	const zoom = inst.zoom;
 	const scale = zoom ?? inst.zero;
 	const limit = limitOf(c.benchmark);
-	const texts = inst.marks.map((m) => m.p50.short);
+	const texts = inst.marks.map((m) => trimZeros(m.p50.short));
 	const unit = c.per ? `${inst.unit} / ${c.per.of}` : inst.unit;
 	const runs = inst.marks.map((m) => m.runs);
 	const fewest = Math.min(...runs);
@@ -211,14 +217,14 @@ function Card(props: { inst: Instrument; index: number }) {
 					{inst.unit}
 				</span>
 			</header>
-			<div class={["chart", familiesUnique ? "" : "whole", zoom ? "zoomed" : ""].filter(Boolean).join(" ")} style={`--n:${inst.marks.length}`}>
+			<div class={zoom ? "chart zoomed" : "chart"} style={`--n:${inst.marks.length}`}>
 				<Plot inst={inst} scale={scale} />
 				{inst.marks.map((m, i) => (
 					<>
 						<span class="m" style={`grid-row:${i + 1}`}>
 							<Name type={m.instanceType} />
 						</span>
-						<Figure m={m} row={i + 1} unit={unit} pad={padFor(m.p50.short, texts)} last={i >= inst.marks.length - 2} />
+						<Figure m={m} row={i + 1} unit={unit} pad={padFor(texts[i]!, texts)} last={i >= inst.marks.length - 2} />
 					</>
 				))}
 				<span class="dir" title={c.lead === "rate" ? "More is faster" : "Less is faster"}>
@@ -325,7 +331,7 @@ export default function Page() {
 								<dd>{BOOTS.join(" ")}</dd>
 							</div>
 							<div>
-								<dt>Runs</dt>
+								<dt>Total Runs</dt>
 								<dd>
 									<a href={links.seriesList} title="Every Series, each listing its Runs">
 										<b>{runs}</b>
@@ -374,6 +380,13 @@ export default function Page() {
 									<path class="break" d="M 3 11 l 3 -9 m 3 9 l 3 -9" />
 								</svg>
 								axis not from 0
+							</span>
+							{/* Each figure opens: the key shows one, chart 01's c8i.2xlarge, and what opening it gives. */}
+							<span>
+								<span class="kv" title={`${pad(0)} ${exMark.instanceType}: median ${exMark.p50.full} ${hero.unit}`}>
+									{trimZeros(exMark.p50.short)}
+								</span>
+								opens every digit, Runs
 							</span>
 						</p>
 					</div>

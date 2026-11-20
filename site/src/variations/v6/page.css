@@ -427,9 +427,17 @@ h3 a:hover {
 	font-size: 0.8rem;
 	font-variant-numeric: tabular-nums;
 	color: var(--ink);
-	/* Each figure is a link to its Series file: a neutral hairline under its digits only (the padding that
-	   lines it up on the point stays bare), so the orange belongs to the medians. */
-	text-decoration: underline 1px var(--line);
+	/* Each figure opens to every digit and its Runs: a neutral dotted rule under its digits only (the padding
+	   that lines it up on the point stays bare), so the orange belongs to the medians. */
+	text-decoration: underline dotted 1.5px color-mix(in srgb, var(--faint) 55%, transparent);
+	text-underline-offset: 4px;
+}
+/* The key's sample figure, set as every figure in the charts is. */
+.key .kv {
+	font-weight: 600;
+	color: var(--ink);
+	font-variant-numeric: tabular-nums;
+	text-decoration: underline dotted 1.5px color-mix(in srgb, var(--faint) 55%, transparent);
 	text-underline-offset: 4px;
 }
 a.v:hover,
@@ -810,9 +818,13 @@ a.v:focus-visible {
 	outline-color: var(--band-accent);
 }
 .copy {
+	display: inline-grid;
+	place-items: center;
+	min-width: 24px;
+	height: 22px;
 	font: 500 0.68rem/1 var(--mono);
 	margin-left: 10px;
-	padding: 4px 7px;
+	padding: 0 4px;
 	border-radius: 5px;
 	border: 1px solid var(--band-line);
 	background: transparent;
@@ -904,15 +916,11 @@ a.v:focus-visible {
 	.lede {
 		font-size: 1rem;
 	}
-	/* The command keeps the box's whole width on one line; the copy button, when there is one, takes the line below, at the right. */
+	/* The command and its copy icon share one line. */
 	.cmd {
-		flex-wrap: wrap;
-		font-size: 0.68rem;
-		padding: 12px 10px 8px 12px;
-		gap: 6px 8px;
-	}
-	.cmd code {
-		flex-basis: calc(100% - 2em);
+		font-size: 0.66rem;
+		padding: 8px 8px 8px 11px;
+		gap: 6px;
 	}
 	.cmds li {
 		position: relative;
@@ -953,7 +961,7 @@ a.v:focus-visible {
 	}
 	.block {
 		padding-top: 28px;
-		padding-bottom: 32px;
+		padding-bottom: 0;
 	}
 	h2 {
 		font-size: 1.35rem;
@@ -975,27 +983,34 @@ a.v:focus-visible {
 	.card-h h3 {
 		white-space: normal;
 	}
-	/* The family alone names a machine in the charts (the Machines panel above keys it), so the plots get the width. */
-	/* The label column is as wide as "faster →", the widest thing in it. */
+	/* Whole machine names, the size lighter; the label column is as wide as the longest. */
 	.chart {
-		grid-template-columns: 3.6em minmax(0, 1fr) minmax(4em, max-content);
+		grid-template-columns: 6.4em minmax(0, 1fr) minmax(4em, max-content);
 		column-gap: 10px;
+	}
+	.chart .m {
+		font-size: 0.72rem;
 	}
 	.chart .dir {
 		font-size: 0.72rem;
 	}
-	/* A zoomed axis starts with a long label, centred on the plot's edge: room for its half too. */
-	.chart.zoomed {
-		grid-template-columns: 4.8em minmax(0, 1fr) minmax(4em, max-content);
+	/* The volume's tag takes its own line under the title, so the title breaks only where it must. */
+	.card-h {
+		flex-wrap: wrap;
+		row-gap: 6px;
 	}
-	.chart .sz {
-		display: none;
+	.card-h:has(.lim)::after {
+		content: "";
+		order: 8;
+		flex-basis: 100%;
+		height: 0;
 	}
-	.chart.whole {
-		grid-template-columns: 6.4em minmax(0, 1fr) minmax(4em, max-content);
+	.card-h .lim {
+		order: 9;
+		margin-left: 26px;
 	}
-	.chart.whole .sz {
-		display: inline;
+	.card-h h3 {
+		flex-basis: 0;
 	}
 	.ro > div {
 		padding: 8px 0;

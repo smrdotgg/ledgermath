@@ -8,6 +8,11 @@ export function fracWidth(text: string): number {
 	return point < 0 ? 0 : text.length - point;
 }
 
+/** A rounded figure without the zeros that end its fraction ("12.50" is "12.5", "10.00" is "10"); the column still lines up on the point. */
+export function trimZeros(text: string): string {
+	return text.includes(".") ? text.replace(/0+$/, "").replace(/\.$/, "") : text;
+}
+
 /** Right padding, in `ch`, that lines `text` up on its decimal point in a right-aligned column of `texts`. */
 export function padFor(text: string, texts: readonly string[]): string {
 	const widest = Math.max(...texts.map(fracWidth));

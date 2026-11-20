@@ -1,10 +1,20 @@
-// Copy buttons beside each command, their label as text in the button. Without JavaScript there are none; the commands read the same and can be selected.
-const LABEL = { copy: "copy", copied: "copied", failed: "select it" } as const;
+// Copy buttons beside each command: an icon (two sheets) that turns to a tick once copied, or says "select it" when the
+// browser refuses. Without JavaScript there are none; the commands read the same and can be selected.
+const SVG = (d: string) =>
+	`<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round">${d}</svg>`;
+const ICON = {
+	copy: SVG('<rect x="5.25" y="5.25" width="8.5" height="8.5" rx="1.5"/><path d="M10.75 3.25v-.5a1 1 0 0 0-1-1h-6a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h.5"/>'),
+	copied: SVG('<path d="M3 8.5l3.25 3.25L13 4.75" stroke-linecap="round"/>'),
+} as const;
 for (const el of document.querySelectorAll<HTMLElement>("[data-copy]")) {
 	const button = document.createElement("button");
 	button.type = "button";
 	button.className = "copy";
-	const show = (state: keyof typeof LABEL) => (button.textContent = LABEL[state]);
+	button.title = "Copy";
+	const show = (state: "copy" | "copied" | "failed") => {
+		if (state === "failed") button.textContent = "select it";
+		else button.innerHTML = ICON[state];
+	};
 	show("copy");
 	button.setAttribute("aria-label", `Copy: ${el.textContent ?? ""}`);
 	button.addEventListener("click", async () => {
