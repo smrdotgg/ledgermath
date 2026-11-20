@@ -1,4 +1,4 @@
-/* Design v5, "Swiss poster". One family, one grid, one accent, and here almost no words. */
+/* Design v5, "Swiss poster". One family, one grid, one accent, and few words. */
 
 @font-face {
 	font-family: "Inter v5";
@@ -14,6 +14,7 @@
 	--ink: #0d0d0c;
 	--muted: #4f4d48;
 	--hair: #c7c4bb;
+	--track: #dcd9d1;
 	--red: #c4141c;
 	--frame: #0d0d0c;
 	--code-bg: #0d0d0c;
@@ -32,6 +33,7 @@
 		--ink: #f1efe9;
 		--muted: #b3b0a8;
 		--hair: #3a3934;
+		--track: #2b2a27;
 		--red: #ff4f44;
 		--frame: #ff4f44;
 		--code-bg: #f1efe9;
@@ -171,80 +173,96 @@ button:focus-visible,
 	letter-spacing: -0.01em;
 }
 
-/* ---------------------------------------------------------------- the five machine types */
+/* ---------------------------------------------------------------- the table */
 
-.mach {
+.table-box {
 	grid-row: 5;
+	margin-top: 64px;
+	overflow-x: auto;
+}
+
+.figs {
 	width: 100%;
-	margin-top: 56px;
+	min-width: 1040px;
 	border-collapse: collapse;
+	table-layout: fixed;
 	font-variant-numeric: tabular-nums;
-	font-size: 16px;
 	line-height: 1.3;
 }
 
-.mach th,
-.mach td {
-	padding: 12px 0;
+.figs th,
+.figs td {
+	padding: 14px 16px 14px 0;
 	text-align: left;
-	vertical-align: baseline;
-	border-bottom: 1px solid var(--hair);
+	vertical-align: top;
 	font-weight: 500;
 }
 
-.mach thead th,
-.mach thead td {
-	padding: 0 0 10px;
+.figs thead th {
+	vertical-align: bottom;
+	padding-bottom: 14px;
 	border-bottom: 2px solid var(--ink);
+}
+
+.corner {
+	width: 21%;
 	font-size: 13px;
-	font-weight: 600;
 	color: var(--muted);
 }
 
-.mach .num {
-	text-align: right;
-	padding-right: var(--g);
-	white-space: nowrap;
+.corner-r {
+	display: block;
 }
 
-.mach-type {
-	width: 22%;
-}
-
-.mach tbody .mach-type {
+.mach-name {
+	display: block;
 	font-size: 20px;
 	font-weight: 700;
 	letter-spacing: -0.02em;
-	color: var(--ink);
 }
 
-.mach-fig {
-	width: 52%;
-	padding-left: var(--g) !important;
-}
-
-/* One fixed slot for every figure, so the five bars share one length and one zero. */
-.figline {
-	display: grid;
-	grid-template-columns: minmax(0, 1fr) 13.5em;
-	align-items: center;
-	column-gap: var(--g);
-}
-
-.bar {
-	position: relative;
+.mach-spec {
 	display: block;
-	height: 10px;
-	background: var(--hair);
+	margin-top: 2px;
+	font-size: 13px;
+	color: var(--muted);
+	word-spacing: 0.35em;
 }
 
-.bar > span {
-	position: absolute;
-	inset: 0 auto 0 0;
-	background: var(--ink);
+.mach-price {
+	display: block;
+	margin-top: 6px;
+	font-size: 17px;
+	font-weight: 650;
+}
+
+.figs tbody th,
+.figs tbody td {
+	border-bottom: 1px solid var(--hair);
+}
+
+.lab {
+	font-size: 16px;
+	font-weight: 700 !important;
+	letter-spacing: -0.01em;
+}
+
+.lab a {
+	text-decoration-color: var(--hair);
+}
+
+.nw {
+	white-space: nowrap;
+}
+
+.dir {
+	margin-left: 6px;
+	color: var(--muted);
+	font-weight: 500;
 }
 
 .fig {
+	display: block;
 	text-decoration: none;
 	white-space: nowrap;
 }
@@ -254,20 +272,33 @@ button:focus-visible,
 }
 
 .fh {
-	font-size: 20px;
+	font-size: 19px;
 	font-weight: 700;
 	letter-spacing: -0.01em;
 }
 
 .ft {
-	font-size: 13px;
+	font-size: 11px;
 	color: var(--muted);
 }
 
-.is-hero .mach-type,
+.bar {
+	position: relative;
+	display: block;
+	height: 6px;
+	margin-top: 9px;
+	background: var(--track);
+}
+
+.bar > span {
+	position: absolute;
+	inset: 0 auto 0 0;
+	background: var(--ink);
+}
+
 .is-hero .fh,
 .is-hero .ft {
-	color: var(--red) !important;
+	color: var(--red);
 }
 
 .is-hero .bar > span {
@@ -280,13 +311,6 @@ button:focus-visible,
 	grid-row: 1;
 	grid-column: 8 / -1 !important;
 	align-self: end;
-}
-
-.way-k {
-	margin-bottom: 8px;
-	font-size: 13px;
-	font-weight: 600;
-	color: var(--muted);
 }
 
 .cmd {
@@ -395,58 +419,6 @@ button:focus-visible,
 		padding: 14px 16px;
 	}
 
-	/* Each machine on two lines: type, vCPU, memory and price; then its bar and figure. */
-	.mach thead tr,
-	.mach tbody tr {
-		display: grid;
-		grid-template-columns: minmax(0, 1fr) 2.5em 3.6em 5.6em;
-		column-gap: 8px;
-		border-bottom: 1px solid var(--hair);
-	}
-
-	.mach thead tr {
-		border-bottom: 2px solid var(--ink);
-	}
-
-	.mach th,
-	.mach td,
-	.mach thead th,
-	.mach thead td {
-		border: 0;
-		width: auto;
-	}
-
-	.mach .num {
-		padding-right: 0;
-	}
-
-	.mach tbody th,
-	.mach tbody td {
-		padding: 12px 0 4px;
-	}
-
-	.mach tbody .mach-type {
-		font-size: 17px;
-	}
-
-	.mach thead .mach-fig {
-		display: none;
-	}
-
-	.mach .mach-fig {
-		grid-column: 1 / -1;
-		padding: 0 0 12px !important;
-	}
-
-	.figline {
-		grid-template-columns: minmax(0, 1fr) 12.6em;
-		column-gap: 12px;
-	}
-
-	.fh {
-		font-size: 18px;
-	}
-
 	/* The address on a line of its own, whole: "curl" above it, the copy mark beside "curl". */
 	.cmd code {
 		font-size: 12.5px;
@@ -462,5 +434,30 @@ button:focus-visible,
 		position: absolute;
 		top: 8px;
 		right: 8px;
+	}
+
+	/* The table scrolls in its own box, the benchmarks' names held at the left. */
+	.table-box {
+		margin-top: 48px;
+	}
+
+	.figs {
+		min-width: 1080px;
+	}
+
+	.corner {
+		width: 132px;
+	}
+
+	.figs th:first-child {
+		position: sticky;
+		left: 0;
+		z-index: 1;
+		background: var(--paper);
+		padding-right: 12px;
+	}
+
+	.lab {
+		font-size: 14px;
 	}
 }
