@@ -551,7 +551,7 @@ describe("in the alarm's issue", () => {
 		expect(await pass(tracker, "2026-11-21T18:04:00Z", published(FIRST_PUBLISH))).toMatchObject({ action: "opened", issue: 1, api: `stale since ${FIRST_PUBLISH}` });
 		expect(tracker.issues[0]?.title).toBe(ALARM_TITLE);
 		expect(tracker.issues[0]?.body).toContain(
-			`**The data API has not been published for 16.2 hours.** In \`s3://${BUCKET}\`, \`v1/index.json\` was last written at ${FIRST_PUBLISH}, by run [${RUN}](${ACTIONS_RUN_URL}${RUN}), more than 14 hours before this check, so the runs since have not published.`,
+			`**The data API has not been published for 16.2 hours.** In the API bucket, \`v1/index.json\` was last written at ${FIRST_PUBLISH}, by run [${RUN}](${ACTIONS_RUN_URL}${RUN}), more than 14 hours before this check, so the runs since have not published.`,
 		);
 		for (const now of ["2026-11-21T22:44:00Z", "2026-11-22T00:04:00Z", "2026-11-22T06:04:00Z"]) expect(await pass(tracker, now, published(FIRST_PUBLISH))).toMatchObject({ action: "unchanged" });
 		expect(await pass(tracker, "2026-11-22T12:04:00Z", published("2026-11-22T12:02:00.000Z", RUN + 1000))).toMatchObject({ action: "commented", api: null });
@@ -584,10 +584,37 @@ describe("in the alarm's issue", () => {
 		}
 	});
 
+	test("no issue or comment names the bucket, for any result in the closed set; the line for the log and step summary does", async () => {
+		const results: CheckResult[] = [
+			{ kind: "unset" },
+			published(FIRST_PUBLISH),
+			published("2026-11-22T00:02:00.000Z", null),
+			{ kind: "empty" },
+			{ kind: "refused", status: 403, attempts: 1 },
+			{ kind: "no-credentials" },
+			{ kind: "server-error", status: 503, attempts: 3 },
+			{ kind: "no-answer", attempts: 3 },
+			{ kind: "no-date" },
+		];
+		for (const state of ["off", "on"]) {
+			for (const result of results) {
+				// Raised beside a stale Series, then said again with the bucket fresh, and once with nothing else stale: every kind of post.
+				const tracker = new FakeIssues();
+				await pass(tracker, "2026-11-22T06:04:00Z", result, state, STALE_SCHEDULE);
+				await pass(tracker, "2026-11-22T06:04:00Z", published("2026-11-22T06:02:00.000Z"), state, STALE_SCHEDULE);
+				await pass(tracker, "2026-11-22T06:04:00Z", result, state);
+				for (const post of tracker.posts()) expect({ result, state, named: post.includes(BUCKET) }).toEqual({ result, state, named: false });
+				const words = report(result, "2026-11-22T06:04:00Z", state);
+				expect([words.raised, words.well, words.again].join("\n")).not.toContain(BUCKET);
+				if (result.kind !== "unset") expect(words.summary).toContain(`s3://${BUCKET}`);
+			}
+		}
+	});
+
 	test("an empty bucket and an unreadable one are raised at once, each in its own fixed words", async () => {
 		const tracker = new FakeIssues();
 		expect(await pass(tracker, "2026-11-21T06:04:00Z", { kind: "empty" })).toMatchObject({ action: "opened", api: "empty" });
-		expect(tracker.issues[0]?.body).toContain(`**The API bucket holds no table of contents.** \`API_BUCKET\` names \`s3://${BUCKET}\``);
+		expect(tracker.issues[0]?.body).toContain("**The API bucket holds no table of contents.** The bucket `API_BUCKET` names holds no `v1/index.json`");
 		expect(await pass(tracker, "2026-11-21T12:04:00Z", { kind: "refused", status: 403, attempts: 1 })).toMatchObject({ action: "commented", api: "unreadable: refused 403" });
 	});
 
@@ -652,7 +679,16 @@ describe("the drill: exactly one notification, nothing else", () => {
 		};
 		const log: string[] = [];
 		const summary: string[] = [];
-		expect(await drillSafely(failing, RUN_URL, (line) => log.push(line), (text) => summary.push(text))).toBeNull();
+		expect(
+			await drillSafely(
+				failing,
+				RUN_URL,
+				(line) => log.push(line),
+				(text) => {
+					summary.push(text);
+				},
+			),
+		).toBeNull();
 		expect(log).toEqual(["the drill's comment could not be posted: GitHub POST /issues: 500 nope"]);
 		expect(summary.join("")).toContain("The drill's comment could not be posted");
 	});
@@ -668,7 +704,7 @@ describe("the script, as the first job runs it", () => {
 	afterEach(() => standin.stop());
 
 	/** The alarm, with the read-only key in its environment; posting nothing unless `github` names a stand-in for GitHub's API. `stale` makes every watched Series stale. */
-	const alarm = async (now: string, extra: string[], options: { stale?: boolean; summary?: "file" | "directory"; github?: string } = {}) => {
+	const alarm = async (now: string, extra: string[], options: { stale?: boolean; summary?: "file" | "directory" | "fifo"; github?: string } = {}) => {
 		const directory = mkdtempSync(join(scratch, "script-"));
 		const runs = join(directory, "ledgermath-runs");
 		mkdirSync(runs);
@@ -676,6 +712,9 @@ describe("the script, as the first job runs it", () => {
 		if (options.summary === "directory") {
 			summary = join(directory, "summary-is-a-directory");
 			mkdirSync(summary);
+		} else if (options.summary === "fifo") {
+			summary = join(directory, "summary-is-a-pipe");
+			expect(Bun.spawnSync(["mkfifo", summary]).exitCode).toBe(0);
 		} else writeFileSync(summary, "");
 		const changed = options.stale === true ? SETTLED.toISOString() : now;
 		const started = performance.now();
@@ -711,7 +750,7 @@ describe("the script, as the first job runs it", () => {
 			},
 		);
 		const [stdout, stderr, exitCode] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
-		return { exitCode, stdout, stderr, elapsed: performance.now() - started, summary: options.summary === "directory" ? "" : readFileSync(summary, "utf8") };
+		return { exitCode, stdout, stderr, elapsed: performance.now() - started, summary: options.summary === "directory" || options.summary === "fifo" ? "" : readFileSync(summary, "utf8") };
 	};
 	const staleLines = (stdout: string): string[] => stdout.split("\n").filter((line) => line.startsWith("stale: "));
 
@@ -756,6 +795,16 @@ describe("the script, as the first job runs it", () => {
 		expect(ours.stdout).toContain("--dry-run: would open");
 	});
 
+	test("a step summary that blocks on open (a pipe nobody reads) does not hold the alarm: its write is abandoned after two seconds and the alarm exits with its verdict's code", async () => {
+		const done = await alarm("2026-11-21T06:04:00Z", ["--api-bucket", ""], { stale: true, summary: "fifo" });
+		expect(done.exitCode).toBe(0);
+		expect(done.stdout).toContain("--dry-run: would open");
+		expect(staleLines(done.stdout).length).toBeGreaterThan(100);
+		expect(done.stderr).toContain("could not write to the step's summary (not written within 2 s); carrying on");
+		// The check's child blocks on the same pipe until its 20 seconds are up; the alarm's own write adds two.
+		expect(done.elapsed).toBeLessThan(CHECK_BUDGET_MS + 10_000);
+	});
+
 	test("every stale Series is listed in the step summary, which the issue points to when it cannot list them all", async () => {
 		const done = await alarm("2026-11-21T06:04:00Z", ["--api-bucket", ""], { stale: true });
 		const count = staleLines(done.stdout).length;
@@ -783,7 +832,7 @@ describe("the script, as the first job runs it", () => {
 			expect(done.exitCode).toBe(0);
 			expect(github.posts).toHaveLength(2);
 			expect(github.posts[0]).toContain("watched Series have had no Run for more than 48 hours.");
-			expect(github.posts[1]).toContain("**This is a drill**");
+			expect(github.posts[1]).toContain("**This is a drill**, started by hand with the input `alarm_drill` in [this run](https://github.com/smrdotgg/ledgermath/actions/runs/44900000000)");
 			expect(done.stderr).toContain("the drill's comment could not be posted");
 			expect(done.summary).toContain("The drill's comment could not be posted");
 			// Every post under GitHub's limit, however many Series are stale; the token never in one.

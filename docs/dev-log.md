@@ -1318,4 +1318,14 @@ A migrated benchmark is done only when **all** of these hold:
   child exits; a child that ignores `SIGTERM`, and a grandchild holding the pipes, are found
   dead. The child now starts before the Runs repository is read. Not deployed; the switch
   stays off.
+- **2026-11-21** — The publishing watch, after a fourth verification (four small points). No
+  issue or comment names the bucket any more ("the API bucket"); the name stays in the log
+  and the step summary, and this run's link is the fixed Actions address and a numeric
+  `GITHUB_RUN_ID` (a test renders every result of the closed set and finds no bucket name).
+  The line that cuts the list says the log lists every stale Series and the step summary as
+  many as its size limit holds. The marker's hash is of the JSON of the sorted list, so
+  `["a", "b"]` and `["a\nb"]` differ (old-format markers still read through the same
+  function). The alarm's own step-summary writes are asynchronous, abandoned after two
+  seconds, and the alarm exits explicitly with its verdict's code (a test gives it a FIFO
+  nobody reads). Not deployed; the switch stays off.
 - _(agents: append your entry here, one per merged benchmark)_

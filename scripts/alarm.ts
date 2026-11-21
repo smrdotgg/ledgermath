@@ -62,7 +62,8 @@
  *
  * Every body it posts is under MAX_BODY_CHARS, below GitHub's limit: when the
  * stale Series do not all fit, as many as fit are listed and one line says
- * how many more, and the step's summary lists every one (staleList). The
+ * how many more; the log lists every one, and the step's summary as many as
+ * its size limit holds (staleList). The
  * state marker carries their number and a hash of the set, not the list.
  *
  * --drill yes (the workflow's input alarm_drill): after its ordinary pass, the
@@ -77,14 +78,15 @@
  */
 
 import { createHash } from "node:crypto";
-import { appendFileSync, existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { appendFile } from "node:fs/promises";
 import { join, relative, resolve, sep } from "node:path";
 import { parseArgs } from "node:util";
 
 import { PUBLIC_API } from "../infra/runs/public-blobs";
 import { appliesTo, parseSchedule, type Schedule } from "../infra/runs/schedule";
 import { canonicalJson, compareText, type ParamValue, type RunFile } from "../methods/run";
-import { type ApiReport, apiReport, type CheckFailure, type CheckResult, checkFailed, parseResult } from "./lib/api-freshness";
+import { ACTIONS_RUN_URL, type ApiReport, apiReport, type CheckFailure, type CheckResult, checkFailed, parseResult } from "./lib/api-freshness";
 import { boundedText, clipText } from "./lib/api-upload";
 import { PRICE_FILE_PATH } from "./lib/prices";
 import { readRunFiles } from "./lib/run-files";
@@ -274,9 +276,9 @@ export interface AlarmState {
 	stale_api?: string;
 }
 
-/** The first 16 hex digits of the SHA-256 of the sorted descriptions, one per line. */
+/** The first 16 hex digits of the SHA-256 of the JSON of the sorted descriptions: unambiguous, whatever a description holds. */
 export function staleHash(descriptions: readonly string[]): string {
-	return createHash("sha256").update([...descriptions].sort(compareText).join("\n")).digest("hex").slice(0, 16);
+	return createHash("sha256").update(JSON.stringify([...descriptions].sort(compareText))).digest("hex").slice(0, 16);
 }
 
 export function alarmState(stale: readonly StaleSeries[], copyFailed: boolean, prices: StalePrices | null = null, api: string | null = null): AlarmState {
@@ -443,13 +445,21 @@ export async function postDrill(tracker: IssueTracker, runUrl: string | null): P
 	return open.number;
 }
 
-/** Appends to the step's summary when there is one: best-effort, a failure only warned of. */
-function toStepSummary(text: string): void {
-	try {
-		if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, text);
-	} catch (error) {
-		console.warn(`could not write to the step's summary (${error instanceof Error ? error.message : String(error)}); carrying on`);
-	}
+/**
+ * Appends to the step's summary when there is one: best-effort, given two
+ * seconds, then abandoned with a warning, so a summary that cannot be
+ * written (or opened: a pipe nobody reads) never holds the alarm. The alarm
+ * exits explicitly afterwards, so a write left waiting cannot keep it alive.
+ */
+export async function toStepSummary(text: string, path = process.env.GITHUB_STEP_SUMMARY): Promise<void> {
+	if (!path) return;
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	const waited = new Promise<string>((resolve) => {
+		timer = setTimeout(() => resolve("not written within 2 s"), 2_000);
+	});
+	const outcome = await Promise.race([appendFile(path, text).then(() => "", (error: unknown) => (error instanceof Error ? error.message : String(error))), waited]);
+	clearTimeout(timer);
+	if (outcome !== "") console.warn(`could not write to the step's summary (${outcome}); carrying on`);
 }
 
 /**
@@ -458,13 +468,18 @@ function toStepSummary(text: string): void {
  * null, and the alarm exits with the code its verdict earned (the publish
  * job runs only when the first job succeeded).
  */
-export async function drillSafely(tracker: IssueTracker, runUrl: string | null, log: (line: string) => void = (line) => console.error(line), summary: (text: string) => void = toStepSummary): Promise<number | null> {
+export async function drillSafely(
+	tracker: IssueTracker,
+	runUrl: string | null,
+	log: (line: string) => void = (line) => console.error(line),
+	summary: (text: string) => Promise<void> | void = (text) => toStepSummary(text),
+): Promise<number | null> {
 	try {
 		return await postDrill(tracker, runUrl);
 	} catch (error) {
 		const words = clipText(error instanceof Error ? error.message : String(error), 500);
 		log(`the drill's comment could not be posted: ${words}`);
-		summary(`### The alarm's drill\n\nThe drill's comment could not be posted: ${words}\n`);
+		await summary(`### The alarm's drill\n\nThe drill's comment could not be posted: ${words}\n`);
 		return null;
 	}
 }
@@ -484,7 +499,7 @@ export interface AlarmTextOptions {
 	apiWasRaised?: boolean;
 	/** The most characters the text may have: MAX_BODY_CHARS less the issue's marker line, unless given. */
 	budget?: number;
-	/** The run whose log and step summary list every stale Series, said when the list is cut; null: not known. */
+	/** The run whose log lists every stale Series, said when the list is cut; null: not known. */
 	fullListAt?: string | null;
 }
 
@@ -502,7 +517,8 @@ export const TEXT_BUDGET = MAX_BODY_CHARS - ALARM_MARKER.length - 1;
  * and how old it is, the price files if stale, the API bucket if raised, and
  * the state marker. Under its budget: when the Series lines do not all fit,
  * as many as fit are listed, in their sorted order, then one line saying how
- * many more there are and that the run's log and step summary list them all.
+ * many more there are, that the run's log lists them all and its step
+ * summary as many as its size limit holds.
  * Everything else is always there.
  */
 export function alarmText(options: AlarmTextOptions): string {
@@ -558,7 +574,8 @@ export function alarmText(options: AlarmTextOptions): string {
 		`${STATE_MARKER}${JSON.stringify(alarmState(stale, copyFailed, prices, apiState))} -->`,
 	];
 	const where = options.fullListAt ? `[the run that wrote this](${options.fullListAt})` : "the run that wrote this";
-	const more = (count: number): string => `- … and ${count} more watched Series not shown, to keep this post under GitHub's limit: the log and step summary of ${where} list every one.`;
+	const more = (count: number): string =>
+		`- … and ${count} more watched Series not shown, to keep this post under GitHub's limit: the log of ${where} lists every one, and its step summary lists them up to its size limit.`;
 	const assemble = (shown: readonly string[], hidden: number): string => [...head, ...(shown.length + hidden > 0 ? ["", ...shown, ...(hidden > 0 ? [more(hidden)] : [])] : []), ...tail].join("\n");
 	const budget = options.budget ?? TEXT_BUDGET;
 	const whole = assemble(lines, 0);
@@ -658,7 +675,7 @@ export async function runAlarm(options: {
 	pricesSince?: Date | null;
 	/** What the check of the API bucket reported (checkInChild): strings only. Null or absent when it was not asked, and then nothing is said of it. */
 	api?: ApiReport | null;
-	/** The run whose log and step summary list every stale Series, linked when the post cannot list them all. */
+	/** The run whose log lists every stale Series, linked when the post cannot list them all. */
 	fullListAt?: string | null;
 }): Promise<AlarmOutcome> {
 	const tracker = guarded(options.tracker);
@@ -839,8 +856,9 @@ async function main(): Promise<void> {
 	const newestPrices = newestPriceFile(values.runs);
 	const api = reportOf(await checking, bucket, now, PUBLIC_API.state);
 	console.log(`the API bucket: ${api.summary}`);
-	const { GITHUB_SERVER_URL: server, GITHUB_REPOSITORY: repository, GITHUB_RUN_ID: runId } = process.env;
-	const runUrl = server && repository && runId ? `${server}/${repository}/actions/runs/${runId}` : null;
+	// This run's page: the repository's fixed address and the run id, which must be a number; nothing else from the environment.
+	const runId = process.env.GITHUB_RUN_ID ?? "";
+	const runUrl = /^[1-9][0-9]{0,19}$/.test(runId) ? `${ACTIONS_RUN_URL}${runId}` : null;
 	const outcome = await runAlarm({ schedule, runs, now, scheduleChangedAt, copyFailed, tracker, newestPrices, pricesSince, api, fullListAt: runUrl });
 	const watched = watchedSeries(schedule);
 	// Those with no Run at all, whatever the schedule's age.
@@ -848,7 +866,7 @@ async function main(): Promise<void> {
 	if (copyFailed) console.log("the copy job failed on this pass: the Runs repository may be behind the bucket");
 	// Every stale Series, in the log and the step summary, which the issue points to when it cannot list them all.
 	for (const series of outcome.stale) console.log(`stale: ${describeSeries(series)} (newest ${series.newest?.startedAt ?? "none"})`);
-	if (outcome.stale.length > 0) toStepSummary(staleList(outcome.stale, now));
+	if (outcome.stale.length > 0) await toStepSummary(staleList(outcome.stale, now));
 	if (values.drill === "yes") {
 		const issue = await drillSafely(tracker, runUrl);
 		if (issue !== null && !values["dry-run"]) console.log(`drill: posted on issue #${issue}`);
@@ -868,8 +886,12 @@ async function main(): Promise<void> {
 }
 
 if (import.meta.main) {
-	main().catch((error: unknown) => {
-		console.error(error instanceof Error ? error.message : String(error));
-		process.exit(1);
-	});
+	// Exits explicitly with the verdict's code: a write to the step summary left waiting (toStepSummary) cannot keep the alarm alive.
+	main().then(
+		() => process.exit(0),
+		(error: unknown) => {
+			console.error(error instanceof Error ? error.message : String(error));
+			process.exit(1);
+		},
+	);
 }

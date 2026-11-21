@@ -541,7 +541,11 @@ describe("every post under GitHub's limit of 65,536 characters", () => {
 				const shown = text.split("\n").filter((line) => line.startsWith("- `")).map((line) => (line.match(/^- `([^`]*)`/) as RegExpMatchArray)[1] as string);
 				expect(shown).toEqual(sorted.slice(0, shown.length));
 				const more = text.split("\n").find((line) => line.startsWith("- … and "));
-				if (shown.length < n) expect(more).toBe(`- … and ${n - shown.length} more watched Series not shown, to keep this post under GitHub's limit: the log and step summary of [the run that wrote this](${RUN_URL}) list every one.`);
+				if (shown.length < n) {
+					expect(more).toBe(
+						`- … and ${n - shown.length} more watched Series not shown, to keep this post under GitHub's limit: the log of [the run that wrote this](${RUN_URL}) lists every one, and its step summary lists them up to its size limit.`,
+					);
+				}
 				else expect(more).toBeUndefined();
 				expect(stateOf(body)).toEqual(alarmState(stale, copyFailed, withPrices ? prices : null, withApi ? bucket.state : null));
 				expect(stateOf(body)?.stale_count).toBe(n);
@@ -631,6 +635,10 @@ describe("GitHub's side", () => {
 		expect(open?.number).toBe(101);
 		// A post from before the count and hash, which listed the stale Series, reads as the same state.
 		expect(stateOf(open?.lastPost ?? "")).toEqual({ stale_count: 2, stale_hash: staleHash(["a", "b"]), copy_failed: true });
+		// Two sets whose descriptions joined by newlines read the same hash differently: the hash is of their JSON.
+		expect(["a", "b"].join("\n")).toBe(["a\nb"].join("\n"));
+		expect(staleHash(["a", "b"])).not.toBe(staleHash(["a\nb"]));
+		expect(staleHash(["b", "a"])).toBe(staleHash(["a", "b"]));
 		await github.comment(101, "still stale");
 		expect(await github.open("t", "b")).toBe(7);
 		expect(calls.map((call) => `${call.method} ${call.url.replace("https://api.github.com", "")}`)).toEqual([

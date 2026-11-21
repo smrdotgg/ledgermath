@@ -217,8 +217,9 @@ function unreadableWords(result: Extract<CheckResult, { kind: "refused" | "no-cr
 
 /**
  * The alarm's words for a result, at now: fixed sentences, with nothing in
- * them but the bucket's name (API_BUCKET, which the alarm itself passed), a
- * date and numbers the result was validated to hold.
+ * those for the issue (raised, well, again) but a date and numbers the result
+ * was validated to hold. The bucket's name is only in `summary`, the line for
+ * the job's log and the step summary.
  */
 export function apiReport(result: CheckResult, bucket: string, now: Date, publicApiState: string): ApiReport {
 	const state = apiAlarmState(result, now, publicApiState);
@@ -241,7 +242,7 @@ export function apiReport(result: CheckResult, bucket: string, now: Date, public
 			return {
 				state,
 				raised:
-					`**The data API has not been published for ${hours} hours.** In \`${where}\`, \`${STAMP_KEY}\` was last written at ${result.last_modified}${byRun(result.run)}, more than ${MAX_HOURS} hours before this check, so the runs since have not published. ` +
+					`**The data API has not been published for ${hours} hours.** In the API bucket, \`${STAMP_KEY}\` was last written at ${result.last_modified}${byRun(result.run)}, more than ${MAX_HOURS} hours before this check, so the runs since have not published. ` +
 					`Look at the \`publish\` job of the latest runs (Actions, \`runs\`): failed, skipped (its first job failed, or \`API_BUCKET\` was unset), cancelled, or not there at all. ` +
 					`(Raised by a check made more than ${MAX_HOURS} hours after the last publish: README, "The alarm".)`,
 				well: `the data API was last published at ${result.last_modified}${byRun(result.run)}`,
@@ -253,7 +254,7 @@ export function apiReport(result: CheckResult, bucket: string, now: Date, public
 		case "empty":
 			return {
 				state,
-				raised: `**The API bucket holds no table of contents.** \`API_BUCKET\` names \`${where}\`, which holds no \`${STAMP_KEY}\`, so no publish has ever finished there. If \`API_BUCKET\` was set since the last run, this is expected: this run's own \`publish\` job comes after this check, and the next run says here whether it published. Otherwise look at the latest runs' \`publish\` jobs, and at whether \`API_BUCKET\` is the scheduled stage's \`apiBucket\` output.`,
+				raised: `**The API bucket holds no table of contents.** The bucket \`API_BUCKET\` names holds no \`${STAMP_KEY}\`, so no publish has ever finished there. If \`API_BUCKET\` was set since the last run, this is expected: this run's own \`publish\` job comes after this check, and the next run says here whether it published. Otherwise look at the latest runs' \`publish\` jobs, and at whether \`API_BUCKET\` is the scheduled stage's \`apiBucket\` output.`,
 				well: "",
 				again: "",
 				watched: true,

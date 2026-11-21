@@ -1575,15 +1575,18 @@ case would have posted nothing. Every body the alarm posts (a new issue, a comme
 recovery, a drill) is now built under 60,000 characters (`MAX_BODY_CHARS`), the hidden
 marker included. The summary and its counts, the copy job's warning, the price finding and
 the bucket finding are always there; the stale Series are listed, in sorted order, as many
-as fit, then one line says how many more are not shown and that the run's log and step
-summary list every one (the alarm writes the complete list to the step summary, under that
-summary's own limit of 1 MiB). The marker carries the number of stale Series and a hash of
-the whole set rather than the list, so it stays a few hundred characters: the same set gives
-the same hash, so a repeat pass stays quiet, and any change to the set, shown or not,
+as fit, then one line says how many more are not shown, that the run's log lists every one
+and that its step summary lists them up to its size limit (900 KB of the summary's 1 MiB:
+thousands of Series). The marker carries the number of stale Series and a hash of the JSON of
+the whole sorted set rather than the list, so it stays a few hundred characters: the same set
+gives the same hash, so a repeat pass stays quiet, and any change to the set, shown or not,
 changes it. Posts written before, whose marker listed the Series, read as the same state. A
 body over the limit is refused before it is sent, and a post GitHub refuses (a 422) fails the
 alarm loudly and is not sent again. Tests: 141, 187 and 1,000 stale Series, with and without
-the bucket and price findings.
+the bucket and price findings. The alarm's own writes to the step summary (the list, a drill
+that could not post) are given two seconds each and then abandoned, and the alarm exits
+explicitly with its verdict's code, so a summary that cannot be written never holds the job.
+An issue names no bucket: the bucket's name is only in the log and the step summary.
 
 The same issue says when the newest price file in the Runs repository (below, "Prices")
 was fetched more than 48 hours ago, by its `fetched_at`. With no price file at all, it
