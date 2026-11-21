@@ -17,30 +17,33 @@
  *
  * The rule (judgeTransition): a distribution is made only disabled ("dark");
  * from an enabled one, or one still deploying, the only way out is "dark";
- * "off" and a change of PUBLIC_BLOBS.plan are made only from "dark" once the
+ * "off" and a change of PUBLIC_API.plan are made only from "dark" once the
  * distribution reports disabled; "closed" and "on" only from what the stage
  * itself left (so not after the watch, or a person, disabled it behind the
  * stage's back); and "on" only when an ACTIVE plan covers it.
  *
  * It judges deploys only. `sst remove` never runs the program, so never
- * reaches it; only SST's stage protection stops a removal, and public blobs
- * are made only on a protected stage (stageRefusals).
+ * reaches it; only SST's stage protection stops a removal, and the public API
+ * is made only on a protected stage (stageRefusals).
  *
  * Plain data: no SST global, no AWS client.
  */
 
 import { join } from "node:path";
 
-import { CLOSED_GRACE_MINUTES, DEPLOYED_STATES, type DeployedState, PLAN_ATTACHMENTS, type PlanAttachment, type PublicBlobsState, WATCH_INTERVAL_MINUTES } from "./public-blobs";
+import { API_DOMAIN, CLOSED_GRACE_MINUTES, DEPLOYED_STATES, type DeployedState, PLAN_ATTACHMENTS, type PlanAttachment, type PublicApiState, WATCH_INTERVAL_MINUTES } from "./public-blobs";
 
 export interface RecordedDeploy {
 	state: DeployedState;
 	plan: PlanAttachment;
 }
 
+/** distributionComment's form, with the stage, state and plan as groups. */
+const COMMENT = new RegExp(`^LedgerMath (\\S+) public API \\(${API_DOMAIN.name.replace(/\./g, "\\.")}\\): state=([a-z]+) plan=([a-z]+)$`);
+
 /** The state and plan attachment a distribution's comment records, for `stage`; null when it records none for it. */
 export function parseComment(comment: string, stage: string): RecordedDeploy | null {
-	const match = /^LedgerMath (\S+) public blobs \(blobs\/sha256\/\* only\): state=([a-z]+) plan=([a-z]+)$/.exec(comment);
+	const match = COMMENT.exec(comment);
 	if (match === null || match[1] !== stage) return null;
 	const state = DEPLOYED_STATES.find((s) => s === match[2]);
 	const plan = PLAN_ATTACHMENTS.find((p) => p === match[3]);
@@ -48,17 +51,17 @@ export function parseComment(comment: string, stage: string): RecordedDeploy | n
 }
 
 /**
- * Whether a comment says it is one of this stage's public-blobs
+ * Whether a comment says it is one of this stage's public API
  * distributions, recorded state or not. The stage is followed by " public
- * blobs", so no other stage's matches.
+ * API", so no other stage's matches.
  */
 export function isStageComment(comment: string, stage: string): boolean {
-	return comment.startsWith(`LedgerMath ${stage} public blobs`);
+	return comment.startsWith(`LedgerMath ${stage} public API`);
 }
 
 /** The distribution's Pulumi type, and its name in the stage (public-blobs-stack.ts makes it under this name). */
 export const DISTRIBUTION_TYPE = "aws:cloudfront/distribution:Distribution";
-export const DISTRIBUTION_NAME = "PublicBlobsDistribution";
+export const DISTRIBUTION_NAME = "PublicApiDistribution";
 
 /** The distribution the stage's state records: none (a deploy would create one), one by ID, or unknown. */
 export type Managed = { kind: "none" } | { kind: "one"; id: string; arn: string; comment: string } | { kind: "unknown"; reason: string };
@@ -188,12 +191,12 @@ export function findDeployed(distributions: readonly DistributionSummary[], stag
 	const unknown = (reason: string): Deployed => ({ kind: "unknown", reason });
 	if (managed.kind === "unknown") return unknown(managed.reason);
 	const ours = distributions.filter((d) => isStageComment(d.comment, stage));
-	if (ours.length > 1) return unknown(`${ours.length} distributions say they are ${stage}'s public blobs (${ours.map((d) => d.id).join(", ")})`);
+	if (ours.length > 1) return unknown(`${ours.length} distributions say they are ${stage}'s public API (${ours.map((d) => d.id).join(", ")})`);
 	const claimant = ours[0];
 	if (managed.kind === "none") {
 		if (claimant === undefined) return { kind: "absent" };
 		return unknown(
-			`distribution ${claimant.id} says it is ${stage}'s public blobs, but the stage's state records no distribution: it was made outside the stage's deploys, ` +
+			`distribution ${claimant.id} says it is ${stage}'s public API, but the stage's state records no distribution: it was made outside the stage's deploys, ` +
 				"or by one whose record was lost, and a deploy would make another beside it",
 		);
 	}
@@ -201,7 +204,7 @@ export function findDeployed(distributions: readonly DistributionSummary[], stag
 	if (listed === undefined) return unknown(`the stage's state records distribution ${managed.id}, which AWS does not list (deleted outside the stage? \`sst refresh\` updates the state)`);
 	if (listed.arn !== managed.arn) return unknown(`distribution ${managed.id} has the ARN ${listed.arn}, not the ${managed.arn} the stage's state records`);
 	if (claimant === undefined) return unknown(`the stage's distribution ${listed.id} no longer carries the stage's comment: ${JSON.stringify(listed.comment)}`);
-	if (claimant.id !== listed.id) return unknown(`distribution ${claimant.id} says it is ${stage}'s public blobs, but the stage's state records ${listed.id}, whose comment is ${JSON.stringify(listed.comment)}`);
+	if (claimant.id !== listed.id) return unknown(`distribution ${claimant.id} says it is ${stage}'s public API, but the stage's state records ${listed.id}, whose comment is ${JSON.stringify(listed.comment)}`);
 	if (listed.comment !== managed.comment) {
 		return unknown(`the comment of distribution ${listed.id} is ${JSON.stringify(listed.comment)}, not the ${JSON.stringify(managed.comment)} the stage last deployed: it was edited outside the stage`);
 	}
@@ -304,9 +307,9 @@ export function coverage(distributionArn: string, subscriptions: readonly Subscr
 	return { active: false, reason: "no plan lists the distribution", subscriptionArn: null, tier: null, warnings };
 }
 
-/** What a deploy deploys: PUBLIC_BLOBS.state and PUBLIC_BLOBS.plan. */
+/** What a deploy deploys: PUBLIC_API.state and PUBLIC_API.plan. */
 export interface Target {
-	state: PublicBlobsState;
+	state: PublicApiState;
 	plan: PlanAttachment;
 }
 
@@ -341,7 +344,7 @@ export interface StageSettings {
  * with a stub that works only while the local session runs (the watch sets
  * dev: false and stays real), and redeploys whenever a file changes.
  */
-export function stageRefusals(state: PublicBlobsState, stage: StageSettings): string[] {
+export function stageRefusals(state: PublicApiState, stage: StageSettings): string[] {
 	if (state === "off") return [];
 	const refusals: string[] = [];
 	if (!stage.protect) {
@@ -353,14 +356,14 @@ export function stageRefusals(state: PublicBlobsState, stage: StageSettings): st
 	if (stage.dev) {
 		refusals.push(
 			"this is sst dev (or sst deploy --dev), which deploys functions as stubs that work only while a local session runs and redeploys " +
-				'whenever a file changes. Deploy public blobs with sst deploy; on this stage, sst dev only with PUBLIC_BLOBS.state "off"',
+				'whenever a file changes. Deploy the public API with sst deploy; on this stage, sst dev only with PUBLIC_API.state "off"',
 		);
 	}
 	return refusals;
 }
 
 const DARK_FIRST =
-	'Deploy with PUBLIC_BLOBS.state "dark" (infra/runs/public-blobs.ts) first, and wait until the distribution reports disabled ' +
+	'Deploy with PUBLIC_API.state "dark" (infra/runs/public-blobs.ts) first, and wait until the distribution reports disabled ' +
 	"(Enabled false, Status Deployed: aws cloudfront list-distributions)";
 
 /** Whether `target` may be deployed over what is deployed. `verdict` is the plan check, needed for "on"; null when AWS could not be asked. */
@@ -388,7 +391,7 @@ export function judgeTransition(deployed: Deployed, target: Target, verdict: Pla
 	if (target.plan !== recorded.plan) {
 		if (target.state === "dark" && quiet && recorded.state === "dark") return allow(`${now}: the plan attachment may change`);
 		return refuse(
-			`${now}. Changing PUBLIC_BLOBS.plan from "${recorded.plan}" to "${target.plan}" may add or cancel the subscription, so it is done only ` +
+			`${now}. Changing PUBLIC_API.plan from "${recorded.plan}" to "${target.plan}" may add or cancel the subscription, so it is done only ` +
 				`in a deploy to "dark" from "dark". ${DARK_FIRST} with plan "${recorded.plan}", then change the plan.`,
 		);
 	}

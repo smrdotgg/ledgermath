@@ -27,12 +27,12 @@ as the base the build started from (last section).
 | `scripts/check-disk-runs.ts` | Checks that every disk Run in such a directory found the disk it declares, that its evidence adds up, and that its dump bears it out |
 | `scripts/check-targets.ts` | Checks `schedule.json`'s targets' `vcpus`, their zone offerings and `vcpu_quota.limit` against AWS, read-only, in the account of the stage it is given; needs AWS access, so not part of `bun test` |
 | `scripts/box-in-container/` | Boots `runner/box.sh` in Amazon Linux 2023 with S3 and shutdown stubbed, in several scenarios, `http_get` against a stand-in for S3 among them |
-| `infra/runs/` | The `-runs` SST stage: stack, launch Lambda, reaper, user-data, the schedule's check (`schedule.ts`), the targets and their launch schedules (`placement.ts`), which account a stage deploys to and which one stage is scheduled (`stages.ts`), what stops SST acting on another account than a stage's (`deploy-account.ts`), the workflow's AWS role, the `s3_fixtures` Service's bucket, objects and role (`fixtures.ts`), AWS-LC's source archive (`tls-archive.ts`), the public blobs' CloudFront distribution on the Free plan, for one stage, off until switched on (`public-blobs.ts`; what a deploy may do from what is deployed, `public-blobs-guard.ts`; the resources, `public-blobs-stack.ts`; the watch that disables it without a plan, `plan-watch.ts`, `plan-watch-handler.ts`) |
+| `infra/runs/` | The `-runs` SST stage: stack, launch Lambda, reaper, user-data, the schedule's check (`schedule.ts`), the targets and their launch schedules (`placement.ts`), which account a stage deploys to and which one stage is scheduled (`stages.ts`), what stops SST acting on another account than a stage's (`deploy-account.ts`), the workflow's AWS role, the `s3_fixtures` Service's bucket, objects and role (`fixtures.ts`), AWS-LC's source archive (`tls-archive.ts`), the data API's private bucket and the workflow's permission to upload to it (`api-bucket.ts`), the public data API's CloudFront distribution on the Free plan at `api.ledgermath.com`, for one stage, off until switched on (`public-blobs.ts`, named for the design it grew from; what a deploy may do from what is deployed, `public-blobs-guard.ts`; the resources, `public-blobs-stack.ts`; the watch that disables it without a plan, `plan-watch.ts`, `plan-watch-handler.ts`) |
 | `methods/` | Methods, versioned, turning Runs into Derivations (`methods/README.md`): `series` v1 (`v1/`) one number per Run for every Series; `requests` v1 (`requests/v1/`) each phase of a request across requests, for the Series of requests; `records.ts` the reduced record of a stream, kept between runs |
 | `scripts/copy-runs.ts` | The copy job: the bucket's Run files and boot summaries into the Runs repository |
 | `scripts/copy-bucket.ts` | Copies one `-runs` bucket into another, across two accounts, only ever adding, and checks the copy (`scripts/lib/bucket-copy.ts`): the move to the production account |
 | `scripts/derive.ts`, `scripts/build-page.ts` | Run the Methods over the Runs; turn their Derivations into the page |
-| `scripts/build-api.ts`, `scripts/check-api.ts`, `scripts/previous-api.ts` | Cut the Derivations and the price files into the data API's static files, laid out as they will be served; check what was written against its schemas, its links, the Derivations and the Runs repository, and against the tree before it; fetch that tree, the last successful run's (`scripts/lib/api.ts`, `scripts/lib/api-check.ts`; section "The data API") |
+| `scripts/build-api.ts`, `scripts/check-api.ts`, `scripts/previous-api.ts` | Cut the Derivations and the price files into the data API's static files, laid out as they will be served; check what was written against its schemas, its links, the Derivations and the Runs repository, and against the tree before it; fetch that tree, the one the latest run that checked its tree kept (`scripts/lib/api.ts`, `scripts/lib/api-check.ts`; section "The data API") |
 | `scripts/alarm.ts` | Opens, or comments on, one issue when a watched Series has had no Run for 48 hours, or the newest price file is more than 48 hours old |
 | `.github/workflows/runs.yml` | On a schedule: copy, push, derive, page, the data API's files, alarm |
 | `scripts/fetch-prices.ts`, `scripts/check-prices.ts` | Make the day's price file from AWS's public price lists; check a price file by downloading its sources again and cutting them again |
@@ -745,62 +745,182 @@ bun scripts/check-runs.ts /tmp/runs-bucket
 The source archive is also in `blobs/` (a Run's `source`), so this checks every Run's
 runner manifest against it too.
 
-### Public blobs: CloudFront on the Free plan
+### The public data API: CloudFront on the Free plan at `api.ledgermath.com`
 
-Published numbers are recomputed from Run files and blobs, so the blobs have to be
-readable by anyone. A CloudFront distribution on the **Free flat-rate plan** does that:
-$0 a month for CloudFront, and no CloudFront overage charge whatever strangers download
-(S3 still bills each request that misses the cache: "What it still costs", below). It is
-built and **off**:
-nothing is public, and nothing of it exists in AWS, until `PUBLIC_BLOBS.state` in
-`infra/runs/public-blobs.ts` says so.
+The data API ("The data API", below) and the evidence it links are served from one host,
+`https://api.ledgermath.com`, by a CloudFront distribution on the **Free flat-rate plan**
+in front of two private buckets of `production-runs`: $0 a month for CloudFront, and no
+CloudFront overage charge whatever strangers download (S3 still bills each request that
+misses the cache: "What it still costs", below). ADR-0031 records the design. It is built
+and **off**: nothing is public, and nothing of it exists in AWS (no distribution, no
+certificate, no DNS record, no web ACL, no grant in either bucket's policy) until
+`PUBLIC_API.state` in `infra/runs/public-blobs.ts` says so. The file keeps the name of the
+design it grew from, which served blobs alone at the distribution's `*.cloudfront.net`
+name ("What became of public blobs", below).
 
-**One stage only.** `PUBLIC_BLOBS.stage` names the stage that may have it:
-`production-runs`, the stage that holds the permanent data (deployed with the profile
-`tabot-production`). On every other stage, `smr-runs` included, nothing of it is created
-and AWS is not even asked, whatever `PUBLIC_BLOBS.state` says; the public address exists
-only on `production-runs`. Every AWS call the deploy makes, and every command it prints,
-uses the profile of the stage being deployed (its provider's, from `sst.config.ts`, or
-`AWS_PROFILE`). The workflow keeps reading the bucket directly with its role and is not
-affected either way.
+What the switch does not cover already exists, and is private: the API bucket, which the
+`runs` workflow fills after every run that checked the tree, and the workflow role's
+permission to write to it ("The data API", "The API bucket").
 
-**What is public, and what is not.** In the state `on`, `GET` and `HEAD` of
+**One stage only.** `PUBLIC_API.stage` is `production-runs`, the stage that holds the
+permanent data (deployed with the profile `tabot-production`). Its type allows no other
+stage, and a setting that names another, in any state, `off` included, stops every deploy,
+of every stage (`checkSetting`), so that a typo is caught while it is harmless rather than
+on the day the state changes. On every other stage, `smr-runs` included, nothing of it is
+created and AWS is not even asked, whatever `PUBLIC_API.state` says. Every AWS call the
+deploy makes, and every command it prints, uses the profile of the stage being deployed
+(its provider's, from `sst.config.ts`, or `AWS_PROFILE`). The workflow keeps reading the
+Runs bucket directly with its role and is not affected either way.
 
-```
-https://<distribution>.cloudfront.net/blobs/sha256/<hex>     (stage output publicBlobs.blobAddress)
-```
+**What is served, and what is not.** In the state `on`, `GET` and `HEAD` of these paths,
+at the host's root, exactly as the tree's links already give them, and nothing else
+(`SERVED` in `infra/runs/public-blobs.ts`; a test holds this table to it):
 
-where `<hex>` is the 64 lowercase hex digits of the SHA-256 of the blob's bytes. Nothing
-else: not `runs/`, `boots/`, `logs/` or `source/`, not a listing of the bucket, not an
-older version of any key. Two locks, each enough alone. The bucket policy lets the
-CloudFront service `s3:GetObject` under `blobs/sha256/` only, and only on behalf of this
-distribution (`AWS:SourceArn`); never `s3:ListBucket`; and it carries that grant only in
-`on`. And the distribution reaches the bucket only from its `blobs/sha256/*` behaviour,
-whose viewer-request CloudFront Function answers 404 to any address that is not exactly a
-hash, while the default behaviour's function answers 404 to everything; neither 404
-reaches the cache or the bucket. Query strings are neither in the cache key nor passed on,
-so `?versionId=` never reaches S3. The bucket stays private and its public access block
-stays on: CloudFront signs its requests with Origin Access Control.
+| Path | From | Cache-Control | Content-Type | Access-Control-Allow-Origin | Compressed |
+|------|------|---------------|--------------|-----------------------------|------------|
+| `/v1/…` | the API bucket (`v1/`), the tree as the build wrote it | `public, max-age=300`, on the object | `application/json`, on the object | `*` | yes, when asked |
+| `/runs/…` | the Runs bucket (`runs/`), Run files | `public, max-age=31536000, immutable`, from the function | `application/json`, from the function | `*` | yes, when asked |
+| `/boots/…` | the Runs bucket (`boots/`), boot summaries | `public, max-age=31536000, immutable`, from the function | `application/json`, from the function | `*` | yes, when asked |
+| `/blobs/sha256/…` | the Runs bucket (`blobs/sha256/`), blobs at `/blobs/sha256/<hex>` | `public, max-age=31536000, immutable`, from the function | as stored (`binary/octet-stream`) | `*` | no |
+
+Every response also carries the bucket's `ETag` (weak, `W/"…"`, when CloudFront compressed
+it: CloudFront turns a strong ETag weak when it compresses), `Last-Modified` and
+`Content-Length`. The AWS managed response-headers policy `CORS-and-SecurityHeadersPolicy`
+adds `Access-Control-Allow-Origin: *` and `X-Content-Type-Options: nosniff` (with
+`Referrer-Policy`, `Strict-Transport-Security`, `X-Frame-Options: SAMEORIGIN` and
+`X-XSS-Protection`) to every response, errors included; the evidence also gets
+`Content-Security-Policy: default-src 'none'; sandbox` from the function. "Compressed":
+CloudFront compresses JSON with gzip or Brotli for a reader that sends `Accept-Encoding`;
+the bytes a reader decodes are the stored ones, whose sha256 the tree gives. Blobs are
+never compressed, so the bytes served are the bytes their address hashes.
+
+**Only the keys the project writes, and only at one host.** Under each prefix, only keys of
+the shapes the project writes there are served: the tree's kinds (`TREE_KINDS` in
+`infra/runs/api-bucket.ts`, the layout of ADR-0030: a schema by the build's own list of
+them, `API_SCHEMAS`, kept in `scripts/lib/api-schemas.ts` and used by the build and the
+edge alike; a month as a real month, a price file's day as a real day), a Run file as
+`runner/run.py` names it (its day a real day, its id the Run schema's version 7 UUID), a
+boot summary as it names it (its day a real day, the kernel's boot id), a blob by its
+SHA-256. "A real day": months 01 to 12, and days the month has, February the 29th in leap
+years only. On 2026-11-21 every one of the Runs repository's 7,270 Run files and 197 boot
+summaries had these shapes. The request function, in front of every served behaviour,
+answers 404 to any other key, before the cache or a bucket sees it, so an object left under
+a served prefix in another shape (a `.bak`, an upper-case id, a schema the build does not
+publish, a date such as `2026-99-99` or `2026-02-29`, a boot's `unknown.json`, which two
+boots of one day without a boot id would share) is never served. Every function, the
+default behaviour's included, answers 403 to a request whose `Host` is not
+`api.ledgermath.com`, the distribution's own `*.cloudfront.net` name included, whatever the
+path: the API has one host, and a wrong host gets the same answer everywhere. The list is
+`SERVED` in `infra/runs/public-blobs.ts`, from which the function is written; a test holds
+this list to it, and others hold the samples' and the built tree's every address to it.
+The addresses, as the request function matches them:
+
+- a schema: `^\/v1\/schemas\/(?:index|series-list|series|series-month|prices)\.schema\.json$`
+- a month file: `^\/v1\/series\/[0-9a-f]{12}\/[0-9]{4}-(?:0[1-9]|1[0-2])\.json$`
+- a price file: `^\/v1\/prices\/(?:[0-9]{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|1[0-9]|2[0-8])|[0-9]{4}-(?:0[13-9]|1[0-2])-(?:29|30)|[0-9]{4}-(?:0[13578]|1[02])-31|(?:[0-9]{2}(?:0[48]|[2468][048]|[13579][26])|(?:[02468][048]|[13579][26])00)-02-29)\.json$`
+- a Series file: `^\/v1\/series\/[0-9a-f]{12}\.json$`
+- the list of Series: `^\/v1\/series\.json$`
+- the table of contents: `^\/v1\/index\.json$`
+- a Run file: `^\/runs\/(?:[0-9]{4}\/(?:0[1-9]|1[0-2])\/(?:0[1-9]|1[0-9]|2[0-8])|[0-9]{4}\/(?:0[13-9]|1[0-2])\/(?:29|30)|[0-9]{4}\/(?:0[13578]|1[02])\/31|(?:[0-9]{2}(?:0[48]|[2468][048]|[13579][26])|(?:[02468][048]|[13579][26])00)\/02\/29)\/[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.json$`
+- a boot summary: `^\/boots\/(?:[0-9]{4}\/(?:0[1-9]|1[0-2])\/(?:0[1-9]|1[0-9]|2[0-8])|[0-9]{4}\/(?:0[13-9]|1[0-2])\/(?:29|30)|[0-9]{4}\/(?:0[13578]|1[02])\/31|(?:[0-9]{2}(?:0[48]|[2468][048]|[13579][26])|(?:[02468][048]|[13579][26])00)\/02\/29)\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.json$`
+- a blob: `^\/blobs\/sha256\/[0-9a-f]{64}$`
+
+A new kind of file, or a new shape of id, is served only once it is added there.
+
+**Notes for readers.**
+
+- **Check a month file against its Series file.** A month file changes in place, at the
+  same address, so a Series file and a month file can come from different rounds: for up
+  to five minutes after a round (each is cached that long), and, should an upload stop
+  between the month files and the Series files, until the next upload succeeds ("The data
+  API", "The API bucket"). The rule: verify the bytes of a month file against the `sha256`
+  its Series file lists; on a mismatch, fetch the Series file again, then the month file,
+  and retry; while they still differ, the pair is not yet consistent, so wait and retry
+  rather than use either. A month file whose sha256 the Series file lists need not be
+  fetched again at all.
+- **`GET` and `HEAD` only.** `OPTIONS` gets 403, so a browser's CORS preflight fails: a
+  plain `fetch()`, with no custom request header, needs none and works from any origin. A
+  script on another origin cannot read the `ETag` header (it is not in
+  `Access-Control-Expose-Headers`), though the browser's own cache still uses it. Both are
+  the managed response-headers policy's: on the Free plan no custom one can be used, and
+  the managed ones that answer preflights or expose headers are not this one.
+
+**Why these cache times**, held to ADR-0030's contract:
+
+- **Nothing under `/v1/` is named by its content.** `v1/index.json`, `v1/series.json` and
+  the Series file of every Series that gained a Run change every round; a month file
+  changes whenever one of ADR-0030's four causes applies (the current month every round, a
+  past one when a boot summary arrives, a Run arrives late, or a Method first applies); a
+  schema when its words are edited; a price file only if the Runs repository's is ever
+  corrected. So none can be `immutable`; and since a Series file lists its month files'
+  sha256, a month file must not be cached longer than the Series file that lists it. One
+  time serves the whole tree: five minutes, at CloudFront's edges (its managed policy keeps
+  an object for the object's own `max-age`) and in readers' caches alike, after which a
+  reader revalidates with the ETag. Five minutes is under 2% of the six hours between the
+  workflow's runs. For up to five minutes after a round a reader may get a Series file and
+  a month file of different rounds; the month's `sha256` in the Series file says so, and
+  the reader fetches again once `max-age` has passed. A reader holding a month file whose
+  sha256 the Series file still lists need not fetch it at all, which is what saves
+  requests, not a long cache time.
+- **The evidence never changes.** A Run file is never edited (ADR-0001; the copy job stops
+  if the bucket's file ever differs from the Runs repository's), and each point cites it
+  with its sha256; a boot summary is written once; a blob is named by its hash. So readers
+  may keep it a year, `immutable`. The boxes upload it with no `Cache-Control`, so
+  CloudFront's edges keep it for the managed policy's default, 24 hours, and then
+  revalidate it.
+- **A key the bucket does not hold** gets S3's 403 `AccessDenied`: the distribution may not
+  list a bucket, so S3 does not say 404. CloudFront caches a 403 only when it carries a
+  `max-age`, which S3's does not, so every such request reaches S3, and the limits below
+  count it.
+
+**Three locks.** Each bucket's policy lets the CloudFront service `s3:GetObject` under that
+bucket's served prefixes only (`v1/` in the API bucket; `runs/`, `boots/` and
+`blobs/sha256/` in the Runs bucket), only on behalf of this distribution
+(`AWS:SourceArn`); never `s3:ListBucket` or `s3:GetObjectVersion`; and it carries that
+grant only in `on`. The distribution reaches a bucket only from the behaviour of a served
+prefix: the default behaviour's function answers 404 to every other address, so `/`,
+`/source/…`, `/logs/…` and whatever is put in either bucket later reach no bucket. And
+within a served prefix, the request function lets through only the shapes above, at one
+host. Query strings are neither in the cache key nor passed on, so `?versionId=` never
+reaches S3. Both buckets stay private, their public access blocks on; CloudFront signs its
+requests to both with one Origin Access Control. `tests/public-blobs.test.ts` proves it: it
+takes every kind of key the two buckets hold or may hold, served prefix or not and of a
+served shape or not, spelt as an attacker might (`//`, `/./`, `..` before and inside a
+prefix, percent-encoded, another case), picks the behaviour as CloudFront does (with dot
+segments removed and without), runs its viewer-request function, applies the grants as the
+policies hold them, and finds nothing but the served shapes ever read, in any state, under
+no other host, and nothing at all in `dark` or `closed`; and, in front of a stand-in for S3
+that holds every one of those keys, it gets each served key's bytes and a 404 from the
+function for every other key under a served prefix, the bucket never asked.
 
 | Request | Answer |
 |---------|--------|
-| `GET /blobs/sha256/<hex>` of a blob the bucket holds | 200, the bytes as stored |
-| the same, for a blob it does not hold (yet) | 403 `AccessDenied` from S3, which says 403 rather than 404 to a reader that may not list the bucket; CloudFront keeps the error 10 seconds, so a blob that appears later is served soon after |
-| any other address, `/` included | 404 from a function |
+| `GET` of a served shape whose object exists | 200, with the headers above |
+| the same, for an object the bucket does not hold (yet) | 403 `AccessDenied` from S3, not cached by CloudFront |
+| a key under a served prefix of no served shape | 404 from the request function, `Cache-Control: public, max-age=300` |
+| any `Host` but `api.ledgermath.com`, the distribution's `*.cloudfront.net` name included | 403 from the request function |
+| any other address, `/` included | 404 from a function, `Cache-Control: public, max-age=300` |
 | plain HTTP | 403 |
+| any method but `GET` and `HEAD`, `OPTIONS` included (no CORS preflight is answered; a plain `fetch()` needs none) | 403 |
 | over the per-address limit or the total limit (as WAF estimates them), or from an address on AWS's IP reputation list | 403 from WAF (a custom status such as 429 needs Pro) |
 
-A blob's response carries `Cache-Control: public, max-age=31536000, immutable` (its key
-is its hash, so it never changes), `Access-Control-Allow-Origin: *` (a page on any origin
-can `fetch()` it), `X-Content-Type-Options: nosniff` and `Content-Security-Policy:
-default-src 'none'; sandbox`, from the viewer-response function; the AWS managed
-response-headers policy `CORS-and-SecurityHeadersPolicy` adds CORS and `nosniff` to every
-response, errors included, which the function does not see (CloudFront runs
-viewer-response functions only below status 400). CloudFront itself keeps a blob 24
-hours, the managed cache policy's default, because the box uploads blobs without a
-`Cache-Control` of their own; the Free plan allows only managed cache policies (custom
-ones are Business), so a year at the edge would take uploads that carry
-`max-age=31536000`.
+**Three functions, and why.** The Free plan allows only AWS managed cache and
+response-headers policies (custom ones are Business), so no policy can add a header the
+object does not carry, and nothing but a function can look at a request's path or host.
+The request function, `ledgermath-production-runs-request`, is the shapes and the one
+host above, on every served behaviour in `on`. The tree's objects carry their own headers,
+set by the upload, so `/v1/` needs nothing more. The boxes upload Run files, boot summaries
+and blobs with no `Cache-Control`, the box is not changed for this, and the workflow may
+not write to the Runs bucket; so a viewer-response function,
+`ledgermath-production-runs-evidence-response`, gives the evidence its `Cache-Control`,
+`nosniff`, the CSP sandbox and, for `.json`, `Content-Type: application/json` (which the
+boxes' upload already guesses from the name, `application/json` on the objects read on
+2026-11-19, but no longer depends on). CloudFront runs it only below status 400. The third,
+`ledgermath-production-runs-no-route`, answers 404 for the default behaviour, which must
+name an origin and would otherwise send every address of no served prefix to a bucket; in
+`dark` and `closed` every behaviour has it. Each is far under CloudFront Functions' 10 KB,
+and the Free plan's feature table sets no number of functions; a behaviour takes one
+viewer-request and one viewer-response function, which is what the evidence's have.
 
 **Every blob the boxes upload is served as `binary/octet-stream`**, because the upload
 sets no content type: `aws s3 sync` in `runner/box.sh` guesses one from a file's name, a
@@ -808,14 +928,14 @@ blob's name has no extension, and S3 then stores `binary/octet-stream`. That is 
 dumps, stdout, binaries and source archives alike; only the deploy's own blobs differ
 (`application/gzip` for AWS-LC's archive, `application/octet-stream` for the Fixtures).
 The upload is not changed. None has a `Content-Encoding`, and the distribution does not
-compress, so every client gets the stored bytes, the ones the hash names: `curl -O` saves
+compress blobs, so every client gets the stored bytes, the ones the hash names: `curl -O` saves
 them as they are, and `fetch()` reads them. **A browser opened on a blob's address
 therefore downloads it rather than showing it**, a text dump included; with `nosniff` it
 does not sniff it into a page, nothing is rendered or run, binaries included, and should
 a blob ever be rendered, the CSP sandbox lets it run nothing.
 
 **Reading through it.** `bun scripts/derive.ts ... --blobs-url
-https://<distribution>.cloudfront.net` reads blobs there instead of `--bucket`, with no
+https://api.ledgermath.com` reads blobs there instead of `--bucket`, with no
 credentials (`publicBlobStore` in `scripts/lib/blobs.ts`). As with the bucket, every blob's
 SHA-256 is checked before it is used or cached, which is what makes bytes from a public
 address trustworthy at all. It never follows a redirect: it contacts the host it was given
@@ -838,8 +958,10 @@ is judged over 2 to 3 months or more; then "your traffic might be served from fe
 distant edge locations, or performance might be adjusted", in proportion to the excess. It
 speaks of the distribution's traffic, everyone's, not of the addresses that caused it, and
 gives no figure. The data grow by about 9,000 blobs a day, so one daily mirror of the new
-blobs is about 270,000 requests a month, a quarter of the allowance; a full download of
-the data outgrows it, and that is when to move to Pro.
+blobs is about 270,000 requests a month, a quarter of the allowance; the whole tree is 390
+files and 46.6 MB on 2026-11-19 (compressed for readers that ask, much less), so a reader
+fetching all of it is 390 requests. A full download of the data outgrows the allowance,
+and that is when to move to Pro.
 
 **Two rate limits** (AWS WAF rate-based rules, in the web ACL the plan requires and pays
 for), evaluated in this order after the two managed rule groups:
@@ -847,23 +969,25 @@ for), evaluated in this order after the two managed rule groups:
 1. **Per address**: 1,500 requests in any 5 minutes, about 5 a second. A mirror fetching a
    day's new blobs at 4 a second, the pace `scripts/lib/blobs.ts` keeps, takes 37.5
    minutes at 1,200 per 5 minutes, 20% under the limit, which leaves room for WAF's
-   estimate being near rather than exact. A runaway loop does tens to hundreds a second and
-   passes 1,500 within a minute; WAF blocks that address until its rate, as WAF estimates
-   it, falls back under. Over IPv6 one client can spread across many addresses; WAF
-   counts each on its own.
-2. **A limit on all requests for blobs together** (the total limit): 6,000 in any 5
-   minutes, 20 a second, counted from every address as one (aggregation `CONSTANT`, "count
-   all", which needs a scope-down statement: here, URI paths that start with `/blobs/`, so
-   that anything else served from the distribution later is not counted). Every request the
-   blob function lets through starts with `/blobs/`, so none reaches S3 uncounted; the
-   malformed addresses under `/blobs/` that the function answers with 404 are counted too,
-   since WAF sees a request before the function does.
+   estimate being near rather than exact; so does an agent walking the tree at that pace. A
+   runaway loop does tens to hundreds a second and passes 1,500 within a minute; WAF blocks
+   that address until its rate, as WAF estimates it, falls back under. Over IPv6 one client
+   can spread across many addresses; WAF counts each on its own.
+2. **A limit on all requests together** (the total limit): 6,000 in any 5 minutes, 20 a
+   second, counted from every address as one (aggregation `CONSTANT`, "count all", which
+   needs a scope-down statement: here, URI paths that start with `/`, which is every path).
+   Every request that can reach a bucket (the tree, Run files, boot summaries, blobs) is
+   counted, so none reaches S3 uncounted; so are the ones CloudFront answers from its cache,
+   and the 404s the function answers, since WAF sees a request before either. In the design
+   this grew from, it counted `/blobs/` alone, the only path that reached a bucket; now four
+   prefixes do, and a 403 for a missing key is never cached, so it counts them all.
 
-   *What it is.* A rate limit that AWS enforces approximately, on the only requests that can
-   reach the bucket. At its rate, all month, 6,000 × 288 × 31 = 53,568,000 requests get past
-   the rule in a 31-day month (288 five-minute windows a day), about 53.6 million, which at
-   $0.0004 per 1,000 GETs is $21.43 if every one of them missed CloudFront's cache: what a
-   month costs at the configured steady rate. *What it is not.* A cap. AWS says rate-based
+   *What it is.* A rate limit that AWS enforces approximately, on every request, those that
+   can reach a bucket among them. At its rate, all month, 6,000 × 288 × 31 = 53,568,000
+   requests get past the rule in a 31-day month (288 five-minute windows a day), about 53.6
+   million, which at $0.0004 per 1,000 GETs is $21.43 if every one of them missed
+   CloudFront's cache: what a month costs at the configured steady rate. *What it is not.*
+   A cap. AWS says rate-based
    rules are "not intended for precise request-rate limiting"
    ([rate-based rule caveats](https://docs.aws.amazon.com/waf/latest/developerguide/waf-rule-statement-type-rate-based-caveats.html)):
    WAF estimates the rate, weighting recent requests, and limits near the limit rather than
@@ -872,10 +996,11 @@ for), evaluated in this order after the two managed rule groups:
    settings resets its counts, which can pause it for up to a minute. So bursts can exceed
    the figure, by much more than rounding when they are large or repeated. There is no hard
    cap on S3 request charges here. Nor is it selective: while the total is over the limit,
-   every request for a blob is refused, for everyone, polite mirrors included (five of them
+   every request is refused, for everyone, polite mirrors and agents included (five of them
    at 4 a second fill it). Service resumes by itself when WAF's estimate of the rate falls
-   below the limit; nothing needs to be done. The total limit also counts requests
-   CloudFront serves from its cache.
+   below the limit; nothing needs to be done. It counts requests CloudFront serves from its
+   cache too, so it is also the most the API serves in all, which is a decision to revisit
+   once there are readers to count (ADR-0031).
 
 Because the total limit comes last, a request a managed group or the per-address limit has
 already blocked is never counted against everyone, so one runaway address is cut off by
@@ -888,31 +1013,36 @@ check-capacity`, read-only, on 2026-11-14: 231 capacity units), which says they 
 rules, not that the Free plan takes them ("Not verified", below).
 
 **What it still costs.** S3 bills a GET for every request that misses CloudFront's cache,
-$0.0004 per 1,000 in us-east-2 (AWS's price list of 2026-11-09), and the plan does not
-cover it; transfer from S3 to CloudFront is free. On the Free allowance, if every request
-missed: $0.40 a month, $1.20 in the month of a 3× spike; beyond that AWS keeps serving, at
-$0.40 per further million misses: $21.43 for a month at the total limit's steady rate, and
-more if bursts get past it, since nothing caps it. A blob already cached at an edge does
-not miss; a 403 for a missing key may be free (S3 does not bill AccessDenied to requests
+$0.0004 per 1,000 in us-east-2 (AWS's Price List API, publication of 2026-11-19: $0.004 per
+10,000), and the plan does not cover it; transfer from S3 to CloudFront is free. On the
+Free allowance, if every request missed: $0.40 a month, $1.20 in the month of a 3× spike;
+beyond that AWS keeps serving, at $0.40 per further million misses: $21.43 for a month at
+the total limit's steady rate, and more if bursts get past it, since nothing caps it. A
+file already cached at an edge does not miss (the tree for five minutes, the evidence for
+24 hours); a 403 for a missing key may be free (S3 does not bill AccessDenied to requests
 from outside the account), but count it. The plan's 5 GB of S3 storage credits offsets that
-much of the bucket's storage.
+much of the buckets' storage. The rest is fixed: the hosted zone of `api.ledgermath.com`,
+$0.50 a month, exists already, on or off; alias queries to CloudFront are free; the
+certificate is free; the watch's 8,640 invocations a month are within Lambda's free tier.
+Off, as merged, nothing of this exists; the API bucket and its upload cost cents a month
+("The data API", "The API bucket").
 
-**The states.** `PUBLIC_BLOBS.state`, on `production-runs`:
+**The states.** `PUBLIC_API.state`, on `production-runs`:
 
-| State | Distribution | Bucket grant | Plan | Serves |
-|-------|--------------|--------------|------|--------|
-| `off` | none | none | none | nothing |
-| `dark` | disabled | none | subscribed by the deploy (`plan: "code"`) or by hand (`"console"`) | nothing |
-| `closed` | enabled | none | as in `dark` | 404 to every address it lets through (WAF's 403s, and CloudFront's for plain HTTP or another method, aside); no request reaches S3 |
-| `on` | enabled | yes | must be ACTIVE: the deploy checks, once, as it starts | `/blobs/sha256/<hex>` |
+| State | Distribution | Certificate, `api.ledgermath.com` records | Bucket grants | Plan | Serves |
+|-------|--------------|-------------------------------------------|---------------|------|--------|
+| `off` | none | none | none | none | nothing |
+| `dark` | disabled | made | none | subscribed by the deploy (`plan: "code"`) or by hand (`"console"`) | nothing |
+| `closed` | enabled | made | none | as in `dark` | 404 to every address it lets through (WAF's 403s, and CloudFront's for plain HTTP or another method, aside); no request reaches S3 |
+| `on` | enabled | made | both buckets, their served prefixes | must be ACTIVE: the deploy checks, once, as it starts | the four served prefixes |
 
 `closed` is needed only if AWS refuses to subscribe a disabled distribution: it is
-enabled so that the plan can be attached, but the blobs behaviour has the 404 function and
-the bucket grants it nothing, so no blob can be read. Being enabled, it takes public
+enabled so that the plan can be attached, but every behaviour has the 404 function and
+neither bucket grants it anything, so nothing can be read. Being enabled, it takes public
 traffic, and until the plan is attached that traffic is billed at pay-as-you-go rates
-(below, after the steps). `on` swaps in the real function and adds the grant, after the
-same check that the plan is ACTIVE. The order is always `dark`, then `closed` only if
-needed, then `on`.
+(below, after the steps). `on` takes the 404 function off the served behaviours and adds
+the grants, after the same check that the plan is ACTIVE. The order is always `dark`, then
+`closed` only if needed, then `on`.
 
 **What a deploy may do from what is deployed.** Before it touches anything, a deploy to
 `production-runs` reads what is deployed (`infra/runs/public-blobs-guard.ts`). Which
@@ -965,7 +1095,7 @@ state from before that deploy beside what AWS reports during it, and its checks 
 The watch, and changes made in the console or with the CLI, do not take the lock either.
 
 So from an enabled distribution the only way out is `dark`; `off` and a change of
-`PUBLIC_BLOBS.plan` come only after `dark` has been deployed and the distribution reports
+`PUBLIC_API.plan` come only after `dark` has been deployed and the distribution reports
 disabled (`Enabled` false, `Status` `Deployed`). A distribution the watch disabled while the
 stage says `closed` or `on` takes a `dark` deploy before anything else, because a deploy of
 `on` would not enable it again (the stage still records it enabled).
@@ -975,10 +1105,10 @@ which destroys what the stage's saved state holds without running the program
 (`pkg/project/run.go`), so the table has no column for it: a removal would cancel the plan
 and delete the distribution whatever the distribution is doing. What stops it is SST's
 stage protection: for a stage whose app settings in `sst.config.ts` say `protect: true`,
-SST refuses `sst remove` before it does anything. So public blobs are made only on a
+SST refuses `sst remove` before it does anything. So the public API is made only on a
 protected stage: a deploy of `dark`, `closed` or `on` stops, before AWS is asked anything,
 unless `$app.protect` is true (`off` is always allowed: it makes nothing).
-`infra/runs/stages.ts` protects `production-runs`, the stage `PUBLIC_BLOBS` names, and no
+`infra/runs/stages.ts` protects `production-runs`, the stage `PUBLIC_API` names, and no
 other `-runs` stage; a test holds the two together. Nor does `sst dev` (or `sst deploy --dev`, which SST runs the same way, with
 `$dev` true) deploy anything but `off` there: dev mode deploys each function as a stub that
 works only while a local session runs, and redeploys whenever a file changes. What stage
@@ -994,8 +1124,8 @@ in place, changes in the console or with the CLI, or cancelling the plan outside
 A dev stage such as `smr-runs` never has any of this, so `sst remove` there removes what it
 always did.
 
-**The watch.** A Lambda in the stage, `PublicBlobsWatch` (stage output
-`publicBlobs.watchFunction`), runs every 5 minutes, deploy or not
+**The watch.** A Lambda in the stage, `PublicApiWatch` (stage output
+`publicApi.watchFunction`), runs every 5 minutes, deploy or not
 (`infra/runs/plan-watch.ts`). It is always deployed as the real function (`dev: false`; SST
 4.17's functions otherwise default to live development, and `sst dev` would deploy a stub
 in its place). If the distribution is enabled and no ACTIVE plan covers it, it disables it
@@ -1019,7 +1149,7 @@ terms, through `GetDistributionConfig` and `UpdateDistribution`, which may answe
 `GetDistribution` did not; if CloudFront answers none of them, the run fails and the
 distribution goes on as it is, serving if it was. A plan with a scheduled cancellation or
 downgrade is logged as a warning with its date, and acted on once it stops being ACTIVE.
-Every disable is logged as `public blobs watch: DISABLED the distribution`, with the
+Every disable is logged as `public API watch: DISABLED the distribution`, with the
 reason; a failure to disable fails the invocation. No alarm is raised on either.
 
 *How long uncovered delivery lasts.* The watch polls, so it cannot guarantee that the
@@ -1042,57 +1172,109 @@ cloudfront:ListTagsForResource, cloudfront:TagResource, cloudfront:UntagResource
                                          on this distribution's ARN only
 ```
 
-**Turning it on, on `production-runs`**, with no moment when blobs are served on
+**Turning it on, on `production-runs`**, with no moment when anything is served on
 pay-as-you-go pricing (`closed`, if it is needed, is billed at pay-as-you-go rates for the
-404s and the inspection of what reaches it until the plan is attached). Every command uses
-the stage's own profile (`tabot-production`); the deploy prints the next step each time.
+404s and the inspection of what reaches it until the plan is attached). The change is one
+line, `state` in `PUBLIC_API` (`infra/runs/public-blobs.ts`), made twice: `"off"` to
+`"dark"`, then `"dark"` to `"on"`, each in its own reviewed pull request, merged, and
+deployed from `main`. **Each of those commits also changes, on purpose, the one constant
+that pins the switch:** `RELEASED_STATE` in `tests/public-blobs.test.ts`, set to the state
+the commit sets, in the same commit. The test "RELEASE GATE: the committed switch is the
+released state, for production-runs" is the only one that reads the committed setting, and
+it fails until the two agree, so that no commit turns the API on by accident; every other
+test builds each state from its own fixture. A test rehearses the change for every state
+and both plan attachments: it copies the repository, sets both the switch and
+`RELEASED_STATE` there, runs the whole suite in the copy with Bun's JUnit report, and
+expects no failing test and every test file run.
+Every command uses the stage's own profile (`tabot-production`); the deploy prints the next
+step each time.
 
-1. Set `state: "dark"` in `infra/runs/public-blobs.ts`, commit, `bunx sst diff --stage
-   production-runs`, then deploy that stage. It makes:
-   - the web ACL `ledgermath-production-runs-public-blobs`, scope `CLOUDFRONT`, in
-     us-east-1 (the provider's resources take a `region` since `@pulumi/aws` 7, so no
-     second provider): default allow, the two managed groups, the per-address limit, the
-     total limit;
-   - the Origin Access Control `ledgermath-production-runs-public-blobs` (S3, always sign,
-     SigV4);
-   - the CloudFront Functions `ledgermath-production-runs-blob-request`,
-     `ledgermath-production-runs-blob-response` and `ledgermath-production-runs-no-route`
+0. Before: the stage is deployed with the API bucket, `API_BUCKET` is set, and the latest
+   run of the `runs` workflow passed "Check that the API bucket holds the data API's
+   files" in its `publish` job ("The data API", "The API bucket"), so what goes public is
+   the current, checked tree. **And a failed `publish` job reaches the maintainer by a
+   route that has been tested**, by failing one on purpose and seeing it arrive. Today the
+   only route is GitHub's own failed-run email to whoever last changed the workflow's
+   schedule, as their notification settings allow, which nobody has tested: while the API
+   is private a stale bucket harms no reader, but once it is served, a `publish` job that
+   keeps failing leaves readers an old tree with nothing to say so. Until such a route is
+   built and tested, the state does not leave `off`.
+1. Set `state: "dark"` and `RELEASED_STATE` to `"dark"`, merge, `bunx sst
+   diff --stage production-runs`, then deploy that stage. It makes, and changes nothing
+   else:
+   - the web ACL `ledgermath-production-runs-public-api`, scope `CLOUDFRONT`, in us-east-1
+     (the provider's resources take a `region` since `@pulumi/aws` 7, so no second
+     provider): default allow, the two managed groups, the per-address limit, the total
+     limit;
+   - the Origin Access Control `ledgermath-production-runs-public-api` (S3, always sign,
+     SigV4), for both origins;
+   - the CloudFront Functions `ledgermath-production-runs-request`,
+     `ledgermath-production-runs-evidence-response` and `ledgermath-production-runs-no-route`
      (`cloudfront-js-2.0`, published);
-   - the distribution, **disabled**: it serves nothing, so it has no traffic to bill; its
-     blobs behaviour has the 404 function, and the bucket policy is not touched;
+   - the certificate for `api.ledgermath.com` in ACM, us-east-1, and the CNAME record that
+     validates it, in the hosted zone `Z03039811C7UWLHZE7CZQ` (whose `CAA 0 issue
+     "amazon.com"` lets Amazon issue it); the deploy waits until ACM has issued it;
+   - the distribution, **disabled**, under `api.ledgermath.com` with that certificate: it
+     serves nothing, so it has no traffic to bill; every behaviour has the 404 function,
+     and neither bucket policy is touched;
+   - the `A` and `AAAA` alias records `api.ledgermath.com` to the distribution, in the
+     same zone;
    - the Free plan subscription, `AWS::PricingPlanManager::Subscription` in us-east-1,
      through Cloud Control (`aws.cloudcontrol.Resource`: the installed provider, 7.20.0,
      has no resource of its own for it). A Free plan activates at once;
    - the watch.
-2. Check the plan: `aws pricing-plan-manager list-subscriptions --region us-east-1
-   --profile tabot-production` lists it, tier `FREE`, status `ACTIVE`, with the
-   distribution (`publicBlobs.distributionArn`) and the web ACL.
+2. Check: `aws pricing-plan-manager list-subscriptions --region us-east-1 --profile
+   tabot-production` lists the plan, tier `FREE`, status `ACTIVE`, with the distribution
+   (`publicApi.distributionArn`) and the web ACL; `aws acm describe-certificate --region
+   us-east-1 --profile tabot-production --certificate-arn <publicApi.certificateArn>`
+   says `ISSUED`; `aws cloudfront get-distribution --profile tabot-production --id
+   <publicApi.distributionId>` says `Enabled` false, `Status` `Deployed`, alias
+   `api.ledgermath.com`; `dig +short api.ledgermath.com` gives CloudFront's addresses.
 3. Only if step 1 failed because AWS refused to subscribe a disabled distribution: set
-   `state: "closed"`, commit, deploy (the distribution is enabled, answering 404 to
+   `state: "closed"` (and `RELEASED_STATE`), merge, deploy (the distribution is enabled, answering 404 to
    everything; with `plan: "code"` this deploy creates the subscription), and check the
    plan as in step 2 before the watch's 60 minutes are up.
-4. Set `state: "on"`, commit, deploy. Before it changes anything the deploy checks that an
-   ACTIVE plan covers the distribution, and stops if not; it checks once, so a plan
-   cancelled after that is left to the watch. The distribution is enabled (or stays so),
-   gets the real function, and the bucket policy gets the grant; it takes a few minutes to
-   reach every edge.
-5. `curl -sSI https://<distribution>.cloudfront.net/blobs/sha256/<hex>` for a blob a Run
-   names: 200, and the headers above.
+4. Set `state: "on"` and `RELEASED_STATE` to `"on"`, merge, deploy. Before it
+   changes anything the deploy checks that an ACTIVE plan covers the distribution, and
+   stops if not; it checks once, so a plan cancelled after that is left to the watch. The
+   distribution is enabled (or stays so), the request function takes the 404 function's
+   place on the four served behaviours, and both bucket policies get their grant; it takes
+   a few minutes to reach every edge.
+5. Check, from anywhere, with no credentials:
+   - `curl -sSI https://api.ledgermath.com/v1/index.json`: 200, `content-type:
+     application/json`, `cache-control: public, max-age=300`,
+     `access-control-allow-origin: *`, an `etag`; with `-H 'accept-encoding: gzip'`,
+     `content-encoding: gzip` and a weak `etag`;
+   - the same for a Series file, and for a month file whose `sha256` (from its Series
+     file's `months`) is that of `curl -sS <its url> | sha256sum`;
+   - `curl -sSI` of a point's `evidence` and its `boot_summary`: 200, `content-type:
+     application/json`, `cache-control: public, max-age=31536000, immutable`; of
+     `https://api.ledgermath.com/blobs/sha256/<hex>` for a blob a Run file names: 200, the
+     same `cache-control`, `content-type: binary/octet-stream`, no `content-encoding`;
+   - 404 for `/`, `/source/<commit>.tar.gz` and `/logs/…` (a key the Runs bucket holds,
+     from `aws s3 ls`), and for `/v1/nothing.json` and `/runs/<a Run file's path>.bak`
+     (from the request function: no served shape); 403 from S3 for
+     `/v1/series/000000000000.json` (a served shape, no object); 403 for
+     `http://api.ledgermath.com/`;
+   - 403 for `curl -sSI https://<publicApi.domainName>/v1/index.json`, the distribution's
+     own name, and for `curl -sSI -H 'host: example.org' https://api.ledgermath.com/v1/index.json`
+     (CloudFront may refuse the second itself, as no alternate name matches it);
+   - `curl -sSI -X OPTIONS https://api.ledgermath.com/v1/index.json`: 403.
 
 With `plan: "console"` the deploy makes no subscription and prints the console steps
 instead, to take after step 1 (or 3): in the CloudFront console, signed in to the stage's
 account, open the distribution whose description starts "LedgerMath production-runs
-public blobs" (`publicBlobs.distributionId`), choose its pricing plan, pick Free, confirm
+public API" (`publicApi.distributionId`), choose its pricing plan, pick Free, confirm
 (its web ACL is already associated), and wait for it to show as active; or `aws
 pricing-plan-manager create-subscription --region us-east-1 --profile tabot-production
---plan-family CloudFront --plan-tier FREE --resource-arns <publicBlobs.distributionArn>
-<publicBlobs.webAclArn>`. Use it if Cloud Control cannot create the subscription.
+--plan-family CloudFront --plan-tier FREE --resource-arns <publicApi.distributionArn>
+<publicApi.webAclArn>`. Use it if Cloud Control cannot create the subscription.
 
 Until the plan is attached the web ACL is billed as usual: by the hour ($5 a month and $1 a
 rule), and for each request it inspects. With the distribution disabled that is cents, for
 the minutes between the distribution and the subscription the same deploy makes. `closed`
 is different: it enables the distribution before the plan is attached, so until then
-public edge traffic is billed at pay-as-you-go rates, although no blob is served and S3 is
+public edge traffic is billed at pay-as-you-go rates, although nothing is served and S3 is
 never reached. Every request that finds the address is inspected by the web ACL, which is
 billed even when it blocks the request, and each one it lets through is a CloudFront
 request, a function invocation (the 404) and the bytes of the answer. The address is not
@@ -1113,7 +1295,15 @@ accounts, read-only, on 2026-11-14); that AWS subscribes a disabled distribution
 table allows managed ones; one report says the console refused a response-headers policy,
 likely a custom one: if AWS refuses the plan over it, the subscription fails while the
 distribution is still disabled; drop `responseHeadersPolicyId` in `distributionArgs`, and
-the viewer-response function still gives every blob CORS and `nosniff`); that the Free plan
+the viewer-response function still gives the evidence CORS and `nosniff`, though the tree
+would then lose `Access-Control-Allow-Origin`, and the evidence function would have to be
+put on `/v1/` too); that the Free plan takes a distribution of two origins, five
+behaviours and an alternate domain name under its one apex domain (AWS's feature table
+says 5 behaviours and one apex domain per plan); that ACM issues the certificate by the
+record in the delegated zone (the zone and its `CAA` record were read, read-only, on
+2026-11-19); that CloudFront runs the viewer-response function for a `304` too, so a
+revalidated Run file keeps its `cache-control` (AWS documents only that it does not for
+400 and above); that the Free plan
 counts each managed rule group as one of its 5 rules, and takes a string match on the URI
 path in a scope-down (regular expressions are a Business feature; a string match is not
 listed as a paid one); that `cloudfront:UpdateDistribution` alone lets the watch disable a
@@ -1144,7 +1334,7 @@ scheduled change they see.
 **Moving to Pro** ($15 a month, prorated, still flat: 10 million requests and 50 TB a
 month, access logs, 10 behaviours, 25 WAF rules, custom WAF responses): with the
 distribution `dark` (above), in the console, or `aws pricing-plan-manager
-update-subscription --region us-east-1 --profile tabot-production --arn <publicBlobs.plan>
+update-subscription --region us-east-1 --profile tabot-production --arn <publicApi.plan>
 --if-match <eTag from get-subscription> --plan-tier PRO`; then, once the plan is `ACTIVE`,
 deploy `on`. Leave `subscriptionState` in `infra/runs/public-blobs.ts` as it is:
 CloudFormation's subscription refuses to change a tier itself, and a deploy touches the
@@ -1153,31 +1343,61 @@ accept a desired tier equal to the one AWS already has is not verified.) The dep
 the watch accept any ACTIVE tier. With Pro, consider raising the total limit with the
 allowance.
 
-**A custom domain** is one line in `PUBLIC_BLOBS`, `domain: { name, certificateArn }` with
-an ACM certificate in us-east-1, then a DNS record to the distribution. With it the TLS
-policy is `TLSv1.2_2025`; on the `*.cloudfront.net` name CloudFront sets TLSv1 itself, and
-no policy can be chosen.
+**The name and its TLS.** `api.ledgermath.com` is the distribution's one alternate name,
+with a certificate the stage makes in ACM (us-east-1, where CloudFront takes certificates
+from), validated by a record in the hosted zone the subdomain is delegated to,
+`Z03039811C7UWLHZE7CZQ` in the production account; the parent domain's DNS, at Vercel, is
+not touched. The TLS policy is `TLSv1.2_2025`, the newest that still speaks TLS 1.2 to
+clients without 1.3. The distribution's own `*.cloudfront.net` name (the stage output
+`publicApi.domainName`) still reaches it, as every distribution's does, and gets 403 from
+the request function: the API has one host.
 
-**Turning it off.** Deploy `dark`: the distribution is disabled, the grant removed, the
-plan kept, and Pulumi's protection lifted. The grant and the distribution are changed
-independently, and edges keep serving with the old configuration, cached blobs included,
-until the disabled one reaches them. Once `aws cloudfront list-distributions` shows
-it `Enabled` false and `Status` `Deployed`, `off` deletes everything, the subscription
-first (a Free plan is cancelled at once; AWS refuses to delete a distribution that is on a
-plan). While on a plan the web ACL cannot be replaced, so do not rename it.
+**Turning it off.** Set `state: "dark"`, merge, deploy: the distribution is disabled, both
+grants removed, the plan, the certificate and the records kept, and Pulumi's protection
+lifted. The grants and the distribution are changed independently, and edges keep serving
+with the old configuration, cached files included, until the disabled one reaches them.
+Check it with `aws cloudfront get-distribution` (`Enabled` false, `Status` `Deployed`) and
+`curl -sSI https://api.ledgermath.com/v1/index.json` (no longer 200). That is enough to
+stop serving. Only then, if everything should go, set `state: "off"`, merge, deploy: it
+deletes the subscription first (a Free plan is cancelled at once; AWS refuses to delete a
+distribution that is on a plan), then the distribution, the web ACL, the functions, the
+access control, the alias records, the certificate and its validation record; the
+hosted zone and its `CAA` record stay, since the stage did not make them. While on a plan
+the web ACL cannot be replaced, so do not rename it. The API bucket and its upload are
+not behind the switch and go on; to stop the upload as well, unset the repository variable
+`API_BUCKET`.
 
 **The Free plan's limits, here and later.** Three Free plans per account: one is used
-here, in the production account. 5 cache behaviours (2 used), 5 WAF rules (4 used), no
-access logs, so no record of who downloaded what beyond the console's usage figures and
-the WAF metrics. Only managed cache and response-headers policies; CloudFront Functions
-are in. Nothing here uses a feature a plan refuses (no Origin Access Identity, legacy
-`ForwardedValues`, real-time logs, Lambda@Edge, continuous deployment, customer rule
-groups). A static site served later from the same distribution would take the default
-behaviour (in place of the 404 function, with a second origin or an origin path) and fits
-in the 5 behaviours, but would share the allowance and the per-address limit with the
-blobs (not the total limit, which counts only `/blobs/`), could set its own headers only
-through a function, and would have no logs below Pro. A second distribution, on a second
-Free plan, would keep them apart.
+here, in the production account. 5 cache behaviours (all 5 used), 5 WAF rules (4 used), one
+apex domain, no access logs, so no record of who downloaded what beyond the console's usage
+figures and the WAF metrics. Only managed cache and response-headers policies; CloudFront
+Functions are in. Nothing here uses a feature a plan refuses (no Origin Access Identity,
+legacy `ForwardedValues`, real-time logs, Lambda@Edge, continuous deployment, customer rule
+groups). A sixth path, or a website on this host, does not fit the Free plan's five
+behaviours: it needs Pro (10) or a second distribution on a second Free plan, which would
+also keep its traffic out of this one's allowance and limits.
+
+**What became of public blobs.** The design this grew from (2026-11-14, dev log) served
+`/blobs/sha256/<hex>` alone, at the distribution's `*.cloudfront.net` name, from the Runs
+bucket. *Kept:* the Free flat-rate plan, so the bill never depends on what strangers
+download; the states `off`, `dark`, `closed` and `on` and the order between them; the guard
+that reads what is deployed and judges each deploy (`public-blobs-guard.ts`); the watch;
+the web ACL's two managed groups and per-address limit; Origin Access Control and private
+buckets with their grants only in `on`; managed policies only; the evidence's immutable
+headers and CSP sandbox from a viewer-response function; the reader of blobs at a public
+address (`--blobs-url`). *Changed:* the setting is `PUBLIC_API` (`PUBLIC_BLOBS` before),
+and naming another stage than `production-runs`, in any state, now stops every deploy
+instead of being ignored; it serves four prefixes from two buckets, not one; the total limit counts every
+request, not `/blobs/` alone; JSON is compressed for readers that ask; the distribution's
+comment, by which the guard and the watch recognise it, says `public API
+(api.ledgermath.com)`; every resource's name says `PublicApi`, and AWS names
+`public-api` (nothing of the design before was ever deployed: on 2026-11-19 the production
+account held no distribution, web ACL or certificate). *Replaced:* the optional `domain`
+setting (a name and an existing certificate's ARN) by the certificate, its validation
+record and the alias records the stage makes for `api.ledgermath.com`; the blob request
+function, which answered 404 to any address under `/blobs/sha256/` that was not a hash, by
+the request function, which does the same for every served prefix, from `SERVED`'s
+shapes, and refuses any other host.
 
 ## The Runs repository, the Method and the page
 
@@ -1249,14 +1469,20 @@ again and comparing with `cmp`.
 ### The workflow
 
 `.github/workflows/runs.yml` runs at 22:40 UTC (half an hour after the 22:10 boot), every
-six hours, and by hand (`workflow_dispatch`), one run at a time. It checks out this
+six hours, and by hand (`workflow_dispatch`), its first job one at a time (the job holds the
+concurrency group `runs`, which `prices.yml` holds too). It checks out this
 repository with its whole history (for the alarm's `--schedule-changed-at`), takes AWS
 credentials through OIDC, checks out `smrdotgg/ledgermath-runs` with the deploy key,
 runs the copy job, commits and pushes what it added, runs both Methods, builds the page,
 uploads the page and both files of Derivations as the artifact `page`, builds and checks
 the data API's files and keeps them for a week as the artifact `api` (section "The data
-API"; to compare them with the last successful run's, its token may read Actions), and runs
-the alarm with the workflow's own token. Each Method runs on its own: when one fails, `derive.ts`
+API"; to compare them with the tree an earlier run checked and kept, its token may read
+Actions), and runs the alarm with the workflow's own token. That is its first job, `runs`,
+which knows nothing of publishing. A second job, `publish`, runs after it, only when it
+succeeded and `API_BUCKET` is set, and puts the checked tree into the API bucket ("The data
+API", "The API bucket"); its failure is its own and changes nothing of the first job's
+(its caches, its artifacts, the next run's baseline). It holds its own group, `api-bucket`,
+not `runs`, so the shared lock is held exactly as long as before it existed. Each Method runs on its own: when one fails, `derive.ts`
 still writes the other's Derivations and, in place of the failed one's, a note saying why
 (`page/<name>.failed.json`); the page is built from what there is and says which part is
 missing and why, the artifact is kept, and the run still ends as failed. Between runs it keeps, in GitHub's cache, the dump blobs it
@@ -1272,6 +1498,7 @@ It needs:
 |-------|------|---------------|
 | Variable | `RUNS_AWS_ROLE_ARN` | The scheduled stage's output `runsReaderRole` (`jq -r .runsReaderRole .sst/outputs.<stage>.json` after a deploy) |
 | Variable | `RUNS_BUCKET` | The scheduled stage's output `bucket`, the bucket's name |
+| Variable | `API_BUCKET` | The scheduled stage's output `apiBucket`, once the stage is deployed with it; while unset, the `publish` job is skipped and nothing is uploaded ("The data API", "The API bucket") |
 | Secret | `RUNS_REPO_DEPLOY_KEY` | The private half of an SSH key whose public half is a deploy key of `smrdotgg/ledgermath-runs` **with write access** (it pushes) |
 
 For the key: `ssh-keygen -t ed25519 -N '' -C ledgermath-runs-copy -f runs-deploy-key`,
@@ -1285,9 +1512,10 @@ account holds one per URL, so only one `-runs` stage per account can create it:
 `production-runs` in the production account, `smr-runs` in the development account) and
 the role `RunsReaderRole`, which only workflows of `smrdotgg/ledgermath` on
 `refs/heads/main` can assume and which may list the bucket and read `runs/*`, `boots/*` and
-`blobs/*`, nothing else (`infra/runs/github-role.ts`). A workflow started from another
-branch cannot assume it. Both variables name the scheduled stage's; the other stage's role
-stays, unused.
+`blobs/*` (`infra/runs/github-role.ts`), and list the API bucket and read and write its
+`v1/*` (`RunsApiUploadPolicy`, `infra/runs/api-bucket.ts`), nothing else. A workflow
+started from another branch cannot assume it. The variables name the scheduled stage's;
+the other stage's role stays, unused.
 
 ### The alarm
 
@@ -1956,9 +2184,11 @@ run is a second chance on a day GitHub drops or delays the first; when the first
 it adds nothing. It checks out this repository and the Runs repository (with the same
 deploy key as `runs.yml`), runs the fetch with its downloads under the runner's temporary
 directory, and commits and pushes the new file as `github-actions[bot]`, refusing to
-commit anything but new files. It shares `runs.yml`'s concurrency group, `runs`, so the
-two never run at once and neither's push is refused because the other pushed after its
-checkout. Its times are hours from `runs.yml`'s, because GitHub keeps at most one run of
+commit anything but new files. It shares the concurrency group of `runs.yml`'s first job,
+`runs` (a workflow's group and a job's of the same name are one lock: GitHub's groups are
+the repository's, for jobs and workflow runs alike), so the two never run at once and
+neither's push is refused because the other pushed after its checkout. `runs.yml`'s
+`publish` job holds a group of its own, so it never keeps this workflow waiting. Its times are hours from `runs.yml`'s, because GitHub keeps at most one run of
 a group waiting: a third run queued while one runs and one waits cancels the waiting one.
 
 It needs only the secret `RUNS_REPO_DEPLOY_KEY`, which `runs.yml` already uses (above): a
@@ -2036,9 +2266,12 @@ Issue #64, ADR-0030. LedgerMath's numbers, for agents first, as a tree of small 
 files, each kind with a JSON schema. `scripts/build-api.ts` cuts it from the two files of
 Derivations and the Runs repository's price files, laid out exactly as it will be served
 from `https://api.ledgermath.com`. Nothing is served yet: the `runs` workflow builds the
-tree, checks it, against the tree its last successful run kept too, and keeps it for a
-week as the artifact `api`, beside `page`. Serving it is the next
-step, and it goes public only on the maintainer's go.
+tree, checks it, against the tree the latest earlier run that checked its own kept too,
+keeps it for a week as the artifact `api`, beside `page`, and, in a job of its own,
+`publish`, uploads it to the stage's private API bucket ("The API bucket", below). The
+serving is built and off ("The public data API: CloudFront on
+the Free plan at `api.ledgermath.com`", under "The daily box"), and goes public only on
+the maintainer's go.
 
 | Path | Holds |
 |------|-------|
@@ -2096,6 +2329,21 @@ address is `--base`, so a private or test address can stand in.
   of the Run right after it then comes from the late Run; (d) adds the Method's block to
   every month file of the Series. The last two are what the Methods produce, and the tree
   neither changes them nor hides them.
+- **Served, a Series file and a month file can be of different rounds.** A month file
+  changes in place, at its address, so no order of upload makes the pair change at once:
+  the upload writes the month files before the Series files ("The API bucket", below), and
+  should it stop between the two, a Series file lists a month's previous sha256 while the
+  month's address already gives the new bytes, until the next upload succeeds (the
+  workflow fails visibly meanwhile, and the next run repairs it by itself); for up to five
+  minutes after each round, too, a reader's cache or CloudFront's may hold one of the two
+  from before. No cache expiry repairs the first case. **The rule a reader follows:** verify
+  a month file's bytes against the `sha256` its Series file lists; on a mismatch, fetch the
+  Series file again and then the month file, and retry; while they still differ, use
+  neither, and retry later. The table of contents and the schemas (the contract's last
+  sentence, above) tell a reader that a held copy is current only when the sha256 matches,
+  and fetch again otherwise; they do not yet say to fetch the Series file again on a
+  mismatch, which is the generator's wording to change (`MONTH_CONTRACT` in
+  `scripts/lib/api.ts`), in a change of its own.
 - **The layout is a number.** `layout` in `v1/index.json` is `LAYOUT` in
   `scripts/lib/api.ts`: raise it whenever the build changes how it writes the files (the
   order of a file's fields, their white space, a field every file of a kind gains). Editing
@@ -2125,9 +2373,13 @@ address is `--base`, so a private or test address can stand in.
   when the previous tree can be read well enough to list the Series and Runs it published
   (its month files, or, in the layout before the split, its Series files' `points`), none
   of them may be missing, and the check says how many it compared. The workflow fetches the
-  artifact `api` of the latest successful run on main created before it
-  (`scripts/previous-api.ts`), and says what it found in the step's summary; a tree it
-  could not download, or a reply it cannot read, fails the step.
+  artifact `api` of the latest run on main created before it that kept one
+  (`scripts/previous-api.ts`, among the 50 latest runs, ended or not: the run before may
+  still be publishing when this one's first job starts). A run keeps it only when
+  its tree passed this check, so the baseline is a checked tree whatever happened after:
+  a run whose `publish` job failed (or was skipped) still is one, and a run whose check
+  failed never is. It says what it found in the step's summary; a tree it could not
+  download, or a reply it cannot read, fails the step.
 - **When the gate fails on a real late Run** of a kind the allowance does not cover, the
   tree is not kept, and the next run fails the same way against the same earlier tree. The
   new-baseline input is not the fix (it does not apply to a tree of the same layout): find
@@ -2211,6 +2463,213 @@ tree with the one before about 2 s more. Between the trees of two snapshots of t
 which every Series gained one Run, every one of the 187 month files changed, each for
 cause (a) only. The lookup tool and
 the agent skill still read the files of Derivations.
+
+### The API bucket
+
+ADR-0031. Every `-runs` stage has a private bucket, `ApiBucket` (stage output
+`apiBucket`), that holds the checked tree under `v1/` and nothing else, so that the day the
+public serving is turned on it serves real, current files. It is not behind `PUBLIC_API`:
+it exists whatever the switch says, is not versioned, has no CORS configuration, keeps
+SST's HTTPS-only policy and public access block, and grants nothing to anyone until
+`PUBLIC_API.state` is `on` (`infra/runs/api-bucket.ts`). It is a bucket of its own rather
+than a prefix of the Runs bucket so that the workflow's role, which writes here, stays
+unable to write to the Runs bucket; so that the Runs bucket stays written once and
+versioned for good, while these files are rewritten every round; and so that what readers
+can reach of each bucket is one list per bucket.
+
+**The upload is a job of its own.** The `runs` workflow's first job, `runs`, builds and
+checks the tree and keeps it as the artifact `api`; it knows nothing of the bucket. Its
+second job, `publish`, `needs` it and runs only when it succeeded and the repository
+variable `API_BUCKET` is set (to the scheduled stage's `apiBucket` output); while the
+variable is unset the job is skipped, which is not an error. It has its own 15-minute
+timeout and only the permissions it uses (read the repository, ask for the OIDC token), and
+it downloads the artifact `api` this run kept, so it uploads exactly the tree that was
+checked. Its steps: "Check the API bucket before anything is written" (`scripts/upload-api.ts
+--preflight`), "Upload the data API's files to the API bucket" (`scripts/upload-api.ts`),
+and "Check that the API bucket holds the data API's files" (`scripts/check-api-bucket.ts
+--run`). When one fails, the `publish` job is red and the run is marked failed (GitHub's own
+failed-run email goes to whoever last changed the workflow's schedule, per their
+notification settings; there is no other alert), but the `runs` job stays green, its
+artifacts are kept, and the next run's baseline is this run's tree ("The data API").
+
+**Never two at once, and never an older tree after a newer one.** The `publish` job holds
+the concurrency group `api-bucket` (never cancelled in progress), and only that: the group
+`runs`, which `prices.yml` shares, is held by the first job alone, exactly as long as before
+the `publish` job existed. So the next run's first job, or `prices.yml`, may run while a
+`publish` job uploads (the next run then takes this run's artifact `api` as its baseline,
+though the run has not ended: "The data API"). Two `publish` jobs never run at once; of
+those waiting, GitHub keeps only the newest and cancels the older, whose tree is older too,
+so its run shows as cancelled and the newer tree is published. Every object the upload
+writes carries the run that wrote it (`x-amz-meta-ledgermath-run`, the run's id, which only
+grows), and every upload that succeeds leaves its run on the table of contents, even when
+it had nothing else to write (below): when the bucket records a later run than this one,
+anywhere, nothing is written and the job fails ("Not uploaded: ... later than this run").
+That covers every order the group does not: a re-run of an old run's `publish` job, a job
+that began waiting after a newer one had published, a newer run whose upload stopped
+halfway, or whose tree equalled the bucket's. One order is left, and it overwrites nothing
+newer: a re-run of an old `publish` job, started by hand while a newer one waits, takes the
+newer one's place in the group, which cancels it; the older tree is then published (if no
+later run is recorded) until the next run publishes. Re-run a `publish` job only when none
+is waiting.
+
+`scripts/upload-api.ts` writes the tree to the bucket, each file at its own path as key:
+
+- **First, the whole bucket is listed**, before anything is written or asked about. If it
+  holds a key the new tree does not have, under `v1/` or anywhere else, nothing at all is
+  written: the step fails, and its summary lists each such key ("A key the tree does not
+  have", below). Publishing a table of contents that no longer lists a file the bucket
+  still serves would leave the bucket unequal to the tree for good, every later run failing
+  the same way, since nothing deletes. The preflight step does this listing, and the
+  `HEAD`s below, and writes nothing: its summary says what the upload would write.
+- **Only what changed.** One `HEAD` per file, with `x-amz-checksum-mode: ENABLED`, gives
+  back the SHA-256 S3 verified and kept when the object was written, its headers and the
+  run that wrote it; a file is written only when the bucket does not hold it, holds it
+  without a SHA-256, holds other bytes, or holds other headers (the run alone is no reason).
+  A month file that did not change is not rewritten.
+- **The run is recorded, even when nothing changed.** When every phase is written, and the
+  table of contents, `v1/index.json`, was not rewritten and does not record this run
+  already, the upload's last act is to write it again, the same bytes and headers, with
+  this run (the stamp; `STAMP_KEY` in `scripts/lib/api-upload.ts`). It adds no key, and at
+  most one `PUT` a round. Without it, a run that published a tree equal to the bucket's
+  would leave no trace, and a retry of an earlier run, its tree older, would be let through.
+  A retry of this same run finds its run already recorded and writes nothing. To a reader
+  the stamp changes nothing but the time: S3's `ETag` is the MD5 of the bytes, so it stays
+  the same and a reader that revalidates with it gets `304 Not Modified`; `Last-Modified`
+  moves on, so a reader that revalidates by date alone fetches the same bytes again, at
+  most once a round, and only after the five minutes its copy may be kept.
+- **In an order that never leaves a readable file linking one not there yet**, five phases,
+  each whole before the next starts: the schemas; the month files and price files; the
+  Series files; the list, `v1/series.json`; the table of contents, `v1/index.json`. Each
+  file links down only to files of earlier phases (a test reads every link of a built tree
+  to hold it to that); its links up, to the table of contents, the list or a month file's
+  own Series file, are to files a reader came through.
+- **A failed write fails the `publish` job, and the next run repairs the bucket.** It
+  stops the upload once the writes of its phase have settled; no later phase starts; the
+  step fails, and its summary names the phase, each key that failed and why. A month file changes in
+  place, so when the stop falls between the month files and the Series files, a Series
+  file lists a month's previous sha256 while the month's address gives the new bytes, and
+  no cache expiry repairs that (readers check the sha256: "The data API", above). The next
+  run's upload repairs it by itself, with nobody's help: the month files are then the
+  bucket's already, and only the Series files, the list and the table of contents differ
+  from it, so only they are written. A test stops an upload there, on a filled bucket,
+  shows the mismatch a reader would find, and shows the next run end it.
+- **Nothing deleted.** The upload sends no `DELETE`, and the role has no `s3:DeleteObject`.
+  Nothing the previous tree published can go: the gate of "The data API" keeps every Series
+  file and month file in every new tree, and a key the tree no longer has (a price file
+  taken out of the Runs repository, a schema dropped, anything put in the bucket by hand)
+  stops the upload, as above, until a person settles it.
+- **Each object carries the headers it is served with**: `Content-Type: application/json`
+  and `Cache-Control: public, max-age=300` (the public serving's managed policies take
+  nothing else; "The public data API"), and `x-amz-checksum-sha256`, which S3 verifies, as
+  it verifies the signed body's SHA-256, so other bytes are refused; and, not served, the
+  run that wrote it.
+
+Then `scripts/check-api-bucket.ts` checks that the whole bucket holds exactly the tree:
+the same keys, under `v1/` and nothing anywhere else, none missing and none more, each with
+the tree's SHA-256, size, `Content-Type` and `Cache-Control`; and, given the run that
+uploaded it (`--run`, as the `publish` job passes it), that the table of contents records
+that run and no object a later one, so a stamp that did not happen fails the job. Each step
+writes what it did, or why it stopped, to the step summary.
+
+**A key the tree does not have.** The preflight step stopped, nothing was written, and its
+summary lists the keys; the published files are those of the last upload that succeeded,
+and every run's `publish` job fails the same way until the key is settled (its `runs` job
+is unaffected). The workflow cannot delete and never will; a person
+does, with the stage's own profile:
+
+1. For each key, find why the tree lacks it. A price file: was it taken out of the Runs
+   repository on purpose (`git log -- prices/<yyyy>/<mm>/<dd>/aws.json` in
+   `smrdotgg/ledgermath-runs`)? A schema: was it dropped from `API_SCHEMAS` in
+   `scripts/lib/api-schemas.ts` on purpose? A key outside `v1/`, or of no shape the build writes:
+   who put it there (`aws s3api head-object --bucket <apiBucket> --key <key> --profile
+   tabot-production` gives its date and size)? A Series file or month file cannot be the
+   cause: the gate keeps every one in every new tree, and a run would have failed there
+   first.
+2. If the tree is wrong (the file was taken out by mistake), put it back where the build
+   reads it from and start the workflow again; nothing in the bucket changes.
+3. If the key should go, delete it, and nothing else, with the stage's own profile: `aws s3
+   rm s3://<apiBucket>/<key> --profile tabot-production`. While the public API is on, the
+   deleted file stops being served once CloudFront's copies expire (five minutes for the
+   tree); readers who kept it keep it.
+4. Start the workflow by hand (Actions, `runs`, "Run workflow"), or wait for the next run:
+   its `publish` job uploads, and "Check that the API bucket holds the data API's files"
+   passes. (Re-running the failed `publish` job of an earlier run works too, unless a later
+   run has written to the bucket since; then it refuses, as above, and the later run's
+   tree is the one to keep.)
+
+**A run recorded too high.** Every `publish` job fails with "Not uploaded: `<key>` as
+written by run N, later than this run", and N is no run of `runs.yml` that published (an
+upload by hand with a wrong `--run`, say, or an id from another repository): until it is
+put right, no run can publish. The run is the object metadata `ledgermath-run` (sent and
+read as the header `x-amz-meta-ledgermath-run`), usually on the table of contents,
+`v1/index.json`, which every upload stamps, and on each file that upload wrote. Put it
+right with your own credentials, the stage's profile; the workflow's role cannot, and
+nothing is deleted:
+
+1. Find the id of the latest run of `runs.yml` whose `publish` job succeeded (Actions,
+   `runs`; the id is the number in the run's address). Call it R.
+2. List the objects that record a later run than R (one `HEAD` per object, a few thousand
+   for a year's tree):
+
+   ```bash
+   for key in $(aws s3api list-objects-v2 --bucket <apiBucket> --query 'Contents[].Key' --output text --profile tabot-production); do
+     echo "$key $(aws s3api head-object --bucket <apiBucket> --key "$key" --query 'Metadata."ledgermath-run"' --output text --profile tabot-production)"
+   done
+   ```
+
+3. For each key whose run is later than R, write the object over itself with R as its run,
+   keeping its bytes, its headers and a SHA-256 S3 computes again:
+
+   ```bash
+   aws s3api copy-object --bucket <apiBucket> --key <key> --copy-source <apiBucket>/<key> \
+     --metadata-directive REPLACE --metadata ledgermath-run=R \
+     --content-type application/json --cache-control "public, max-age=300" \
+     --checksum-algorithm SHA256 --profile tabot-production
+   ```
+
+   (`REPLACE` drops whatever is not given again, which is why the headers are. If an object
+   is left without its SHA-256 or headers all the same, the next upload sees it and writes
+   it again.)
+4. Start the workflow by hand: its `publish` job uploads, stamps the table of contents with
+   its own run, and the check passes.
+
+**The permission.** The workflow writes with the role it already assumes, `RunsReaderRole`,
+through a second policy of that role, `RunsApiUploadPolicy`: `s3:ListBucket` on the API
+bucket, `s3:GetObject` and `s3:PutObject` on its `v1/*`, and nothing else. The role, its
+trust policy and its first policy (list the Runs bucket, read `runs/`, `boots/` and
+`blobs/`) are unchanged, so it still cannot write to the Runs bucket; a test holds both
+policies together to that. The listing is not narrowed to `v1/` by a condition: S3 answers
+a `HEAD` of a missing key with 404 only to a requester that may list the bucket, and a
+`HEAD` carries no prefix for such a condition, so a missing file would look like a refusal.
+
+**Setting it up.** A deploy of a `-runs` stage with this change creates, and changes nothing
+else for it: the bucket (`ApiBucket`, with its public access block and SST's HTTPS-only
+policy, which grants nothing), the role policy `RunsApiUploadPolicy`, and the output
+`apiBucket`. Then, for the scheduled stage:
+
+```bash
+gh variable set API_BUCKET --repo smrdotgg/ledgermath --body <the apiBucket output of production-runs>
+```
+
+The next run of the workflow uploads every file (all new), the one after writes only what
+changed. To stop the upload, `gh variable delete API_BUCKET --repo smrdotgg/ledgermath`.
+
+```bash
+# Locally, with the profile of the stage whose bucket it is, in a subshell, so that this shell keeps no keys.
+# --run is the id of the run whose artifact api /tmp/api is (it is refused if a later run wrote to the bucket).
+(eval "$(aws configure export-credentials --profile tabot-production --format env)" && bun scripts/upload-api.ts --tree /tmp/api --bucket <apiBucket> --run <run id> --preflight)
+(eval "$(aws configure export-credentials --profile tabot-production --format env)" && bun scripts/upload-api.ts --tree /tmp/api --bucket <apiBucket> --run <run id>)
+(eval "$(aws configure export-credentials --profile tabot-production --format env)" && bun scripts/check-api-bucket.ts --tree /tmp/api --bucket <apiBucket> --run <run id>)
+```
+
+**What it costs**, at the prices of AWS's Price List API on 2026-11-19 (us-east-2): S3
+Standard storage $0.023 per GB-month, so the 46.6 MB tree is about $0.001 a month and a
+year's growth (about 1.8 GB) about $0.04; `PUT` $0.005 per 1,000, and a round writes the
+Series files and month files that gained a Run, the list and the table of contents, at most
+about 380 files, so at five rounds a day at most about 57,000 a month, $0.29; `HEAD` and
+`GET` $0.0004 per 1,000, two `HEAD`s per file per round (the upload's and the check's), so
+about 120,000 a month now, $0.05, growing with the tree (about 2,600 files a year on, 780,000
+a month, $0.31). Transfer into S3 is free.
 
 ## The website (`site/`)
 

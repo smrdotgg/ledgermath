@@ -53,8 +53,17 @@ jobs:
       - run: bun install --frozen-lockfile
       - name: AWS-LC's source archive, for http_get's tests
         run: benchmarks/harness/c/vendor/fetch-aws-lc.sh "$RUNNER_TEMP/aws-lc.tar.gz"
+      # SST's platform, in .sst/platform: the types the -runs stage's wiring is
+      # checked against, and the Pulumi with which tests/public-api-graph.test.ts
+      # builds the public API's resources for each state, under mocks. Installing
+      # it fetches SST's providers and asks AWS nothing.
+      - name: SST's platform, for the stack's type check and resource graph
+        run: bunx sst install
+      - name: The -runs stage's wiring type-checks against SST's platform types
+        run: bun scripts/check-stack-types.ts
       - run: bun test
         env:
           AWS_LC_ARCHIVE: ${{ runner.temp }}/aws-lc.tar.gz
           AWS_LC_JOBS: "4"
           LM_HTTP_GET_REQUIRED: "1"
+          LM_STACK_REQUIRED: "1"

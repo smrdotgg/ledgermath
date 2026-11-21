@@ -47,6 +47,7 @@ import { join, relative, resolve, sep } from "node:path";
 import type { DerivationsFile as RequestsFile, SeriesDerivation as RequestsDerivation, Point as RequestsPoint, Stats } from "../../methods/requests/v1/output";
 import { canonicalJson, compareText } from "../../methods/run";
 import type { DerivationsFile as SeriesFile, SeriesDerivation, Point as SeriesPoint, Stat } from "../../methods/v1/output";
+import { API_SCHEMAS } from "./api-schemas";
 import { PRICE_FILE_PATH } from "./prices";
 import { parseStrictJson } from "./strict-json";
 
@@ -82,14 +83,8 @@ export const NEWEST_RUNS = 12;
  */
 export const LAYOUT = 1;
 
-/** Each kind of file's schema: its name in the tree, and where it is kept in this repository. */
-export const API_SCHEMAS = [
-	{ name: "index", describes: "v1/index.json", source: "schemas/api/v1/index.schema.json" },
-	{ name: "series-list", describes: "v1/series.json", source: "schemas/api/v1/series-list.schema.json" },
-	{ name: "series", describes: "v1/series/<id>.json", source: "schemas/api/v1/series.schema.json" },
-	{ name: "series-month", describes: "v1/series/<id>/<yyyy-mm>.json", source: "schemas/api/v1/series-month.schema.json" },
-	{ name: "prices", describes: "v1/prices/<yyyy-mm-dd>.json", source: "schemas/prices.schema.json" },
-] as const;
+/** Each kind of file's schema: its name in the tree, and where it is kept in this repository (kept in scripts/lib/api-schemas.ts, which the stack imports too). */
+export { API_SCHEMAS };
 export type SchemaName = (typeof API_SCHEMAS)[number]["name"];
 
 export const SCHEMA_IDS = {

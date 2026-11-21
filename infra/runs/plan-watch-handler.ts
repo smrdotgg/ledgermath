@@ -82,15 +82,15 @@ export async function handler(): Promise<WatchResult> {
 	const arn = required("LEDGERMATH_DISTRIBUTION_ARN");
 	try {
 		const result = await watchOnce(realClients(id, arn), { stage, distributionArn: arn }, new Date());
-		const log = { message: `public blobs watch: ${result.action}`, stage, distribution: id, reason: result.reason, warnings: result.warnings };
-		if (result.action === "disabled") console.error(JSON.stringify({ ...log, message: "public blobs watch: DISABLED the distribution" }));
+		const log = { message: `public API watch: ${result.action}`, stage, distribution: id, reason: result.reason, warnings: result.warnings };
+		if (result.action === "disabled") console.error(JSON.stringify({ ...log, message: "public API watch: DISABLED the distribution" }));
 		else if (result.warnings.length > 0 || result.action === "marked") console.warn(JSON.stringify(log));
 		else console.log(JSON.stringify(log));
 		return result;
 	} catch (error) {
 		// Thrown so the invocation counts as an error: the distribution had to
 		// be disabled and could not be.
-		console.error(JSON.stringify({ message: "public blobs watch FAILED", stage, distribution: id, error: error instanceof Error ? error.message : String(error) }));
+		console.error(JSON.stringify({ message: "public API watch FAILED", stage, distribution: id, error: error instanceof Error ? error.message : String(error) }));
 		throw error;
 	}
 }

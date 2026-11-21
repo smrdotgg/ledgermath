@@ -33,25 +33,32 @@
  * main can assume let .github/workflows/runs.yml read Runs, boot summaries
  * and blobs from the bucket (infra/runs/github-role.ts).
  *
- * On the one stage PUBLIC_BLOBS names, and only when it says so, a CloudFront
- * distribution on the Free flat-rate plan lets anyone read blobs/sha256/<hex>,
- * and nothing else of the bucket, which stays private
+ * The API bucket, private, holds the data API's tree (ADR-0030) under v1/,
+ * which the workflow uploads after every run that checked it; the same role
+ * may list it and read and write its v1/, nothing more, and still only reads
+ * the Runs bucket (infra/runs/api-bucket.ts, ADR-0031).
+ *
+ * On the one stage PUBLIC_API names, and only when it says so, a CloudFront
+ * distribution on the Free flat-rate plan serves the tree and its evidence at
+ * https://api.ledgermath.com: v1/ of the API bucket, and runs/, boots/ and
+ * blobs/sha256/ of the Runs bucket, nothing else of either, both private
  * (infra/runs/public-blobs.ts). It is off by default, and on every other
- * stage nothing of it exists: then the bucket's arguments, and everything
- * else here, are as they were without it.
+ * stage nothing of it exists: then the Runs bucket's arguments are as they
+ * were without it, and the API bucket grants nothing to anyone.
  */
 
 import { execFileSync } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 
+import { apiBucketArgs, apiUploadPolicy } from "./api-bucket";
 import { boxPolicy } from "./box-role";
 import { confirmDeployAccount } from "./deploy-account";
 import { fixturesReaderPolicy, fixturesReaderTrustPolicy, writeFixtureFiles } from "./fixtures";
 import { GITHUB_OIDC_AUDIENCE, GITHUB_OIDC_URL, readPolicy, trustPolicy } from "./github-role";
 import { scheduledTargetTypes, stageLaunchSchedules, TARGETS, ZONE } from "./placement";
-import { PUBLIC_BLOBS, runsBucketArgs } from "./public-blobs";
-import { preparePublicBlobs } from "./public-blobs-stack";
+import { PUBLIC_API, runsBucketArgs } from "./public-blobs";
+import { preparePublicApi } from "./public-blobs-stack";
 import { tlsArchive } from "./tls-archive";
 
 /**
@@ -109,16 +116,23 @@ export async function runsStack() {
 	// Checked before anything is made: a missing or wrong copy stops the deploy
 	// here, saying how to fetch it.
 	const tls = tlsArchive($cli.paths.root);
-	// null on every stage but PUBLIC_BLOBS.stage, and there while "off". On
+	// null on every stage but PUBLIC_API.stage, and there while "off". On
 	// that stage it first reads what is deployed and stops a deploy the
-	// transition rules refuse (infra/runs/public-blobs-guard.ts).
-	const publicBlobs = preparePublicBlobs(PUBLIC_BLOBS, $cli.command);
+	// transition rules refuse (infra/runs/public-blobs-guard.ts). A setting
+	// naming another stage stops every deploy.
+	const publicApi = preparePublicApi(PUBLIC_API, $cli.command);
 
 	// Runs are added and never edited: versioning keeps every earlier object
-	// even if a key is written twice. With public blobs "on", the bucket policy
-	// also lets the distribution read blobs/sha256/*; otherwise the arguments
-	// are { versioning: true }, as they always were.
-	const bucket = new sst.aws.Bucket("RunsBucket", runsBucketArgs(publicBlobs?.bucketPolicy ?? null));
+	// even if a key is written twice. With the public API "on", the bucket
+	// policy also lets the distribution read runs/*, boots/* and
+	// blobs/sha256/*; otherwise the arguments are { versioning: true }, as
+	// they always were.
+	const bucket = new sst.aws.Bucket("RunsBucket", runsBucketArgs(publicApi?.runsBucketPolicy ?? null));
+	// The data API's tree, under v1/, uploaded by the workflow after every run
+	// that checked it: private, not versioned, no CORS (infra/runs/api-bucket.ts).
+	// With the public API "on", its policy also lets the distribution read
+	// v1/*; otherwise it is SST's alone, HTTPS only, granting nothing.
+	const apiBucket = new sst.aws.Bucket("ApiBucket", apiBucketArgs(publicApi?.apiBucketPolicy ?? null));
 	// The key is HEAD's commit (sourceArchive). A new commit gives a new key, so
 	// the resource is replaced and, without retainOnDelete, the previous
 	// source/ object is deleted: every version of it, or, for an object whose
@@ -327,11 +341,20 @@ export async function runsStack() {
 		role: readerRole.id,
 		policy: bucket.arn.apply((arn) => JSON.stringify(readPolicy(arn))),
 	});
+	// A second policy of the same role, so the first, and the role itself, are
+	// unchanged: list the API bucket, read and write objects under its v1/;
+	// nothing of the Runs bucket, no delete (infra/runs/api-bucket.ts).
+	new aws.iam.RolePolicy("RunsApiUploadPolicy", {
+		role: readerRole.id,
+		policy: apiBucket.arn.apply((arn) => JSON.stringify(apiUploadPolicy(arn))),
+	});
 
-	const publicBlobsOutputs = publicBlobs === null ? null : publicBlobs.create(bucket);
+	const publicApiOutputs = publicApi === null ? null : publicApi.create(bucket, apiBucket).outputs;
 
 	return {
 		bucket: bucket.name,
+		/** The repository variable API_BUCKET: the runs workflow uploads the data API's tree here once it is set. */
+		apiBucket: apiBucket.name,
 		runsReaderRole: readerRole.arn,
 		launchFunction: launch.name,
 		reaperFunction: reaper.nodes.function.name,
@@ -354,7 +377,7 @@ export async function runsStack() {
 		tlsArchiveKey: tls.key,
 		fixturesBucket: fixturesBucket.name,
 		fixturesRole: fixturesRole.arn,
-		// Absent while off, so the outputs are as they were.
-		...(publicBlobsOutputs === null ? {} : { publicBlobs: publicBlobsOutputs }),
+		// Absent while off.
+		...(publicApiOutputs === null ? {} : { publicApi: publicApiOutputs }),
 	};
 }

@@ -350,7 +350,7 @@ describe("the watch's permissions", () => {
 
 	test("are what the stage gives it, every 5 minutes, with the distribution's id and ARN, as a real function even under sst dev", () => {
 		expect(WATCH_SCHEDULE).toBe("rate(5 minutes)");
-		expect(RESOURCES).toContain('new sst.aws.CronV2("PublicBlobsWatch", {');
+		expect(RESOURCES).toContain('new sst.aws.CronV2("PublicApiWatch", {');
 		expect(RESOURCES).toContain('handler: "infra/runs/plan-watch-handler.handler",\n\t\t\tdev: false,');
 		expect(RESOURCES).toContain("permissions: distribution.arn.apply((arn) => watchPermissions(arn)),");
 		expect(RESOURCES).toContain("LEDGERMATH_DISTRIBUTION_ID: distribution.id,");

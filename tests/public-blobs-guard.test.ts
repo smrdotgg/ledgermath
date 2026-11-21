@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { distributionComment, type PlanAttachment, type PublicBlobsState } from "../infra/runs/public-blobs";
+import { distributionComment, type PlanAttachment, type PublicApiState } from "../infra/runs/public-blobs";
 import {
 	type AwsCli,
 	coverage,
@@ -83,8 +83,13 @@ describe("the record of what is deployed", () => {
 		}
 		expect(parseComment(distributionComment(STAGE, "on", "code"), "smr-runs")).toBeNull();
 		expect(parseComment(distributionComment("production-runs2", "on", "code"), STAGE)).toBeNull();
-		expect(parseComment("LedgerMath production-runs public blobs (blobs/sha256/* only): state=off plan=code", STAGE)).toBeNull();
-		expect(parseComment("LedgerMath production-runs: public blobs (blobs/sha256/* only)", STAGE)).toBeNull();
+		expect(parseComment("LedgerMath production-runs public API (api.ledgermath.com): state=off plan=code", STAGE)).toBeNull();
+		expect(parseComment("LedgerMath production-runs: public API (api.ledgermath.com)", STAGE)).toBeNull();
+		// The domain's dots are dots, not any character.
+		expect(parseComment("LedgerMath production-runs public API (apixledgermath.com): state=on plan=code", STAGE)).toBeNull();
+		// The comment of the design before, which nothing deployed ever carried, is not read as this one's.
+		expect(parseComment("LedgerMath production-runs public blobs (blobs/sha256/* only): state=on plan=code", STAGE)).toBeNull();
+		expect(distributionComment(STAGE, "closed", "console").length).toBeLessThanOrEqual(128);
 	});
 
 	test("reads an account with no distribution, as the CLI prints it, as nothing deployed", () => {
@@ -119,7 +124,7 @@ describe("the record of what is deployed", () => {
 		expect(readDeployed(() => ({ DistributionList: { IsTruncated: false, Quantity: 2, Items: [] } }), STAGE, NOTHING).kind).toBe("unknown");
 		const two = [summary("E1", distributionComment(STAGE, "on", "code"), true), summary("E2", distributionComment(STAGE, "dark", "code"), false)];
 		expect(readDeployed(() => page(two), STAGE, NOTHING)).toMatchObject({ kind: "unknown", reason: expect.stringContaining("2 distributions") });
-		const odd = "LedgerMath production-runs public blobs, hand-edited";
+		const odd = "LedgerMath production-runs public API, hand-edited";
 		expect(findDeployed(distributionsPage(page([summary("E1", odd, true)])).items, STAGE, managedOne("E1", odd))).toMatchObject({ kind: "unknown", reason: expect.stringContaining("does not record") });
 		// When the stage's state cannot be read, the listing does not matter.
 		expect(readDeployed(() => EMPTY_ACCOUNT, STAGE, { kind: "unknown", reason: "the stage's state could not be read: ENOENT" })).toEqual({ kind: "unknown", reason: "the stage's state could not be read: ENOENT" });
@@ -211,12 +216,12 @@ describe("which distribution is the stage's", () => {
 	test("two distributions carrying the comment: unknown, whichever the state records", () => {
 		const items = distributionsPage(page([summary("E3", DARK, false), summary("E9", ON, true)])).items;
 		for (const managed of [NOTHING, managedOne("E3", DARK), managedOne("E9", ON)]) {
-			expect(findDeployed(items, STAGE, managed)).toMatchObject({ kind: "unknown", reason: expect.stringContaining("2 distributions say they are production-runs's public blobs (E3, E9)") });
+			expect(findDeployed(items, STAGE, managed)).toMatchObject({ kind: "unknown", reason: expect.stringContaining("2 distributions say they are production-runs's public API (E3, E9)") });
 		}
 	});
 
 	test("the stage's distribution with its comment gone, or edited: unknown, not absent", () => {
-		for (const comment of ["", "edited by hand", "LedgerMath smr-runs public blobs (blobs/sha256/* only): state=on plan=code"]) {
+		for (const comment of ["", "edited by hand", "LedgerMath smr-runs public API (api.ledgermath.com): state=on plan=code"]) {
 			const deployed = findDeployed(distributionsPage(page([summary("E3", comment, true)])).items, STAGE, managedOne("E3", ON));
 			expect(deployed).toMatchObject({ kind: "unknown", reason: expect.stringContaining("the stage's distribution E3 no longer carries the stage's comment") });
 		}
@@ -237,7 +242,7 @@ describe("which distribution is the stage's", () => {
 		const cases: Array<[string, Array<Record<string, unknown>>, Managed, string]> = [
 			["the state records none: a deploy would make a second distribution", [summary("E9", ON, true)], NOTHING, "the stage's state records no distribution"],
 			["the stage's own is gone", [summary("E9", ON, true)], managedOne("E3", ON), "which AWS does not list"],
-			["the stage's own lost its comment", [summary("E3", "edited by hand", true), summary("E9", ON, true)], managedOne("E3", ON), "distribution E9 says it is production-runs's public blobs, but the stage's state records E3"],
+			["the stage's own lost its comment", [summary("E3", "edited by hand", true), summary("E9", ON, true)], managedOne("E3", ON), "distribution E9 says it is production-runs's public API, but the stage's state records E3"],
 		];
 		for (const [name, listing, managed, reason] of cases) {
 			const deployed = readDeployed(() => page(listing), STAGE, managed);
@@ -313,7 +318,7 @@ describe("whether a plan covers the distribution", () => {
 });
 
 describe("the transitions", () => {
-	const deploy = (state: PublicBlobsState, plan: PlanAttachment = "code"): Target => ({ state, plan });
+	const deploy = (state: PublicApiState, plan: PlanAttachment = "code"): Target => ({ state, plan });
 
 	// [what is deployed, the target, the plan check, allowed]
 	const situations: Record<string, Deployed> = {
@@ -375,7 +380,7 @@ describe("the transitions", () => {
 	test("say why, and what to do", () => {
 		const enabledOff = judgeTransition(present("on", true), deploy("off"), ACTIVE);
 		expect(enabledOff.reason).toContain("is enabled, Deployed");
-		expect(enabledOff.reason).toContain('Deploy with PUBLIC_BLOBS.state "dark"');
+		expect(enabledOff.reason).toContain('Deploy with PUBLIC_API.state "dark"');
 		expect(enabledOff.reason).toContain("wait until the distribution reports disabled (Enabled false, Status Deployed");
 		expect(enabledOff.reason).toContain('"off" would cancel its plan while it may still serve');
 		const lapsed = judgeTransition(present("on", true), deploy("on"), NONE);
@@ -387,7 +392,7 @@ describe("the transitions", () => {
 		expect(fromDark.reason).toContain('deploy "closed" first if AWS will not subscribe a disabled distribution');
 		const watched = judgeTransition(present("on", false), deploy("on"), ACTIVE);
 		expect(watched.reason).toContain("the watch, or a person, disabled it, and a deploy would not enable it again");
-		expect(judgeTransition(present("on", true), deploy("on", "console"), ACTIVE).reason).toContain('Changing PUBLIC_BLOBS.plan from "code" to "console"');
+		expect(judgeTransition(present("on", true), deploy("on", "console"), ACTIVE).reason).toContain('Changing PUBLIC_API.plan from "code" to "console"');
 		expect(judgeTransition({ kind: "absent" }, deploy("on"), ACTIVE).reason).toContain('A distribution is made only disabled: deploy "dark" first.');
 		expect(judgeTransition({ kind: "unknown", reason: "x" }, deploy("off"), null).reason).toBe("what is deployed cannot be told: x");
 	});

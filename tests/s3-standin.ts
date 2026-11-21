@@ -11,6 +11,12 @@
  * Every write is counted per key, so an overwrite shows. A bucket can give
  * ETags that are not the MD5 of the bytes, as S3 does under SSE-KMS. A test
  * can answer any request itself (fault).
+ *
+ * As S3 does, a PUT keeps the Cache-Control and the x-amz-meta-* headers it
+ * is sent (a HEAD or GET gives them back), and an
+ * x-amz-checksum-sha256 it is sent once it holds for the body (400 BadDigest
+ * otherwise); a HEAD or GET gives the Cache-Control back, and the checksum
+ * only when asked with x-amz-checksum-mode: ENABLED.
  */
 
 import { createHash } from "node:crypto";
@@ -22,6 +28,12 @@ export interface StoredObject {
 	contentType: string;
 	/** How many times the key was written. */
 	writes: number;
+	/** The Cache-Control it was written with, or none. */
+	cacheControl?: string;
+	/** The x-amz-checksum-sha256 (base64) it was written with, or none. */
+	checksumSha256?: string;
+	/** The x-amz-meta-* headers it was written with, by their lower-case names. */
+	metadata?: Record<string, string>;
 }
 
 export interface StandinRequest {
@@ -152,11 +164,15 @@ export class S3Standin {
 		}
 		const object = bucket.objects.get(key);
 		const etag = (bytes: Uint8Array): string => (bucket.opaqueEtags ? "e".repeat(32) : md5(bytes));
+		const checksumMode = request.headers.get("x-amz-checksum-mode") === "ENABLED";
 		const headers = (stored: StoredObject): Record<string, string> => ({
 			"content-type": stored.contentType,
 			"content-length": String(stored.bytes.length),
 			etag: `"${etag(stored.bytes)}"`,
 			"last-modified": new Date("2026-11-14T00:00:00Z").toUTCString(),
+			...(stored.cacheControl === undefined ? {} : { "cache-control": stored.cacheControl }),
+			...(stored.metadata ?? {}),
+			...(checksumMode && stored.checksumSha256 !== undefined ? { "x-amz-checksum-sha256": stored.checksumSha256, "x-amz-checksum-type": "FULL_OBJECT" } : {}),
 		});
 		if (request.method === "HEAD") return object === undefined ? new Response(null, { status: 404 }) : new Response(null, { headers: headers(object) });
 		if (request.method === "GET") {
@@ -171,10 +187,23 @@ export class S3Standin {
 			if (payload !== null && payload !== "UNSIGNED-PAYLOAD" && payload !== sha256(body)) {
 				return error(400, "XAmzContentSHA256Mismatch", "The provided 'x-amz-content-sha256' header does not match what was computed.");
 			}
+			const checksum = request.headers.get("x-amz-checksum-sha256");
+			if (checksum !== null && checksum !== createHash("sha256").update(body).digest("base64")) {
+				return error(400, "BadDigest", "The SHA256 you specified did not match the calculated checksum.");
+			}
 			if (request.headers.get("if-none-match") === "*" && object !== undefined) {
 				return error(412, "PreconditionFailed", "At least one of the pre-conditions you specified did not hold");
 			}
-			const stored: StoredObject = { bytes: body, contentType: request.headers.get("content-type") ?? "binary/octet-stream", writes: (object?.writes ?? 0) + 1 };
+			const cacheControl = request.headers.get("cache-control");
+			const metadata = Object.fromEntries([...request.headers.entries()].filter(([name]) => name.toLowerCase().startsWith("x-amz-meta-")).map(([name, value]) => [name.toLowerCase(), value]));
+			const stored: StoredObject = {
+				bytes: body,
+				contentType: request.headers.get("content-type") ?? "binary/octet-stream",
+				writes: (object?.writes ?? 0) + 1,
+				...(cacheControl === null ? {} : { cacheControl }),
+				...(checksum === null ? {} : { checksumSha256: checksum }),
+				...(Object.keys(metadata).length === 0 ? {} : { metadata }),
+			};
 			bucket.objects.set(key, stored);
 			return new Response(null, { headers: { etag: `"${etag(body)}"` } });
 		}

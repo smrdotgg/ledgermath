@@ -1121,4 +1121,96 @@ A migrated benchmark is done only when **all** of these hold:
   changed for (a); a counted late Run simulated in an `http_get` Series passes as (c) with
   its counts exact, and fails with `runs` 999. The first scheduled run after the merge fails
   on purpose (the kept tree has no layout) until it is run by hand with `new_baseline`.
+- **2026-11-20** — The data API's serving, built and off (#64, slice 3; ADR-0031). One
+  host, `https://api.ledgermath.com`: `/v1/…` from a new private API bucket, exactly as the
+  build writes the tree, and `/runs/…`, `/boots/…`, `/blobs/sha256/…` from the Runs bucket at
+  its own keys, through CloudFront on the Free flat-rate plan with Origin Access Control;
+  nothing else of either bucket is reachable, and a test routes every kind of key, spelt as an
+  attacker might, through the behaviours and the grants to show it. It grew from public blobs
+  (2026-11-14), which nothing ever deployed: the plan, the states, the guard and the watch are
+  kept; the switch is now `PUBLIC_API` (typed to `production-runs`, and refusing any other
+  stage instead of ignoring it), the stage makes the certificate, its DNS validation and the
+  `A`/`AAAA` alias records in the delegated zone `Z03039811C7UWLHZE7CZQ` (replacing the
+  `domain` setting), the total WAF limit counts every request rather than `/blobs/` alone,
+  and the blob request function is gone. The plan allows only managed policies, so the
+  tree's `Content-Type: application/json` and `Cache-Control: public, max-age=300` are on its
+  objects, set by the upload; CORS comes from the managed response-headers policy; the
+  evidence's `immutable` and its JSON type come from the one viewer-response function; the
+  default behaviour's function answers 404. Five minutes for the whole tree because no
+  address in `v1/` is named by its content and a month file must not outlive the Series file
+  listing its sha256. **Running now:** the `runs` workflow uploads the checked tree to the API
+  bucket once the repository variable `API_BUCKET` is set (writing only files whose SHA-256,
+  which S3 verifies and keeps, or headers differ; schemas, then month and price files, Series
+  files, the list, the table of contents; deleting nothing), then checks that the bucket
+  holds exactly the tree; while the variable is unset the step summary says so. The
+  workflow's role gets a second policy, `RunsApiUploadPolicy` (list the API bucket, read and
+  write its `v1/*`), and still cannot write to the Runs bucket. Not deployed; `sst diff` was
+  not run, the AWS login having expired. A deploy of a `-runs` stage now creates the API
+  bucket and that policy, and nothing of the serving.
+- **2026-11-21** — The data API's serving, after an independent review (PASS WITH FIXES;
+  the production `sst diff` agreed that, off, a deploy makes only the API bucket and the
+  role's upload policy). **Only what the project writes is served, at one host**: a request
+  function in front of every served behaviour lets through only the key shapes in `SERVED`
+  (the tree's kinds; a Run file by the Run schema's UUIDv7; a boot summary by the kernel's
+  boot id; a blob by its SHA-256: every one of the Runs repository's 7,270 Run files and 197
+  boot summaries had them on 2026-11-21), answering 404 to anything else under a served
+  prefix, and 403 to any `Host` but `api.ledgermath.com`, the distribution's own name
+  included; tested against a stand-in for S3 that holds the malformed keys. **The upload
+  lists the whole bucket first** and writes nothing while it holds a key the tree lacks (a
+  price file taken out, a stray key anywhere), naming each, so a published table of
+  contents can never leave the bucket unequal to the tree for good; the README says how to
+  settle a key by hand, and the workflow still cannot delete. **A failed write fails the run
+  naming its phase and key**, and the next run repairs the bucket by itself; a test stops an
+  upload between the month files and the Series files on a filled bucket, shows the sha256
+  mismatch a reader then finds, and shows the next run end it. A month file changes in place,
+  so no order prevents that window: ADR-0031 and the README give readers the rule (check a
+  month file against its Series file's sha256; on a mismatch fetch the Series file again).
+  The generator's own words (`MONTH_CONTRACT`) do not yet say so, and are left for a change
+  of their own. **Tests no longer depend on the committed switch**: one release-gate test
+  pins it to `off`, and a rehearsal sets it to each state (and the `console` attachment) in
+  child processes and finds that only that test fails; `checkSetting` refuses an unknown or
+  missing state or attachment. **The stack's wiring is type-checked in CI**
+  (`scripts/check-stack-types.ts`, after `bunx sst install`, which asks AWS nothing), and
+  `tests/public-api-graph.test.ts` builds the resources of `dark`, `closed` and `on` with the
+  stack's own code under Pulumi's mocks. ADR-0031 also states that the evidence's immutable
+  caching assumes each key is written once, what holds that and what would catch a rewrite.
+  Off, a deploy still makes only the API bucket and `RunsApiUploadPolicy`. Not deployed.
+- **2026-11-21** — The data API's serving, after a second review (FAIL). **The rehearsal
+  failed in CI and passed locally**: it counted failing tests from Bun's printed lines, and
+  under GitHub Actions Bun repeats each failure in a recap, so the release gate counted
+  twice. It now reads each child's JUnit report (`tests/junit.ts`), requires every test
+  file to have run, and covers every state and both plan attachments; the gate and the
+  rehearsal read one constant, `RELEASED_STATE`. A copy of the repository with the switch
+  and the constant both at `dark` passed the whole suite; with the constant left at `off`
+  it failed the gate alone. **Publishing is a job of its own**: the `runs` job does what it
+  did on `main`; `publish` needs it, runs only when it succeeded and `API_BUCKET` is set,
+  downloads the artifact `api`, and runs a preflight, the upload and the check, with a
+  15-minute timeout and only the permissions it uses. The baseline is the artifact `api`
+  of the latest earlier run that kept one (kept only when the check passed), so a run whose
+  `publish` failed is one and a run whose check failed is not. The workflow's concurrency
+  group keeps runs apart, the job's group keeps uploads apart, and each object now carries
+  the id of the run that wrote it, so a re-run of an old `publish` job never writes an older
+  tree over a newer one. **The edge's shapes are exact**: schema names are the generator's
+  `API_SCHEMAS` (moved to `scripts/lib/api-schemas.ts`, which imports nothing, so the
+  stack's bundle does not load the build), dates and months are real calendar values, and
+  the default function checks the `Host` too. **`checkSetting` refuses another stage in
+  every state**, `off` included. **The stack type check judges the compiler's exit**: a
+  signal, a non-zero exit with no diagnostics or lines it cannot read now fail, tested with
+  a stand-in compiler. Not deployed; the switch stays off.
+- **2026-11-21** — The data API's serving, after a third review (FAIL on two findings).
+  **A run that published nothing new left no trace**: run 100 wrote tree A, run 102
+  published the same A with no `PUT`, and a retry of run 101 then wrote its tree B over it
+  and passed its check. Every upload that succeeds now leaves its run on `v1/index.json`
+  (the stamp: the same bytes written again with the run in its metadata, when the table of
+  contents was not rewritten and does not record the run already), and the check, given
+  the run, requires it; S3's ETag stays the same, only `Last-Modified` moves. Tests: the
+  three-run case, the same run's retry (allowed, no write), the first upload (no stamp).
+  The README says how to put right a run recorded too high. **The publish job no longer
+  holds the lock `prices.yml` shares**: the group `runs` moved from the workflow to the
+  first job (GitHub's groups are the repository's, jobs and workflow runs alike), and
+  `publish` holds `api-bucket` alone. So the next run's first job can start while the run
+  before publishes, and the baseline lookup now searches runs of every status (an artifact
+  v4 can be downloaded as soon as it is kept); a test holds it to a run still going. The
+  turn-on steps now require a tested route by which a failed publish reaches the
+  maintainer. Not deployed; the switch stays off.
 - _(agents: append your entry here, one per merged benchmark)_
