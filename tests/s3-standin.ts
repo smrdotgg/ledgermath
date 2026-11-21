@@ -17,6 +17,11 @@
  * x-amz-checksum-sha256 it is sent once it holds for the body (400 BadDigest
  * otherwise); a HEAD or GET gives the Cache-Control back, and the checksum
  * only when asked with x-amz-checksum-mode: ENABLED.
+ *
+ * Each object's Last-Modified is when it was written, by the stand-in's
+ * clock (now), which stays at 2026-11-14T00:00:00Z unless a test moves it.
+ * A test can make every answer take latencyMs, and read the most requests
+ * the stand-in was answering at once (peakInFlight).
  */
 
 import { createHash } from "node:crypto";
@@ -34,7 +39,12 @@ export interface StoredObject {
 	checksumSha256?: string;
 	/** The x-amz-meta-* headers it was written with, by their lower-case names. */
 	metadata?: Record<string, string>;
+	/** When it was written, by the stand-in's clock; absent, the clock's first time. */
+	lastModified?: Date;
 }
+
+/** The stand-in's clock until a test moves it, and the Last-Modified of an object put without one. */
+const FIRST_TIME = new Date("2026-11-14T00:00:00Z");
 
 export interface StandinRequest {
 	method: string;
@@ -93,6 +103,13 @@ export class S3Standin {
 	fault: ((request: StandinRequest) => Response | undefined) | undefined;
 	/** Secrets by key ID: a PUT signed in the Authorization header by one of these keys must have a right signature. */
 	readonly secrets = new Map<string, string>();
+	/** The clock a write's Last-Modified is read from. */
+	now: () => Date = () => FIRST_TIME;
+	/** How long each answer waits before it is given. */
+	latencyMs = 0;
+	/** The most requests being answered at once, so far. */
+	peakInFlight = 0;
+	private inFlight = 0;
 	private server: ReturnType<typeof Bun.serve> | undefined;
 
 	/** A bucket that the keys in `readers` may read and those in `writers` may read and write. */
@@ -120,7 +137,18 @@ export class S3Standin {
 	}
 
 	start(): void {
-		this.server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: (request) => this.answer(request) });
+		this.server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: (request) => this.timed(request) });
+	}
+
+	private async timed(request: Request): Promise<Response> {
+		this.inFlight++;
+		this.peakInFlight = Math.max(this.peakInFlight, this.inFlight);
+		try {
+			if (this.latencyMs > 0) await Bun.sleep(this.latencyMs);
+			return await this.answer(request);
+		} finally {
+			this.inFlight--;
+		}
 	}
 
 	stop(): void {
@@ -153,7 +181,7 @@ export class S3Standin {
 			const contents = page
 				.map((name) => {
 					const object = bucket.objects.get(name) as StoredObject;
-					return `<Contents><Key>${xml(name)}</Key><LastModified>2026-11-14T00:00:00.000Z</LastModified><ETag>&quot;${bucket.opaqueEtags ? "e".repeat(32) : md5(object.bytes)}&quot;</ETag><Size>${object.bytes.length}</Size><StorageClass>STANDARD</StorageClass></Contents>`;
+					return `<Contents><Key>${xml(name)}</Key><LastModified>${(object.lastModified ?? FIRST_TIME).toISOString()}</LastModified><ETag>&quot;${bucket.opaqueEtags ? "e".repeat(32) : md5(object.bytes)}&quot;</ETag><Size>${object.bytes.length}</Size><StorageClass>STANDARD</StorageClass></Contents>`;
 				})
 				.join("");
 			const next = truncated ? `<NextContinuationToken>${xml(page.at(-1) as string)}</NextContinuationToken>` : "";
@@ -169,7 +197,7 @@ export class S3Standin {
 			"content-type": stored.contentType,
 			"content-length": String(stored.bytes.length),
 			etag: `"${etag(stored.bytes)}"`,
-			"last-modified": new Date("2026-11-14T00:00:00Z").toUTCString(),
+			"last-modified": (stored.lastModified ?? FIRST_TIME).toUTCString(),
 			...(stored.cacheControl === undefined ? {} : { "cache-control": stored.cacheControl }),
 			...(stored.metadata ?? {}),
 			...(checksumMode && stored.checksumSha256 !== undefined ? { "x-amz-checksum-sha256": stored.checksumSha256, "x-amz-checksum-type": "FULL_OBJECT" } : {}),
@@ -200,6 +228,7 @@ export class S3Standin {
 				bytes: body,
 				contentType: request.headers.get("content-type") ?? "binary/octet-stream",
 				writes: (object?.writes ?? 0) + 1,
+				lastModified: this.now(),
 				...(cacheControl === null ? {} : { cacheControl }),
 				...(checksum === null ? {} : { checksumSha256: checksum }),
 				...(Object.keys(metadata).length === 0 ? {} : { metadata }),

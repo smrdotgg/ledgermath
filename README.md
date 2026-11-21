@@ -33,7 +33,7 @@ as the base the build started from (last section).
 | `scripts/copy-bucket.ts` | Copies one `-runs` bucket into another, across two accounts, only ever adding, and checks the copy (`scripts/lib/bucket-copy.ts`): the move to the production account |
 | `scripts/derive.ts`, `scripts/build-page.ts` | Run the Methods over the Runs; turn their Derivations into the page |
 | `scripts/build-api.ts`, `scripts/check-api.ts`, `scripts/previous-api.ts` | Cut the Derivations and the price files into the data API's static files, laid out as they will be served; check what was written against its schemas, its links, the Derivations and the Runs repository, and against the tree before it; fetch that tree, the one the latest run that checked its tree kept (`scripts/lib/api.ts`, `scripts/lib/api-check.ts`; section "The data API") |
-| `scripts/alarm.ts` | Opens, or comments on, one issue when a watched Series has had no Run for 48 hours, or the newest price file is more than 48 hours old |
+| `scripts/alarm.ts` | Opens, or comments on, one issue when a watched Series has had no Run for 48 hours, the newest price file is more than 48 hours old, or the API bucket has missed two scheduled publishes in a row (or has no table of contents, or cannot be read) |
 | `.github/workflows/runs.yml` | On a schedule: copy, push, derive, page, the data API's files, alarm |
 | `scripts/fetch-prices.ts`, `scripts/check-prices.ts` | Make the day's price file from AWS's public price lists; check a price file by downloading its sources again and cutting them again |
 | `scripts/lib/price-rules.ts` | The selection rules, versioned: which of AWS's price records a price file keeps |
@@ -1192,13 +1192,32 @@ step each time.
 0. Before: the stage is deployed with the API bucket, `API_BUCKET` is set, and the latest
    run of the `runs` workflow passed "Check that the API bucket holds the data API's
    files" in its `publish` job ("The data API", "The API bucket"), so what goes public is
-   the current, checked tree. **And a failed `publish` job reaches the maintainer by a
-   route that has been tested**, by failing one on purpose and seeing it arrive. Today the
-   only route is GitHub's own failed-run email to whoever last changed the workflow's
-   schedule, as their notification settings allow, which nobody has tested: while the API
-   is private a stale bucket harms no reader, but once it is served, a `publish` job that
-   keeps failing leaves readers an old tree with nothing to say so. Until such a route is
-   built and tested, the state does not leave `off`.
+   the current, checked tree. **And a stale or failed publish reaches the maintainer by a
+   route that has been tested.** The route exists: the alarm ("The Runs repository, the
+   Method and the page", "The alarm", "The data API's publishing") reads the API bucket in
+   every run's first job and opens, or comments on, the alarm issue when two scheduled runs
+   in a row have each had an hour without publishing, when the bucket holds no table of
+   contents, or when it cannot be read, and, once the state leaves `off`, when `API_BUCKET`
+   is unset. Its tests cover each of those against a stand-in for S3, and the issue clearing
+   itself when publishing recovers. What no test can show is that the issue's notification
+   reaches the maintainer (GitHub notifies those who watch the repository, by web, email or
+   mobile as their settings say). Confirm it once, by hand, between two scheduled runs:
+   1. `gh variable set API_BUCKET --repo smrdotgg/ledgermath --body ledgermath-alarm-route-test`,
+      a name that is no bucket of the stage, then start the workflow by hand (Actions,
+      `runs`, "Run workflow"). Its alarm cannot read that bucket and opens the alarm issue,
+      or comments on the one open, saying "The API bucket could not be read". Its `publish`
+      job fails at its preflight, writing nothing: the role may write only the stage's own
+      API bucket.
+   2. See the notification arrive, where the maintainer expects to see it.
+   3. `gh variable set API_BUCKET --repo smrdotgg/ledgermath --body <the apiBucket output of
+      production-runs>` and start the workflow by hand again: its alarm reads the real bucket
+      and says on the issue that the data API is published (or, if two scheduled runs have
+      been missed meanwhile, that it has not been, until the publish of this run lands and
+      the next run says so), and its `publish` job publishes. Close the issue.
+
+   Until that is done, the state does not leave `off`: while the API is private a stale
+   bucket harms no reader, but once it is served, publishing that has stopped leaves
+   readers an old tree, and the alarm is what says so.
 1. Set `state: "dark"` and `RELEASED_STATE` to `"dark"`, merge, `bunx sst
    diff --stage production-runs`, then deploy that stage. It makes, and changes nothing
    else:
@@ -1453,6 +1472,11 @@ bun scripts/build-page.ts /tmp/page/derivations.json /tmp/page/index.html --requ
 bun scripts/alarm.ts --runs /tmp/ledgermath-runs --copy succeeded --dry-run --now 2026-11-13T00:00:00Z \
   --schedule-changed-at "$(git log -1 --first-parent --format=%cI origin/main -- schedule.json)" \
   --prices-since "$(git log --first-parent --reverse --format=%cI origin/main -- .github/workflows/prices.yml | sed -n 1p)"
+
+# The same, also reading the API bucket (one GET of v1/index.json), with the keys in a subshell.
+(eval "$(aws configure export-credentials --profile tabot-production --format env)" && bun scripts/alarm.ts \
+  --runs /tmp/ledgermath-runs --copy succeeded --dry-run --schedule-changed-at 2026-10-01T00:00:00Z \
+  --api-bucket "$(gh variable get API_BUCKET --repo smrdotgg/ledgermath)")
 ```
 
 Without AWS, the samples are a directory of Runs with their blobs:
@@ -1478,7 +1502,9 @@ uploads the page and both files of Derivations as the artifact `page`, builds an
 the data API's files and keeps them for a week as the artifact `api` (section "The data
 API"; to compare them with the tree an earlier run checked and kept, its token may read
 Actions), and runs the alarm with the workflow's own token. That is its first job, `runs`,
-which knows nothing of publishing. A second job, `publish`, runs after it, only when it
+which does not publish: its alarm only reads, with one `GET`, when the API bucket's table of
+contents was last written ("The alarm", below), and whatever S3 answers is reported, never a
+failure of the job. A second job, `publish`, runs after it, only when it
 succeeded and `API_BUCKET` is set, and puts the checked tree into the API bucket ("The data
 API", "The API bucket"); its failure is its own and changes nothing of the first job's
 (its caches, its artifacts, the next run's baseline). It holds its own group, `api-bucket`,
@@ -1498,7 +1524,7 @@ It needs:
 |-------|------|---------------|
 | Variable | `RUNS_AWS_ROLE_ARN` | The scheduled stage's output `runsReaderRole` (`jq -r .runsReaderRole .sst/outputs.<stage>.json` after a deploy) |
 | Variable | `RUNS_BUCKET` | The scheduled stage's output `bucket`, the bucket's name |
-| Variable | `API_BUCKET` | The scheduled stage's output `apiBucket`, once the stage is deployed with it; while unset, the `publish` job is skipped and nothing is uploaded ("The data API", "The API bucket") |
+| Variable | `API_BUCKET` | The scheduled stage's output `apiBucket`, once the stage is deployed with it; while unset, the `publish` job is skipped, nothing is uploaded and the alarm does not read the bucket ("The data API", "The API bucket") |
 | Secret | `RUNS_REPO_DEPLOY_KEY` | The private half of an SSH key whose public half is a deploy key of `smrdotgg/ledgermath-runs` **with write access** (it pushes) |
 
 For the key: `ssh-keygen -t ed25519 -N '' -C ledgermath-runs-copy -f runs-deploy-key`,
@@ -1554,6 +1580,69 @@ workflow, the merge that brought it. Without `--prices-since`, or with it empty,
 file is not reported. Whether the price files are stale is part of the state each post
 carries, so it too is written only when it changes; when they are fresh again while
 Series are still stale, the next post says so.
+
+**The data API's publishing.** With `API_BUCKET` set (the workflow passes it as
+`--api-bucket`), the same issue says when publishing has stopped
+(`scripts/lib/api-freshness.ts`). It judges by what the API bucket holds, never by any
+job's conclusion, so every way publishing can stop looks the same: the `publish` job
+failed, was skipped (its first job failed, or the variable was unset at the time) or
+cancelled, never ran, or its preflight refused the bucket. In each, the table of contents,
+`v1/index.json`, is not written again.
+
+- **The evidence is that object's `Last-Modified`.** S3 sets it, from its own clock, as the
+  object is written, and no writer can set it; the upload writes `v1/index.json` only as its
+  last act, after every phase (in the last phase when it changed, otherwise as the stamp),
+  so it moves on every upload of a new run that succeeded and on nothing else the workflow
+  does. The two other things there could lie, so they decide nothing: the run the object's
+  metadata records is whatever the uploader passed ("A run recorded too high"), and the
+  tree's own `newest_run_started_at` says when the newest Run started, which stands still
+  when the boxes do, however well publishing works. The run is named in the alarm's words,
+  linked, as a lead. `Last-Modified` moves without the workflow only when a person writes the
+  object with their own credentials (an upload by hand, the `copy-object` of "A run recorded
+  too high").
+- **The threshold is two scheduled runs in a row.** A scheduled run (00:00, 06:00, 12:00,
+  18:00 and 22:40 UTC) has missed when `v1/index.json` was last written before its
+  scheduled time and an hour has passed since that time; two missed raise the alarm. The
+  scheduled runs after the last publish are consecutive, so that is two in a row, each
+  failed or an hour late, and one late or failed run raises nothing. An hour, because the
+  runs of 2026-11-11 to 2026-11-21 started 2 to 5 minutes late and took about a minute,
+  publish included, and because it lets the 22:40 run, if it published nothing, count at
+  the 00:00 run's alarm. Counted by the schedule, not by hours, because the schedule's gaps
+  are uneven: one failed run can leave the tree 12 hours old by the time an alarm looks
+  (the 06:00 run failing, seen by the 12:00 run's), and two in a row can leave it no older
+  (the 22:40 and 00:00 runs failing, seen by the 06:00 run's). The alarm runs before its
+  own run's `publish` job, so it judges the runs before: it fires at the run after the
+  second that missed, when the tree is 12 to 18 hours old, depending on which runs failed.
+  Two failed runs followed by one that publishes before any alarm could count the second
+  raise nothing; by then the bucket is current again. A test plays every scheduled run of
+  three days, with runs 4, 30 and 50 minutes late, and finds that one failed run never
+  raises and two in a row always do, at the run after them (`tests/api-freshness.test.ts`);
+  another holds the schedule the alarm counts to the workflow's crons.
+- **A bucket with no table of contents, or one that cannot be read, is raised at once.**
+  No `v1/index.json` means no publish has ever finished there: expected only between
+  setting `API_BUCKET` to a new bucket and its first publish (the run after the change
+  raises it, since its alarm comes before its own `publish` job, and the run after that says
+  the data API is published), and otherwise a sign that the variable names another bucket.
+  A bucket that cannot be read (the role refused, the bucket missing, or a 5xx or no
+  answer three times, 2 and 4 seconds apart) means whether publishing works cannot be
+  told: the `publish` job reads it with the same role and the same variable. The read is
+  one `GET`, not a `HEAD`, because a `HEAD`'s 404 has no body to tell a missing key from a
+  missing bucket. Nothing S3 answers fails the job; each answer is a finding, in the
+  alarm's words.
+- **With `API_BUCKET` unset, the bucket is not read** and nothing is raised for it, since
+  unsetting it is how publishing is stopped on purpose ("The API bucket", "Setting it up");
+  the step summary says so. Except while `PUBLIC_API` is not `off`: then readers are served,
+  or are about to be, a tree nobody publishes, and the variable unset is itself raised.
+- **It speaks as the rest of the alarm does**: once when raised, again only when what it
+  raises changes (a stale bucket is named by when it was last written, not by how many runs
+  it has missed since), and once more, on the open issue, when the data API is published
+  again. Every pass writes what it found of the bucket to the step's summary.
+
+It reads with the first job's role, which may already list the API bucket and read its
+`v1/*` (`RunsApiUploadPolicy`); the role gains nothing. The alarm runs in the same workflow,
+so a workflow that does not run at all, or a first job that fails before the Runs
+repository is checked out (the alarm's condition), reports nothing here; GitHub's
+failed-run email is then the only word.
 
 ## Moving the schedule to the production account
 
@@ -2489,8 +2578,10 @@ checked. Its steps: "Check the API bucket before anything is written" (`scripts/
 and "Check that the API bucket holds the data API's files" (`scripts/check-api-bucket.ts
 --run`). When one fails, the `publish` job is red and the run is marked failed (GitHub's own
 failed-run email goes to whoever last changed the workflow's schedule, per their
-notification settings; there is no other alert), but the `runs` job stays green, its
-artifacts are kept, and the next run's baseline is this run's tree ("The data API").
+notification settings), but the `runs` job stays green, its artifacts are kept, and the
+next run's baseline is this run's tree ("The data API"). Publishing that stops, however it
+stops, is raised by the alarm in a later run's first job once two scheduled runs in a row
+have each had an hour without publishing ("The alarm", "The data API's publishing").
 
 **Never two at once, and never an older tree after a newer one.** The `publish` job holds
 the concurrency group `api-bucket` (never cancelled in progress), and only that: the group
@@ -2511,6 +2602,17 @@ newer: a re-run of an old `publish` job, started by hand while a newer one waits
 newer one's place in the group, which cancels it; the older tree is then published (if no
 later run is recorded) until the next run publishes. Re-run a `publish` job only when none
 is waiting.
+
+**Uploads must be serialized.** The run guard reads the bucket before the upload writes
+anything, not while it writes: two uploads that overlap in time can each pass it, and
+their writes then interleave, so the older tree can be written last and roll the bucket
+back (its table of contents, list and Series files those of the older run, until the next
+upload). Nothing in the bucket stops that; only the group `api-bucket` keeps two uploads
+apart, which is why the `publish` job holds it. So an upload by hand goes through the
+workflow, never from a laptop while a `publish` job may be running: re-run a `publish` job
+(when none is waiting), or start the workflow by hand (Actions, `runs`, "Run workflow").
+The commands below that upload from a laptop are for a bucket no `publish` job writes to:
+`API_BUCKET` unset, or naming another bucket.
 
 `scripts/upload-api.ts` writes the tree to the bucket, each file at its own path as key:
 
@@ -2570,6 +2672,23 @@ the tree's SHA-256, size, `Content-Type` and `Cache-Control`; and, given the run
 uploaded it (`--run`, as the `publish` job passes it), that the table of contents records
 that run and no object a later one, so a stamp that did not happen fails the job. Each step
 writes what it did, or why it stopped, to the step summary.
+
+**Requests and time.** Each of the `publish` job's three steps (the preflight, the upload,
+the check) lists the whole bucket and sends one `HEAD` per file of the tree, so a run makes
+three passes: 3 `HEAD`s per file of the tree and 3 listings of the whole bucket (a listing
+is one request per 1,000 keys), and a `PUT` per file written, with at most one more for the
+stamp. For the tree of 391 files that is 1,173 `HEAD`s and 3 listing requests a round. The
+first publish, run 44852356733 on 2026-11-21, wrote all 391 files: the preflight took 1.7 s,
+the upload 4.3 s and the check 1.8 s, so at least 230 `HEAD`s a second at eight at once
+(those times include reading and hashing the 46.6 MB tree). At that rate a pass over a
+year's tree (about 2,600 files) takes about 11 s, and the job's 15 minutes hold the three
+passes of roughly 60,000 files. A test holds the counts to the number of files, without
+AWS: it runs the `publish` job's own three commands, read from the workflow, against the
+stand-in for S3, for trees of two sizes, for a first publish, a round that changed one
+Series and a round that changed nothing, and requires exactly these counts, with never more
+than eight requests at once (`tests/api-upload.test.ts`); a fourth pass, a second `HEAD` per
+file or a listing per file fails it. Time itself needs AWS: time a publish again when the
+tree is several times larger (each step's summary gives its milliseconds).
 
 **A key the tree does not have.** The preflight step stopped, nothing was written, and its
 summary lists the keys; the published files are those of the last upload that succeeded,
@@ -2652,24 +2771,34 @@ gh variable set API_BUCKET --repo smrdotgg/ledgermath --body <the apiBucket outp
 ```
 
 The next run of the workflow uploads every file (all new), the one after writes only what
-changed. To stop the upload, `gh variable delete API_BUCKET --repo smrdotgg/ledgermath`.
+changed. That first run's alarm, which comes before its own `publish` job, finds a new
+bucket with no table of contents and raises it on the alarm issue ("The alarm", "The data
+API's publishing"): expected, and the run after says the data API is published. To stop
+the upload, `gh variable delete API_BUCKET --repo smrdotgg/ledgermath`; the alarm then stops
+reading the bucket and raises nothing for it (while `PUBLIC_API` is `off`).
 
 ```bash
 # Locally, with the profile of the stage whose bucket it is, in a subshell, so that this shell keeps no keys.
 # --run is the id of the run whose artifact api /tmp/api is (it is refused if a later run wrote to the bucket).
+# The preflight and the check only read, and are safe at any time.
 (eval "$(aws configure export-credentials --profile tabot-production --format env)" && bun scripts/upload-api.ts --tree /tmp/api --bucket <apiBucket> --run <run id> --preflight)
-(eval "$(aws configure export-credentials --profile tabot-production --format env)" && bun scripts/upload-api.ts --tree /tmp/api --bucket <apiBucket> --run <run id>)
 (eval "$(aws configure export-credentials --profile tabot-production --format env)" && bun scripts/check-api-bucket.ts --tree /tmp/api --bucket <apiBucket> --run <run id>)
+# The upload writes: only to a bucket no publish job writes to (API_BUCKET unset, or naming another bucket).
+# Uploads must be serialized ("Uploads must be serialized", above); to the scheduled stage's bucket, go through the workflow.
+(eval "$(aws configure export-credentials --profile tabot-production --format env)" && bun scripts/upload-api.ts --tree /tmp/api --bucket <apiBucket> --run <run id>)
 ```
 
 **What it costs**, at the prices of AWS's Price List API on 2026-11-19 (us-east-2): S3
 Standard storage $0.023 per GB-month, so the 46.6 MB tree is about $0.001 a month and a
-year's growth (about 1.8 GB) about $0.04; `PUT` $0.005 per 1,000, and a round writes the
-Series files and month files that gained a Run, the list and the table of contents, at most
-about 380 files, so at five rounds a day at most about 57,000 a month, $0.29; `HEAD` and
-`GET` $0.0004 per 1,000, two `HEAD`s per file per round (the upload's and the check's), so
-about 120,000 a month now, $0.05, growing with the tree (about 2,600 files a year on, 780,000
-a month, $0.31). Transfer into S3 is free.
+year's growth (about 1.8 GB) about $0.04; `PUT` and `LIST` $0.005 per 1,000, and a round
+writes the Series files and month files that gained a Run, the list and the table of
+contents, at most about 380 files, so at five rounds a day at most about 57,000 `PUT`s a
+month, $0.29, while the three listings a round add 450 requests a month (1,350 a year on, at
+three pages each), under a cent; `HEAD` and `GET` $0.0004 per 1,000, three `HEAD`s per file
+per round (the preflight's, the upload's and the check's: "Requests and time", above), so
+about 176,000 a month for today's 391 files, $0.07, growing with the tree (about 2,600 files
+a year on, 1,170,000 a month, $0.47), and the alarm's one `GET` a round, 150 a month.
+Transfer into S3 is free.
 
 ## The website (`site/`)
 

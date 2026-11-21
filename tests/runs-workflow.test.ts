@@ -3,6 +3,8 @@ import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { RUNS_SCHEDULE_UTC } from "../scripts/lib/api-freshness";
+
 // They read the workflows; on a loaded machine even that can take longer than bun's five-second default.
 setDefaultTimeout(60_000);
 
@@ -174,10 +176,17 @@ describe("the runs workflow", () => {
 		expect(text).not.toMatch(/aws s3 (cp|sync)|s3:\/\/|sst deploy|vercel/i);
 	});
 
-	test("the first job knows nothing of publishing: no step of it names the API bucket, uploads or checks a bucket of the tree, and the alarm is its last step, within its own 30 minutes", () => {
-		const forbidden = /API_BUCKET|upload-api|check-api-bucket|download-artifact|api-bucket/;
-		for (const step of steps) expect({ step: step.name ?? step.uses ?? step.run, publishing: forbidden.test(JSON.stringify(step)) }).toEqual({ step: step.name ?? step.uses ?? step.run, publishing: false });
-		expect(JSON.stringify(job.env)).not.toMatch(forbidden);
+	test("the first job does not publish: no step of it uploads or checks a bucket of the tree, only the alarm names the API bucket, to read it, and the alarm is its last step, within its own 30 minutes", () => {
+		const publishing = /upload-api|check-api-bucket|download-artifact|group: api-bucket/;
+		const alarm = steps.find((step) => step.run?.includes("scripts/alarm.ts")) as Step;
+		for (const step of steps) {
+			const named = step === alarm ? publishing.test(JSON.stringify(step)) : /API_BUCKET|api-bucket/.test(JSON.stringify(step)) || publishing.test(JSON.stringify(step));
+			expect({ step: step.name ?? step.uses ?? step.run, publishing: named }).toEqual({ step: step.name ?? step.uses ?? step.run, publishing: false });
+		}
+		// The alarm is given the bucket's name and nothing else of publishing; reading it never fails the step (tests/api-freshness.test.ts).
+		expect(alarm.env?.API_BUCKET).toBe("${{ vars.API_BUCKET }}");
+		expect(JSON.stringify(job.env)).not.toMatch(/API_BUCKET|api-bucket/);
+		expect(JSON.stringify(job.env)).not.toMatch(publishing);
 		expect(job.needs).toBeUndefined();
 		expect(job["timeout-minutes"]).toBe(30);
 		expect(steps.at(-1)?.run).toContain("bun scripts/alarm.ts");
@@ -240,6 +249,33 @@ describe("the runs workflow", () => {
 		const alarm = steps.find((step) => step.run?.includes("scripts/alarm.ts"));
 		expect(alarm?.run).toContain('changed="$(git log -1 --first-parent --format=%cI -- schedule.json)"');
 		expect(alarm?.run).toContain('--schedule-changed-at "$changed"');
+	});
+
+	test("tells the alarm the API bucket, as API_BUCKET names it, empty when it is unset", () => {
+		const alarm = steps.find((step) => step.run?.includes("scripts/alarm.ts")) as Step;
+		expect(alarm.env?.API_BUCKET).toBe("${{ vars.API_BUCKET }}");
+		expect(alarm.run).toContain('--api-bucket "$API_BUCKET"');
+		// The same variable, by the same name, as the publish job's.
+		expect(publish.env?.API_BUCKET).toBe(alarm.env?.API_BUCKET as string);
+		// And no endpoint of its own: the tests' stand-in only.
+		expect(alarm.run).not.toContain("--api-endpoint");
+	});
+
+	test("the schedule the alarm expects a publish by is exactly the workflow's crons", () => {
+		/** The values one field of a cron takes: N, a list of them, or * or *\/N over 0 to max. */
+		const field = (text: string, max: number): number[] => {
+			const every = /^\*(?:\/(\d+))?$/.exec(text);
+			if (every !== null) return Array.from({ length: max + 1 }, (_, value) => value).filter((value) => value % Number(every[1] ?? 1) === 0);
+			if (!/^\d+(,\d+)*$/.test(text)) throw new Error(`a cron field this test does not read: ${text}`);
+			return text.split(",").map(Number);
+		};
+		const starts = workflow.on.schedule.flatMap(({ cron }) => {
+			const [minute, hour, day, month, weekday] = cron.split(" ") as [string, string, string, string, string];
+			// Every day: the alarm counts a scheduled run on each.
+			expect([day, month, weekday]).toEqual(["*", "*", "*"]);
+			return field(hour, 23).flatMap((h) => field(minute, 59).map((m) => `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`));
+		});
+		expect([...starts].sort()).toEqual([...RUNS_SCHEDULE_UTC]);
 	});
 
 	test("tells the alarm when the prices workflow first existed on main, from the whole history", () => {

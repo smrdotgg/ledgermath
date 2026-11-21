@@ -1213,4 +1213,34 @@ A migrated benchmark is done only when **all** of these hold:
   v4 can be downloaded as soon as it is kept); a test holds it to a run still going. The
   turn-on steps now require a tested route by which a failed publish reaches the
   maintainer. Not deployed; the switch stays off.
+- **2026-11-21** — A stale or failed publish now reaches the maintainer the way stale
+  data does (ADR-0032, README "The alarm", "The data API's publishing"). **The alarm reads
+  the API bucket** in every run's first job, with the role's existing read: one `GET` of
+  `v1/index.json`, whose `Last-Modified` S3 sets as the upload's last act writes it (in the
+  last phase or as the stamp), so it moves on every successful upload of a new run and on
+  nothing else the workflow does; the run in its metadata (which an upload by hand can set
+  to anything) and the tree's `newest_run_started_at` (which stands still when the boxes
+  do) decide nothing. **It raises two scheduled runs in a row** (00:00, 06:00, 12:00, 18:00,
+  22:40 UTC, held to the crons by a test) that have each had an hour since their time
+  without a publish, counted by the schedule because its gaps are uneven: one failed run
+  can leave the tree as old as two in a row, 12 hours. It fires at the run after the second
+  miss, the tree 12 to 18 hours old, and a test plays three days of runs at 4, 30 and 50
+  minutes late to hold one miss silent and two always raised. A bucket with no table of
+  contents, or one it cannot read (a `GET`, so a missing bucket is not taken for an empty
+  one; a 5xx or no answer tried three times), is raised at once; nothing S3 answers fails
+  the job. `API_BUCKET` unset raises nothing while `PUBLIC_API` is `off`, and is raised in
+  any other state. Same issue, same rule of writing only on change, and once when the data
+  API is published again; each pass writes what it found to the step summary. The workflow
+  passes the variable to the alarm step only; the first job still writes nothing to the
+  bucket. Turn-on step 0 now says what exists and gives the one thing left to do by hand:
+  point `API_BUCKET` at a name that is no bucket of the stage, start a run, see the
+  notification arrive, put it back. **README corrections from #72's last verification**:
+  uploads must be serialized (the run guard reads before writing, not during), so an upload
+  by hand goes through the workflow; and a run makes three passes, 3 `HEAD`s per file and 3
+  listings, not two (about 176,000 `HEAD`s a month now, $0.07; $0.47 a year on), with the
+  first publish's timings (391 files: preflight 1.7 s, upload 4.3 s, check 1.8 s). A test runs
+  the `publish` job's own commands, read from the workflow, against the stand-in for S3 for
+  trees of two sizes and requires exactly those counts and at most eight requests at once,
+  and the README to state the same counts. ADR-0031's costs and its decision 7 point at the
+  change. Not deployed; nothing in AWS changes; the switch stays off.
 - _(agents: append your entry here, one per merged benchmark)_

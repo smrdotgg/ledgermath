@@ -18,6 +18,7 @@ import { apiBucketArgs, apiUploadPolicy, TREE_CACHE_CONTROL, TREE_CONTENT_TYPE, 
 import { readPolicy } from "../infra/runs/github-role";
 import { buildApi, DEFAULT_BASE, readApiSchemas, readBootSummaries, readPriceFiles } from "../scripts/lib/api";
 import { CEILINGS } from "../scripts/lib/api-check";
+import { API_SCHEMAS } from "../scripts/lib/api-schemas";
 import {
 	checkBucket,
 	checksumHeader,
@@ -833,5 +834,101 @@ describe("the scripts", () => {
 		const copy = fresh("copy");
 		cpSync(tree, copy, { recursive: true });
 		expect(readTree(copy).map((file) => file.key)).toEqual(readTree(tree).map((file) => file.key));
+	});
+});
+
+/**
+ * What the README states a run of the publish job asks S3 ("The API bucket",
+ * "What it costs"): each of its three steps lists the whole bucket and sends
+ * one HEAD per file of the tree. Held here, without AWS, so the passes cannot
+ * quietly grow: a fourth pass, a second HEAD per file, or a listing per file
+ * would change these counts.
+ */
+const HEADS_PER_FILE = 3;
+const LISTINGS_PER_RUN = 3;
+
+describe("the requests a run of the publish job makes, as the README states them", () => {
+	let standin: S3Standin;
+	beforeEach(() => {
+		standin = new S3Standin();
+		standin.start();
+		standin.bucket(BUCKET, { writers: [KEY_ID] });
+		standin.secrets.set(KEY_ID, SECRET);
+	});
+	afterEach(() => standin.stop());
+
+	/** A tree of the build's kinds, its contents beside the point: the schemas, `series` Series files with a month file each, the list and the table of contents. */
+	function treeOf(series: number, round = 1): Map<string, Uint8Array> {
+		const json = (value: unknown): Uint8Array => new TextEncoder().encode(JSON.stringify(value));
+		const tree = new Map<string, Uint8Array>();
+		for (const { name } of API_SCHEMAS) tree.set(`v1/schemas/${name}.schema.json`, json({ name }));
+		for (let i = 0; i < series; i++) {
+			const id = i.toString(16).padStart(12, "0");
+			tree.set(`v1/series/${id}.json`, json({ id, round: i === 0 ? round : 1 }));
+			tree.set(`v1/series/${id}/2026-11.json`, json({ id, month: "2026-11", round: i === 0 ? round : 1 }));
+		}
+		tree.set("v1/series.json", json({ series, round }));
+		tree.set("v1/index.json", json({ series, round }));
+		return tree;
+	}
+
+	/** The publish job's own commands, from the workflow, each with this tree, bucket and run, and the stand-in's endpoint. */
+	const workflow = Bun.YAML.parse(readFileSync(join(ROOT, ".github", "workflows", "runs.yml"), "utf8")) as { jobs: { publish: { steps: Array<{ run?: string }> } } };
+	const commands = workflow.jobs.publish.steps.flatMap((step) => (step.run?.trim().startsWith("bun scripts/") ? [step.run.trim()] : []));
+	const argv = (command: string, tree: string, run: number): string[] => {
+		const words = command.split(/\s+/).map((word) => word.replace(/^"(.*)"$/, "$1"));
+		return [
+			...words.map((word, i) => (word === "$API_BUCKET" ? BUCKET : word === "$GITHUB_RUN_ID" ? String(run) : words[i - 1] === "--tree" ? tree : word.startsWith("scripts/") ? join(ROOT, word) : word)),
+			"--endpoint",
+			standin.url,
+		];
+	};
+
+	/** One run of the publish job: its commands in order, each to succeed. The requests it made, by kind. */
+	async function publishJob(tree: string, run: number): Promise<{ heads: number; listings: number; puts: number; other: number }> {
+		const from = standin.requests.length;
+		for (const command of commands) {
+			const child = Bun.spawn(argv(command, tree, run), {
+				env: { PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? "", AWS_ACCESS_KEY_ID: KEY_ID, AWS_SECRET_ACCESS_KEY: SECRET, AWS_SESSION_TOKEN: "token" },
+				stdout: "pipe",
+				stderr: "pipe",
+			});
+			const [stderr, exitCode] = await Promise.all([new Response(child.stderr).text(), child.exited]);
+			expect({ command, exitCode, stderr }).toEqual({ command, exitCode: 0, stderr: "" });
+		}
+		const made = standin.requests.slice(from);
+		const heads = made.filter((request) => request.method === "HEAD").length;
+		const listings = made.filter((request) => request.method === "GET" && request.key === "").length;
+		const puts = made.filter((request) => request.method === "PUT").length;
+		return { heads, listings, puts, other: made.length - heads - listings - puts };
+	}
+
+	test("the job runs three passes over the bucket: the preflight, the upload and the check", () => {
+		expect(commands.map((command) => command.split(" ")[1])).toEqual(["scripts/upload-api.ts", "scripts/upload-api.ts", "scripts/check-api-bucket.ts"]);
+	});
+
+	test(`${HEADS_PER_FILE} HEADs per file of the tree and ${LISTINGS_PER_RUN} listings of the whole bucket a run, at any size: linear in the files, at most 8 requests at once`, async () => {
+		const pages = (keys: number): number => Math.max(1, Math.ceil(keys / standin.pageSize));
+		for (const series of [7, 30]) {
+			const files = treeOf(series).size;
+			const run = 44_852_356_733 + series * 10;
+			// The first publish, to an empty bucket: every file new; the preflight and the upload list an empty bucket, the check a full one.
+			expect(await publishJob(writeTree(treeOf(series)), run)).toEqual({ heads: HEADS_PER_FILE * files, listings: 2 * pages(0) + pages(files), puts: files, other: 0 });
+			// A round that changed one Series: its file and month file, the list and the table of contents written.
+			expect(await publishJob(writeTree(treeOf(series, 2)), run + 1)).toEqual({ heads: HEADS_PER_FILE * files, listings: LISTINGS_PER_RUN * pages(files), puts: 4, other: 0 });
+			// A round that changed nothing: only the stamp. Slowed, to see the requests overlap, and never more than eight at once.
+			standin.latencyMs = 20;
+			standin.peakInFlight = 0;
+			expect(await publishJob(writeTree(treeOf(series, 2)), run + 2)).toEqual({ heads: HEADS_PER_FILE * files, listings: LISTINGS_PER_RUN * pages(files), puts: 1, other: 0 });
+			expect(standin.peakInFlight).toBeGreaterThan(1);
+			expect(standin.peakInFlight).toBeLessThanOrEqual(8);
+			standin.latencyMs = 0;
+			standin.buckets.get(BUCKET)?.objects.clear();
+		}
+	});
+
+	test("the README states the same counts", () => {
+		const readme = readFileSync(join(ROOT, "README.md"), "utf8").replace(/\s+/g, " ");
+		expect(readme).toContain(`${HEADS_PER_FILE} \`HEAD\`s per file of the tree and ${LISTINGS_PER_RUN} listings of the whole bucket`);
 	});
 });

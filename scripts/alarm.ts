@@ -4,7 +4,8 @@
  * the alarm issue already open instead of opening a second.
  *
  *     bun scripts/alarm.ts --runs DIR --copy succeeded|failed --schedule-changed-at ISO-8601
- *         [--prices-since ISO-8601] [--now 2026-11-12T22:40:00Z] [--schedule FILE] [--dry-run]
+ *         [--prices-since ISO-8601] [--api-bucket NAME] [--now 2026-11-12T22:40:00Z] [--schedule FILE]
+ *         [--dry-run] [--api-endpoint URL]
  *
  * A watched Series is one schedule.json runs (benchmark, params, build) on one
  * of its targets (instance type and zone), where the entry's instance_types,
@@ -37,17 +38,38 @@
  * main's first-parent line that touched .github/workflows/prices.yml). Without
  * --prices-since, or with it empty, an absence of price files is not reported.
  *
+ * And it watches the data API's publishing (scripts/lib/api-freshness.ts):
+ * with --api-bucket naming the API bucket (the workflow passes API_BUCKET),
+ * it reads when the bucket's table of contents, v1/index.json, was last
+ * written, by S3's own clock, and says so in the same issue, by the same rule,
+ * when two scheduled runs of the workflow in a row have each had an hour
+ * since their scheduled time and none has published; also when the bucket
+ * holds no table of contents, or cannot be read. Reading the bucket never
+ * fails the alarm: whatever S3 answers is a finding. The workflow runs the
+ * alarm before its own run's publish job, so it judges the runs before.
+ * With --api-bucket empty or absent (API_BUCKET unset) the bucket is not
+ * read and nothing is raised for it, unless PUBLIC_API is not "off": then
+ * readers are served a tree nobody publishes, and that is raised. What it
+ * found of the bucket goes to the step's summary ($GITHUB_STEP_SUMMARY)
+ * when there is one. Credentials come from the environment, as
+ * aws-actions/configure-aws-credentials sets them; --api-endpoint is a
+ * stand-in for S3, for the tests.
+ *
  * GitHub is reached through IssueTracker, so tests use a fake. The real one
  * reads GITHUB_REPOSITORY and GITHUB_TOKEN, as a workflow sets them.
  * --dry-run prints what would be posted and posts nothing.
  */
 
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, relative, resolve, sep } from "node:path";
 import { parseArgs } from "node:util";
 
+import { PUBLIC_API } from "../infra/runs/public-blobs";
 import { appliesTo, parseSchedule, type Schedule } from "../infra/runs/schedule";
+import { RUNS_REGION } from "../infra/runs/stages";
 import { canonicalJson, compareText, type ParamValue, type RunFile } from "../methods/run";
+import { type ApiBucketCheck, checkApiBucket, isStale, MISSED_TO_RAISE, PUBLISH_GRACE_MS } from "./lib/api-freshness";
+import { S3ApiStore, STAMP_KEY } from "./lib/api-upload";
 import { PRICE_FILE_PATH } from "./lib/prices";
 import { readRunFiles } from "./lib/run-files";
 import { RUNS_REPOSITORY_BLOB_URL } from "./lib/runs-repository";
@@ -57,7 +79,9 @@ export const MAX_AGE_MS = 48 * 3_600_000;
 export const ALARM_MARKER = "<!-- ledgermath-alarm: stale-series -->";
 /** Begins the hidden marker each alarm post ends with: the state it reported. */
 export const STATE_MARKER = "<!-- ledgermath-alarm-state: ";
-export const ALARM_TITLE = "Stale: no Run, or no price file, for 48 hours";
+export const ALARM_TITLE = "Stale: no Run or price file for 48 hours, or the data API not published";
+/** Where a run of this repository's workflows is shown: a run id the API bucket records is linked here. */
+export const ACTIONS_RUN_URL = "https://github.com/smrdotgg/ledgermath/actions/runs/";
 
 export interface WatchedSeries {
 	benchmark: string;
@@ -224,11 +248,36 @@ export interface AlarmState {
 	copy_failed: boolean;
 	/** Present only when the price files are stale: the newest one's path, or "none". Posts from before prices were watched lack it. */
 	stale_prices?: string;
+	/** Present only when the API bucket is raised: apiAlarmState(). Posts from before the bucket was watched lack it. */
+	stale_api?: string;
 }
 
-export function alarmState(stale: readonly StaleSeries[], copyFailed: boolean, prices: StalePrices | null = null): AlarmState {
+/**
+ * What the alarm raises of the API bucket, as the state its posts carry, or
+ * null when nothing: stale (MISSED_TO_RAISE scheduled runs missed), with no
+ * table of contents, unreadable, or unset while PUBLIC_API serves (or is on
+ * its way to serving) what it holds. Stable while nothing changes: a stale
+ * bucket is named by when it was last written, not by how many runs it has
+ * missed since.
+ */
+export function apiAlarmState(check: ApiBucketCheck | null, publicApiState: string): string | null {
+	if (check === null) return null;
+	switch (check.kind) {
+		case "unset":
+			return publicApiState === "off" ? null : `unset while PUBLIC_API is ${publicApiState}`;
+		case "published":
+			return isStale(check) ? `stale since ${check.lastModified}` : null;
+		case "empty":
+			return "empty";
+		case "unreadable":
+			return `unreadable: ${check.code}`;
+	}
+}
+
+export function alarmState(stale: readonly StaleSeries[], copyFailed: boolean, prices: StalePrices | null = null, api: string | null = null): AlarmState {
 	const state: AlarmState = { stale: stale.map(describeSeries).sort(compareText), copy_failed: copyFailed };
 	if (prices !== null) state.stale_prices = prices.newest?.path ?? "none";
+	if (api !== null) state.stale_api = api;
 	return state;
 }
 
@@ -242,6 +291,7 @@ export function stateOf(post: string): AlarmState | null {
 		if (!Array.isArray(state.stale) || typeof state.copy_failed !== "boolean") return null;
 		const parsed: AlarmState = { stale: state.stale.map(String), copy_failed: state.copy_failed };
 		if (typeof state.stale_prices === "string") parsed.stale_prices = state.stale_prices;
+		if (typeof state.stale_api === "string") parsed.stale_api = state.stale_api;
 		return parsed;
 	} catch {
 		return null;
@@ -252,17 +302,82 @@ const COPY_FAILED =
 	"**The copy job failed on this pass.** The Runs repository may be behind the bucket, so what follows may be out of " +
 	"date, and a Series listed may in fact be getting Runs. Look at the copy job first.";
 
-/** The text posted: the stale Series, each with its newest Run and how old it is, the price files if stale, and the state marker. */
-export function alarmText(
-	stale: readonly StaleSeries[],
-	now: Date,
-	copyFailed: boolean,
-	runUrlBase = RUNS_REPOSITORY_BLOB_URL,
-	prices: StalePrices | null = null,
-	pricesWatched = false,
+/** A time as the alarm writes a scheduled start: 2026-11-21 06:00 UTC. */
+const minuteUtc = (iso: string): string => `${iso.slice(0, 10)} ${iso.slice(11, 16)} UTC`;
+
+/** ", by run [N](its page)", or nothing when the object records no run. The run is a lead: an upload by hand can record any. */
+const byRun = (run: number | null): string => (run === null ? "" : `, by run [${run}](${ACTIONS_RUN_URL}${run})`);
+
+/** The paragraph raising the API bucket, by its state (apiAlarmState), or nothing. */
+function apiRaised(check: ApiBucketCheck | null, state: string | null, publicApiState: string, hours: (iso: string) => string): string[] {
+	if (check === null || state === null) return [];
+	switch (check.kind) {
+		case "unset":
+			return [
+				`**\`API_BUCKET\` is unset while \`PUBLIC_API\` is \`${publicApiState}\`.** The \`publish\` job is skipped, so nothing is published and readers are served the tree last published, and the API bucket is not watched. Set it again to the scheduled stage's \`apiBucket\` output (README, "The API bucket", "Setting it up").`,
+			];
+		case "published": {
+			const shown = check.missed.slice(0, 5).map(minuteUtc).join(", ");
+			const more = check.missed.length > 5 ? `, and ${check.missed.length - 5} more` : "";
+			return [
+				`**The data API has not been published for ${check.missed.length} scheduled runs in a row.** In \`${check.bucket}\`, \`${STAMP_KEY}\` was last written at ${check.lastModified}, ${hours(check.lastModified)} hours ago${byRun(check.run)}, and no run since has published: not the runs scheduled at ${shown}${more}, each given ${PUBLISH_GRACE_MS / 3_600_000} hour. ` +
+					`Look at the \`publish\` job of the latest runs (Actions, \`runs\`): failed, skipped (its first job failed, or \`API_BUCKET\` was unset), cancelled, or not there at all. ` +
+					`(Raised after ${MISSED_TO_RAISE} missed in a row: README, "The alarm".)`,
+			];
+		}
+		case "empty":
+			return [
+				`**The API bucket holds no table of contents.** \`API_BUCKET\` names \`${check.bucket}\`, which holds no \`${STAMP_KEY}\`, so no publish has ever finished there. If \`API_BUCKET\` was set since the last run, this is expected: this run's own \`publish\` job comes after this check, and the next run says here whether it published. Otherwise look at the latest runs' \`publish\` jobs, and at whether \`API_BUCKET\` is the scheduled stage's \`apiBucket\` output.`,
+			];
+		case "unreadable":
+			return [
+				`**The API bucket could not be read**, so whether the data API is being published cannot be told. ${check.reason}${check.attempts > 1 ? ` (tried ${check.attempts} times)` : ""}. The \`publish\` job reads it with the same role and the same \`API_BUCKET\`. Look at whether \`API_BUCKET\` is the scheduled stage's \`apiBucket\` output, and at the role's \`RunsApiUploadPolicy\`.`,
+			];
+	}
+}
+
+/** What is well of the API bucket, as a clause of the summary: when it was last published, or that it is not watched. */
+function apiWell(check: ApiBucketCheck | null): string {
+	if (check?.kind === "published") return `the data API was last published at ${check.lastModified}${byRun(check.run)}`;
+	return "`API_BUCKET` is unset, so the API bucket is not watched";
+}
+
+/** Said once, when the API bucket was raised and no longer is, while something else still is. */
+function apiAgain(check: ApiBucketCheck): string {
+	if (check.kind === "published") return `The data API is published again: it was last published at ${check.lastModified}${byRun(check.run)}.`;
+	return "`API_BUCKET` is unset now, so the API bucket is no longer watched.";
+}
+
+export interface AlarmTextOptions {
+	stale: readonly StaleSeries[];
+	now: Date;
+	copyFailed: boolean;
+	runUrlBase?: string;
+	prices?: StalePrices | null;
+	pricesWatched?: boolean;
 	/** Whether the last post said the price files were stale. */
-	pricesWereStale = false,
-): string {
+	pricesWereStale?: boolean;
+	/** What the check of the API bucket found; null or absent when it was not asked. */
+	api?: ApiBucketCheck | null;
+	/** PUBLIC_API.state. */
+	publicApiState?: string;
+	/** Whether the last post raised the API bucket. */
+	apiWasRaised?: boolean;
+}
+
+/** The text posted: the stale Series, each with its newest Run and how old it is, the price files if stale, the API bucket if raised, and the state marker. */
+export function alarmText(options: AlarmTextOptions): string {
+	const { stale, now, copyFailed } = options;
+	const runUrlBase = options.runUrlBase ?? RUNS_REPOSITORY_BLOB_URL;
+	const prices = options.prices ?? null;
+	const pricesWatched = options.pricesWatched ?? false;
+	const pricesWereStale = options.pricesWereStale ?? false;
+	const api = options.api ?? null;
+	const publicApiState = options.publicApiState ?? "off";
+	const apiWasRaised = options.apiWasRaised ?? false;
+	const apiState = apiAlarmState(api, publicApiState);
+	// Said only once the bucket is read, or when it was raised before and no longer is.
+	const apiWatched = api !== null && (api.kind !== "unset" || apiWasRaised);
 	const hours = (startedAt: string): string => ((now.getTime() - Date.parse(startedAt)) / 3_600_000).toFixed(1);
 	const lines = stale
 		.slice()
@@ -272,15 +387,18 @@ export function alarmText(
 				? `- \`${describeSeries(series)}\`: no Run at all`
 				: `- \`${describeSeries(series)}\`: newest Run [${series.newest.id}](${runUrlBase}${series.newest.path}) started ${series.newest.startedAt}, ${hours(series.newest.startedAt)} hours ago`,
 		);
+	const well = ["every watched Series has had a Run in the last 48 hours again"];
+	if (pricesWatched) well.push("the newest price file is no more than 48 hours old");
+	if (apiWatched) well.push(apiWell(api));
 	const summary =
 		stale.length > 0
 			? `Checked at ${now.toISOString()}: ${stale.length} watched Series ${stale.length === 1 ? "has" : "have"} had no Run for more than 48 hours.`
-			: prices !== null
+			: prices !== null || apiState !== null
 				? `Checked at ${now.toISOString()}: every watched Series has had a Run in the last 48 hours.`
-				: `Checked at ${now.toISOString()}: every watched Series has had a Run in the last 48 hours again${pricesWatched ? ", and the newest price file is no more than 48 hours old" : ""}.`;
+				: `Checked at ${now.toISOString()}: ${well.length === 1 ? well[0] : `${well.slice(0, -1).join(", ")}, and ${well.at(-1)}`}.`;
 	const pricesLine =
 		prices === null
-			? pricesWereStale && stale.length > 0
+			? pricesWereStale && (stale.length > 0 || apiState !== null)
 				? ["", "The newest price file is no more than 48 hours old again."]
 				: []
 			: prices.newest === null
@@ -292,14 +410,17 @@ export function alarmText(
 						"",
 						`**No new price file for more than 48 hours.** The newest, [${prices.newest.path}](${runUrlBase}${prices.newest.path}), was fetched at ${prices.newest.fetchedAt}, ${hours(prices.newest.fetchedAt)} hours ago. Look at the prices workflow.`,
 					];
+	const raised = apiRaised(api, apiState, publicApiState, hours);
+	const apiLine = raised.length > 0 ? ["", ...raised] : apiWasRaised && api !== null && (stale.length > 0 || prices !== null) ? ["", apiAgain(api)] : [];
 	return [
 		...(copyFailed ? [COPY_FAILED, ""] : []),
 		summary,
 		...(lines.length ? ["", ...lines] : []),
 		...pricesLine,
+		...apiLine,
 		"",
-		"A watched Series is one `schedule.json` runs on one of its targets, the instance types and zone the stage launches. Written by `scripts/alarm.ts`, which writes again only when the stale Series, whether the copy job is failing, or whether the price files are stale, change.",
-		`${STATE_MARKER}${JSON.stringify(alarmState(stale, copyFailed, prices))} -->`,
+		"A watched Series is one `schedule.json` runs on one of its targets, the instance types and zone the stage launches. Written by `scripts/alarm.ts`, which writes again only when the stale Series, whether the copy job is failing, whether the price files are stale, or what it raises of the API bucket, change.",
+		`${STATE_MARKER}${JSON.stringify(alarmState(stale, copyFailed, prices, apiState))} -->`,
 	].join("\n");
 }
 
@@ -317,15 +438,23 @@ export interface IssueTracker {
 	comment(issue: number, body: string): Promise<void>;
 }
 
+/** What a pass found: the stale Series, the price files if stale, and what it raised of the API bucket (apiAlarmState), or null. */
+interface Found {
+	stale: StaleSeries[];
+	prices: StalePrices | null;
+	api: string | null;
+}
+
 export type AlarmOutcome =
-	| { action: "none"; stale: StaleSeries[]; prices: StalePrices | null }
-	| { action: "opened"; issue: number; stale: StaleSeries[]; prices: StalePrices | null }
-	| { action: "commented"; issue: number; stale: StaleSeries[]; prices: StalePrices | null }
-	| { action: "unchanged"; issue: number; stale: StaleSeries[]; prices: StalePrices | null };
+	| ({ action: "none" } & Found)
+	| ({ action: "opened"; issue: number } & Found)
+	| ({ action: "commented"; issue: number } & Found)
+	| ({ action: "unchanged"; issue: number } & Found);
 
 const sameState = (a: AlarmState, b: AlarmState): boolean =>
 	a.copy_failed === b.copy_failed &&
 	(a.stale_prices ?? null) === (b.stale_prices ?? null) &&
+	(a.stale_api ?? null) === (b.stale_api ?? null) &&
 	a.stale.length === b.stale.length &&
 	a.stale.every((series, i) => series === b.stale[i]);
 
@@ -344,26 +473,65 @@ export async function runAlarm(options: {
 	newestPrices?: NewestPriceFile | null;
 	/** When the prices workflow first existed: no price file is not stale until 48 hours after. Null or absent: not known to exist. */
 	pricesSince?: Date | null;
+	/** What checkApiBucket found of the API bucket; null or absent when it was not asked (and then nothing is said of it). */
+	api?: ApiBucketCheck | null;
+	/** PUBLIC_API.state: while "off", API_BUCKET unset raises nothing. Absent: "off". */
+	publicApiState?: string;
 }): Promise<AlarmOutcome> {
 	const stale = staleSeries(watchedSeries(options.schedule), options.runs, options.now, options.scheduleChangedAt);
 	const newestPrices = options.newestPrices ?? null;
 	const pricesSince = options.pricesSince ?? null;
 	const prices = stalePrices(newestPrices, options.now, pricesSince);
 	const pricesWatched = newestPrices !== null || pricesSince !== null;
+	const api = options.api ?? null;
+	const publicApiState = options.publicApiState ?? "off";
+	const apiState = apiAlarmState(api, publicApiState);
+	const found: Found = { stale, prices, api: apiState };
 	const open = await options.tracker.findOpen(ALARM_MARKER);
 	const last = open === null ? null : stateOf(open.lastPost);
-	const text = alarmText(stale, options.now, options.copyFailed, options.runUrlBase, prices, pricesWatched, last?.stale_prices !== undefined);
-	const allWell = stale.length === 0 && prices === null;
+	const text = alarmText({
+		stale,
+		now: options.now,
+		copyFailed: options.copyFailed,
+		runUrlBase: options.runUrlBase,
+		prices,
+		pricesWatched,
+		pricesWereStale: last?.stale_prices !== undefined,
+		api,
+		publicApiState,
+		apiWasRaised: last?.stale_api !== undefined,
+	});
+	const allWell = stale.length === 0 && prices === null && apiState === null;
 	if (open === null) {
-		if (allWell) return { action: "none", stale, prices };
+		if (allWell) return { action: "none", ...found };
 		const issue = await options.tracker.open(ALARM_TITLE, `${ALARM_MARKER}\n${text}`);
-		return { action: "opened", issue, stale, prices };
+		return { action: "opened", issue, ...found };
 	}
-	if (last !== null && sameState(last, alarmState(stale, options.copyFailed, prices))) return { action: "unchanged", issue: open.number, stale, prices };
+	if (last !== null && sameState(last, alarmState(stale, options.copyFailed, prices, apiState))) return { action: "unchanged", issue: open.number, ...found };
 	// Nothing to say on an issue whose last word was already that all is well, if only the copy changed.
-	if (last === null && allWell) return { action: "unchanged", issue: open.number, stale, prices };
+	if (last === null && allWell) return { action: "unchanged", issue: open.number, ...found };
 	await options.tracker.comment(open.number, text);
-	return { action: "commented", issue: open.number, stale, prices };
+	return { action: "commented", issue: open.number, ...found };
+}
+
+/** What the check of the API bucket found, in a line for the log and the step's summary. */
+export function apiSummary(check: ApiBucketCheck, now: Date, publicApiState: string): string {
+	const raised = apiAlarmState(check, publicApiState) !== null;
+	switch (check.kind) {
+		case "unset":
+			return raised
+				? `API_BUCKET is unset while PUBLIC_API is ${publicApiState}: nothing is published, and that is raised`
+				: "API_BUCKET is unset: the API bucket is not read and nothing is raised for it (the publish job is skipped too)";
+		case "published": {
+			const hours = ((now.getTime() - Date.parse(check.lastModified)) / 3_600_000).toFixed(1);
+			const run = check.run === null ? "which records no run" : `by run ${check.run}`;
+			return `${check.bucket}: ${STAMP_KEY} last written at ${check.lastModified} (${hours} hours ago), ${run}; ${check.missed.length} scheduled run${check.missed.length === 1 ? "" : "s"} since ha${check.missed.length === 1 ? "s" : "ve"} had ${PUBLISH_GRACE_MS / 3_600_000} hour without publishing, and ${MISSED_TO_RAISE} in a row raise the alarm: ${raised ? "raised" : "not raised"}`;
+		}
+		case "empty":
+			return `${check.bucket} holds no ${STAMP_KEY}: no publish has finished there; raised`;
+		case "unreadable":
+			return `${check.bucket} could not be read (${check.attempts} tr${check.attempts === 1 ? "y" : "ies"}): ${check.reason}; raised`;
+	}
 }
 
 type Fetch = (url: string, init: RequestInit) => Promise<Response>;
@@ -446,14 +614,17 @@ async function main(): Promise<void> {
 			"schedule-changed-at": { type: "string" },
 			copy: { type: "string" },
 			"prices-since": { type: "string" },
+			"api-bucket": { type: "string" },
+			"api-endpoint": { type: "string" },
 			"dry-run": { type: "boolean" },
 		},
 	});
 	if (!values.runs || (values.copy !== "succeeded" && values.copy !== "failed") || values["schedule-changed-at"] === undefined) {
 		console.error(
-			"usage: bun scripts/alarm.ts --runs DIR --copy succeeded|failed --schedule-changed-at ISO-8601 [--prices-since ISO-8601] [--now ISO-8601] [--schedule FILE] [--dry-run]\n" +
+			"usage: bun scripts/alarm.ts --runs DIR --copy succeeded|failed --schedule-changed-at ISO-8601 [--prices-since ISO-8601] [--api-bucket NAME] [--now ISO-8601] [--schedule FILE] [--dry-run] [--api-endpoint URL]\n" +
 				'  --schedule-changed-at: when the schedule last changed, such as "$(git log -1 --first-parent --format=%cI -- schedule.json)"\n' +
-				'  --prices-since: when the prices workflow first existed, such as "$(git log --first-parent --reverse --format=%cI -- .github/workflows/prices.yml | sed -n 1p)"',
+				'  --prices-since: when the prices workflow first existed, such as "$(git log --first-parent --reverse --format=%cI -- .github/workflows/prices.yml | sed -n 1p)"\n' +
+				'  --api-bucket: the API bucket, as API_BUCKET names it; empty or absent, it is not read',
 		);
 		process.exit(2);
 	}
@@ -480,7 +651,16 @@ async function main(): Promise<void> {
 	const runs = readRunFiles(values.runs);
 	const copyFailed = values.copy === "failed";
 	const newestPrices = newestPriceFile(values.runs);
-	const outcome = await runAlarm({ schedule, runs, now, scheduleChangedAt, copyFailed, tracker, newestPrices, pricesSince });
+	// Read before anything is posted; whatever S3 answers is a finding, never a failure of this script.
+	const apiBucket = values["api-bucket"] ?? "";
+	const reader =
+		apiBucket === "" ? null : new S3ApiStore(apiBucket, RUNS_REGION, values["api-endpoint"] === undefined ? {} : { endpoint: values["api-endpoint"] });
+	const api = await checkApiBucket(reader, now);
+	const publicApiState = PUBLIC_API.state;
+	const apiLine = apiSummary(api, now, publicApiState);
+	console.log(`the API bucket: ${apiLine}`);
+	if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, `### The API bucket\n\n${apiLine}\n`);
+	const outcome = await runAlarm({ schedule, runs, now, scheduleChangedAt, copyFailed, tracker, newestPrices, pricesSince, api, publicApiState });
 	const watched = watchedSeries(schedule);
 	// Those with no Run at all, whatever the schedule's age.
 	const neverRun = staleSeries(watched, runs, now, new Date(0)).filter((series) => series.newest === null).length;

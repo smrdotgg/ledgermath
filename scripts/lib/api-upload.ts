@@ -19,7 +19,11 @@
  *     records its run even if nothing else changed (STAMP_KEY);
  *   - checkBucket: the whole bucket holds exactly the tree's files, each with
  *     the tree's SHA-256 and the headers treeObject gives it, and, given the
- *     run that uploaded it, the table of contents records that run.
+ *     run that uploaded it, the table of contents records that run;
+ *   - S3ApiStore.lastWritten: when an object was last written, by S3's own
+ *     clock, and the run it records: what the alarm reads of the table of
+ *     contents to tell whether publishing has stopped
+ *     (scripts/lib/api-freshness.ts).
  *
  * A month file changes in place, at the same key: when an upload stops after
  * the month files and before the Series files, a Series file still lists the
@@ -111,6 +115,30 @@ export function parseRun(value: string | null | undefined): number | null {
 	return Number.isSafeInteger(run) ? run : null;
 }
 
+/** When an object was last written, by S3's own clock, and the run its metadata records. */
+export interface WrittenAt {
+	/** Its Last-Modified: set by S3 as the object is written, never by the writer. */
+	lastModified: Date;
+	/** The run its RUN_METADATA records; null when it records none. */
+	run: number | null;
+}
+
+/**
+ * S3 gave an answer other than the one asked for, or none: its HTTP status
+ * (null when no answer came) and S3's error code, or one of ours, NoAnswer
+ * or NoCredentials, in its place.
+ */
+export class S3Refused extends Error {
+	constructor(
+		readonly status: number | null,
+		readonly code: string,
+		message: string,
+	) {
+		super(message);
+		this.name = "S3Refused";
+	}
+}
+
 /** The API bucket, as the upload and the check see it. */
 export interface ApiStore {
 	readonly name: string;
@@ -163,7 +191,7 @@ export class S3ApiStore implements ApiStore {
 		return this.options.credentials?.() ?? credentialsFromEnvironment();
 	}
 
-	private async send(method: "HEAD" | "PUT", key: string, extra: Array<[string, string]>, payloadSha256: string, body?: Uint8Array): Promise<Response> {
+	private async send(method: "GET" | "HEAD" | "PUT", key: string, extra: Array<[string, string]>, payloadSha256: string, body?: Uint8Array): Promise<Response> {
 		if (hasDotSegment(key)) throw new Error(`${key}: a key with a "." or ".." segment cannot be sent by name`);
 		const canonicalUri = `/${encodeUriPath(this.bucket)}/${encodeUriPath(key)}`;
 		const url = new URL(`${this.endpoint}${canonicalUri}`);
@@ -204,6 +232,39 @@ export class S3ApiStore implements ApiStore {
 			cacheControl: response.headers.get("cache-control"),
 			run: parseRun(response.headers.get(RUN_METADATA)),
 		};
+	}
+
+	/**
+	 * When `key` was last written, and by which run: one GET. Not a HEAD,
+	 * because a HEAD's 404 has no body, so a missing key and a missing bucket
+	 * would look alike. Null when the bucket holds no such key (404 NoSuchKey,
+	 * which S3 answers only to a requester that may list the bucket; to
+	 * another it answers 403). Throws S3Refused for any other answer, or none.
+	 */
+	async lastWritten(key: string): Promise<WrittenAt | null> {
+		try {
+			this.credentials();
+		} catch (error) {
+			throw new S3Refused(null, "NoCredentials", error instanceof Error ? error.message : String(error));
+		}
+		let response: Response;
+		try {
+			response = await this.send("GET", key, [], EMPTY_SHA256);
+		} catch (error) {
+			throw new S3Refused(null, "NoAnswer", `GET ${this.name}/${key}: no answer (${error instanceof Error ? error.message : String(error)})`);
+		}
+		if (response.status === 200) {
+			await response.arrayBuffer().catch(() => undefined);
+			const header = response.headers.get("last-modified");
+			const at = header === null ? Number.NaN : Date.parse(header);
+			if (Number.isNaN(at)) throw new S3Refused(200, "NoLastModified", `GET ${this.name}/${key} answered 200 with no Last-Modified that is a date: ${JSON.stringify(header)}`);
+			return { lastModified: new Date(at), run: parseRun(response.headers.get(RUN_METADATA)) };
+		}
+		const text = await response.text().catch(() => "");
+		const code = xmlElement(text, "Code") ?? `HTTP${response.status}`;
+		if (response.status === 404 && code === "NoSuchKey") return null;
+		const said = xmlElement(text, "Message") ?? "";
+		throw new S3Refused(response.status, code, `GET ${this.name}/${key} answered ${response.status} ${code}${said === "" ? "" : `: ${said}`}`);
 	}
 
 	async put(file: TreeFile, run: number): Promise<void> {
