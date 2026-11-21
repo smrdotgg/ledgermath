@@ -213,8 +213,11 @@ jobs:
         if: ${{ !cancelled() && steps.api-check.outcome == 'success' && vars.API_BUCKET != '' }}
         run: bun scripts/upload-api.ts --tree api --bucket "$API_BUCKET"
 
-      # What the bucket holds under v1/ is exactly the tree just built: the
-      # same files, each with its SHA-256, size and headers.
+      # What the whole bucket holds is exactly the tree just built: the same
+      # files, each with its SHA-256, size and headers, and nothing else. The
+      # upload itself stops, writing nothing, when the bucket holds a key the
+      # tree does not, and fails naming the phase and key of a failed write;
+      # the next run's upload repairs what a failed one left.
       - name: Check that the API bucket holds the data API's files
         if: ${{ !cancelled() && steps.api-upload.outcome == 'success' }}
         run: bun scripts/check-api-bucket.ts --tree api --bucket "$API_BUCKET"

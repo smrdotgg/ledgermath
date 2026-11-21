@@ -64,6 +64,7 @@ import {
 	type PublicApiSetting,
 	publicApiNames,
 	publicApiPlan,
+	REQUEST_FUNCTION_CODE,
 	reminder,
 	SUBSCRIPTION_TYPE,
 	subscriptionState,
@@ -104,13 +105,24 @@ export interface PublicApiOutputs {
 
 type PolicyTransform = (args: aws.s3.BucketPolicyArgs) => undefined;
 
+/** What createResources needs of a bucket: sst.aws.Bucket gives it, and a test's stand-in can. */
+export interface BucketNodes {
+	nodes: { bucket: { bucketRegionalDomainName: $util.Input<string> } };
+}
+
+/** What create() made: the stack's outputs, and every resource by its name in the stage, for tests. */
+export interface PublicApiResources {
+	outputs: PublicApiOutputs;
+	resources: Record<string, $util.Resource>;
+}
+
 export interface PublicApi {
 	/** In "on" only: the Runs bucket's transform.policy, SST's policy with the grant of runs/, boots/ and blobs/sha256/ to the distribution added. */
 	runsBucketPolicy: PolicyTransform | null;
 	/** In "on" only: the API bucket's transform.policy, SST's policy with the grant of v1/ to the distribution added. */
 	apiBucketPolicy: PolicyTransform | null;
 	/** Makes the resources, once both buckets exist. */
-	create(runsBucket: sst.aws.Bucket, apiBucket: sst.aws.Bucket): PublicApiOutputs;
+	create(runsBucket: BucketNodes, apiBucket: BucketNodes): PublicApiResources;
 }
 
 /** SST commands that change nothing in AWS: a refused transition only warns. */
@@ -174,7 +186,17 @@ export function preparePublicApi(setting: PublicApiSetting, command: string): Pu
 	const plan = publicApiPlan(setting, $app.stage);
 	if (plan === null) return null;
 	console.warn(reminder(plan, profile).join("\n"));
-	const names = publicApiNames($app.name, $app.stage);
+	return publicApiDeclarations(plan, publicApiNames($app.name, $app.stage));
+}
+
+/**
+ * What a plan declares, once the guard has allowed it: the two buckets'
+ * policy transforms (in "on" only) and the function that makes the rest.
+ * Reads nothing from AWS, the stage or the environment, so
+ * tests/public-api-graph.test.ts builds every state's resources with it,
+ * under Pulumi's mocks.
+ */
+export function publicApiDeclarations(plan: PublicApiPlan, names: PublicApiNames): PublicApi {
 	if (!plan.serve) return { runsBucketPolicy: null, apiBucketPolicy: null, create: (runsBucket, apiBucket) => createResources(plan, names, runsBucket, apiBucket, null) };
 	const [distributionArn, setDistributionArn] = $util.deferredOutput<string>();
 	const grant =
@@ -196,10 +218,10 @@ export function preparePublicApi(setting: PublicApiSetting, command: string): Pu
 function createResources(
 	plan: PublicApiPlan,
 	names: PublicApiNames,
-	runsBucket: sst.aws.Bucket,
-	apiBucket: sst.aws.Bucket,
+	runsBucket: BucketNodes,
+	apiBucket: BucketNodes,
 	setDistributionArn: ((arn: $util.Output<string>) => void) | null,
-): PublicApiOutputs {
+): PublicApiResources {
 	// The plan requires a web ACL; the plan pays for it and its rules.
 	const webAcl = new aws.wafv2.WebAcl("PublicApiWebAcl", {
 		region: GLOBAL_REGION,
@@ -217,6 +239,13 @@ function createResources(
 		originAccessControlOriginType: "s3",
 		signingBehavior: "always",
 		signingProtocol: "sigv4",
+	});
+	const requestFunction = new aws.cloudfront.Function("PublicApiRequestFunction", {
+		name: names.requestFunction,
+		runtime: "cloudfront-js-2.0",
+		comment: "LedgerMath public API: 403 for another host, 404 for a key of no served shape",
+		code: REQUEST_FUNCTION_CODE,
+		publish: true,
 	});
 	const evidenceResponseFunction = new aws.cloudfront.Function("PublicApiEvidenceResponseFunction", {
 		name: names.evidenceResponseFunction,
@@ -261,6 +290,7 @@ function createResources(
 				runsBucketDomain: runsBucket.nodes.bucket.bucketRegionalDomainName,
 				originAccessControlId: oac.id,
 				webAclArn: webAcl.arn,
+				requestFunctionArn: requestFunction.arn,
 				evidenceResponseFunctionArn: evidenceResponseFunction.arn,
 				noRouteFunctionArn: noRouteFunction.arn,
 				certificateArn: certificateValidation.certificateArn,
@@ -270,8 +300,8 @@ function createResources(
 		{ protect: plan.protect },
 	);
 	if (setDistributionArn !== null) setDistributionArn(distribution.arn);
-	new aws.route53.Record("PublicApiAliasA", aliasRecordArgs("A", distribution.domainName, distribution.hostedZoneId));
-	new aws.route53.Record("PublicApiAliasAAAA", aliasRecordArgs("AAAA", distribution.domainName, distribution.hostedZoneId));
+	const aliasA = new aws.route53.Record("PublicApiAliasA", aliasRecordArgs("A", distribution.domainName, distribution.hostedZoneId));
+	const aliasAAAA = new aws.route53.Record("PublicApiAliasAAAA", aliasRecordArgs("AAAA", distribution.domainName, distribution.hostedZoneId));
 	// Created after the distribution and the web ACL it names, and so deleted
 	// before them: AWS refuses to delete a distribution that is on a plan.
 	const subscription = plan.subscribeInCode
@@ -307,16 +337,34 @@ function createResources(
 			nodejs: { install: ["@aws-sdk/client-cloudfront", "@aws-sdk/client-pricing-plan-manager"] },
 		},
 	});
+	const resources: Record<string, $util.Resource> = {
+		PublicApiWebAcl: webAcl,
+		PublicApiOac: oac,
+		PublicApiRequestFunction: requestFunction,
+		PublicApiEvidenceResponseFunction: evidenceResponseFunction,
+		PublicApiNoRouteFunction: noRouteFunction,
+		PublicApiCertificate: certificate,
+		PublicApiCertificateRecord: certificateRecord,
+		PublicApiCertificateValidation: certificateValidation,
+		[DISTRIBUTION_NAME]: distribution,
+		PublicApiAliasA: aliasA,
+		PublicApiAliasAAAA: aliasAAAA,
+		...(subscription === null ? {} : { PublicApiFreePlan: subscription }),
+		PublicApiWatch: watch,
+	};
 	return {
-		state: plan.state,
-		enabled: plan.distributionEnabled,
-		distributionId: distribution.id,
-		distributionArn: distribution.arn,
-		domainName: distribution.domainName,
-		address: `https://${API_DOMAIN.name}/v1/index.json`,
-		webAclArn: webAcl.arn,
-		certificateArn: certificateValidation.certificateArn,
-		plan: subscription === null ? 'none made: PUBLIC_API.plan is "console"; subscribe in the console' : subscription.id,
-		watchFunction: watch.nodes.function.name,
+		outputs: {
+			state: plan.state,
+			enabled: plan.distributionEnabled,
+			distributionId: distribution.id,
+			distributionArn: distribution.arn,
+			domainName: distribution.domainName,
+			address: `https://${API_DOMAIN.name}/v1/index.json`,
+			webAclArn: webAcl.arn,
+			certificateArn: certificateValidation.certificateArn,
+			plan: subscription === null ? 'none made: PUBLIC_API.plan is "console"; subscribe in the console' : subscription.id,
+			watchFunction: watch.nodes.function.name,
+		},
+		resources,
 	};
 }

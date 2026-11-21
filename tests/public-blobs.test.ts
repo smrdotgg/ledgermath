@@ -1,14 +1,16 @@
-import { afterAll, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative, sep } from "node:path";
 
-import { apiBucketArgs, TREE_CACHE_CONTROL, TREE_CONTENT_TYPE, treeObject } from "../infra/runs/api-bucket";
+import { apiBucketArgs, TREE_CACHE_CONTROL, TREE_CONTENT_TYPE, TREE_KINDS, treeObject } from "../infra/runs/api-bucket";
 import {
 	ALIAS_RECORD_TYPES,
 	aliasRecordArgs,
 	API_DOMAIN,
+	BLOB_KEY,
+	BOOT_KEY,
 	bucketGrant,
 	CACHING_OPTIMIZED,
 	CACHING_UNCOMPRESSED,
@@ -26,12 +28,14 @@ import {
 	FUNCTION_CODE_LIMIT_BYTES,
 	GLOBAL_REGION,
 	GRANT_SID,
+	isServedKey,
 	MANAGED_RULE_GROUPS,
 	monthAtTotalLimit,
 	NO_ROUTE_FUNCTION_CODE,
 	type Origin,
 	ORIGIN_IDS,
 	PER_ADDRESS_RULE,
+	PLAN_ATTACHMENTS,
 	PUBLIC_API,
 	type PublicApiPlan,
 	type PublicApiState,
@@ -40,13 +44,17 @@ import {
 	RATE_LIMIT,
 	type RateRule,
 	reminder,
+	REQUEST_FUNCTION_CODE,
 	RESPONSE_HEADERS_POLICY,
+	RUN_KEY,
 	runsBucketArgs,
 	S3_GET_USD_PER_THOUSAND,
 	SERVED,
 	servedHeaders,
 	servedPrefixes,
+	STATES,
 	subscriptionState,
+	uriPattern,
 	TLS_POLICY,
 	TOTAL_RATE_LIMIT,
 	TOTAL_RULE,
@@ -58,6 +66,10 @@ import {
 import { DISTRIBUTION_NAME } from "../infra/runs/public-blobs-guard";
 import { PRODUCTION_STAGE, runsStageApp } from "../infra/runs/stages";
 import { blobsFromBucket, PUBLIC_REQUESTS_PER_SECOND, publicBlobStore } from "../scripts/lib/blobs";
+import { S3Standin } from "./s3-standin";
+
+// The turn-on rehearsal runs the suite again in its own processes: seconds on a loaded machine.
+setDefaultTimeout(120_000);
 
 const ROOT = join(import.meta.dir, "..");
 const STACK = readFileSync(join(ROOT, "infra", "runs", "stack.ts"), "utf8");
@@ -106,6 +118,7 @@ const REFS = {
 	runsBucketDomain: "ledgermath-production-runs-runsbucketbucket-abcdefgh.s3.us-east-2.amazonaws.com",
 	originAccessControlId: "E2QWRUHEXAMPLE",
 	webAclArn: WEB_ACL_ARN,
+	requestFunctionArn: "arn:aws:cloudfront::123456789012:function/ledgermath-production-runs-request",
 	evidenceResponseFunctionArn: "arn:aws:cloudfront::123456789012:function/ledgermath-production-runs-evidence-response",
 	noRouteFunctionArn: "arn:aws:cloudfront::123456789012:function/ledgermath-production-runs-no-route",
 	certificateArn: "arn:aws:acm:us-east-1:123456789012:certificate/00000000-0000-0000-0000-000000000000",
@@ -132,30 +145,80 @@ function load(code: string): Handler {
 	return new Function(`${code}\nreturn handler;`)() as Handler;
 }
 
-function request(uri: string): CfRequest {
-	return { method: "GET", uri, headers: { host: { value: API_DOMAIN.name } } };
-}
-
-/** The names of the resources a source file declares: `new aws.x.Y("Name"` and `new sst.aws.Y("Name"`, and the distribution's, which takes DISTRIBUTION_NAME. */
-function declaredIn(source: string): string[] {
-	return [...source.matchAll(/new (?:aws|sst)\.[\w.]+\(\s*(?:"(\w+)"|(DISTRIBUTION_NAME))/g)].map((match) => (match[1] ?? (match[2] === "DISTRIBUTION_NAME" ? DISTRIBUTION_NAME : "?")) as string);
+function request(uri: string, host: string | null = API_DOMAIN.name): CfRequest {
+	return { method: "GET", uri, headers: host === null ? {} : { host: { value: host } } };
 }
 
 const CREATE = RESOURCES.slice(RESOURCES.indexOf("function createResources("));
 const PREPARE = RESOURCES.slice(RESOURCES.indexOf("export function preparePublicApi"), RESOURCES.indexOf("function createResources("));
+/** Set in the turn-on rehearsal's own processes (below): the committed setting is then not the one in force. */
+const REHEARSAL = process.env.LM_PUBLIC_API_STATE !== undefined;
 
 describe("the switch", () => {
-	test("is off as committed, names production-runs, and is one typed setting", () => {
-		expect(PUBLIC_API).toEqual({ stage: "production-runs", state: "off", plan: "code" });
+	// RELEASE GATE. The one test that reads the committed switch: nothing is public in what is merged while it says "off".
+	// The commit that turns the public API on (README, "The public data API", "Turning it on") changes this test, on purpose,
+	// to the state it deploys; every other test builds each state from its own fixture, whatever is committed.
+	test("RELEASE GATE: the committed switch is off, for production-runs", () => {
 		expect(PUBLIC_API.stage).toBe(PRODUCTION_STAGE);
+		expect(PUBLIC_API.state).toBe("off");
+	});
+
+	test("is one typed setting, read once by the stack, and declared as the union of its states, so the type check sees every state", () => {
 		// The setting's type allows production-runs alone.
 		const typed: typeof PUBLIC_API.stage = "production-runs";
 		expect(typed).toBe(PRODUCTION_STAGE);
-		// It is the only setting: stack.ts's code (its comments aside) imports it and reads it once, and nothing else decides whether the API is served.
+		const source = readFileSync(join(ROOT, "infra", "runs", "public-blobs.ts"), "utf8");
+		expect(source).toContain("export const PUBLIC_API: PublicApiSetting = {");
+		expect(source).toMatch(/export interface PublicApiSetting \{[^}]*\n\tstate: PublicApiState;\n\tplan: PlanAttachment;\n\}/);
+		// stack.ts's code (its comments aside) imports it and reads it once, and nothing else decides whether the API is served.
 		const code = STACK.split("\n").filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line)).join("\n");
 		expect(code.match(/PUBLIC_API\b/g)?.length).toBe(2);
 		expect(code).toContain('import { PUBLIC_API, runsBucketArgs } from "./public-blobs";');
 		expect(code).toContain("const publicApi = preparePublicApi(PUBLIC_API, $cli.command);");
+	});
+
+	test("rejects, at run time, a setting of no known state or plan attachment, or none at all", () => {
+		const good = { stage: STAGE, state: "off", plan: "code" };
+		expect(() => checkSetting(good)).not.toThrow();
+		for (const state of STATES) for (const attachment of PLAN_ATTACHMENTS) expect(() => checkSetting({ stage: STAGE, state, plan: attachment })).not.toThrow();
+		for (const [setting, message] of [
+			[{ ...good, state: "On" }, 'state is "On", which is none of "off", "dark", "closed", "on"'],
+			[{ ...good, state: "public" }, 'state is "public"'],
+			[{ stage: STAGE, plan: "code" }, "state is undefined"],
+			[{ ...good, state: null }, "state is null"],
+			[{ ...good, plan: "Code" }, 'plan attachment is "Code", which is none of "code", "console"'],
+			[{ stage: STAGE, state: "off" }, "plan attachment is undefined"],
+			[{ state: "off", plan: "code" }, "names no stage"],
+			[null, "is not an object"],
+			["off", "is not an object"],
+		] as const) {
+			expect(() => checkSetting(setting)).toThrow(message);
+			expect(() => publicApiPlan(setting, STAGE)).toThrow(message);
+		}
+	});
+
+	test("the documented turn-on change, and the console plan fallback, fail exactly the release gate", async () => {
+		if (REHEARSAL) return;
+		const files = ["tests/public-blobs.test.ts", "tests/public-blobs-guard.test.ts", "tests/plan-watch.test.ts", "tests/public-api-graph.test.ts"];
+		for (const [state, attachment, gateFails] of [
+			["dark", "code", true],
+			["closed", "code", true],
+			["on", "code", true],
+			["off", "console", false],
+			["dark", "console", true],
+		] as const) {
+			const child = Bun.spawn(["bun", "test", "--preload", "./tests/rehearse-switch.ts", ...files], {
+				cwd: ROOT,
+				env: { ...process.env, LM_PUBLIC_API_STATE: state, LM_PUBLIC_API_PLAN: attachment },
+				stdout: "pipe",
+				stderr: "pipe",
+			});
+			const [stdout, stderr, exitCode] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
+			const output = `${stdout}${stderr}`;
+			const failed = [...output.matchAll(/^\(fail\) (.*?)(?: \[[\d.]+m?s\])?$/gm)].map((match) => match[1]);
+			expect({ state, attachment, failed }).toEqual({ state, attachment, failed: gateFails ? ["the switch > RELEASE GATE: the committed switch is off, for production-runs"] : [] });
+			expect(exitCode).toBe(gateFails ? 1 : 0);
+		}
 	});
 
 	test("refuses it on for any stage but production-runs, whatever stage is deployed", () => {
@@ -165,7 +228,7 @@ describe("the switch", () => {
 				expect(() => checkSetting(setting)).toThrow(`The public data API may be served from ${PRODUCTION_STAGE} alone`);
 				for (const deployed of [stage, STAGE, "smr-runs"]) expect(() => publicApiPlan(setting, deployed)).toThrow("may be served from production-runs alone");
 			}
-			expect(() => checkSetting({ stage, state: "off" })).not.toThrow();
+			expect(() => checkSetting({ stage, state: "off", plan: "code" })).not.toThrow();
 			expect(publicApiPlan({ stage, state: "off", plan: "code" }, stage)).toBeNull();
 		}
 		// And every deploy checks it before anything else, on every stage.
@@ -182,16 +245,18 @@ describe("the switch", () => {
 	});
 
 	test("off: the stack declares no distribution, certificate, DNS record, web ACL or function, and no bucket grants anything to CloudFront", () => {
-		const off = publicApiPlan(PUBLIC_API, STAGE);
-		expect(off).toBeNull();
-		expect(declaredResources(off)).toEqual([]);
+		for (const attachment of PLAN_ATTACHMENTS) {
+			const off = publicApiPlan({ stage: STAGE, state: "off", plan: attachment }, STAGE);
+			expect(off).toBeNull();
+			expect(declaredResources(off)).toEqual([]);
+		}
 		// The buckets' arguments carry no transform of their policies: SST's own, HTTPS only, granting nothing.
 		expect(runsBucketArgs(null)).toStrictEqual({ versioning: true });
 		expect(apiBucketArgs(null)).toStrictEqual({ cors: false });
 		// stack.ts passes the transforms only from a non-null preparePublicApi, makes the resources only then, and outputs nothing of them otherwise.
 		expect(STACK).toContain('const bucket = new sst.aws.Bucket("RunsBucket", runsBucketArgs(publicApi?.runsBucketPolicy ?? null));');
 		expect(STACK).toContain('const apiBucket = new sst.aws.Bucket("ApiBucket", apiBucketArgs(publicApi?.apiBucketPolicy ?? null));');
-		expect(STACK).toContain("const publicApiOutputs = publicApi === null ? null : publicApi.create(bucket, apiBucket);");
+		expect(STACK).toContain("const publicApiOutputs = publicApi === null ? null : publicApi.create(bucket, apiBucket).outputs;");
 		expect(STACK).toContain("...(publicApiOutputs === null ? {} : { publicApi: publicApiOutputs }),");
 		// preparePublicApi returns null for off before it could make anything; it declares nothing itself.
 		expect(PREPARE).toContain("const plan = publicApiPlan(setting, $app.stage);\n\tif (plan === null) return null;");
@@ -209,10 +274,11 @@ describe("the switch", () => {
 		expect(plan("dark", "console").subscribeInCode).toBe(false);
 	});
 
-	test("on: the stack declares exactly the distribution, its certificate and validation record, the api.ledgermath.com records, the web ACL, the access control, two functions, the plan and the watch", () => {
+	test("on: the stack declares exactly the distribution, its certificate and validation record, the api.ledgermath.com records, the web ACL, the access control, three functions, the plan and the watch (tests/public-api-graph.test.ts builds them)", () => {
 		expect(declaredResources(plan("on"))).toEqual([
 			"PublicApiWebAcl",
 			"PublicApiOac",
+			"PublicApiRequestFunction",
 			"PublicApiEvidenceResponseFunction",
 			"PublicApiNoRouteFunction",
 			"PublicApiCertificate",
@@ -226,10 +292,8 @@ describe("the switch", () => {
 		]);
 		expect(declaredResources(plan("dark"))).toEqual(declaredResources(plan("on")));
 		expect(declaredResources(plan("on", "console"))).not.toContain("PublicApiFreePlan");
-		// What createResources makes is that list, in that order, and nothing else.
-		expect(declaredIn(CREATE)).toEqual(declaredResources(plan("on")));
 		expect(DISTRIBUTION_NAME).toBe("PublicApiDistribution");
-		// Pulumi refuses to delete or replace the distribution and the subscription while enabled.
+		// Pulumi refuses to delete or replace the distribution and the subscription while enabled: a resource option, which the mocks do not see.
 		expect(CREATE.match(/\{ protect: plan\.protect \}/g)?.length).toBe(2);
 	});
 
@@ -325,20 +389,40 @@ function grants(policyJson: string, bucketArn: string, key: string, distribution
 	});
 }
 
+/** The functions by the ARN the distribution names them by, loaded as CloudFront Functions loads them. */
+const FUNCTIONS: Record<string, Handler> = {
+	[REFS.requestFunctionArn]: load(REQUEST_FUNCTION_CODE),
+	[REFS.noRouteFunctionArn]: load(NO_ROUTE_FUNCTION_CODE),
+	[REFS.evidenceResponseFunctionArn]: load(EVIDENCE_RESPONSE_FUNCTION_CODE),
+};
+
+/** The behaviour's viewer-request function run on the request: the request to go on with, or the response it answers. */
+function viewerRequest(behaviour: Behaviour, path: string, host: string | null): CfRequest | CfResponse {
+	const association = behaviour.functionAssociations.find((entry) => entry.eventType === "viewer-request");
+	const sent = request(path, host);
+	if (association === undefined) return sent;
+	const handler = FUNCTIONS[association.functionArn];
+	if (handler === undefined) throw new Error(`no function ${association.functionArn}`);
+	return handler({ context: { eventType: "viewer-request" }, request: sent });
+}
+
+const isResponse = (value: CfRequest | CfResponse): value is CfResponse => "statusCode" in value;
+
 /**
- * What a GET of `path` reads, by the distribution of a plan, or null when it
- * reads nothing: a function answers it, or the bucket's policy refuses. The
- * key is the path without its leading slash, %-decoded as S3 decodes it;
- * CloudFront picks the behaviour from the path as sent, or, should it
- * normalise dot segments first, from that.
+ * What a GET of `path` reads, by the distribution of a plan, or nothing: a
+ * function answers it (its viewer-request function, run as CloudFront runs
+ * it), or the bucket's policy refuses. The key is the path without its
+ * leading slash, %-decoded as S3 decodes it; CloudFront picks the behaviour
+ * from the path as sent, or, should it normalise dot segments first, from
+ * that.
  */
-function reads(p: PublicApiPlan, path: string): Array<{ origin: Origin; key: string }> {
+function reads(p: PublicApiPlan, path: string, host: string | null = API_DOMAIN.name): Array<{ origin: Origin; key: string }> {
 	const spec = distributionArgs(REFS, p);
 	const bucketPolicies = policies(p);
 	const found: Array<{ origin: Origin; key: string }> = [];
 	for (const sent of new Set([path, normalized(path)])) {
 		const behaviour = behaviourFor(spec, sent);
-		if (behaviour.functionAssociations.some((association) => association.eventType === "viewer-request")) continue;
+		if (isResponse(viewerRequest(behaviour, sent, host))) continue;
 		const origin = ORIGIN_OF_ID[behaviour.targetOriginId] as Origin;
 		let key: string;
 		try {
@@ -351,7 +435,11 @@ function reads(p: PublicApiPlan, path: string): Array<{ origin: Origin; key: str
 	return found;
 }
 
-/** Every key each bucket holds or may hold, of every kind the stack, the boxes and the workflow write, and some that nothing writes. */
+/**
+ * Every key each bucket holds or may hold: of every kind the stack, the boxes
+ * and the workflow write, and, under the served prefixes too, keys of no
+ * served shape that a person, a stray tool or a bug could leave there.
+ */
 const INVENTORY: Record<Origin, string[]> = {
 	runs: [
 		"runs/2026/11/19/01a1f200-3dd5-7ac0-8994-a5f0ba761290.json",
@@ -364,6 +452,22 @@ const INVENTORY: Record<Origin, string[]> = {
 		"results/c6i.8xlarge/2026-07-18T2310Z.json",
 		"index.html",
 		"v1/index.json",
+		// Under served prefixes, of no served shape.
+		"runs/2026/11/19/01a1f200-3dd5-7ac0-8994-a5f0ba761290.json.bak",
+		"runs/2026/11/19/01A1F200-3DD5-7AC0-8994-A5F0BA761290.json",
+		"runs/2026/11/19/01a1f200-3dd5-4ac0-8994-a5f0ba761290.json",
+		"runs/2026/11/19/notes.txt",
+		"runs/2026/11/19/x.json",
+		"runs/x.json",
+		"runs/2026/11/19/sub/01a1f200-3dd5-7ac0-8994-a5f0ba761290.json",
+		"boots/2026/11/19/unknown.json",
+		"boots/2026/11/19/0bd3dc59-287c-4e18-b5b3-7dd30d38d0b0.log",
+		"boots/2026/11/19/0bd3dc59-287c-4e18-b5b3-7dd30d38d0b0.json.tmp",
+		`blobs/sha256/${HEX}.tmp`,
+		`blobs/sha256/${HEX.toUpperCase()}`,
+		`blobs/sha256/${HEX.slice(1)}`,
+		`blobs/sha256/${HEX}0`,
+		`blobs/sha256/${HEX}/x`,
 	],
 	api: [
 		"v1/index.json",
@@ -375,11 +479,21 @@ const INVENTORY: Record<Origin, string[]> = {
 		"v2/index.json",
 		"index.html",
 		"runs/2026/11/19/x.json",
+		// Under v1/, of no served shape.
+		"v1/index.json.bak",
+		"v1/notes.md",
+		"v1/series/0cacb5fd6fae.json~",
+		"v1/series/0CACB5FD6FAE.json",
+		"v1/series/0cacb5fd6fae/2026-11.json.orig",
+		"v1/series/0cacb5fd6fae/extra/2026-11.json",
+		"v1/prices/2026-11-19.json.tmp",
+		"v1/schemas/index.schema.json.old",
+		"v1/series/",
 	],
 };
 
-/** Whether a key is under one of its bucket's served prefixes. */
-const isServed = (origin: Origin, key: string): boolean => servedPrefixes(origin).some((prefix) => key.startsWith(prefix));
+/** Whether a key is of a served shape and in the bucket that serves it. */
+const isServed = (origin: Origin, key: string): boolean => servedPrefixes(origin).some((prefix) => key.startsWith(prefix)) && isServedKey(key);
 
 /** Ways to ask for a key: as it is, and as an attacker might spell it. */
 function spellings(key: string): string[] {
@@ -417,29 +531,42 @@ describe("what is served, and what is not", () => {
 		expect(listed).toEqual(SERVED.map((served) => [served.prefix, served.origin === "api" ? "API" : "Runs"]));
 	});
 
-	test("every key under a served prefix is readable at its own address, in on", () => {
+	test("every key of a served shape is readable at its own address, in on", () => {
+		let served = 0;
 		for (const origin of ["api", "runs"] as const) {
-			for (const key of INVENTORY[origin].filter((k) => isServed(origin, k))) expect(reads(plan("on"), `/${key}`)).toContainEqual({ origin, key });
+			for (const key of INVENTORY[origin].filter((k) => isServed(origin, k))) {
+				expect(reads(plan("on"), `/${key}`)).toEqual([{ origin, key }]);
+				served++;
+			}
 		}
+		expect(served).toBe(9);
 	});
 
-	test("no key outside the served prefixes is ever read, however it is spelt; and every read is under a served prefix of the bucket it is read from", () => {
+	test("no key of no served shape is ever read, however it is spelt, served prefix or not; every read is of a served shape, from the bucket that serves it", () => {
 		for (const origin of ["api", "runs"] as const) {
 			for (const key of INVENTORY[origin]) {
 				for (const path of spellings(key)) {
 					for (const state of ["dark", "closed", "on"] as const) {
 						for (const read of reads(plan(state), path.split("?")[0] as string)) {
 							expect(isServed(read.origin, read.key)).toBe(true);
-							if (read.origin === origin && !isServed(origin, key)) expect(read.key).not.toBe(key);
+							expect(read.key).toBe(key);
 						}
 					}
 				}
 			}
 		}
-		// In particular, nothing of the Runs bucket's source/ and logs/, and nothing at the root.
-		for (const path of ["/", "/source/x.tar.gz", "/logs/2026/11/19/b.log", "/index.html", "/results/x.json", "/v2/index.json", "/runs", "/blobs/other"]) {
+		// In particular, nothing of the Runs bucket's source/ and logs/, nothing at the root, and nothing under a served prefix of no served shape.
+		for (const path of ["/", "/source/x.tar.gz", "/logs/2026/11/19/b.log", "/index.html", "/results/x.json", "/v2/index.json", "/runs", "/blobs/other", "/runs/2026/11/19/notes.txt", "/v1/notes.md", "/boots/2026/11/19/unknown.json"]) {
 			expect(reads(plan("on"), path)).toEqual([]);
 		}
+	});
+
+	test("under any other host than api.ledgermath.com, the distribution's own *.cloudfront.net name included, nothing is read", () => {
+		for (const host of ["d111111abcdef8.cloudfront.net", "API.LEDGERMATH.COM.", "ledgermath.com", "api.ledgermath.com.evil.example", "", null]) {
+			for (const origin of ["api", "runs"] as const) for (const key of INVENTORY[origin]) expect(reads(plan("on"), `/${key}`, host)).toEqual([]);
+		}
+		// The name is matched without regard to case, as DNS names are.
+		expect(reads(plan("on"), "/v1/index.json", "API.LedgerMath.com")).toEqual([{ origin: "api", key: "v1/index.json" }]);
 	});
 
 	test("in dark and closed, nothing is read at all", () => {
@@ -455,6 +582,70 @@ describe("what is served, and what is not", () => {
 			expect([CACHING_OPTIMIZED.id, CACHING_UNCOMPRESSED.id]).toContain(behaviour.cachePolicyId);
 		}
 		expect(JSON.stringify(distributionArgs(REFS, plan("on")))).not.toContain("originRequestPolicyId");
+	});
+});
+
+describe("the edge in on, in front of a stand-in for S3 that holds every key of the inventory", () => {
+	let standin: S3Standin;
+	const READER = "CLOUDFRONTOAC";
+	beforeEach(() => {
+		standin = new S3Standin();
+		standin.start();
+		for (const origin of ["api", "runs"] as const) {
+			standin.bucket(origin, { readers: [READER] });
+			for (const key of INVENTORY[origin]) standin.put(origin, key, `the bytes of ${origin}:${key}`, "application/json");
+		}
+	});
+	afterEach(() => standin.stop());
+
+	/** A GET through the distribution, as the model above routes it: a function's answer, the policy's refusal, or the bucket's object. */
+	async function edge(path: string, host: string | null = API_DOMAIN.name): Promise<{ status: number; body: string; from: "function" | "policy" | "bucket" }> {
+		const p = plan("on");
+		const behaviour = behaviourFor(distributionArgs(REFS, p), path);
+		const answered = viewerRequest(behaviour, path, host);
+		if (isResponse(answered)) return { status: answered.statusCode, body: answered.body?.data ?? "", from: "function" };
+		const origin = ORIGIN_OF_ID[behaviour.targetOriginId] as Origin;
+		const key = decodeURIComponent(path.slice(1));
+		if (!grants(policies(p)[origin], BUCKET_ARNS[origin], key, DISTRIBUTION_ARN)) return { status: 403, body: "AccessDenied", from: "policy" };
+		const response = await fetch(`${standin.url}/${origin}/${key.split("/").map(encodeURIComponent).join("/")}`, {
+			headers: { authorization: `AWS4-HMAC-SHA256 Credential=${READER}/20261121/us-east-2/s3/aws4_request, SignedHeaders=host, Signature=${"0".repeat(64)}` },
+		});
+		return { status: response.status, body: await response.text(), from: "bucket" };
+	}
+
+	const asked = (origin: string, key: string): boolean => standin.requests.some((entry) => entry.method === "GET" && entry.bucket === origin && entry.key === key);
+
+	test("serves each object of a served shape from its bucket, with its bytes", async () => {
+		for (const origin of ["api", "runs"] as const) {
+			for (const key of INVENTORY[origin].filter((k) => isServed(origin, k))) {
+				expect(await edge(`/${key}`)).toEqual({ status: 200, body: `the bytes of ${origin}:${key}`, from: "bucket" });
+			}
+		}
+	});
+
+	test("answers 404 itself to every object under a served prefix that is of no served shape, though the bucket holds it, and never asks the bucket for it", async () => {
+		let refused = 0;
+		for (const origin of ["api", "runs"] as const) {
+			for (const key of INVENTORY[origin].filter((k) => servedPrefixes(origin).some((prefix) => k.startsWith(prefix)) && !isServedKey(k))) {
+				const got = await edge(`/${key}`);
+				expect({ key, status: got.status, from: got.from }).toEqual({ key, status: 404, from: "function" });
+				expect(got.body).toContain("Not found.");
+				expect(asked(origin, key)).toBe(false);
+				refused++;
+			}
+		}
+		expect(refused).toBe(24);
+	});
+
+	test("refuses another host with 403 before the bucket is asked, whatever the address", async () => {
+		for (const host of ["d111111abcdef8.cloudfront.net", null]) {
+			for (const key of ["v1/index.json", "runs/2026/11/19/01a1f200-3dd5-7ac0-8994-a5f0ba761290.json", `blobs/sha256/${HEX}`]) {
+				const got = await edge(`/${key}`, host);
+				expect({ status: got.status, from: got.from }).toEqual({ status: 403, from: "function" });
+				expect(got.body).toContain("https://api.ledgermath.com/");
+			}
+		}
+		expect(standin.requests).toEqual([]);
 	});
 });
 
@@ -491,7 +682,8 @@ describe("the bucket grants", () => {
 	test("are for this distribution only, and never the bucket itself (no listing), nor an older version", () => {
 		for (const origin of ["api", "runs"] as const) {
 			const policy = withGrant(sstPolicy(BUCKET_ARNS[origin]), BUCKET_ARNS[origin], DISTRIBUTION_ARN, origin);
-			for (const key of INVENTORY[origin]) expect(grants(policy, BUCKET_ARNS[origin], key, DISTRIBUTION_ARN)).toBe(isServed(origin, key));
+			// The grant stops at the prefix; the request function narrows it to the served shapes.
+			for (const key of INVENTORY[origin]) expect(grants(policy, BUCKET_ARNS[origin], key, DISTRIBUTION_ARN)).toBe(servedPrefixes(origin).some((prefix) => key.startsWith(prefix)));
 			for (const key of INVENTORY[origin]) expect(grants(policy, BUCKET_ARNS[origin], key, OTHER_DISTRIBUTION_ARN)).toBe(false);
 			const text = JSON.stringify(bucketGrant(BUCKET_ARNS[origin], DISTRIBUTION_ARN, origin));
 			for (const action of ["s3:ListBucket", "s3:GetObjectVersion", "s3:*", "s3:PutObject"]) expect(text).not.toContain(action);
@@ -543,16 +735,17 @@ describe("the distribution", () => {
 		expect(CREATE).toContain('signingProtocol: "sigv4",');
 	});
 
-	test("in on: one behaviour per served prefix, to its bucket; the tree with no function, the evidence with the headers function; the default answers every request itself; the Free plan's five", () => {
+	test("in on: one behaviour per served prefix, to its bucket, behind the request function; the evidence also with the headers function; the default answers every request itself; the Free plan's five", () => {
 		expect(spec.orderedCacheBehaviors.map((behaviour) => [behaviour.pathPattern, behaviour.targetOriginId])).toEqual([
 			["v1/*", "api-bucket"],
 			["runs/*", "runs-bucket"],
 			["boots/*", "runs-bucket"],
 			["blobs/sha256/*", "runs-bucket"],
 		]);
-		expect(byPattern("v1/*")?.functionAssociations).toEqual([]);
+		const requestFunction = { eventType: "viewer-request" as const, functionArn: REFS.requestFunctionArn };
+		expect(byPattern("v1/*")?.functionAssociations).toEqual([requestFunction]);
 		for (const pattern of ["runs/*", "boots/*", "blobs/sha256/*"]) {
-			expect(byPattern(pattern)?.functionAssociations).toEqual([{ eventType: "viewer-response", functionArn: REFS.evidenceResponseFunctionArn }]);
+			expect(byPattern(pattern)?.functionAssociations).toEqual([requestFunction, { eventType: "viewer-response" as const, functionArn: REFS.evidenceResponseFunctionArn }]);
 		}
 		expect(spec.defaultCacheBehavior.functionAssociations).toEqual([{ eventType: "viewer-request", functionArn: REFS.noRouteFunctionArn }]);
 		expect(behaviours.length).toBe(FREE_PLAN.cacheBehaviours);
@@ -699,8 +892,10 @@ describe("the headers", () => {
 		expect(servedHeaders(SAMPLES["blobs/sha256/"] as string)).toMatchObject({ contentType: null, contentTypeFrom: "the bucket", compressed: false });
 	});
 
-	test("nothing is served outside the served prefixes", () => {
-		for (const path of ["/", "/index.html", "/source/x.tar.gz", "/logs/x.log", "/v2/index.json", "/blobs/other"]) expect(servedHeaders(path)).toBeNull();
+	test("nothing is served outside the served shapes, under a served prefix or not", () => {
+		for (const path of ["/", "/index.html", "/source/x.tar.gz", "/logs/x.log", "/v2/index.json", "/blobs/other", "/runs/2026/11/19/x.json", "/v1/notes.md", "/boots/2026/11/19/unknown.json"]) {
+			expect(servedHeaders(path)).toBeNull();
+		}
 	});
 
 	test("are, for each kind of path, what the README's table says", () => {
@@ -721,12 +916,115 @@ describe("the headers", () => {
 	});
 });
 
+/** Every file under a directory, by its path from it with forward slashes. */
+function filesUnder(directory: string): string[] {
+	return readdirSync(directory, { recursive: true, withFileTypes: true })
+		.filter((entry) => entry.isFile())
+		.map((entry) => relative(directory, join(entry.parentPath, entry.name)).split(sep).join("/"));
+}
+
+describe("the shapes of key served", () => {
+	test("are, for v1/, the tree's kinds (TREE_KINDS); for the evidence, a Run file, a boot summary and a blob; each within its own prefix", () => {
+		expect(SERVED.flatMap((served) => served.keys.map((shape) => [served.prefix, shape.kind]))).toEqual([
+			...TREE_KINDS.map((kind) => ["v1/", kind.kind]),
+			["runs/", "a Run file"],
+			["boots/", "a boot summary"],
+			["blobs/sha256/", "a blob"],
+		]);
+		for (const served of SERVED) {
+			for (const shape of served.keys) {
+				expect(shape.key.source.startsWith(`^${served.prefix.replace(/\//g, "\\/")}`)).toBe(true);
+				expect(shape.key.source.endsWith("$")).toBe(true);
+				expect(new RegExp(uriPattern(shape)).source).toBe(`^\\/${shape.key.source.slice(1)}`);
+			}
+		}
+	});
+
+	test("a Run file's id is the Run schema's version 7 UUID", () => {
+		const schema = JSON.parse(readFileSync(join(ROOT, "schemas", "run.schema.json"), "utf8")) as { properties: { id: { pattern: string } } };
+		const id = schema.properties.id.pattern.replace(/^\^|\$$/g, "");
+		expect(RUN_KEY.source).toBe(`^runs\\/[0-9]{4}\\/[0-9]{2}\\/[0-9]{2}\\/${id}\\.json$`);
+	});
+
+	test("cover every Run file, boot summary and blob of the samples, and every link the built tree gives to evidence", () => {
+		const samples = join(import.meta.dir, "samples");
+		let runs = 0;
+		let boots = 0;
+		let blobs = 0;
+		for (const sample of readdirSync(samples, { withFileTypes: true }).filter((entry) => entry.isDirectory())) {
+			for (const path of filesUnder(join(samples, sample.name))) {
+				if (path.startsWith("runs/")) {
+					expect(RUN_KEY.test(path)).toBe(true);
+					runs++;
+				}
+				if (path.startsWith("boots/")) {
+					expect(BOOT_KEY.test(path)).toBe(true);
+					boots++;
+				}
+				if (path.startsWith("blobs/")) {
+					expect(BLOB_KEY.test(path)).toBe(true);
+					blobs++;
+				}
+			}
+		}
+		expect(runs).toBeGreaterThan(10);
+		expect(boots).toBeGreaterThan(3);
+		expect(blobs).toBeGreaterThan(10);
+		// Every address the golden tree links, its own files and the evidence, is of a served shape, but two the test
+		// fixture makes up and no box writes: not-a-run.json, a file in runs/ whose name is no Run id, which the tree lists
+		// as unreadable with its evidence link, and a boot summary named boot-2026-11-12, where a box names it by the
+		// kernel's boot id, a UUID (as all 197 of the Runs repository's were on 2026-11-21). Neither is served: only what
+		// the boxes write is.
+		const golden = join(import.meta.dir, "api-golden");
+		const unserved = new Set<string>();
+		let links = 0;
+		for (const path of filesUnder(golden)) {
+			expect(isServedKey(path)).toBe(true);
+			for (const match of readFileSync(join(golden, path), "utf8").matchAll(/"https:\/\/api\.ledgermath\.com\/([^"{]+)"/g)) {
+				if (!isServedKey(match[1] as string)) unserved.add(match[1] as string);
+				links++;
+			}
+		}
+		expect([...unserved].sort()).toEqual(["boots/2026/11/12/boot-2026-11-12.json", "runs/2026/11/14/not-a-run.json"]);
+		expect(readFileSync(join(golden, "v1", "series.json"), "utf8")).toContain('"evidence":"https://api.ledgermath.com/runs/2026/11/14/not-a-run.json"');
+		expect(links).toBeGreaterThan(20);
+	});
+
+	test("are, shape for shape, the README's table of addresses", () => {
+		const rows = SECTION.split("\n").filter((line) => /^\| (a|an|the) [^|]+ \| `\^\\\//.test(line));
+		const listed = rows.map((row) => /^\| ([^|]+?) \| `([^`]+)` \|$/.exec(row)?.slice(1, 3));
+		expect(listed).toEqual(SERVED.flatMap((served) => served.keys.map((shape) => [shape.kind, uriPattern(shape)])));
+	});
+});
+
 describe("the functions", () => {
 	const noRoute = load(NO_ROUTE_FUNCTION_CODE);
+	const requestFunction = load(REQUEST_FUNCTION_CODE);
 
-	test("fit CloudFront Functions' size limit, and there are two", () => {
-		for (const code of [EVIDENCE_RESPONSE_FUNCTION_CODE, NO_ROUTE_FUNCTION_CODE]) expect(Buffer.byteLength(code)).toBeLessThan(FUNCTION_CODE_LIMIT_BYTES);
-		expect(CREATE.match(/new aws\.cloudfront\.Function\(/g)?.length).toBe(2);
+	test("fit CloudFront Functions' size limit, and there are three", () => {
+		for (const code of [REQUEST_FUNCTION_CODE, EVIDENCE_RESPONSE_FUNCTION_CODE, NO_ROUTE_FUNCTION_CODE]) expect(Buffer.byteLength(code)).toBeLessThan(FUNCTION_CODE_LIMIT_BYTES);
+		expect(CREATE.match(/new aws\.cloudfront\.Function\(/g)?.length).toBe(3);
+	});
+
+	test("the request function lets through, unchanged, a request for a key of a served shape under api.ledgermath.com", () => {
+		for (const uri of ["/v1/index.json", "/v1/series/0cacb5fd6fae/2026-11.json", "/runs/2026/11/19/01a1f200-3dd5-7ac0-8994-a5f0ba761290.json", `/blobs/sha256/${HEX}`]) {
+			const sent = request(uri);
+			expect(requestFunction({ context: { eventType: "viewer-request" }, request: sent })).toBe(sent);
+		}
+	});
+
+	test("the request function answers 404 to a key of no served shape, and 403 to another host, before cache or bucket", () => {
+		for (const uri of ["/v1/notes.md", "/runs/2026/11/19/x.json", `/blobs/sha256/${HEX.toUpperCase()}`, "/v1/index.json/", "/v1/index.json%00", "/boots/2026/11/19/unknown.json"]) {
+			const got = requestFunction({ context: { eventType: "viewer-request" }, request: request(uri) }) as CfResponse;
+			expect(got.statusCode).toBe(404);
+			expect(got.headers["access-control-allow-origin"]?.value).toBe("*");
+		}
+		for (const host of ["d111111abcdef8.cloudfront.net", "api.ledgermath.com.", null]) {
+			const got = requestFunction({ context: { eventType: "viewer-request" }, request: request("/v1/index.json", host) }) as CfResponse;
+			expect(got.statusCode).toBe(403);
+			expect(got.headers["content-type"]?.value).toBe("text/plain; charset=utf-8");
+			expect(got.body?.data).toContain("https://api.ledgermath.com/");
+		}
 	});
 
 	test("the no-route function answers 404 to every address, served or not, and reaches neither cache nor bucket", () => {

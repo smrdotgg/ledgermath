@@ -1147,4 +1147,32 @@ A migrated benchmark is done only when **all** of these hold:
   write its `v1/*`), and still cannot write to the Runs bucket. Not deployed; `sst diff` was
   not run, the AWS login having expired. A deploy of a `-runs` stage now creates the API
   bucket and that policy, and nothing of the serving.
+- **2026-11-21** — The data API's serving, after an independent review (PASS WITH FIXES;
+  the production `sst diff` agreed that, off, a deploy makes only the API bucket and the
+  role's upload policy). **Only what the project writes is served, at one host**: a request
+  function in front of every served behaviour lets through only the key shapes in `SERVED`
+  (the tree's kinds; a Run file by the Run schema's UUIDv7; a boot summary by the kernel's
+  boot id; a blob by its SHA-256: every one of the Runs repository's 7,270 Run files and 197
+  boot summaries had them on 2026-11-21), answering 404 to anything else under a served
+  prefix, and 403 to any `Host` but `api.ledgermath.com`, the distribution's own name
+  included; tested against a stand-in for S3 that holds the malformed keys. **The upload
+  lists the whole bucket first** and writes nothing while it holds a key the tree lacks (a
+  price file taken out, a stray key anywhere), naming each, so a published table of
+  contents can never leave the bucket unequal to the tree for good; the README says how to
+  settle a key by hand, and the workflow still cannot delete. **A failed write fails the run
+  naming its phase and key**, and the next run repairs the bucket by itself; a test stops an
+  upload between the month files and the Series files on a filled bucket, shows the sha256
+  mismatch a reader then finds, and shows the next run end it. A month file changes in place,
+  so no order prevents that window: ADR-0031 and the README give readers the rule (check a
+  month file against its Series file's sha256; on a mismatch fetch the Series file again).
+  The generator's own words (`MONTH_CONTRACT`) do not yet say so, and are left for a change
+  of their own. **Tests no longer depend on the committed switch**: one release-gate test
+  pins it to `off`, and a rehearsal sets it to each state (and the `console` attachment) in
+  child processes and finds that only that test fails; `checkSetting` refuses an unknown or
+  missing state or attachment. **The stack's wiring is type-checked in CI**
+  (`scripts/check-stack-types.ts`, after `bunx sst install`, which asks AWS nothing), and
+  `tests/public-api-graph.test.ts` builds the resources of `dark`, `closed` and `on` with the
+  stack's own code under Pulumi's mocks. ADR-0031 also states that the evidence's immutable
+  caching assumes each key is written once, what holds that and what would catch a rewrite.
+  Off, a deploy still makes only the API bucket and `RunsApiUploadPolicy`. Not deployed.
 - _(agents: append your entry here, one per merged benchmark)_

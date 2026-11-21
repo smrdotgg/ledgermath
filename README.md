@@ -793,6 +793,52 @@ CloudFront compresses JSON with gzip or Brotli for a reader that sends `Accept-E
 the bytes a reader decodes are the stored ones, whose sha256 the tree gives. Blobs are
 never compressed, so the bytes served are the bytes their address hashes.
 
+**Only the keys the project writes, and only at one host.** Under each prefix, only keys of
+the shapes the project writes there are served: the tree's kinds (`TREE_KINDS` in
+`infra/runs/api-bucket.ts`, the layout of ADR-0030), a Run file as `runner/run.py` names it
+(its id the Run schema's version 7 UUID), a boot summary as it names it (the kernel's boot
+id), a blob by its SHA-256. On 2026-11-21 every one of the Runs repository's 7,270 Run
+files and 197 boot summaries had these shapes. The request function, in front of every
+served behaviour, answers 404 to any other key, before the cache or a bucket sees it, so an
+object left under a served prefix in another shape (a `.bak`, an upper-case id, a boot's
+`unknown.json`, which two boots of one day without a boot id would share) is never served.
+It also answers 403 to a request whose `Host` is not `api.ledgermath.com`, the
+distribution's own `*.cloudfront.net` name included: the API has one host. The list is
+`SERVED` in `infra/runs/public-blobs.ts`, from which the function is written; a test holds
+this table to it, and others hold the samples' and the built tree's every address to it:
+
+| Kind | Address, as the request function matches it |
+|------|---------------------------------------------|
+| a schema | `^\/v1\/schemas\/[a-z0-9-]+\.schema\.json$` |
+| a month file | `^\/v1\/series\/[0-9a-f]{12}\/[0-9]{4}-[0-9]{2}\.json$` |
+| a price file | `^\/v1\/prices\/[0-9]{4}-[0-9]{2}-[0-9]{2}\.json$` |
+| a Series file | `^\/v1\/series\/[0-9a-f]{12}\.json$` |
+| the list of Series | `^\/v1\/series\.json$` |
+| the table of contents | `^\/v1\/index\.json$` |
+| a Run file | `^\/runs\/[0-9]{4}\/[0-9]{2}\/[0-9]{2}\/[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.json$` |
+| a boot summary | `^\/boots\/[0-9]{4}\/[0-9]{2}\/[0-9]{2}\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.json$` |
+| a blob | `^\/blobs\/sha256\/[0-9a-f]{64}$` |
+
+A new kind of file, or a new shape of id, is served only once it is added there.
+
+**Notes for readers.**
+
+- **Check a month file against its Series file.** A month file changes in place, at the
+  same address, so a Series file and a month file can come from different rounds: for up
+  to five minutes after a round (each is cached that long), and, should an upload stop
+  between the month files and the Series files, until the next upload succeeds ("The data
+  API", "The API bucket"). The rule: verify the bytes of a month file against the `sha256`
+  its Series file lists; on a mismatch, fetch the Series file again, then the month file,
+  and retry; while they still differ, the pair is not yet consistent, so wait and retry
+  rather than use either. A month file whose sha256 the Series file lists need not be
+  fetched again at all.
+- **`GET` and `HEAD` only.** `OPTIONS` gets 403, so a browser's CORS preflight fails: a
+  plain `fetch()`, with no custom request header, needs none and works from any origin. A
+  script on another origin cannot read the `ETag` header (it is not in
+  `Access-Control-Expose-Headers`), though the browser's own cache still uses it. Both are
+  the managed response-headers policy's: on the Free plan no custom one can be used, and
+  the managed ones that answer preflights or expose headers are not this one.
+
 **Why these cache times**, held to ADR-0030's contract:
 
 - **Nothing under `/v1/` is named by its content.** `v1/index.json`, `v1/series.json` and
@@ -821,43 +867,54 @@ never compressed, so the bytes served are the bytes their address hashes.
   `max-age`, which S3's does not, so every such request reaches S3, and the limits below
   count it.
 
-**Two locks, each enough alone.** Each bucket's policy lets the CloudFront service
-`s3:GetObject` under that bucket's served prefixes only (`v1/` in the API bucket; `runs/`,
-`boots/` and `blobs/sha256/` in the Runs bucket), only on behalf of this distribution
+**Three locks.** Each bucket's policy lets the CloudFront service `s3:GetObject` under that
+bucket's served prefixes only (`v1/` in the API bucket; `runs/`, `boots/` and
+`blobs/sha256/` in the Runs bucket), only on behalf of this distribution
 (`AWS:SourceArn`); never `s3:ListBucket` or `s3:GetObjectVersion`; and it carries that
-grant only in `on`. And the distribution reaches a bucket only from the behaviour of a
-served prefix: the default behaviour's function answers 404 to every other address, so
-`/`, `/source/…`, `/logs/…` and whatever is put in either bucket later reach no bucket.
-Query strings are neither in the cache key nor passed on, so `?versionId=` never reaches
-S3. Both buckets stay private, their public access blocks on; CloudFront signs its
-requests to both with one Origin Access Control. `tests/public-blobs.test.ts` proves it:
-it takes every kind of key the two buckets hold or may hold, spelt as an attacker might
-(`//`, `/./`, `..` before and inside a prefix, percent-encoded, another case), picks the
-behaviour as CloudFront does (with dot segments removed and without), applies the grants
-as the policies hold them, and finds nothing outside the served prefixes ever read, in any
-state, and nothing at all in `dark` or `closed`.
+grant only in `on`. The distribution reaches a bucket only from the behaviour of a served
+prefix: the default behaviour's function answers 404 to every other address, so `/`,
+`/source/…`, `/logs/…` and whatever is put in either bucket later reach no bucket. And
+within a served prefix, the request function lets through only the shapes above, at one
+host. Query strings are neither in the cache key nor passed on, so `?versionId=` never
+reaches S3. Both buckets stay private, their public access blocks on; CloudFront signs its
+requests to both with one Origin Access Control. `tests/public-blobs.test.ts` proves it: it
+takes every kind of key the two buckets hold or may hold, served prefix or not and of a
+served shape or not, spelt as an attacker might (`//`, `/./`, `..` before and inside a
+prefix, percent-encoded, another case), picks the behaviour as CloudFront does (with dot
+segments removed and without), runs its viewer-request function, applies the grants as the
+policies hold them, and finds nothing but the served shapes ever read, in any state, under
+no other host, and nothing at all in `dark` or `closed`; and, in front of a stand-in for S3
+that holds every one of those keys, it gets each served key's bytes and a 404 from the
+function for every other key under a served prefix, the bucket never asked.
 
 | Request | Answer |
 |---------|--------|
-| `GET` of a served path whose object exists | 200, with the headers above |
+| `GET` of a served shape whose object exists | 200, with the headers above |
 | the same, for an object the bucket does not hold (yet) | 403 `AccessDenied` from S3, not cached by CloudFront |
+| a key under a served prefix of no served shape | 404 from the request function, `Cache-Control: public, max-age=300` |
+| any `Host` but `api.ledgermath.com`, the distribution's `*.cloudfront.net` name included | 403 from the request function |
 | any other address, `/` included | 404 from a function, `Cache-Control: public, max-age=300` |
 | plain HTTP | 403 |
 | any method but `GET` and `HEAD`, `OPTIONS` included (no CORS preflight is answered; a plain `fetch()` needs none) | 403 |
 | over the per-address limit or the total limit (as WAF estimates them), or from an address on AWS's IP reputation list | 403 from WAF (a custom status such as 429 needs Pro) |
 
-**Two functions, and why.** The Free plan allows only AWS managed cache and
+**Three functions, and why.** The Free plan allows only AWS managed cache and
 response-headers policies (custom ones are Business), so no policy can add a header the
-object does not carry. The tree's objects carry theirs, set by the upload, so `/v1/` runs
-no function at all. The boxes upload Run files, boot summaries and blobs with no
-`Cache-Control`, the box is not changed for this, and the workflow may not write to the
-Runs bucket; so one viewer-response function, `ledgermath-production-runs-evidence-response`,
-gives the evidence its `Cache-Control`, `nosniff`, the CSP sandbox and, for `.json`,
-`Content-Type: application/json` (which the boxes' upload already guesses from the name,
-`application/json` on the objects read on 2026-11-19, but no longer depends on). CloudFront
-runs it only below status 400. The other, `ledgermath-production-runs-no-route`, answers
-404 for the default behaviour, which must name an origin and would otherwise send every
-address of no served prefix to a bucket; in `dark` and `closed` every behaviour has it.
+object does not carry, and nothing but a function can look at a request's path or host.
+The request function, `ledgermath-production-runs-request`, is the shapes and the one
+host above, on every served behaviour in `on`. The tree's objects carry their own headers,
+set by the upload, so `/v1/` needs nothing more. The boxes upload Run files, boot summaries
+and blobs with no `Cache-Control`, the box is not changed for this, and the workflow may
+not write to the Runs bucket; so a viewer-response function,
+`ledgermath-production-runs-evidence-response`, gives the evidence its `Cache-Control`,
+`nosniff`, the CSP sandbox and, for `.json`, `Content-Type: application/json` (which the
+boxes' upload already guesses from the name, `application/json` on the objects read on
+2026-11-19, but no longer depends on). CloudFront runs it only below status 400. The third,
+`ledgermath-production-runs-no-route`, answers 404 for the default behaviour, which must
+name an origin and would otherwise send every address of no served prefix to a bucket; in
+`dark` and `closed` every behaviour has it. Each is far under CloudFront Functions' 10 KB,
+and the Free plan's feature table sets no number of functions; a behaviour takes one
+viewer-request and one viewer-response function, which is what the evidence's have.
 
 **Every blob the boxes upload is served as `binary/octet-stream`**, because the upload
 sets no content type: `aws s3 sync` in `runner/box.sh` guesses one from a file's name, a
@@ -1114,23 +1171,31 @@ pay-as-you-go pricing (`closed`, if it is needed, is billed at pay-as-you-go rat
 404s and the inspection of what reaches it until the plan is attached). The change is one
 line, `state` in `PUBLIC_API` (`infra/runs/public-blobs.ts`), made twice: `"off"` to
 `"dark"`, then `"dark"` to `"on"`, each in its own reviewed pull request, merged, and
-deployed from `main`. Every command uses the stage's own profile (`tabot-production`); the
-deploy prints the next step each time.
+deployed from `main`. **Each of those commits also changes, on purpose, the one test that
+pins the switch:** "RELEASE GATE: the committed switch is off, for production-runs" in
+`tests/public-blobs.test.ts`, to expect the state the commit sets. It is the only test that
+reads the committed setting, and it fails until it is changed, so that no commit turns the
+API on by accident; every other test builds each state from its own fixture, and a test
+rehearses the change (and the `console` plan attachment) to show that it fails nothing else.
+Every command uses the stage's own profile (`tabot-production`); the deploy prints the next
+step each time.
 
 0. Before: the stage is deployed with the API bucket, `API_BUCKET` is set, and the latest
    run of the `runs` workflow passed "Check that the API bucket holds the data API's
    files" ("The data API", "The API bucket"), so what goes public is the current, checked
    tree.
-1. Set `state: "dark"`, merge, `bunx sst diff --stage production-runs`, then deploy that
-   stage. It makes, and changes nothing else:
+1. Set `state: "dark"` and the release gate's expectation to `"dark"`, merge, `bunx sst
+   diff --stage production-runs`, then deploy that stage. It makes, and changes nothing
+   else:
    - the web ACL `ledgermath-production-runs-public-api`, scope `CLOUDFRONT`, in us-east-1
      (the provider's resources take a `region` since `@pulumi/aws` 7, so no second
      provider): default allow, the two managed groups, the per-address limit, the total
      limit;
    - the Origin Access Control `ledgermath-production-runs-public-api` (S3, always sign,
      SigV4), for both origins;
-   - the CloudFront Functions `ledgermath-production-runs-evidence-response` and
-     `ledgermath-production-runs-no-route` (`cloudfront-js-2.0`, published);
+   - the CloudFront Functions `ledgermath-production-runs-request`,
+     `ledgermath-production-runs-evidence-response` and `ledgermath-production-runs-no-route`
+     (`cloudfront-js-2.0`, published);
    - the certificate for `api.ledgermath.com` in ACM, us-east-1, and the CNAME record that
      validates it, in the hosted zone `Z03039811C7UWLHZE7CZQ` (whose `CAA 0 issue
      "amazon.com"` lets Amazon issue it); the deploy waits until ACM has issued it;
@@ -1151,14 +1216,15 @@ deploy prints the next step each time.
    <publicApi.distributionId>` says `Enabled` false, `Status` `Deployed`, alias
    `api.ledgermath.com`; `dig +short api.ledgermath.com` gives CloudFront's addresses.
 3. Only if step 1 failed because AWS refused to subscribe a disabled distribution: set
-   `state: "closed"`, merge, deploy (the distribution is enabled, answering 404 to
+   `state: "closed"` (and the release gate's expectation), merge, deploy (the distribution is enabled, answering 404 to
    everything; with `plan: "code"` this deploy creates the subscription), and check the
    plan as in step 2 before the watch's 60 minutes are up.
-4. Set `state: "on"`, merge, deploy. Before it changes anything the deploy checks that an
-   ACTIVE plan covers the distribution, and stops if not; it checks once, so a plan
-   cancelled after that is left to the watch. The distribution is enabled (or stays so),
-   the 404 function comes off the four served behaviours, and both bucket policies get
-   their grant; it takes a few minutes to reach every edge.
+4. Set `state: "on"` and the release gate's expectation to `"on"`, merge, deploy. Before it
+   changes anything the deploy checks that an ACTIVE plan covers the distribution, and
+   stops if not; it checks once, so a plan cancelled after that is left to the watch. The
+   distribution is enabled (or stays so), the request function takes the 404 function's
+   place on the four served behaviours, and both bucket policies get their grant; it takes
+   a few minutes to reach every edge.
 5. Check, from anywhere, with no credentials:
    - `curl -sSI https://api.ledgermath.com/v1/index.json`: 200, `content-type:
      application/json`, `cache-control: public, max-age=300`,
@@ -1171,7 +1237,13 @@ deploy prints the next step each time.
      `https://api.ledgermath.com/blobs/sha256/<hex>` for a blob a Run file names: 200, the
      same `cache-control`, `content-type: binary/octet-stream`, no `content-encoding`;
    - 404 for `/`, `/source/<commit>.tar.gz` and `/logs/…` (a key the Runs bucket holds,
-     from `aws s3 ls`), 403 for `/v1/nothing.json`, 403 for `http://api.ledgermath.com/`;
+     from `aws s3 ls`), and for `/v1/nothing.json` and `/runs/<a Run file's path>.bak`
+     (from the request function: no served shape); 403 from S3 for
+     `/v1/series/000000000000.json` (a served shape, no object); 403 for
+     `http://api.ledgermath.com/`;
+   - 403 for `curl -sSI https://<publicApi.domainName>/v1/index.json`, the distribution's
+     own name, and for `curl -sSI -H 'host: example.org' https://api.ledgermath.com/v1/index.json`
+     (CloudFront may refuse the second itself, as no alternate name matches it);
    - `curl -sSI -X OPTIONS https://api.ledgermath.com/v1/index.json`: 403.
 
 With `plan: "console"` the deploy makes no subscription and prints the console steps
@@ -1261,8 +1333,9 @@ with a certificate the stage makes in ACM (us-east-1, where CloudFront takes cer
 from), validated by a record in the hosted zone the subdomain is delegated to,
 `Z03039811C7UWLHZE7CZQ` in the production account; the parent domain's DNS, at Vercel, is
 not touched. The TLS policy is `TLSv1.2_2025`, the newest that still speaks TLS 1.2 to
-clients without 1.3. The distribution's own `*.cloudfront.net` name answers too (the stage
-output `publicApi.domainName`); nothing links it.
+clients without 1.3. The distribution's own `*.cloudfront.net` name (the stage output
+`publicApi.domainName`) still reaches it, as every distribution's does, and gets 403 from
+the request function: the API has one host.
 
 **Turning it off.** Set `state: "dark"`, merge, deploy: the distribution is disabled, both
 grants removed, the plan, the certificate and the records kept, and Pulumi's protection
@@ -1308,9 +1381,8 @@ account held no distribution, web ACL or certificate). *Replaced:* the optional 
 setting (a name and an existing certificate's ARN) by the certificate, its validation
 record and the alias records the stage makes for `api.ledgermath.com`; the blob request
 function, which answered 404 to any address under `/blobs/sha256/` that was not a hash, by
-nothing: the grants and the behaviours already confine reads to the served prefixes, a
-key that is not there costs one S3 request, which the total limit counts, and one function
-fewer runs.
+the request function, which does the same for every served prefix, from `SERVED`'s
+shapes, and refuses any other host.
 
 ## The Runs repository, the Method and the page
 
@@ -2233,6 +2305,21 @@ address is `--base`, so a private or test address can stand in.
   of the Run right after it then comes from the late Run; (d) adds the Method's block to
   every month file of the Series. The last two are what the Methods produce, and the tree
   neither changes them nor hides them.
+- **Served, a Series file and a month file can be of different rounds.** A month file
+  changes in place, at its address, so no order of upload makes the pair change at once:
+  the upload writes the month files before the Series files ("The API bucket", below), and
+  should it stop between the two, a Series file lists a month's previous sha256 while the
+  month's address already gives the new bytes, until the next upload succeeds (the
+  workflow fails visibly meanwhile, and the next run repairs it by itself); for up to five
+  minutes after each round, too, a reader's cache or CloudFront's may hold one of the two
+  from before. No cache expiry repairs the first case. **The rule a reader follows:** verify
+  a month file's bytes against the `sha256` its Series file lists; on a mismatch, fetch the
+  Series file again and then the month file, and retry; while they still differ, use
+  neither, and retry later. The table of contents and the schemas (the contract's last
+  sentence, above) tell a reader that a held copy is current only when the sha256 matches,
+  and fetch again otherwise; they do not yet say to fetch the Series file again on a
+  mismatch, which is the generator's wording to change (`MONTH_CONTRACT` in
+  `scripts/lib/api.ts`), in a change of its own.
 - **The layout is a number.** `layout` in `v1/index.json` is `LAYOUT` in
   `scripts/lib/api.ts`: raise it whenever the build changes how it writes the files (the
   order of a file's fields, their white space, a field every file of a kind gains). Editing
@@ -2367,6 +2454,12 @@ the tree is kept as the artifact `api`, and only when the repository variable `A
 is set (to the scheduled stage's `apiBucket` output), `scripts/upload-api.ts` writes the
 tree to the bucket, each file at its own path as key:
 
+- **First, the whole bucket is listed**, before anything is written or asked about. If it
+  holds a key the new tree does not have, under `v1/` or anywhere else, nothing at all is
+  written: the step fails, and its summary lists each such key ("A key the tree does not
+  have", below). Publishing a table of contents that no longer lists a file the bucket
+  still serves would leave the bucket unequal to the tree for good, every later run failing
+  the same way, since nothing deletes.
 - **Only what changed.** One `HEAD` per file, with `x-amz-checksum-mode: ENABLED`, gives
   back the SHA-256 S3 verified and kept when the object was written, and its headers; a
   file is written only when the bucket does not hold it, holds it without a SHA-256, holds
@@ -2376,22 +2469,54 @@ tree to the bucket, each file at its own path as key:
   Series files; the list, `v1/series.json`; the table of contents, `v1/index.json`. Each
   file links down only to files of earlier phases (a test reads every link of a built tree
   to hold it to that); its links up, to the table of contents, the list or a month file's
-  own Series file, are to files a reader came through. A failed write stops the upload
-  once the writes of its phase have settled, and no later phase starts.
+  own Series file, are to files a reader came through.
+- **A failed write fails the run, and the next run repairs the bucket.** It stops the
+  upload once the writes of its phase have settled; no later phase starts; the step fails,
+  and its summary names the phase, each key that failed and why. A month file changes in
+  place, so when the stop falls between the month files and the Series files, a Series
+  file lists a month's previous sha256 while the month's address gives the new bytes, and
+  no cache expiry repairs that (readers check the sha256: "The data API", above). The next
+  run's upload repairs it by itself, with nobody's help: the month files are then the
+  bucket's already, and only the Series files, the list and the table of contents differ
+  from it, so only they are written. A test stops an upload there, on a filled bucket,
+  shows the mismatch a reader would find, and shows the next run end it.
 - **Nothing deleted.** The upload sends no `DELETE`, and the role has no `s3:DeleteObject`.
-  So nothing the previous tree published, which the gate of "The data API" already keeps in
-  every new tree, can go; a key the tree no longer has stays, and the check below names it.
+  Nothing the previous tree published can go: the gate of "The data API" keeps every Series
+  file and month file in every new tree, and a key the tree no longer has (a price file
+  taken out of the Runs repository, a schema dropped, anything put in the bucket by hand)
+  stops the upload, as above, until a person settles it.
 - **Each object carries the headers it is served with**: `Content-Type: application/json`
   and `Cache-Control: public, max-age=300` (the public serving's managed policies take
   nothing else; "The public data API"), and `x-amz-checksum-sha256`, which S3 verifies, as
   it verifies the signed body's SHA-256, so other bytes are refused.
 
-Then `scripts/check-api-bucket.ts` checks that the bucket's `v1/` holds exactly the tree:
-the same keys, none missing and none more, each with the tree's SHA-256, size,
-`Content-Type` and `Cache-Control`. A key in the bucket that the tree does not have fails
-it: a person decides whether it goes. While `API_BUCKET` is not set, neither runs, and the
-step summary says that nothing was uploaded and why; that is not an error. Both write what
-they did to the step summary.
+Then `scripts/check-api-bucket.ts` checks that the whole bucket holds exactly the tree:
+the same keys, under `v1/` and nothing anywhere else, none missing and none more, each with
+the tree's SHA-256, size, `Content-Type` and `Cache-Control`. While `API_BUCKET` is not
+set, neither runs, and the step summary says that nothing was uploaded and why; that is not
+an error. Both write what they did, or why they stopped, to the step summary.
+
+**A key the tree does not have.** The upload stopped, wrote nothing, and listed the keys;
+the published files are those of the last upload that succeeded, and every run fails the
+same way until the key is settled. The workflow cannot delete and never will; a person
+does, with the stage's own profile:
+
+1. For each key, find why the tree lacks it. A price file: was it taken out of the Runs
+   repository on purpose (`git log -- prices/<yyyy>/<mm>/<dd>/aws.json` in
+   `smrdotgg/ledgermath-runs`)? A schema: was it dropped from `API_SCHEMAS` in
+   `scripts/lib/api.ts` on purpose? A key outside `v1/`, or of no shape the build writes:
+   who put it there (`aws s3api head-object --bucket <apiBucket> --key <key> --profile
+   tabot-production` gives its date and size)? A Series file or month file cannot be the
+   cause: the gate keeps every one in every new tree, and a run would have failed there
+   first.
+2. If the tree is wrong (the file was taken out by mistake), put it back where the build
+   reads it from and start the workflow again; nothing in the bucket changes.
+3. If the key should go, delete it, and nothing else, with the stage's own profile: `aws s3
+   rm s3://<apiBucket>/<key> --profile tabot-production`. While the public API is on, the
+   deleted file stops being served once CloudFront's copies expire (five minutes for the
+   tree); readers who kept it keep it.
+4. Start the workflow by hand (Actions, `runs`, "Run workflow"), or wait for the next run:
+   it uploads, and "Check that the API bucket holds the data API's files" passes.
 
 **The permission.** The workflow writes with the role it already assumes, `RunsReaderRole`,
 through a second policy of that role, `RunsApiUploadPolicy`: `s3:ListBucket` on the API

@@ -1,0 +1,8 @@
+{
+	// The -runs stage's wiring, which tsconfig.json leaves out because it needs SST's
+	// platform types (.sst/platform, written by `bunx sst install`). Checked by
+	// scripts/check-stack-types.ts, which CI runs (.github/workflows/check.yml).
+	"extends": "./tsconfig.json",
+	"include": ["infra/runs/stack.ts", "infra/runs/public-blobs-stack.ts"],
+	"exclude": ["node_modules", "site", "benchmarks/*/build"]
+}

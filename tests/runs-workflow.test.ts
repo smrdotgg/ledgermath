@@ -213,6 +213,51 @@ describe("the runs workflow", () => {
 	});
 });
 
+describe("the check workflow", () => {
+	const check = Bun.YAML.parse(readFileSync(join(ROOT, ".github", "workflows", "check.yml"), "utf8")) as Workflow;
+	const testJob = check.jobs.test as { steps: Step[] };
+
+	test("installs SST's platform, type-checks the -runs stage's wiring against it, and requires the public API's resource graph in bun test", () => {
+		const install = testJob.steps.findIndex((step) => step.run === "bunx sst install");
+		const types = testJob.steps.findIndex((step) => step.run === "bun scripts/check-stack-types.ts");
+		const tests = testJob.steps.findIndex((step) => step.run === "bun test");
+		expect(install).toBeGreaterThan(testJob.steps.findIndex((step) => step.run === "bun install --frozen-lockfile"));
+		expect(types).toBeGreaterThan(install);
+		expect(tests).toBeGreaterThan(install);
+		expect(testJob.steps[tests]?.env?.LM_STACK_REQUIRED).toBe("1");
+		expect(existsSync(join(ROOT, "scripts", "check-stack-types.ts"))).toBe(true);
+		expect(existsSync(join(ROOT, "tsconfig.stack.json"))).toBe(true);
+		// No AWS credentials: installing SST's platform asks AWS nothing.
+		expect(readFileSync(join(ROOT, ".github", "workflows", "check.yml"), "utf8")).not.toMatch(/aws-actions|id-token|aws-access-key-id/);
+	});
+});
+
+describe("the stack's type check", () => {
+	test("fails on an error in this project's files, or one tied to no file, and leaves SST's own sources' errors aside", async () => {
+		const { sortErrors } = await import("../scripts/check-stack-types");
+		const output = [
+			".sst/platform/src/components/aws/bucket.ts(999,15): error TS2322: Type 'x' is not assignable to type 'y'.",
+			"  more of that message",
+			"infra/runs/public-blobs-stack.ts(12,3): error TS2304: Cannot find name 'nope'.",
+			"error TS2688: Cannot find type definition file for 'bun'.",
+			`${ROOT}/.sst/platform/src/components/aws/cdn.ts(1,1): error TS1000: SST's own.`,
+		].join("\n");
+		expect(sortErrors(output, ROOT)).toEqual({
+			ours: ["infra/runs/public-blobs-stack.ts(12,3): error TS2304: Cannot find name 'nope'.", "error TS2688: Cannot find type definition file for 'bun'."],
+			sst: 2,
+		});
+		expect(sortErrors("", ROOT)).toEqual({ ours: [], sst: 0 });
+	});
+
+	test("checks the stack files, which tsconfig.json leaves out, as strictly as the rest", () => {
+		const stack = Bun.JSONC.parse(readFileSync(join(ROOT, "tsconfig.stack.json"), "utf8")) as { extends: string; include: string[] };
+		const root = Bun.JSONC.parse(readFileSync(join(ROOT, "tsconfig.json"), "utf8")) as { exclude: string[] };
+		expect(stack.extends).toBe("./tsconfig.json");
+		expect(stack.include).toEqual(["infra/runs/stack.ts", "infra/runs/public-blobs-stack.ts"]);
+		for (const file of stack.include) expect(root.exclude).toContain(file);
+	});
+});
+
 describe("the prices workflow", () => {
 	const prices = Bun.YAML.parse(readFileSync(join(ROOT, ".github", "workflows", "prices.yml"), "utf8")) as Workflow;
 	const pricesJob = Object.values(prices.jobs)[0] as { env?: Record<string, string>; steps: Step[] };

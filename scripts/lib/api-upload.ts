@@ -5,13 +5,25 @@
  *   - readTree: every file of a tree scripts/build-api.ts wrote, with its key
  *     (its path, which is where it is served), its SHA-256, and the headers
  *     its object carries (treeObject), refusing a file of no known kind;
- *   - uploadTree: writes only what differs from the bucket, by content hash
- *     and by headers, read with one HEAD per file (S3 gives back the SHA-256
- *     it verified when the object was written); in UPLOAD_PHASES' order, each
- *     phase whole before the next starts, so no file a reader can reach links
- *     one that is not there yet; and never deletes anything;
- *   - checkBucket: the bucket's v1/ holds exactly the tree's files, each with
+ *   - uploadTree: first lists the whole bucket, and writes nothing at all if
+ *     it holds a key the tree does not (UnexpectedKeys: the upload never
+ *     deletes, so a person decides, README "The API bucket"); then writes only
+ *     what differs from the bucket, by content hash and by headers, read with
+ *     one HEAD per file (S3 gives back the SHA-256 it verified when the object
+ *     was written), in UPLOAD_PHASES' order, each phase whole before the next
+ *     starts, so no file a reader can reach links down to one that is not
+ *     there yet; and stops at a failed write, naming its phase and key
+ *     (UploadStopped), starting no later phase;
+ *   - checkBucket: the whole bucket holds exactly the tree's files, each with
  *     the tree's SHA-256 and the headers treeObject gives it.
+ *
+ * A month file changes in place, at the same key: when an upload stops after
+ * the month files and before the Series files, a Series file still lists the
+ * month's previous sha256 while the month's address gives the new bytes, and
+ * no cache expiry repairs it. The next upload that runs does, by itself: the
+ * month files are then the bucket's already, and only the Series files, the
+ * list and the table of contents are written. Readers check a month file
+ * against the sha256 its Series file lists (README, "The data API").
  *
  * Requests are signed here with SigV4 (scripts/lib/sigv4.ts), path-style, as
  * scripts/lib/s3-create.ts signs its own, because Bun's S3 client can neither
@@ -236,14 +248,69 @@ export interface UploadOptions {
 }
 
 /**
+ * The bucket holds keys the tree does not have. Nothing was written: the
+ * upload never deletes, and publishing a table of contents that no longer
+ * lists a file the bucket still serves would leave the bucket unequal to the
+ * tree for good, every later run failing the same way. A person decides
+ * whether each key goes (README, "The API bucket", "A key the tree does not
+ * have").
+ */
+export class UnexpectedKeys extends Error {
+	constructor(
+		readonly bucket: string,
+		readonly keys: readonly string[],
+	) {
+		super(
+			`${bucket} holds ${keys.length} key${keys.length === 1 ? "" : "s"} the tree does not have, so nothing was uploaded (the upload deletes nothing; README, "The API bucket", "A key the tree does not have"): ${keys.join(", ")}`,
+		);
+		this.name = "UnexpectedKeys";
+	}
+}
+
+/**
+ * A write failed. The phases before `phase` were written whole; in `phase`,
+ * the writes that succeeded are `written`, the ones that failed `failed`; no
+ * later phase was started. The bucket may now hold month files of this round
+ * beside Series files of the round before, whose sha256 no longer match them:
+ * the next upload that runs writes what is still missing and repairs it.
+ */
+export class UploadStopped extends Error {
+	constructor(
+		readonly bucket: string,
+		readonly phase: number,
+		readonly written: readonly string[],
+		readonly failed: ReadonlyArray<{ key: string; error: string }>,
+		readonly before: readonly PhaseReport[],
+	) {
+		const first = failed[0];
+		super(
+			`the upload to ${bucket} stopped in phase ${phase + 1} of ${UPLOAD_PHASES.length}, ${UPLOAD_PHASES[phase]}: ${failed.length} write${failed.length === 1 ? "" : "s"} failed` +
+				`${first === undefined ? "" : `, the first ${first.key}: ${first.error}`}; ${written.length} of that phase written, no later phase started. ` +
+				"Until the next upload succeeds, a Series file may list a month file's previous sha256 while its address gives the new bytes; the next run repairs it.",
+		);
+		this.name = "UploadStopped";
+	}
+}
+
+/** The keys the bucket holds and the tree does not, in key order. */
+export function unexpectedKeys(listed: readonly string[], files: readonly TreeFile[]): string[] {
+	const expected = new Set(files.map((file) => file.key));
+	return listed.filter((key) => !expected.has(key)).sort();
+}
+
+/**
  * Writes to the store the files of the tree that it does not hold as they
  * would be written: a phase at a time, in UPLOAD_PHASES' order, each phase
- * whole before the next begins. A failed write stops the upload once the
- * writes of its phase have settled, and no later phase starts: the files
- * already readable then still link only files that are there. Never deletes.
+ * whole before the next begins. First, before any write or HEAD, it lists the
+ * whole bucket and throws UnexpectedKeys, having written nothing, if the
+ * bucket holds a key the tree does not. A failed write stops the upload once
+ * the writes of its phase have settled, with UploadStopped, and no later
+ * phase starts. Never deletes.
  */
 export async function uploadTree(store: ApiStore, files: readonly TreeFile[], options: UploadOptions = {}): Promise<UploadReport> {
 	const concurrency = options.concurrency ?? 8;
+	const extra = unexpectedKeys(await store.list(""), files);
+	if (extra.length > 0) throw new UnexpectedKeys(store.name, extra);
 	const reasons = new Map<string, string>();
 	await inParallel(files, concurrency, async (file) => {
 		const reason = writeReason(file, await store.head(file.key));
@@ -254,24 +321,32 @@ export async function uploadTree(store: ApiStore, files: readonly TreeFile[], op
 		const ofPhase = files.filter((file) => file.phase === index);
 		const toWrite = ofPhase.filter((file) => reasons.has(file.key));
 		const written: string[] = [];
+		const failed: Array<{ key: string; error: string }> = [];
 		await inParallel(toWrite, concurrency, async (file) => {
-			await store.put(file);
+			try {
+				await store.put(file);
+			} catch (error) {
+				failed.push({ key: file.key, error: error instanceof Error ? error.message : String(error) });
+				return;
+			}
 			written.push(file.key);
 			options.onWrite?.(file);
 		});
+		if (failed.length > 0) throw new UploadStopped(store.name, index, written.sort(), failed.sort((a, b) => (a.key < b.key ? -1 : 1)), phases);
 		phases.push({ phase, written: written.sort(), unchanged: ofPhase.length - toWrite.length });
 	}
 	return { phases, reasons };
 }
 
 /**
- * What differs between the store's v1/ and the tree: a file missing or extra,
- * a SHA-256 other than the file's, or headers other than treeObject gives.
- * Empty when the store holds the tree exactly.
+ * What differs between the whole store and the tree: a file missing, a key
+ * the tree does not have (under v1/ or anywhere else), a SHA-256 other than
+ * the file's, or headers other than treeObject gives. Empty when the store
+ * holds the tree exactly.
  */
 export async function checkBucket(store: ApiStore, files: readonly TreeFile[], options: { concurrency?: number } = {}): Promise<string[]> {
 	const problems: string[] = [];
-	const listed = new Set(await store.list(TREE_PREFIX));
+	const listed = new Set(await store.list(""));
 	const expected = new Set(files.map((file) => file.key));
 	for (const key of [...listed].sort()) {
 		if (!expected.has(key)) problems.push(`${store.name}/${key}: in the bucket, not in the tree (the upload deletes nothing: a person decides whether it goes)`);

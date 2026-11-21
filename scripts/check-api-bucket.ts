@@ -6,7 +6,7 @@
  *
  * (--endpoint: a stand-in for S3, path-style; the tests use it.)
  *
- * Every key under v1/ of the bucket is a file of the tree and every file of
+ * Every key of the bucket, under v1/ or anywhere else, is a file of the tree and every file of
  * the tree is there, each with the file's SHA-256 (the one S3 verified and
  * kept when it was written), its size, and the Content-Type and
  * Cache-Control treeObject gives it. A key the tree no longer has is a
@@ -39,7 +39,7 @@ async function main(): Promise<void> {
 	const took = Math.round(performance.now() - started);
 	const outcome =
 		problems.length === 0
-			? `${store.name} holds the data API's tree exactly: ${files.length} files under v1/, each with the tree's SHA-256, size, Content-Type and Cache-Control (${took} ms)`
+			? `${store.name} holds the data API's tree exactly: ${files.length} files, all under v1/ and nothing else, each with the tree's SHA-256, size, Content-Type and Cache-Control (${took} ms)`
 			: `${store.name} does not hold the data API's tree exactly: ${problems.length} problem${problems.length === 1 ? "" : "s"} (${took} ms)`;
 	if (process.env.GITHUB_STEP_SUMMARY) {
 		const shown = problems.slice(0, 20).map((problem) => `- ${problem}`).join("\n");

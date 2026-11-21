@@ -349,7 +349,7 @@ export async function runsStack() {
 		policy: apiBucket.arn.apply((arn) => JSON.stringify(apiUploadPolicy(arn))),
 	});
 
-	const publicApiOutputs = publicApi === null ? null : publicApi.create(bucket, apiBucket);
+	const publicApiOutputs = publicApi === null ? null : publicApi.create(bucket, apiBucket).outputs;
 
 	return {
 		bucket: bucket.name,

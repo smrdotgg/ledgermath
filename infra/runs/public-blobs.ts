@@ -41,9 +41,10 @@
  *           Enabled, it takes public traffic, billed at pay-as-you-go rates
  *           until the plan is attached.
  *   on      the distribution serves: the served behaviours reach their
- *           buckets, and both buckets' policies carry the grant. The deploy
- *           goes on only if AWS says, at that moment, that an ACTIVE plan
- *           covers the distribution.
+ *           buckets behind the request function (one host, and only keys of
+ *           a served shape: SERVED), and both buckets' policies carry the
+ *           grant. The deploy goes on only if AWS says, at that moment, that
+ *           an ACTIVE plan covers the distribution.
  *
  * What is deployed decides what a deploy may do (public-blobs-guard.ts): from
  * an enabled distribution the only way out is "dark". A watch in the stage
@@ -60,18 +61,22 @@
  * Content-Type and Cache-Control, set by the upload: api-bucket.ts), the
  * managed response-headers policy (CORS), or the one viewer-response function
  * (the evidence's Cache-Control, which the boxes upload without; servedHeaders
- * says which, path by path).
+ * says which, path by path). Three functions in all, each under CloudFront
+ * Functions' 10 KB: the request function, the evidence's response function,
+ * and the 404 of the default behaviour (and of every behaviour in "dark" and
+ * "closed").
  *
  * Plain data: no SST global is used, so tests can import it.
  * infra/runs/public-blobs-stack.ts makes the resources from it, and
  * tests/public-blobs.test.ts checks it.
  */
 
-import { TREE_CACHE_CONTROL, TREE_CONTENT_TYPE, TREE_PREFIX } from "./api-bucket";
+import { TREE_CACHE_CONTROL, TREE_CONTENT_TYPE, TREE_KINDS, TREE_PREFIX } from "./api-bucket";
 import type { PolicyStatement } from "./github-role";
 import { PRODUCTION_STAGE } from "./stages";
 
 export type PublicApiState = "off" | "dark" | "closed" | "on";
+export const STATES: readonly PublicApiState[] = ["off", "dark", "closed", "on"];
 /** The states in which the distribution exists. */
 export type DeployedState = Exclude<PublicApiState, "off">;
 export const DEPLOYED_STATES: readonly DeployedState[] = ["dark", "closed", "on"];
@@ -101,7 +106,11 @@ export interface PublicApiSetting {
  * (stack.ts, sourceArchive), so the state is in git, and a routine deploy
  * that forgot a variable cannot delete the distribution or disable it.
  * Turning it on is a change of `state`, reviewed and merged, and deployed in
- * the order the README gives ("The public data API", "Turning it on").
+ * the order the README gives ("The public data API", "Turning it on"); the
+ * commit that does it also changes the one test that pins it to "off"
+ * (tests/public-blobs.test.ts, "RELEASE GATE"). Its type is
+ * PublicApiSetting, not the literal, so the type check sees every state's
+ * branch whatever is committed.
  */
 export const PUBLIC_API: PublicApiSetting = {
 	stage: "production-runs",
@@ -121,29 +130,72 @@ export const GLOBAL_REGION = "us-east-1";
 /** Which bucket a served prefix is read from. */
 export type Origin = "api" | "runs";
 
+/** One shape of key the project writes, as a regular expression over the bucket's key (no leading slash). */
+export interface KeyShape {
+	kind: string;
+	key: RegExp;
+}
+
 export interface Served {
 	/** A key prefix of its bucket, which is also the path under the host's root. */
 	prefix: string;
 	origin: Origin;
 	what: string;
+	/** The only keys under the prefix that are served: the shapes the project writes there. Anything else gets 404 at the edge. */
+	keys: readonly KeyShape[];
 }
 
 /**
+ * A Run file: runs/<yyyy>/<mm>/<dd>/<id>.json, the Run's start date and its
+ * id, a version 7 UUID, as runner/run.py writes it and the Run schema's id
+ * pattern says (schemas/run.schema.json). All 7,270 Run files of the Runs
+ * repository had this shape on 2026-11-21.
+ */
+export const RUN_KEY = /^runs\/[0-9]{4}\/[0-9]{2}\/[0-9]{2}\/[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.json$/;
+/**
+ * A boot summary: boots/<yyyy>/<mm>/<dd>/<boot>.json, the boot's day and the
+ * kernel's boot id, a UUID in lowercase hex, as runner/run.py writes it from
+ * /proc/sys/kernel/random/boot_id. A boot whose id could not be read writes
+ * unknown.json, which two such boots of one day would share, and which the
+ * tree never links (no Run's boot is "unknown"): it is not served. All 197
+ * boot summaries of the Runs repository had this shape on 2026-11-21.
+ */
+export const BOOT_KEY = /^boots\/[0-9]{4}\/[0-9]{2}\/[0-9]{2}\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.json$/;
+/** A blob: blobs/sha256/<hex>, the SHA-256 of its bytes in 64 lowercase hex digits (scripts/lib/blobs.ts reads no other). */
+export const BLOB_KEY = /^blobs\/sha256\/[0-9a-f]{64}$/;
+
+/**
  * Everything the distribution can reach, in the order its behaviours are
- * listed. Anything else of either bucket (the Runs bucket's source/ and
- * logs/, and whatever is put there later) is reached by no behaviour and
- * granted to no one.
+ * listed, with the shapes of key served under each: the one list the
+ * request function, the grants, the tests and the README's table of
+ * addresses are all made from or held to. Anything else of either bucket
+ * (the Runs bucket's source/ and logs/, an object under a served prefix of
+ * no served shape, and whatever is put there later) is reached by no
+ * behaviour, or answered 404 by the request function before the bucket is
+ * asked.
  */
 export const SERVED: readonly Served[] = [
-	{ prefix: TREE_PREFIX, origin: "api", what: "the data API's tree" },
-	{ prefix: "runs/", origin: "runs", what: "Run files" },
-	{ prefix: "boots/", origin: "runs", what: "boot summaries" },
-	{ prefix: "blobs/sha256/", origin: "runs", what: "blobs" },
+	{ prefix: TREE_PREFIX, origin: "api", what: "the data API's tree", keys: TREE_KINDS.map((kind) => ({ kind: kind.kind, key: kind.path })) },
+	{ prefix: "runs/", origin: "runs", what: "Run files", keys: [{ kind: "a Run file", key: RUN_KEY }] },
+	{ prefix: "boots/", origin: "runs", what: "boot summaries", keys: [{ kind: "a boot summary", key: BOOT_KEY }] },
+	{ prefix: "blobs/sha256/", origin: "runs", what: "blobs", keys: [{ kind: "a blob", key: BLOB_KEY }] },
 ];
 
 /** The prefixes a bucket's grant covers. */
 export function servedPrefixes(origin: Origin): string[] {
 	return SERVED.filter((served) => served.origin === origin).map((served) => served.prefix);
+}
+
+/** Whether a key (no leading slash) is of a shape the distribution serves. */
+export function isServedKey(key: string): boolean {
+	return SERVED.some((served) => served.keys.some((shape) => shape.key.test(key)));
+}
+
+/** A key shape as the request function matches it: against the request's URI, which starts with a slash. */
+export function uriPattern(shape: KeyShape): string {
+	const source = shape.key.source;
+	if (!source.startsWith("^")) throw new Error(`the key shape of ${shape.kind} is not anchored at its start: ${source}`);
+	return `^\\/${source.slice(1)}`;
 }
 
 /** CloudFront path patterns have no leading slash; * matches any characters, slashes included. */
@@ -244,7 +296,7 @@ export interface ServedHeaders {
  */
 export function servedHeaders(path: string): ServedHeaders | null {
 	const served = SERVED.find((entry) => path.startsWith(`/${entry.prefix}`));
-	if (served === undefined) return null;
+	if (served === undefined || !served.keys.some((shape) => shape.key.test(path.slice(1)))) return null;
 	const rule = servedRule(served);
 	if (served.origin === "api") {
 		return {
@@ -332,6 +384,7 @@ export const CLOSED_GRACE_MINUTES = 60;
 export interface PublicApiNames {
 	webAcl: string;
 	originAccessControl: string;
+	requestFunction: string;
 	evidenceResponseFunction: string;
 	noRouteFunction: string;
 }
@@ -341,6 +394,7 @@ export function publicApiNames(app: string, stage: string): PublicApiNames {
 	return {
 		webAcl: `${prefix}-public-api`,
 		originAccessControl: `${prefix}-public-api`,
+		requestFunction: `${prefix}-request`,
 		evidenceResponseFunction: `${prefix}-evidence-response`,
 		noRouteFunction: `${prefix}-no-route`,
 	};
@@ -373,14 +427,27 @@ export interface PublicApiPlan {
 }
 
 /**
- * Throws unless the setting names production-runs or is "off": no other
- * stage may ever serve the API. PUBLIC_API's type already says so; this says
- * it to a setting built at run time, and to a test.
+ * Throws unless the setting is one the code knows: an object, its state one
+ * of STATES and its plan attachment one of PLAN_ATTACHMENTS (a typo, a
+ * missing field or a value from some other version would otherwise reach
+ * the plan as something no branch expects), and unless it names
+ * production-runs or is "off": no other stage may ever serve the API.
+ * PUBLIC_API's type already says so; this says it to a setting built at run
+ * time, and to a test.
  */
-export function checkSetting(setting: { stage: string; state: PublicApiState }): void {
-	if (setting.stage !== PRODUCTION_STAGE && setting.state !== "off") {
+export function checkSetting(setting: unknown): asserts setting is { stage: string; state: PublicApiState; plan: PlanAttachment } {
+	if (typeof setting !== "object" || setting === null) throw new Error(`The public data API's setting is not an object: ${JSON.stringify(setting)}`);
+	const { stage, state, plan } = setting as Record<string, unknown>;
+	if (typeof stage !== "string") throw new Error(`The public data API's setting names no stage: ${JSON.stringify(stage)}`);
+	if (!STATES.some((known) => known === state)) {
+		throw new Error(`The public data API's state is ${JSON.stringify(state)}, which is none of ${STATES.map((known) => `"${known}"`).join(", ")} (infra/runs/public-blobs.ts)`);
+	}
+	if (!PLAN_ATTACHMENTS.some((known) => known === plan)) {
+		throw new Error(`The public data API's plan attachment is ${JSON.stringify(plan)}, which is none of ${PLAN_ATTACHMENTS.map((known) => `"${known}"`).join(", ")} (infra/runs/public-blobs.ts)`);
+	}
+	if (stage !== PRODUCTION_STAGE && state !== "off") {
 		throw new Error(
-			`The public data API may be served from ${PRODUCTION_STAGE} alone, and the setting names ${JSON.stringify(setting.stage)} with the state "${setting.state}". ` +
+			`The public data API may be served from ${PRODUCTION_STAGE} alone, and the setting names ${JSON.stringify(stage)} with the state "${String(state)}". ` +
 				`Set PUBLIC_API.stage to "${PRODUCTION_STAGE}" (infra/runs/public-blobs.ts).`,
 		);
 	}
@@ -391,7 +458,7 @@ export function checkSetting(setting: { stage: string; state: PublicApiState }):
  * for any stage but setting.stage. Throws for a setting that names another
  * stage than production-runs with anything but "off".
  */
-export function publicApiPlan(setting: { stage: string; state: PublicApiState; plan: PlanAttachment }, stage: string): PublicApiPlan | null {
+export function publicApiPlan(setting: unknown, stage: string): PublicApiPlan | null {
 	checkSetting(setting);
 	if (stage !== setting.stage || setting.state === "off") return null;
 	const enabled = setting.state === "closed" || setting.state === "on";
@@ -409,7 +476,8 @@ export function publicApiPlan(setting: { stage: string; state: PublicApiState; p
 
 /**
  * Every resource the stack declares for a plan, by its name in the stage
- * (public-blobs-stack.ts makes exactly these, and a test holds the two
+ * (public-blobs-stack.ts makes exactly these, and tests/public-api-graph.test.ts
+ * builds the stack's resources for each state, without AWS, and holds the two
  * together). None for "off". The grants are not resources: in "on" they go
  * into the two bucket policies SST already makes (bucketGrant, withGrant).
  */
@@ -418,6 +486,7 @@ export function declaredResources(plan: PublicApiPlan | null): string[] {
 	return [
 		"PublicApiWebAcl",
 		"PublicApiOac",
+		"PublicApiRequestFunction",
 		"PublicApiEvidenceResponseFunction",
 		"PublicApiNoRouteFunction",
 		"PublicApiCertificate",
@@ -517,6 +586,7 @@ export interface DistributionRefs<T> {
 	runsBucketDomain: T;
 	originAccessControlId: T;
 	webAclArn: T;
+	requestFunctionArn: T;
 	evidenceResponseFunctionArn: T;
 	noRouteFunctionArn: T;
 	/** The validated certificate for API_DOMAIN.name, in us-east-1. */
@@ -528,16 +598,19 @@ export const TLS_POLICY = "TLSv1.2_2025";
 
 /**
  * The distribution: five cache behaviours, the Free plan's most. One per
- * served prefix, each reaching its bucket in "on" (the tree with no function
- * at all, the evidence with the viewer-response function that sets its
- * headers), and the default behaviour, which reaches nothing: its function
- * answers 404 to every request, before the cache or a bucket sees it. In
- * "dark" and "closed" every behaviour has that function, so nothing reaches
- * a bucket. GET and HEAD only, HTTPS only (plain HTTP gets 403), HTTP/2 and
- * HTTP/3, IPv6, every edge location, under api.ledgermath.com alone.
+ * served prefix, each reaching its bucket in "on" behind the request
+ * function, which refuses another host than api.ledgermath.com and answers
+ * 404 to a key of no served shape (the evidence also has the viewer-response
+ * function that sets its headers), and the default behaviour, which reaches
+ * nothing: its function answers 404 to every request, before the cache or a
+ * bucket sees it. In "dark" and "closed" every behaviour has that function,
+ * so nothing reaches a bucket. GET and HEAD only, HTTPS only (plain HTTP gets
+ * 403), HTTP/2 and HTTP/3, IPv6, every edge location, under
+ * api.ledgermath.com alone.
  */
 export function distributionArgs<T>(refs: DistributionRefs<T>, plan: PublicApiPlan): DistributionSpec<T> {
 	const noRoute: FunctionAssociation<T> = { eventType: "viewer-request", functionArn: refs.noRouteFunctionArn };
+	const request: FunctionAssociation<T> = { eventType: "viewer-request", functionArn: refs.requestFunctionArn };
 	const behaviour = (origin: Origin, cachePolicy: ManagedPolicy, compress: boolean, associations: Array<FunctionAssociation<T>>): CacheBehaviour<T> => ({
 		targetOriginId: ORIGIN_IDS[origin],
 		viewerProtocolPolicy: "https-only",
@@ -565,7 +638,7 @@ export function distributionArgs<T>(refs: DistributionRefs<T>, plan: PublicApiPl
 		orderedCacheBehaviors: SERVED.map((served) => {
 			const rule = servedRule(served);
 			const associations: Array<FunctionAssociation<T>> = [
-				...(plan.serve ? [] : [noRoute]),
+				plan.serve ? request : noRoute,
 				...(rule.evidenceHeaders ? [{ eventType: "viewer-response" as const, functionArn: refs.evidenceResponseFunctionArn }] : []),
 			];
 			return { pathPattern: pathPattern(served.prefix), ...behaviour(served.origin, rule.cachePolicy, rule.compress, associations) };
@@ -626,6 +699,48 @@ const NOT_FOUND_SOURCE = [
  * served prefix would be a request to a bucket.
  */
 export const NO_ROUTE_FUNCTION_CODE = [NOT_FOUND_SOURCE, "function handler(event) {", "  return notFound();", "}", ""].join("\n");
+
+const OTHER_HOST_TEXT = `Forbidden. LedgerMath's data API is served at https://${API_DOMAIN.name}/ and under no other name.\n`;
+
+/**
+ * The served behaviours' viewer-request function, in "on". A request whose
+ * Host is not api.ledgermath.com (the distribution's own *.cloudfront.net
+ * name, say) gets 403: the API has one host. A request whose path is not
+ * exactly a key of a served shape (SERVED's keys: the tree's kinds, a Run
+ * file, a boot summary, a blob) gets 404, before the cache or a bucket sees
+ * it, so an object under a served prefix that the project did not write in
+ * one of those shapes is never served, whatever is put there. Anything else
+ * goes on, unchanged.
+ */
+export const REQUEST_FUNCTION_CODE = [
+	`var HOST = ${JSON.stringify(API_DOMAIN.name)};`,
+	`var SHAPES = [${SERVED.flatMap((served) => served.keys)
+		.map((shape) => `new RegExp(${JSON.stringify(uriPattern(shape))})`)
+		.join(", ")}];`,
+	NOT_FOUND_SOURCE,
+	"function otherHost() {",
+	"  return {",
+	"    statusCode: 403,",
+	"    statusDescription: 'Forbidden',",
+	"    headers: {",
+	"      'content-type': { value: 'text/plain; charset=utf-8' },",
+	`      'cache-control': { value: '${NOT_FOUND_CACHE_CONTROL}' },`,
+	"      'x-content-type-options': { value: 'nosniff' }",
+	"    },",
+	`    body: { encoding: 'text', data: ${JSON.stringify(OTHER_HOST_TEXT)} }`,
+	"  };",
+	"}",
+	"function handler(event) {",
+	"  var request = event.request;",
+	"  var host = request.headers.host ? request.headers.host.value.toLowerCase() : '';",
+	"  if (host !== HOST) return otherHost();",
+	"  for (var i = 0; i < SHAPES.length; i++) {",
+	"    if (SHAPES[i].test(request.uri)) return request;",
+	"  }",
+	"  return notFound();",
+	"}",
+	"",
+].join("\n");
 
 /**
  * The evidence behaviours' viewer-response function: the headers of bytes
