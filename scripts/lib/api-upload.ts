@@ -156,6 +156,8 @@ export interface S3ApiStoreOptions {
 	endpoint?: string;
 	fetcher?: Fetch;
 	now?: () => Date;
+	/** How long lastWritten reads an error answer's body: ERROR_BODY_MS unless given (tests give less). */
+	errorBodyMs?: number;
 }
 
 /** The SHA-256 of nothing, for the signed requests without a body. */
@@ -163,6 +165,55 @@ const EMPTY_SHA256 = sha256Hex(new Uint8Array());
 
 function xmlElement(body: string, name: string): string | null {
 	return new RegExp(`<${name}>([^<]*)</${name}>`).exec(body)?.[1] ?? null;
+}
+
+/** The most of an error answer's body lastWritten reads, for S3's code and message. */
+export const ERROR_BODY_BYTES = 2_048;
+
+/**
+ * Text from S3 or an error, made fit to quote in an issue: one line, no
+ * backticks, at most `limit` characters (an ellipsis marks a cut).
+ */
+export function clipText(text: string, limit = 300): string {
+	const flat = text.replace(/\s+/g, " ").replace(/`/g, "'").trim();
+	return flat.length <= limit ? flat : `${flat.slice(0, limit - 1)}…`;
+}
+
+/** The most time lastWritten spends reading an error answer's body, after its headers. */
+export const ERROR_BODY_MS = 1_000;
+
+/** At most `limit` bytes of a body, read for at most `ms`, as text: whatever came before the stream ended, broke, was aborted or ran out of time. Cancels the rest. */
+async function boundedText(response: Response, limit: number, ms: number): Promise<string> {
+	const reader = response.body?.getReader();
+	if (reader === undefined) return "";
+	const chunks: Uint8Array[] = [];
+	let size = 0;
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	const outOfTime = new Promise<null>((resolve) => {
+		timer = setTimeout(() => resolve(null), ms);
+	});
+	try {
+		while (size < limit) {
+			const read = await Promise.race([reader.read(), outOfTime]);
+			if (read === null || read.done) break;
+			chunks.push(read.value);
+			size += read.value.length;
+		}
+	} catch {
+		// Aborted, or the connection broke: what came is all there is.
+	} finally {
+		clearTimeout(timer);
+		reader.cancel().catch(() => undefined);
+	}
+	const bytes = new Uint8Array(Math.min(size, limit));
+	let at = 0;
+	for (const chunk of chunks) {
+		const part = chunk.subarray(0, bytes.length - at);
+		bytes.set(part, at);
+		at += part.length;
+		if (at >= bytes.length) break;
+	}
+	return new TextDecoder().decode(bytes);
 }
 
 /** A hex SHA-256 as S3's x-amz-checksum-sha256 carries it, in base64; and back. */
@@ -191,7 +242,7 @@ export class S3ApiStore implements ApiStore {
 		return this.options.credentials?.() ?? credentialsFromEnvironment();
 	}
 
-	private async send(method: "GET" | "HEAD" | "PUT", key: string, extra: Array<[string, string]>, payloadSha256: string, body?: Uint8Array): Promise<Response> {
+	private async send(method: "GET" | "HEAD" | "PUT", key: string, extra: Array<[string, string]>, payloadSha256: string, body?: Uint8Array, signal?: AbortSignal): Promise<Response> {
 		if (hasDotSegment(key)) throw new Error(`${key}: a key with a "." or ".." segment cannot be sent by name`);
 		const canonicalUri = `/${encodeUriPath(this.bucket)}/${encodeUriPath(key)}`;
 		const url = new URL(`${this.endpoint}${canonicalUri}`);
@@ -213,7 +264,7 @@ export class S3ApiStore implements ApiStore {
 		});
 		const sent: Record<string, string> = Object.fromEntries(headers.filter(([name]) => name !== "host"));
 		sent.authorization = signed.authorization;
-		return (this.options.fetcher ?? fetch)(url, { method, headers: sent, ...(body === undefined ? {} : { body }) });
+		return (this.options.fetcher ?? fetch)(url, { method, headers: sent, ...(body === undefined ? {} : { body }), ...(signal === undefined ? {} : { signal }) });
 	}
 
 	async head(key: string): Promise<StoredObject | null> {
@@ -235,36 +286,42 @@ export class S3ApiStore implements ApiStore {
 	}
 
 	/**
-	 * When `key` was last written, and by which run: one GET. Not a HEAD,
-	 * because a HEAD's 404 has no body, so a missing key and a missing bucket
-	 * would look alike. Null when the bucket holds no such key (404 NoSuchKey,
-	 * which S3 answers only to a requester that may list the bucket; to
-	 * another it answers 403). Throws S3Refused for any other answer, or none.
+	 * When `key` was last written, and by which run: one GET, of which only
+	 * the headers are used. Not a HEAD, because a HEAD's 404 has no body, so a
+	 * missing key and a missing bucket would look alike. The body of a 200 is
+	 * cancelled unread, as soon as the headers are in; of an error, at most
+	 * ERROR_BODY_BYTES are read, for at most ERROR_BODY_MS, for S3's code and
+	 * message (without them, the status alone is said). `signal` aborts the
+	 * request and that read. Null when the bucket holds no such key (404
+	 * NoSuchKey, which S3 answers only to a requester that may list the
+	 * bucket; to another it answers 403). Throws S3Refused for any other
+	 * answer, or none: Timeout when `signal` ended it.
 	 */
-	async lastWritten(key: string): Promise<WrittenAt | null> {
+	async lastWritten(key: string, signal?: AbortSignal): Promise<WrittenAt | null> {
 		try {
 			this.credentials();
 		} catch (error) {
-			throw new S3Refused(null, "NoCredentials", error instanceof Error ? error.message : String(error));
+			throw new S3Refused(null, "NoCredentials", clipText(error instanceof Error ? error.message : String(error)));
 		}
 		let response: Response;
 		try {
-			response = await this.send("GET", key, [], EMPTY_SHA256);
+			response = await this.send("GET", key, [], EMPTY_SHA256, undefined, signal);
 		} catch (error) {
-			throw new S3Refused(null, "NoAnswer", `GET ${this.name}/${key}: no answer (${error instanceof Error ? error.message : String(error)})`);
+			if (signal?.aborted) throw new S3Refused(null, "Timeout", `GET ${this.name}/${key}: no answer in the time allowed`);
+			throw new S3Refused(null, "NoAnswer", `GET ${this.name}/${key}: no answer (${clipText(error instanceof Error ? error.message : String(error))})`);
 		}
 		if (response.status === 200) {
-			await response.arrayBuffer().catch(() => undefined);
+			response.body?.cancel().catch(() => undefined);
 			const header = response.headers.get("last-modified");
 			const at = header === null ? Number.NaN : Date.parse(header);
-			if (Number.isNaN(at)) throw new S3Refused(200, "NoLastModified", `GET ${this.name}/${key} answered 200 with no Last-Modified that is a date: ${JSON.stringify(header)}`);
+			if (Number.isNaN(at)) throw new S3Refused(200, "NoLastModified", `GET ${this.name}/${key} answered 200 with no Last-Modified that is a date: ${clipText(JSON.stringify(header))}`);
 			return { lastModified: new Date(at), run: parseRun(response.headers.get(RUN_METADATA)) };
 		}
-		const text = await response.text().catch(() => "");
+		const text = await boundedText(response, ERROR_BODY_BYTES, this.options.errorBodyMs ?? ERROR_BODY_MS);
 		const code = xmlElement(text, "Code") ?? `HTTP${response.status}`;
 		if (response.status === 404 && code === "NoSuchKey") return null;
 		const said = xmlElement(text, "Message") ?? "";
-		throw new S3Refused(response.status, code, `GET ${this.name}/${key} answered ${response.status} ${code}${said === "" ? "" : `: ${said}`}`);
+		throw new S3Refused(response.status, clipText(code, 64), `GET ${this.name}/${key} answered ${response.status} ${clipText(code, 64)}${said === "" ? "" : `: ${clipText(said)}`}`);
 	}
 
 	async put(file: TreeFile, run: number): Promise<void> {

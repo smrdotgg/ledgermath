@@ -243,7 +243,8 @@ describe("the runs workflow", () => {
 	});
 
 	test("tells the alarm when main last changed schedule.json, from the whole history", () => {
-		const checkout = steps[0];
+		const checkout = steps.find((step) => step.uses?.startsWith("actions/checkout@") && step.with?.repository === undefined);
+		expect(steps.indexOf(checkout as Step)).toBe(1);
 		expect(checkout?.uses?.startsWith("actions/checkout@")).toBe(true);
 		expect(checkout?.with?.["fetch-depth"]).toBe(0 as unknown as string);
 		const alarm = steps.find((step) => step.run?.includes("scripts/alarm.ts"));
@@ -259,6 +260,35 @@ describe("the runs workflow", () => {
 		expect(publish.env?.API_BUCKET).toBe(alarm.env?.API_BUCKET as string);
 		// And no endpoint of its own: the tests' stand-in only.
 		expect(alarm.run).not.toContain("--api-endpoint");
+	});
+
+	test("tells the alarm when its job started, noted by the job's first step, and the cron that started the run, empty when started by hand", () => {
+		const first = steps[0] as Step;
+		expect(first.name).toBe("Note when this job started");
+		expect(first.run?.trim()).toBe('echo "JOB_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_ENV"');
+		expect(first.if).toBeUndefined();
+		const alarm = steps.find((step) => step.run?.includes("scripts/alarm.ts")) as Step;
+		expect(alarm.run).toContain('--job-started-at "$JOB_STARTED_AT"');
+		expect(alarm.run).toContain('--cron "$RUN_CRON"');
+		expect(alarm.env?.RUN_CRON).toBe("${{ github.event.schedule }}");
+	});
+
+	test("the input alarm_drill: only on a run started by hand, off by default, reaching only the alarm step, never the publish job", () => {
+		const text = readFileSync(join(ROOT, ".github", "workflows", "runs.yml"), "utf8");
+		// Present only on dispatch: a scheduled run has no inputs.
+		expect(workflow.on.workflow_dispatch?.inputs?.alarm_drill).toMatchObject({ type: "boolean", default: false });
+		expect(workflow.on.workflow_dispatch?.inputs?.alarm_drill?.description).toContain("publishing is untouched");
+		expect(Object.keys(workflow.on)).toEqual(["schedule", "workflow_dispatch"]);
+		// Read in one place, the alarm step's environment, as yes only when true.
+		const alarm = steps.find((step) => step.run?.includes("scripts/alarm.ts")) as Step;
+		expect(alarm.env?.ALARM_DRILL).toBe("${{ inputs.alarm_drill == true && 'yes' || 'no' }}");
+		expect(alarm.run).toContain('--drill "$ALARM_DRILL"');
+		expect(text.match(/inputs\.alarm_drill/g)?.length).toBe(1);
+		for (const step of steps) if (step !== alarm) expect(JSON.stringify(step)).not.toMatch(/alarm_drill|ALARM_DRILL|--drill/);
+		expect(JSON.stringify(job.env ?? {})).not.toMatch(/alarm_drill|ALARM_DRILL/);
+		// The publish job never sees it, and publishes to API_BUCKET as on any run.
+		expect(JSON.stringify(publish)).not.toMatch(/alarm_drill|ALARM_DRILL|drill/i);
+		expect(publish.env).toEqual({ API_BUCKET: "${{ vars.API_BUCKET }}" });
 	});
 
 	test("the schedule the alarm expects a publish by is exactly the workflow's crons", () => {

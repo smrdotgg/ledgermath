@@ -4,8 +4,8 @@
  * the alarm issue already open instead of opening a second.
  *
  *     bun scripts/alarm.ts --runs DIR --copy succeeded|failed --schedule-changed-at ISO-8601
- *         [--prices-since ISO-8601] [--api-bucket NAME] [--now 2026-11-12T22:40:00Z] [--schedule FILE]
- *         [--dry-run] [--api-endpoint URL]
+ *         [--prices-since ISO-8601] [--api-bucket NAME] [--job-started-at ISO-8601] [--cron CRON]
+ *         [--drill yes|no] [--now 2026-11-12T22:40:00Z] [--schedule FILE] [--dry-run] [--api-endpoint URL]
  *
  * A watched Series is one schedule.json runs (benchmark, params, build) on one
  * of its targets (instance type and zone), where the entry's instance_types,
@@ -42,18 +42,27 @@
  * with --api-bucket naming the API bucket (the workflow passes API_BUCKET),
  * it reads when the bucket's table of contents, v1/index.json, was last
  * written, by S3's own clock, and says so in the same issue, by the same rule,
- * when two scheduled runs of the workflow in a row have each had an hour
- * since their scheduled time and none has published; also when the bucket
- * holds no table of contents, or cannot be read. Reading the bucket never
- * fails the alarm: whatever S3 answers is a finding. The workflow runs the
- * alarm before its own run's publish job, so it judges the runs before.
- * With --api-bucket empty or absent (API_BUCKET unset) the bucket is not
- * read and nothing is raised for it, unless PUBLIC_API is not "off": then
- * readers are served a tree nobody publishes, and that is raised. What it
- * found of the bucket goes to the step's summary ($GITHUB_STEP_SUMMARY)
- * when there is one. Credentials come from the environment, as
- * aws-actions/configure-aws-credentials sets them; --api-endpoint is a
- * stand-in for S3, for the tests.
+ * when two scheduled slots of the workflow have elapsed since then; also when
+ * the bucket holds no table of contents, or cannot be read. A job judges only
+ * slots whose publish should have finished an hour before it started
+ * (--job-started-at) and never its own run's slot (the latest of --cron's
+ * times by then; --cron empty: started by hand, no slot of its own), since
+ * its own publish job comes after the alarm. With --api-bucket empty or
+ * absent (API_BUCKET unset) the bucket is not read, and nothing is raised for
+ * it while PUBLIC_API is "off"; in any other state the alarm is raised, since
+ * serving is then on and a missing bucket name means publishing has stopped.
+ * --drill yes (the workflow's input alarm_drill) reads DRILL_BUCKET, a name no
+ * bucket can have, in place of --api-bucket, and the post says it is a drill.
+ *
+ * That check is done whole, before anything is posted, by watchApiBucket:
+ * bounded to 20 seconds, and guarded, so that whatever it meets (an answer
+ * that stalls, an error, a step summary that cannot be written, a fault of
+ * its own) is a line in the alarm's words or a warning, never a throw, and
+ * what the alarm says of the Series and the price files is what it would say
+ * without it. What it found goes to the step's summary
+ * ($GITHUB_STEP_SUMMARY), when there is one and it can be written.
+ * Credentials come from the environment, as aws-actions/configure-aws-
+ * credentials sets them; --api-endpoint is a stand-in for S3, for the tests.
  *
  * GitHub is reached through IssueTracker, so tests use a fake. The real one
  * reads GITHUB_REPOSITORY and GITHUB_TOKEN, as a workflow sets them.
@@ -68,8 +77,18 @@ import { PUBLIC_API } from "../infra/runs/public-blobs";
 import { appliesTo, parseSchedule, type Schedule } from "../infra/runs/schedule";
 import { RUNS_REGION } from "../infra/runs/stages";
 import { canonicalJson, compareText, type ParamValue, type RunFile } from "../methods/run";
-import { type ApiBucketCheck, checkApiBucket, isStale, MISSED_TO_RAISE, PUBLISH_GRACE_MS } from "./lib/api-freshness";
-import { S3ApiStore, STAMP_KEY } from "./lib/api-upload";
+import {
+	type ApiBucketCheck,
+	checkApiBucket,
+	isStale,
+	judgedThrough,
+	MISSED_TO_RAISE,
+	ownSlot,
+	PUBLISH_GRACE_MS,
+	type PublishedReader,
+	type ReadOptions,
+} from "./lib/api-freshness";
+import { clipText, S3ApiStore, STAMP_KEY } from "./lib/api-upload";
 import { PRICE_FILE_PATH } from "./lib/prices";
 import { readRunFiles } from "./lib/run-files";
 import { RUNS_REPOSITORY_BLOB_URL } from "./lib/runs-repository";
@@ -308,44 +327,164 @@ const minuteUtc = (iso: string): string => `${iso.slice(0, 10)} ${iso.slice(11, 
 /** ", by run [N](its page)", or nothing when the object records no run. The run is a lead: an upload by hand can record any. */
 const byRun = (run: number | null): string => (run === null ? "" : `, by run [${run}](${ACTIONS_RUN_URL}${run})`);
 
-/** The paragraph raising the API bucket, by its state (apiAlarmState), or nothing. */
-function apiRaised(check: ApiBucketCheck | null, state: string | null, publicApiState: string, hours: (iso: string) => string): string[] {
-	if (check === null || state === null) return [];
+/** What the alarm can say of the API bucket, from what the check found. */
+export interface ApiTexts {
+	/** The paragraph raising it (empty when there is nothing to raise). */
+	raised: string;
+	/** The clause of an all-well summary: when it was last published, or that it is not watched. */
+	well: string;
+	/** The line said once, when it was raised and no longer is, while something else still is. */
+	again: string;
+}
+
+/** The alarm's words for what the check found (the "text" stage of watchApiBucket). */
+export function apiTexts(check: ApiBucketCheck, now: Date, publicApiState: string): ApiTexts {
+	const hours = (iso: string): string => ((now.getTime() - Date.parse(iso)) / 3_600_000).toFixed(1);
+	const unwatched = { well: "`API_BUCKET` is unset, so the API bucket is not watched", again: "`API_BUCKET` is unset now, so the API bucket is no longer watched." };
 	switch (check.kind) {
 		case "unset":
-			return [
-				`**\`API_BUCKET\` is unset while \`PUBLIC_API\` is \`${publicApiState}\`.** The \`publish\` job is skipped, so nothing is published and readers are served the tree last published, and the API bucket is not watched. Set it again to the scheduled stage's \`apiBucket\` output (README, "The API bucket", "Setting it up").`,
-			];
+			return {
+				raised: `**\`API_BUCKET\` is unset while \`PUBLIC_API\` is \`${publicApiState}\`.** The \`publish\` job is skipped, so nothing is published and readers are served the tree last published, and the API bucket is not watched. Set it again to the scheduled stage's \`apiBucket\` output (README, "The API bucket", "Setting it up").`,
+				...unwatched,
+			};
 		case "published": {
 			const shown = check.missed.slice(0, 5).map(minuteUtc).join(", ");
 			const more = check.missed.length > 5 ? `, and ${check.missed.length - 5} more` : "";
-			return [
-				`**The data API has not been published for ${check.missed.length} scheduled runs in a row.** In \`${check.bucket}\`, \`${STAMP_KEY}\` was last written at ${check.lastModified}, ${hours(check.lastModified)} hours ago${byRun(check.run)}, and no run since has published: not the runs scheduled at ${shown}${more}, each given ${PUBLISH_GRACE_MS / 3_600_000} hour. ` +
+			return {
+				raised:
+					`**The data API has not been published for ${check.missed.length} scheduled slots.** In \`${check.bucket}\`, \`${STAMP_KEY}\` was last written at ${check.lastModified}, ${hours(check.lastModified)} hours ago${byRun(check.run)}, and nothing has published since: not the runs scheduled at ${shown}${more}, each given ${PUBLISH_GRACE_MS / 3_600_000} hour. ` +
 					`Look at the \`publish\` job of the latest runs (Actions, \`runs\`): failed, skipped (its first job failed, or \`API_BUCKET\` was unset), cancelled, or not there at all. ` +
-					`(Raised after ${MISSED_TO_RAISE} missed in a row: README, "The alarm".)`,
-			];
+					`(Raised once ${MISSED_TO_RAISE} scheduled slots have elapsed since the bucket was last written: README, "The alarm".)`,
+				well: `the data API was last published at ${check.lastModified}${byRun(check.run)}`,
+				again: `The data API is published again: it was last published at ${check.lastModified}${byRun(check.run)}.`,
+			};
 		}
 		case "empty":
-			return [
-				`**The API bucket holds no table of contents.** \`API_BUCKET\` names \`${check.bucket}\`, which holds no \`${STAMP_KEY}\`, so no publish has ever finished there. If \`API_BUCKET\` was set since the last run, this is expected: this run's own \`publish\` job comes after this check, and the next run says here whether it published. Otherwise look at the latest runs' \`publish\` jobs, and at whether \`API_BUCKET\` is the scheduled stage's \`apiBucket\` output.`,
-			];
+			return {
+				raised: `**The API bucket holds no table of contents.** \`API_BUCKET\` names \`${check.bucket}\`, which holds no \`${STAMP_KEY}\`, so no publish has ever finished there. If \`API_BUCKET\` was set since the last run, this is expected: this run's own \`publish\` job comes after this check, and the next run says here whether it published. Otherwise look at the latest runs' \`publish\` jobs, and at whether \`API_BUCKET\` is the scheduled stage's \`apiBucket\` output.`,
+				well: "",
+				again: "",
+			};
 		case "unreadable":
-			return [
-				`**The API bucket could not be read**, so whether the data API is being published cannot be told. ${check.reason}${check.attempts > 1 ? ` (tried ${check.attempts} times)` : ""}. The \`publish\` job reads it with the same role and the same \`API_BUCKET\`. Look at whether \`API_BUCKET\` is the scheduled stage's \`apiBucket\` output, and at the role's \`RunsApiUploadPolicy\`.`,
-			];
+			return {
+				raised: `**The API bucket could not be read**, so whether the data API is being published cannot be told. ${clipText(check.reason)}${check.attempts > 1 ? ` (tried ${check.attempts} times)` : ""}. The \`publish\` job reads it with the same role and the same \`API_BUCKET\`. Look at whether \`API_BUCKET\` is the scheduled stage's \`apiBucket\` output, and at the role's \`RunsApiUploadPolicy\`.`,
+				well: "",
+				again: "",
+			};
 	}
 }
 
-/** What is well of the API bucket, as a clause of the summary: when it was last published, or that it is not watched. */
-function apiWell(check: ApiBucketCheck | null): string {
-	if (check?.kind === "published") return `the data API was last published at ${check.lastModified}${byRun(check.run)}`;
-	return "`API_BUCKET` is unset, so the API bucket is not watched";
+/** Everything the alarm says of the API bucket, worked out once by watchApiBucket; plain strings, so nothing in the post can throw because of it. */
+export interface ApiReport extends ApiTexts {
+	/** The state its posts carry (stale_api), or null when nothing is raised. */
+	state: string | null;
+	/** Whether the bucket was read (API_BUCKET set, or a drill). */
+	watched: boolean;
+	/** The line for the log and the step's summary. */
+	summary: string;
 }
 
-/** Said once, when the API bucket was raised and no longer is, while something else still is. */
-function apiAgain(check: ApiBucketCheck): string {
-	if (check.kind === "published") return `The data API is published again: it was last published at ${check.lastModified}${byRun(check.run)}.`;
-	return "`API_BUCKET` is unset now, so the API bucket is no longer watched.";
+/** A name no S3 bucket can have (an underscore, capitals): what a drill reads in place of API_BUCKET. */
+export const DRILL_BUCKET = "LEDGERMATH_ALARM_DRILL";
+
+const DRILL_NOTICE =
+	`**This is a drill.** The workflow was started by hand with \`alarm_drill\`, so the alarm read \`s3://${DRILL_BUCKET}\`, a name no bucket can have, in place of \`API_BUCKET\`, to show that this issue's notification reaches the maintainer. ` +
+	"This run's `publish` job used the real `API_BUCKET`. The next ordinary run reads the real bucket and says here what it finds. What the drill read:";
+
+/** The stages of the check of the API bucket, each replaceable in tests. */
+export interface ApiWatchSteps {
+	read: (reader: PublishedReader | null, through: Date, options: ReadOptions) => Promise<ApiBucketCheck>;
+	judge: (check: ApiBucketCheck, publicApiState: string) => string | null;
+	summarize: (check: ApiBucketCheck, now: Date, publicApiState: string) => string;
+	text: (check: ApiBucketCheck, now: Date, publicApiState: string) => ApiTexts;
+	/** Writes the line to the step's summary: best-effort, its failure only warned of. */
+	write: (line: string) => void;
+}
+
+const STEPS: ApiWatchSteps = {
+	read: checkApiBucket,
+	judge: apiAlarmState,
+	summarize: apiSummary,
+	text: apiTexts,
+	write: (line) => {
+		if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, `### The API bucket\n\n${line}\n`);
+	},
+};
+
+/** An error as words fit for an issue, whatever was thrown. */
+function errorWords(error: unknown): string {
+	try {
+		return clipText(error instanceof Error ? `${error.name}: ${error.message}` : String(error));
+	} catch {
+		return "something was thrown that cannot be put in words";
+	}
+}
+
+/** What the alarm says when the check itself threw: raised, like a bucket that cannot be read, and nothing else touched. */
+function checkFailed(error: unknown): ApiReport {
+	const words = errorWords(error);
+	return {
+		state: "check failed",
+		raised: `**The check of the API bucket failed**, so whether the data API is being published cannot be told: ${words}. This is a fault in \`scripts/alarm.ts\`, not a finding about the bucket; the rest of this post does not depend on it.`,
+		well: "",
+		again: "",
+		watched: true,
+		summary: `the check of the API bucket failed: ${words}; raised`,
+	};
+}
+
+/**
+ * The check of the API bucket, whole and guarded: when this job's judgement
+ * ends (judgedThrough, from when it started and, for a scheduled run, its
+ * cron), the read (bounded by its budget), the judgement, the alarm's words,
+ * and the line for the log and the step's summary. Never throws: anything
+ * thrown anywhere in it becomes checkFailed's report, and the step summary's
+ * write is best-effort. So runAlarm's verdict on the Series and the price
+ * files never depends on it.
+ */
+export async function watchApiBucket(input: {
+	/** Makes the reader: null when API_BUCKET is unset. Called inside the guard. */
+	reader: () => PublishedReader | null;
+	now: Date;
+	/** When this job started (ISO 8601); absent or empty, now. */
+	jobStartedAt?: string;
+	/** The cron that started this run (github.event.schedule); empty for a run started by hand. */
+	cron?: string;
+	publicApiState: string;
+	/** A drill: the reader reads DRILL_BUCKET, and the words say it is a drill. */
+	drill?: boolean;
+	readOptions?: ReadOptions;
+	steps?: Partial<ApiWatchSteps>;
+}): Promise<ApiReport> {
+	const steps: ApiWatchSteps = { ...STEPS, ...input.steps };
+	let report: ApiReport;
+	try {
+		const started = input.jobStartedAt === undefined || input.jobStartedAt === "" ? input.now : new Date(input.jobStartedAt);
+		if (Number.isNaN(started.getTime())) throw new Error(`--job-started-at ${JSON.stringify(input.jobStartedAt)} is not a time`);
+		const through = judgedThrough(started, ownSlot(input.cron ?? "", started));
+		const check = await steps.read(input.reader(), through, input.readOptions ?? {});
+		const judged = steps.judge(check, input.publicApiState);
+		const texts = steps.text(check, input.now, input.publicApiState);
+		const summary = steps.summarize(check, input.now, input.publicApiState);
+		const drill = input.drill === true;
+		report = {
+			state: judged === null ? null : drill ? `drill, ${judged}` : judged,
+			raised: drill ? `${DRILL_NOTICE} ${texts.raised}` : texts.raised,
+			well: texts.well,
+			again: texts.again,
+			watched: check.kind !== "unset",
+			summary: drill ? `drill: ${summary}` : summary,
+		};
+	} catch (error) {
+		report = checkFailed(error);
+	}
+	console.log(`the API bucket: ${report.summary}`);
+	try {
+		steps.write(report.summary);
+	} catch (error) {
+		console.warn(`the API bucket's line could not be written to the step's summary (${errorWords(error)}); carrying on`);
+	}
+	return report;
 }
 
 export interface AlarmTextOptions {
@@ -357,10 +496,8 @@ export interface AlarmTextOptions {
 	pricesWatched?: boolean;
 	/** Whether the last post said the price files were stale. */
 	pricesWereStale?: boolean;
-	/** What the check of the API bucket found; null or absent when it was not asked. */
-	api?: ApiBucketCheck | null;
-	/** PUBLIC_API.state. */
-	publicApiState?: string;
+	/** What watchApiBucket said of the API bucket; null or absent when it was not asked. */
+	api?: ApiReport | null;
 	/** Whether the last post raised the API bucket. */
 	apiWasRaised?: boolean;
 }
@@ -373,11 +510,10 @@ export function alarmText(options: AlarmTextOptions): string {
 	const pricesWatched = options.pricesWatched ?? false;
 	const pricesWereStale = options.pricesWereStale ?? false;
 	const api = options.api ?? null;
-	const publicApiState = options.publicApiState ?? "off";
 	const apiWasRaised = options.apiWasRaised ?? false;
-	const apiState = apiAlarmState(api, publicApiState);
+	const apiState = api?.state ?? null;
 	// Said only once the bucket is read, or when it was raised before and no longer is.
-	const apiWatched = api !== null && (api.kind !== "unset" || apiWasRaised);
+	const apiWatched = api !== null && (api.watched || apiWasRaised);
 	const hours = (startedAt: string): string => ((now.getTime() - Date.parse(startedAt)) / 3_600_000).toFixed(1);
 	const lines = stale
 		.slice()
@@ -389,7 +525,7 @@ export function alarmText(options: AlarmTextOptions): string {
 		);
 	const well = ["every watched Series has had a Run in the last 48 hours again"];
 	if (pricesWatched) well.push("the newest price file is no more than 48 hours old");
-	if (apiWatched) well.push(apiWell(api));
+	if (apiWatched && api !== null) well.push(api.well);
 	const summary =
 		stale.length > 0
 			? `Checked at ${now.toISOString()}: ${stale.length} watched Series ${stale.length === 1 ? "has" : "have"} had no Run for more than 48 hours.`
@@ -410,8 +546,7 @@ export function alarmText(options: AlarmTextOptions): string {
 						"",
 						`**No new price file for more than 48 hours.** The newest, [${prices.newest.path}](${runUrlBase}${prices.newest.path}), was fetched at ${prices.newest.fetchedAt}, ${hours(prices.newest.fetchedAt)} hours ago. Look at the prices workflow.`,
 					];
-	const raised = apiRaised(api, apiState, publicApiState, hours);
-	const apiLine = raised.length > 0 ? ["", ...raised] : apiWasRaised && api !== null && (stale.length > 0 || prices !== null) ? ["", apiAgain(api)] : [];
+	const apiLine = api !== null && apiState !== null ? ["", api.raised] : apiWasRaised && api !== null && (stale.length > 0 || prices !== null) ? ["", api.again] : [];
 	return [
 		...(copyFailed ? [COPY_FAILED, ""] : []),
 		summary,
@@ -473,10 +608,8 @@ export async function runAlarm(options: {
 	newestPrices?: NewestPriceFile | null;
 	/** When the prices workflow first existed: no price file is not stale until 48 hours after. Null or absent: not known to exist. */
 	pricesSince?: Date | null;
-	/** What checkApiBucket found of the API bucket; null or absent when it was not asked (and then nothing is said of it). */
-	api?: ApiBucketCheck | null;
-	/** PUBLIC_API.state: while "off", API_BUCKET unset raises nothing. Absent: "off". */
-	publicApiState?: string;
+	/** What watchApiBucket said of the API bucket: strings only. Null or absent when it was not asked, and then nothing is said of it. */
+	api?: ApiReport | null;
 }): Promise<AlarmOutcome> {
 	const stale = staleSeries(watchedSeries(options.schedule), options.runs, options.now, options.scheduleChangedAt);
 	const newestPrices = options.newestPrices ?? null;
@@ -484,8 +617,7 @@ export async function runAlarm(options: {
 	const prices = stalePrices(newestPrices, options.now, pricesSince);
 	const pricesWatched = newestPrices !== null || pricesSince !== null;
 	const api = options.api ?? null;
-	const publicApiState = options.publicApiState ?? "off";
-	const apiState = apiAlarmState(api, publicApiState);
+	const apiState = api?.state ?? null;
 	const found: Found = { stale, prices, api: apiState };
 	const open = await options.tracker.findOpen(ALARM_MARKER);
 	const last = open === null ? null : stateOf(open.lastPost);
@@ -498,7 +630,6 @@ export async function runAlarm(options: {
 		pricesWatched,
 		pricesWereStale: last?.stale_prices !== undefined,
 		api,
-		publicApiState,
 		apiWasRaised: last?.stale_api !== undefined,
 	});
 	const allWell = stale.length === 0 && prices === null && apiState === null;
@@ -514,7 +645,7 @@ export async function runAlarm(options: {
 	return { action: "commented", issue: open.number, ...found };
 }
 
-/** What the check of the API bucket found, in a line for the log and the step's summary. */
+/** What the check of the API bucket found, in a line for the log and the step's summary (the "summarize" stage of watchApiBucket). */
 export function apiSummary(check: ApiBucketCheck, now: Date, publicApiState: string): string {
 	const raised = apiAlarmState(check, publicApiState) !== null;
 	switch (check.kind) {
@@ -525,12 +656,12 @@ export function apiSummary(check: ApiBucketCheck, now: Date, publicApiState: str
 		case "published": {
 			const hours = ((now.getTime() - Date.parse(check.lastModified)) / 3_600_000).toFixed(1);
 			const run = check.run === null ? "which records no run" : `by run ${check.run}`;
-			return `${check.bucket}: ${STAMP_KEY} last written at ${check.lastModified} (${hours} hours ago), ${run}; ${check.missed.length} scheduled run${check.missed.length === 1 ? "" : "s"} since ha${check.missed.length === 1 ? "s" : "ve"} had ${PUBLISH_GRACE_MS / 3_600_000} hour without publishing, and ${MISSED_TO_RAISE} in a row raise the alarm: ${raised ? "raised" : "not raised"}`;
+			return `${check.bucket}: ${STAMP_KEY} last written at ${check.lastModified} (${hours} hours ago), ${run}; ${check.missed.length} scheduled slot${check.missed.length === 1 ? "" : "s"} since that this job judges, and ${MISSED_TO_RAISE} raise the alarm: ${raised ? "raised" : "not raised"}`;
 		}
 		case "empty":
 			return `${check.bucket} holds no ${STAMP_KEY}: no publish has finished there; raised`;
 		case "unreadable":
-			return `${check.bucket} could not be read (${check.attempts} tr${check.attempts === 1 ? "y" : "ies"}): ${check.reason}; raised`;
+			return `${check.bucket} could not be read (${check.attempts} tr${check.attempts === 1 ? "y" : "ies"}): ${clipText(check.reason)}; raised`;
 	}
 }
 
@@ -615,16 +746,22 @@ async function main(): Promise<void> {
 			copy: { type: "string" },
 			"prices-since": { type: "string" },
 			"api-bucket": { type: "string" },
+			"job-started-at": { type: "string" },
+			cron: { type: "string" },
+			drill: { type: "string" },
 			"api-endpoint": { type: "string" },
 			"dry-run": { type: "boolean" },
 		},
 	});
 	if (!values.runs || (values.copy !== "succeeded" && values.copy !== "failed") || values["schedule-changed-at"] === undefined) {
 		console.error(
-			"usage: bun scripts/alarm.ts --runs DIR --copy succeeded|failed --schedule-changed-at ISO-8601 [--prices-since ISO-8601] [--api-bucket NAME] [--now ISO-8601] [--schedule FILE] [--dry-run] [--api-endpoint URL]\n" +
+			"usage: bun scripts/alarm.ts --runs DIR --copy succeeded|failed --schedule-changed-at ISO-8601 [--prices-since ISO-8601] [--api-bucket NAME]\n" +
+				"         [--job-started-at ISO-8601] [--cron CRON] [--drill yes|no] [--now ISO-8601] [--schedule FILE] [--dry-run] [--api-endpoint URL]\n" +
 				'  --schedule-changed-at: when the schedule last changed, such as "$(git log -1 --first-parent --format=%cI -- schedule.json)"\n' +
 				'  --prices-since: when the prices workflow first existed, such as "$(git log --first-parent --reverse --format=%cI -- .github/workflows/prices.yml | sed -n 1p)"\n' +
-				'  --api-bucket: the API bucket, as API_BUCKET names it; empty or absent, it is not read',
+				"  --api-bucket: the API bucket, as API_BUCKET names it; empty or absent, it is not read\n" +
+				"  --job-started-at, --cron: when this job started, and the cron that started its run (empty when started by hand): the bucket is judged on the slots before\n" +
+				"  --drill yes: read a name no bucket can have in place of --api-bucket, and say it is a drill",
 		);
 		process.exit(2);
 	}
@@ -651,16 +788,19 @@ async function main(): Promise<void> {
 	const runs = readRunFiles(values.runs);
 	const copyFailed = values.copy === "failed";
 	const newestPrices = newestPriceFile(values.runs);
-	// Read before anything is posted; whatever S3 answers is a finding, never a failure of this script.
-	const apiBucket = values["api-bucket"] ?? "";
-	const reader =
-		apiBucket === "" ? null : new S3ApiStore(apiBucket, RUNS_REGION, values["api-endpoint"] === undefined ? {} : { endpoint: values["api-endpoint"] });
-	const api = await checkApiBucket(reader, now);
-	const publicApiState = PUBLIC_API.state;
-	const apiLine = apiSummary(api, now, publicApiState);
-	console.log(`the API bucket: ${apiLine}`);
-	if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, `### The API bucket\n\n${apiLine}\n`);
-	const outcome = await runAlarm({ schedule, runs, now, scheduleChangedAt, copyFailed, tracker, newestPrices, pricesSince, api, publicApiState });
+	// The check of the API bucket, whole and guarded, before anything is posted: it never throws, and is bounded in time.
+	const drill = values.drill === "yes";
+	const apiBucket = drill ? DRILL_BUCKET : (values["api-bucket"] ?? "");
+	const endpoint = values["api-endpoint"];
+	const api = await watchApiBucket({
+		reader: () => (apiBucket === "" ? null : new S3ApiStore(apiBucket, RUNS_REGION, endpoint === undefined ? {} : { endpoint })),
+		now,
+		jobStartedAt: values["job-started-at"],
+		cron: values.cron,
+		publicApiState: PUBLIC_API.state,
+		drill,
+	});
+	const outcome = await runAlarm({ schedule, runs, now, scheduleChangedAt, copyFailed, tracker, newestPrices, pricesSince, api });
 	const watched = watchedSeries(schedule);
 	// Those with no Run at all, whatever the schedule's age.
 	const neverRun = staleSeries(watched, runs, now, new Date(0)).filter((series) => series.newest === null).length;

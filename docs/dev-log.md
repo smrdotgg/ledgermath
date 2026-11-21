@@ -1243,4 +1243,28 @@ A migrated benchmark is done only when **all** of these hold:
   trees of two sizes and requires exactly those counts and at most eight requests at once,
   and the README to state the same counts. ADR-0031's costs and its decision 7 point at the
   change. Not deployed; nothing in AWS changes; the switch stays off.
+- **2026-11-21** — The publishing watch, after an independent verification (FAIL: the new
+  check could suppress the existing alarm). **Bounded**: the read has 20 s in all, 5 s a try,
+  waits of 1 and 2 s; the body of a 200 is cancelled unread, of an error at most 2 KB are read
+  for at most a second, and what reaches the issue is one line of at most 300 characters,
+  without backticks. Tests make the stand-in answer headers and then stall, not answer, and
+  trickle, and find the existing alarm's verdict within the budget. **Guarded whole**:
+  `watchApiBucket` does the whole check before anything is posted, and anything thrown in it
+  becomes "The check of the API bucket failed", raised like an unreadable bucket, while
+  `runAlarm` takes only finished strings; the step summary's write is best-effort. Tests
+  throw at each stage (the reader, the read, the judgement, the words, the summary line, the
+  job start, the cron, a thrown thing with no words) and find the stale-Series verdict as
+  without the bucket; a step summary that is a directory is warned of, with the verdict and
+  exit code unchanged. **The count, truthfully**: elapsed scheduled slots since the bucket
+  was last written, judged only up to an hour before the job started and never the job's
+  own slot (the cron that started it, `github.event.schedule`; the job's first step notes
+  when it started). The verifier's two counterexamples are tests: the 22:40 run failing and
+  the 00:00 job starting an hour late no longer raises; a publish by hand between two failed
+  runs starts the count again. The simulation now draws lateness up to 79 minutes and adds
+  runs by hand between slots. **Unset decided**: nothing raised while `PUBLIC_API` is `off`,
+  raised in any other state. **The drill**: a `workflow_dispatch` input, `alarm_drill`, makes
+  only the alarm's check read a name no bucket can have and say it is a drill; the publish
+  job never sees it, and the next ordinary run clears it. Step 0 of turning the API on now
+  uses it and closes the issue only when it reports nothing else. Not deployed; the switch
+  stays off.
 - _(agents: append your entry here, one per merged benchmark)_
