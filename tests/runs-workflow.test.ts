@@ -121,7 +121,7 @@ describe("the runs workflow", () => {
 		expect(steps.indexOf(alarm)).toBeGreaterThan(steps.indexOf(page));
 	});
 
-	test("builds the data API's files after the page when both Methods succeeded, checks them against the tree the last successful run kept, and keeps only a checked tree, as the artifact api, for a week", () => {
+	test("builds the data API's files after the page when both Methods succeeded, checks them against the tree the latest earlier run that checked its own kept, and keeps only a checked tree, as the artifact api, for a week", () => {
 		const text = readFileSync(join(ROOT, ".github", "workflows", "runs.yml"), "utf8");
 		const derive = steps.find((step) => step.id === "derive") as Step;
 		const pageUpload = steps.find((step) => step.uses?.startsWith("actions/upload-artifact@") && step.with?.name === "page") as Step;
@@ -139,7 +139,7 @@ describe("the runs workflow", () => {
 		expect(command(build)).toBe(
 			"bun scripts/build-api.ts --derivations page/derivations.json --requests-derivations page/requests-derivations.json --runs ledgermath-runs --out api",
 		);
-		// The previous tree: the artifact api of the last successful run on main, with this run's token; said to be comparable or not as the step's output.
+		// The previous tree: the artifact api of the latest earlier run on main that kept one, with this run's token; said to be comparable or not as the step's output.
 		expect(command(previous)).toBe('bun scripts/previous-api.ts --repository "$GITHUB_REPOSITORY" --workflow runs.yml --branch main --run-id "$GITHUB_RUN_ID" --tree api --out api-previous');
 		expect(previous.id).toBe("api-previous");
 		expect(previous.if).toBe("${{ !cancelled() && steps.api.outcome == 'success' }}");
