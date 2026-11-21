@@ -182,9 +182,14 @@ export function clipText(text: string, limit = 300): string {
 /** The most time lastWritten spends reading an error answer's body, after its headers. */
 export const ERROR_BODY_MS = 1_000;
 
-/** At most `limit` bytes of a body, read for at most `ms`, as text: whatever came before the stream ended, broke, was aborted or ran out of time. Cancels the rest. */
-async function boundedText(response: Response, limit: number, ms: number): Promise<string> {
-	const reader = response.body?.getReader();
+/**
+ * At most `limit` bytes of a stream, read for at most `ms`, as text: whatever
+ * came before it ended, broke, was aborted or ran out of time. Only the
+ * first `limit` bytes are decoded, however large a chunk arrives. Cancels the
+ * rest.
+ */
+export async function boundedText(stream: ReadableStream<Uint8Array> | null | undefined, limit: number, ms: number): Promise<string> {
+	const reader = stream?.getReader();
 	if (reader === undefined) return "";
 	const chunks: Uint8Array[] = [];
 	let size = 0;
@@ -317,7 +322,7 @@ export class S3ApiStore implements ApiStore {
 			if (Number.isNaN(at)) throw new S3Refused(200, "NoLastModified", `GET ${this.name}/${key} answered 200 with no Last-Modified that is a date: ${clipText(JSON.stringify(header))}`);
 			return { lastModified: new Date(at), run: parseRun(response.headers.get(RUN_METADATA)) };
 		}
-		const text = await boundedText(response, ERROR_BODY_BYTES, this.options.errorBodyMs ?? ERROR_BODY_MS);
+		const text = await boundedText(response.body, ERROR_BODY_BYTES, this.options.errorBodyMs ?? ERROR_BODY_MS);
 		const code = xmlElement(text, "Code") ?? `HTTP${response.status}`;
 		if (response.status === 404 && code === "NoSuchKey") return null;
 		const said = xmlElement(text, "Message") ?? "";

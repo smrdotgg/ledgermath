@@ -3,7 +3,8 @@ import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { RUNS_SCHEDULE_UTC } from "../scripts/lib/api-freshness";
+import { MAX_PUBLISH_AGE_MS } from "../scripts/lib/api-freshness";
+import { scheduledMinutes } from "./runs-schedule";
 
 // They read the workflows; on a loaded machine even that can take longer than bun's five-second default.
 setDefaultTimeout(60_000);
@@ -243,8 +244,7 @@ describe("the runs workflow", () => {
 	});
 
 	test("tells the alarm when main last changed schedule.json, from the whole history", () => {
-		const checkout = steps.find((step) => step.uses?.startsWith("actions/checkout@") && step.with?.repository === undefined);
-		expect(steps.indexOf(checkout as Step)).toBe(1);
+		const checkout = steps[0];
 		expect(checkout?.uses?.startsWith("actions/checkout@")).toBe(true);
 		expect(checkout?.with?.["fetch-depth"]).toBe(0 as unknown as string);
 		const alarm = steps.find((step) => step.run?.includes("scripts/alarm.ts"));
@@ -262,15 +262,37 @@ describe("the runs workflow", () => {
 		expect(alarm.run).not.toContain("--api-endpoint");
 	});
 
-	test("tells the alarm when its job started, noted by the job's first step, and the cron that started the run, empty when started by hand", () => {
-		const first = steps[0] as Step;
-		expect(first.name).toBe("Note when this job started");
-		expect(first.run?.trim()).toBe('echo "JOB_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_ENV"');
-		expect(first.if).toBeUndefined();
-		const alarm = steps.find((step) => step.run?.includes("scripts/alarm.ts")) as Step;
-		expect(alarm.run).toContain('--job-started-at "$JOB_STARTED_AT"');
-		expect(alarm.run).toContain('--cron "$RUN_CRON"');
-		expect(alarm.env?.RUN_CRON).toBe("${{ github.event.schedule }}");
+	test("the first job has exactly main's steps, in main's order, and the alarm step main's condition: the bucket check added none", () => {
+		const key = (step: Step): string => step.name ?? step.uses?.split("@")[0] ?? (step.run ?? "").trim();
+		expect(steps.map(key)).toEqual([
+			"actions/checkout",
+			"oven-sh/setup-bun",
+			"bun install --frozen-lockfile",
+			"AWS credentials for the bucket, through OIDC",
+			"Check out the Runs repository",
+			"Copy new Run files and boot summaries from the bucket",
+			"Commit and push them to the Runs repository",
+			"Keep the dump blobs and the streams' reduced records",
+			"Derive every Series (Method series v1) and every Series of requests (Method requests v1)",
+			"Build the page",
+			"Keep the page and the Derivations",
+			"Build the data API's files",
+			"Fetch the data API's files the last run that checked its tree kept",
+			"Check the data API's files",
+			"Keep the data API's files",
+			"Check for watched Series with no Run, and price files, for 48 hours",
+		]);
+		const alarm = steps.at(-1) as Step;
+		expect(alarm.if).toBe("${{ !cancelled() && steps.runs-repository.outcome == 'success' }}");
+		// main's environment for the step, and two more: the bucket's name and the drill.
+		expect(Object.keys(alarm.env ?? {})).toEqual(["GITHUB_TOKEN", "COPY", "API_BUCKET", "ALARM_DRILL"]);
+	});
+
+	test("the schedule's runs are at most 6 hours apart, which the alarm's 14 hours assume: two gaps, and two hours for a late start", () => {
+		const minutes = scheduledMinutes();
+		const gaps = minutes.map((minute, index) => (index === 0 ? minute + 1_440 - (minutes.at(-1) as number) : minute - (minutes[index - 1] as number)));
+		expect(Math.max(...gaps) * 60_000).toBe(6 * 3_600_000);
+		expect(MAX_PUBLISH_AGE_MS).toBe(2 * Math.max(...gaps) * 60_000 + 2 * 3_600_000);
 	});
 
 	test("the input alarm_drill: only on a run started by hand, off by default, reaching only the alarm step, never the publish job", () => {
@@ -289,23 +311,6 @@ describe("the runs workflow", () => {
 		// The publish job never sees it, and publishes to API_BUCKET as on any run.
 		expect(JSON.stringify(publish)).not.toMatch(/alarm_drill|ALARM_DRILL|drill/i);
 		expect(publish.env).toEqual({ API_BUCKET: "${{ vars.API_BUCKET }}" });
-	});
-
-	test("the schedule the alarm expects a publish by is exactly the workflow's crons", () => {
-		/** The values one field of a cron takes: N, a list of them, or * or *\/N over 0 to max. */
-		const field = (text: string, max: number): number[] => {
-			const every = /^\*(?:\/(\d+))?$/.exec(text);
-			if (every !== null) return Array.from({ length: max + 1 }, (_, value) => value).filter((value) => value % Number(every[1] ?? 1) === 0);
-			if (!/^\d+(,\d+)*$/.test(text)) throw new Error(`a cron field this test does not read: ${text}`);
-			return text.split(",").map(Number);
-		};
-		const starts = workflow.on.schedule.flatMap(({ cron }) => {
-			const [minute, hour, day, month, weekday] = cron.split(" ") as [string, string, string, string, string];
-			// Every day: the alarm counts a scheduled run on each.
-			expect([day, month, weekday]).toEqual(["*", "*", "*"]);
-			return field(hour, 23).flatMap((h) => field(minute, 59).map((m) => `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`));
-		});
-		expect([...starts].sort()).toEqual([...RUNS_SCHEDULE_UTC]);
 	});
 
 	test("tells the alarm when the prices workflow first existed on main, from the whole history", () => {

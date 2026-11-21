@@ -1267,4 +1267,29 @@ A migrated benchmark is done only when **all** of these hold:
   job never sees it, and the next ordinary run clears it. Step 0 of turning the API on now
   uses it and closes the issue only when it reports nothing else. Not deployed; the switch
   stays off.
+- **2026-11-21** — The publishing watch, after a second verification (FAIL, six findings).
+  **The rule is now age, nothing else** (the orchestrator's decision): raised when
+  `v1/index.json` was last written more than 14 hours before the check runs
+  (`MAX_PUBLISH_AGE_MS`). Slot counting is gone (the cron reader, the run's own slot, the
+  judgement cut-off, the workflow step that noted the job's start): three rounds each found
+  a new way for it to be wrong, the last a re-run of an old run clearing a real alarm.
+  ADR-0032 records why, and the guarantee in plain terms: one failed publish raises nothing
+  unless a run starts more than two hours late; publishing that stops is raised within
+  about 20 hours; two failures around the 22:40 to 00:00 gap can pass unnoticed when the
+  next publish succeeds. Tests: ages either side of 14 hours; the real schedule (read from
+  the crons) with one failure and starts up to two hours late; publishing stopped after each
+  run of a day; a re-run whose child prints the same report; the first publish. **The check
+  runs in a child process** (`scripts/check-api-publishing.ts`) that the alarm kills with
+  `SIGKILL` after 20 seconds; a kill, a non-zero exit or output that is not a report is "the
+  check of the API bucket failed", and the alarm writes nothing on the check's behalf.
+  Tests: children that sleep past the budget, ignore `SIGTERM`, print garbage, exit
+  non-zero, and the real check with a step summary that blocks (a FIFO); in each the
+  stale-Series verdict as on main, on time. A first try kept the alarm alive for the grace
+  timer's 22 seconds after its work; the timer is now cleared, and a test holds the alarm's
+  run under ten seconds. **The drill posts one comment**, with the run's link, after the
+  ordinary pass, reads nothing and carries no state marker, so an open finding stays
+  reported. **The first job has main's steps again**, in main's order, with main's condition
+  on the alarm step (a test holds both). **The error body's limit is tested**: an S3 code
+  beyond byte 2,048 is not seen, and one chunk larger than the limit is decoded only up to
+  it. Not deployed; the switch stays off.
 - _(agents: append your entry here, one per merged benchmark)_

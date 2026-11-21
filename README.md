@@ -33,7 +33,7 @@ as the base the build started from (last section).
 | `scripts/copy-bucket.ts` | Copies one `-runs` bucket into another, across two accounts, only ever adding, and checks the copy (`scripts/lib/bucket-copy.ts`): the move to the production account |
 | `scripts/derive.ts`, `scripts/build-page.ts` | Run the Methods over the Runs; turn their Derivations into the page |
 | `scripts/build-api.ts`, `scripts/check-api.ts`, `scripts/previous-api.ts` | Cut the Derivations and the price files into the data API's static files, laid out as they will be served; check what was written against its schemas, its links, the Derivations and the Runs repository, and against the tree before it; fetch that tree, the one the latest run that checked its tree kept (`scripts/lib/api.ts`, `scripts/lib/api-check.ts`; section "The data API") |
-| `scripts/alarm.ts` | Opens, or comments on, one issue when a watched Series has had no Run for 48 hours, the newest price file is more than 48 hours old, or two scheduled slots have elapsed since the API bucket was last written (or it has no table of contents, or cannot be read) |
+| `scripts/alarm.ts` | Opens, or comments on, one issue when a watched Series has had no Run for 48 hours, the newest price file is more than 48 hours old, or the API bucket's table of contents is more than 14 hours old (or missing, or unreadable) |
 | `.github/workflows/runs.yml` | On a schedule: copy, push, derive, page, the data API's files, alarm |
 | `scripts/fetch-prices.ts`, `scripts/check-prices.ts` | Make the day's price file from AWS's public price lists; check a price file by downloading its sources again and cutting them again |
 | `scripts/lib/price-rules.ts` | The selection rules, versioned: which of AWS's price records a price file keeps |
@@ -1195,24 +1195,23 @@ step each time.
    the current, checked tree. **And a stale or failed publish reaches the maintainer by a
    route that has been tested.** The route exists: the alarm ("The Runs repository, the
    Method and the page", "The alarm", "The data API's publishing") reads the API bucket in
-   every run's first job and opens, or comments on, the alarm issue when two scheduled slots
-   have elapsed since the bucket was last written, when it holds no table of contents, or
-   when it cannot be read, and, once the state leaves `off`, when `API_BUCKET` is unset. Its
+   every run's first job and opens, or comments on, the alarm issue when its table of
+   contents is more than 14 hours old, when it holds none, or when it cannot be read, and,
+   once the state leaves `off`, when `API_BUCKET` is unset. Its
    tests cover each of those against a stand-in for S3, and the issue clearing itself when
    publishing recovers. What no test can show is that the issue's notification reaches the
    maintainer (GitHub notifies those who watch the repository, by web, email or mobile as
    their settings say). Confirm it once, by hand, with the drill, which touches nothing
-   shared: no variable changes, and publishing goes on as on any run.
+   shared: no variable changes, nothing the alarm reads back changes, and publishing goes on
+   as on any run.
    1. Start the workflow by hand with the drill: Actions, `runs`, "Run workflow", tick
       "Drill the alarm" (the input `alarm_drill`), or
       `gh workflow run runs.yml --repo smrdotgg/ledgermath -f alarm_drill=true`. Its alarm
-      reads a name no bucket can have and opens the alarm issue, or comments on the one
-      open, beginning "**This is a drill.**". Its `publish` job publishes to `API_BUCKET`
-      as usual.
+      runs as on any run, then posts one comment on the alarm issue, or opens the issue
+      with it if none is open, beginning "**This is a drill**" and linking the run.
    2. See the notification arrive, where the maintainer expects to see it.
-   3. Leave the issue to the next ordinary run, scheduled or by hand without the input: it
-      reads the real bucket and comments once that the data API is published. Close the
-      issue only when it reports nothing else (no stale Series, no stale price file).
+   3. If the drill opened the issue, close it when it reports nothing else (no stale
+      Series, price file or bucket); an issue already open stays as the alarm left it.
 
    Until that is done, the state does not leave `off`: while the API is private a stale
    bucket harms no reader, but once it is served, publishing that has stopped leaves
@@ -1599,73 +1598,64 @@ cancelled, never ran, or its preflight refused the bucket. In each, the table of
   linked, as a lead. `Last-Modified` moves without the workflow only when a person writes the
   object with their own credentials (an upload by hand, the `copy-object` of "A run recorded
   too high").
-- **What is counted: elapsed scheduled slots since the bucket was last written.** The
-  slots are the workflow's scheduled times, 00:00, 06:00, 12:00, 18:00 and 22:40 UTC (a
-  test holds the list to the crons). The alarm counts the slots after `v1/index.json` was
-  last written that its job may judge, and raises at two. A job judges only slots whose
-  publish should have finished an hour before the job started (the job's first step notes
-  when it started), and never its own run's slot or a later one: the alarm runs before its
-  own run's `publish` job. For a scheduled run its own slot is the latest time of the cron
-  that started it (`github.event.schedule`); a run started by hand has none. An hour,
-  because the runs of 2026-11-11 to 2026-11-21 started 2 to 5 minutes late and took about a
-  minute, publish included, and because it lets the 00:00 run's job judge the 22:40 slot.
-  Counted in slots, not hours, because the schedule's gaps are uneven: one failed run can
-  leave the tree 12 hours old by the time an alarm looks (the 06:00 run failing, seen by the
-  12:00 run's), and two failed in a row can leave it no older (the 22:40 and 00:00 runs
-  failing, seen by the 06:00 run's). In practice: two scheduled runs that fail in a row,
-  with nothing published between them, raise the alarm at the run after them, the tree
-  then 12 to 18 hours old; one failed run, however late the runs start, raises nothing.
-  **A failed run followed by a publish by hand** starts the count again from the hand
-  publish, since the bucket was written then: the 22:40 and 00:00 runs failing around a run
-  started by hand that publishes at 23:50 leave one slot counted at 06:00, not two. **A very
-  late start** never counts against its own run, which is judged by the next run's job; and
-  a run whose publish lands after the next slot's time (the 22:40 run starting 79 minutes
-  late) writes the bucket after that slot, so that slot is not counted either. Tests play
-  every scheduled run of three days, with runs late by seeded amounts up to 79 minutes (past
-  the hour included) and runs started by hand between the slots, and hold all of this
-  (`tests/api-freshness.test.ts`), the two cases above among them.
+- **The rule is age, and nothing else.** The alarm is raised when `v1/index.json` was last
+  written more than 14 hours before the check runs, and is clear otherwise
+  (`MAX_PUBLISH_AGE_MS`). Its inputs are that `Last-Modified` and the current time: no
+  schedule, no run attempt, no start time, so a re-run of an old run, a run started by hand
+  and a late run all judge alike, and none can clear a real alarm. What the 14 hours give:
+  scheduled runs are at most 6 hours apart (a test holds the crons to that), so after one
+  failed publish the bucket is at most 12 hours old when the next run's alarm looks, plus
+  that run's lateness; 14 hours leaves two hours for lateness, so one failed publish raises
+  nothing unless a run also starts more than two hours late. Publishing that has stopped is
+  raised by the first alarm that runs once the bucket is 14 hours old, which is at most
+  about 20 hours after the last publish (14 hours, and up to 6 more until the next run).
+  What it does not promise: two failed runs either side of the short gap from 22:40 to
+  00:00 can pass unnoticed when the next publish succeeds; publishing has then recovered.
+  Tests: ages either side of 14 hours; the real schedule over three days with one failed
+  publish and runs starting up to two hours late (never raised); publishing stopped after
+  each run of a day (raised by the first alarm past 14 hours, within 20 hours); a re-run of
+  an old run, which gets the same report as any run at that moment; the first publish,
+  2026-11-21 01:49:48 UTC, fresh until 15:49:48.
 - **A bucket with no table of contents, or one that cannot be read, is raised at once.**
   No `v1/index.json` means no publish has ever finished there: expected only between
   setting `API_BUCKET` to a new bucket and its first publish (the run after the change
   raises it, since its alarm comes before its own `publish` job, and the run after that says
   the data API is published), and otherwise a sign that the variable names another bucket.
-  A bucket that cannot be read (the role refused, the bucket missing, or a 5xx, no answer
-  or an answer that stalls, three times) means whether publishing works cannot be told: the
-  `publish` job reads it with the same role and the same variable. The read is one `GET`,
-  not a `HEAD`, because a `HEAD`'s 404 has no body to tell a missing key from a missing
-  bucket; but only its headers are used, and the body of a 200 is cancelled unread.
-- **The read is bounded: 20 seconds in all**, so the alarm's own verdict, which comes after
-  it, is never held up for long. Each try may take 5 seconds (a `GET` of the table of
-  contents takes about a tenth of a second); the second and third come 1 and 2 seconds
-  after a 5xx, no answer, or a try that ran out of time; three tries and their waits take at
-  most 18 seconds. Of an error's body at most 2 KB are read, for at most a second, and what
-  reaches the issue of anything S3 or an error says is one line, without backticks, of at
-  most 300 characters. Tests make the stand-in for S3 answer with headers and then stall,
-  not answer at all, and trickle a byte at a time, and find the existing alarm's verdict
-  within the budget each time.
-- **Nothing in the check can change the rest of the alarm.** The check is done whole, before
-  anything is posted (`watchApiBucket` in `scripts/alarm.ts`): when the job's judgement
-  ends, the read, the judgement, the words and the line for the step summary. Anything
-  thrown anywhere in it becomes "The check of the API bucket failed", raised in the issue
-  like a bucket that cannot be read, and the stale Series and price files are judged and
-  written exactly as without it; a step summary that cannot be written is warned of and
-  passed over. Tests throw at each stage and find the stale-Series verdict, its words and
-  the exit code those of the alarm without the bucket.
+  A bucket that cannot be read (the role refused, the bucket missing, no credentials, or a
+  5xx or no answer three times) means whether publishing works cannot be told: the
+  `publish` job reads it with the same role and the same variable. A single 5xx is tried
+  again quietly, 1 and then 2 seconds later. The read is one `GET`, not a `HEAD`, because a
+  `HEAD`'s 404 has no body to tell a missing key from a missing bucket; only its headers are
+  used, and the body of a 200 is cancelled unread. Of an error's body at most the first
+  2,048 bytes are read, for at most a second, and what reaches the issue of anything S3
+  says is one line, without backticks, of at most 300 characters.
+- **The check runs in a child process, killed after 20 seconds.** The alarm starts
+  `scripts/check-api-publishing.ts`, which reads the bucket, judges it, words it, writes its
+  own line to the step summary and prints its report as one line of JSON. If it has not
+  finished within 20 seconds the alarm kills it outright (`SIGKILL`); a kill, a non-zero
+  exit or output that is not a report becomes "The check of the API bucket failed", with the
+  reason, raised like a bucket that cannot be read, and the stale Series and price files are
+  judged and written exactly as without the check. The alarm itself writes nothing on the
+  check's behalf, so nothing the check meets (an answer that stalls, a step summary that
+  blocks) can hold up the alarm's own verdict. Tests start children that sleep past the
+  budget, ignore `SIGTERM`, print garbage and exit non-zero, and the real check with a step
+  summary that blocks, and find each time the stale-Series verdict, on time, as without it.
 - **With `API_BUCKET` unset, nothing is raised while `PUBLIC_API` is `off`, and the alarm
   is raised in any other state**: unsetting the variable is how publishing is stopped on
   purpose while nothing is served ("The API bucket", "Setting it up"), but once serving is
   on (`dark`, `closed` or `on`), a missing bucket name means publishing has stopped. The
   bucket is not read either way, and the step summary says the variable is unset.
 - **It speaks as the rest of the alarm does**: once when raised, again only when what it
-  raises changes (a stale bucket is named by when it was last written, not by how many slots
-  have elapsed since), and once more, on the open issue, when the data API is published
-  again. Every pass writes what it found of the bucket to the step's summary.
-- **A drill shows the route without touching publishing.** Started by hand with the input
-  `alarm_drill` (Actions, `runs`, "Run workflow"), the alarm's check reads `s3://LEDGERMATH_ALARM_DRILL`,
-  a name no bucket can have, in place of `API_BUCKET`, and raises it on the alarm issue,
-  saying it is a drill. Nothing else changes: the `publish` job never sees the input and
-  publishes to `API_BUCKET` as on any run, and the next ordinary run reads the real bucket
-  and clears the drill with the usual single comment. A scheduled run has no inputs.
+  raises changes (a stale bucket is named by when it was last written, so it stays the same
+  while the bucket only grows older), and once more, on the open issue, when the data API is
+  published again.
+- **A drill shows the route and touches nothing.** Started by hand with the input
+  `alarm_drill` (Actions, `runs`, "Run workflow"), the alarm runs its ordinary pass and then
+  posts one comment on the alarm issue (opening the issue if none is open) saying it is a
+  drill, with the run's link, and that nothing is wrong. It reads nothing, carries no state
+  marker, and changes nothing the alarm reads back, so an open finding stays reported and
+  the next pass writes as it would have. An issue opened only by a drill is closed by the
+  maintainer. The `publish` job never sees the input; a scheduled run has no inputs.
 
 It reads with the first job's role, which may already list the API bucket and read its
 `v1/*` (`RunsApiUploadPolicy`); the role gains nothing. The alarm runs in the same workflow,
@@ -2610,8 +2600,8 @@ and "Check that the API bucket holds the data API's files" (`scripts/check-api-b
 failed-run email goes to whoever last changed the workflow's schedule, per their
 notification settings), but the `runs` job stays green, its artifacts are kept, and the
 next run's baseline is this run's tree ("The data API"). Publishing that stops, however it
-stops, is raised by the alarm in a later run's first job once two scheduled slots have
-elapsed since the bucket was last written ("The alarm", "The data API's publishing").
+stops, is raised by the alarm in a later run's first job once the bucket's table of
+contents is more than 14 hours old ("The alarm", "The data API's publishing").
 
 **Never two at once, and never an older tree after a newer one.** The `publish` job holds
 the concurrency group `api-bucket` (never cancelled in progress), and only that: the group
