@@ -13,9 +13,13 @@
  *     was written), in UPLOAD_PHASES' order, each phase whole before the next
  *     starts, so no file a reader can reach links down to one that is not
  *     there yet; and stops at a failed write, naming its phase and key
- *     (UploadStopped), starting no later phase;
+ *     (UploadStopped), starting no later phase. Every object it writes
+ *     records the run that wrote it, and it refuses a bucket that a later run
+ *     wrote to (OlderTree); and when it succeeds, the table of contents
+ *     records its run even if nothing else changed (STAMP_KEY);
  *   - checkBucket: the whole bucket holds exactly the tree's files, each with
- *     the tree's SHA-256 and the headers treeObject gives it.
+ *     the tree's SHA-256 and the headers treeObject gives it, and, given the
+ *     run that uploaded it, the table of contents records that run.
  *
  * A month file changes in place, at the same key: when an upload stops after
  * the month files and before the Series files, a Series file still lists the
@@ -89,6 +93,16 @@ export interface StoredObject {
  * an upload from an earlier run is refused (OlderTree).
  */
 export const RUN_METADATA = "x-amz-meta-ledgermath-run";
+
+/**
+ * The object on which every upload that succeeds leaves its run, even when it
+ * had nothing else to write: the table of contents, a key every tree has. When
+ * the upload did not rewrite it, its last act is to write it again, the same
+ * bytes and headers, with this run in RUN_METADATA (the stamp). Without it, a
+ * run that published a tree identical to the bucket's would leave no trace,
+ * and a retry of an earlier run, its tree older, would not be refused.
+ */
+export const STAMP_KEY = `${TREE_PREFIX}index.json`;
 
 /** A run id as GitHub gives it, or what an upload by hand passes: a positive whole number. */
 export function parseRun(value: string | null | undefined): number | null {
@@ -263,6 +277,8 @@ export interface UploadReport {
 	reasons: Map<string, string>;
 	/** The latest run that wrote anything the bucket holds of the tree, before this upload; null when none says. */
 	newestRunBefore: number | null;
+	/** Whether STAMP_KEY was written again, unchanged, only to record this run (or, in a preflight, would be). */
+	stamped: boolean;
 }
 
 export interface UploadOptions {
@@ -339,6 +355,24 @@ export class UploadStopped extends Error {
 	}
 }
 
+/**
+ * Every file of the tree is in the bucket, as written, but the stamp failed:
+ * the bucket does not yet record that this run published, so a retry of an
+ * earlier run's publish job would not be refused by it. The next upload that
+ * succeeds records its own run.
+ */
+export class NotStamped extends Error {
+	constructor(
+		readonly bucket: string,
+		readonly run: number,
+		readonly reason: string,
+		readonly phases: readonly PhaseReport[],
+	) {
+		super(`every file of the tree is in ${bucket}, but recording run ${run} on ${STAMP_KEY} failed: ${reason}. Until an upload succeeds, the bucket does not record that run ${run} published`);
+		this.name = "NotStamped";
+	}
+}
+
 /** The keys the bucket holds and the tree does not, in key order. */
 export function unexpectedKeys(listed: readonly string[], files: readonly TreeFile[]): string[] {
 	const expected = new Set(files.map((file) => file.key));
@@ -354,24 +388,35 @@ export function unexpectedKeys(listed: readonly string[], files: readonly TreeFi
  * written by a later run than options.run, it throws OlderTree, having
  * written nothing. With options.preflight it stops there, and says what it
  * would write. A failed write stops the upload once the writes of its phase
- * have settled, with UploadStopped, and no later phase starts. Never deletes.
+ * have settled, with UploadStopped, and no later phase starts. When every
+ * phase is written, and STAMP_KEY was not rewritten and does not record this
+ * run already, its last act is the stamp: STAMP_KEY written again, unchanged,
+ * with this run (NotStamped if that fails). So the bucket's latest run is
+ * this one after any upload that succeeds, whether or not a byte changed.
+ * Never deletes.
  */
 export async function uploadTree(store: ApiStore, files: readonly TreeFile[], options: UploadOptions): Promise<UploadReport> {
 	const { run } = options;
 	if (parseRun(String(run)) === null) throw new Error(`${run} is not a run id: a positive whole number (GITHUB_RUN_ID)`);
+	const stampFile = files.find((file) => file.key === STAMP_KEY);
+	if (stampFile === undefined) throw new Error(`the tree has no ${STAMP_KEY}, on which every upload records its run: not a tree scripts/build-api.ts wrote, so nothing was uploaded`);
 	const concurrency = options.concurrency ?? 8;
 	const extra = unexpectedKeys(await store.list(""), files);
 	if (extra.length > 0) throw new UnexpectedKeys(store.name, extra);
 	const reasons = new Map<string, string>();
 	let newest: { run: number; key: string } | null = null;
+	let stampRun: number | null = null;
 	await inParallel(files, concurrency, async (file) => {
 		const stored = await store.head(file.key);
 		if (stored?.run != null && (newest === null || stored.run > newest.run)) newest = { run: stored.run, key: file.key };
+		if (file.key === STAMP_KEY) stampRun = stored?.run ?? null;
 		const reason = writeReason(file, stored);
 		if (reason !== null) reasons.set(file.key, reason);
 	});
 	const latest = newest as { run: number; key: string } | null;
 	if (latest !== null && latest.run > run) throw new OlderTree(store.name, run, latest.run, latest.key);
+	// Written in its phase, it records this run already; otherwise the stamp does, unless it says this run (this run's retry).
+	const stamp = !reasons.has(STAMP_KEY) && (stampRun as number | null) !== run;
 	const phases: PhaseReport[] = [];
 	for (const [index, phase] of UPLOAD_PHASES.entries()) {
 		const ofPhase = files.filter((file) => file.phase === index);
@@ -395,16 +440,24 @@ export async function uploadTree(store: ApiStore, files: readonly TreeFile[], op
 		if (failed.length > 0) throw new UploadStopped(store.name, index, written.sort(), failed.sort((a, b) => (a.key < b.key ? -1 : 1)), phases);
 		phases.push({ phase, written: written.sort(), unchanged: ofPhase.length - toWrite.length, wouldWrite: [] });
 	}
-	return { phases, reasons, newestRunBefore: latest?.run ?? null };
+	if (stamp && options.preflight !== true) {
+		try {
+			await store.put(stampFile, run);
+		} catch (error) {
+			throw new NotStamped(store.name, run, error instanceof Error ? error.message : String(error), phases);
+		}
+	}
+	return { phases, reasons, newestRunBefore: latest?.run ?? null, stamped: stamp };
 }
 
 /**
  * What differs between the whole store and the tree: a file missing, a key
  * the tree does not have (under v1/ or anywhere else), a SHA-256 other than
- * the file's, or headers other than treeObject gives. Empty when the store
- * holds the tree exactly.
+ * the file's, or headers other than treeObject gives. With options.run, the
+ * run that just uploaded it, also: STAMP_KEY recording another run, or any
+ * object a later one. Empty when the store holds the tree exactly.
  */
-export async function checkBucket(store: ApiStore, files: readonly TreeFile[], options: { concurrency?: number } = {}): Promise<string[]> {
+export async function checkBucket(store: ApiStore, files: readonly TreeFile[], options: { concurrency?: number; run?: number } = {}): Promise<string[]> {
 	const problems: string[] = [];
 	const listed = new Set(await store.list(""));
 	const expected = new Set(files.map((file) => file.key));
@@ -425,6 +478,10 @@ export async function checkBucket(store: ApiStore, files: readonly TreeFile[], o
 		if (stored.size !== file.bytes.length) problems.push(`${store.name}/${file.key}: ${stored.size} bytes, and the tree's file has ${file.bytes.length}`);
 		if (stored.contentType !== file.contentType) problems.push(`${store.name}/${file.key}: Content-Type ${JSON.stringify(stored.contentType)}, not ${JSON.stringify(file.contentType)}`);
 		if (stored.cacheControl !== file.cacheControl) problems.push(`${store.name}/${file.key}: Cache-Control ${JSON.stringify(stored.cacheControl)}, not ${JSON.stringify(file.cacheControl)}`);
+		const { run } = options;
+		if (run === undefined) return;
+		if (file.key === STAMP_KEY && stored.run !== run) problems.push(`${store.name}/${file.key}: records run ${stored.run ?? "none"}, not this run, ${run}, which uploaded the tree`);
+		else if (stored.run !== null && stored.run > run) problems.push(`${store.name}/${file.key}: records run ${stored.run}, later than this run, ${run}`);
 	});
 	return problems.sort();
 }

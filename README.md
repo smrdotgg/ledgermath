@@ -1192,7 +1192,13 @@ step each time.
 0. Before: the stage is deployed with the API bucket, `API_BUCKET` is set, and the latest
    run of the `runs` workflow passed "Check that the API bucket holds the data API's
    files" in its `publish` job ("The data API", "The API bucket"), so what goes public is
-   the current, checked tree.
+   the current, checked tree. **And a failed `publish` job reaches the maintainer by a
+   route that has been tested**, by failing one on purpose and seeing it arrive. Today the
+   only route is GitHub's own failed-run email to whoever last changed the workflow's
+   schedule, as their notification settings allow, which nobody has tested: while the API
+   is private a stale bucket harms no reader, but once it is served, a `publish` job that
+   keeps failing leaves readers an old tree with nothing to say so. Until such a route is
+   built and tested, the state does not leave `off`.
 1. Set `state: "dark"` and `RELEASED_STATE` to `"dark"`, merge, `bunx sst
    diff --stage production-runs`, then deploy that stage. It makes, and changes nothing
    else:
@@ -1463,7 +1469,8 @@ again and comparing with `cmp`.
 ### The workflow
 
 `.github/workflows/runs.yml` runs at 22:40 UTC (half an hour after the 22:10 boot), every
-six hours, and by hand (`workflow_dispatch`), one run at a time. It checks out this
+six hours, and by hand (`workflow_dispatch`), its first job one at a time (the job holds the
+concurrency group `runs`, which `prices.yml` holds too). It checks out this
 repository with its whole history (for the alarm's `--schedule-changed-at`), takes AWS
 credentials through OIDC, checks out `smrdotgg/ledgermath-runs` with the deploy key,
 runs the copy job, commits and pushes what it added, runs both Methods, builds the page,
@@ -1474,7 +1481,8 @@ Actions), and runs the alarm with the workflow's own token. That is its first jo
 which knows nothing of publishing. A second job, `publish`, runs after it, only when it
 succeeded and `API_BUCKET` is set, and puts the checked tree into the API bucket ("The data
 API", "The API bucket"); its failure is its own and changes nothing of the first job's
-(its caches, its artifacts, the next run's baseline). Each Method runs on its own: when one fails, `derive.ts`
+(its caches, its artifacts, the next run's baseline). It holds its own group, `api-bucket`,
+not `runs`, so the shared lock is held exactly as long as before it existed. Each Method runs on its own: when one fails, `derive.ts`
 still writes the other's Derivations and, in place of the failed one's, a note saying why
 (`page/<name>.failed.json`); the page is built from what there is and says which part is
 missing and why, the artifact is kept, and the run still ends as failed. Between runs it keeps, in GitHub's cache, the dump blobs it
@@ -2176,9 +2184,11 @@ run is a second chance on a day GitHub drops or delays the first; when the first
 it adds nothing. It checks out this repository and the Runs repository (with the same
 deploy key as `runs.yml`), runs the fetch with its downloads under the runner's temporary
 directory, and commits and pushes the new file as `github-actions[bot]`, refusing to
-commit anything but new files. It shares `runs.yml`'s concurrency group, `runs`, so the
-two never run at once and neither's push is refused because the other pushed after its
-checkout. Its times are hours from `runs.yml`'s, because GitHub keeps at most one run of
+commit anything but new files. It shares the concurrency group of `runs.yml`'s first job,
+`runs` (a workflow's group and a job's of the same name are one lock: GitHub's groups are
+the repository's, for jobs and workflow runs alike), so the two never run at once and
+neither's push is refused because the other pushed after its checkout. `runs.yml`'s
+`publish` job holds a group of its own, so it never keeps this workflow waiting. Its times are hours from `runs.yml`'s, because GitHub keeps at most one run of
 a group waiting: a third run queued while one runs and one waits cancels the waiting one.
 
 It needs only the secret `RUNS_REPO_DEPLOY_KEY`, which `runs.yml` already uses (above): a
@@ -2364,7 +2374,8 @@ address is `--base`, so a private or test address can stand in.
   (its month files, or, in the layout before the split, its Series files' `points`), none
   of them may be missing, and the check says how many it compared. The workflow fetches the
   artifact `api` of the latest run on main created before it that kept one
-  (`scripts/previous-api.ts`, among the 50 latest completed runs). A run keeps it only when
+  (`scripts/previous-api.ts`, among the 50 latest runs, ended or not: the run before may
+  still be publishing when this one's first job starts). A run keeps it only when
   its tree passed this check, so the baseline is a checked tree whatever happened after:
   a run whose `publish` job failed (or was skipped) still is one, and a run whose check
   failed never is. It says what it found in the step's summary; a tree it could not
@@ -2475,21 +2486,31 @@ timeout and only the permissions it uses (read the repository, ask for the OIDC 
 it downloads the artifact `api` this run kept, so it uploads exactly the tree that was
 checked. Its steps: "Check the API bucket before anything is written" (`scripts/upload-api.ts
 --preflight`), "Upload the data API's files to the API bucket" (`scripts/upload-api.ts`),
-and "Check that the API bucket holds the data API's files" (`scripts/check-api-bucket.ts`).
-When one fails, the `publish` job is red and the run is marked failed (GitHub's own
+and "Check that the API bucket holds the data API's files" (`scripts/check-api-bucket.ts
+--run`). When one fails, the `publish` job is red and the run is marked failed (GitHub's own
 failed-run email goes to whoever last changed the workflow's schedule, per their
 notification settings; there is no other alert), but the `runs` job stays green, its
 artifacts are kept, and the next run's baseline is this run's tree ("The data API").
 
-**Never two at once, and never an older tree after a newer one.** The workflow's
-concurrency group `runs` (never cancelled in progress) lets one run of the workflow, its
-`publish` job included, run at a time, and GitHub keeps only the newest run waiting; the
-`publish` job's own group, `api-bucket`, keeps any two `publish` jobs apart even so. And
-every object the upload writes carries the run that wrote it (`x-amz-meta-ledgermath-run`,
-the run's id, which only grows): when the bucket holds any file written by a later run than
-this one, nothing is written and the job fails ("Not uploaded: ... later than this run").
-That is what stops a re-run of an old run's `publish` job, which the groups alone would let
-through, even after a newer run's upload stopped halfway.
+**Never two at once, and never an older tree after a newer one.** The `publish` job holds
+the concurrency group `api-bucket` (never cancelled in progress), and only that: the group
+`runs`, which `prices.yml` shares, is held by the first job alone, exactly as long as before
+the `publish` job existed. So the next run's first job, or `prices.yml`, may run while a
+`publish` job uploads (the next run then takes this run's artifact `api` as its baseline,
+though the run has not ended: "The data API"). Two `publish` jobs never run at once; of
+those waiting, GitHub keeps only the newest and cancels the older, whose tree is older too,
+so its run shows as cancelled and the newer tree is published. Every object the upload
+writes carries the run that wrote it (`x-amz-meta-ledgermath-run`, the run's id, which only
+grows), and every upload that succeeds leaves its run on the table of contents, even when
+it had nothing else to write (below): when the bucket records a later run than this one,
+anywhere, nothing is written and the job fails ("Not uploaded: ... later than this run").
+That covers every order the group does not: a re-run of an old run's `publish` job, a job
+that began waiting after a newer one had published, a newer run whose upload stopped
+halfway, or whose tree equalled the bucket's. One order is left, and it overwrites nothing
+newer: a re-run of an old `publish` job, started by hand while a newer one waits, takes the
+newer one's place in the group, which cancels it; the older tree is then published (if no
+later run is recorded) until the next run publishes. Re-run a `publish` job only when none
+is waiting.
 
 `scripts/upload-api.ts` writes the tree to the bucket, each file at its own path as key:
 
@@ -2505,6 +2526,17 @@ through, even after a newer run's upload stopped halfway.
   run that wrote it; a file is written only when the bucket does not hold it, holds it
   without a SHA-256, holds other bytes, or holds other headers (the run alone is no reason).
   A month file that did not change is not rewritten.
+- **The run is recorded, even when nothing changed.** When every phase is written, and the
+  table of contents, `v1/index.json`, was not rewritten and does not record this run
+  already, the upload's last act is to write it again, the same bytes and headers, with
+  this run (the stamp; `STAMP_KEY` in `scripts/lib/api-upload.ts`). It adds no key, and at
+  most one `PUT` a round. Without it, a run that published a tree equal to the bucket's
+  would leave no trace, and a retry of an earlier run, its tree older, would be let through.
+  A retry of this same run finds its run already recorded and writes nothing. To a reader
+  the stamp changes nothing but the time: S3's `ETag` is the MD5 of the bytes, so it stays
+  the same and a reader that revalidates with it gets `304 Not Modified`; `Last-Modified`
+  moves on, so a reader that revalidates by date alone fetches the same bytes again, at
+  most once a round, and only after the five minutes its copy may be kept.
 - **In an order that never leaves a readable file linking one not there yet**, five phases,
   each whole before the next starts: the schemas; the month files and price files; the
   Series files; the list, `v1/series.json`; the table of contents, `v1/index.json`. Each
@@ -2534,8 +2566,10 @@ through, even after a newer run's upload stopped halfway.
 
 Then `scripts/check-api-bucket.ts` checks that the whole bucket holds exactly the tree:
 the same keys, under `v1/` and nothing anywhere else, none missing and none more, each with
-the tree's SHA-256, size, `Content-Type` and `Cache-Control`. Each step writes what it did,
-or why it stopped, to the step summary.
+the tree's SHA-256, size, `Content-Type` and `Cache-Control`; and, given the run that
+uploaded it (`--run`, as the `publish` job passes it), that the table of contents records
+that run and no object a later one, so a stamp that did not happen fails the job. Each step
+writes what it did, or why it stopped, to the step summary.
 
 **A key the tree does not have.** The preflight step stopped, nothing was written, and its
 summary lists the keys; the published files are those of the last upload that succeeded,
@@ -2563,6 +2597,42 @@ does, with the stage's own profile:
    run has written to the bucket since; then it refuses, as above, and the later run's
    tree is the one to keep.)
 
+**A run recorded too high.** Every `publish` job fails with "Not uploaded: `<key>` as
+written by run N, later than this run", and N is no run of `runs.yml` that published (an
+upload by hand with a wrong `--run`, say, or an id from another repository): until it is
+put right, no run can publish. The run is the object metadata `ledgermath-run` (sent and
+read as the header `x-amz-meta-ledgermath-run`), usually on the table of contents,
+`v1/index.json`, which every upload stamps, and on each file that upload wrote. Put it
+right with your own credentials, the stage's profile; the workflow's role cannot, and
+nothing is deleted:
+
+1. Find the id of the latest run of `runs.yml` whose `publish` job succeeded (Actions,
+   `runs`; the id is the number in the run's address). Call it R.
+2. List the objects that record a later run than R (one `HEAD` per object, a few thousand
+   for a year's tree):
+
+   ```bash
+   for key in $(aws s3api list-objects-v2 --bucket <apiBucket> --query 'Contents[].Key' --output text --profile tabot-production); do
+     echo "$key $(aws s3api head-object --bucket <apiBucket> --key "$key" --query 'Metadata."ledgermath-run"' --output text --profile tabot-production)"
+   done
+   ```
+
+3. For each key whose run is later than R, write the object over itself with R as its run,
+   keeping its bytes, its headers and a SHA-256 S3 computes again:
+
+   ```bash
+   aws s3api copy-object --bucket <apiBucket> --key <key> --copy-source <apiBucket>/<key> \
+     --metadata-directive REPLACE --metadata ledgermath-run=R \
+     --content-type application/json --cache-control "public, max-age=300" \
+     --checksum-algorithm SHA256 --profile tabot-production
+   ```
+
+   (`REPLACE` drops whatever is not given again, which is why the headers are. If an object
+   is left without its SHA-256 or headers all the same, the next upload sees it and writes
+   it again.)
+4. Start the workflow by hand: its `publish` job uploads, stamps the table of contents with
+   its own run, and the check passes.
+
 **The permission.** The workflow writes with the role it already assumes, `RunsReaderRole`,
 through a second policy of that role, `RunsApiUploadPolicy`: `s3:ListBucket` on the API
 bucket, `s3:GetObject` and `s3:PutObject` on its `v1/*`, and nothing else. The role, its
@@ -2589,7 +2659,7 @@ changed. To stop the upload, `gh variable delete API_BUCKET --repo smrdotgg/ledg
 # --run is the id of the run whose artifact api /tmp/api is (it is refused if a later run wrote to the bucket).
 (eval "$(aws configure export-credentials --profile tabot-production --format env)" && bun scripts/upload-api.ts --tree /tmp/api --bucket <apiBucket> --run <run id> --preflight)
 (eval "$(aws configure export-credentials --profile tabot-production --format env)" && bun scripts/upload-api.ts --tree /tmp/api --bucket <apiBucket> --run <run id>)
-(eval "$(aws configure export-credentials --profile tabot-production --format env)" && bun scripts/check-api-bucket.ts --tree /tmp/api --bucket <apiBucket>)
+(eval "$(aws configure export-credentials --profile tabot-production --format env)" && bun scripts/check-api-bucket.ts --tree /tmp/api --bucket <apiBucket> --run <run id>)
 ```
 
 **What it costs**, at the prices of AWS's Price List API on 2026-11-19 (us-east-2): S3

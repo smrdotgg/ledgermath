@@ -22,9 +22,12 @@
  * only the files the bucket does not already hold with the same SHA-256 and
  * headers (one HEAD per file tells), in five phases, each whole before the
  * next: schemas; month files and price files; Series files; the list; the
- * table of contents (UPLOAD_PHASES). Deletes nothing. Each object carries its
- * Content-Type and Cache-Control (treeObject), and S3 verifies its SHA-256 as
- * it is written and keeps it. Credentials come from the environment
+ * table of contents (UPLOAD_PHASES). Then, if the table of contents was not
+ * rewritten and does not record --run already, writes it again, unchanged,
+ * with --run (the stamp, STAMP_KEY), so the bucket records that this run
+ * published even when nothing else changed. Deletes nothing. Each object
+ * carries its Content-Type and Cache-Control (treeObject) and the run that
+ * wrote it, and S3 verifies its SHA-256 as it is written and keeps it. Credentials come from the environment
  * (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_SESSION_TOKEN), as
  * aws-actions/configure-aws-credentials sets them. scripts/check-api-bucket.ts
  * then checks what the bucket holds.
@@ -44,7 +47,7 @@ import { parseArgs } from "node:util";
 
 import { UPLOAD_PHASES } from "../infra/runs/api-bucket";
 import { RUNS_REGION } from "../infra/runs/stages";
-import { OlderTree, parseRun, readTree, S3ApiStore, UnexpectedKeys, UploadStopped, uploadTree } from "./lib/api-upload";
+import { NotStamped, OlderTree, parseRun, readTree, S3ApiStore, STAMP_KEY, UnexpectedKeys, UploadStopped, uploadTree } from "./lib/api-upload";
 
 const USAGE = "usage: bun scripts/upload-api.ts --tree DIR --bucket NAME --run ID [--preflight] [--region R] [--endpoint URL]";
 
@@ -79,6 +82,15 @@ export function stoppedSummary(error: unknown): string | null {
 			"Until an upload succeeds, a Series file may list a month file's previous sha256 while the month's address gives the new bytes (readers check the sha256: README, \"The data API\"). The next run's upload writes what is still missing and repairs it.",
 		].join("\n");
 	}
+	if (error instanceof NotStamped) {
+		return [
+			`**Every file of the tree is in ${error.bucket}, but recording run ${error.run} on \`${STAMP_KEY}\` failed:** ${error.reason}`,
+			"",
+			...error.phases.map((phase, index) => `- phase ${index + 1}, ${phase.phase}: ${phase.written.length} written, ${phase.unchanged} unchanged`),
+			"",
+			"Until an upload succeeds, the bucket does not record that this run published, so a retry of an earlier run's publish job would not be refused. Run this job again, or let the next run publish.",
+		].join("\n");
+	}
 	return null;
 }
 
@@ -109,7 +121,8 @@ async function main(): Promise<void> {
 	if (preflight) {
 		const lines = report.phases.map((phase, index) => `phase ${index + 1}, ${phase.phase}: ${phase.wouldWrite.length} to write, ${phase.unchanged} unchanged`);
 		const total = report.phases.reduce((sum, phase) => sum + phase.wouldWrite.length, 0);
-		const summary = `${store.name} holds nothing the tree lacks, and ${before} (this is run ${run}): ${total} of ${files.length} files to write, nothing written, in ${took} ms`;
+		const stamp = report.stamped ? `, then ${STAMP_KEY} again, unchanged, to record this run` : "";
+		const summary = `${store.name} holds nothing the tree lacks, and ${before} (this is run ${run}): ${total} of ${files.length} files to write${stamp}, nothing written, in ${took} ms`;
 		for (const line of lines) console.log(line);
 		console.log(summary);
 		toSummary(heading, `${summary}\n\n\`\`\`\n${lines.join("\n")}\n\`\`\``);
@@ -120,7 +133,8 @@ async function main(): Promise<void> {
 	for (const reason of report.reasons.values()) byReason.set(reason, (byReason.get(reason) ?? 0) + 1);
 	const why = [...byReason].map(([reason, count]) => `${count} ${reason}`).join(", ");
 	const total = report.phases.reduce((sum, phase) => sum + phase.written.length, 0);
-	const summary = `data API v1 to ${store.name}: ${files.length} files, ${total} written${why === "" ? "" : ` (${why})`} by run ${run}, nothing deleted, in ${took} ms`;
+	const stamp = report.stamped ? `, and ${STAMP_KEY} written again, unchanged, to record this run` : "";
+	const summary = `data API v1 to ${store.name}: ${files.length} files, ${total} written${why === "" ? "" : ` (${why})`} by run ${run}${stamp}, nothing deleted, in ${took} ms`;
 	for (const line of lines) console.log(line);
 	console.log(summary);
 	toSummary(heading, `${summary}\n\n\`\`\`\n${lines.join("\n")}\n\`\`\``);

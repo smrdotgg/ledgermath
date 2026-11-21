@@ -15,15 +15,17 @@
  *   --out DIR                where the previous tree is put; a new or empty directory
  *   --gh PATH                the GitHub CLI (default gh), which reads its token from GH_TOKEN
  *
- * It reads when this run was created, and goes through the completed runs of
- * the workflow on the branch created before that, newest first (so a re-run
- * of an older run takes a run before it, never one made after it), to the
- * first that kept an artifact api. A run keeps one only when its tree passed
- * the check (the workflow's step "Keep the data API's files"), so the choice
- * rests on that and on nothing else: not on how the run ended, which a later
- * job (the publish job) or a later step (the alarm) can make a failure. A run
- * whose publish job failed is a baseline; a run whose check failed, or that
- * ran before the data API, is passed over. It downloads that artifact into
+ * It reads when this run was created, and goes through the runs of the
+ * workflow on the branch created before that, ended or not, newest first (so
+ * a re-run of an older run takes a run before it, never one made after it),
+ * to the first that kept an artifact api. A run keeps one only when its tree
+ * passed the check (the workflow's step "Keep the data API's files"), so the
+ * choice rests on that and on nothing else: not on how the run ended, which a
+ * later job (the publish job) or a later step (the alarm) can make a failure,
+ * nor on whether it has: this run's first job may start while the run before
+ * is still publishing, and an artifact can be downloaded as soon as it is
+ * kept. A run whose publish job failed, or is still going, is a baseline; a
+ * run whose check failed, or that ran before the data API, is passed over. It downloads that artifact into
  * --out, and says what it found, on stdout and in the step's summary
  * ($GITHUB_STEP_SUMMARY): a tree, with its layout beside this one's; or none,
  * because no run of the RUNS_SEARCHED latest kept an artifact api, or the
@@ -89,7 +91,7 @@ const layoutOf = (directory: string): string => {
 
 const NEW_BASELINE = "The check fails unless this run was started by hand with the input new_baseline, which declares this run's tree a new baseline.";
 
-/** How many of the latest completed runs are searched for one that kept an artifact api: more than a week of runs at five a day. */
+/** How many of the latest runs, ended or not, are searched for one that kept an artifact api: more than a week of runs at five a day. */
 export const RUNS_SEARCHED = 50;
 
 /**
@@ -105,14 +107,15 @@ export function fetchPrevious(options: PreviousOptions): Previous {
 	if (!isObject(self) || typeof self.created_at !== "string" || !CREATED_AT.test(self.created_at)) throw new CouldNotFetch(`could not fetch run ${runId}: the reply gives no created_at as GitHub writes it`);
 	const createdAt = self.created_at;
 
+	// Every status: a run whose publish job is still going has kept its artifact api already.
 	const listed = json(
-		`the completed runs of ${workflow} on ${branch} created before ${createdAt}`,
-		gh(["api", "-X", "GET", `repos/${repository}/actions/workflows/${workflow}/runs`, "-f", `branch=${branch}`, "-f", "status=completed", "-f", `created=<${createdAt}`, "-f", `per_page=${RUNS_SEARCHED}`]),
+		`the runs of ${workflow} on ${branch} created before ${createdAt}`,
+		gh(["api", "-X", "GET", `repos/${repository}/actions/workflows/${workflow}/runs`, "-f", `branch=${branch}`, "-f", `created=<${createdAt}`, "-f", `per_page=${RUNS_SEARCHED}`]),
 	);
-	if (!isObject(listed) || !Array.isArray(listed.workflow_runs)) throw new CouldNotFetch(`could not fetch the completed runs of ${workflow}: the reply holds no workflow_runs`);
+	if (!isObject(listed) || !Array.isArray(listed.workflow_runs)) throw new CouldNotFetch(`could not fetch the runs of ${workflow}: the reply holds no workflow_runs`);
 	const runs = listed.workflow_runs.map((run, i) => {
 		if (!isObject(run) || typeof run.id !== "number" || typeof run.head_branch !== "string" || typeof run.created_at !== "string" || !CREATED_AT.test(run.created_at)) {
-			throw new CouldNotFetch(`could not fetch the completed runs of ${workflow}: entry ${i} of the reply lacks its id, head_branch or created_at: ${JSON.stringify(run)?.slice(0, 200)}`);
+			throw new CouldNotFetch(`could not fetch the runs of ${workflow}: entry ${i} of the reply lacks its id, head_branch or created_at: ${JSON.stringify(run)?.slice(0, 200)}`);
 		}
 		return { id: run.id, branch: run.head_branch, createdAt: run.created_at, url: typeof run.html_url === "string" ? run.html_url : `run ${run.id}` };
 	});

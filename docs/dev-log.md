@@ -1197,4 +1197,20 @@ A migrated benchmark is done only when **all** of these hold:
   every state**, `off` included. **The stack type check judges the compiler's exit**: a
   signal, a non-zero exit with no diagnostics or lines it cannot read now fail, tested with
   a stand-in compiler. Not deployed; the switch stays off.
+- **2026-11-21** — The data API's serving, after a third review (FAIL on two findings).
+  **A run that published nothing new left no trace**: run 100 wrote tree A, run 102
+  published the same A with no `PUT`, and a retry of run 101 then wrote its tree B over it
+  and passed its check. Every upload that succeeds now leaves its run on `v1/index.json`
+  (the stamp: the same bytes written again with the run in its metadata, when the table of
+  contents was not rewritten and does not record the run already), and the check, given
+  the run, requires it; S3's ETag stays the same, only `Last-Modified` moves. Tests: the
+  three-run case, the same run's retry (allowed, no write), the first upload (no stamp).
+  The README says how to put right a run recorded too high. **The publish job no longer
+  holds the lock `prices.yml` shares**: the group `runs` moved from the workflow to the
+  first job (GitHub's groups are the repository's, jobs and workflow runs alike), and
+  `publish` holds `api-bucket` alone. So the next run's first job can start while the run
+  before publishes, and the baseline lookup now searches runs of every status (an artifact
+  v4 can be downloaded as soon as it is kept); a test holds it to a run still going. The
+  turn-on steps now require a tested route by which a failed publish reaches the
+  maintainer. Not deployed; the switch stays off.
 - _(agents: append your entry here, one per merged benchmark)_

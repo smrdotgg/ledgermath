@@ -70,7 +70,12 @@ interface World {
 	download?: Record<number, string | GhResult>;
 }
 
-/** A gh that answers from `world`, and records what it was asked. It returns every run it holds, whatever the filter: the script filters again. */
+/**
+ * A gh that answers from `world`, and records what it was asked. It returns
+ * every run it holds whatever the branch and creation filters (the script
+ * filters again), but honours a status filter, as GitHub's API does, so that
+ * a run still going is left out when only ended runs are asked for.
+ */
 function fakeGh(world: World, asked: string[][] = []): Gh {
 	const ok = (value: unknown): GhResult => ({ code: 0, stdout: JSON.stringify(value), stderr: "" });
 	return (args) => {
@@ -80,7 +85,10 @@ function fakeGh(world: World, asked: string[][] = []): Gh {
 			return typeof self === "object" && self !== null && "code" in self ? (self as GhResult) : ok(self);
 		}
 		if (args[0] === "api" && args[3]?.endsWith("/actions/workflows/runs.yml/runs")) {
-			return Array.isArray(world.runs) || world.runs === undefined ? ok({ total_count: world.runs?.length ?? 0, workflow_runs: world.runs ?? [] }) : world.runs;
+			if (!(Array.isArray(world.runs) || world.runs === undefined)) return world.runs;
+			const status = args.find((arg) => arg.startsWith("status="))?.slice("status=".length);
+			const runs = (world.runs ?? []).filter((entry) => status === undefined || (typeof entry === "object" && entry !== null && (entry as { status?: unknown }).status === status));
+			return ok({ total_count: runs.length, workflow_runs: runs });
 		}
 		const artifacts = /^repos\/owner\/ledgermath\/actions\/runs\/([0-9]+)\/artifacts$/.exec(args[3] ?? "");
 		if (args[0] === "api" && artifacts !== null) {
@@ -137,7 +145,7 @@ describe("the previous tree", () => {
 		expect(readFileSync(join(out, "v1/index.json"))).toEqual(readFileSync(join(kept, "v1/index.json")));
 		expect(asked).toEqual([
 			["api", `repos/${REPOSITORY}/actions/runs/${SELF.id}`],
-			["api", "-X", "GET", `repos/${REPOSITORY}/actions/workflows/runs.yml/runs`, "-f", "branch=main", "-f", "status=completed", "-f", `created=<${SELF.created_at}`, "-f", `per_page=${RUNS_SEARCHED}`],
+			["api", "-X", "GET", `repos/${REPOSITORY}/actions/workflows/runs.yml/runs`, "-f", "branch=main", "-f", `created=<${SELF.created_at}`, "-f", `per_page=${RUNS_SEARCHED}`],
 			["api", "-X", "GET", `repos/${REPOSITORY}/actions/runs/250/artifacts`, "-f", "name=api", "-f", "per_page=10"],
 			["run", "download", "250", "--repo", REPOSITORY, "--name", "api", "--dir", out],
 		]);
@@ -166,6 +174,31 @@ describe("the previous tree", () => {
 		]);
 		// A run that ended in success but kept no artifact api (its check did not run) is passed over too.
 		expect(previous({ runs: [run(280, "2026-11-19T22:00:00Z"), run(250, "2026-11-19T18:00:00Z")], artifacts: { 250: [artifact()] }, download: { 250: kept } }).result()).toMatchObject({ found: true, run: 250 });
+	});
+
+	test("is the artifact api of a run that has not ended, its publish job still going: this run's first job may start while the run before publishes", () => {
+		const asked: string[][] = [];
+		const { out, result } = previous(
+			{
+				runs: [
+					// The run before: its first job kept the checked tree; its publish job is still uploading.
+					run(290, "2026-11-19T22:10:00Z", { status: "in_progress", conclusion: null }),
+					// A run still waiting for its first job has kept nothing yet, and is passed over.
+					run(285, "2026-11-19T22:05:00Z", { status: "queued", conclusion: null }),
+					run(250, "2026-11-19T18:00:00Z"),
+				],
+				artifacts: { 290: [artifact()], 250: [artifact()] },
+				download: { 290: kept, 250: otherLayout },
+			},
+			asked,
+		);
+		expect(result()).toMatchObject({ found: true, run: 290 });
+		expect(readFileSync(join(out, "v1/index.json"))).toEqual(readFileSync(join(kept, "v1/index.json")));
+		// Runs of every status are asked for: none is filtered out by whether it has ended.
+		const listing = asked.find((args) => args[3]?.endsWith("/actions/workflows/runs.yml/runs")) as string[];
+		expect(listing.some((arg) => arg.startsWith("status="))).toBe(false);
+		// And a run passed over because it has kept nothing yet does not end the search.
+		expect(previous({ runs: [run(285, "2026-11-19T22:05:00Z", { status: "queued", conclusion: null }), run(250, "2026-11-19T18:00:00Z")], artifacts: { 250: [artifact()] }, download: { 250: kept } }).result()).toMatchObject({ found: true, run: 250 });
 	});
 
 	test("on a re-run of an older run, is never a run created after it", () => {
@@ -209,16 +242,16 @@ describe("the previous tree", () => {
 
 	test("could not be fetched, which is never none: gh failing, a reply that is not theirs, a run or an artifact without what is needed, a download that fails", () => {
 		const failed: GhResult = { code: 1, stdout: "", stderr: "HTTP 403: Resource not accessible by integration" };
-		const listing = `the completed runs of runs.yml on main created before ${SELF.created_at}`;
+		const listing = `the runs of runs.yml on main created before ${SELF.created_at}`;
 		const cases: Array<[World, string]> = [
 			[{ self: failed }, `could not fetch run ${SELF.id}: gh exited 1: HTTP 403: Resource not accessible by integration`],
 			[{ self: { id: SELF.id } }, `could not fetch run ${SELF.id}: the reply gives no created_at as GitHub writes it`],
 			[{ runs: failed }, `could not fetch ${listing}: gh exited 1: HTTP 403: Resource not accessible by integration`],
 			[{ runs: { code: 0, stdout: "<html>", stderr: "" } }, `could not fetch ${listing}: gh's reply is not JSON: <html>`],
-			[{ runs: { code: 0, stdout: "{}", stderr: "" } }, "could not fetch the completed runs of runs.yml: the reply holds no workflow_runs"],
+			[{ runs: { code: 0, stdout: "{}", stderr: "" } }, "could not fetch the runs of runs.yml: the reply holds no workflow_runs"],
 			// A run without its creation time is not "no earlier run".
-			[{ runs: [run(250, "2026-11-19T18:00:00Z"), { id: 240, head_branch: "main", conclusion: "success" }] }, "could not fetch the completed runs of runs.yml: entry 1 of the reply lacks its id, head_branch or created_at"],
-			[{ runs: [{ ...run(250, "2026-11-19T18:00:00Z"), id: "250" }] }, "could not fetch the completed runs of runs.yml: entry 0 of the reply lacks its id, head_branch or created_at"],
+			[{ runs: [run(250, "2026-11-19T18:00:00Z"), { id: 240, head_branch: "main", conclusion: "success" }] }, "could not fetch the runs of runs.yml: entry 1 of the reply lacks its id, head_branch or created_at"],
+			[{ runs: [{ ...run(250, "2026-11-19T18:00:00Z"), id: "250" }] }, "could not fetch the runs of runs.yml: entry 0 of the reply lacks its id, head_branch or created_at"],
 			[{ runs: [run(250, "2026-11-19T18:00:00Z")], artifacts: failed }, "could not fetch the artifacts of run 250: gh exited 1: HTTP 403: Resource not accessible by integration"],
 			[{ runs: [run(250, "2026-11-19T18:00:00Z")], artifacts: { 250: [{ id: 7, name: "api" }] } }, "could not fetch the artifacts of run 250: entry 0 of the reply lacks its name or expired"],
 			[{ runs: [run(250, "2026-11-19T18:00:00Z")], artifacts: { 250: [artifact()] } }, "could not download the artifact api of run 250: gh exited 1: no valid artifacts found to download"],

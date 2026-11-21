@@ -33,7 +33,7 @@ interface Job {
 interface Workflow {
 	on: { schedule: Array<{ cron: string }>; workflow_dispatch: { inputs?: Record<string, { description?: string; type?: string; default?: unknown }> } | null };
 	permissions: Record<string, string>;
-	concurrency: { group: string; "cancel-in-progress": boolean };
+	concurrency?: { group: string; "cancel-in-progress": boolean };
 	jobs: Record<string, Job>;
 }
 
@@ -44,12 +44,18 @@ const runs = steps.flatMap((step) => (step.run === undefined ? [] : [step.run]))
 const publish = workflow.jobs.publish as Job;
 
 describe("the runs workflow", () => {
-	test("runs at 22:40 UTC, every six hours, and by hand, one run at a time, both its jobs", () => {
+	test("runs at 22:40 UTC, every six hours, and by hand; its first job holds the group runs, shared with prices.yml, and the publish job only api-bucket", () => {
 		expect(workflow.on.schedule.map((entry) => entry.cron)).toEqual(["40 22 * * *", "0 */6 * * *"]);
 		expect("workflow_dispatch" in workflow.on).toBe(true);
-		// The workflow's group holds a run, its publish job included, until the run ends.
-		expect(workflow.concurrency).toEqual({ group: "runs", "cancel-in-progress": false });
 		expect(Object.keys(workflow.jobs)).toEqual(["runs", "publish"]);
+		// No group for the workflow as a whole: then a run would hold runs, the lock prices.yml shares, through its publish job too.
+		expect(workflow.concurrency).toBeUndefined();
+		// The first job holds runs exactly as long as the workflow did before the publish job: for itself.
+		expect(job.concurrency).toEqual({ group: "runs", "cancel-in-progress": false });
+		// The publish job holds api-bucket alone, so the next run's first job, and prices.yml, can start while it uploads.
+		expect(publish.concurrency).toEqual({ group: "api-bucket", "cancel-in-progress": false });
+		const text = readFileSync(join(ROOT, ".github", "workflows", "runs.yml"), "utf8");
+		expect(text.match(/^\s*group:/gm)?.length).toBe(2);
 	});
 
 	test("gives the workflow no permission, and each job its own: the first may read contents and Actions, ask for an OIDC token and write issues", () => {
@@ -199,7 +205,7 @@ describe("the runs workflow", () => {
 			"aws-actions/configure-aws-credentials",
 			'bun scripts/upload-api.ts --tree api --bucket "$API_BUCKET" --run "$GITHUB_RUN_ID" --preflight',
 			'bun scripts/upload-api.ts --tree api --bucket "$API_BUCKET" --run "$GITHUB_RUN_ID"',
-			'bun scripts/check-api-bucket.ts --tree api --bucket "$API_BUCKET"',
+			'bun scripts/check-api-bucket.ts --tree api --bucket "$API_BUCKET" --run "$GITHUB_RUN_ID"',
 		]);
 		expect(p[3]?.with).toEqual({ name: "api", path: "api" });
 		expect(p[4]?.with).toEqual({ "role-to-assume": "${{ vars.RUNS_AWS_ROLE_ARN }}", "aws-region": "us-east-2" });
@@ -209,14 +215,14 @@ describe("the runs workflow", () => {
 		for (const script of ["upload-api", "check-api-bucket"]) expect(existsSync(join(ROOT, "scripts", `${script}.ts`))).toBe(true);
 	});
 
-	test("the next run's baseline is the artifact api, which the first job keeps only when its check passed, and never how the run ended, so the publish job cannot change it", () => {
+	test("the next run's baseline is the artifact api, which the first job keeps only when its check passed, never how the run ended nor whether it has, so the publish job cannot change it", () => {
 		const keep = steps.find((step) => step.uses?.startsWith("actions/upload-artifact@") && step.with?.name === "api") as Step;
 		expect(keep.if).toBe("${{ !cancelled() && steps.api-check.outcome == 'success' }}");
 		const source = readFileSync(join(ROOT, "scripts", "previous-api.ts"), "utf8");
-		expect(source).toContain('"status=completed"');
-		expect(source).not.toContain("status=success");
+		// Runs of every status are searched: the run before may still be publishing when this run's first job starts.
+		expect(source).not.toContain("status=");
 		expect(source).not.toMatch(/conclusion === "success"/);
-		// tests/previous-api.test.ts: a run whose publish job failed is a baseline; one whose check failed is not.
+		// tests/previous-api.test.ts: a run whose publish job failed, or is still going, is a baseline; one whose check failed is not.
 	});
 
 	test("tells the alarm whether this pass's copy and push succeeded", () => {
@@ -371,8 +377,9 @@ describe("the prices workflow", () => {
 		}
 	});
 
-	test("shares the runs workflow's concurrency group, so the two never push to the Runs repository at once", () => {
-		expect(prices.concurrency).toEqual(workflow.concurrency);
+	test("shares the group of the runs workflow's first job, so the two never push to the Runs repository at once", () => {
+		// A workflow's group and a job's of the same name are one: GitHub's groups are the repository's, for jobs and workflow runs alike.
+		expect(prices.concurrency).toEqual(job.concurrency);
 		expect(prices.concurrency).toEqual({ group: "runs", "cancel-in-progress": false });
 	});
 

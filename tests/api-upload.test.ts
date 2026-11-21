@@ -23,11 +23,13 @@ import {
 	checksumHeader,
 	checksumHex,
 	inParallel,
+	NotStamped,
 	OlderTree,
 	parseRun,
 	RUN_METADATA,
 	readTree,
 	S3ApiStore,
+	STAMP_KEY,
 	type TreeFile,
 	UnexpectedKeys,
 	UploadStopped,
@@ -485,6 +487,8 @@ describe("the upload, against a stand-in for S3", () => {
 		const later = await uploadTree(store, readTree(writeTree(tree)), { run: RUN.run + 1 });
 		expect(later.newestRunBefore).toBe(RUN.run);
 		expect(later.phases.flatMap((phase) => phase.written).length).toBe(2);
+		// The table of contents did not change, and is written again only to record the later run.
+		expect(later.stamped).toBe(true);
 	});
 
 	test("refuses an older run's tree even when the newer run's upload stopped part way, its month files written and nothing after", async () => {
@@ -502,6 +506,77 @@ describe("the upload, against a stand-in for S3", () => {
 		for (const [key, bytes] of TREE) standin.put(BUCKET, key, bytes, "application/json");
 		const report = await uploadTree(store, readTree(writeTree(TREE)), { run: 1 });
 		expect(report.newestRunBefore).toBeNull();
+		// Its run is recorded all the same, on the table of contents (rewritten in its phase here, as those objects carry no SHA-256).
+		expect(report.reasons.get(STAMP_KEY)).toBe("no SHA-256 stored with the object");
+		expect(report.stamped).toBe(false);
+		expect(objects().get(STAMP_KEY)?.metadata).toEqual({ [RUN_METADATA]: "1" });
+	});
+
+	test("a run that publishes the tree the bucket already holds still records its run, so a retry of an earlier run, its tree older, is refused afterwards", async () => {
+		const treeA = readTree(writeTree(TREE));
+		const treeB = readTree(writeTree(nextRound().tree));
+		// Run 100 writes tree A.
+		await uploadTree(store, treeA, { run: 100 });
+		// Run 102 publishes the same tree A: no file of it differs, so the one PUT is the table of contents again, unchanged, recording run 102.
+		const before = puts().length;
+		const published = await uploadTree(store, treeA, { run: 102 });
+		expect(published.phases.flatMap((phase) => phase.written)).toEqual([]);
+		expect(published.reasons.size).toBe(0);
+		expect(published.stamped).toBe(true);
+		expect(puts().slice(before)).toEqual([STAMP_KEY]);
+		expect(STAMP_KEY).toBe("v1/index.json");
+		expect(objects().get(STAMP_KEY)?.metadata).toEqual({ [RUN_METADATA]: "102" });
+		expect(Buffer.from(objects().get(STAMP_KEY)?.bytes ?? []).equals(Buffer.from(treeA.find((file) => file.key === STAMP_KEY)?.bytes ?? []))).toBe(true);
+		expect(await checkBucket(store, treeA, { run: 102 })).toEqual([]);
+		// A retry of run 101, whose tree B is older than what run 102 published, writes nothing.
+		const writes = puts().length;
+		const refused = await uploadTree(store, treeB, { run: 101 }).catch((error: unknown) => error);
+		expect(refused).toBeInstanceOf(OlderTree);
+		expect(refused).toMatchObject({ run: 101, newest: 102, key: STAMP_KEY });
+		expect(puts().length).toBe(writes);
+		expect(await checkBucket(store, treeA, { run: 102 })).toEqual([]);
+	});
+
+	test("the same run again, after it published nothing new, goes ahead and writes nothing at all", async () => {
+		const treeA = readTree(writeTree(TREE));
+		await uploadTree(store, treeA, { run: 100 });
+		await uploadTree(store, treeA, { run: 102 });
+		const before = puts().length;
+		const again = await uploadTree(store, treeA, { run: 102 });
+		expect(again.newestRunBefore).toBe(102);
+		expect(again.stamped).toBe(false);
+		expect(puts().length).toBe(before);
+		expect(objects().get(STAMP_KEY)?.writes).toBe(2);
+		expect(await checkBucket(store, treeA, { run: 102 })).toEqual([]);
+	});
+
+	test("the first upload to an empty bucket writes each file once, the table of contents in its own phase, with no stamp after", async () => {
+		const files = readTree(writeTree(TREE));
+		const report = await uploadTree(store, files, { run: 100 });
+		expect(report.stamped).toBe(false);
+		expect(report.newestRunBefore).toBeNull();
+		expect(puts().length).toBe(files.length);
+		expect(puts().filter((key) => key === STAMP_KEY)).toEqual([STAMP_KEY]);
+		for (const object of objects().values()) expect(object.writes).toBe(1);
+		expect(await checkBucket(store, files, { run: 100 })).toEqual([]);
+	});
+
+	test("a stamp that fails fails the upload, saying the tree is in the bucket and its run is not recorded", async () => {
+		const files = readTree(writeTree(TREE));
+		await uploadTree(store, files, { run: 100 });
+		standin.fault = (request) => (request.method === "PUT" && request.key === STAMP_KEY ? new Response("<Error><Code>InternalError</Code></Error>", { status: 500 }) : undefined);
+		const stopped = await uploadTree(store, files, { run: 102 }).catch((error: unknown) => error);
+		expect(stopped).toBeInstanceOf(NotStamped);
+		expect(String(stopped)).toContain(`every file of the tree is in s3://${BUCKET}, but recording run 102 on ${STAMP_KEY} failed: PUT s3://${BUCKET}/${STAMP_KEY} answered 500, InternalError`);
+		// The check, given the run, says so too.
+		standin.fault = undefined;
+		expect(await checkBucket(store, files, { run: 102 })).toEqual([`s3://${BUCKET}/${STAMP_KEY}: records run 100, not this run, 102, which uploaded the tree`]);
+	});
+
+	test("refuses, before it asks the bucket anything, a tree with no table of contents to record its run on", async () => {
+		const files = readTree(writeTree(TREE)).filter((file) => file.key !== STAMP_KEY);
+		await expect(uploadTree(store, files, RUN)).rejects.toThrow(`the tree has no ${STAMP_KEY}, on which every upload records its run`);
+		expect(standin.requests).toEqual([]);
 	});
 
 	test("a preflight checks the bucket and says what would be written, and writes nothing", async () => {
@@ -512,6 +587,9 @@ describe("the upload, against a stand-in for S3", () => {
 		expect(puts().length).toBe(writes);
 		expect(report.phases.flatMap((phase) => phase.wouldWrite)).toEqual([month, series]);
 		expect(report.phases.flatMap((phase) => phase.written)).toEqual([]);
+		// The table of contents did not change, so the upload would write it again to record its run; the preflight does not.
+		expect(report.stamped).toBe(true);
+		expect(objects().get(STAMP_KEY)?.metadata).toEqual({ [RUN_METADATA]: String(RUN.run) });
 		await expect(uploadTree(store, readTree(writeTree(tree)), { run: RUN.run - 1, preflight: true })).rejects.toBeInstanceOf(OlderTree);
 		standin.put(BUCKET, "stray.json", "{}", "application/json");
 		await expect(uploadTree(store, readTree(writeTree(tree)), { run: RUN.run + 1, preflight: true })).rejects.toBeInstanceOf(UnexpectedKeys);
@@ -565,6 +643,20 @@ describe("the check of the bucket, against a stand-in for S3", () => {
 		expect(problems).toContainEqual(`s3://${BUCKET}/${retyped}: Content-Type "binary/octet-stream", not "application/json"`);
 	});
 
+	test("given the run that uploaded, finds a table of contents that records another run, and an object that records a later one", async () => {
+		const files = readTree(writeTree(TREE));
+		await uploadTree(store, files, { run: 100 });
+		expect(await checkBucket(store, files, { run: 100 })).toEqual([]);
+		// Without the run, the check compares bytes and headers only.
+		expect(await checkBucket(store, files)).toEqual([]);
+		expect(await checkBucket(store, files, { run: 102 })).toEqual([`s3://${BUCKET}/${STAMP_KEY}: records run 100, not this run, 102, which uploaded the tree`]);
+		const month = files.find((file) => file.kind === "a month file")?.key as string;
+		const object = objects().get(month);
+		if (object === undefined) throw new Error("not uploaded");
+		object.metadata = { [RUN_METADATA]: "103" };
+		expect(await checkBucket(store, files, { run: 100 })).toEqual([`s3://${BUCKET}/${month}: records run 103, later than this run, 100`]);
+	});
+
 	test("lists the whole of v1/, page by page", async () => {
 		const files = readTree(writeTree(TREE));
 		standin.pageSize = 2;
@@ -584,10 +676,9 @@ describe("the scripts", () => {
 	});
 	afterEach(() => standin.stop());
 
-	/** Runs a script as its own process, asynchronously: the stand-in answers from this one. */
-	const run = async (script: string, tree: string, summary: string, extra: string[] = []): Promise<{ exitCode: number; stdout: string; stderr: string }> => {
-		const upload = script === "upload-api.ts" ? ["--run", String(RUN.run)] : [];
-		const child = Bun.spawn(["bun", join(ROOT, "scripts", script), "--tree", tree, "--bucket", BUCKET, "--endpoint", standin.url, ...upload, ...extra], {
+	/** Runs a script as its own process, asynchronously, with the run id, as the publish job passes it to both: the stand-in answers from this one. */
+	const run = async (script: string, tree: string, summary: string, extra: string[] = [], runId = RUN.run): Promise<{ exitCode: number; stdout: string; stderr: string }> => {
+		const child = Bun.spawn(["bun", join(ROOT, "scripts", script), "--tree", tree, "--bucket", BUCKET, "--endpoint", standin.url, "--run", String(runId), ...extra], {
 			env: { PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? "", AWS_ACCESS_KEY_ID: KEY_ID, AWS_SECRET_ACCESS_KEY: SECRET, AWS_SESSION_TOKEN: "token", GITHUB_STEP_SUMMARY: summary },
 			stdout: "pipe",
 			stderr: "pipe",
@@ -613,6 +704,7 @@ describe("the scripts", () => {
 		const checked = await run("check-api-bucket.ts", tree, summary);
 		expect(checked.stderr).toBe("");
 		expect(checked.exitCode).toBe(0);
+		expect(checked.stdout).toContain(`and v1/index.json records run ${RUN.run}, the latest any object records`);
 		const again = await run("upload-api.ts", tree, summary);
 		expect(again.stdout).toContain(`${TREE.size} files, 0 written by run ${RUN.run}, nothing deleted`);
 		const text = readFileSync(summary, "utf8");
@@ -620,6 +712,29 @@ describe("the scripts", () => {
 		expect(text).toContain("### The data API's files to the API bucket");
 		expect(text).toContain("### The API bucket against the tree");
 		expect(text).toContain(`holds the data API's tree exactly: ${TREE.size} files, all under v1/ and nothing else`);
+	});
+
+	test("a later run that publishes the same tree says it wrote the table of contents again only to record its run, and its check holds it to that", async () => {
+		const tree = writeTree(TREE);
+		const summary = join(fresh("summary"), "summary.md");
+		mkdirSync(dirname(summary), { recursive: true });
+		writeFileSync(summary, "");
+		expect((await run("upload-api.ts", tree, summary)).exitCode).toBe(0);
+		const later = RUN.run + 2;
+		const preflight = await run("upload-api.ts", tree, summary, ["--preflight"], later);
+		expect(preflight.stdout).toContain(`0 of ${TREE.size} files to write, then v1/index.json again, unchanged, to record this run, nothing written`);
+		// Before the later run uploads, its check finds the table of contents recording the earlier run.
+		const early = await run("check-api-bucket.ts", tree, summary, [], later);
+		expect(early.exitCode).toBe(1);
+		expect(early.stderr).toContain(`v1/index.json: records run ${RUN.run}, not this run, ${later}, which uploaded the tree`);
+		const uploaded = await run("upload-api.ts", tree, summary, [], later);
+		expect(uploaded.exitCode).toBe(0);
+		expect(uploaded.stdout).toContain(`${TREE.size} files, 0 written by run ${later}, and v1/index.json written again, unchanged, to record this run, nothing deleted`);
+		expect((await run("check-api-bucket.ts", tree, summary, [], later)).exitCode).toBe(0);
+		// The earlier run, run again, is refused.
+		const retry = await run("upload-api.ts", tree, summary, [], RUN.run + 1);
+		expect(retry.exitCode).toBe(1);
+		expect(retry.stderr).toContain(`holds v1/index.json as written by run ${later}, later than this run, ${RUN.run + 1}`);
 	});
 
 	test("the check fails, naming the problem, when the bucket holds more than the tree, outside v1/ too", async () => {
@@ -688,6 +803,12 @@ describe("the scripts", () => {
 			const done = Bun.spawnSync(["bun", join(ROOT, "scripts", "upload-api.ts"), "--tree", "x", "--bucket", BUCKET, ...runId]);
 			expect(done.exitCode).toBe(2);
 			expect(done.stderr.toString()).toContain("--run ID");
+		}
+		// The check takes no run, or a run id; never something else.
+		for (const runId of [["--run", "0"], ["--run", "abc"], ["--run=-5"]]) {
+			const done = Bun.spawnSync(["bun", join(ROOT, "scripts", "check-api-bucket.ts"), "--tree", "x", "--bucket", BUCKET, ...runId]);
+			expect(done.exitCode).toBe(2);
+			expect(done.stderr.toString()).toContain("[--run ID]");
 		}
 	});
 

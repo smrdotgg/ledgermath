@@ -53,21 +53,26 @@ on:
 # Nothing for the workflow as a whole: each job says what it may do.
 permissions: {}
 
-# One run at a time, both jobs: a run, its publish job included, ends before
-# the next starts, and of the runs waiting GitHub keeps only the newest. So two
-# publish jobs never run against the bucket at once, and runs publish in the
-# order they were made. A job run again by hand later (an older run's publish
-# job) is refused by the upload itself when the bucket holds anything a later
-# run wrote (scripts/lib/api-upload.ts, OlderTree).
-concurrency:
-  group: runs
-  cancel-in-progress: false
+# No concurrency for the workflow as a whole: each job holds its own group.
+# The first job holds runs, the group prices.yml holds for its whole run, so
+# the two never push to the Runs repository at once; it holds it exactly as
+# long as the workflow did before the publish job existed. GitHub's groups
+# are the repository's, shared by jobs and workflow runs alike: "only a
+# single job or workflow using the same concurrency group will run at a
+# time" (docs.github.com, "Control the concurrency of workflows and jobs").
+# The publish job holds api-bucket alone (below).
 
 jobs:
   runs:
     name: copy the Runs, derive, build the page and the data API, check for stale Series
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    # One at a time with every other runs job and every prices run; of those
+    # waiting, GitHub keeps only the newest (cancel-in-progress false: the one
+    # running is never cancelled).
+    concurrency:
+      group: runs
+      cancel-in-progress: false
     permissions:
       contents: read
       id-token: write # the OIDC token AWS exchanges for the role
@@ -183,6 +188,8 @@ jobs:
       # that kept one, which a run does only when its tree passed the check:
       # chosen by that artifact, never by how the run ended, so a run whose
       # publish job failed is a baseline and one whose check failed is not.
+      # That run may not have ended (its publish job still going): an
+      # artifact can be downloaded as soon as it is kept.
       # There may be none: no such run, an artifact that expired. The script
       # says which in the step's summary, and decides nothing. A tree that
       # could not be fetched fails this step, and the check does not run: it
@@ -247,10 +254,18 @@ jobs:
   # later run; then writes only the files whose SHA-256 or headers differ,
   # schemas first, then month files and price files, Series files, the list
   # and the table of contents, each phase whole before the next; it deletes
-  # nothing. The bucket grants nothing to anyone until the public API is
-  # turned on (infra/runs/public-blobs.ts, PUBLIC_API), so nothing here is
-  # public. A failure is this job's alone, red, its summary naming the phase
+  # nothing; and, last, makes the table of contents record this run even when
+  # nothing else changed. The bucket grants nothing to anyone until the public
+  # API is turned on (infra/runs/public-blobs.ts, PUBLIC_API), so nothing here
+  # is public. A failure is this job's alone, red, its summary naming the phase
   # and the keys; the next run repairs the bucket.
+  #
+  # It holds api-bucket, not runs: the next run's first job may start while it
+  # uploads. Two publish jobs never run at once; of those waiting, GitHub keeps
+  # only the newest and cancels the older, whose tree is older. Any other order
+  # (an older run's job run again by hand, a job that started waiting later
+  # than a newer one) is refused by the upload itself, which writes nothing
+  # when the bucket records a later run than this one (OlderTree).
   publish:
     name: publish the data API's checked files to the private API bucket
     needs: runs
@@ -293,6 +308,7 @@ jobs:
         run: bun scripts/upload-api.ts --tree api --bucket "$API_BUCKET" --run "$GITHUB_RUN_ID"
 
       # What the whole bucket holds is exactly the tree just uploaded: the same
-      # files, each with its SHA-256, size and headers, and nothing else.
+      # files, each with its SHA-256, size and headers, and nothing else; and
+      # the table of contents records this run, the latest any object records.
       - name: Check that the API bucket holds the data API's files
-        run: bun scripts/check-api-bucket.ts --tree api --bucket "$API_BUCKET"
+        run: bun scripts/check-api-bucket.ts --tree api --bucket "$API_BUCKET" --run "$GITHUB_RUN_ID"
