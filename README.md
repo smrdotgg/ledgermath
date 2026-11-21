@@ -2567,7 +2567,8 @@ versioned for good, while these files are rewritten every round; and so that wha
 can reach of each bucket is one list per bucket.
 
 **The upload is a job of its own.** The `runs` workflow's first job, `runs`, builds and
-checks the tree and keeps it as the artifact `api`; it knows nothing of the bucket. Its
+checks the tree and keeps it as the artifact `api`; it writes nothing to the bucket (its
+alarm only reads when the table of contents was last written: "The alarm"). Its
 second job, `publish`, `needs` it and runs only when it succeeded and the repository
 variable `API_BUCKET` is set (to the scheduled stage's `apiBucket` output); while the
 variable is unset the job is skipped, which is not an error. It has its own 15-minute
