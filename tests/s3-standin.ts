@@ -99,8 +99,8 @@ export class S3Standin {
 	readonly requests: StandinRequest[] = [];
 	/** Objects in a listing page; small, so paging is exercised. */
 	pageSize = 7;
-	/** Answers a request instead of the stand-in when it returns a Response (or a promise of one, which may never settle: no answer). */
-	fault: ((request: StandinRequest) => Response | Promise<Response> | undefined) | undefined;
+	/** Answers a request instead of the stand-in when it returns a Response. */
+	fault: ((request: StandinRequest) => Response | undefined) | undefined;
 	/** Secrets by key ID: a PUT signed in the Authorization header by one of these keys must have a right signature. */
 	readonly secrets = new Map<string, string>();
 	/** The clock a write's Last-Modified is read from. */
@@ -164,7 +164,7 @@ export class S3Standin {
 		this.requests.push(seen);
 		const body = new Uint8Array(await request.arrayBuffer());
 		const faulty = this.fault?.(seen);
-		if (faulty !== undefined) return await faulty;
+		if (faulty !== undefined) return faulty;
 
 		const bucket = this.buckets.get(bucketName);
 		if (bucket === undefined) return error(404, "NoSuchBucket", "The specified bucket does not exist");

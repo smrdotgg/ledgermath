@@ -315,6 +315,14 @@ describe("the API bucket, read from a stand-in for S3", () => {
 		expect(long.reason.length).toBeLessThanOrEqual(`GET s3://${BUCKET}/v1/index.json answered 403 AccessDenied: `.length + 300);
 	});
 
+	test("an error whose body stalls after its headers is read for a limited time, then said by its status", async () => {
+		standin.fault = (request) => (request.method === "GET" ? new Response(stalling("<Error><Code>Acc"), { status: 403 }) : undefined);
+		const started = performance.now();
+		expect(await checkApiBucket(alarmView(), { sleep: noSleep })).toMatchObject({ kind: "unreadable", code: "403 HTTP403", attempts: 1 });
+		// The alarm's view reads an error's body for 100 ms (ERROR_BODY_MS, a second, otherwise).
+		expect(performance.now() - started).toBeLessThan(1_000);
+	});
+
 	test("one chunk larger than the limit is decoded only up to the limit", async () => {
 		const big = `${"a".repeat(2_048)}<Code>Hidden</Code>${"b".repeat(1_000_000)}`;
 		const text = await boundedText(new Response(big).body, 2_048, 1_000);
