@@ -1,35 +1,31 @@
 /**
  * Whether the data API is still being published (ADR-0032): the age of the
  * API bucket's table of contents, v1/index.json, and nothing else. The alarm
- * (scripts/alarm.ts) asks, in the runs workflow's first job, through a child
- * process (scripts/check-api-publishing.ts) that it kills after
- * CHECK_BUDGET_MS, with that job's role, which may list the bucket and read
- * its v1/* and is given nothing more for this.
+ * (scripts/alarm.ts) asks through a child process
+ * (scripts/check-api-publishing.ts) that it kills after CHECK_BUDGET_MS,
+ * with the first job's role, which may list the bucket and read its v1/*.
  *
  * The evidence is that object's Last-Modified. S3 sets it, from its own
  * clock, as the object is written, and no writer can; an upload writes
  * v1/index.json only as its last act, after every phase (in its last phase
  * when it changed, otherwise as the stamp), so it moves on every upload of a
- * new run that succeeds and on nothing else the workflow does. The run its
- * metadata records is named in the alarm's words as a lead and decides
- * nothing: an upload by hand can record any number.
+ * new run that succeeds and on nothing else the workflow does.
  *
- * The rule: raised when v1/index.json was last written more than
- * MAX_PUBLISH_AGE_MS before the check runs, clear otherwise. Its inputs are
- * Last-Modified and the current time, so a re-run, a run started by hand
- * and a late run all judge alike. Scheduled runs are at most 6 hours apart,
- * so after one failed publish the bucket is at most 12 hours old when the
- * next run's alarm looks, plus that run's lateness; 14 hours leaves two hours
- * for lateness. Publishing that has stopped is raised by the first alarm that
- * runs once the bucket is 14 hours old: at most about 20 hours after the last
- * publish. Not promised: two failed runs either side of the short gap from
- * 22:40 to 00:00 can pass unnoticed when the next publish succeeds, since by
- * then publishing has recovered.
+ * The rule: raised by the first check made more than MAX_PUBLISH_AGE_MS
+ * after v1/index.json was last written, clear otherwise. Its inputs are
+ * Last-Modified and the time of the check, so a re-run, a run started by
+ * hand and a late run all judge alike. What that means for the schedule is
+ * the README's ("The alarm", "The data API's publishing") and ADR-0032's.
+ *
+ * The child reports what it read as one of a closed set of results
+ * (CheckResult), validated by parseResult, and the alarm renders fixed
+ * sentences from it (apiReport): nothing the child or S3 says in words
+ * reaches the issue. Their words go to the job's log.
  */
 
-import { clipText, S3Refused, STAMP_KEY, type WrittenAt } from "./api-upload";
+import { S3Refused, STAMP_KEY, type WrittenAt } from "./api-upload";
 
-/** The age of v1/index.json past which the alarm is raised: 14 hours (README, "The alarm", "The data API's publishing"). */
+/** The age of v1/index.json past which a check raises the alarm: 14 hours. */
 export const MAX_PUBLISH_AGE_MS = 14 * 3_600_000;
 
 /** One try of the read; the whole check, in its child, is killed after CHECK_BUDGET_MS (scripts/alarm.ts). */
@@ -44,78 +40,122 @@ export interface PublishedReader {
 	lastWritten(key: string, signal?: AbortSignal): Promise<WrittenAt | null>;
 }
 
-/** What the read found. */
-export type ApiBucketCheck =
-	/** API_BUCKET is unset: nothing to read, and the publish job is skipped. */
+/**
+ * What the child read, from a closed set: data only, never words. Its JSON
+ * is what the child prints and parseResult accepts, field for field.
+ */
+export type CheckResult =
+	/** API_BUCKET is unset: nothing was read. */
 	| { kind: "unset" }
-	/** v1/index.json was last written at lastModified, recording run. */
-	| { kind: "published"; bucket: string; lastModified: string; run: number | null }
-	/** The bucket holds no v1/index.json: no publish has ever finished there. */
-	| { kind: "empty"; bucket: string }
-	/** It could not be read: code is the status and S3's code, or NoAnswer, Timeout or NoCredentials; reason what was answered. */
-	| { kind: "unreadable"; bucket: string; code: string; reason: string; attempts: number };
+	/** v1/index.json was last written at last_modified (ISO 8601, as toISOString writes it), recording run. */
+	| { kind: "published"; last_modified: string; run: number | null }
+	/** The bucket holds no v1/index.json. */
+	| { kind: "empty" }
+	/** S3 refused the read: an answer of 300 to 499 other than NoSuchKey (403 refused, 404 no such bucket, 301 another Region). */
+	| { kind: "refused"; status: number; attempts: number }
+	/** No AWS credentials in the child's environment. */
+	| { kind: "no-credentials" }
+	/** S3 answered 500 to 599 on every try. */
+	| { kind: "server-error"; status: number; attempts: number }
+	/** No answer came, or not in time, on every try. */
+	| { kind: "no-answer"; attempts: number }
+	/** S3 answered 200 with no Last-Modified that is a date. */
+	| { kind: "no-date" };
 
 export interface ReadOptions {
 	/** ATTEMPT_MS and RETRY_WAITS_MS unless given (tests give smaller). */
 	attemptMs?: number;
 	waitsMs?: readonly number[];
 	sleep?: (ms: number) => Promise<void>;
+	/** Told of what S3 said in words, for the job's log; never for the issue. */
+	log?: (line: string) => void;
 }
 
 const transient = (error: S3Refused): boolean => error.code === "NoAnswer" || error.code === "Timeout" || (error.status !== null && error.status >= 500);
 
+/** What an S3Refused is, as a result. */
+function refusal(error: S3Refused, attempts: number): CheckResult {
+	if (error.code === "NoCredentials") return { kind: "no-credentials" };
+	if (error.code === "NoLastModified") return { kind: "no-date" };
+	if (error.status === null) return { kind: "no-answer", attempts };
+	if (error.status >= 500) return { kind: "server-error", status: error.status, attempts };
+	return { kind: "refused", status: error.status, attempts };
+}
+
 /**
  * One GET of v1/index.json, tried again after a 5xx, no answer, or a try
  * that ran out of time. Never throws: a bucket that cannot be read is a
- * finding. A null reader is API_BUCKET unset.
+ * result. A null reader is API_BUCKET unset.
  */
-export async function checkApiBucket(reader: PublishedReader | null, options: ReadOptions = {}): Promise<ApiBucketCheck> {
+export async function checkApiBucket(reader: PublishedReader | null, options: ReadOptions = {}): Promise<CheckResult> {
 	if (reader === null) return { kind: "unset" };
 	const waits = options.waitsMs ?? RETRY_WAITS_MS;
 	const sleep = options.sleep ?? ((ms: number) => Bun.sleep(ms));
 	for (let tries = 1; ; tries++) {
 		try {
 			const written = await reader.lastWritten(STAMP_KEY, AbortSignal.timeout(options.attemptMs ?? ATTEMPT_MS));
-			if (written === null) return { kind: "empty", bucket: reader.name };
-			return { kind: "published", bucket: reader.name, lastModified: written.lastModified.toISOString(), run: written.run };
+			if (written === null) return { kind: "empty" };
+			return { kind: "published", last_modified: written.lastModified.toISOString(), run: written.run };
 		} catch (error) {
-			const refused = error instanceof S3Refused ? error : new S3Refused(null, "Error", error instanceof Error ? error.message : String(error));
+			const refused = error instanceof S3Refused ? error : new S3Refused(null, "NoAnswer", error instanceof Error ? error.message : String(error));
+			options.log?.(`try ${tries}: ${refused.message}`);
 			const wait = waits[tries - 1];
 			if (transient(refused) && wait !== undefined) {
 				await sleep(wait);
 				continue;
 			}
-			return { kind: "unreadable", bucket: reader.name, code: refused.status === null ? refused.code : `${refused.status} ${refused.code}`, reason: refused.message, attempts: tries };
+			return refusal(refused, tries);
 		}
 	}
 }
 
-/** How old v1/index.json is at now, in milliseconds. */
-const ageMs = (lastModified: string, now: Date): number => now.getTime() - Date.parse(lastModified);
-const hoursOld = (lastModified: string, now: Date): string => (ageMs(lastModified, now) / 3_600_000).toFixed(1);
-const MAX_HOURS = MAX_PUBLISH_AGE_MS / 3_600_000;
+const ISO = /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z$/;
+const isInteger = (value: unknown, low: number, high: number): value is number => Number.isSafeInteger(value) && (value as number) >= low && (value as number) <= high;
 
 /**
- * What the alarm raises of the API bucket, as the state its posts carry, or
- * null when nothing: older than MAX_PUBLISH_AGE_MS, with no table of
- * contents, unreadable, or unset while PUBLIC_API is not "off". A stale
- * bucket is named by when it was last written, so the state does not change
- * while it only grows older.
+ * A result as the child prints it, one line of JSON; null for anything else.
+ * Every field is checked against its kind's closed form: a date as
+ * toISOString writes it, a run a positive whole number, a status in its
+ * range, and no field the kind does not have.
  */
-export function apiAlarmState(check: ApiBucketCheck, now: Date, publicApiState: string): string | null {
-	switch (check.kind) {
+export function parseResult(text: string): CheckResult | null {
+	let value: unknown;
+	try {
+		value = JSON.parse(text.trim());
+	} catch {
+		return null;
+	}
+	if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+	const result = value as Record<string, unknown>;
+	const only = (...keys: string[]): boolean => Object.keys(result).every((key) => key === "kind" || keys.includes(key)) && keys.every((key) => key in result);
+	switch (result.kind) {
 		case "unset":
-			return publicApiState === "off" ? null : `unset while PUBLIC_API is ${publicApiState}`;
-		case "published":
-			return ageMs(check.lastModified, now) > MAX_PUBLISH_AGE_MS ? `stale since ${check.lastModified}` : null;
 		case "empty":
-			return "empty";
-		case "unreadable":
-			return `unreadable: ${check.code}`;
+		case "no-credentials":
+		case "no-date":
+			return only() ? { kind: result.kind } : null;
+		case "published": {
+			const date = result.last_modified;
+			const run = result.run;
+			if (!only("last_modified", "run") || typeof date !== "string" || !ISO.test(date) || Number.isNaN(Date.parse(date)) || new Date(date).toISOString() !== date) return null;
+			if (run !== null && !isInteger(run, 1, Number.MAX_SAFE_INTEGER)) return null;
+			return { kind: "published", last_modified: date, run };
+		}
+		case "refused":
+			return only("status", "attempts") && isInteger(result.status, 300, 499) && isInteger(result.attempts, 1, 10) ? { kind: "refused", status: result.status, attempts: result.attempts } : null;
+		case "server-error":
+			return only("status", "attempts") && isInteger(result.status, 500, 599) && isInteger(result.attempts, 1, 10) ? { kind: "server-error", status: result.status, attempts: result.attempts } : null;
+		case "no-answer":
+			return only("attempts") && isInteger(result.attempts, 1, 10) ? { kind: "no-answer", attempts: result.attempts } : null;
+		default:
+			return null;
 	}
 }
 
-/** Everything the alarm says of the API bucket: plain strings, so nothing in the post can throw because of it. */
+/** Why the check gave no result, from a closed set. */
+export type CheckFailure = { reason: "killed"; budgetMs: number } | { reason: "exited"; code: number } | { reason: "output" } | { reason: "start" };
+
+/** Everything the alarm says of the API bucket: fixed sentences, rendered from data. */
 export interface ApiReport {
 	/** The state its posts carry (stale_api), or null when nothing is raised. */
 	state: string | null;
@@ -134,12 +174,56 @@ export interface ApiReport {
 /** Where a run of this repository's workflows is shown: a run id the API bucket records is linked here. */
 export const ACTIONS_RUN_URL = "https://github.com/smrdotgg/ledgermath/actions/runs/";
 const byRun = (run: number | null): string => (run === null ? "" : `, by run [${run}](${ACTIONS_RUN_URL}${run})`);
+const MAX_HOURS = MAX_PUBLISH_AGE_MS / 3_600_000;
+const tries = (attempts: number): string => (attempts === 1 ? "" : `, on each of ${attempts} tries`);
 
-/** The alarm's words for what the read found, at now. */
-export function apiReport(check: ApiBucketCheck, now: Date, publicApiState: string): ApiReport {
-	const state = apiAlarmState(check, now, publicApiState);
-	const raisedNote = state === null ? "not raised" : "raised";
-	switch (check.kind) {
+/** What the alarm raises of the API bucket, as the state its posts carry, or null when nothing. A stale bucket is named by when it was last written, so the state stays the same while it only grows older. */
+export function apiAlarmState(result: CheckResult, now: Date, publicApiState: string): string | null {
+	switch (result.kind) {
+		case "unset":
+			return publicApiState === "off" ? null : `unset while PUBLIC_API is ${publicApiState}`;
+		case "published":
+			return now.getTime() - Date.parse(result.last_modified) > MAX_PUBLISH_AGE_MS ? `stale since ${result.last_modified}` : null;
+		case "empty":
+			return "empty";
+		case "refused":
+			return `unreadable: refused ${result.status}`;
+		case "no-credentials":
+			return "unreadable: no credentials";
+		case "server-error":
+			return `unreadable: server error ${result.status}`;
+		case "no-answer":
+			return "unreadable: no answer";
+		case "no-date":
+			return "unreadable: no date";
+	}
+}
+
+/** The fixed sentence for a bucket that could not be read. */
+function unreadableWords(result: Extract<CheckResult, { kind: "refused" | "no-credentials" | "server-error" | "no-answer" | "no-date" }>): string {
+	switch (result.kind) {
+		case "refused":
+			return `S3 refused the read (HTTP ${result.status}${tries(result.attempts)})`;
+		case "no-credentials":
+			return "the job had no AWS credentials to read it with";
+		case "server-error":
+			return `S3 answered with a server error (HTTP ${result.status}${tries(result.attempts)})`;
+		case "no-answer":
+			return `S3 gave no answer in time${tries(result.attempts)}`;
+		case "no-date":
+			return "S3 answered without a date to judge by";
+	}
+}
+
+/**
+ * The alarm's words for a result, at now: fixed sentences, with nothing in
+ * them but the bucket's name (API_BUCKET, which the alarm itself passed), a
+ * date and numbers the result was validated to hold.
+ */
+export function apiReport(result: CheckResult, bucket: string, now: Date, publicApiState: string): ApiReport {
+	const state = apiAlarmState(result, now, publicApiState);
+	const where = `s3://${bucket}`;
+	switch (result.kind) {
 		case "unset":
 			return {
 				state,
@@ -153,72 +237,58 @@ export function apiReport(check: ApiBucketCheck, now: Date, publicApiState: stri
 						: `API_BUCKET is unset while PUBLIC_API is ${publicApiState}: nothing is published, and that is raised`,
 			};
 		case "published": {
-			const hours = hoursOld(check.lastModified, now);
+			const hours = ((now.getTime() - Date.parse(result.last_modified)) / 3_600_000).toFixed(1);
 			return {
 				state,
 				raised:
-					`**The data API has not been published for ${hours} hours.** In \`${check.bucket}\`, \`${STAMP_KEY}\` was last written at ${check.lastModified}${byRun(check.run)}, more than ${MAX_HOURS} hours before this check, so the runs since have not published. ` +
+					`**The data API has not been published for ${hours} hours.** In \`${where}\`, \`${STAMP_KEY}\` was last written at ${result.last_modified}${byRun(result.run)}, more than ${MAX_HOURS} hours before this check, so the runs since have not published. ` +
 					`Look at the \`publish\` job of the latest runs (Actions, \`runs\`): failed, skipped (its first job failed, or \`API_BUCKET\` was unset), cancelled, or not there at all. ` +
-					`(Raised when the table of contents is more than ${MAX_HOURS} hours old: README, "The alarm".)`,
-				well: `the data API was last published at ${check.lastModified}${byRun(check.run)}`,
-				again: `The data API is published again: it was last published at ${check.lastModified}${byRun(check.run)}.`,
+					`(Raised by a check made more than ${MAX_HOURS} hours after the last publish: README, "The alarm".)`,
+				well: `the data API was last published at ${result.last_modified}${byRun(result.run)}`,
+				again: `The data API is published again: it was last published at ${result.last_modified}${byRun(result.run)}.`,
 				watched: true,
-				summary: `${check.bucket}: ${STAMP_KEY} last written at ${check.lastModified} (${hours} hours ago)${check.run === null ? ", which records no run" : `, by run ${check.run}`}; raised past ${MAX_HOURS} hours: ${raisedNote}`,
+				summary: `${where}: ${STAMP_KEY} last written at ${result.last_modified} (${hours} hours ago)${result.run === null ? ", which records no run" : `, by run ${result.run}`}; raised past ${MAX_HOURS} hours: ${state === null ? "not raised" : "raised"}`,
 			};
 		}
 		case "empty":
 			return {
 				state,
-				raised: `**The API bucket holds no table of contents.** \`API_BUCKET\` names \`${check.bucket}\`, which holds no \`${STAMP_KEY}\`, so no publish has ever finished there. If \`API_BUCKET\` was set since the last run, this is expected: this run's own \`publish\` job comes after this check, and the next run says here whether it published. Otherwise look at the latest runs' \`publish\` jobs, and at whether \`API_BUCKET\` is the scheduled stage's \`apiBucket\` output.`,
+				raised: `**The API bucket holds no table of contents.** \`API_BUCKET\` names \`${where}\`, which holds no \`${STAMP_KEY}\`, so no publish has ever finished there. If \`API_BUCKET\` was set since the last run, this is expected: this run's own \`publish\` job comes after this check, and the next run says here whether it published. Otherwise look at the latest runs' \`publish\` jobs, and at whether \`API_BUCKET\` is the scheduled stage's \`apiBucket\` output.`,
 				well: "",
 				again: "",
 				watched: true,
-				summary: `${check.bucket} holds no ${STAMP_KEY}: no publish has finished there; raised`,
+				summary: `${where} holds no ${STAMP_KEY}: no publish has finished there; raised`,
 			};
-		case "unreadable":
+		default: {
+			const words = unreadableWords(result);
 			return {
 				state,
-				raised: `**The API bucket could not be read**, so whether the data API is being published cannot be told. ${clipText(check.reason)}${check.attempts > 1 ? ` (tried ${check.attempts} times)` : ""}. The \`publish\` job reads it with the same role and the same \`API_BUCKET\`. Look at whether \`API_BUCKET\` is the scheduled stage's \`apiBucket\` output, and at the role's \`RunsApiUploadPolicy\`.`,
+				raised: `**The API bucket could not be read**: ${words}, so whether the data API is being published cannot be told. The \`publish\` job reads it with the same role and the same \`API_BUCKET\`. Look at whether \`API_BUCKET\` is the scheduled stage's \`apiBucket\` output, and at the role's \`RunsApiUploadPolicy\`; the run's log has what S3 said.`,
 				well: "",
 				again: "",
 				watched: true,
-				summary: `${check.bucket} could not be read (${check.attempts} tr${check.attempts === 1 ? "y" : "ies"}): ${clipText(check.reason)}; raised`,
+				summary: `${where} could not be read: ${words}; raised`,
 			};
+		}
 	}
 }
 
-/** What the alarm says when the check gave no report: raised, like a bucket that cannot be read; the rest of the post does not depend on it. */
-export function checkFailed(reason: string): ApiReport {
-	const words = clipText(reason);
+/** What the alarm says when the check gave no result: raised, like a bucket that cannot be read; fixed words for each closed reason. */
+export function checkFailed(failure: CheckFailure): ApiReport {
+	const words =
+		failure.reason === "killed"
+			? `it gave no result within ${failure.budgetMs / 1_000} s and was stopped`
+			: failure.reason === "exited"
+				? `it exited with code ${failure.code}`
+				: failure.reason === "output"
+					? "its output was not understood"
+					: "it could not be started";
 	return {
 		state: "check failed",
-		raised: `**The check of the API bucket failed**, so whether the data API is being published cannot be told: ${words}. This is a fault of the check, not a finding about the bucket; the rest of this post does not depend on it.`,
+		raised: `**The check of the API bucket failed**: ${words}, so whether the data API is being published cannot be told. This is a fault of the check, not a finding about the bucket; the run's log has the details, and the rest of this post does not depend on it.`,
 		well: "",
 		again: "",
 		watched: true,
 		summary: `the check of the API bucket failed: ${words}; raised`,
-	};
-}
-
-/** A report as the child prints it, one line of JSON; null when it is not one. Its texts are cut to a size an issue can take. */
-export function parseReport(text: string): ApiReport | null {
-	let value: unknown;
-	try {
-		value = JSON.parse(text.trim());
-	} catch {
-		return null;
-	}
-	const report = value as Partial<Record<keyof ApiReport, unknown>> | null;
-	if (typeof report !== "object" || report === null) return null;
-	const strings = ["raised", "well", "again", "summary"] as const;
-	if (!(report.state === null || typeof report.state === "string") || typeof report.watched !== "boolean" || strings.some((key) => typeof report[key] !== "string")) return null;
-	const cut = (text: string): string => (text.length <= 4_000 ? text : `${text.slice(0, 3_999)}…`);
-	return {
-		state: report.state === null ? null : clipText(report.state as string, 200),
-		raised: cut(report.raised as string),
-		well: cut(report.well as string),
-		again: cut(report.again as string),
-		watched: report.watched,
-		summary: cut(report.summary as string),
 	};
 }

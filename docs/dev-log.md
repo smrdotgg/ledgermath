@@ -1292,4 +1292,30 @@ A migrated benchmark is done only when **all** of these hold:
   on the alarm step (a test holds both). **The error body's limit is tested**: an S3 code
   beyond byte 2,048 is not seen, and one chunk larger than the limit is decoded only up to
   it. Not deployed; the switch stays off.
+- **2026-11-21** — The publishing watch, after a third verification (FAIL on five points;
+  the design held). **Every post fits GitHub's limit**: GitHub refuses a body over 65,536
+  characters, and with all 187 watched Series stale `main`'s body was 87,890, so the alarm's
+  most important case posted nothing. Bodies are now built under 60,000 (`MAX_BODY_CHARS`):
+  summary, counts and findings always; as many Series as fit, sorted; one line saying how
+  many more and that the run's log and step summary list them all (the alarm now writes the
+  full list there). The marker carries a count and a hash of the set, not the list; old
+  markers read as the same state. 187 Series now give 59,797 characters (59,873 with the
+  bucket finding). Tests: 141, 187 and 1,000 Series with and without findings; quiet on
+  repeat; a change in a Series not shown is a change; a 422 fails loudly and is sent once.
+  **Nothing in words from the child or S3 reaches the issue**: the child reports a closed-set
+  result, validated field by field and rendered in fixed sentences; failures have four fixed
+  reasons; the words go to the log. Its environment is the three AWS keys and
+  `GITHUB_STEP_SUMMARY`, nothing else. Tests put a token's shape, a mention and a link in the
+  child's stdout and stderr and in S3's error; none reaches an issue. **The guarantee,
+  stated by checks**: raised by the first check made more than 14 hours after the last
+  successful publish; one failed publish stays quiet while every alarm runs under two hours
+  after its slot; stopped publishing is raised 16 h 40 m to 19 h 20 m after the last
+  scheduled publish with on-time runs. The simulation varies each alarm's time after its slot
+  and asserts exactly these. **A drill that cannot post does not fail the job** (a fake
+  GitHub API answers 500 to it; the alarm exits 0); with no open issue, the drill opens the
+  issue and posts no comment, one notification. **The kill is tested by death**: the child
+  leads its own process group, killed with `SIGKILL` after the budget and as soon as the
+  child exits; a child that ignores `SIGTERM`, and a grandchild holding the pipes, are found
+  dead. The child now starts before the Runs repository is read. Not deployed; the switch
+  stays off.
 - _(agents: append your entry here, one per merged benchmark)_

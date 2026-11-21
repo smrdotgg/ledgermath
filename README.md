@@ -1568,6 +1568,23 @@ the top, before the list. When every watched Series has a Run again it says so o
 open issue, so a later incident is not mistaken for the old one. Closing the issue lets
 the next incident open a new one.
 
+**Every post fits GitHub's limit.** GitHub refuses an issue or comment body over 65,536
+characters, and the whole post with it: with every watched Series stale (187 today, with
+their Run links), the post on `main` was 87,890 characters, so the alarm's most important
+case would have posted nothing. Every body the alarm posts (a new issue, a comment, a
+recovery, a drill) is now built under 60,000 characters (`MAX_BODY_CHARS`), the hidden
+marker included. The summary and its counts, the copy job's warning, the price finding and
+the bucket finding are always there; the stale Series are listed, in sorted order, as many
+as fit, then one line says how many more are not shown and that the run's log and step
+summary list every one (the alarm writes the complete list to the step summary, under that
+summary's own limit of 1 MiB). The marker carries the number of stale Series and a hash of
+the whole set rather than the list, so it stays a few hundred characters: the same set gives
+the same hash, so a repeat pass stays quiet, and any change to the set, shown or not,
+changes it. Posts written before, whose marker listed the Series, read as the same state. A
+body over the limit is refused before it is sent, and a post GitHub refuses (a 422) fails the
+alarm loudly and is not sent again. Tests: 141, 187 and 1,000 stale Series, with and without
+the bucket and price findings.
+
 The same issue says when the newest price file in the Runs repository (below, "Prices")
 was fetched more than 48 hours ago, by its `fetched_at`. With no price file at all, it
 says nothing until the prices workflow has existed for more than 48 hours, the same idea
@@ -1598,24 +1615,28 @@ cancelled, never ran, or its preflight refused the bucket. In each, the table of
   linked, as a lead. `Last-Modified` moves without the workflow only when a person writes the
   object with their own credentials (an upload by hand, the `copy-object` of "A run recorded
   too high").
-- **The rule is age, and nothing else.** The alarm is raised when `v1/index.json` was last
-  written more than 14 hours before the check runs, and is clear otherwise
-  (`MAX_PUBLISH_AGE_MS`). Its inputs are that `Last-Modified` and the current time: no
-  schedule, no run attempt, no start time, so a re-run of an old run, a run started by hand
-  and a late run all judge alike, and none can clear a real alarm. What the 14 hours give:
-  scheduled runs are at most 6 hours apart (a test holds the crons to that), so after one
-  failed publish the bucket is at most 12 hours old when the next run's alarm looks, plus
-  that run's lateness; 14 hours leaves two hours for lateness, so one failed publish raises
-  nothing unless a run also starts more than two hours late. Publishing that has stopped is
-  raised by the first alarm that runs once the bucket is 14 hours old, which is at most
-  about 20 hours after the last publish (14 hours, and up to 6 more until the next run).
-  What it does not promise: two failed runs either side of the short gap from 22:40 to
-  00:00 can pass unnoticed when the next publish succeeds; publishing has then recovered.
-  Tests: ages either side of 14 hours; the real schedule over three days with one failed
-  publish and runs starting up to two hours late (never raised); publishing stopped after
-  each run of a day (raised by the first alarm past 14 hours, within 20 hours); a re-run of
-  an old run, which gets the same report as any run at that moment; the first publish,
-  2026-11-21 01:49:48 UTC, fresh until 15:49:48.
+- **The rule is age, and nothing else.** The alarm is raised by the first check made more
+  than 14 hours after the last successful publish, that is, when `v1/index.json` was last
+  written more than 14 hours before the check runs (`MAX_PUBLISH_AGE_MS`); it is clear
+  otherwise. Its inputs are that `Last-Modified` and the time of the check: no schedule, no
+  run attempt, no start time, so a re-run of an old run, a run started by hand and a late
+  run all judge alike, and none can clear a real alarm. What that means for the schedule,
+  whose runs are at most 6 hours apart (a test holds the crons to that): after one failed
+  publish, the next check comes at most 12 hours after the last publish, plus however late
+  that run's alarm step runs after its slot, so it stays quiet when the alarm runs less than
+  two hours after its slot (and may raise if it runs later: the 06:00 publish failing and the
+  noon run's alarm checking at 14:04 raises it). Publishing that has stopped is raised by the
+  first check made after 14 hours; with on-time runs, that is between 16 h 40 m (last publish
+  06:00, raised at 22:40) and 19 h 20 m (last publish 22:40, raised at 18:00) after the last
+  scheduled publish, and later by however late that check runs. What it does not promise:
+  two failed runs either side of the short gap from 22:40 to 00:00 can pass unnoticed when
+  the next publish succeeds; publishing has then recovered. Tests: ages either side of 14
+  hours; the real schedule over three days, each alarm checking up to three hours after its
+  slot, every check raised exactly when it is more than 14 hours after the last publish; one
+  failed publish with every alarm under two hours late (never raised); publishing stopped
+  after each run of a day with on-time runs (16 h 40 m to 19 h 20 m); a re-run of an old run,
+  which gets the same result as any run at that moment; the first publish, 2026-11-21
+  01:49:48 UTC, fresh until 15:49:48.
 - **A bucket with no table of contents, or one that cannot be read, is raised at once.**
   No `v1/index.json` means no publish has ever finished there: expected only between
   setting `API_BUCKET` to a new bucket and its first publish (the run after the change
@@ -1627,19 +1648,33 @@ cancelled, never ran, or its preflight refused the bucket. In each, the table of
   again quietly, 1 and then 2 seconds later. The read is one `GET`, not a `HEAD`, because a
   `HEAD`'s 404 has no body to tell a missing key from a missing bucket; only its headers are
   used, and the body of a 200 is cancelled unread. Of an error's body at most the first
-  2,048 bytes are read, for at most a second, and what reaches the issue of anything S3
-  says is one line, without backticks, of at most 300 characters.
-- **The check runs in a child process, killed after 20 seconds.** The alarm starts
-  `scripts/check-api-publishing.ts`, which reads the bucket, judges it, words it, writes its
-  own line to the step summary and prints its report as one line of JSON. If it has not
-  finished within 20 seconds the alarm kills it outright (`SIGKILL`); a kill, a non-zero
-  exit or output that is not a report becomes "The check of the API bucket failed", with the
-  reason, raised like a bucket that cannot be read, and the stale Series and price files are
-  judged and written exactly as without the check. The alarm itself writes nothing on the
-  check's behalf, so nothing the check meets (an answer that stalls, a step summary that
-  blocks) can hold up the alarm's own verdict. Tests start children that sleep past the
-  budget, ignore `SIGTERM`, print garbage and exit non-zero, and the real check with a step
-  summary that blocks, and find each time the stale-Series verdict, on time, as without it.
+  2,048 bytes are read, for at most a second.
+- **Nothing the check or S3 says in words reaches the issue.** The check reports one of a
+  closed set of results: published (with the date and run), empty, refused (with the HTTP
+  status), no credentials, server error (with the HTTP status), no answer, no date, or unset.
+  The alarm validates it field by field and writes fixed sentences from it: "S3 refused the
+  read (HTTP 403)", "the job had no AWS credentials to read it with", and so on. A check that
+  gives no result is "the check of the API bucket failed" for one of four reasons, also in
+  fixed words: it gave no result within 20 s and was stopped, it exited with code N, its
+  output was not understood, it could not be started. What S3 or the check said goes to the
+  job's log only. The repository is public, and an issue must not carry a mention, a link or
+  anything shaped like a token from elsewhere; tests put a token's shape, a mention and a
+  link in the check's output and in S3's error, and find none of it in any issue.
+- **The check runs in a child process, with only what it needs, killed after 20 seconds.**
+  The alarm starts `scripts/check-api-publishing.ts` before it reads the Runs repository, so
+  the wait overlaps that work. The child's environment is `AWS_ACCESS_KEY_ID`,
+  `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN` and `GITHUB_STEP_SUMMARY` and nothing else (not
+  `GITHUB_TOKEN`; Bun needs no `PATH` or `HOME` to run it); the bucket, the time and
+  `PUBLIC_API`'s state go as arguments, and the Region is `us-east-2`, in the code. It runs in
+  a process group of its own, which the alarm kills with `SIGKILL` if it has not finished
+  within 20 seconds, and, in any case, as soon as the child exits, so nothing it started can
+  outlive it or hold its pipes open. The child writes its own line to the step summary; the
+  alarm writes nothing on its behalf, so nothing the check meets (an answer that stalls, a
+  step summary that blocks) holds up the alarm's own verdict for longer than the budget and
+  two seconds' grace. Tests start children that sleep past the budget, ignore `SIGTERM` (and
+  are found dead afterwards), start a grandchild that holds the pipes (found dead too), print
+  garbage, exit non-zero, and the real check with a step summary that blocks; each time the
+  stale-Series verdict is as without the check.
 - **With `API_BUCKET` unset, nothing is raised while `PUBLIC_API` is `off`, and the alarm
   is raised in any other state**: unsetting the variable is how publishing is stopped on
   purpose while nothing is served ("The API bucket", "Setting it up"), but once serving is
@@ -1649,13 +1684,17 @@ cancelled, never ran, or its preflight refused the bucket. In each, the table of
   raises changes (a stale bucket is named by when it was last written, so it stays the same
   while the bucket only grows older), and once more, on the open issue, when the data API is
   published again.
-- **A drill shows the route and touches nothing.** Started by hand with the input
-  `alarm_drill` (Actions, `runs`, "Run workflow"), the alarm runs its ordinary pass and then
-  posts one comment on the alarm issue (opening the issue if none is open) saying it is a
-  drill, with the run's link, and that nothing is wrong. It reads nothing, carries no state
-  marker, and changes nothing the alarm reads back, so an open finding stays reported and
-  the next pass writes as it would have. An issue opened only by a drill is closed by the
-  maintainer. The `publish` job never sees the input; a scheduled run has no inputs.
+- **A drill shows the route and touches nothing: exactly one notification.** Started by
+  hand with the input `alarm_drill` (Actions, `runs`, "Run workflow"), the alarm runs its
+  ordinary pass and then posts one comment on the open alarm issue, saying it is a drill,
+  with the run's link, and that nothing is wrong; with no issue open, it opens the alarm
+  issue with those words as its body and posts no comment, since a second post would be a
+  second notification. It reads nothing, carries no state marker, and changes nothing the
+  alarm reads back, so an open finding stays reported and the next pass writes as it would
+  have. An issue opened only by a drill is closed by the maintainer. A drill that cannot post
+  says so in the log and the step summary and does not fail the job, which exits as its
+  verdict earned (the `publish` job runs only when the first job succeeded). The `publish`
+  job never sees the input; a scheduled run has no inputs.
 
 It reads with the first job's role, which may already list the API bucket and read its
 `v1/*` (`RunsApiUploadPolicy`); the role gains nothing. The alarm runs in the same workflow,

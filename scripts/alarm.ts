@@ -47,34 +47,45 @@
  * (API_BUCKET unset) the bucket is not read, and nothing is raised for it
  * while PUBLIC_API is "off"; in any other state the alarm is raised, since
  * serving is then on and a missing bucket name means publishing has stopped.
- * That check runs whole, before anything is posted, in a child process
- * (scripts/check-api-publishing.ts) that the alarm kills after
- * CHECK_BUDGET_MS; a kill, a failure or output that is not a report is "the
- * check of the API bucket failed", and what the alarm says of the Series and
- * the price files is what it would say without the check. The child writes
- * its own line to the step's summary; the alarm writes nothing on its behalf.
- * Credentials come from the environment, as aws-actions/configure-aws-
- * credentials sets them; --api-endpoint is a stand-in for S3, for the tests.
+ * That check runs whole in a child process (scripts/check-api-publishing.ts),
+ * started before the Runs repository is read, with only CHILD_ENVIRONMENT,
+ * in a process group the alarm kills after CHECK_BUDGET_MS. It reports a
+ * result from a closed set, which the alarm validates and renders in fixed
+ * words; a kill, a failure or output that is not a result is "the check of
+ * the API bucket failed", for a reason from a closed set, and what the alarm
+ * says of the Series and the price files is what it would say without the
+ * check. What the child or S3 said goes to the log, never to the issue. The
+ * child writes its own line to the step's summary; the alarm writes nothing
+ * on its behalf. Credentials come from the environment, as
+ * aws-actions/configure-aws-credentials sets them; --api-endpoint is a
+ * stand-in for S3, for the tests.
+ *
+ * Every body it posts is under MAX_BODY_CHARS, below GitHub's limit: when the
+ * stale Series do not all fit, as many as fit are listed and one line says
+ * how many more, and the step's summary lists every one (staleList). The
+ * state marker carries their number and a hash of the set, not the list.
  *
  * --drill yes (the workflow's input alarm_drill): after its ordinary pass, the
- * alarm posts one comment on its issue, or opens the issue with it, saying it
- * is a drill and that nothing is wrong. It reads nothing and carries no state
- * marker, so nothing the alarm reads back changes.
+ * alarm posts one comment on its issue, or, with none open, opens the issue
+ * with the drill's words and no comment: one notification. It reads nothing
+ * and carries no state marker, so nothing the alarm reads back changes, and a
+ * drill that cannot post does not change the alarm's exit code.
  *
  * GitHub is reached through IssueTracker, so tests use a fake. The real one
  * reads GITHUB_REPOSITORY and GITHUB_TOKEN, as a workflow sets them.
  * --dry-run prints what would be posted and posts nothing.
  */
 
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { appendFileSync, existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, relative, resolve, sep } from "node:path";
 import { parseArgs } from "node:util";
 
 import { PUBLIC_API } from "../infra/runs/public-blobs";
 import { appliesTo, parseSchedule, type Schedule } from "../infra/runs/schedule";
 import { canonicalJson, compareText, type ParamValue, type RunFile } from "../methods/run";
-import { type ApiReport, checkFailed, parseReport } from "./lib/api-freshness";
-import { boundedText } from "./lib/api-upload";
+import { type ApiReport, apiReport, type CheckFailure, type CheckResult, checkFailed, parseResult } from "./lib/api-freshness";
+import { boundedText, clipText } from "./lib/api-upload";
 import { PRICE_FILE_PATH } from "./lib/prices";
 import { readRunFiles } from "./lib/run-files";
 import { RUNS_REPOSITORY_BLOB_URL } from "./lib/runs-repository";
@@ -244,10 +255,18 @@ export function describeSeries(series: WatchedSeries): string {
 	return `${series.benchmark} · ${params} · ${series.build} · ${series.instanceType} · ${series.zone}`;
 }
 
-/** What an alarm post reported: compared with the next pass's to decide whether to write. */
+/**
+ * What an alarm post reported: compared with the next pass's to decide
+ * whether to write. The stale Series are carried as their number and a hash
+ * of the whole sorted set, not listed, so the marker stays a few hundred
+ * characters however many there are: any change to the set, shown in the
+ * post or not, changes the hash, and the same set gives the same hash.
+ */
 export interface AlarmState {
-	/** describeSeries() of each stale Series, sorted. */
-	stale: string[];
+	/** How many watched Series are stale. */
+	stale_count: number;
+	/** staleHash() of their describeSeries(), sorted. */
+	stale_hash: string;
 	copy_failed: boolean;
 	/** Present only when the price files are stale: the newest one's path, or "none". Posts from before prices were watched lack it. */
 	stale_prices?: string;
@@ -255,22 +274,37 @@ export interface AlarmState {
 	stale_api?: string;
 }
 
+/** The first 16 hex digits of the SHA-256 of the sorted descriptions, one per line. */
+export function staleHash(descriptions: readonly string[]): string {
+	return createHash("sha256").update([...descriptions].sort(compareText).join("\n")).digest("hex").slice(0, 16);
+}
+
 export function alarmState(stale: readonly StaleSeries[], copyFailed: boolean, prices: StalePrices | null = null, api: string | null = null): AlarmState {
-	const state: AlarmState = { stale: stale.map(describeSeries).sort(compareText), copy_failed: copyFailed };
+	const state: AlarmState = { stale_count: stale.length, stale_hash: staleHash(stale.map(describeSeries)), copy_failed: copyFailed };
 	if (prices !== null) state.stale_prices = prices.newest?.path ?? "none";
 	if (api !== null) state.stale_api = api;
 	return state;
 }
 
-/** The state the newest alarm post carries, or null when it carries none. */
+/**
+ * The state the newest alarm post carries, or null when it carries none.
+ * Reads posts written before the count and hash, which listed the stale
+ * Series, as the same state.
+ */
 export function stateOf(post: string): AlarmState | null {
 	const at = post.lastIndexOf(STATE_MARKER);
 	if (at < 0) return null;
 	const end = post.indexOf(" -->", at);
 	try {
-		const state = JSON.parse(post.slice(at + STATE_MARKER.length, end)) as Partial<AlarmState>;
-		if (!Array.isArray(state.stale) || typeof state.copy_failed !== "boolean") return null;
-		const parsed: AlarmState = { stale: state.stale.map(String), copy_failed: state.copy_failed };
+		const state = JSON.parse(post.slice(at + STATE_MARKER.length, end)) as Partial<AlarmState> & { stale?: unknown };
+		if (typeof state.copy_failed !== "boolean") return null;
+		let parsed: AlarmState;
+		if (Array.isArray(state.stale)) {
+			const listed = state.stale.map(String);
+			parsed = { stale_count: listed.length, stale_hash: staleHash(listed), copy_failed: state.copy_failed };
+		} else if (Number.isSafeInteger(state.stale_count) && typeof state.stale_hash === "string") {
+			parsed = { stale_count: state.stale_count as number, stale_hash: state.stale_hash, copy_failed: state.copy_failed };
+		} else return null;
 		if (typeof state.stale_prices === "string") parsed.stale_prices = state.stale_prices;
 		if (typeof state.stale_api === "string") parsed.stale_api = state.stale_api;
 		return parsed;
@@ -286,51 +320,104 @@ const COPY_FAILED =
 /** The whole check of the API bucket, in its child, is killed after this: well under a minute, so the alarm's own verdict, which comes after it, is never held up long. */
 export const CHECK_BUDGET_MS = 20_000;
 
-/** The most of the child's output read: a report is a few kilobytes. */
-const CHILD_OUTPUT_BYTES = 64 * 1_024;
+/** The most of the child's output read: a result is under a hundred bytes. */
+const CHILD_OUTPUT_BYTES = 4_096;
+
+/**
+ * The child's whole environment: the AWS keys aws-actions/configure-aws-
+ * credentials sets, and where the step's summary is. Nothing else: not
+ * GITHUB_TOKEN, not PATH or HOME, which Bun does not need to run it. The
+ * bucket, the time and PUBLIC_API.state go as arguments; the Region is
+ * RUNS_REGION, in the code.
+ */
+export const CHILD_ENVIRONMENT = ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "GITHUB_STEP_SUMMARY"] as const;
+
+/** What the check came to: a result from the child, or why there is none. */
+export type ChildOutcome = { result: CheckResult } | { failure: CheckFailure };
+
+/** Kills a process group, the child and anything it started; already gone is no error. */
+function killGroup(pid: number): void {
+	try {
+		process.kill(-pid, "SIGKILL");
+	} catch {
+		// Already gone.
+	}
+}
 
 /**
  * The check of the API bucket, run as the child process `command`
- * (scripts/check-api-publishing.ts), killed with SIGKILL if it has not
- * finished within budgetMs. Its report is the one line of JSON it prints. A
- * kill, a non-zero exit, output that is not a report, or a child that cannot
- * be started is a check that failed, with the reason. Never throws, and
- * writes nothing: the child writes its own line to the step's summary, and
- * if that blocks, the kill ends it. So the alarm's verdict on the Series and
- * the price files, which comes after, never depends on the check.
+ * (scripts/check-api-publishing.ts) with only CHILD_ENVIRONMENT, taken from
+ * `env` (process.env unless given), in a process group of its own, which is
+ * killed with SIGKILL, the child and anything it started, if it has not
+ * finished within budgetMs, and in any case once it has. Its result is the
+ * one line of JSON it prints, validated against the closed set
+ * (parseResult). A kill, a non-zero exit, output that is not a result, or a
+ * child that cannot be started is a failure from a closed set. What the
+ * child printed goes to `log` (the job's log), never into the result. Never
+ * throws, and writes nothing to the step's summary: the child writes its own
+ * line, and if that blocks, the kill ends it.
  */
-export async function checkInChild(command: string[], options: { budgetMs?: number; env?: Record<string, string | undefined> } = {}): Promise<ApiReport> {
+export async function checkInChild(
+	command: string[],
+	options: { budgetMs?: number; env?: Record<string, string | undefined>; log?: (line: string) => void } = {},
+): Promise<ChildOutcome> {
 	const budget = options.budgetMs ?? CHECK_BUDGET_MS;
+	const log = options.log ?? ((line: string) => console.error(line));
+	const source = options.env ?? process.env;
+	const env: Record<string, string> = {};
+	for (const name of CHILD_ENVIRONMENT) if (source[name] !== undefined) env[name] = source[name] as string;
 	let child: ReturnType<typeof Bun.spawn>;
 	try {
-		child = Bun.spawn(command, { stdin: "ignore", stdout: "pipe", stderr: "pipe", env: options.env ?? process.env });
+		child = Bun.spawn(command, { stdin: "ignore", stdout: "pipe", stderr: "pipe", env, detached: true } as Parameters<typeof Bun.spawn>[1]);
 	} catch (error) {
-		return checkFailed(`it could not be started: ${error instanceof Error ? error.message : String(error)}`);
+		log(`the check of the API bucket could not be started: ${error instanceof Error ? error.message : String(error)}`);
+		return { failure: { reason: "start" } };
 	}
 	let killed = false;
 	const timer = setTimeout(() => {
 		killed = true;
-		child.kill("SIGKILL");
+		killGroup(child.pid);
 	}, budget);
 	// The pipes close when the child dies; two seconds' grace past the kill, and nothing is waited for longer. Both timers are cleared, so neither keeps the alarm alive.
 	let graceTimer: ReturnType<typeof setTimeout> | undefined;
 	const grace = new Promise<null>((resolve) => {
 		graceTimer = setTimeout(() => resolve(null), budget + 2_000);
 	});
+	// The moment the child exits, the rest of its group goes too, so nothing it started can hold the pipes open.
+	const exited = child.exited.then((code) => {
+		killGroup(child.pid);
+		return code;
+	});
 	const ended = await Promise.race([
 		Promise.all([
 			boundedText(child.stdout as ReadableStream<Uint8Array>, CHILD_OUTPUT_BYTES, budget + 1_000),
 			boundedText(child.stderr as ReadableStream<Uint8Array>, 4_096, budget + 1_000),
-			child.exited,
+			exited,
 		]),
 		grace,
 	]);
 	clearTimeout(timer);
 	clearTimeout(graceTimer);
-	if (killed || ended === null) return checkFailed(`it gave no result within ${budget / 1_000} s, so it was stopped`);
-	const [stdout, stderr, exitCode] = ended;
-	if (exitCode !== 0) return checkFailed(`it exited ${exitCode}${stderr.trim() === "" ? "" : `: ${stderr}`}`);
-	return parseReport(stdout) ?? checkFailed(`its output is not a report: ${stdout.trim() === "" ? "nothing" : stdout}`);
+	// Whatever the child started dies with it.
+	killGroup(child.pid);
+	if (ended !== null && ended[1].trim() !== "") log(`the check of the API bucket said (log only): ${clipText(ended[1], 2_000)}`);
+	if (killed || ended === null) {
+		log(`the check of the API bucket gave no result within ${budget} ms and was killed`);
+		return { failure: { reason: "killed", budgetMs: budget } };
+	}
+	const [stdout, , exitCode] = ended;
+	if (exitCode !== 0) return { failure: { reason: "exited", code: exitCode } };
+	const result = parseResult(stdout);
+	if (result === null) {
+		log(`the check of the API bucket printed what is not a result (log only): ${clipText(stdout, 2_000)}`);
+		return { failure: { reason: "output" } };
+	}
+	return { result };
+}
+
+/** The alarm's words for what the check came to. */
+export function reportOf(outcome: ChildOutcome, bucket: string, now: Date, publicApiState: string): ApiReport {
+	return "result" in outcome ? apiReport(outcome.result, bucket, now, publicApiState) : checkFailed(outcome.failure);
 }
 
 /** The words of a drill: one post, which says so and that nothing is wrong, and carries no state, so it changes nothing the alarm reads back. */
@@ -342,15 +429,44 @@ export function drillText(runUrl: string | null): string {
 }
 
 /**
- * A drill: one comment on the open alarm issue, or, with none open, the issue
- * opened with it. It carries no state marker, so the alarm's next pass reads
- * the same last post as before and writes as it would have.
+ * A drill: exactly one notification. On the open alarm issue, one comment;
+ * with none open, the issue opened with the drill's words as its body and no
+ * comment (a second post would be a second notification). It carries no
+ * state marker, so the alarm's next pass reads the same last post as before
+ * and writes as it would have.
  */
 export async function postDrill(tracker: IssueTracker, runUrl: string | null): Promise<number> {
-	const open = await tracker.findOpen(ALARM_MARKER);
-	if (open === null) return tracker.open(ALARM_TITLE, `${ALARM_MARKER}\n${drillText(runUrl)}`);
-	await tracker.comment(open.number, drillText(runUrl));
+	const posting = guarded(tracker);
+	const open = await posting.findOpen(ALARM_MARKER);
+	if (open === null) return posting.open(ALARM_TITLE, `${ALARM_MARKER}\n${drillText(runUrl)}`);
+	await posting.comment(open.number, drillText(runUrl));
 	return open.number;
+}
+
+/** Appends to the step's summary when there is one: best-effort, a failure only warned of. */
+function toStepSummary(text: string): void {
+	try {
+		if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, text);
+	} catch (error) {
+		console.warn(`could not write to the step's summary (${error instanceof Error ? error.message : String(error)}); carrying on`);
+	}
+}
+
+/**
+ * The drill, after the alarm's own verdict, never failing the job: a drill
+ * that cannot post says so in the log and the step summary and returns
+ * null, and the alarm exits with the code its verdict earned (the publish
+ * job runs only when the first job succeeded).
+ */
+export async function drillSafely(tracker: IssueTracker, runUrl: string | null, log: (line: string) => void = (line) => console.error(line), summary: (text: string) => void = toStepSummary): Promise<number | null> {
+	try {
+		return await postDrill(tracker, runUrl);
+	} catch (error) {
+		const words = clipText(error instanceof Error ? error.message : String(error), 500);
+		log(`the drill's comment could not be posted: ${words}`);
+		summary(`### The alarm's drill\n\nThe drill's comment could not be posted: ${words}\n`);
+		return null;
+	}
 }
 
 export interface AlarmTextOptions {
@@ -366,9 +482,29 @@ export interface AlarmTextOptions {
 	api?: ApiReport | null;
 	/** Whether the last post raised the API bucket. */
 	apiWasRaised?: boolean;
+	/** The most characters the text may have: MAX_BODY_CHARS less the issue's marker line, unless given. */
+	budget?: number;
+	/** The run whose log and step summary list every stale Series, said when the list is cut; null: not known. */
+	fullListAt?: string | null;
 }
 
-/** The text posted: the stale Series, each with its newest Run and how old it is, the price files if stale, the API bucket if raised, and the state marker. */
+/**
+ * GitHub refuses an issue or comment body over 65,536 characters, and the
+ * whole post with it. Every body the alarm posts is built under this, the
+ * hidden state marker included (alarmText, and the drill's few lines).
+ */
+export const MAX_BODY_CHARS = 60_000;
+/** What alarmText may take: the issue's body is the marker line and the text. */
+export const TEXT_BUDGET = MAX_BODY_CHARS - ALARM_MARKER.length - 1;
+
+/**
+ * The text posted: the summary, the stale Series, each with its newest Run
+ * and how old it is, the price files if stale, the API bucket if raised, and
+ * the state marker. Under its budget: when the Series lines do not all fit,
+ * as many as fit are listed, in their sorted order, then one line saying how
+ * many more there are and that the run's log and step summary list them all.
+ * Everything else is always there.
+ */
 export function alarmText(options: AlarmTextOptions): string {
 	const { stale, now, copyFailed } = options;
 	const runUrlBase = options.runUrlBase ?? RUNS_REPOSITORY_BLOB_URL;
@@ -413,16 +549,44 @@ export function alarmText(options: AlarmTextOptions): string {
 						`**No new price file for more than 48 hours.** The newest, [${prices.newest.path}](${runUrlBase}${prices.newest.path}), was fetched at ${prices.newest.fetchedAt}, ${hours(prices.newest.fetchedAt)} hours ago. Look at the prices workflow.`,
 					];
 	const apiLine = api !== null && apiState !== null ? ["", api.raised] : apiWasRaised && api !== null && (stale.length > 0 || prices !== null) ? ["", api.again] : [];
-	return [
-		...(copyFailed ? [COPY_FAILED, ""] : []),
-		summary,
-		...(lines.length ? ["", ...lines] : []),
+	const head = [...(copyFailed ? [COPY_FAILED, ""] : []), summary];
+	const tail = [
 		...pricesLine,
 		...apiLine,
 		"",
 		"A watched Series is one `schedule.json` runs on one of its targets, the instance types and zone the stage launches. Written by `scripts/alarm.ts`, which writes again only when the stale Series, whether the copy job is failing, whether the price files are stale, or what it raises of the API bucket, change.",
 		`${STATE_MARKER}${JSON.stringify(alarmState(stale, copyFailed, prices, apiState))} -->`,
-	].join("\n");
+	];
+	const where = options.fullListAt ? `[the run that wrote this](${options.fullListAt})` : "the run that wrote this";
+	const more = (count: number): string => `- … and ${count} more watched Series not shown, to keep this post under GitHub's limit: the log and step summary of ${where} list every one.`;
+	const assemble = (shown: readonly string[], hidden: number): string => [...head, ...(shown.length + hidden > 0 ? ["", ...shown, ...(hidden > 0 ? [more(hidden)] : [])] : []), ...tail].join("\n");
+	const budget = options.budget ?? TEXT_BUDGET;
+	const whole = assemble(lines, 0);
+	if (whole.length <= budget) return whole;
+	// As many lines as fit beside the line saying how many more; that line, written for all of them, is the longest it can be.
+	let size = assemble([], lines.length).length;
+	let shown = 0;
+	while (shown < lines.length && size + (lines[shown] as string).length + 1 <= budget) size += (lines[shown++] as string).length + 1;
+	return assemble(lines.slice(0, shown), lines.length - shown);
+}
+
+/** The complete list of stale Series, for the step summary, under its own limit of 1 MiB (cut, with a count, at STEP_SUMMARY_LIST_BYTES). */
+export const STEP_SUMMARY_LIST_BYTES = 900_000;
+export function staleList(stale: readonly StaleSeries[], now: Date, runUrlBase = RUNS_REPOSITORY_BLOB_URL): string {
+	const lines = stale
+		.map((series) => `- \`${describeSeries(series)}\`: ${series.newest === null ? "no Run at all" : `newest Run [${series.newest.id}](${runUrlBase}${series.newest.path}) started ${series.newest.startedAt}, ${((now.getTime() - Date.parse(series.newest.startedAt)) / 3_600_000).toFixed(1)} hours ago`}`)
+		.sort(compareText);
+	const out = [`### Stale watched Series (${stale.length})`, ""];
+	let bytes = Buffer.byteLength(out.join("\n"));
+	for (const [index, line] of lines.entries()) {
+		if (bytes + Buffer.byteLength(line) + 200 > STEP_SUMMARY_LIST_BYTES) {
+			out.push(`- … and ${lines.length - index} more: the log lists every one.`);
+			break;
+		}
+		out.push(line);
+		bytes += Buffer.byteLength(line) + 1;
+	}
+	return `${out.join("\n")}\n`;
 }
 
 /** The open alarm issue, and its newest alarm post: the body, or the newest comment carrying a state marker. */
@@ -456,8 +620,26 @@ const sameState = (a: AlarmState, b: AlarmState): boolean =>
 	a.copy_failed === b.copy_failed &&
 	(a.stale_prices ?? null) === (b.stale_prices ?? null) &&
 	(a.stale_api ?? null) === (b.stale_api ?? null) &&
-	a.stale.length === b.stale.length &&
-	a.stale.every((series, i) => series === b.stale[i]);
+	a.stale_count === b.stale_count &&
+	a.stale_hash === b.stale_hash;
+
+/** Posts through `tracker`, refusing a body GitHub would refuse: by construction none is, so this is a loud failure, never a cut. */
+function guarded(tracker: IssueTracker): IssueTracker {
+	const check = (body: string): void => {
+		if (body.length > MAX_BODY_CHARS) throw new Error(`an alarm post of ${body.length} characters, over MAX_BODY_CHARS (${MAX_BODY_CHARS}): not posted`);
+	};
+	return {
+		findOpen: (marker) => tracker.findOpen(marker),
+		open: (title, body) => {
+			check(body);
+			return tracker.open(title, body);
+		},
+		comment: (issue, body) => {
+			check(body);
+			return tracker.comment(issue, body);
+		},
+	};
+}
 
 /** One pass of the alarm. */
 export async function runAlarm(options: {
@@ -476,7 +658,10 @@ export async function runAlarm(options: {
 	pricesSince?: Date | null;
 	/** What the check of the API bucket reported (checkInChild): strings only. Null or absent when it was not asked, and then nothing is said of it. */
 	api?: ApiReport | null;
+	/** The run whose log and step summary list every stale Series, linked when the post cannot list them all. */
+	fullListAt?: string | null;
 }): Promise<AlarmOutcome> {
+	const tracker = guarded(options.tracker);
 	const stale = staleSeries(watchedSeries(options.schedule), options.runs, options.now, options.scheduleChangedAt);
 	const newestPrices = options.newestPrices ?? null;
 	const pricesSince = options.pricesSince ?? null;
@@ -485,7 +670,7 @@ export async function runAlarm(options: {
 	const api = options.api ?? null;
 	const apiState = api?.state ?? null;
 	const found: Found = { stale, prices, api: apiState };
-	const open = await options.tracker.findOpen(ALARM_MARKER);
+	const open = await tracker.findOpen(ALARM_MARKER);
 	const last = open === null ? null : stateOf(open.lastPost);
 	const text = alarmText({
 		stale,
@@ -497,32 +682,38 @@ export async function runAlarm(options: {
 		pricesWereStale: last?.stale_prices !== undefined,
 		api,
 		apiWasRaised: last?.stale_api !== undefined,
+		fullListAt: options.fullListAt ?? null,
 	});
 	const allWell = stale.length === 0 && prices === null && apiState === null;
 	if (open === null) {
 		if (allWell) return { action: "none", ...found };
-		const issue = await options.tracker.open(ALARM_TITLE, `${ALARM_MARKER}\n${text}`);
+		const issue = await tracker.open(ALARM_TITLE, `${ALARM_MARKER}\n${text}`);
 		return { action: "opened", issue, ...found };
 	}
 	if (last !== null && sameState(last, alarmState(stale, options.copyFailed, prices, apiState))) return { action: "unchanged", issue: open.number, ...found };
 	// Nothing to say on an issue whose last word was already that all is well, if only the copy changed.
 	if (last === null && allWell) return { action: "unchanged", issue: open.number, ...found };
-	await options.tracker.comment(open.number, text);
+	await tracker.comment(open.number, text);
 	return { action: "commented", issue: open.number, ...found };
 }
 
 type Fetch = (url: string, init: RequestInit) => Promise<Response>;
 
-/** GitHub's REST API, with a token that may write issues. */
+/**
+ * GitHub's REST API, with a token that may write issues, at GITHUB_API_URL
+ * (which Actions sets) or api.github.com. A call GitHub refuses (a 422 for a
+ * body too long, say) throws, naming the answer; nothing is sent again.
+ */
 export class GitHubIssues implements IssueTracker {
 	constructor(
 		private readonly repository: string,
 		private readonly token: string,
 		private readonly fetcher: Fetch = fetch,
+		private readonly apiBase: string = process.env.GITHUB_API_URL || "https://api.github.com",
 	) {}
 
 	private async call(method: string, path: string, body?: unknown): Promise<unknown> {
-		const response = await this.fetcher(`https://api.github.com/repos/${this.repository}${path}`, {
+		const response = await this.fetcher(`${this.apiBase}/repos/${this.repository}${path}`, {
 			method,
 			headers: {
 				Accept: "application/vnd.github+json",
@@ -628,34 +819,40 @@ async function main(): Promise<void> {
 		if (!repository || !token) throw new Error("GITHUB_REPOSITORY and GITHUB_TOKEN must be set, or pass --dry-run");
 		tracker = new GitHubIssues(repository, token);
 	}
-	const runs = readRunFiles(values.runs);
-	const copyFailed = values.copy === "failed";
-	const newestPrices = newestPriceFile(values.runs);
-	// The check of the API bucket, whole, in a child killed after CHECK_BUDGET_MS, before anything is posted: it never throws.
+	// The check of the API bucket, whole, in a child killed after CHECK_BUDGET_MS: started before the Runs repository
+	// is read, so the wait overlaps that work, and awaited before anything is posted. It never throws.
 	const endpoint = values["api-endpoint"];
-	const api = await checkInChild([
+	const bucket = values["api-bucket"] ?? "";
+	const checking = checkInChild([
 		process.execPath,
 		join(import.meta.dir, "check-api-publishing.ts"),
 		"--bucket",
-		values["api-bucket"] ?? "",
+		bucket,
 		"--now",
 		now.toISOString(),
 		"--public-api-state",
 		PUBLIC_API.state,
 		...(endpoint === undefined ? [] : ["--endpoint", endpoint]),
 	]);
+	const runs = readRunFiles(values.runs);
+	const copyFailed = values.copy === "failed";
+	const newestPrices = newestPriceFile(values.runs);
+	const api = reportOf(await checking, bucket, now, PUBLIC_API.state);
 	console.log(`the API bucket: ${api.summary}`);
-	const outcome = await runAlarm({ schedule, runs, now, scheduleChangedAt, copyFailed, tracker, newestPrices, pricesSince, api });
-	if (values.drill === "yes") {
-		const { GITHUB_SERVER_URL: server, GITHUB_REPOSITORY: repository, GITHUB_RUN_ID: runId } = process.env;
-		const issue = await postDrill(tracker, server && repository && runId ? `${server}/${repository}/actions/runs/${runId}` : null);
-		if (!values["dry-run"]) console.log(`drill: posted on issue #${issue}`);
-	}
+	const { GITHUB_SERVER_URL: server, GITHUB_REPOSITORY: repository, GITHUB_RUN_ID: runId } = process.env;
+	const runUrl = server && repository && runId ? `${server}/${repository}/actions/runs/${runId}` : null;
+	const outcome = await runAlarm({ schedule, runs, now, scheduleChangedAt, copyFailed, tracker, newestPrices, pricesSince, api, fullListAt: runUrl });
 	const watched = watchedSeries(schedule);
 	// Those with no Run at all, whatever the schedule's age.
 	const neverRun = staleSeries(watched, runs, now, new Date(0)).filter((series) => series.newest === null).length;
 	if (copyFailed) console.log("the copy job failed on this pass: the Runs repository may be behind the bucket");
+	// Every stale Series, in the log and the step summary, which the issue points to when it cannot list them all.
 	for (const series of outcome.stale) console.log(`stale: ${describeSeries(series)} (newest ${series.newest?.startedAt ?? "none"})`);
+	if (outcome.stale.length > 0) toStepSummary(staleList(outcome.stale, now));
+	if (values.drill === "yes") {
+		const issue = await drillSafely(tracker, runUrl);
+		if (issue !== null && !values["dry-run"]) console.log(`drill: posted on issue #${issue}`);
+	}
 	if (neverRun > 0 && now.getTime() - scheduleChangedAt.getTime() <= MAX_AGE_MS) {
 		console.log(
 			`${neverRun} watched Series have never had a Run; schedule.json changed at ${scheduleChangedAt.toISOString()}, so they are stale only after ${new Date(scheduleChangedAt.getTime() + MAX_AGE_MS).toISOString()}`,
