@@ -1213,4 +1213,119 @@ A migrated benchmark is done only when **all** of these hold:
   v4 can be downloaded as soon as it is kept); a test holds it to a run still going. The
   turn-on steps now require a tested route by which a failed publish reaches the
   maintainer. Not deployed; the switch stays off.
+- **2026-11-21** — A stale or failed publish now reaches the maintainer the way stale
+  data does (ADR-0032, README "The alarm", "The data API's publishing"). **The alarm reads
+  the API bucket** in every run's first job, with the role's existing read: one `GET` of
+  `v1/index.json`, whose `Last-Modified` S3 sets as the upload's last act writes it (in the
+  last phase or as the stamp), so it moves on every successful upload of a new run and on
+  nothing else the workflow does; the run in its metadata (which an upload by hand can set
+  to anything) and the tree's `newest_run_started_at` (which stands still when the boxes
+  do) decide nothing. **It raises two scheduled runs in a row** (00:00, 06:00, 12:00, 18:00,
+  22:40 UTC, held to the crons by a test) that have each had an hour since their time
+  without a publish, counted by the schedule because its gaps are uneven: one failed run
+  can leave the tree as old as two in a row, 12 hours. It fires at the run after the second
+  miss, the tree 12 to 18 hours old, and a test plays three days of runs at 4, 30 and 50
+  minutes late to hold one miss silent and two always raised. A bucket with no table of
+  contents, or one it cannot read (a `GET`, so a missing bucket is not taken for an empty
+  one; a 5xx or no answer tried three times), is raised at once; nothing S3 answers fails
+  the job. `API_BUCKET` unset raises nothing while `PUBLIC_API` is `off`, and is raised in
+  any other state. Same issue, same rule of writing only on change, and once when the data
+  API is published again; each pass writes what it found to the step summary. The workflow
+  passes the variable to the alarm step only; the first job still writes nothing to the
+  bucket. Turn-on step 0 now says what exists and gives the one thing left to do by hand:
+  point `API_BUCKET` at a name that is no bucket of the stage, start a run, see the
+  notification arrive, put it back. **README corrections from #72's last verification**:
+  uploads must be serialized (the run guard reads before writing, not during), so an upload
+  by hand goes through the workflow; and a run makes three passes, 3 `HEAD`s per file and 3
+  listings, not two (about 176,000 `HEAD`s a month now, $0.07; $0.47 a year on), with the
+  first publish's timings (391 files: preflight 1.7 s, upload 4.3 s, check 1.8 s). A test runs
+  the `publish` job's own commands, read from the workflow, against the stand-in for S3 for
+  trees of two sizes and requires exactly those counts and at most eight requests at once,
+  and the README to state the same counts. ADR-0031's costs and its decision 7 point at the
+  change. Not deployed; nothing in AWS changes; the switch stays off.
+- **2026-11-21** — The publishing watch, after an independent verification (FAIL: the new
+  check could suppress the existing alarm). **Bounded**: the read has 20 s in all, 5 s a try,
+  waits of 1 and 2 s; the body of a 200 is cancelled unread, of an error at most 2 KB are read
+  for at most a second, and what reaches the issue is one line of at most 300 characters,
+  without backticks. Tests make the stand-in answer headers and then stall, not answer, and
+  trickle, and find the existing alarm's verdict within the budget. **Guarded whole**:
+  `watchApiBucket` does the whole check before anything is posted, and anything thrown in it
+  becomes "The check of the API bucket failed", raised like an unreadable bucket, while
+  `runAlarm` takes only finished strings; the step summary's write is best-effort. Tests
+  throw at each stage (the reader, the read, the judgement, the words, the summary line, the
+  job start, the cron, a thrown thing with no words) and find the stale-Series verdict as
+  without the bucket; a step summary that is a directory is warned of, with the verdict and
+  exit code unchanged. **The count, truthfully**: elapsed scheduled slots since the bucket
+  was last written, judged only up to an hour before the job started and never the job's
+  own slot (the cron that started it, `github.event.schedule`; the job's first step notes
+  when it started). The verifier's two counterexamples are tests: the 22:40 run failing and
+  the 00:00 job starting an hour late no longer raises; a publish by hand between two failed
+  runs starts the count again. The simulation now draws lateness up to 79 minutes and adds
+  runs by hand between slots. **Unset decided**: nothing raised while `PUBLIC_API` is `off`,
+  raised in any other state. **The drill**: a `workflow_dispatch` input, `alarm_drill`, makes
+  only the alarm's check read a name no bucket can have and say it is a drill; the publish
+  job never sees it, and the next ordinary run clears it. Step 0 of turning the API on now
+  uses it and closes the issue only when it reports nothing else. Not deployed; the switch
+  stays off.
+- **2026-11-21** — The publishing watch, after a second verification (FAIL, six findings).
+  **The rule is now age, nothing else** (the orchestrator's decision): raised when
+  `v1/index.json` was last written more than 14 hours before the check runs
+  (`MAX_PUBLISH_AGE_MS`). Slot counting is gone (the cron reader, the run's own slot, the
+  judgement cut-off, the workflow step that noted the job's start): three rounds each found
+  a new way for it to be wrong, the last a re-run of an old run clearing a real alarm.
+  ADR-0032 records why, and the guarantee in plain terms: one failed publish raises nothing
+  unless a run starts more than two hours late; publishing that stops is raised within
+  about 20 hours; two failures around the 22:40 to 00:00 gap can pass unnoticed when the
+  next publish succeeds. Tests: ages either side of 14 hours; the real schedule (read from
+  the crons) with one failure and starts up to two hours late; publishing stopped after each
+  run of a day; a re-run whose child prints the same report; the first publish. **The check
+  runs in a child process** (`scripts/check-api-publishing.ts`) that the alarm kills with
+  `SIGKILL` after 20 seconds; a kill, a non-zero exit or output that is not a report is "the
+  check of the API bucket failed", and the alarm writes nothing on the check's behalf.
+  Tests: children that sleep past the budget, ignore `SIGTERM`, print garbage, exit
+  non-zero, and the real check with a step summary that blocks (a FIFO); in each the
+  stale-Series verdict as on main, on time. A first try kept the alarm alive for the grace
+  timer's 22 seconds after its work; the timer is now cleared, and a test holds the alarm's
+  run under ten seconds. **The drill posts one comment**, with the run's link, after the
+  ordinary pass, reads nothing and carries no state marker, so an open finding stays
+  reported. **The first job has main's steps again**, in main's order, with main's condition
+  on the alarm step (a test holds both). **The error body's limit is tested**: an S3 code
+  beyond byte 2,048 is not seen, and one chunk larger than the limit is decoded only up to
+  it. Not deployed; the switch stays off.
+- **2026-11-21** — The publishing watch, after a third verification (FAIL on five points;
+  the design held). **Every post fits GitHub's limit**: GitHub refuses a body over 65,536
+  characters, and with all 187 watched Series stale `main`'s body was 87,890, so the alarm's
+  most important case posted nothing. Bodies are now built under 60,000 (`MAX_BODY_CHARS`):
+  summary, counts and findings always; as many Series as fit, sorted; one line saying how
+  many more and that the run's log and step summary list them all (the alarm now writes the
+  full list there). The marker carries a count and a hash of the set, not the list; old
+  markers read as the same state. 187 Series now give 59,797 characters (59,873 with the
+  bucket finding). Tests: 141, 187 and 1,000 Series with and without findings; quiet on
+  repeat; a change in a Series not shown is a change; a 422 fails loudly and is sent once.
+  **Nothing in words from the child or S3 reaches the issue**: the child reports a closed-set
+  result, validated field by field and rendered in fixed sentences; failures have four fixed
+  reasons; the words go to the log. Its environment is the three AWS keys and
+  `GITHUB_STEP_SUMMARY`, nothing else. Tests put a token's shape, a mention and a link in the
+  child's stdout and stderr and in S3's error; none reaches an issue. **The guarantee,
+  stated by checks**: raised by the first check made more than 14 hours after the last
+  successful publish; one failed publish stays quiet while every alarm runs under two hours
+  after its slot; stopped publishing is raised 16 h 40 m to 19 h 20 m after the last
+  scheduled publish with on-time runs. The simulation varies each alarm's time after its slot
+  and asserts exactly these. **A drill that cannot post does not fail the job** (a fake
+  GitHub API answers 500 to it; the alarm exits 0); with no open issue, the drill opens the
+  issue and posts no comment, one notification. **The kill is tested by death**: the child
+  leads its own process group, killed with `SIGKILL` after the budget and as soon as the
+  child exits; a child that ignores `SIGTERM`, and a grandchild holding the pipes, are found
+  dead. The child now starts before the Runs repository is read. Not deployed; the switch
+  stays off.
+- **2026-11-21** — The publishing watch, after a fourth verification (four small points). No
+  issue or comment names the bucket any more ("the API bucket"); the name stays in the log
+  and the step summary, and this run's link is the fixed Actions address and a numeric
+  `GITHUB_RUN_ID` (a test renders every result of the closed set and finds no bucket name).
+  The line that cuts the list says the log lists every stale Series and the step summary as
+  many as its size limit holds. The marker's hash is of the JSON of the sorted list, so
+  `["a", "b"]` and `["a\nb"]` differ (old-format markers still read through the same
+  function). The alarm's own step-summary writes are asynchronous, abandoned after two
+  seconds, and the alarm exits explicitly with its verdict's code (a test gives it a FIFO
+  nobody reads). Not deployed; the switch stays off.
 - _(agents: append your entry here, one per merged benchmark)_

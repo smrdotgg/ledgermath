@@ -8,9 +8,14 @@
 # Derivations and against the files the last run that checked its tree kept
 # (fetched with this run's token, which may therefore read Actions), keeps
 # them as a second artifact, api, for a week, and opens (or comments on) one
-# issue when a watched Series has had no Run for 48 hours, or the newest price
-# file (prices.yml) is more than 48 hours old. It knows nothing of publishing:
-# its success, its caches and its timing are the same with or without it.
+# issue when a watched Series has had no Run for 48 hours, the newest price
+# file (prices.yml) is more than 48 hours old, or the API bucket's table of
+# contents is more than 14 hours old. It writes nothing to the API bucket and
+# does not publish: its alarm only reads, in a child process killed after 20
+# seconds, when that table of contents was last written, and whatever S3
+# answers, or the check meets, is a finding the alarm reports, never a failure
+# of the job. Its success, its caches and its timing are the same with or
+# without publishing.
 #
 # The second, publish, runs after the first, only when the first succeeded and
 # the variable API_BUCKET is set: it takes that run's checked artifact api,
@@ -29,7 +34,8 @@
 # and, once the scheduled stage is deployed with an API bucket (README, "The
 # data API", "The API bucket"):
 #   variable API_BUCKET            the scheduled stage's apiBucket output; while
-#                                  it is not set, the publish job is skipped
+#                                  it is not set, the publish job is skipped and
+#                                  the alarm does not read the bucket
 # infra/runs/stages.ts names the scheduled stage; the README ("Moving the
 # schedule to the production account") says when the variables change.
 name: runs
@@ -47,6 +53,16 @@ on:
     inputs:
       new_baseline:
         description: "Declare this run's data API tree a new baseline: past months are not compared (no published Series or Run may be missing all the same)"
+        type: boolean
+        default: false
+      # alarm_drill makes the alarm, after its ordinary pass, post one comment
+      # on its issue (opening it if none is open) saying it is a drill and
+      # that nothing is wrong, so the maintainer sees whether its notification
+      # arrives (README, "Turning it on", step 0). It reads nothing and changes
+      # no state the alarm reads back. Only by hand: a scheduled run has no
+      # inputs. The publish job never sees it.
+      alarm_drill:
+        description: "Drill the alarm: post one comment on the alarm issue saying it is a drill; nothing else changes, publishing is untouched"
         type: boolean
         default: false
 
@@ -234,16 +250,27 @@ jobs:
       # newest price file more than 48 hours old; with no price file at all,
       # only once the prices workflow has existed for 48 hours: it is told when
       # that was, the commit time of the first commit on main's first-parent
-      # line that touched .github/workflows/prices.yml.
+      # line that touched .github/workflows/prices.yml. And, with API_BUCKET
+      # set, it reads when the API bucket's v1/index.json was last written, by
+      # S3's clock, and reports it more than 14 hours old, a bucket with no
+      # table of contents, or one it cannot read (ADR-0032). That check runs
+      # in a child process the alarm kills after 20 seconds, with the role's
+      # existing read of the bucket; nothing it does or meets fails this step
+      # or changes what the alarm says of the Series and price files. With the
+      # input alarm_drill, the alarm also posts one drill comment on its
+      # issue, which changes nothing it reads back.
       - name: Check for watched Series with no Run, and price files, for 48 hours
         if: ${{ !cancelled() && steps.runs-repository.outcome == 'success' }}
         env:
           GITHUB_TOKEN: ${{ github.token }}
           COPY: ${{ steps.copy.outcome == 'success' && steps.push.outcome == 'success' && 'succeeded' || 'failed' }}
+          API_BUCKET: ${{ vars.API_BUCKET }}
+          ALARM_DRILL: ${{ inputs.alarm_drill == true && 'yes' || 'no' }}
         run: |
           changed="$(git log -1 --first-parent --format=%cI -- schedule.json)"
           prices_since="$(git log --first-parent --reverse --format=%cI -- .github/workflows/prices.yml | sed -n 1p)"
-          bun scripts/alarm.ts --runs ledgermath-runs --copy "$COPY" --schedule-changed-at "$changed" --prices-since "$prices_since"
+          bun scripts/alarm.ts --runs ledgermath-runs --copy "$COPY" --schedule-changed-at "$changed" --prices-since "$prices_since" \
+            --api-bucket "$API_BUCKET" --drill "$ALARM_DRILL"
 
   # The checked tree, to the stage's private API bucket (ADR-0031), after the
   # first job and apart from it: only when the first job succeeded (so its tree
@@ -258,14 +285,21 @@ jobs:
   # nothing else changed. The bucket grants nothing to anyone until the public
   # API is turned on (infra/runs/public-blobs.ts, PUBLIC_API), so nothing here
   # is public. A failure is this job's alone, red, its summary naming the phase
-  # and the keys; the next run repairs the bucket.
+  # and the keys; the next run repairs the bucket. When publishing stops,
+  # however it stops, the table of contents is not written again, and the
+  # first job's alarm in a later run says so once it is more than 14 hours
+  # old. This job never sees the input alarm_drill.
   #
   # It holds api-bucket, not runs: the next run's first job may start while it
   # uploads. Two publish jobs never run at once; of those waiting, GitHub keeps
   # only the newest and cancels the older, whose tree is older. Any other order
   # (an older run's job run again by hand, a job that started waiting later
   # than a newer one) is refused by the upload itself, which writes nothing
-  # when the bucket records a later run than this one (OlderTree).
+  # when the bucket records a later run than this one (OlderTree). That guard
+  # reads the bucket before writing, not during: two uploads overlapping in
+  # time could still leave the older tree written last. The group is what
+  # keeps uploads apart, so an upload by hand goes through this job (a re-run,
+  # or a dispatch), never from elsewhere while a publish may be running.
   publish:
     name: publish the data API's checked files to the private API bucket
     needs: runs

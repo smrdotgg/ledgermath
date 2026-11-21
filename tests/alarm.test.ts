@@ -5,21 +5,32 @@ import { join, relative } from "node:path";
 
 import { TARGETS } from "../infra/runs/placement";
 import { parseSchedule, type Schedule, type Target } from "../infra/runs/schedule";
+import { compareText } from "../methods/run";
 import {
 	ALARM_MARKER,
 	ALARM_TITLE,
+	alarmState,
+	alarmText,
 	describeSeries,
 	GitHubIssues,
 	type IssueTracker,
+	MAX_BODY_CHARS,
 	newestPriceFile,
 	type OpenAlarm,
 	runAlarm,
 	STATE_MARKER,
+	STEP_SUMMARY_LIST_BYTES,
+	type StalePrices,
+	type StaleSeries,
+	staleHash,
+	staleList,
 	stalePrices,
 	staleSeries,
 	stateOf,
+	type WatchedSeries,
 	watchedSeries,
 } from "../scripts/alarm";
+import { apiReport } from "../scripts/lib/api-freshness";
 import { HandMade } from "./hand-made-runs";
 
 // They make hand-made Runs and read files; on a loaded machine that can take far longer than bun's five-second default.
@@ -204,7 +215,8 @@ describe("the alarm", () => {
 		expect(issue?.body).toContain("49.0 hours ago");
 		expect(issue?.body).not.toContain("copy job failed");
 		expect(stateOf(issue?.body ?? "")).toMatchObject({ copy_failed: false });
-		expect(stateOf(issue?.body ?? "")?.stale.length).toBe(8);
+		expect(stateOf(issue?.body ?? "")?.stale_count).toBe(8);
+		expect(stateOf(issue?.body ?? "")?.stale_hash).toBe(staleHash(outcome.stale.map(describeSeries)));
 	});
 
 	test("the next passes, with nothing changed, open no second issue and stay silent", async () => {
@@ -428,13 +440,13 @@ describe("the price files", () => {
 		expect(body).toContain(
 			"**No new price file for more than 48 hours.** The newest, [prices/2026/11/13/aws.json](https://github.com/smrdotgg/ledgermath-runs/blob/main/prices/2026/11/13/aws.json), was fetched at 2026-11-13T03:17:42.123Z, 67.7 hours ago.",
 		);
-		expect(stateOf(body)).toEqual({ stale: [], copy_failed: false, stale_prices: "prices/2026/11/13/aws.json" });
+		expect(stateOf(body)).toEqual({ stale_count: 0, stale_hash: staleHash([]), copy_failed: false, stale_prices: "prices/2026/11/13/aws.json" });
 		expect(await pass("2026-11-16T05:00:00Z", file("2026-11-13"))).toMatchObject({ action: "unchanged" });
 		const recovered = await pass("2026-11-16T23:00:00Z", file("2026-11-16"));
 		expect(recovered).toMatchObject({ action: "commented", prices: null });
 		expect(tracker.issues[0]?.comments[0]).toContain("every watched Series has had a Run in the last 48 hours again, and the newest price file is no more than 48 hours old.");
 		expect(tracker.issues[0]?.comments[0]).not.toContain("No new price file");
-		expect(stateOf(tracker.issues[0]?.comments[0] ?? "")).toEqual({ stale: [], copy_failed: false });
+		expect(stateOf(tracker.issues[0]?.comments[0] ?? "")).toEqual({ stale_count: 0, stale_hash: staleHash([]), copy_failed: false });
 		expect(await pass("2026-11-17T05:00:00Z", file("2026-11-16"))).toMatchObject({ action: "unchanged" });
 		expect(tracker.issues.length).toBe(1);
 	});
@@ -490,7 +502,116 @@ describe("the price files", () => {
 	});
 });
 
+describe("every post under GitHub's limit of 65,536 characters", () => {
+	const NOW = new Date("2026-11-21T16:00:00Z");
+	const OLD = "2026-11-19T01:00:00.000Z";
+	const ID = "01a1dd67-a680-7a77-8758-308276605aac";
+	/** n stale Series, each with a newest Run at a real-length address: the real schedule's, or more, made up. */
+	function staleOf(n: number): StaleSeries[] {
+		const real = watchedSeries(REAL_SCHEDULE);
+		const made: Schedule = {
+			vcpu_quota: QUOTA,
+			targets: [C6I],
+			benchmarks: [{ name: "memory_read_random", builds: ["static"], samples: 10, timeout_seconds: 600, params: Array.from({ length: Math.max(0, n - real.length) }, (_, i) => ({ size_bytes: 1073741824 + i, threads: "all", path: "avx512-nontemporal" })) }],
+		};
+		return [...real, ...watchedSeries(made)].slice(0, n).map((series) => ({ ...series, newest: { id: ID, startedAt: OLD, path: `runs/2026/11/19/${ID}.json` } }));
+	}
+	const bucket = apiReport({ kind: "published", last_modified: OLD, run: 44852356733 }, "ledgermath-production-runs-apibucketbucket-wvtsemfo", NOW, "off");
+	const prices: StalePrices = { newest: { path: "prices/2026/11/13/aws.json", fetchedAt: "2026-11-13T03:17:42.123Z" }, since: null };
+	const RUN_URL = "https://github.com/smrdotgg/ledgermath/actions/runs/44900000000";
+
+	test("141, 187 and 1,000 stale Series, with and without the bucket and price findings: every body fits, keeps both findings and the counts, lists a sorted prefix, says how many more and where, and its marker reads back", () => {
+		expect(watchedSeries(REAL_SCHEDULE).length).toBeGreaterThanOrEqual(187);
+		for (const n of [141, 187, 1_000]) {
+			const stale = staleOf(n);
+			const sorted = stale.map(describeSeries).sort(compareText);
+			for (const [withApi, withPrices, copyFailed] of [
+				[false, false, false],
+				[true, false, false],
+				[false, true, false],
+				[true, true, true],
+			] as const) {
+				const text = alarmText({ stale, now: NOW, copyFailed, api: withApi ? bucket : null, prices: withPrices ? prices : null, fullListAt: RUN_URL });
+				const body = `${ALARM_MARKER}\n${text}`;
+				const label = { n, withApi, withPrices, copyFailed };
+				expect({ ...label, fits: body.length <= MAX_BODY_CHARS }).toEqual({ ...label, fits: true });
+				expect(text).toContain(`${n} watched Series have had no Run for more than 48 hours.`);
+				if (withApi) expect(text).toContain("**The data API has not been published for 63.0 hours.**");
+				if (withPrices) expect(text).toContain("**No new price file for more than 48 hours.**");
+				const shown = text.split("\n").filter((line) => line.startsWith("- `")).map((line) => (line.match(/^- `([^`]*)`/) as RegExpMatchArray)[1] as string);
+				expect(shown).toEqual(sorted.slice(0, shown.length));
+				const more = text.split("\n").find((line) => line.startsWith("- … and "));
+				if (shown.length < n) {
+					expect(more).toBe(
+						`- … and ${n - shown.length} more watched Series not shown, to keep this post under GitHub's limit: the log of [the run that wrote this](${RUN_URL}) lists every one, and its step summary lists them up to its size limit.`,
+					);
+				}
+				else expect(more).toBeUndefined();
+				expect(stateOf(body)).toEqual(alarmState(stale, copyFailed, withPrices ? prices : null, withApi ? bucket.state : null));
+				expect(stateOf(body)?.stale_count).toBe(n);
+			}
+		}
+		// Listed whole, 187 Series take more than the budget even with the short marker (on main, whose marker listed every one
+		// again, the body was longer still, and GitHub refused it): so the 187 above were cut, not merely short.
+		const uncut = `${ALARM_MARKER}\n${alarmText({ stale: staleOf(187), now: NOW, copyFailed: false, budget: Number.POSITIVE_INFINITY })}`;
+		expect(uncut.length).toBeGreaterThan(MAX_BODY_CHARS);
+	});
+
+	test("a repeat pass with the same stale Series stays quiet, however many are not shown; a change in one that is not shown is a change", async () => {
+		const many: Schedule = {
+			vcpu_quota: QUOTA,
+			targets: [C6I],
+			benchmarks: [{ name: "memory_read_random", builds: ["static"], samples: 10, timeout_seconds: 600, params: Array.from({ length: 1_000 }, (_, i) => ({ size_bytes: 1073741824 + i, threads: "all", path: "avx512-nontemporal" })) }],
+		};
+		const tracker = new FakeIssues();
+		const pass = (runs: HandMade["files"]) => runAlarm({ schedule: many, runs, now: NOW, scheduleChangedAt: SETTLED, copyFailed: false, tracker });
+		const opened = await pass([]);
+		expect(opened).toMatchObject({ action: "opened" });
+		expect((tracker.issues[0]?.body.length ?? 0) <= MAX_BODY_CHARS).toBe(true);
+		expect(tracker.issues[0]?.body).toContain("more watched Series not shown");
+		expect(await pass([])).toMatchObject({ action: "unchanged" });
+		// The last Series in the sorted list, far below what the post shows, gets a Run.
+		const last = watchedSeries(many).sort((a, b) => compareText(describeSeries(a), describeSeries(b))).at(-1) as WatchedSeries;
+		expect(tracker.issues[0]?.body).not.toContain(describeSeries(last));
+		const made = new HandMade();
+		made.run({ startedAt: "2026-11-21T10:00:00Z", benchmark: last.benchmark, params: last.params, build: last.build, instanceType: last.instanceType, zone: last.zone });
+		const changed = await pass(made.files);
+		expect(changed).toMatchObject({ action: "commented" });
+		expect(changed.stale.length).toBe(999);
+		expect((tracker.issues[0]?.comments[0]?.length ?? 0) <= MAX_BODY_CHARS).toBe(true);
+		expect(await pass(made.files)).toMatchObject({ action: "unchanged" });
+	});
+
+	test("the step summary lists every stale Series, under its own limit, cut with a count past it", () => {
+		const all = staleList(staleOf(1_000), NOW);
+		expect(all.split("\n").filter((line) => line.startsWith("- `")).length).toBe(1_000);
+		expect(Buffer.byteLength(all)).toBeLessThan(STEP_SUMMARY_LIST_BYTES);
+		const huge = staleList(staleOf(10_000), NOW);
+		expect(Buffer.byteLength(huge)).toBeLessThanOrEqual(STEP_SUMMARY_LIST_BYTES);
+		expect(huge).toMatch(/- … and [0-9]+ more: the log lists every one\.\n$/);
+	});
+
+	test("a body over the limit is never sent: refused before GitHub sees it, loudly", async () => {
+		const sent: string[] = [];
+		const tracker: IssueTracker = { findOpen: async () => null, open: async (_, body) => (sent.push(body), 1), comment: async () => {} };
+		await expect(runAlarm({ schedule: SCHEDULE, runs: [], now: NOW, scheduleChangedAt: SETTLED, copyFailed: false, tracker, api: { ...bucket, raised: "x".repeat(70_000) } })).rejects.toThrow(
+			"over MAX_BODY_CHARS",
+		);
+		expect(sent).toEqual([]);
+	});
+});
+
 describe("GitHub's side", () => {
+	test("a post GitHub refuses (422) throws, naming the answer, and is sent once", async () => {
+		const calls: string[] = [];
+		const github = new GitHubIssues("smrdotgg/ledgermath", "a-token", async (url, init) => {
+			calls.push(`${init.method} ${url}`);
+			return new Response('{"message":"Validation Failed","errors":[{"field":"body","code":"custom","message":"body is too long (maximum is 65536 characters)"}]}', { status: 422 });
+		});
+		await expect(github.open("t", "b")).rejects.toThrow("422");
+		expect(calls).toHaveLength(1);
+	});
+
 	test("finds the open alarm issue by its marker across pages, skipping pull requests, and its newest alarm post", async () => {
 		const calls: Array<{ method: string; url: string; body?: string }> = [];
 		const issues = [
@@ -512,7 +633,12 @@ describe("GitHub's side", () => {
 		const github = new GitHubIssues("smrdotgg/ledgermath", "a-token", fetcher);
 		const open = await github.findOpen(ALARM_MARKER);
 		expect(open?.number).toBe(101);
-		expect(stateOf(open?.lastPost ?? "")).toEqual({ stale: ["a", "b"], copy_failed: true });
+		// A post from before the count and hash, which listed the stale Series, reads as the same state.
+		expect(stateOf(open?.lastPost ?? "")).toEqual({ stale_count: 2, stale_hash: staleHash(["a", "b"]), copy_failed: true });
+		// Two sets whose descriptions joined by newlines read the same hash differently: the hash is of their JSON.
+		expect(["a", "b"].join("\n")).toBe(["a\nb"].join("\n"));
+		expect(staleHash(["a", "b"])).not.toBe(staleHash(["a\nb"]));
+		expect(staleHash(["b", "a"])).toBe(staleHash(["a", "b"]));
 		await github.comment(101, "still stale");
 		expect(await github.open("t", "b")).toBe(7);
 		expect(calls.map((call) => `${call.method} ${call.url.replace("https://api.github.com", "")}`)).toEqual([

@@ -19,7 +19,11 @@
  *     records its run even if nothing else changed (STAMP_KEY);
  *   - checkBucket: the whole bucket holds exactly the tree's files, each with
  *     the tree's SHA-256 and the headers treeObject gives it, and, given the
- *     run that uploaded it, the table of contents records that run.
+ *     run that uploaded it, the table of contents records that run;
+ *   - S3ApiStore.lastWritten: when an object was last written, by S3's own
+ *     clock, and the run it records: what the alarm reads of the table of
+ *     contents to tell whether publishing has stopped
+ *     (scripts/lib/api-freshness.ts).
  *
  * A month file changes in place, at the same key: when an upload stops after
  * the month files and before the Series files, a Series file still lists the
@@ -111,6 +115,30 @@ export function parseRun(value: string | null | undefined): number | null {
 	return Number.isSafeInteger(run) ? run : null;
 }
 
+/** When an object was last written, by S3's own clock, and the run its metadata records. */
+export interface WrittenAt {
+	/** Its Last-Modified: set by S3 as the object is written, never by the writer. */
+	lastModified: Date;
+	/** The run its RUN_METADATA records; null when it records none. */
+	run: number | null;
+}
+
+/**
+ * S3 gave an answer other than the one asked for, or none: its HTTP status
+ * (null when no answer came) and S3's error code, or one of ours, NoAnswer
+ * or NoCredentials, in its place.
+ */
+export class S3Refused extends Error {
+	constructor(
+		readonly status: number | null,
+		readonly code: string,
+		message: string,
+	) {
+		super(message);
+		this.name = "S3Refused";
+	}
+}
+
 /** The API bucket, as the upload and the check see it. */
 export interface ApiStore {
 	readonly name: string;
@@ -128,6 +156,8 @@ export interface S3ApiStoreOptions {
 	endpoint?: string;
 	fetcher?: Fetch;
 	now?: () => Date;
+	/** How long lastWritten reads an error answer's body: ERROR_BODY_MS unless given (tests give less). */
+	errorBodyMs?: number;
 }
 
 /** The SHA-256 of nothing, for the signed requests without a body. */
@@ -135,6 +165,60 @@ const EMPTY_SHA256 = sha256Hex(new Uint8Array());
 
 function xmlElement(body: string, name: string): string | null {
 	return new RegExp(`<${name}>([^<]*)</${name}>`).exec(body)?.[1] ?? null;
+}
+
+/** The most of an error answer's body lastWritten reads, for S3's code and message. */
+export const ERROR_BODY_BYTES = 2_048;
+
+/**
+ * Text from S3 or an error, made fit to quote in an issue: one line, no
+ * backticks, at most `limit` characters (an ellipsis marks a cut).
+ */
+export function clipText(text: string, limit = 300): string {
+	const flat = text.replace(/\s+/g, " ").replace(/`/g, "'").trim();
+	return flat.length <= limit ? flat : `${flat.slice(0, limit - 1)}…`;
+}
+
+/** The most time lastWritten spends reading an error answer's body, after its headers. */
+export const ERROR_BODY_MS = 1_000;
+
+/**
+ * At most `limit` bytes of a stream, read for at most `ms`, as text: whatever
+ * came before it ended, broke, was aborted or ran out of time. Only the
+ * first `limit` bytes are decoded, however large a chunk arrives. Cancels the
+ * rest.
+ */
+export async function boundedText(stream: ReadableStream<Uint8Array> | null | undefined, limit: number, ms: number): Promise<string> {
+	const reader = stream?.getReader();
+	if (reader === undefined) return "";
+	const chunks: Uint8Array[] = [];
+	let size = 0;
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	const outOfTime = new Promise<null>((resolve) => {
+		timer = setTimeout(() => resolve(null), ms);
+	});
+	try {
+		while (size < limit) {
+			const read = await Promise.race([reader.read(), outOfTime]);
+			if (read === null || read.done) break;
+			chunks.push(read.value);
+			size += read.value.length;
+		}
+	} catch {
+		// Aborted, or the connection broke: what came is all there is.
+	} finally {
+		clearTimeout(timer);
+		reader.cancel().catch(() => undefined);
+	}
+	const bytes = new Uint8Array(Math.min(size, limit));
+	let at = 0;
+	for (const chunk of chunks) {
+		const part = chunk.subarray(0, bytes.length - at);
+		bytes.set(part, at);
+		at += part.length;
+		if (at >= bytes.length) break;
+	}
+	return new TextDecoder().decode(bytes);
 }
 
 /** A hex SHA-256 as S3's x-amz-checksum-sha256 carries it, in base64; and back. */
@@ -163,7 +247,7 @@ export class S3ApiStore implements ApiStore {
 		return this.options.credentials?.() ?? credentialsFromEnvironment();
 	}
 
-	private async send(method: "HEAD" | "PUT", key: string, extra: Array<[string, string]>, payloadSha256: string, body?: Uint8Array): Promise<Response> {
+	private async send(method: "GET" | "HEAD" | "PUT", key: string, extra: Array<[string, string]>, payloadSha256: string, body?: Uint8Array, signal?: AbortSignal): Promise<Response> {
 		if (hasDotSegment(key)) throw new Error(`${key}: a key with a "." or ".." segment cannot be sent by name`);
 		const canonicalUri = `/${encodeUriPath(this.bucket)}/${encodeUriPath(key)}`;
 		const url = new URL(`${this.endpoint}${canonicalUri}`);
@@ -185,7 +269,7 @@ export class S3ApiStore implements ApiStore {
 		});
 		const sent: Record<string, string> = Object.fromEntries(headers.filter(([name]) => name !== "host"));
 		sent.authorization = signed.authorization;
-		return (this.options.fetcher ?? fetch)(url, { method, headers: sent, ...(body === undefined ? {} : { body }) });
+		return (this.options.fetcher ?? fetch)(url, { method, headers: sent, ...(body === undefined ? {} : { body }), ...(signal === undefined ? {} : { signal }) });
 	}
 
 	async head(key: string): Promise<StoredObject | null> {
@@ -204,6 +288,45 @@ export class S3ApiStore implements ApiStore {
 			cacheControl: response.headers.get("cache-control"),
 			run: parseRun(response.headers.get(RUN_METADATA)),
 		};
+	}
+
+	/**
+	 * When `key` was last written, and by which run: one GET, of which only
+	 * the headers are used. Not a HEAD, because a HEAD's 404 has no body, so a
+	 * missing key and a missing bucket would look alike. The body of a 200 is
+	 * cancelled unread, as soon as the headers are in; of an error, at most
+	 * ERROR_BODY_BYTES are read, for at most ERROR_BODY_MS, for S3's code and
+	 * message (without them, the status alone is said). `signal` aborts the
+	 * request and that read. Null when the bucket holds no such key (404
+	 * NoSuchKey, which S3 answers only to a requester that may list the
+	 * bucket; to another it answers 403). Throws S3Refused for any other
+	 * answer, or none: Timeout when `signal` ended it.
+	 */
+	async lastWritten(key: string, signal?: AbortSignal): Promise<WrittenAt | null> {
+		try {
+			this.credentials();
+		} catch (error) {
+			throw new S3Refused(null, "NoCredentials", clipText(error instanceof Error ? error.message : String(error)));
+		}
+		let response: Response;
+		try {
+			response = await this.send("GET", key, [], EMPTY_SHA256, undefined, signal);
+		} catch (error) {
+			if (signal?.aborted) throw new S3Refused(null, "Timeout", `GET ${this.name}/${key}: no answer in the time allowed`);
+			throw new S3Refused(null, "NoAnswer", `GET ${this.name}/${key}: no answer (${clipText(error instanceof Error ? error.message : String(error))})`);
+		}
+		if (response.status === 200) {
+			response.body?.cancel().catch(() => undefined);
+			const header = response.headers.get("last-modified");
+			const at = header === null ? Number.NaN : Date.parse(header);
+			if (Number.isNaN(at)) throw new S3Refused(200, "NoLastModified", `GET ${this.name}/${key} answered 200 with no Last-Modified that is a date: ${clipText(JSON.stringify(header))}`);
+			return { lastModified: new Date(at), run: parseRun(response.headers.get(RUN_METADATA)) };
+		}
+		const text = await boundedText(response.body, ERROR_BODY_BYTES, this.options.errorBodyMs ?? ERROR_BODY_MS);
+		const code = xmlElement(text, "Code") ?? `HTTP${response.status}`;
+		if (response.status === 404 && code === "NoSuchKey") return null;
+		const said = xmlElement(text, "Message") ?? "";
+		throw new S3Refused(response.status, clipText(code, 64), `GET ${this.name}/${key} answered ${response.status} ${clipText(code, 64)}${said === "" ? "" : `: ${clipText(said)}`}`);
 	}
 
 	async put(file: TreeFile, run: number): Promise<void> {

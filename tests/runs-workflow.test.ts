@@ -3,6 +3,9 @@ import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { MAX_PUBLISH_AGE_MS } from "../scripts/lib/api-freshness";
+import { scheduledMinutes } from "./runs-schedule";
+
 // They read the workflows; on a loaded machine even that can take longer than bun's five-second default.
 setDefaultTimeout(60_000);
 
@@ -174,10 +177,17 @@ describe("the runs workflow", () => {
 		expect(text).not.toMatch(/aws s3 (cp|sync)|s3:\/\/|sst deploy|vercel/i);
 	});
 
-	test("the first job knows nothing of publishing: no step of it names the API bucket, uploads or checks a bucket of the tree, and the alarm is its last step, within its own 30 minutes", () => {
-		const forbidden = /API_BUCKET|upload-api|check-api-bucket|download-artifact|api-bucket/;
-		for (const step of steps) expect({ step: step.name ?? step.uses ?? step.run, publishing: forbidden.test(JSON.stringify(step)) }).toEqual({ step: step.name ?? step.uses ?? step.run, publishing: false });
-		expect(JSON.stringify(job.env)).not.toMatch(forbidden);
+	test("the first job does not publish: no step of it uploads or checks a bucket of the tree, only the alarm names the API bucket, to read it, and the alarm is its last step, within its own 30 minutes", () => {
+		const publishing = /upload-api|check-api-bucket|download-artifact|group: api-bucket/;
+		const alarm = steps.find((step) => step.run?.includes("scripts/alarm.ts")) as Step;
+		for (const step of steps) {
+			const named = step === alarm ? publishing.test(JSON.stringify(step)) : /API_BUCKET|api-bucket/.test(JSON.stringify(step)) || publishing.test(JSON.stringify(step));
+			expect({ step: step.name ?? step.uses ?? step.run, publishing: named }).toEqual({ step: step.name ?? step.uses ?? step.run, publishing: false });
+		}
+		// The alarm is given the bucket's name and nothing else of publishing; reading it never fails the step (tests/api-freshness.test.ts).
+		expect(alarm.env?.API_BUCKET).toBe("${{ vars.API_BUCKET }}");
+		expect(JSON.stringify(job.env)).not.toMatch(/API_BUCKET|api-bucket/);
+		expect(JSON.stringify(job.env)).not.toMatch(publishing);
 		expect(job.needs).toBeUndefined();
 		expect(job["timeout-minutes"]).toBe(30);
 		expect(steps.at(-1)?.run).toContain("bun scripts/alarm.ts");
@@ -240,6 +250,67 @@ describe("the runs workflow", () => {
 		const alarm = steps.find((step) => step.run?.includes("scripts/alarm.ts"));
 		expect(alarm?.run).toContain('changed="$(git log -1 --first-parent --format=%cI -- schedule.json)"');
 		expect(alarm?.run).toContain('--schedule-changed-at "$changed"');
+	});
+
+	test("tells the alarm the API bucket, as API_BUCKET names it, empty when it is unset", () => {
+		const alarm = steps.find((step) => step.run?.includes("scripts/alarm.ts")) as Step;
+		expect(alarm.env?.API_BUCKET).toBe("${{ vars.API_BUCKET }}");
+		expect(alarm.run).toContain('--api-bucket "$API_BUCKET"');
+		// The same variable, by the same name, as the publish job's.
+		expect(publish.env?.API_BUCKET).toBe(alarm.env?.API_BUCKET as string);
+		// And no endpoint of its own: the tests' stand-in only.
+		expect(alarm.run).not.toContain("--api-endpoint");
+	});
+
+	test("the first job has exactly main's steps, in main's order, and the alarm step main's condition: the bucket check added none", () => {
+		const key = (step: Step): string => step.name ?? step.uses?.split("@")[0] ?? (step.run ?? "").trim();
+		expect(steps.map(key)).toEqual([
+			"actions/checkout",
+			"oven-sh/setup-bun",
+			"bun install --frozen-lockfile",
+			"AWS credentials for the bucket, through OIDC",
+			"Check out the Runs repository",
+			"Copy new Run files and boot summaries from the bucket",
+			"Commit and push them to the Runs repository",
+			"Keep the dump blobs and the streams' reduced records",
+			"Derive every Series (Method series v1) and every Series of requests (Method requests v1)",
+			"Build the page",
+			"Keep the page and the Derivations",
+			"Build the data API's files",
+			"Fetch the data API's files the last run that checked its tree kept",
+			"Check the data API's files",
+			"Keep the data API's files",
+			"Check for watched Series with no Run, and price files, for 48 hours",
+		]);
+		const alarm = steps.at(-1) as Step;
+		expect(alarm.if).toBe("${{ !cancelled() && steps.runs-repository.outcome == 'success' }}");
+		// main's environment for the step, and two more: the bucket's name and the drill.
+		expect(Object.keys(alarm.env ?? {})).toEqual(["GITHUB_TOKEN", "COPY", "API_BUCKET", "ALARM_DRILL"]);
+	});
+
+	test("the schedule's runs are at most 6 hours apart, which the alarm's 14 hours assume: two gaps, and two hours for a late start", () => {
+		const minutes = scheduledMinutes();
+		const gaps = minutes.map((minute, index) => (index === 0 ? minute + 1_440 - (minutes.at(-1) as number) : minute - (minutes[index - 1] as number)));
+		expect(Math.max(...gaps) * 60_000).toBe(6 * 3_600_000);
+		expect(MAX_PUBLISH_AGE_MS).toBe(2 * Math.max(...gaps) * 60_000 + 2 * 3_600_000);
+	});
+
+	test("the input alarm_drill: only on a run started by hand, off by default, reaching only the alarm step, never the publish job", () => {
+		const text = readFileSync(join(ROOT, ".github", "workflows", "runs.yml"), "utf8");
+		// Present only on dispatch: a scheduled run has no inputs.
+		expect(workflow.on.workflow_dispatch?.inputs?.alarm_drill).toMatchObject({ type: "boolean", default: false });
+		expect(workflow.on.workflow_dispatch?.inputs?.alarm_drill?.description).toContain("publishing is untouched");
+		expect(Object.keys(workflow.on)).toEqual(["schedule", "workflow_dispatch"]);
+		// Read in one place, the alarm step's environment, as yes only when true.
+		const alarm = steps.find((step) => step.run?.includes("scripts/alarm.ts")) as Step;
+		expect(alarm.env?.ALARM_DRILL).toBe("${{ inputs.alarm_drill == true && 'yes' || 'no' }}");
+		expect(alarm.run).toContain('--drill "$ALARM_DRILL"');
+		expect(text.match(/inputs\.alarm_drill/g)?.length).toBe(1);
+		for (const step of steps) if (step !== alarm) expect(JSON.stringify(step)).not.toMatch(/alarm_drill|ALARM_DRILL|--drill/);
+		expect(JSON.stringify(job.env ?? {})).not.toMatch(/alarm_drill|ALARM_DRILL/);
+		// The publish job never sees it, and publishes to API_BUCKET as on any run.
+		expect(JSON.stringify(publish)).not.toMatch(/alarm_drill|ALARM_DRILL|drill/i);
+		expect(publish.env).toEqual({ API_BUCKET: "${{ vars.API_BUCKET }}" });
 	});
 
 	test("tells the alarm when the prices workflow first existed on main, from the whole history", () => {
