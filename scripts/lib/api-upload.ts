@@ -78,13 +78,31 @@ export interface StoredObject {
 	sha256: string | null;
 	contentType: string | null;
 	cacheControl: string | null;
+	/** The workflow run whose upload wrote it (RUN_METADATA); null when it carries none. */
+	run: number | null;
+}
+
+/**
+ * The object metadata every write carries: the id of the GitHub Actions run
+ * whose upload wrote it. Run ids grow with time, and a run run again keeps its
+ * id, so the largest id in the bucket names the latest run that wrote to it:
+ * an upload from an earlier run is refused (OlderTree).
+ */
+export const RUN_METADATA = "x-amz-meta-ledgermath-run";
+
+/** A run id as GitHub gives it, or what an upload by hand passes: a positive whole number. */
+export function parseRun(value: string | null | undefined): number | null {
+	if (value === null || value === undefined || !/^[1-9][0-9]*$/.test(value)) return null;
+	const run = Number(value);
+	return Number.isSafeInteger(run) ? run : null;
 }
 
 /** The API bucket, as the upload and the check see it. */
 export interface ApiStore {
 	readonly name: string;
 	head(key: string): Promise<StoredObject | null>;
-	put(file: TreeFile): Promise<void>;
+	/** Writes the file, recording `run` as the run that wrote it. */
+	put(file: TreeFile, run: number): Promise<void>;
 	/** Every key under the prefix. */
 	list(prefix: string): Promise<string[]>;
 }
@@ -170,10 +188,12 @@ export class S3ApiStore implements ApiStore {
 			sha256: checksum === null ? null : checksumHex(checksum),
 			contentType: response.headers.get("content-type"),
 			cacheControl: response.headers.get("cache-control"),
+			run: parseRun(response.headers.get(RUN_METADATA)),
 		};
 	}
 
-	async put(file: TreeFile): Promise<void> {
+	async put(file: TreeFile, run: number): Promise<void> {
+		if (parseRun(String(run)) === null) throw new Error(`${run} is not a run id: a positive whole number`);
 		const response = await this.send(
 			"PUT",
 			file.key,
@@ -181,6 +201,7 @@ export class S3ApiStore implements ApiStore {
 				["cache-control", file.cacheControl],
 				["content-type", file.contentType],
 				["x-amz-checksum-sha256", checksumHeader(file.sha256)],
+				[RUN_METADATA, String(run)],
 			],
 			file.sha256,
 			file.bytes,
@@ -232,19 +253,45 @@ export interface PhaseReport {
 	phase: string;
 	written: string[];
 	unchanged: number;
+	/** In a preflight, what would be written; empty otherwise. */
+	wouldWrite: string[];
 }
 
 export interface UploadReport {
 	phases: PhaseReport[];
-	/** Why each written file was written. */
+	/** Why each written file was written (or, in a preflight, would be). */
 	reasons: Map<string, string>;
+	/** The latest run that wrote anything the bucket holds of the tree, before this upload; null when none says. */
+	newestRunBefore: number | null;
 }
 
 export interface UploadOptions {
+	/** The id of the workflow run uploading (GITHUB_RUN_ID): recorded on every object written, and an upload from an earlier run than the bucket's newest is refused. */
+	run: number;
+	/** Check the bucket and say what would be written, and write nothing. */
+	preflight?: boolean;
 	/** Requests at once. */
 	concurrency?: number;
 	/** Told of each file as it is written, in order of completion. */
 	onWrite?: (file: TreeFile) => void;
+}
+
+/**
+ * The bucket holds an object written by a later run than this one: this
+ * tree is older than what is published, and writing it would put older files
+ * over newer. Nothing was written. It happens when an older run's publish
+ * job is run again by hand after a newer run published.
+ */
+export class OlderTree extends Error {
+	constructor(
+		readonly bucket: string,
+		readonly run: number,
+		readonly newest: number,
+		readonly key: string,
+	) {
+		super(`${bucket} holds ${key} as written by run ${newest}, later than this run, ${run}: this tree is older than what is published, so nothing was uploaded`);
+		this.name = "OlderTree";
+	}
 }
 
 /**
@@ -303,28 +350,41 @@ export function unexpectedKeys(listed: readonly string[], files: readonly TreeFi
  * would be written: a phase at a time, in UPLOAD_PHASES' order, each phase
  * whole before the next begins. First, before any write or HEAD, it lists the
  * whole bucket and throws UnexpectedKeys, having written nothing, if the
- * bucket holds a key the tree does not. A failed write stops the upload once
- * the writes of its phase have settled, with UploadStopped, and no later
- * phase starts. Never deletes.
+ * bucket holds a key the tree does not. Then the HEADs: if any object was
+ * written by a later run than options.run, it throws OlderTree, having
+ * written nothing. With options.preflight it stops there, and says what it
+ * would write. A failed write stops the upload once the writes of its phase
+ * have settled, with UploadStopped, and no later phase starts. Never deletes.
  */
-export async function uploadTree(store: ApiStore, files: readonly TreeFile[], options: UploadOptions = {}): Promise<UploadReport> {
+export async function uploadTree(store: ApiStore, files: readonly TreeFile[], options: UploadOptions): Promise<UploadReport> {
+	const { run } = options;
+	if (parseRun(String(run)) === null) throw new Error(`${run} is not a run id: a positive whole number (GITHUB_RUN_ID)`);
 	const concurrency = options.concurrency ?? 8;
 	const extra = unexpectedKeys(await store.list(""), files);
 	if (extra.length > 0) throw new UnexpectedKeys(store.name, extra);
 	const reasons = new Map<string, string>();
+	let newest: { run: number; key: string } | null = null;
 	await inParallel(files, concurrency, async (file) => {
-		const reason = writeReason(file, await store.head(file.key));
+		const stored = await store.head(file.key);
+		if (stored?.run != null && (newest === null || stored.run > newest.run)) newest = { run: stored.run, key: file.key };
+		const reason = writeReason(file, stored);
 		if (reason !== null) reasons.set(file.key, reason);
 	});
+	const latest = newest as { run: number; key: string } | null;
+	if (latest !== null && latest.run > run) throw new OlderTree(store.name, run, latest.run, latest.key);
 	const phases: PhaseReport[] = [];
 	for (const [index, phase] of UPLOAD_PHASES.entries()) {
 		const ofPhase = files.filter((file) => file.phase === index);
 		const toWrite = ofPhase.filter((file) => reasons.has(file.key));
+		if (options.preflight === true) {
+			phases.push({ phase, written: [], unchanged: ofPhase.length - toWrite.length, wouldWrite: toWrite.map((file) => file.key) });
+			continue;
+		}
 		const written: string[] = [];
 		const failed: Array<{ key: string; error: string }> = [];
 		await inParallel(toWrite, concurrency, async (file) => {
 			try {
-				await store.put(file);
+				await store.put(file, run);
 			} catch (error) {
 				failed.push({ key: file.key, error: error instanceof Error ? error.message : String(error) });
 				return;
@@ -333,9 +393,9 @@ export async function uploadTree(store: ApiStore, files: readonly TreeFile[], op
 			options.onWrite?.(file);
 		});
 		if (failed.length > 0) throw new UploadStopped(store.name, index, written.sort(), failed.sort((a, b) => (a.key < b.key ? -1 : 1)), phases);
-		phases.push({ phase, written: written.sort(), unchanged: ofPhase.length - toWrite.length });
+		phases.push({ phase, written: written.sort(), unchanged: ofPhase.length - toWrite.length, wouldWrite: [] });
 	}
-	return { phases, reasons };
+	return { phases, reasons, newestRunBefore: latest?.run ?? null };
 }
 
 /**

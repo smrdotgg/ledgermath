@@ -2,16 +2,23 @@
  * Uploads the data API's tree, once scripts/check-api.ts has passed it, to the
  * stage's private API bucket (infra/runs/api-bucket.ts, ADR-0031):
  *
- *     bun scripts/upload-api.ts --tree DIR --bucket NAME [--region us-east-2] [--endpoint URL]
+ *     bun scripts/upload-api.ts --tree DIR --bucket NAME --run ID [--preflight] [--region us-east-2] [--endpoint URL]
  *
  *   --tree DIR      the tree scripts/build-api.ts wrote and scripts/check-api.ts checked (it holds v1/)
  *   --bucket NAME   the stage's apiBucket output (the runs workflow's repository variable API_BUCKET)
+ *   --run ID        the GitHub Actions run whose tree this is (GITHUB_RUN_ID); an upload by hand
+ *                   passes the id of the run whose artifact api it uploads
+ *   --preflight     check the bucket and say what would be written; write nothing
  *   --region R      the bucket's Region (default us-east-2, every -runs stage's)
  *   --endpoint URL  a stand-in for S3, path-style; the tests use it
  *
  * First lists the whole bucket: if it holds a key the tree does not (under
  * v1/ or anywhere else), it writes nothing, names each such key, and exits 1
- * (README, "The API bucket", "A key the tree does not have"). Then writes
+ * (README, "The API bucket", "A key the tree does not have"). Then one HEAD
+ * per file: if any object was written by a later run than --run (each write
+ * records its run in the object's metadata), the tree is older than what is
+ * published, and it writes nothing and exits 1. With --preflight it stops
+ * there. Then writes
  * only the files the bucket does not already hold with the same SHA-256 and
  * headers (one HEAD per file tells), in five phases, each whole before the
  * next: schemas; month files and price files; Series files; the list; the
@@ -37,17 +44,22 @@ import { parseArgs } from "node:util";
 
 import { UPLOAD_PHASES } from "../infra/runs/api-bucket";
 import { RUNS_REGION } from "../infra/runs/stages";
-import { readTree, S3ApiStore, UnexpectedKeys, UploadStopped, uploadTree } from "./lib/api-upload";
+import { OlderTree, parseRun, readTree, S3ApiStore, UnexpectedKeys, UploadStopped, uploadTree } from "./lib/api-upload";
 
-const USAGE = "usage: bun scripts/upload-api.ts --tree DIR --bucket NAME [--region R] [--endpoint URL]";
-const HEADING = "### The data API's files to the API bucket";
+const USAGE = "usage: bun scripts/upload-api.ts --tree DIR --bucket NAME --run ID [--preflight] [--region R] [--endpoint URL]";
 
-function toSummary(text: string): void {
-	if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${HEADING}\n\n${text}\n`);
+function toSummary(heading: string, text: string): void {
+	if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${heading}\n\n${text}\n`);
 }
 
 /** What the summary says when the upload stopped, and why. */
 export function stoppedSummary(error: unknown): string | null {
+	if (error instanceof OlderTree) {
+		return [
+			`**Not uploaded: ${error.bucket} holds \`${error.key}\` as written by run ${error.newest}, later than this run, ${error.run}.** This tree is older than what is published, so nothing was written.`,
+			"This happens when an older run's publish job is run again after a newer run published: there is nothing to do, the newer tree stays.",
+		].join("\n");
+	}
 	if (error instanceof UnexpectedKeys) {
 		return [
 			`**Not uploaded: ${error.bucket} holds ${error.keys.length} key${error.keys.length === 1 ? "" : "s"} the tree does not have.** Nothing was written, so the published table of contents and list are those of the last upload that succeeded.`,
@@ -71,31 +83,47 @@ export function stoppedSummary(error: unknown): string | null {
 }
 
 async function main(): Promise<void> {
-	const { values } = parseArgs({ options: { tree: { type: "string" }, bucket: { type: "string" }, region: { type: "string" }, endpoint: { type: "string" } } });
-	if (!values.tree || !values.bucket) {
+	const { values } = parseArgs({
+		options: { tree: { type: "string" }, bucket: { type: "string" }, run: { type: "string" }, preflight: { type: "boolean" }, region: { type: "string" }, endpoint: { type: "string" } },
+	});
+	const run = parseRun(values.run);
+	if (!values.tree || !values.bucket || run === null) {
 		console.error(USAGE);
 		process.exit(2);
 	}
+	const preflight = values.preflight === true;
+	const heading = preflight ? "### The API bucket, checked before the upload" : "### The data API's files to the API bucket";
 	const started = performance.now();
 	const files = readTree(values.tree);
 	const store = new S3ApiStore(values.bucket, values.region ?? RUNS_REGION, values.endpoint === undefined ? {} : { endpoint: values.endpoint });
 	let report: Awaited<ReturnType<typeof uploadTree>>;
 	try {
-		report = await uploadTree(store, files);
+		report = await uploadTree(store, files, { run, preflight });
 	} catch (error) {
 		const summary = stoppedSummary(error);
-		if (summary !== null) toSummary(summary);
+		if (summary !== null) toSummary(heading, summary);
 		throw error;
+	}
+	const took = Math.round(performance.now() - started);
+	const before = report.newestRunBefore === null ? "no object of it says which run wrote it" : `the latest run to write to it was ${report.newestRunBefore}`;
+	if (preflight) {
+		const lines = report.phases.map((phase, index) => `phase ${index + 1}, ${phase.phase}: ${phase.wouldWrite.length} to write, ${phase.unchanged} unchanged`);
+		const total = report.phases.reduce((sum, phase) => sum + phase.wouldWrite.length, 0);
+		const summary = `${store.name} holds nothing the tree lacks, and ${before} (this is run ${run}): ${total} of ${files.length} files to write, nothing written, in ${took} ms`;
+		for (const line of lines) console.log(line);
+		console.log(summary);
+		toSummary(heading, `${summary}\n\n\`\`\`\n${lines.join("\n")}\n\`\`\``);
+		return;
 	}
 	const lines = report.phases.map((phase, index) => `phase ${index + 1}, ${phase.phase}: ${phase.written.length} written, ${phase.unchanged} unchanged`);
 	const byReason = new Map<string, number>();
 	for (const reason of report.reasons.values()) byReason.set(reason, (byReason.get(reason) ?? 0) + 1);
 	const why = [...byReason].map(([reason, count]) => `${count} ${reason}`).join(", ");
 	const total = report.phases.reduce((sum, phase) => sum + phase.written.length, 0);
-	const summary = `data API v1 to ${store.name}: ${files.length} files, ${total} written${why === "" ? "" : ` (${why})`}, nothing deleted, in ${Math.round(performance.now() - started)} ms`;
+	const summary = `data API v1 to ${store.name}: ${files.length} files, ${total} written${why === "" ? "" : ` (${why})`} by run ${run}, nothing deleted, in ${took} ms`;
 	for (const line of lines) console.log(line);
 	console.log(summary);
-	toSummary(`${summary}\n\n\`\`\`\n${lines.join("\n")}\n\`\`\``);
+	toSummary(heading, `${summary}\n\n\`\`\`\n${lines.join("\n")}\n\`\`\``);
 }
 
 if (import.meta.main) {

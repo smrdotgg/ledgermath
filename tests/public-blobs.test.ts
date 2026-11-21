@@ -4,7 +4,9 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node
 import { tmpdir } from "node:os";
 import { join, relative, sep } from "node:path";
 
-import { apiBucketArgs, TREE_CACHE_CONTROL, TREE_CONTENT_TYPE, TREE_KINDS, treeObject } from "../infra/runs/api-bucket";
+import { apiBucketArgs, calendarDate, TREE_CACHE_CONTROL, TREE_CONTENT_TYPE, TREE_KINDS, treeObject } from "../infra/runs/api-bucket";
+import { API_SCHEMAS as API_SCHEMAS_OF_BUILD } from "../scripts/lib/api";
+import { API_SCHEMAS } from "../scripts/lib/api-schemas";
 import {
 	ALIAS_RECORD_TYPES,
 	aliasRecordArgs,
@@ -46,6 +48,7 @@ import {
 	reminder,
 	REQUEST_FUNCTION_CODE,
 	RESPONSE_HEADERS_POLICY,
+	RUN_ID,
 	RUN_KEY,
 	runsBucketArgs,
 	S3_GET_USD_PER_THOUSAND,
@@ -66,6 +69,7 @@ import {
 import { DISTRIBUTION_NAME } from "../infra/runs/public-blobs-guard";
 import { PRODUCTION_STAGE, runsStageApp } from "../infra/runs/stages";
 import { blobsFromBucket, PUBLIC_REQUESTS_PER_SECOND, publicBlobStore } from "../scripts/lib/blobs";
+import { failedTests, readJunit } from "./junit";
 import { S3Standin } from "./s3-standin";
 
 // The turn-on rehearsal runs the suite again in its own processes: seconds on a loaded machine.
@@ -154,13 +158,23 @@ const PREPARE = RESOURCES.slice(RESOURCES.indexOf("export function preparePublic
 /** Set in the turn-on rehearsal's own processes (below): the committed setting is then not the one in force. */
 const REHEARSAL = process.env.LM_PUBLIC_API_STATE !== undefined;
 
+/**
+ * RELEASED_STATE: the state the public API is released in, which the
+ * committed switch must hold. "off": nothing is public in what is merged. The
+ * commit that turns the public API on (README, "The public data API",
+ * "Turning it on") sets PUBLIC_API.state and this, together, on purpose, to
+ * the state it deploys; the release gate below and the rehearsal both read it,
+ * and no other test reads the committed switch.
+ */
+const RELEASED_STATE: PublicApiState = "off";
+/** The release gate, as the JUnit report names it. */
+const GATE = "tests/public-blobs.test.ts > the switch > RELEASE GATE: the committed switch is the released state, for production-runs";
+
 describe("the switch", () => {
-	// RELEASE GATE. The one test that reads the committed switch: nothing is public in what is merged while it says "off".
-	// The commit that turns the public API on (README, "The public data API", "Turning it on") changes this test, on purpose,
-	// to the state it deploys; every other test builds each state from its own fixture, whatever is committed.
-	test("RELEASE GATE: the committed switch is off, for production-runs", () => {
+	// RELEASE GATE. The one test that reads the committed switch: it must be RELEASED_STATE.
+	test("RELEASE GATE: the committed switch is the released state, for production-runs", () => {
 		expect(PUBLIC_API.stage).toBe(PRODUCTION_STAGE);
-		expect(PUBLIC_API.state).toBe("off");
+		expect(PUBLIC_API.state).toBe(RELEASED_STATE);
 	});
 
 	test("is one typed setting, read once by the stack, and declared as the union of its states, so the type check sees every state", () => {
@@ -197,39 +211,37 @@ describe("the switch", () => {
 		}
 	});
 
-	test("the documented turn-on change, and the console plan fallback, fail exactly the release gate", async () => {
+	test("rehearsed in child processes for every state and plan attachment, the switch fails the release gate exactly when it is not the released state, and nothing else", async () => {
 		if (REHEARSAL) return;
 		const files = ["tests/public-blobs.test.ts", "tests/public-blobs-guard.test.ts", "tests/plan-watch.test.ts", "tests/public-api-graph.test.ts"];
-		for (const [state, attachment, gateFails] of [
-			["dark", "code", true],
-			["closed", "code", true],
-			["on", "code", true],
-			["off", "console", false],
-			["dark", "console", true],
-		] as const) {
-			const child = Bun.spawn(["bun", "test", "--preload", "./tests/rehearse-switch.ts", ...files], {
-				cwd: ROOT,
-				env: { ...process.env, LM_PUBLIC_API_STATE: state, LM_PUBLIC_API_PLAN: attachment },
-				stdout: "pipe",
-				stderr: "pipe",
-			});
-			const [stdout, stderr, exitCode] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
-			const output = `${stdout}${stderr}`;
-			const failed = [...output.matchAll(/^\(fail\) (.*?)(?: \[[\d.]+m?s\])?$/gm)].map((match) => match[1]);
-			expect({ state, attachment, failed }).toEqual({ state, attachment, failed: gateFails ? ["the switch > RELEASE GATE: the committed switch is off, for production-runs"] : [] });
-			expect(exitCode).toBe(gateFails ? 1 : 0);
+		const reports = mkdtempSync(join(tmpdir(), "rehearse-switch-"));
+		for (const state of STATES) {
+			for (const attachment of PLAN_ATTACHMENTS) {
+				const report = join(reports, `${state}-${attachment}.xml`);
+				const child = Bun.spawn(["bun", "test", "--preload", "./tests/rehearse-switch.ts", "--reporter=junit", `--reporter-outfile=${report}`, ...files], {
+					cwd: ROOT,
+					env: { ...process.env, LM_PUBLIC_API_STATE: state, LM_PUBLIC_API_PLAN: attachment },
+					stdout: "pipe",
+					stderr: "pipe",
+				});
+				const [, , exitCode] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
+				const xml = readFileSync(report, "utf8");
+				const expected = state === RELEASED_STATE ? [] : [GATE];
+				expect({ state, attachment, failed: failedTests(xml) }).toEqual({ state, attachment, failed: expected });
+				// Every file ran: its tests are in the report.
+				for (const file of files) expect(readJunit(xml).some((entry) => entry.file === file)).toBe(true);
+				expect({ state, attachment, exitCode }).toEqual({ state, attachment, exitCode: expected.length === 0 ? 0 : 1 });
+			}
 		}
 	});
 
-	test("refuses it on for any stage but production-runs, whatever stage is deployed", () => {
-		for (const stage of ["smr-runs", "production", "production-runs2", "dev-runs", "Production-runs"]) {
-			for (const state of ["dark", "closed", "on"] as const) {
+	test("refuses a setting naming any stage but production-runs, in every state, off included", () => {
+		for (const stage of ["smr-runs", "production", "production-runs2", "dev-runs", "Production-runs", "", "production-run", " production-runs"]) {
+			for (const state of STATES) {
 				const setting = { stage, state, plan: "code" as const };
 				expect(() => checkSetting(setting)).toThrow(`The public data API may be served from ${PRODUCTION_STAGE} alone`);
 				for (const deployed of [stage, STAGE, "smr-runs"]) expect(() => publicApiPlan(setting, deployed)).toThrow("may be served from production-runs alone");
 			}
-			expect(() => checkSetting({ stage, state: "off", plan: "code" })).not.toThrow();
-			expect(publicApiPlan({ stage, state: "off", plan: "code" }, stage)).toBeNull();
 		}
 		// And every deploy checks it before anything else, on every stage.
 		expect(PREPARE.indexOf("checkSetting(setting);")).toBeGreaterThan(0);
@@ -468,6 +480,14 @@ const INVENTORY: Record<Origin, string[]> = {
 		`blobs/sha256/${HEX.slice(1)}`,
 		`blobs/sha256/${HEX}0`,
 		`blobs/sha256/${HEX}/x`,
+		// Dates that are no day of the calendar.
+		"runs/2026/02/30/01a1f200-3dd5-7ac0-8994-a5f0ba761290.json",
+		"runs/2026/13/01/01a1f200-3dd5-7ac0-8994-a5f0ba761290.json",
+		"runs/2026/02/29/01a1f200-3dd5-7ac0-8994-a5f0ba761290.json",
+		"boots/2026/00/10/0bd3dc59-287c-4e18-b5b3-7dd30d38d0b0.json",
+		"boots/2026/04/31/0bd3dc59-287c-4e18-b5b3-7dd30d38d0b0.json",
+		// A leap year's 29th of February is a day.
+		"runs/2024/02/29/01a1f200-3dd5-7ac0-8994-a5f0ba761290.json",
 	],
 	api: [
 		"v1/index.json",
@@ -489,6 +509,15 @@ const INVENTORY: Record<Origin, string[]> = {
 		"v1/prices/2026-11-19.json.tmp",
 		"v1/schemas/index.schema.json.old",
 		"v1/series/",
+		// Names the build cannot write: a schema it does not publish, a month or day that is not one.
+		"v1/schemas/unpublished.schema.json",
+		"v1/prices/2026-99-99.json",
+		"v1/prices/2026-02-29.json",
+		"v1/prices/2026-11-31.json",
+		"v1/series/0cacb5fd6fae/2026-13.json",
+		"v1/series/0cacb5fd6fae/2026-00.json",
+		// A leap year's 29th of February is a day.
+		"v1/prices/2028-02-29.json",
 	],
 };
 
@@ -539,7 +568,7 @@ describe("what is served, and what is not", () => {
 				served++;
 			}
 		}
-		expect(served).toBe(9);
+		expect(served).toBe(11);
 	});
 
 	test("no key of no served shape is ever read, however it is spelt, served prefix or not; every read is of a served shape, from the bucket that serves it", () => {
@@ -634,18 +663,34 @@ describe("the edge in on, in front of a stand-in for S3 that holds every key of 
 				refused++;
 			}
 		}
-		expect(refused).toBe(24);
+		expect(refused).toBe(35);
 	});
 
-	test("refuses another host with 403 before the bucket is asked, whatever the address", async () => {
-		for (const host of ["d111111abcdef8.cloudfront.net", null]) {
-			for (const key of ["v1/index.json", "runs/2026/11/19/01a1f200-3dd5-7ac0-8994-a5f0ba761290.json", `blobs/sha256/${HEX}`]) {
+	test("refuses another host with the same 403 before the bucket is asked, whatever the address, from the served behaviours and the default alike", async () => {
+		const answers = new Set<string>();
+		for (const host of ["d111111abcdef8.cloudfront.net", "API.LEDGERMATH.COM.", null]) {
+			for (const key of ["v1/index.json", "runs/2026/11/19/01a1f200-3dd5-7ac0-8994-a5f0ba761290.json", `blobs/sha256/${HEX}`, "", "source/x.tar.gz", "v1/notes.md", "nothing/here"]) {
 				const got = await edge(`/${key}`, host);
-				expect({ status: got.status, from: got.from }).toEqual({ status: 403, from: "function" });
-				expect(got.body).toContain("https://api.ledgermath.com/");
+				expect({ key, status: got.status, from: got.from }).toEqual({ key, status: 403, from: "function" });
+				answers.add(got.body);
 			}
 		}
+		expect([...answers]).toEqual(["Forbidden. LedgerMath's data API is served at https://api.ledgermath.com/ and under no other name.\n"]);
 		expect(standin.requests).toEqual([]);
+	});
+});
+
+describe("a wrong host, in every state", () => {
+	test("gets 403 from every behaviour's function in dark and closed too, and 404 only under api.ledgermath.com", () => {
+		for (const state of ["dark", "closed", "on"] as const) {
+			const spec = distributionArgs(REFS, plan(state));
+			for (const path of ["/", "/v1/index.json", "/runs/2026/11/19/01a1f200-3dd5-7ac0-8994-a5f0ba761290.json", "/source/x"]) {
+				const wrong = viewerRequest(behaviourFor(spec, path), path, "d111111abcdef8.cloudfront.net");
+				expect({ state, path, status: isResponse(wrong) ? wrong.statusCode : "forwarded" }).toEqual({ state, path, status: 403 });
+			}
+			const root = viewerRequest(behaviourFor(spec, "/"), "/", API_DOMAIN.name);
+			expect(isResponse(root) ? root.statusCode : "forwarded").toBe(404);
+		}
 	});
 });
 
@@ -940,10 +985,11 @@ describe("the shapes of key served", () => {
 		}
 	});
 
-	test("a Run file's id is the Run schema's version 7 UUID", () => {
+	test("a Run file's id is the Run schema's version 7 UUID, after a day of the calendar", () => {
 		const schema = JSON.parse(readFileSync(join(ROOT, "schemas", "run.schema.json"), "utf8")) as { properties: { id: { pattern: string } } };
 		const id = schema.properties.id.pattern.replace(/^\^|\$$/g, "");
-		expect(RUN_KEY.source).toBe(`^runs\\/[0-9]{4}\\/[0-9]{2}\\/[0-9]{2}\\/${id}\\.json$`);
+		expect(RUN_ID).toBe(id);
+		expect(RUN_KEY.source).toBe(new RegExp(`^runs\\/${calendarDate("\\/")}\\/${id}\\.json$`).source);
 	});
 
 	test("cover every Run file, boot summary and blob of the samples, and every link the built tree gives to evidence", () => {
@@ -990,10 +1036,42 @@ describe("the shapes of key served", () => {
 		expect(links).toBeGreaterThan(20);
 	});
 
-	test("are, shape for shape, the README's table of addresses", () => {
-		const rows = SECTION.split("\n").filter((line) => /^\| (a|an|the) [^|]+ \| `\^\\\//.test(line));
-		const listed = rows.map((row) => /^\| ([^|]+?) \| `([^`]+)` \|$/.exec(row)?.slice(1, 3));
+	test("are, shape for shape, the README's list of addresses", () => {
+		const rows = SECTION.split("\n").filter((line) => /^- (a|an|the) [^:]+: `\^\\\//.test(line));
+		const listed = rows.map((row) => /^- ([^:]+): `([^`]+)`$/.exec(row)?.slice(1, 3));
 		expect(listed).toEqual(SERVED.flatMap((served) => served.keys.map((shape) => [shape.kind, uriPattern(shape)])));
+	});
+
+	test("serve exactly the schemas the build publishes, from the build's own list", () => {
+		expect(API_SCHEMAS_OF_BUILD).toBe(API_SCHEMAS);
+		const schema = TREE_KINDS.find((kind) => kind.kind === "a schema")?.path as RegExp;
+		for (const { name } of API_SCHEMAS) expect(isServedKey(`v1/schemas/${name}.schema.json`)).toBe(true);
+		for (const name of ["unpublished", "index2", "series-months", "Index", "run", ""]) expect(isServedKey(`v1/schemas/${name}.schema.json`)).toBe(false);
+		expect(schema.source).toContain(`(?:${API_SCHEMAS.map((entry) => entry.name).join("|")})`);
+	});
+
+	test("take a date as a day of the calendar and a month as a month, the leap years' 29th of February included, and nothing else", () => {
+		const real = (year: number, month: number, day: number): boolean => {
+			const date = new Date(Date.UTC(year, month - 1, day));
+			return month >= 1 && month <= 12 && day >= 1 && date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
+		};
+		const pad = (value: number, width: number): string => String(value).padStart(width, "0");
+		let checked = 0;
+		for (const year of [1900, 2000, 2023, 2024, 2026, 2028, 2100, 2400]) {
+			for (let month = 0; month <= 13; month++) {
+				expect(isServedKey(`v1/series/0cacb5fd6fae/${pad(year, 4)}-${pad(month, 2)}.json`)).toBe(month >= 1 && month <= 12);
+				for (let day = 0; day <= 32; day++) {
+					const [y, m, d] = [pad(year, 4), pad(month, 2), pad(day, 2)];
+					const expected = real(year, month, day);
+					expect({ date: `${y}-${m}-${d}`, served: isServedKey(`v1/prices/${y}-${m}-${d}.json`) }).toEqual({ date: `${y}-${m}-${d}`, served: expected });
+					expect(isServedKey(`runs/${y}/${m}/${d}/01a1f200-3dd5-7ac0-8994-a5f0ba761290.json`)).toBe(expected);
+					expect(isServedKey(`boots/${y}/${m}/${d}/0bd3dc59-287c-4e18-b5b3-7dd30d38d0b0.json`)).toBe(expected);
+					checked++;
+				}
+			}
+		}
+		expect(checked).toBe(8 * 14 * 33);
+		expect(calendarDate("-")).not.toContain("|[0-9]{4}-02-29");
 	});
 });
 
@@ -1027,7 +1105,7 @@ describe("the functions", () => {
 		}
 	});
 
-	test("the no-route function answers 404 to every address, served or not, and reaches neither cache nor bucket", () => {
+	test("the no-route function answers 404 to every address under api.ledgermath.com, served or not, and reaches neither cache nor bucket", () => {
 		for (const uri of ["/", "/runs/2026/11/14/x.json", "/boots/", "/logs/2026/11/14/b.log", "/source/x.tar.gz", "/index.html", "/v1/index.json", `/blobs/sha256/${HEX}`]) {
 			const got = noRoute({ context: { eventType: "viewer-request" }, request: request(uri) }) as CfResponse;
 			expect(got.statusCode).toBe(404);
@@ -1036,6 +1114,41 @@ describe("the functions", () => {
 			expect(got.headers["content-type"]?.value).toBe("text/plain; charset=utf-8");
 			expect(got.body?.data).toContain("/v1/index.json");
 		}
+	});
+
+	test("the no-route function answers another host with the request function's 403, word for word", () => {
+		for (const host of ["d111111abcdef8.cloudfront.net", null]) {
+			for (const uri of ["/", "/v1/index.json", "/anything"]) {
+				const fromDefault = noRoute({ context: { eventType: "viewer-request" }, request: request(uri, host) }) as CfResponse;
+				const fromServed = requestFunction({ context: { eventType: "viewer-request" }, request: request("/v1/index.json", host) }) as CfResponse;
+				expect(fromDefault.statusCode).toBe(403);
+				expect(fromDefault).toEqual(fromServed);
+			}
+		}
+	});
+});
+
+describe("the JUnit report reader", () => {
+	test("counts each failed test once, by its file, describe and name, decoding what the report escapes", () => {
+		const xml = [
+			'<?xml version="1.0" encoding="UTF-8"?>',
+			'<testsuites name="bun test" tests="3" failures="1">',
+			'  <testsuite name="tests/a.test.ts" file="tests/a.test.ts">',
+			'    <testsuite name="a group" file="tests/a.test.ts" line="3">',
+			'      <testcase name="passes" classname="a group" file="tests/a.test.ts" line="4" assertions="1" />',
+			'      <testcase name="fails, with &quot;quotes&quot; &amp; &lt;angles&gt;" classname="a group" file="tests/a.test.ts" line="7">',
+			'        <failure type="AssertionError" message="no">AssertionError</failure>',
+			"      </testcase>",
+			'      <testcase name="fails, with &quot;quotes&quot; &amp; &lt;angles&gt;" classname="a group" file="tests/a.test.ts" line="7">',
+			'        <failure type="AssertionError" message="no">AssertionError again</failure>',
+			"      </testcase>",
+			"    </testsuite>",
+			"  </testsuite>",
+			"</testsuites>",
+		].join("\n");
+		expect(readJunit(xml).length).toBe(3);
+		expect(failedTests(xml)).toEqual(['tests/a.test.ts > a group > fails, with "quotes" & <angles>']);
+		expect(() => readJunit("(fail) a group > fails")).toThrow("not a JUnit report");
 	});
 });
 

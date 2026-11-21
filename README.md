@@ -32,7 +32,7 @@ as the base the build started from (last section).
 | `scripts/copy-runs.ts` | The copy job: the bucket's Run files and boot summaries into the Runs repository |
 | `scripts/copy-bucket.ts` | Copies one `-runs` bucket into another, across two accounts, only ever adding, and checks the copy (`scripts/lib/bucket-copy.ts`): the move to the production account |
 | `scripts/derive.ts`, `scripts/build-page.ts` | Run the Methods over the Runs; turn their Derivations into the page |
-| `scripts/build-api.ts`, `scripts/check-api.ts`, `scripts/previous-api.ts` | Cut the Derivations and the price files into the data API's static files, laid out as they will be served; check what was written against its schemas, its links, the Derivations and the Runs repository, and against the tree before it; fetch that tree, the last successful run's (`scripts/lib/api.ts`, `scripts/lib/api-check.ts`; section "The data API") |
+| `scripts/build-api.ts`, `scripts/check-api.ts`, `scripts/previous-api.ts` | Cut the Derivations and the price files into the data API's static files, laid out as they will be served; check what was written against its schemas, its links, the Derivations and the Runs repository, and against the tree before it; fetch that tree, the one the latest run that checked its tree kept (`scripts/lib/api.ts`, `scripts/lib/api-check.ts`; section "The data API") |
 | `scripts/alarm.ts` | Opens, or comments on, one issue when a watched Series has had no Run for 48 hours, or the newest price file is more than 48 hours old |
 | `.github/workflows/runs.yml` | On a schedule: copy, push, derive, page, the data API's files, alarm |
 | `scripts/fetch-prices.ts`, `scripts/check-prices.ts` | Make the day's price file from AWS's public price lists; check a price file by downloading its sources again and cutting them again |
@@ -764,8 +764,9 @@ permission to write to it ("The data API", "The API bucket").
 
 **One stage only.** `PUBLIC_API.stage` is `production-runs`, the stage that holds the
 permanent data (deployed with the profile `tabot-production`). Its type allows no other
-stage, and a setting that names another with anything but `off` stops every deploy, of
-every stage (`checkSetting`). On every other stage, `smr-runs` included, nothing of it is
+stage, and a setting that names another, in any state, `off` included, stops every deploy,
+of every stage (`checkSetting`), so that a typo is caught while it is harmless rather than
+on the day the state changes. On every other stage, `smr-runs` included, nothing of it is
 created and AWS is not even asked, whatever `PUBLIC_API.state` says. Every AWS call the
 deploy makes, and every command it prints, uses the profile of the stage being deployed
 (its provider's, from `sst.config.ts`, or `AWS_PROFILE`). The workflow keeps reading the
@@ -795,29 +796,34 @@ never compressed, so the bytes served are the bytes their address hashes.
 
 **Only the keys the project writes, and only at one host.** Under each prefix, only keys of
 the shapes the project writes there are served: the tree's kinds (`TREE_KINDS` in
-`infra/runs/api-bucket.ts`, the layout of ADR-0030), a Run file as `runner/run.py` names it
-(its id the Run schema's version 7 UUID), a boot summary as it names it (the kernel's boot
-id), a blob by its SHA-256. On 2026-11-21 every one of the Runs repository's 7,270 Run
-files and 197 boot summaries had these shapes. The request function, in front of every
-served behaviour, answers 404 to any other key, before the cache or a bucket sees it, so an
-object left under a served prefix in another shape (a `.bak`, an upper-case id, a boot's
-`unknown.json`, which two boots of one day without a boot id would share) is never served.
-It also answers 403 to a request whose `Host` is not `api.ledgermath.com`, the
-distribution's own `*.cloudfront.net` name included: the API has one host. The list is
+`infra/runs/api-bucket.ts`, the layout of ADR-0030: a schema by the build's own list of
+them, `API_SCHEMAS`, kept in `scripts/lib/api-schemas.ts` and used by the build and the
+edge alike; a month as a real month, a price file's day as a real day), a Run file as
+`runner/run.py` names it (its day a real day, its id the Run schema's version 7 UUID), a
+boot summary as it names it (its day a real day, the kernel's boot id), a blob by its
+SHA-256. "A real day": months 01 to 12, and days the month has, February the 29th in leap
+years only. On 2026-11-21 every one of the Runs repository's 7,270 Run files and 197 boot
+summaries had these shapes. The request function, in front of every served behaviour,
+answers 404 to any other key, before the cache or a bucket sees it, so an object left under
+a served prefix in another shape (a `.bak`, an upper-case id, a schema the build does not
+publish, a date such as `2026-99-99` or `2026-02-29`, a boot's `unknown.json`, which two
+boots of one day without a boot id would share) is never served. Every function, the
+default behaviour's included, answers 403 to a request whose `Host` is not
+`api.ledgermath.com`, the distribution's own `*.cloudfront.net` name included, whatever the
+path: the API has one host, and a wrong host gets the same answer everywhere. The list is
 `SERVED` in `infra/runs/public-blobs.ts`, from which the function is written; a test holds
-this table to it, and others hold the samples' and the built tree's every address to it:
+this list to it, and others hold the samples' and the built tree's every address to it.
+The addresses, as the request function matches them:
 
-| Kind | Address, as the request function matches it |
-|------|---------------------------------------------|
-| a schema | `^\/v1\/schemas\/[a-z0-9-]+\.schema\.json$` |
-| a month file | `^\/v1\/series\/[0-9a-f]{12}\/[0-9]{4}-[0-9]{2}\.json$` |
-| a price file | `^\/v1\/prices\/[0-9]{4}-[0-9]{2}-[0-9]{2}\.json$` |
-| a Series file | `^\/v1\/series\/[0-9a-f]{12}\.json$` |
-| the list of Series | `^\/v1\/series\.json$` |
-| the table of contents | `^\/v1\/index\.json$` |
-| a Run file | `^\/runs\/[0-9]{4}\/[0-9]{2}\/[0-9]{2}\/[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.json$` |
-| a boot summary | `^\/boots\/[0-9]{4}\/[0-9]{2}\/[0-9]{2}\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.json$` |
-| a blob | `^\/blobs\/sha256\/[0-9a-f]{64}$` |
+- a schema: `^\/v1\/schemas\/(?:index|series-list|series|series-month|prices)\.schema\.json$`
+- a month file: `^\/v1\/series\/[0-9a-f]{12}\/[0-9]{4}-(?:0[1-9]|1[0-2])\.json$`
+- a price file: `^\/v1\/prices\/(?:[0-9]{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|1[0-9]|2[0-8])|[0-9]{4}-(?:0[13-9]|1[0-2])-(?:29|30)|[0-9]{4}-(?:0[13578]|1[02])-31|(?:[0-9]{2}(?:0[48]|[2468][048]|[13579][26])|(?:[02468][048]|[13579][26])00)-02-29)\.json$`
+- a Series file: `^\/v1\/series\/[0-9a-f]{12}\.json$`
+- the list of Series: `^\/v1\/series\.json$`
+- the table of contents: `^\/v1\/index\.json$`
+- a Run file: `^\/runs\/(?:[0-9]{4}\/(?:0[1-9]|1[0-2])\/(?:0[1-9]|1[0-9]|2[0-8])|[0-9]{4}\/(?:0[13-9]|1[0-2])\/(?:29|30)|[0-9]{4}\/(?:0[13578]|1[02])\/31|(?:[0-9]{2}(?:0[48]|[2468][048]|[13579][26])|(?:[02468][048]|[13579][26])00)\/02\/29)\/[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.json$`
+- a boot summary: `^\/boots\/(?:[0-9]{4}\/(?:0[1-9]|1[0-2])\/(?:0[1-9]|1[0-9]|2[0-8])|[0-9]{4}\/(?:0[13-9]|1[0-2])\/(?:29|30)|[0-9]{4}\/(?:0[13578]|1[02])\/31|(?:[0-9]{2}(?:0[48]|[2468][048]|[13579][26])|(?:[02468][048]|[13579][26])00)\/02\/29)\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.json$`
+- a blob: `^\/blobs\/sha256\/[0-9a-f]{64}$`
 
 A new kind of file, or a new shape of id, is served only once it is added there.
 
@@ -1171,20 +1177,23 @@ pay-as-you-go pricing (`closed`, if it is needed, is billed at pay-as-you-go rat
 404s and the inspection of what reaches it until the plan is attached). The change is one
 line, `state` in `PUBLIC_API` (`infra/runs/public-blobs.ts`), made twice: `"off"` to
 `"dark"`, then `"dark"` to `"on"`, each in its own reviewed pull request, merged, and
-deployed from `main`. **Each of those commits also changes, on purpose, the one test that
-pins the switch:** "RELEASE GATE: the committed switch is off, for production-runs" in
-`tests/public-blobs.test.ts`, to expect the state the commit sets. It is the only test that
-reads the committed setting, and it fails until it is changed, so that no commit turns the
-API on by accident; every other test builds each state from its own fixture, and a test
-rehearses the change (and the `console` plan attachment) to show that it fails nothing else.
+deployed from `main`. **Each of those commits also changes, on purpose, the one constant
+that pins the switch:** `RELEASED_STATE` in `tests/public-blobs.test.ts`, set to the state
+the commit sets, in the same commit. The test "RELEASE GATE: the committed switch is the
+released state, for production-runs" is the only one that reads the committed setting, and
+it fails until the two agree, so that no commit turns the API on by accident; every other
+test builds each state from its own fixture. A test rehearses the change for every state
+and both plan attachments: it copies the repository, sets both the switch and
+`RELEASED_STATE` there, runs the whole suite in the copy with Bun's JUnit report, and
+expects no failing test and every test file run.
 Every command uses the stage's own profile (`tabot-production`); the deploy prints the next
 step each time.
 
 0. Before: the stage is deployed with the API bucket, `API_BUCKET` is set, and the latest
    run of the `runs` workflow passed "Check that the API bucket holds the data API's
-   files" ("The data API", "The API bucket"), so what goes public is the current, checked
-   tree.
-1. Set `state: "dark"` and the release gate's expectation to `"dark"`, merge, `bunx sst
+   files" in its `publish` job ("The data API", "The API bucket"), so what goes public is
+   the current, checked tree.
+1. Set `state: "dark"` and `RELEASED_STATE` to `"dark"`, merge, `bunx sst
    diff --stage production-runs`, then deploy that stage. It makes, and changes nothing
    else:
    - the web ACL `ledgermath-production-runs-public-api`, scope `CLOUDFRONT`, in us-east-1
@@ -1216,10 +1225,10 @@ step each time.
    <publicApi.distributionId>` says `Enabled` false, `Status` `Deployed`, alias
    `api.ledgermath.com`; `dig +short api.ledgermath.com` gives CloudFront's addresses.
 3. Only if step 1 failed because AWS refused to subscribe a disabled distribution: set
-   `state: "closed"` (and the release gate's expectation), merge, deploy (the distribution is enabled, answering 404 to
+   `state: "closed"` (and `RELEASED_STATE`), merge, deploy (the distribution is enabled, answering 404 to
    everything; with `plan: "code"` this deploy creates the subscription), and check the
    plan as in step 2 before the watch's 60 minutes are up.
-4. Set `state: "on"` and the release gate's expectation to `"on"`, merge, deploy. Before it
+4. Set `state: "on"` and `RELEASED_STATE` to `"on"`, merge, deploy. Before it
    changes anything the deploy checks that an ACTIVE plan covers the distribution, and
    stops if not; it checks once, so a plan cancelled after that is left to the watch. The
    distribution is enabled (or stays so), the request function takes the 404 function's
@@ -1371,8 +1380,8 @@ the web ACL's two managed groups and per-address limit; Origin Access Control an
 buckets with their grants only in `on`; managed policies only; the evidence's immutable
 headers and CSP sandbox from a viewer-response function; the reader of blobs at a public
 address (`--blobs-url`). *Changed:* the setting is `PUBLIC_API` (`PUBLIC_BLOBS` before),
-and naming another stage than `production-runs` now stops every deploy instead of being
-ignored; it serves four prefixes from two buckets, not one; the total limit counts every
+and naming another stage than `production-runs`, in any state, now stops every deploy
+instead of being ignored; it serves four prefixes from two buckets, not one; the total limit counts every
 request, not `/blobs/` alone; JSON is compressed for readers that ask; the distribution's
 comment, by which the guard and the watch recognise it, says `public API
 (api.ledgermath.com)`; every resource's name says `PublicApi`, and AWS names
@@ -1460,8 +1469,12 @@ credentials through OIDC, checks out `smrdotgg/ledgermath-runs` with the deploy 
 runs the copy job, commits and pushes what it added, runs both Methods, builds the page,
 uploads the page and both files of Derivations as the artifact `page`, builds and checks
 the data API's files and keeps them for a week as the artifact `api` (section "The data
-API"; to compare them with the last successful run's, its token may read Actions), and runs
-the alarm with the workflow's own token. Each Method runs on its own: when one fails, `derive.ts`
+API"; to compare them with the tree an earlier run checked and kept, its token may read
+Actions), and runs the alarm with the workflow's own token. That is its first job, `runs`,
+which knows nothing of publishing. A second job, `publish`, runs after it, only when it
+succeeded and `API_BUCKET` is set, and puts the checked tree into the API bucket ("The data
+API", "The API bucket"); its failure is its own and changes nothing of the first job's
+(its caches, its artifacts, the next run's baseline). Each Method runs on its own: when one fails, `derive.ts`
 still writes the other's Derivations and, in place of the failed one's, a note saying why
 (`page/<name>.failed.json`); the page is built from what there is and says which part is
 missing and why, the artifact is kept, and the run still ends as failed. Between runs it keeps, in GitHub's cache, the dump blobs it
@@ -1477,7 +1490,7 @@ It needs:
 |-------|------|---------------|
 | Variable | `RUNS_AWS_ROLE_ARN` | The scheduled stage's output `runsReaderRole` (`jq -r .runsReaderRole .sst/outputs.<stage>.json` after a deploy) |
 | Variable | `RUNS_BUCKET` | The scheduled stage's output `bucket`, the bucket's name |
-| Variable | `API_BUCKET` | The scheduled stage's output `apiBucket`, once the stage is deployed with it; while unset, the data API's files are not uploaded and the step summary says so ("The data API", "The API bucket") |
+| Variable | `API_BUCKET` | The scheduled stage's output `apiBucket`, once the stage is deployed with it; while unset, the `publish` job is skipped and nothing is uploaded ("The data API", "The API bucket") |
 | Secret | `RUNS_REPO_DEPLOY_KEY` | The private half of an SSH key whose public half is a deploy key of `smrdotgg/ledgermath-runs` **with write access** (it pushes) |
 
 For the key: `ssh-keygen -t ed25519 -N '' -C ledgermath-runs-copy -f runs-deploy-key`,
@@ -2243,9 +2256,10 @@ Issue #64, ADR-0030. LedgerMath's numbers, for agents first, as a tree of small 
 files, each kind with a JSON schema. `scripts/build-api.ts` cuts it from the two files of
 Derivations and the Runs repository's price files, laid out exactly as it will be served
 from `https://api.ledgermath.com`. Nothing is served yet: the `runs` workflow builds the
-tree, checks it, against the tree its last successful run kept too, keeps it for a week as
-the artifact `api`, beside `page`, and uploads it to the stage's private API bucket ("The
-API bucket", below). The serving is built and off ("The public data API: CloudFront on
+tree, checks it, against the tree the latest earlier run that checked its own kept too,
+keeps it for a week as the artifact `api`, beside `page`, and, in a job of its own,
+`publish`, uploads it to the stage's private API bucket ("The API bucket", below). The
+serving is built and off ("The public data API: CloudFront on
 the Free plan at `api.ledgermath.com`", under "The daily box"), and goes public only on
 the maintainer's go.
 
@@ -2349,9 +2363,12 @@ address is `--base`, so a private or test address can stand in.
   when the previous tree can be read well enough to list the Series and Runs it published
   (its month files, or, in the layout before the split, its Series files' `points`), none
   of them may be missing, and the check says how many it compared. The workflow fetches the
-  artifact `api` of the latest successful run on main created before it
-  (`scripts/previous-api.ts`), and says what it found in the step's summary; a tree it
-  could not download, or a reply it cannot read, fails the step.
+  artifact `api` of the latest run on main created before it that kept one
+  (`scripts/previous-api.ts`, among the 50 latest completed runs). A run keeps it only when
+  its tree passed this check, so the baseline is a checked tree whatever happened after:
+  a run whose `publish` job failed (or was skipped) still is one, and a run whose check
+  failed never is. It says what it found in the step's summary; a tree it could not
+  download, or a reply it cannot read, fails the step.
 - **When the gate fails on a real late Run** of a kind the allowance does not cover, the
   tree is not kept, and the next run fails the same way against the same earlier tree. The
   new-baseline input is not the fix (it does not apply to a tree of the same layout): find
@@ -2449,30 +2466,54 @@ unable to write to the Runs bucket; so that the Runs bucket stays written once a
 versioned for good, while these files are rewritten every round; and so that what readers
 can reach of each bucket is one list per bucket.
 
-**The upload.** In the `runs` workflow, after "Check the data API's files" has passed and
-the tree is kept as the artifact `api`, and only when the repository variable `API_BUCKET`
-is set (to the scheduled stage's `apiBucket` output), `scripts/upload-api.ts` writes the
-tree to the bucket, each file at its own path as key:
+**The upload is a job of its own.** The `runs` workflow's first job, `runs`, builds and
+checks the tree and keeps it as the artifact `api`; it knows nothing of the bucket. Its
+second job, `publish`, `needs` it and runs only when it succeeded and the repository
+variable `API_BUCKET` is set (to the scheduled stage's `apiBucket` output); while the
+variable is unset the job is skipped, which is not an error. It has its own 15-minute
+timeout and only the permissions it uses (read the repository, ask for the OIDC token), and
+it downloads the artifact `api` this run kept, so it uploads exactly the tree that was
+checked. Its steps: "Check the API bucket before anything is written" (`scripts/upload-api.ts
+--preflight`), "Upload the data API's files to the API bucket" (`scripts/upload-api.ts`),
+and "Check that the API bucket holds the data API's files" (`scripts/check-api-bucket.ts`).
+When one fails, the `publish` job is red and the run is marked failed (GitHub's own
+failed-run email goes to whoever last changed the workflow's schedule, per their
+notification settings; there is no other alert), but the `runs` job stays green, its
+artifacts are kept, and the next run's baseline is this run's tree ("The data API").
+
+**Never two at once, and never an older tree after a newer one.** The workflow's
+concurrency group `runs` (never cancelled in progress) lets one run of the workflow, its
+`publish` job included, run at a time, and GitHub keeps only the newest run waiting; the
+`publish` job's own group, `api-bucket`, keeps any two `publish` jobs apart even so. And
+every object the upload writes carries the run that wrote it (`x-amz-meta-ledgermath-run`,
+the run's id, which only grows): when the bucket holds any file written by a later run than
+this one, nothing is written and the job fails ("Not uploaded: ... later than this run").
+That is what stops a re-run of an old run's `publish` job, which the groups alone would let
+through, even after a newer run's upload stopped halfway.
+
+`scripts/upload-api.ts` writes the tree to the bucket, each file at its own path as key:
 
 - **First, the whole bucket is listed**, before anything is written or asked about. If it
   holds a key the new tree does not have, under `v1/` or anywhere else, nothing at all is
   written: the step fails, and its summary lists each such key ("A key the tree does not
   have", below). Publishing a table of contents that no longer lists a file the bucket
   still serves would leave the bucket unequal to the tree for good, every later run failing
-  the same way, since nothing deletes.
+  the same way, since nothing deletes. The preflight step does this listing, and the
+  `HEAD`s below, and writes nothing: its summary says what the upload would write.
 - **Only what changed.** One `HEAD` per file, with `x-amz-checksum-mode: ENABLED`, gives
-  back the SHA-256 S3 verified and kept when the object was written, and its headers; a
-  file is written only when the bucket does not hold it, holds it without a SHA-256, holds
-  other bytes, or holds other headers. A month file that did not change is not rewritten.
+  back the SHA-256 S3 verified and kept when the object was written, its headers and the
+  run that wrote it; a file is written only when the bucket does not hold it, holds it
+  without a SHA-256, holds other bytes, or holds other headers (the run alone is no reason).
+  A month file that did not change is not rewritten.
 - **In an order that never leaves a readable file linking one not there yet**, five phases,
   each whole before the next starts: the schemas; the month files and price files; the
   Series files; the list, `v1/series.json`; the table of contents, `v1/index.json`. Each
   file links down only to files of earlier phases (a test reads every link of a built tree
   to hold it to that); its links up, to the table of contents, the list or a month file's
   own Series file, are to files a reader came through.
-- **A failed write fails the run, and the next run repairs the bucket.** It stops the
-  upload once the writes of its phase have settled; no later phase starts; the step fails,
-  and its summary names the phase, each key that failed and why. A month file changes in
+- **A failed write fails the `publish` job, and the next run repairs the bucket.** It
+  stops the upload once the writes of its phase have settled; no later phase starts; the
+  step fails, and its summary names the phase, each key that failed and why. A month file changes in
   place, so when the stop falls between the month files and the Series files, a Series
   file lists a month's previous sha256 while the month's address gives the new bytes, and
   no cache expiry repairs that (readers check the sha256: "The data API", above). The next
@@ -2488,23 +2529,24 @@ tree to the bucket, each file at its own path as key:
 - **Each object carries the headers it is served with**: `Content-Type: application/json`
   and `Cache-Control: public, max-age=300` (the public serving's managed policies take
   nothing else; "The public data API"), and `x-amz-checksum-sha256`, which S3 verifies, as
-  it verifies the signed body's SHA-256, so other bytes are refused.
+  it verifies the signed body's SHA-256, so other bytes are refused; and, not served, the
+  run that wrote it.
 
 Then `scripts/check-api-bucket.ts` checks that the whole bucket holds exactly the tree:
 the same keys, under `v1/` and nothing anywhere else, none missing and none more, each with
-the tree's SHA-256, size, `Content-Type` and `Cache-Control`. While `API_BUCKET` is not
-set, neither runs, and the step summary says that nothing was uploaded and why; that is not
-an error. Both write what they did, or why they stopped, to the step summary.
+the tree's SHA-256, size, `Content-Type` and `Cache-Control`. Each step writes what it did,
+or why it stopped, to the step summary.
 
-**A key the tree does not have.** The upload stopped, wrote nothing, and listed the keys;
-the published files are those of the last upload that succeeded, and every run fails the
-same way until the key is settled. The workflow cannot delete and never will; a person
+**A key the tree does not have.** The preflight step stopped, nothing was written, and its
+summary lists the keys; the published files are those of the last upload that succeeded,
+and every run's `publish` job fails the same way until the key is settled (its `runs` job
+is unaffected). The workflow cannot delete and never will; a person
 does, with the stage's own profile:
 
 1. For each key, find why the tree lacks it. A price file: was it taken out of the Runs
    repository on purpose (`git log -- prices/<yyyy>/<mm>/<dd>/aws.json` in
    `smrdotgg/ledgermath-runs`)? A schema: was it dropped from `API_SCHEMAS` in
-   `scripts/lib/api.ts` on purpose? A key outside `v1/`, or of no shape the build writes:
+   `scripts/lib/api-schemas.ts` on purpose? A key outside `v1/`, or of no shape the build writes:
    who put it there (`aws s3api head-object --bucket <apiBucket> --key <key> --profile
    tabot-production` gives its date and size)? A Series file or month file cannot be the
    cause: the gate keeps every one in every new tree, and a run would have failed there
@@ -2516,7 +2558,10 @@ does, with the stage's own profile:
    deleted file stops being served once CloudFront's copies expire (five minutes for the
    tree); readers who kept it keep it.
 4. Start the workflow by hand (Actions, `runs`, "Run workflow"), or wait for the next run:
-   it uploads, and "Check that the API bucket holds the data API's files" passes.
+   its `publish` job uploads, and "Check that the API bucket holds the data API's files"
+   passes. (Re-running the failed `publish` job of an earlier run works too, unless a later
+   run has written to the bucket since; then it refuses, as above, and the later run's
+   tree is the one to keep.)
 
 **The permission.** The workflow writes with the role it already assumes, `RunsReaderRole`,
 through a second policy of that role, `RunsApiUploadPolicy`: `s3:ListBucket` on the API
@@ -2541,7 +2586,9 @@ changed. To stop the upload, `gh variable delete API_BUCKET --repo smrdotgg/ledg
 
 ```bash
 # Locally, with the profile of the stage whose bucket it is, in a subshell, so that this shell keeps no keys.
-(eval "$(aws configure export-credentials --profile tabot-production --format env)" && bun scripts/upload-api.ts --tree /tmp/api --bucket <apiBucket>)
+# --run is the id of the run whose artifact api /tmp/api is (it is refused if a later run wrote to the bucket).
+(eval "$(aws configure export-credentials --profile tabot-production --format env)" && bun scripts/upload-api.ts --tree /tmp/api --bucket <apiBucket> --run <run id> --preflight)
+(eval "$(aws configure export-credentials --profile tabot-production --format env)" && bun scripts/upload-api.ts --tree /tmp/api --bucket <apiBucket> --run <run id>)
 (eval "$(aws configure export-credentials --profile tabot-production --format env)" && bun scripts/check-api-bucket.ts --tree /tmp/api --bucket <apiBucket>)
 ```
 

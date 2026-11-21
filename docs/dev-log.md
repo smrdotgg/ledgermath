@@ -1175,4 +1175,26 @@ A migrated benchmark is done only when **all** of these hold:
   stack's own code under Pulumi's mocks. ADR-0031 also states that the evidence's immutable
   caching assumes each key is written once, what holds that and what would catch a rewrite.
   Off, a deploy still makes only the API bucket and `RunsApiUploadPolicy`. Not deployed.
+- **2026-11-21** — The data API's serving, after a second review (FAIL). **The rehearsal
+  failed in CI and passed locally**: it counted failing tests from Bun's printed lines, and
+  under GitHub Actions Bun repeats each failure in a recap, so the release gate counted
+  twice. It now reads each child's JUnit report (`tests/junit.ts`), requires every test
+  file to have run, and covers every state and both plan attachments; the gate and the
+  rehearsal read one constant, `RELEASED_STATE`. A copy of the repository with the switch
+  and the constant both at `dark` passed the whole suite; with the constant left at `off`
+  it failed the gate alone. **Publishing is a job of its own**: the `runs` job does what it
+  did on `main`; `publish` needs it, runs only when it succeeded and `API_BUCKET` is set,
+  downloads the artifact `api`, and runs a preflight, the upload and the check, with a
+  15-minute timeout and only the permissions it uses. The baseline is the artifact `api`
+  of the latest earlier run that kept one (kept only when the check passed), so a run whose
+  `publish` failed is one and a run whose check failed is not. The workflow's concurrency
+  group keeps runs apart, the job's group keeps uploads apart, and each object now carries
+  the id of the run that wrote it, so a re-run of an old `publish` job never writes an older
+  tree over a newer one. **The edge's shapes are exact**: schema names are the generator's
+  `API_SCHEMAS` (moved to `scripts/lib/api-schemas.ts`, which imports nothing, so the
+  stack's bundle does not load the build), dates and months are real calendar values, and
+  the default function checks the `Host` too. **`checkSetting` refuses another stage in
+  every state**, `off` included. **The stack type check judges the compiler's exit**: a
+  signal, a non-zero exit with no diagnostics or lines it cannot read now fail, tested with
+  a stand-in compiler. Not deployed; the switch stays off.
 - _(agents: append your entry here, one per merged benchmark)_

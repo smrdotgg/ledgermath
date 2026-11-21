@@ -1,6 +1,8 @@
 /**
  * scripts/previous-api.ts: which tree the runs workflow compares its data API
- * with (the one kept by the latest successful run created before this one),
+ * with (the artifact api kept by the latest run created before this one that
+ * kept one, which a run does only when its tree passed the check, whatever
+ * its publish job did),
  * that it decides nothing about whether to compare, and that "there is none"
  * is never what a failure to fetch one, or a reply it cannot read, says. gh
  * is a stand-in here, answering as GitHub's API and `gh run download` do.
@@ -12,7 +14,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
 import { apiJson, buildApi, DEFAULT_BASE, readApiSchemas, readBootSummaries, readPriceFiles } from "../scripts/lib/api";
-import { CouldNotFetch, fetchPrevious, type Gh, type GhResult } from "../scripts/previous-api";
+import { CouldNotFetch, fetchPrevious, type Gh, type GhResult, RUNS_SEARCHED } from "../scripts/previous-api";
 import { makeApiFixture } from "./api-fixtures";
 
 setDefaultTimeout(60_000);
@@ -116,7 +118,7 @@ function previous(world: World, asked?: string[][]) {
 }
 
 describe("the previous tree", () => {
-	test("is the artifact api of the latest successful run on main created before this one, downloaded, its layout named beside this tree's", () => {
+	test("is the artifact api of the latest run on main created before this one that kept one, downloaded, its layout named beside this tree's", () => {
 		const asked: string[][] = [];
 		const { out, result } = previous(
 			{
@@ -130,15 +132,40 @@ describe("the previous tree", () => {
 			found: true,
 			run: 250,
 			url: "https://github.example/runs/250",
-			summary: `The previous tree is the artifact api of the last successful run created before this one, https://github.example/runs/250: layout ${LAYOUT}, this tree's ${LAYOUT}. Of one layout, every past month is compared with it; of another, the check fails unless this run was started by hand with the input new_baseline.`,
+			summary: `The previous tree is the artifact api of the latest run created before this one that kept one (as a run does only when its tree passed the check, however the run ended), https://github.example/runs/250: layout ${LAYOUT}, this tree's ${LAYOUT}. Of one layout, every past month is compared with it; of another, the check fails unless this run was started by hand with the input new_baseline.`,
 		});
 		expect(readFileSync(join(out, "v1/index.json"))).toEqual(readFileSync(join(kept, "v1/index.json")));
 		expect(asked).toEqual([
 			["api", `repos/${REPOSITORY}/actions/runs/${SELF.id}`],
-			["api", "-X", "GET", `repos/${REPOSITORY}/actions/workflows/runs.yml/runs`, "-f", "branch=main", "-f", "status=success", "-f", `created=<${SELF.created_at}`, "-f", "per_page=20"],
+			["api", "-X", "GET", `repos/${REPOSITORY}/actions/workflows/runs.yml/runs`, "-f", "branch=main", "-f", "status=completed", "-f", `created=<${SELF.created_at}`, "-f", `per_page=${RUNS_SEARCHED}`],
 			["api", "-X", "GET", `repos/${REPOSITORY}/actions/runs/250/artifacts`, "-f", "name=api", "-f", "per_page=10"],
 			["run", "download", "250", "--repo", REPOSITORY, "--name", "api", "--dir", out],
 		]);
+	});
+
+	test("is chosen by the artifact a run keeps only when its tree passed the check, never by how the run ended: a run whose publish job failed is a baseline, one whose check failed is not", () => {
+		const asked: string[][] = [];
+		const { result } = previous(
+			{
+				runs: [
+					// The newest: its tree check failed, so it kept no artifact api (only the page), and the run failed.
+					run(270, "2026-11-19T21:00:00Z", { conclusion: "failure" }),
+					// Its tree passed the check and was kept; its publish job failed, so the run failed.
+					run(260, "2026-11-19T19:00:00Z", { conclusion: "failure" }),
+					run(250, "2026-11-19T18:00:00Z"),
+				],
+				artifacts: { 270: [artifact({ name: "page" })], 260: [artifact()], 250: [artifact()] },
+				download: { 260: kept, 250: kept },
+			},
+			asked,
+		);
+		expect(result()).toMatchObject({ found: true, run: 260 });
+		expect(asked.filter((args) => args[3]?.endsWith("/artifacts")).map((args) => args[3])).toEqual([
+			`repos/${REPOSITORY}/actions/runs/270/artifacts`,
+			`repos/${REPOSITORY}/actions/runs/260/artifacts`,
+		]);
+		// A run that ended in success but kept no artifact api (its check did not run) is passed over too.
+		expect(previous({ runs: [run(280, "2026-11-19T22:00:00Z"), run(250, "2026-11-19T18:00:00Z")], artifacts: { 250: [artifact()] }, download: { 250: kept } }).result()).toMatchObject({ found: true, run: 250 });
 	});
 
 	test("on a re-run of an older run, is never a run created after it", () => {
@@ -153,26 +180,24 @@ describe("the previous tree", () => {
 		// And with only later runs, there is no earlier one.
 		expect(previous({ self: { id: SELF.id, created_at: "2026-11-19T18:30:00Z" }, runs: [run(350, "2026-11-19T20:00:00Z")] }).result()).toEqual({
 			found: false,
-			summary: `No successful run of runs.yml on main was created before this one (2026-11-19T18:30:00Z), so there is no previous tree. ${NEW_BASELINE}`,
+			summary: `No run of runs.yml on main was created before this one (2026-11-19T18:30:00Z), so there is no previous tree. ${NEW_BASELINE}`,
 		});
 	});
 
-	test("is none, said plainly with what the check then needs, when there is no earlier successful run, when that run kept no artifact api, or when its artifact expired", () => {
+	test("is none, said plainly with what the check then needs, when there is no earlier run, when none of them kept an artifact api, or when the latest that did has expired", () => {
 		expect(previous({ runs: [run(SELF.id, SELF.created_at)] }).result()).toEqual({
 			found: false,
-			summary: `No successful run of runs.yml on main was created before this one (${SELF.created_at}), so there is no previous tree. ${NEW_BASELINE}`,
+			summary: `No run of runs.yml on main was created before this one (${SELF.created_at}), so there is no previous tree. ${NEW_BASELINE}`,
 		});
-		expect(previous({ runs: [run(250, "2026-11-19T18:00:00Z")], artifacts: { 250: [artifact({ name: "page" })] } }).result()).toEqual({
+		expect(previous({ runs: [run(250, "2026-11-19T18:00:00Z"), run(240, "2026-11-19T17:00:00Z", { conclusion: "failure" })], artifacts: { 250: [artifact({ name: "page" })] } }).result()).toEqual({
 			found: false,
-			run: 250,
-			url: "https://github.example/runs/250",
-			summary: `The last successful run created before this one, https://github.example/runs/250, kept no artifact api (it ran before the data API was built), so there is no previous tree. ${NEW_BASELINE}`,
+			summary: `No run of runs.yml on main created before this one (${SELF.created_at}), of the 2 latest, kept an artifact api (a run keeps one only when its tree passed the check), so there is no previous tree. ${NEW_BASELINE}`,
 		});
 		expect(previous({ runs: [run(250, "2026-11-19T18:00:00Z")], artifacts: { 250: [artifact({ expired: true, expires_at: "2026-11-12T18:00:00Z" })] } }).result()).toEqual({
 			found: false,
 			run: 250,
 			url: "https://github.example/runs/250",
-			summary: `The artifact api of the last successful run created before this one, https://github.example/runs/250, expired (2026-11-12T18:00:00Z), so there is no previous tree. ${NEW_BASELINE}`,
+			summary: `The artifact api of the latest run created before this one that kept one, https://github.example/runs/250, expired (2026-11-12T18:00:00Z), so there is no previous tree. ${NEW_BASELINE}`,
 		});
 	});
 
@@ -184,16 +209,16 @@ describe("the previous tree", () => {
 
 	test("could not be fetched, which is never none: gh failing, a reply that is not theirs, a run or an artifact without what is needed, a download that fails", () => {
 		const failed: GhResult = { code: 1, stdout: "", stderr: "HTTP 403: Resource not accessible by integration" };
-		const listing = `the successful runs of runs.yml on main created before ${SELF.created_at}`;
+		const listing = `the completed runs of runs.yml on main created before ${SELF.created_at}`;
 		const cases: Array<[World, string]> = [
 			[{ self: failed }, `could not fetch run ${SELF.id}: gh exited 1: HTTP 403: Resource not accessible by integration`],
 			[{ self: { id: SELF.id } }, `could not fetch run ${SELF.id}: the reply gives no created_at as GitHub writes it`],
 			[{ runs: failed }, `could not fetch ${listing}: gh exited 1: HTTP 403: Resource not accessible by integration`],
 			[{ runs: { code: 0, stdout: "<html>", stderr: "" } }, `could not fetch ${listing}: gh's reply is not JSON: <html>`],
-			[{ runs: { code: 0, stdout: "{}", stderr: "" } }, "could not fetch the successful runs of runs.yml: the reply holds no workflow_runs"],
+			[{ runs: { code: 0, stdout: "{}", stderr: "" } }, "could not fetch the completed runs of runs.yml: the reply holds no workflow_runs"],
 			// A run without its creation time is not "no earlier run".
-			[{ runs: [run(250, "2026-11-19T18:00:00Z"), { id: 240, head_branch: "main", conclusion: "success" }] }, "could not fetch the successful runs of runs.yml: entry 1 of the reply lacks its id, head_branch, conclusion or created_at"],
-			[{ runs: [{ ...run(250, "2026-11-19T18:00:00Z"), id: "250" }] }, "could not fetch the successful runs of runs.yml: entry 0 of the reply lacks its id, head_branch, conclusion or created_at"],
+			[{ runs: [run(250, "2026-11-19T18:00:00Z"), { id: 240, head_branch: "main", conclusion: "success" }] }, "could not fetch the completed runs of runs.yml: entry 1 of the reply lacks its id, head_branch or created_at"],
+			[{ runs: [{ ...run(250, "2026-11-19T18:00:00Z"), id: "250" }] }, "could not fetch the completed runs of runs.yml: entry 0 of the reply lacks its id, head_branch or created_at"],
 			[{ runs: [run(250, "2026-11-19T18:00:00Z")], artifacts: failed }, "could not fetch the artifacts of run 250: gh exited 1: HTTP 403: Resource not accessible by integration"],
 			[{ runs: [run(250, "2026-11-19T18:00:00Z")], artifacts: { 250: [{ id: 7, name: "api" }] } }, "could not fetch the artifacts of run 250: entry 0 of the reply lacks its name or expired"],
 			[{ runs: [run(250, "2026-11-19T18:00:00Z")], artifacts: { 250: [artifact()] } }, "could not download the artifact api of run 250: gh exited 1: no valid artifacts found to download"],
@@ -242,7 +267,7 @@ describe("the command", () => {
 	test("writes the step's summary when there is a tree, or none, and exits 0 with no step output to decide anything by; exits 1 when it could not fetch one", () => {
 		const cases: Array<[World, string]> = [
 			[{ runs: [run(250, "2026-11-19T18:00:00Z")], artifacts: { 250: [artifact()] }, download: { 250: kept } }, `layout ${LAYOUT}, this tree's ${LAYOUT}.`],
-			[{ runs: [] }, `No successful run of runs.yml on main was created before this one (${SELF.created_at}), so there is no previous tree. ${NEW_BASELINE}`],
+			[{ runs: [] }, `No run of runs.yml on main was created before this one (${SELF.created_at}), so there is no previous tree. ${NEW_BASELINE}`],
 		];
 		for (const [world, said] of cases) {
 			const directory = mkdtempSync(join(tmpdir(), "previous-api-github-"));

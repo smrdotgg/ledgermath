@@ -71,7 +71,7 @@
  * tests/public-blobs.test.ts checks it.
  */
 
-import { TREE_CACHE_CONTROL, TREE_CONTENT_TYPE, TREE_KINDS, TREE_PREFIX } from "./api-bucket";
+import { calendarDate, TREE_CACHE_CONTROL, TREE_CONTENT_TYPE, TREE_KINDS, TREE_PREFIX } from "./api-bucket";
 import type { PolicyStatement } from "./github-role";
 import { PRODUCTION_STAGE } from "./stages";
 
@@ -145,22 +145,24 @@ export interface Served {
 	keys: readonly KeyShape[];
 }
 
+/** The id of a Run: a version 7 UUID, the Run schema's id pattern (schemas/run.schema.json), unanchored. */
+export const RUN_ID = "[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}";
 /**
- * A Run file: runs/<yyyy>/<mm>/<dd>/<id>.json, the Run's start date and its
- * id, a version 7 UUID, as runner/run.py writes it and the Run schema's id
- * pattern says (schemas/run.schema.json). All 7,270 Run files of the Runs
- * repository had this shape on 2026-11-21.
+ * A Run file: runs/<yyyy>/<mm>/<dd>/<id>.json, the Run's start date (a day of
+ * the calendar) and its id, as runner/run.py writes it. All 7,270 Run files
+ * of the Runs repository had this shape on 2026-11-21.
  */
-export const RUN_KEY = /^runs\/[0-9]{4}\/[0-9]{2}\/[0-9]{2}\/[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.json$/;
+export const RUN_KEY = new RegExp(`^runs\\/${calendarDate("\\/")}\\/${RUN_ID}\\.json$`);
 /**
- * A boot summary: boots/<yyyy>/<mm>/<dd>/<boot>.json, the boot's day and the
- * kernel's boot id, a UUID in lowercase hex, as runner/run.py writes it from
- * /proc/sys/kernel/random/boot_id. A boot whose id could not be read writes
- * unknown.json, which two such boots of one day would share, and which the
- * tree never links (no Run's boot is "unknown"): it is not served. All 197
- * boot summaries of the Runs repository had this shape on 2026-11-21.
+ * A boot summary: boots/<yyyy>/<mm>/<dd>/<boot>.json, the boot's day (a day of
+ * the calendar) and the kernel's boot id, a UUID in lowercase hex, as
+ * runner/run.py writes it from /proc/sys/kernel/random/boot_id. A boot whose
+ * id could not be read writes unknown.json, which two such boots of one day
+ * would share, and which the tree never links (no Run's boot is "unknown"):
+ * it is not served. All 197 boot summaries of the Runs repository had this
+ * shape on 2026-11-21.
  */
-export const BOOT_KEY = /^boots\/[0-9]{4}\/[0-9]{2}\/[0-9]{2}\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.json$/;
+export const BOOT_KEY = new RegExp(`^boots\\/${calendarDate("\\/")}\\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\.json$`);
 /** A blob: blobs/sha256/<hex>, the SHA-256 of its bytes in 64 lowercase hex digits (scripts/lib/blobs.ts reads no other). */
 export const BLOB_KEY = /^blobs\/sha256\/[0-9a-f]{64}$/;
 
@@ -431,9 +433,11 @@ export interface PublicApiPlan {
  * of STATES and its plan attachment one of PLAN_ATTACHMENTS (a typo, a
  * missing field or a value from some other version would otherwise reach
  * the plan as something no branch expects), and unless it names
- * production-runs or is "off": no other stage may ever serve the API.
- * PUBLIC_API's type already says so; this says it to a setting built at run
- * time, and to a test.
+ * production-runs, in every state: no other stage may ever serve the API, and
+ * a misspelt or empty stage, even while "off", would make the setting
+ * silently apply to no stage the day it is turned on. PUBLIC_API's type
+ * already says so; this says it to a setting built at run time, and to a
+ * test.
  */
 export function checkSetting(setting: unknown): asserts setting is { stage: string; state: PublicApiState; plan: PlanAttachment } {
 	if (typeof setting !== "object" || setting === null) throw new Error(`The public data API's setting is not an object: ${JSON.stringify(setting)}`);
@@ -445,18 +449,18 @@ export function checkSetting(setting: unknown): asserts setting is { stage: stri
 	if (!PLAN_ATTACHMENTS.some((known) => known === plan)) {
 		throw new Error(`The public data API's plan attachment is ${JSON.stringify(plan)}, which is none of ${PLAN_ATTACHMENTS.map((known) => `"${known}"`).join(", ")} (infra/runs/public-blobs.ts)`);
 	}
-	if (stage !== PRODUCTION_STAGE && state !== "off") {
+	if (stage !== PRODUCTION_STAGE) {
 		throw new Error(
-			`The public data API may be served from ${PRODUCTION_STAGE} alone, and the setting names ${JSON.stringify(stage)} with the state "${String(state)}". ` +
-				`Set PUBLIC_API.stage to "${PRODUCTION_STAGE}" (infra/runs/public-blobs.ts).`,
+			`The public data API may be served from ${PRODUCTION_STAGE} alone, and the setting names ${JSON.stringify(stage)} (with the state "${String(state)}"). ` +
+				`Set PUBLIC_API.stage to "${PRODUCTION_STAGE}" (infra/runs/public-blobs.ts), in every state, "off" included.`,
 		);
 	}
 }
 
 /**
  * What a deploy of `stage` makes for a setting: nothing at all for "off", or
- * for any stage but setting.stage. Throws for a setting that names another
- * stage than production-runs with anything but "off".
+ * for any stage but setting.stage. Throws for a setting checkSetting refuses:
+ * one naming another stage than production-runs, in any state.
  */
 export function publicApiPlan(setting: unknown, stage: string): PublicApiPlan | null {
 	checkSetting(setting);
@@ -691,16 +695,47 @@ const NOT_FOUND_SOURCE = [
 	"}",
 ].join("\n");
 
+const OTHER_HOST_TEXT = `Forbidden. LedgerMath's data API is served at https://${API_DOMAIN.name}/ and under no other name.\n`;
+
+/**
+ * The one host, and the 403 every function answers a request for any other
+ * with, whatever its path: the API has one name, and every request to
+ * another gets the same answer, from whichever behaviour it reaches.
+ */
+const HOST_SOURCE = [
+	`var HOST = ${JSON.stringify(API_DOMAIN.name)};`,
+	"function otherHost(request) {",
+	"  var host = request.headers.host ? request.headers.host.value.toLowerCase() : '';",
+	"  if (host === HOST) return null;",
+	"  return {",
+	"    statusCode: 403,",
+	"    statusDescription: 'Forbidden',",
+	"    headers: {",
+	"      'content-type': { value: 'text/plain; charset=utf-8' },",
+	`      'cache-control': { value: '${NOT_FOUND_CACHE_CONTROL}' },`,
+	"      'x-content-type-options': { value: 'nosniff' }",
+	"    },",
+	`    body: { encoding: 'text', data: ${JSON.stringify(OTHER_HOST_TEXT)} }`,
+	"  };",
+	"}",
+].join("\n");
+
 /**
  * The default behaviour's function, and every behaviour's in "dark" and
- * "closed": every request gets 404, and reaches neither cache nor bucket.
- * Needed because CloudFront has no behaviour that reaches no origin, and the
- * default behaviour must otherwise name one: without it, every address of no
- * served prefix would be a request to a bucket.
+ * "closed": 403 for another host, as the request function answers it, and
+ * 404 for every request to api.ledgermath.com; neither reaches cache or
+ * bucket. Needed because CloudFront has no behaviour that reaches no origin,
+ * and the default behaviour must otherwise name one: without it, every
+ * address of no served prefix would be a request to a bucket.
  */
-export const NO_ROUTE_FUNCTION_CODE = [NOT_FOUND_SOURCE, "function handler(event) {", "  return notFound();", "}", ""].join("\n");
-
-const OTHER_HOST_TEXT = `Forbidden. LedgerMath's data API is served at https://${API_DOMAIN.name}/ and under no other name.\n`;
+export const NO_ROUTE_FUNCTION_CODE = [
+	HOST_SOURCE,
+	NOT_FOUND_SOURCE,
+	"function handler(event) {",
+	"  return otherHost(event.request) || notFound();",
+	"}",
+	"",
+].join("\n");
 
 /**
  * The served behaviours' viewer-request function, in "on". A request whose
@@ -713,27 +748,15 @@ const OTHER_HOST_TEXT = `Forbidden. LedgerMath's data API is served at https://$
  * goes on, unchanged.
  */
 export const REQUEST_FUNCTION_CODE = [
-	`var HOST = ${JSON.stringify(API_DOMAIN.name)};`,
 	`var SHAPES = [${SERVED.flatMap((served) => served.keys)
 		.map((shape) => `new RegExp(${JSON.stringify(uriPattern(shape))})`)
 		.join(", ")}];`,
+	HOST_SOURCE,
 	NOT_FOUND_SOURCE,
-	"function otherHost() {",
-	"  return {",
-	"    statusCode: 403,",
-	"    statusDescription: 'Forbidden',",
-	"    headers: {",
-	"      'content-type': { value: 'text/plain; charset=utf-8' },",
-	`      'cache-control': { value: '${NOT_FOUND_CACHE_CONTROL}' },`,
-	"      'x-content-type-options': { value: 'nosniff' }",
-	"    },",
-	`    body: { encoding: 'text', data: ${JSON.stringify(OTHER_HOST_TEXT)} }`,
-	"  };",
-	"}",
 	"function handler(event) {",
 	"  var request = event.request;",
-	"  var host = request.headers.host ? request.headers.host.value.toLowerCase() : '';",
-	"  if (host !== HOST) return otherHost();",
+	"  var refused = otherHost(request);",
+	"  if (refused) return refused;",
 	"  for (var i = 0; i < SHAPES.length; i++) {",
 	"    if (SHAPES[i].test(request.uri)) return request;",
 	"  }",

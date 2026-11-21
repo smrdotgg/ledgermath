@@ -10,19 +10,25 @@
  *   --workflow FILE          the workflow's file name, runs.yml
  *   --branch NAME            the branch its runs ran on, main
  *   --run-id ID              this run: the previous tree is the one kept by the latest
- *                            successful run created before it was
+ *                            run created before it that kept one
  *   --tree DIR               the tree this run built, whose layout the summary names
  *   --out DIR                where the previous tree is put; a new or empty directory
  *   --gh PATH                the GitHub CLI (default gh), which reads its token from GH_TOKEN
  *
- * It reads when this run was created, takes the latest successful run of the
- * workflow on the branch created before that (so a re-run of an older run
- * takes the run before it, never one made after it), and downloads that run's
- * artifact api into --out. It says what it found, on stdout and in the step's
- * summary ($GITHUB_STEP_SUMMARY): a tree, with its layout beside this one's;
- * or none, because there is no such run, that run kept no artifact api, or
- * its artifact expired. It decides nothing: with no tree, or one of another
- * layout, the check fails unless a human declared a new baseline (the
+ * It reads when this run was created, and goes through the completed runs of
+ * the workflow on the branch created before that, newest first (so a re-run
+ * of an older run takes a run before it, never one made after it), to the
+ * first that kept an artifact api. A run keeps one only when its tree passed
+ * the check (the workflow's step "Keep the data API's files"), so the choice
+ * rests on that and on nothing else: not on how the run ended, which a later
+ * job (the publish job) or a later step (the alarm) can make a failure. A run
+ * whose publish job failed is a baseline; a run whose check failed, or that
+ * ran before the data API, is passed over. It downloads that artifact into
+ * --out, and says what it found, on stdout and in the step's summary
+ * ($GITHUB_STEP_SUMMARY): a tree, with its layout beside this one's; or none,
+ * because no run of the RUNS_SEARCHED latest kept an artifact api, or the
+ * latest that did has expired. It decides nothing: with no tree, or one of
+ * another layout, the check fails unless a human declared a new baseline (the
  * workflow's input new_baseline, the only source of --allow-no-previous).
  *
  * Anything that fails on the way exits 1: gh, the API, a reply it cannot
@@ -83,6 +89,9 @@ const layoutOf = (directory: string): string => {
 
 const NEW_BASELINE = "The check fails unless this run was started by hand with the input new_baseline, which declares this run's tree a new baseline.";
 
+/** How many of the latest completed runs are searched for one that kept an artifact api: more than a week of runs at five a day. */
+export const RUNS_SEARCHED = 50;
+
 /**
  * Finds and downloads the previous tree, and says what it found; throws
  * CouldNotFetch when any step fails.
@@ -97,35 +106,51 @@ export function fetchPrevious(options: PreviousOptions): Previous {
 	const createdAt = self.created_at;
 
 	const listed = json(
-		`the successful runs of ${workflow} on ${branch} created before ${createdAt}`,
-		gh(["api", "-X", "GET", `repos/${repository}/actions/workflows/${workflow}/runs`, "-f", `branch=${branch}`, "-f", "status=success", "-f", `created=<${createdAt}`, "-f", "per_page=20"]),
+		`the completed runs of ${workflow} on ${branch} created before ${createdAt}`,
+		gh(["api", "-X", "GET", `repos/${repository}/actions/workflows/${workflow}/runs`, "-f", `branch=${branch}`, "-f", "status=completed", "-f", `created=<${createdAt}`, "-f", `per_page=${RUNS_SEARCHED}`]),
 	);
-	if (!isObject(listed) || !Array.isArray(listed.workflow_runs)) throw new CouldNotFetch(`could not fetch the successful runs of ${workflow}: the reply holds no workflow_runs`);
+	if (!isObject(listed) || !Array.isArray(listed.workflow_runs)) throw new CouldNotFetch(`could not fetch the completed runs of ${workflow}: the reply holds no workflow_runs`);
 	const runs = listed.workflow_runs.map((run, i) => {
-		if (!isObject(run) || typeof run.id !== "number" || typeof run.head_branch !== "string" || typeof run.conclusion !== "string" || typeof run.created_at !== "string" || !CREATED_AT.test(run.created_at)) {
-			throw new CouldNotFetch(`could not fetch the successful runs of ${workflow}: entry ${i} of the reply lacks its id, head_branch, conclusion or created_at: ${JSON.stringify(run)?.slice(0, 200)}`);
+		if (!isObject(run) || typeof run.id !== "number" || typeof run.head_branch !== "string" || typeof run.created_at !== "string" || !CREATED_AT.test(run.created_at)) {
+			throw new CouldNotFetch(`could not fetch the completed runs of ${workflow}: entry ${i} of the reply lacks its id, head_branch or created_at: ${JSON.stringify(run)?.slice(0, 200)}`);
 		}
-		return { id: run.id, branch: run.head_branch, conclusion: run.conclusion, createdAt: run.created_at, url: typeof run.html_url === "string" ? run.html_url : `run ${run.id}` };
+		return { id: run.id, branch: run.head_branch, createdAt: run.created_at, url: typeof run.html_url === "string" ? run.html_url : `run ${run.id}` };
 	});
 	const earlier = runs
-		.filter((run) => String(run.id) !== runId && run.branch === branch && run.conclusion === "success" && run.createdAt < createdAt)
+		.filter((run) => String(run.id) !== runId && run.branch === branch && run.createdAt < createdAt)
 		.sort((a, b) => (a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : b.id - a.id));
-	const last = earlier[0];
-	if (last === undefined) return none(`No successful run of ${workflow} on ${branch} was created before this one (${createdAt}), so there is no previous tree.`);
-	const run = { id: last.id, url: last.url };
 
-	const kept = json(`the artifacts of run ${run.id}`, gh(["api", "-X", "GET", `repos/${repository}/actions/runs/${run.id}/artifacts`, "-f", "name=api", "-f", "per_page=10"]));
-	if (!isObject(kept) || !Array.isArray(kept.artifacts)) throw new CouldNotFetch(`could not fetch the artifacts of run ${run.id}: the reply holds no artifacts`);
-	const artifacts = kept.artifacts.map((artifact, i) => {
-		if (!isObject(artifact) || typeof artifact.name !== "string" || typeof artifact.expired !== "boolean") {
-			throw new CouldNotFetch(`could not fetch the artifacts of run ${run.id}: entry ${i} of the reply lacks its name or expired: ${JSON.stringify(artifact)?.slice(0, 200)}`);
+	/** The artifacts named api a run kept, read and checked. */
+	const apiArtifacts = (run: { id: number }) => {
+		const kept = json(`the artifacts of run ${run.id}`, gh(["api", "-X", "GET", `repos/${repository}/actions/runs/${run.id}/artifacts`, "-f", "name=api", "-f", "per_page=10"]));
+		if (!isObject(kept) || !Array.isArray(kept.artifacts)) throw new CouldNotFetch(`could not fetch the artifacts of run ${run.id}: the reply holds no artifacts`);
+		return kept.artifacts
+			.map((artifact, i) => {
+				if (!isObject(artifact) || typeof artifact.name !== "string" || typeof artifact.expired !== "boolean") {
+					throw new CouldNotFetch(`could not fetch the artifacts of run ${run.id}: entry ${i} of the reply lacks its name or expired: ${JSON.stringify(artifact)?.slice(0, 200)}`);
+				}
+				return { name: artifact.name, expired: artifact.expired, expiresAt: String(artifact.expires_at) };
+			})
+			.filter((artifact) => artifact.name === "api");
+	};
+	let found: { run: { id: number; url: string }; api: Array<{ expired: boolean; expiresAt: string }> } | undefined;
+	for (const candidate of earlier) {
+		const api = apiArtifacts(candidate);
+		if (api.length > 0) {
+			found = { run: { id: candidate.id, url: candidate.url }, api };
+			break;
 		}
-		return { name: artifact.name, expired: artifact.expired, expiresAt: String(artifact.expires_at) };
-	});
-	const api = artifacts.filter((artifact) => artifact.name === "api");
-	if (api.length === 0) return none(`The last successful run created before this one, ${run.url}, kept no artifact api (it ran before the data API was built), so there is no previous tree.`, run);
+	}
+	if (found === undefined) {
+		return none(
+			earlier.length === 0
+				? `No run of ${workflow} on ${branch} was created before this one (${createdAt}), so there is no previous tree.`
+				: `No run of ${workflow} on ${branch} created before this one (${createdAt}), of the ${earlier.length} latest, kept an artifact api (a run keeps one only when its tree passed the check), so there is no previous tree.`,
+		);
+	}
+	const { run, api } = found;
 	if (!api.some((artifact) => !artifact.expired)) {
-		return none(`The artifact api of the last successful run created before this one, ${run.url}, expired (${api.map((artifact) => artifact.expiresAt).join(", ")}), so there is no previous tree.`, run);
+		return none(`The artifact api of the latest run created before this one that kept one, ${run.url}, expired (${api.map((artifact) => artifact.expiresAt).join(", ")}), so there is no previous tree.`, run);
 	}
 
 	const download = gh(["run", "download", String(run.id), "--repo", repository, "--name", "api", "--dir", out]);
@@ -135,7 +160,7 @@ export function fetchPrevious(options: PreviousOptions): Previous {
 		run: run.id,
 		url: run.url,
 		summary:
-			`The previous tree is the artifact api of the last successful run created before this one, ${run.url}: layout ${layoutOf(out)}, this tree's ${layoutOf(tree)}. ` +
+			`The previous tree is the artifact api of the latest run created before this one that kept one (as a run does only when its tree passed the check, however the run ended), ${run.url}: layout ${layoutOf(out)}, this tree's ${layoutOf(tree)}. ` +
 			"Of one layout, every past month is compared with it; of another, the check fails unless this run was started by hand with the input new_baseline.",
 	};
 }

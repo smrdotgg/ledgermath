@@ -12,7 +12,8 @@
  * ETags that are not the MD5 of the bytes, as S3 does under SSE-KMS. A test
  * can answer any request itself (fault).
  *
- * As S3 does, a PUT keeps the Cache-Control it is sent, and an
+ * As S3 does, a PUT keeps the Cache-Control and the x-amz-meta-* headers it
+ * is sent (a HEAD or GET gives them back), and an
  * x-amz-checksum-sha256 it is sent once it holds for the body (400 BadDigest
  * otherwise); a HEAD or GET gives the Cache-Control back, and the checksum
  * only when asked with x-amz-checksum-mode: ENABLED.
@@ -31,6 +32,8 @@ export interface StoredObject {
 	cacheControl?: string;
 	/** The x-amz-checksum-sha256 (base64) it was written with, or none. */
 	checksumSha256?: string;
+	/** The x-amz-meta-* headers it was written with, by their lower-case names. */
+	metadata?: Record<string, string>;
 }
 
 export interface StandinRequest {
@@ -168,6 +171,7 @@ export class S3Standin {
 			etag: `"${etag(stored.bytes)}"`,
 			"last-modified": new Date("2026-11-14T00:00:00Z").toUTCString(),
 			...(stored.cacheControl === undefined ? {} : { "cache-control": stored.cacheControl }),
+			...(stored.metadata ?? {}),
 			...(checksumMode && stored.checksumSha256 !== undefined ? { "x-amz-checksum-sha256": stored.checksumSha256, "x-amz-checksum-type": "FULL_OBJECT" } : {}),
 		});
 		if (request.method === "HEAD") return object === undefined ? new Response(null, { status: 404 }) : new Response(null, { headers: headers(object) });
@@ -191,12 +195,14 @@ export class S3Standin {
 				return error(412, "PreconditionFailed", "At least one of the pre-conditions you specified did not hold");
 			}
 			const cacheControl = request.headers.get("cache-control");
+			const metadata = Object.fromEntries([...request.headers.entries()].filter(([name]) => name.toLowerCase().startsWith("x-amz-meta-")).map(([name, value]) => [name.toLowerCase(), value]));
 			const stored: StoredObject = {
 				bytes: body,
 				contentType: request.headers.get("content-type") ?? "binary/octet-stream",
 				writes: (object?.writes ?? 0) + 1,
 				...(cacheControl === null ? {} : { cacheControl }),
 				...(checksum === null ? {} : { checksumSha256: checksum }),
+				...(Object.keys(metadata).length === 0 ? {} : { metadata }),
 			};
 			bucket.objects.set(key, stored);
 			return new Response(null, { headers: { etag: `"${etag(body)}"` } });

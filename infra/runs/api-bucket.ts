@@ -29,9 +29,11 @@
  * (README, "The public data API"), and the managed cache policy takes its
  * time to live from the object's own Cache-Control.
  *
- * Plain data: no SST global, so tests and scripts can import it.
+ * Plain data: no SST global, so tests and scripts can import it; and nothing
+ * that needs Bun, since the stack, bundled to run under Node, imports it.
  */
 
+import { API_SCHEMAS } from "../../scripts/lib/api-schemas";
 import type { PolicyDocument } from "./github-role";
 
 /** Every key of the tree starts with it: the tree is served from the host's root exactly as written. */
@@ -75,11 +77,41 @@ export interface TreeKind {
 	phase: number;
 }
 
-/** Every kind of file the build writes (scripts/lib/api.ts), and its upload phase. */
+/** A leap year, as a regular expression over its four digits: divisible by 4, and not by 100 unless by 400. */
+const LEAP_YEAR = "(?:[0-9]{2}(?:0[48]|[2468][048]|[13579][26])|(?:[02468][048]|[13579][26])00)";
+
+/**
+ * A day of the calendar, year, month and day joined by `separator` (as it is
+ * written in a regular expression: "-", or "\\/"): months 01 to 12, and days
+ * that month has, February the 29th in leap years only. What a date in a key
+ * of the build's or a box's is: the start of a Run, a boot's day, a price
+ * file's day, all written from a clock, never typed.
+ */
+export function calendarDate(separator: string): string {
+	const s = separator;
+	return (
+		`(?:[0-9]{4}${s}(?:0[1-9]|1[0-2])${s}(?:0[1-9]|1[0-9]|2[0-8])` +
+		`|[0-9]{4}${s}(?:0[13-9]|1[0-2])${s}(?:29|30)` +
+		`|[0-9]{4}${s}(?:0[13578]|1[02])${s}31` +
+		`|${LEAP_YEAR}${s}02${s}29)`
+	);
+}
+
+/** A month of the calendar, yyyy-mm, months 01 to 12: a month file's name. */
+export const CALENDAR_MONTH = "[0-9]{4}-(?:0[1-9]|1[0-2])";
+
+/**
+ * Every kind of file the build writes (scripts/lib/api.ts), and its upload
+ * phase. Each pattern admits what the build can write and nothing more: the
+ * schemas by the build's own list of them (API_SCHEMAS), a Series by its
+ * 12-hex id, a month and a day as calendar values. The public serving
+ * serves these and no other key under v1/ (infra/runs/public-blobs.ts,
+ * SERVED).
+ */
 export const TREE_KINDS: readonly TreeKind[] = [
-	{ kind: "a schema", path: /^v1\/schemas\/[a-z0-9-]+\.schema\.json$/, phase: 0 },
-	{ kind: "a month file", path: /^v1\/series\/[0-9a-f]{12}\/[0-9]{4}-[0-9]{2}\.json$/, phase: 1 },
-	{ kind: "a price file", path: /^v1\/prices\/[0-9]{4}-[0-9]{2}-[0-9]{2}\.json$/, phase: 1 },
+	{ kind: "a schema", path: new RegExp(`^v1\\/schemas\\/(?:${API_SCHEMAS.map((schema) => schema.name).join("|")})\\.schema\\.json$`), phase: 0 },
+	{ kind: "a month file", path: new RegExp(`^v1\\/series\\/[0-9a-f]{12}\\/${CALENDAR_MONTH}\\.json$`), phase: 1 },
+	{ kind: "a price file", path: new RegExp(`^v1\\/prices\\/${calendarDate("-")}\\.json$`), phase: 1 },
 	{ kind: "a Series file", path: /^v1\/series\/[0-9a-f]{12}\.json$/, phase: 2 },
 	{ kind: "the list of Series", path: /^v1\/series\.json$/, phase: 3 },
 	{ kind: "the table of contents", path: /^v1\/index\.json$/, phase: 4 },
