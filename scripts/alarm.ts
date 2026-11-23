@@ -5,7 +5,7 @@
  *
  *     bun scripts/alarm.ts --runs DIR --copy succeeded|failed --schedule-changed-at ISO-8601
  *         [--prices-since ISO-8601] [--api-bucket NAME] [--drill yes|no] [--now 2026-11-12T22:40:00Z]
- *         [--schedule FILE] [--dry-run] [--api-endpoint URL] [--telegram-endpoint URL]
+ *         [--schedule FILE] [--dry-run] [--api-endpoint URL] [--telegram-endpoint URL] [--telegram-budget-ms MS]
  *
  * A watched Series is one schedule.json runs (benchmark, params, build) on one
  * of its targets (instance type and zone), where the entry's instance_types,
@@ -83,8 +83,11 @@
  * them) and given up after PING_BUDGET_MS (pingSafely). It never changes the
  * verdict, the posts, the marker or the exit code: a message that cannot be
  * sent is a warning annotation and a line in the step summary, in fixed
- * words, and with the secrets unset it is skipped with a notice.
- * --telegram-endpoint is a stand-in for Telegram, for the tests.
+ * words, and with the secrets unset it is skipped with a notice. A write
+ * that went out with no whole answer back is said to be unconfirmed, not
+ * missing, and the issue's address is given whenever it is known
+ * (notingTracker). --telegram-endpoint is a stand-in for Telegram, and
+ * --telegram-budget-ms a shorter wait than SEND_BUDGET_MS, for the tests.
  *
  * GitHub is reached through IssueTracker, and Telegram through Messenger, so
  * tests use fakes. The real tracker reads GITHUB_REPOSITORY and GITHUB_TOKEN,
@@ -744,10 +747,70 @@ export async function runAlarm(
 /** Where an issue of this repository is shown, followed by its number: the Telegram message links the alarm issue here. */
 export const ALARM_ISSUE_URL = "https://github.com/smrdotgg/ledgermath/issues/";
 
-/** What the pass's verdict wrote on GitHub, or that it had something to post and could not. */
-export type VerdictPost = { kind: "opened" | "commented" | "all-clear"; issue: number } | { kind: "not-posted" };
-/** What the drill wrote on GitHub, or that it could not. */
-export type DrillPost = { kind: "posted"; issue: number } | { kind: "not-posted" };
+/**
+ * A post that failed: not made (GitHub refused it with a 4xx, could not be
+ * read, or the post was refused before it was sent), or unconfirmed (the
+ * request went out and no whole, valid answer came back, so it may have been
+ * made). With the alarm issue's number when it is known: the issue found
+ * open, or the one a comment went to.
+ */
+export type FailedPost = { kind: "not-posted" | "unconfirmed"; issue: number | null };
+/** What the pass's verdict wrote on GitHub, or that it had something to post and it failed. */
+export type VerdictPost = { kind: "opened" | "commented" | "all-clear"; issue: number } | FailedPost;
+/** What the drill wrote on GitHub, or that it failed. */
+export type DrillPost = { kind: "posted"; issue: number } | FailedPost;
+
+/** What one phase's calls through notingTracker came to. */
+export interface WriteNote {
+	/** The alarm issue's number once known (found open, or a comment sent to it, or the number an opening returned), a positive whole number; else null. */
+	issue: number | null;
+	/** Whether a write (open or comment) was sent to the tracker. */
+	wrote: boolean;
+	/** How the write failed: "refused" for a GitHubRefused of 400 to 499 (nothing was written); "unconfirmed" for anything else (no answer, a 5xx, an answer cut short or not understood); "none" when no write failed. */
+	failure: "none" | "refused" | "unconfirmed";
+}
+
+/** `tracker`, noting into `note` the issue it learns of and how a write fails; every call and its result or error pass through unchanged. */
+export function notingTracker(tracker: IssueTracker): { tracker: IssueTracker; note: WriteNote } {
+	const note: WriteNote = { issue: null, wrote: false, failure: "none" };
+	const learn = (issue: number): void => {
+		if (isIssue(issue)) note.issue = issue;
+	};
+	const write = async <T>(send: () => Promise<T>): Promise<T> => {
+		note.wrote = true;
+		try {
+			return await send();
+		} catch (error) {
+			note.failure = error instanceof GitHubRefused && error.status >= 400 && error.status <= 499 ? "refused" : "unconfirmed";
+			throw error;
+		}
+	};
+	return {
+		note,
+		tracker: {
+			findOpen: async (marker) => {
+				const open = await tracker.findOpen(marker);
+				if (open !== null) learn(open.number);
+				return open;
+			},
+			open: (title, body) =>
+				write(async () => {
+					const issue = await tracker.open(title, body);
+					learn(issue);
+					return issue;
+				}),
+			comment: (issue, body) => {
+				learn(issue);
+				return write(() => tracker.comment(issue, body));
+			},
+		},
+	};
+}
+
+/** A phase that failed, as its Telegram words see it: unconfirmed when a write went out unanswered, otherwise not made; with the issue when known. */
+export function failedPost(note: WriteNote): FailedPost {
+	return { kind: note.failure === "unconfirmed" ? "unconfirmed" : "not-posted", issue: note.issue };
+}
 
 /** Everything the Telegram message is made from: what was written, the verdict's counts and flags, and this run's address. */
 export interface PingFacts {
@@ -791,7 +854,7 @@ const counted = (count: number): string => (Number.isSafeInteger(count) && count
 export function pingText(facts: PingFacts): string | null {
 	const { verdict, drill } = facts;
 	if (verdict === null && drill === null) return null;
-	const issue = (number: number): string => (isIssue(number) ? `issue #${number}` : "the alarm issue");
+	const issue = (number: number | null): string => (number !== null && isIssue(number) ? `issue #${number}` : "the alarm issue");
 	const lines: string[] = [];
 	if (verdict !== null) {
 		lines.push(
@@ -801,7 +864,9 @@ export function pingText(facts: PingFacts): string | null {
 					? `LedgerMath alarm: commented on ${issue(verdict.issue)}, because what it reports has changed.`
 					: verdict.kind === "all-clear"
 						? `LedgerMath alarm: all clear, said on ${issue(verdict.issue)}. Nothing it watches is stale now.`
-						: "LedgerMath alarm: COULD NOT POST ON GITHUB. GitHub refused the post or could not be reached, so the issue does not say what follows. The run's log says why.",
+						: verdict.kind === "not-posted"
+							? `LedgerMath alarm: COULD NOT POST ON GITHUB. GitHub refused the post or could not be reached, so ${issue(verdict.issue)} does not say what follows. The run's log says why.`
+							: `LedgerMath alarm: ITS POST ON GITHUB COULD NOT BE CONFIRMED. The post to ${issue(verdict.issue)} went out, but no whole answer came back, so it may or may not be there. The run's log says why.`,
 		);
 		const now = [`${counted(facts.stale)} of ${counted(facts.watched)} watched Series stale (no Run for 48 hours)`];
 		if (facts.pricesStale) now.push("the price files stale (none new for 48 hours)");
@@ -814,11 +879,13 @@ export function pingText(facts: PingFacts): string | null {
 		lines.push(
 			drill.kind === "posted"
 				? `${head}: posted on ${issue(drill.issue)}, started by hand with alarm_drill. Nothing is wrong because of the drill. This is its Telegram message.`
-				: `${head}: it could not post on GitHub (GitHub refused it or could not be reached). Nothing is wrong because of the drill. This is its Telegram message.`,
+				: drill.kind === "not-posted"
+					? `${head}: it could not post on ${issue(drill.issue)} (GitHub refused it or could not be reached). Nothing is wrong because of the drill. This is its Telegram message.`
+					: `${head}: its post to ${issue(drill.issue)} went out, but no whole answer came back, so it could not be confirmed. Nothing is wrong because of the drill. This is its Telegram message.`,
 		);
 	}
 	const issues = new Set<number>();
-	for (const post of [verdict, drill]) if (post !== null && "issue" in post && isIssue(post.issue)) issues.add(post.issue);
+	for (const post of [verdict, drill]) if (post !== null && post.issue !== null && isIssue(post.issue)) issues.add(post.issue);
 	for (const number of issues) lines.push(`Issue: ${ALARM_ISSUE_URL}${number}`);
 	const runUrl = facts.runUrl;
 	if (runUrl !== null && runUrl.startsWith(ACTIONS_RUN_URL) && /^[1-9][0-9]{0,19}$/.test(runUrl.slice(ACTIONS_RUN_URL.length))) lines.push(`Run: ${runUrl}`);
@@ -831,8 +898,10 @@ export interface PingReport {
 	summary(text: string): Promise<void> | void;
 }
 
-/** The most the alarm waits for its message, whatever the Messenger: a second past TelegramBot's own SEND_BUDGET_MS. */
-export const PING_BUDGET_MS = SEND_BUDGET_MS + 1_000;
+/** How long past TelegramBot's own budget the alarm still waits, whatever the Messenger, before it abandons the message. */
+export const PING_BACKSTOP_MS = 1_000;
+/** The most the alarm waits for its message: a second past TelegramBot's own SEND_BUDGET_MS. */
+export const PING_BUDGET_MS = SEND_BUDGET_MS + PING_BACKSTOP_MS;
 
 /** What the alarm did about Telegram. */
 export type PingResult = "nothing" | "sent" | "skipped" | "failed";
@@ -891,10 +960,21 @@ export async function pingSafely(
 
 type Fetch = (url: string, init: RequestInit) => Promise<Response>;
 
+/** GitHub answered a call with a status other than 2xx: thrown with the status, so a write it refused is told from one whose fate is not known. */
+export class GitHubRefused extends Error {
+	constructor(
+		readonly status: number,
+		message: string,
+	) {
+		super(message);
+	}
+}
+
 /**
  * GitHub's REST API, with a token that may write issues, at GITHUB_API_URL
  * (which Actions sets) or api.github.com. A call GitHub refuses (a 422 for a
- * body too long, say) throws, naming the answer; nothing is sent again.
+ * body too long, say) throws GitHubRefused, naming the answer; nothing is
+ * sent again.
  */
 export class GitHubIssues implements IssueTracker {
 	constructor(
@@ -916,7 +996,7 @@ export class GitHubIssues implements IssueTracker {
 			},
 			body: body === undefined ? undefined : JSON.stringify(body),
 		});
-		if (!response.ok) throw new Error(`GitHub ${method} ${path}: ${response.status} ${await response.text()}`);
+		if (!response.ok) throw new GitHubRefused(response.status, `GitHub ${method} ${path}: ${response.status} ${await response.text()}`);
 		return response.json();
 	}
 
@@ -978,13 +1058,14 @@ async function main(): Promise<void> {
 			drill: { type: "string" },
 			"api-endpoint": { type: "string" },
 			"telegram-endpoint": { type: "string" },
+			"telegram-budget-ms": { type: "string" },
 			"dry-run": { type: "boolean" },
 		},
 	});
 	if (!values.runs || (values.copy !== "succeeded" && values.copy !== "failed") || values["schedule-changed-at"] === undefined) {
 		console.error(
 			"usage: bun scripts/alarm.ts --runs DIR --copy succeeded|failed --schedule-changed-at ISO-8601 [--prices-since ISO-8601] [--api-bucket NAME]\n" +
-				"         [--drill yes|no] [--now ISO-8601] [--schedule FILE] [--dry-run] [--api-endpoint URL] [--telegram-endpoint URL]\n" +
+				"         [--drill yes|no] [--now ISO-8601] [--schedule FILE] [--dry-run] [--api-endpoint URL] [--telegram-endpoint URL] [--telegram-budget-ms MS]\n" +
 				'  --schedule-changed-at: when the schedule last changed, such as "$(git log -1 --first-parent --format=%cI -- schedule.json)"\n' +
 				'  --prices-since: when the prices workflow first existed, such as "$(git log --first-parent --reverse --format=%cI -- .github/workflows/prices.yml | sed -n 1p)"\n' +
 				"  --api-bucket: the API bucket, as API_BUCKET names it; empty or absent, it is not read\n" +
@@ -1013,10 +1094,14 @@ async function main(): Promise<void> {
 		tracker = new GitHubIssues(repository, token);
 	}
 	// One Telegram message whenever the alarm writes on GitHub, or could not (ADR-0033): never in a dry run, which prints it.
+	// --telegram-endpoint and --telegram-budget-ms are the tests' (a stand-in, and a shorter wait); the workflow passes neither.
 	const telegramEndpoint = values["telegram-endpoint"];
-	const telegram = telegramFromEnvironment(process.env, telegramEndpoint === undefined ? {} : { apiBase: telegramEndpoint });
+	const budgetText = values["telegram-budget-ms"];
+	const budgetMs = budgetText === undefined ? SEND_BUDGET_MS : Number(budgetText);
+	if (!Number.isSafeInteger(budgetMs) || budgetMs < 1 || budgetMs > SEND_BUDGET_MS) throw new Error(`--telegram-budget-ms ${JSON.stringify(budgetText)} is not a whole number of milliseconds from 1 to ${SEND_BUDGET_MS}`);
+	const telegram = telegramFromEnvironment(process.env, { budgetMs, ...(telegramEndpoint === undefined ? {} : { apiBase: telegramEndpoint }) });
 	const ping = async (text: string | null): Promise<void> => {
-		if (!values["dry-run"]) await pingSafely(text, telegram);
+		if (!values["dry-run"]) await pingSafely(text, telegram, undefined, budgetMs + PING_BACKSTOP_MS);
 		else if (text !== null) console.log(`--dry-run: would send to Telegram:\n${text}`);
 	};
 	// The check of the API bucket, whole, in a child killed after CHECK_BUDGET_MS: started before the Runs repository
@@ -1043,30 +1128,20 @@ async function main(): Promise<void> {
 	const runId = process.env.GITHUB_RUN_ID ?? "";
 	const runUrl = /^[1-9][0-9]{0,19}$/.test(runId) ? `${ACTIONS_RUN_URL}${runId}` : null;
 	const watched = watchedSeries(schedule);
-	// Notes whether the pass tried to write, so that a failure can be told apart: it had something to post, or it could not read GitHub to know.
-	let tried = false;
-	const noting: IssueTracker = {
-		findOpen: (marker) => tracker.findOpen(marker),
-		open: (title, body) => {
-			tried = true;
-			return tracker.open(title, body);
-		},
-		comment: (issue, body) => {
-			tried = true;
-			return tracker.comment(issue, body);
-		},
-	};
+	// Notes the issue the pass learns of and how a write fails, so that a failure can be told apart: it had something to post, or it could
+	// not read GitHub to know; a write GitHub refused, or one that went out unanswered.
+	const verdictCalls = notingTracker(tracker);
 	let outcome: AlarmOutcome;
 	try {
-		outcome = await runAlarm({ schedule, runs, now, scheduleChangedAt, copyFailed, tracker: noting, newestPrices, pricesSince, api, fullListAt: runUrl });
+		outcome = await runAlarm({ schedule, runs, now, scheduleChangedAt, copyFailed, tracker: verdictCalls.tracker, newestPrices, pricesSince, api, fullListAt: runUrl });
 	} catch (error) {
 		// Said on Telegram when the pass had something to post (it tried to write, or something is stale); then the alarm fails as it did before, with its own error whatever the message met.
 		try {
 			const found = judge({ schedule, runs, now, scheduleChangedAt, newestPrices, pricesSince, api });
-			if (tried || found.stale.length > 0 || found.prices !== null || found.api !== null) {
+			if (verdictCalls.note.wrote || found.stale.length > 0 || found.prices !== null || found.api !== null) {
 				await ping(
 					pingText({
-						verdict: { kind: "not-posted" },
+						verdict: failedPost(verdictCalls.note),
 						drill: null,
 						stale: found.stale.length,
 						watched: watched.length,
@@ -1090,9 +1165,10 @@ async function main(): Promise<void> {
 	if (outcome.stale.length > 0) await toStepSummary(staleList(outcome.stale, now));
 	let drill: DrillPost | null = null;
 	if (values.drill === "yes") {
-		const issue = await drillSafely(tracker, runUrl);
+		const drillCalls = notingTracker(tracker);
+		const issue = await drillSafely(drillCalls.tracker, runUrl);
 		if (issue !== null && !values["dry-run"]) console.log(`drill: posted on issue #${issue}`);
-		drill = issue === null ? { kind: "not-posted" } : { kind: "posted", issue };
+		drill = issue === null ? failedPost(drillCalls.note) : { kind: "posted", issue };
 	}
 	if (neverRun > 0 && now.getTime() - scheduleChangedAt.getTime() <= MAX_AGE_MS) {
 		console.log(

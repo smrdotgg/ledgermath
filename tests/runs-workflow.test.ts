@@ -46,6 +46,72 @@ const steps = job.steps;
 const runs = steps.flatMap((step) => (step.run === undefined ? [] : [step.run]));
 const publish = workflow.jobs.publish as Job;
 
+const RUNS_WORKFLOW = ".github/workflows/runs.yml";
+
+/** Every file under .github, at any depth: the workflows, and any action or workflow a later change adds. */
+function githubFiles(): Array<{ name: string; text: string }> {
+	return readdirSync(join(ROOT, ".github"), { recursive: true, withFileTypes: true })
+		.filter((entry) => entry.isFile())
+		.map((entry) => join(entry.parentPath, entry.name))
+		.map((path) => ({ name: relative(ROOT, path).split(sep).join("/"), text: readFileSync(path, "utf8") }));
+}
+
+/**
+ * Every way the files under .github let the Telegram secrets out of the alarm
+ * step of runs.yml (ADR-0033): empty when none. Judged on the text (any
+ * reference to a TELEGRAM_ secret, toJSON(secrets)) and on the parsed YAML
+ * (a job's `secrets` that is not a mapping, which is `inherit` however it is
+ * quoted; the two references being the alarm step's own `env`; runs.yml's
+ * triggers; the alarm's command), so a spelling cannot slip past.
+ */
+function telegramSecretProblems(files: Array<{ name: string; text: string }>): string[] {
+	const problems: string[] = [];
+	for (const { name, text } of files) {
+		// secrets.TELEGRAM_…, secrets['TELEGRAM_…'], in any case: twice in runs.yml (the two lines of the alarm step), nowhere else.
+		const references = text.match(/secrets\s*(\.|\[\s*['"])\s*TELEGRAM/gi)?.length ?? 0;
+		if (references !== (name === RUNS_WORKFLOW ? 2 : 0)) problems.push(`${name}: ${references} references to a TELEGRAM_ secret`);
+		if (/toJSON\(\s*secrets\s*\)/i.test(text)) problems.push(`${name}: hands over every secret with toJSON(secrets)`);
+		if (name !== RUNS_WORKFLOW && /TELEGRAM/i.test(text)) problems.push(`${name}: names TELEGRAM`);
+		if (!/\.ya?ml$/.test(name)) continue;
+		let parsed: { on?: unknown; env?: unknown; jobs?: Record<string, { secrets?: unknown; env?: unknown; steps?: Step[] }> };
+		try {
+			parsed = Bun.YAML.parse(text) as typeof parsed;
+		} catch {
+			problems.push(`${name}: not YAML this check can read`);
+			continue;
+		}
+		const jobs = Object.entries(parsed?.jobs ?? {});
+		for (const [id, each] of jobs) {
+			// A job's secrets are a mapping of names, or the keyword inherit, which hands over every secret: by its parsed value, however it is quoted.
+			const secrets = each?.secrets;
+			if (secrets !== undefined && (typeof secrets !== "object" || secrets === null || Array.isArray(secrets))) problems.push(`${name}: job ${id} hands over its secrets as ${JSON.stringify(secrets)}`);
+		}
+		if (name !== RUNS_WORKFLOW) continue;
+		const alarms = jobs.flatMap(([, each]) => (each?.steps ?? []).filter((step) => step.run?.includes("scripts/alarm.ts")));
+		if (alarms.length !== 1) {
+			problems.push(`${name}: ${alarms.length} alarm steps`);
+			continue;
+		}
+		const alarm = alarms[0] as Step;
+		const named = Object.entries(alarm.env ?? {}).filter(([key, value]) => /TELEGRAM/i.test(key) || /TELEGRAM/i.test(String(value)));
+		if (JSON.stringify(named) !== JSON.stringify([["TELEGRAM_BOT_TOKEN", "${{ secrets.TELEGRAM_BOT_TOKEN }}"], ["TELEGRAM_CHAT_ID", "${{ secrets.TELEGRAM_CHAT_ID }}"]])) {
+			problems.push(`${name}: the alarm step's environment holds ${JSON.stringify(named)}`);
+		}
+		// No other step, no job's environment, not the workflow's: the alarm step's own env holds them, or nothing does.
+		if (/TELEGRAM/i.test(JSON.stringify(parsed.env ?? {}))) problems.push(`${name}: the workflow's environment names TELEGRAM`);
+		for (const [id, each] of jobs) {
+			if (/TELEGRAM/i.test(JSON.stringify({ ...each, steps: (each?.steps ?? []).filter((step) => step !== alarm) }))) problems.push(`${name}: job ${id} names TELEGRAM outside the alarm step`);
+		}
+		const { env: _env, ...alarmBesidesEnv } = alarm;
+		if (/TELEGRAM/i.test(JSON.stringify(alarmBesidesEnv)) || /--telegram-/.test(alarm.run ?? "")) problems.push(`${name}: the alarm step names Telegram outside its environment, or passes a test's option`);
+		// Started on its schedule and by hand, never by a pull request or anything else.
+		const on = parsed.on;
+		const triggers = typeof on === "string" ? [on] : Array.isArray(on) ? on.map(String) : Object.keys((on as object | null) ?? {});
+		if (triggers.join(",") !== "schedule,workflow_dispatch") problems.push(`${name}: started by ${triggers.join(", ")}`);
+	}
+	return problems;
+}
+
 describe("the runs workflow", () => {
 	test("runs at 22:40 UTC, every six hours, and by hand; its first job holds the group runs, shared with prices.yml, and the publish job only api-bucket", () => {
 		expect(workflow.on.schedule.map((entry) => entry.cron)).toEqual(["40 22 * * *", "0 */6 * * *"]);
@@ -319,29 +385,47 @@ describe("the runs workflow", () => {
 			TELEGRAM_BOT_TOKEN: "${{ secrets.TELEGRAM_BOT_TOKEN }}",
 			TELEGRAM_CHAT_ID: "${{ secrets.TELEGRAM_CHAT_ID }}",
 		});
-		// Every file under .github, at any depth: the workflows, and any action or workflow a later change adds.
-		const files = readdirSync(join(ROOT, ".github"), { recursive: true, withFileTypes: true })
-			.filter((entry) => entry.isFile())
-			.map((entry) => join(entry.parentPath, entry.name))
-			.map((path) => ({ name: relative(ROOT, path).split(sep).join("/"), text: readFileSync(path, "utf8") }));
-		expect(files.map((file) => file.name)).toContain(".github/workflows/runs.yml");
-		for (const { name, text } of files) {
-			// secrets.TELEGRAM_…, secrets['TELEGRAM_…'], in any case: twice in runs.yml (the two lines of the alarm step), nowhere else.
-			const references = text.match(/secrets\s*(\.|\[\s*['"])\s*TELEGRAM/gi) ?? [];
-			expect({ name, references: references.length }).toEqual({ name, references: name === ".github/workflows/runs.yml" ? 2 : 0 });
-			// Nor every secret at once, by any route.
-			expect({ name, everySecret: /toJSON\(\s*secrets\s*\)|secrets\s*:\s*inherit/i.test(text) }).toEqual({ name, everySecret: false });
-			if (name !== ".github/workflows/runs.yml") expect({ name, telegram: /TELEGRAM/i.test(text) }).toEqual({ name, telegram: false });
-		}
-		// In runs.yml, the two references are the alarm step's: no other step's, no job's or the workflow's environment, not the publish job.
-		for (const step of steps) if (step !== alarm) expect({ step: step.name ?? step.uses ?? step.run, telegram: /TELEGRAM/i.test(JSON.stringify(step)) }).toEqual({ step: step.name ?? step.uses ?? step.run, telegram: false });
-		expect(JSON.stringify(job.env ?? {})).not.toMatch(/TELEGRAM/i);
-		expect(JSON.stringify(publish)).not.toMatch(/TELEGRAM/i);
-		expect(JSON.stringify((workflow as { env?: unknown }).env ?? {})).not.toMatch(/TELEGRAM/i);
+		const files = githubFiles();
+		expect(files.map((file) => file.name)).toContain(RUNS_WORKFLOW);
+		expect(files.filter((file) => /\.ya?ml$/.test(file.name)).length).toBeGreaterThanOrEqual(4);
+		expect(telegramSecretProblems(files)).toEqual([]);
 		// The workflow runs on its schedule and by hand, never for a pull request, whose code could read the step's environment.
 		expect(Object.keys(workflow.on)).toEqual(["schedule", "workflow_dispatch"]);
-		// And the alarm is never pointed at a stand-in for Telegram: the tests' only.
-		expect(alarm.run).not.toContain("--telegram-endpoint");
+	});
+
+	test("the check of the Telegram secrets rejects every way of letting them out: by reference, by handing over every secret however the value is spelled, by trigger", () => {
+		const files = githubFiles();
+		const runsText = (files.find((file) => file.name === RUNS_WORKFLOW) as { text: string }).text;
+		/** The repository's files, with runs.yml changed by `change`, and one more workflow, `extra`, when given. */
+		const variant = (change: (text: string) => string, extra?: string) => [
+			...files.map((file) => (file.name === RUNS_WORKFLOW ? { ...file, text: change(file.text) } : file)),
+			...(extra === undefined ? [] : [{ name: ".github/workflows/extra.yml", text: extra }]),
+		];
+		const same = (text: string): string => text;
+		/** Another workflow calling a reusable one, handing it `secrets` as written. */
+		const caller = (secrets: string) => `name: extra\non: workflow_dispatch\njobs:\n  call:\n    uses: ./.github/workflows/reusable.yml\n    secrets: ${secrets}\n`;
+		const replaced = (from: string, to: string) => (text: string) => {
+			if (!text.includes(from)) throw new Error(`runs.yml no longer holds ${JSON.stringify(from)}: the fixture needs updating`);
+			return text.replace(from, to);
+		};
+		const fixtures: Array<[string, Array<{ name: string; text: string }>]> = [
+			["secrets: inherit", variant(same, caller("inherit"))],
+			['secrets: "inherit"', variant(same, caller('"inherit"'))],
+			["secrets: 'inherit'", variant(same, caller("'inherit'"))],
+			["secrets: inherit in runs.yml's own jobs", variant(replaced("  publish:\n", "  handed:\n    uses: ./.github/workflows/reusable.yml\n    secrets: 'inherit'\n  publish:\n"))],
+			["a secret passed by name to a reusable workflow", variant(same, caller("\n      token: ${{ secrets.TELEGRAM_BOT_TOKEN }}"))],
+			["toJSON(secrets)", variant(same, "name: extra\non: workflow_dispatch\njobs:\n  dump:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: echo hi\n        env:\n          ALL: ${{ toJSON(secrets) }}\n")],
+			["a reference in another workflow", variant(same, "name: extra\non: pull_request\njobs:\n  leak:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: echo hi\n        env:\n          T: ${{ secrets['TELEGRAM_BOT_TOKEN'] }}\n")],
+			["a reference in runs.yml's job environment", variant(replaced("      RUNS_BUCKET: ${{ vars.RUNS_BUCKET }}\n", "      RUNS_BUCKET: ${{ vars.RUNS_BUCKET }}\n      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}\n"))],
+			["runs.yml started by a pull request", variant(replaced("on:\n  schedule:\n", "on:\n  pull_request:\n  schedule:\n"))],
+			["runs.yml started by pull_request_target", variant(replaced("on:\n  schedule:\n", "on:\n  pull_request_target:\n  schedule:\n"))],
+			["the alarm pointed at a stand-in for Telegram", variant(replaced('--drill "$ALARM_DRILL"', '--drill "$ALARM_DRILL" --telegram-endpoint http://127.0.0.1:1'))],
+			["the alarm given a shorter Telegram deadline", variant(replaced('--drill "$ALARM_DRILL"', '--drill "$ALARM_DRILL" --telegram-budget-ms 100'))],
+		];
+		for (const [label, fixture] of fixtures) expect({ label, rejected: telegramSecretProblems(fixture).length > 0 }).toEqual({ label, rejected: true });
+		// And the repository's own files, unchanged, pass.
+		expect(telegramSecretProblems(variant(same))).toEqual([]);
+		expect(runsText).toContain("secrets.TELEGRAM_BOT_TOKEN");
 	});
 
 	test("tells the alarm when the prices workflow first existed on main, from the whole history", () => {

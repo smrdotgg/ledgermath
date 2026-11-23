@@ -1722,11 +1722,16 @@ on GitHub, it also sends the maintainer one plain-text Telegram message
 (`scripts/lib/telegram.ts`, `pingText` and `pingSafely` in `scripts/alarm.ts`).
 
 - **When.** The issue opened, a comment because something changed, the comment saying all
-  is clear again, a drill; and when the alarm had something to post and could not (GitHub
-  refused the post or could not be reached, after it tried to write or with something
-  stale), when the message matters most. The alarm then fails as before. A pass that writes
+  is clear again, a drill; and when the alarm had something to post and it failed (after it
+  tried to write, or with something stale), when the message matters most. The alarm then
+  fails as before. A failed post is said as one of two things: **it could not post** (GitHub
+  refused it with a 4xx, or could not be reached), or **its post could not be confirmed**
+  (the request went out and no whole answer came back: no answer, a 5xx, an answer cut
+  short), since such a post may well be on the issue. The issue's address is in the message
+  whenever the issue is known (found open, or the one a comment went to). A pass that writes
   nothing sends nothing. One message per run, sent last, after every post: a run whose pass
-  comments and which is also a drill sends one message saying both.
+  comments and which is also a drill sends one message saying both, and if only the drill's
+  post fails, the message says so and the run still exits 0.
 - **What it says.** Fixed words chosen by the code: which kind of post it was, the counts
   from the alarm's verdict ("3 of 187 watched Series stale"), whether the price files are
   stale, whether publishing is raised, whether the copy job failed, the issue's address
@@ -1745,19 +1750,26 @@ on GitHub, it also sends the maintainer one plain-text Telegram message
   not sent is a warning annotation and a line in the step summary, in fixed words: Telegram
   could not be reached, gave no whole answer within 15 s, answered HTTP N, its answer was
   not understood, or it did not accept the message. Never the request's address, which
-  holds the token, and nothing of Telegram's answer but its HTTP status; no second try. A
-  Telegram outage never fails the step, so it never skips the `publish` job. With the
-  secrets unset (a fork, or never set), a notice and nothing else.
+  holds the token, and nothing of Telegram's answer but its HTTP status; no second try. The
+  request is never traced by Bun (`verbose: false`), so setting `BUN_CONFIG_VERBOSE_FETCH`
+  to diagnose delivery prints neither key. A Telegram outage never fails the step, so it
+  never skips the `publish` job. With the secrets unset (a fork, or never set), a notice and
+  nothing else.
 - **The secrets stay in one place.** `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` are in the
   alarm step's own environment and nowhere else in any workflow, and `runs.yml` never runs
   for a pull request, so a stranger's pull request cannot reach them; the check's child
-  does not get them. A test reads every file under `.github` and fails otherwise.
+  does not get them. A test reads every file under `.github` and fails otherwise, judging a
+  job's `secrets` by its parsed value, so `secrets: "inherit"` fails like `secrets: inherit`.
 - **Tests**, against a stand-in for Telegram: each kind of post sends exactly one message
-  with its words, a drill one that says so, a pass with no post none; Telegram down, never
-  sending its headers, stalling in its body, answering 401, 429 or what is not JSON: the
-  same exit code, posts and marker as without Telegram, in a bounded time, the token never
-  in the log or the step summary; the secrets unset; nothing S3 said in the message; the
-  length bound.
+  with its words, a drill one that says so, a run that comments and drills one, a pass with
+  no post none; a comment GitHub records and then cuts its answer short (unconfirmed, with
+  the issue's address), and a comment refused on a known issue; Telegram down, never
+  sending its headers, stalling in its body, answering 401, 429, what is not JSON, or the
+  word `timeout`: the same exit code, posts and marker as without Telegram, the token never
+  in the log or the step summary, even with Bun's tracing on; the secrets unset; nothing S3
+  said in the message; the length bound. Stalls get a short deadline
+  (`--telegram-budget-ms`, which the workflow never passes and which can only be shorter
+  than 15 s), so the file runs in seconds.
 
 The alarm runs in the same workflow, so a workflow that does not run at all, or a first
 job that fails before the Runs repository is checked out (the alarm's condition), reports

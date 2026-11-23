@@ -9,7 +9,9 @@
  * throws and gives up after its budget. What happened is one of a closed set
  * of outcomes (SendOutcome), said in fixed words (outcomeWords): of Telegram's
  * answer only the HTTP status is kept. The request's address holds the bot
- * token, so it is never put in an error, a log line or an outcome.
+ * token, so it is never put in an error, a log line or an outcome, and the
+ * request is never traced by Bun (verbose: false), whatever
+ * BUN_CONFIG_VERBOSE_FETCH says.
  */
 
 /** Where the Bot API is: the tests give a stand-in instead. */
@@ -63,7 +65,8 @@ const TOKEN_SHAPE = /^[0-9]{1,20}:[A-Za-z0-9_-]{1,200}$/;
 /** The names of the two secrets, as the workflow's alarm step passes them. */
 export const TELEGRAM_VARIABLES = ["TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID"] as const;
 
-type Fetch = (url: string, init: RequestInit) => Promise<Response>;
+/** Bun's fetch options: `verbose` decides whether Bun traces the request. */
+type Fetch = (url: string, init: RequestInit & { verbose?: boolean }) => Promise<Response>;
 
 export interface BotOptions {
 	/** TELEGRAM_API unless given. */
@@ -100,6 +103,8 @@ export class TelegramBot implements Messenger {
 					signal: controller.signal,
 					// A redirect would carry the form elsewhere: its status is the outcome.
 					redirect: "manual",
+					// Never traced, whatever BUN_CONFIG_VERBOSE_FETCH says: Bun's trace prints the address (the token) and the form (the chat) to stderr.
+					verbose: false,
 				});
 			} catch {
 				// Never the error itself: Bun's names the address, and the address holds the token.
@@ -110,11 +115,11 @@ export class TelegramBot implements Messenger {
 				return { kind: "status", status: response.status };
 			}
 			const answer = await readAnswer(response.body, this.budgetMs - (performance.now() - started), controller.signal);
-			if (answer === "timeout") return { kind: "timeout" };
-			if (answer === null) return { kind: "malformed" };
+			if (answer.kind === "timeout") return { kind: "timeout" };
+			if (answer.kind === "unreadable") return { kind: "malformed" };
 			let parsed: unknown;
 			try {
-				parsed = JSON.parse(answer);
+				parsed = JSON.parse(answer.text);
 			} catch {
 				return { kind: "malformed" };
 			}
@@ -127,36 +132,42 @@ export class TelegramBot implements Messenger {
 	}
 }
 
+/** What reading an answer came to: tagged, so no answer's text can pass for one of the others. */
+type Answer = { kind: "text"; text: string } | { kind: "timeout" } | { kind: "unreadable" };
+
+/** Marks the reader's deadline in a race with reader.read(): a value no read can give. */
+const LATE: unique symbol = Symbol("late");
+
 /**
- * The whole answer as text, read for at most `ms`: "timeout" when it does not
- * end in time (or the request is aborted), null when it is longer than
+ * The whole answer as text, read for at most `ms`: a timeout when it does not
+ * end in time (or the request is aborted), unreadable when it is longer than
  * ANSWER_BYTES or the connection breaks. Cancels what is left.
  */
-async function readAnswer(stream: ReadableStream<Uint8Array> | null, ms: number, signal: AbortSignal): Promise<string | "timeout" | null> {
-	if (stream === null) return "";
+async function readAnswer(stream: ReadableStream<Uint8Array> | null, ms: number, signal: AbortSignal): Promise<Answer> {
+	if (stream === null) return { kind: "text", text: "" };
 	const reader = stream.getReader();
 	const chunks: Uint8Array[] = [];
 	let size = 0;
 	let timer: ReturnType<typeof setTimeout> | undefined;
-	const late = new Promise<"late">((resolve) => {
-		timer = setTimeout(() => resolve("late"), Math.max(0, ms));
+	const late = new Promise<typeof LATE>((resolve) => {
+		timer = setTimeout(() => resolve(LATE), Math.max(0, ms));
 	});
 	try {
 		for (;;) {
 			const read = await Promise.race([reader.read(), late]);
-			if (read === "late") return "timeout";
+			if (read === LATE) return { kind: "timeout" };
 			if (read.done) break;
 			size += read.value.length;
-			if (size > ANSWER_BYTES) return null;
+			if (size > ANSWER_BYTES) return { kind: "unreadable" };
 			chunks.push(read.value);
 		}
 	} catch {
-		return signal.aborted ? "timeout" : null;
+		return signal.aborted ? { kind: "timeout" } : { kind: "unreadable" };
 	} finally {
 		clearTimeout(timer);
 		reader.cancel().catch(() => undefined);
 	}
-	return new TextDecoder().decode(Buffer.concat(chunks));
+	return { kind: "text", text: new TextDecoder().decode(Buffer.concat(chunks)) };
 }
 
 /** Whether a message can be sent, from the environment: a bot, or why not. */

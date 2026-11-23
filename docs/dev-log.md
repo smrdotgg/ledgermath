@@ -1341,4 +1341,15 @@ A migrated benchmark is done only when **all** of these hold:
   none without a post; down, stalled headers, stalled body, 401, 429, not JSON, each the same
   as no Telegram, bounded, the token never printed. The drill's Telegram message is what the
   maintainer confirms before the API goes public.
+- **2026-11-23** — The Telegram message, after an independent verification (five points).
+  The request is made with `verbose: false`: with `BUN_CONFIG_VERBOSE_FETCH` set, Bun's trace
+  printed both keys to stderr. A write that went out with no whole answer back (GitHub
+  recorded a comment, answered 201, and cut its JSON short) is now "could not be confirmed",
+  not "could not post", and the issue's address is in the message whenever the issue is
+  known, a refused comment included (`notingTracker`, `GitHubRefused`: a 4xx is refused,
+  anything else unconfirmed). The workflow test judges each job's `secrets` by its parsed
+  value (`secrets: "inherit"` passed it before) and must reject a set of fixtures. A body
+  reading `timeout` is no longer taken for a timeout (a tagged result). Stalls are tested
+  with a short deadline (`--telegram-budget-ms`, only ever shorter than 15 s), no test times
+  a process, and the file runs in about 6 seconds instead of 33.
 - _(agents: append your entry here, one per merged benchmark)_
