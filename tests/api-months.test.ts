@@ -183,6 +183,10 @@ describe("a month file's bytes change only for the four causes", () => {
 		expect(contract).toContain("For a given layout (the layout of v1/index.json), a month file's bytes change only when (a) a Run that started in that month is added, (b) a boot summary that was missing arrives, (c) a Run arrives late");
 		expect(contract).toContain("or (d) a Method first applies to the Series; otherwise they do not change.");
 		expect(contract).toContain("These four are the only causes for a given layout: layout increases when LedgerMath changes how the files are written, and only then may a file's bytes change without one of them.");
+		// The reader's rule for a month file that does not match its Series file (ADR-0031, decision 8), in the tree's own words.
+		expect(contract).toContain(
+			"So a reader checks the sha256 of every month file it fetches against the one its Series file lists; on a mismatch, it fetches the Series file again, then the month file, and compares again; while they still differ, it uses neither, and tries again later.",
+		);
 		const index = json(tree, "v1/index.json");
 		expect(index.months).toBe(MONTHS);
 		expect(index.months).toContain(MONTH_CONTRACT);

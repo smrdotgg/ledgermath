@@ -2470,7 +2470,13 @@ address is `--base`, so a private or test address can stand in.
   only then may a file's bytes change without one of them. A past month is therefore not
   immutable: each entry of the Series file's months gives its month file's sha256 and size
   in bytes, so a reader holding a copy can tell whether it is current, and fetches the file
-  again only when the sha256 differs. (a) brings the Run's point, its pair entry, and the
+  again only when the sha256 differs. A Series file and a month file fetched together can
+  still be from different updates of the files: a cache may hold one of them from before
+  the other changed, and an update that stopped halfway leaves them so until the next one.
+  So a reader checks the sha256 of every month file it fetches against the one its Series
+  file lists; on a mismatch, it fetches the Series file again, then the month file, and
+  compares again; while they still differ, it uses neither, and tries again later. (a)
+  brings the Run's point, its pair entry, and the
   month's count and span; (b) turns a point's `boot_summary` from null into its address,
   and nothing else; (c) does what (a) does and, in that month and every later one, may
   change in the later points only what depends on earlier Runs: their group and requests
@@ -2489,11 +2495,9 @@ address is `--base`, so a private or test address can stand in.
   from before. No cache expiry repairs the first case. **The rule a reader follows:** verify
   a month file's bytes against the `sha256` its Series file lists; on a mismatch, fetch the
   Series file again and then the month file, and retry; while they still differ, use
-  neither, and retry later. The table of contents and the schemas (the contract's last
-  sentence, above) tell a reader that a held copy is current only when the sha256 matches,
-  and fetch again otherwise; they do not yet say to fetch the Series file again on a
-  mismatch, which is the generator's wording to change (`MONTH_CONTRACT` in
-  `scripts/lib/api.ts`), in a change of its own.
+  neither, and retry later. The table of contents and the schemas say the same, in the
+  contract's last sentences (above; `MONTH_CONTRACT` in `scripts/lib/api.ts`), so a reader
+  who has only the API has the rule too.
 - **The layout is a number.** `layout` in `v1/index.json` is `LAYOUT` in
   `scripts/lib/api.ts`: raise it whenever the build changes how it writes the files (the
   order of a file's fields, their white space, a field every file of a kind gains). Editing
@@ -2539,6 +2543,16 @@ address is `--base`, so a private or test address can stand in.
   change; if it does not, the Method or the tree is wrong.
 - **Each Method's part is labelled.** The 25 `http_get` Series carry both `series_v1` and
   `requests_v1`, each with its `method`; the others carry `series_v1` only.
+- **Words a reader of the API alone can follow.** Its first readers have the API and
+  nothing else, so no word the tree publishes (its own texts, each Method's definitions
+  and words, the schemas' descriptions) names a file or directory of this repository, a
+  README or a document's section, an issue, a pull request, an ADR, a function of the code
+  or a program's option: a definition states its rule instead. `tests/api-words.test.ts`
+  builds a tree and scans every string but the data (what the Runs recorded, and what a
+  Method derived from them for one Series or one Run: a point's `failure`, a Run file's
+  `path`), and fails on any such reference. Two remain, both known: `docs`, the README's
+  section on GitHub, which can be followed once the repository is public; and "the events
+  schema", which both Methods' definitions name and the tree does not serve.
 - **`v1` only ever gains fields.** The API's own schemas forbid no member they do not list, so
   a field added later fails no older reader; a change that would break one is a `v2` beside
   `v1`. The price files are the exception: each is the Runs repository's, byte for byte, and

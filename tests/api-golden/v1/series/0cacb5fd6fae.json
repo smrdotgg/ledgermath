@@ -29,7 +29,7 @@
       },
       "definitions": {
         "bytes_per_second": "Per Run, where the benchmark observed bytes_per_repetition: bytes_per_repetition × 10^9 / the Run's time per repetition in nanoseconds.",
-        "counted": "A Run counts when its binary exited 0, every stdout line is an event that matches the events schema, and the stream obeys every order rule scripts/check-events.py checks: started first and once (not a --quick stream), finished last and once, samples numbered from 0, each closed by its own sample_ended before the next starts and never ending before it starts, observed keys once, exactly one verified, and as many counted samples as the Run asked for. Any other Run is failed: shown, with the reasons, and in no percentile.",
+        "counted": "A Run counts when its binary exited 0, every stdout line is an event that matches the events schema, and the stream obeys every one of these order rules: started first and once (and without quick: true, which marks a developer's trial stream), finished last and once, samples numbered from 0 in order, each closed by its own sample_ended before the next starts and never ending before it starts, observed keys once, exactly one verified, and as many counted samples as the Run asked for. Any other Run is failed: shown, with the reasons, and in no percentile.",
         "differed": "For each pair of consecutive Runs in a Series, every split fact and every dump section of the before-dump whose hash changed, split on or not, with the top-level keys that changed for the sections that are read. Each changed section is marked: it splits, its change lies only in what is left out, or it is not split on.",
         "groups": "Within a Series, the Runs whose split facts are all equal make one group. Groups are lettered in the order each first appears, and may interleave in time. A dump section is compared whole, apart from the per-boot values listed as left out; a fact read from such a section is canonical-json-sha256:<hex>, the sha256 of what remains as JSON with keys sorted and no whitespace (lscpu's output is re-written that way too).",
         "percentiles": "5th, 50th and 95th percentiles across the counted Runs of a Series, and of each group, by linear interpolation between closest ranks (R type 7): with n values sorted, h = (n − 1) × p / 100 and the percentile is x[⌊h⌋] + (h − ⌊h⌋) × (x[⌊h⌋+1] − x[⌊h⌋]). Each number's percentiles are taken over that number's values, so the bytes-per-second percentiles are not the time percentiles inverted.",
@@ -38,7 +38,7 @@
       },
       "split_on": [
         {"fact":"binary","what":"binary.blob: the bytes that ran"},
-        {"fact":"runner","what":"runner: the manifest of runner/ that launched the binary"},
+        {"fact":"runner","what":"runner: the manifest of the runner that launched the binary, a blob listing each of its files with its hash"},
         {"fact":"samples","what":"samples: LM_SAMPLES"},
         {"fact":"image","what":"provider.image_id"},
         {"fact":"cpuid","what":"dump section cpuid: the raw cpuid leaves of every CPU, without what is left out","section":"cpuid"},

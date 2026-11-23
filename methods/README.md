@@ -48,6 +48,17 @@ outputs is a new version, never an edit: version 2 of `series` goes in `v2/`, be
 the page learn to choose it. Rewriting a Method never touches a stored Run; only the Run
 record is forever.
 
+A Method's words (its definitions, and what it splits on, leaves out and does not split
+on, its phases and facts) are part of what it outputs, and the data API publishes them
+word for word to readers who have the API and nothing else. So they name nothing such a
+reader cannot fetch: no file or directory of this repository, no README or document
+section, no issue, pull request or ADR, no function of the code or option of a program; a
+definition states its rule instead (`tests/api-words.test.ts` scans every word a built tree
+publishes). Rewording a definition, every number the same, is still a change to what the
+version outputs: free until its data is first published, as on 2026-11-23, when both
+versions' definitions stopped naming `scripts/check-events.py` and the binary's README
+before the API was public; a new version after.
+
 ## The reduced record of a stream
 
 A Method reads a Run's events from its stdout blob, 4 KB for most benchmarks and 150 to

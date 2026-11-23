@@ -107,15 +107,28 @@ export const DEFINITIONS: Record<string, string> = {
 		"first appears; the same letters series v1 gives the same Runs.",
 	counted:
 		"A Run counts when its binary exited 0 or 4 (4: the Run completed and holds at least one failed request), every " +
-		"stdout line is an event that matches the events schema and the stream obeys every order rule of " +
-		"scripts/check-events.py, the stream has as many counted samples as the Run asked for (fewer: the Run was cut " +
-		"short), every timestamp is a whole number a JavaScript number holds exactly (at most 2^53 − 1), every request " +
-		"in it reads as the binary's README says (every event naming a request names its sample's; a complete response's " +
-		"events in their order on one open connection, each phase at least 0, sample_ended at the clock read that ended " +
-		"the request; a failed request's events, before its request_failed, the start of that order up to where its " +
-		"phase says it got), and an exit 0 has no failed request, no failed warmup request and no failed setup of a kept " +
-		"connection. Any other Run is failed: shown, with the reasons, and in no figure. A counted Run's failed requests " +
-		"are counted; its succeeded requests are in the figures.",
+		"stdout line is an event that matches the events schema and the stream obeys every order rule Method series v1's " +
+		"definition counted lists, the stream has as many counted samples as the Run asked for (fewer: the Run was cut " +
+		"short), every timestamp is a whole number a JavaScript number holds exactly (at most 2^53 − 1), the stream holds " +
+		"a request (a response_ended or request_failed carrying request), every sample in it, the warmup's included, " +
+		"reads as one request, every connection_failed outside a sample has a phase and an error that are words of a-z, " +
+		"0-9 and _ starting with a letter, and an exit 0 has no failed request, no failed warmup request and no failed " +
+		"setup of a kept connection. A sample reads as one request when every event in it that names a request names " +
+		"the sample's number and, its certificate events and a certificate's withheld line aside, either it holds a " +
+		"line_withheld (the request then failed in phase record); or it ends with a request_failed at sample_ended's t, " +
+		"whose phase is dns, connect, tls, send, first_byte, headers or body, whose phase and error are such words, and " +
+		"before which come the first events of a new connection's order or a reused one's (below), up " +
+		"to where that phase got: dns after none or name_resolved, connect and tls after connection_opened, send after " +
+		"connection_secured or, over a reused connection, after none, first_byte after request_sent, headers after " +
+		"first_byte, body after response_headers; or its events are exactly a new connection's order, name_resolved, " +
+		"connection_opened, connection_secured, request_sent, first_byte, response_headers, response_ended, or a reused " +
+		"one's, its last four, with every phase at least 0, sample_ended at response_ended's t, a status " +
+		"(response_headers.status) that is a whole number, and, when the status is 2xx, a body that matched " +
+		"(response_ended.fixture and .s3_checksum both \"match\"). And over a new connection, the connection it opened " +
+		"is the one it secured and the one it sent its request on; a request it sent went over a connection that a " +
+		"connection_opened and a connection_secured before it describe (its address; its TLS version, cipher and " +
+		"group) and no connection_closed has closed since. Any other Run is failed: shown, with the reasons, and in no " +
+		"figure. A counted Run's failed requests are counted; its succeeded requests are in the figures.",
 };
 
 // ---------------------------------------------------------------- gather

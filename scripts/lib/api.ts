@@ -133,9 +133,11 @@ export const ABOUT =
 	"static JSON files cut from the Derivations and the daily price files, each kind with a JSON schema. A Series' file holds each Method's summary and its newest Runs; " +
 	"every Run's point is in the file of the month it started in, and months says when such a file changes.";
 /**
- * When a month file's bytes change, in the API's own words: stated, word for
- * word, in v1/index.json (months), the schemas series and series-month,
- * ADR-0030 and the README, and held to by scripts/check-api.ts --previous.
+ * When a month file's bytes change, and what a reader does about it, in the
+ * API's own words: stated, word for word, in v1/index.json (months), the
+ * schemas series and series-month, ADR-0030 and the README, and held to by
+ * scripts/check-api.ts --previous. Its last sentences are the reader's rule
+ * for a month file that does not match its Series file (ADR-0031, decision 8).
  */
 export const MONTH_CONTRACT =
 	"For a given layout (the layout of v1/index.json), a month file's bytes change only when (a) a Run that started in that month is added, (b) a boot summary that was missing arrives, " +
@@ -143,7 +145,11 @@ export const MONTH_CONTRACT =
 	"or (d) a Method first applies to the Series; otherwise they do not change. " +
 	"These four are the only causes for a given layout: layout increases when LedgerMath changes how the files are written, and only then may a file's bytes change without one of them. " +
 	"A past month is therefore not immutable: each entry of the Series file's months gives its month file's sha256 and size in bytes, " +
-	"so a reader holding a copy can tell whether it is current, and fetches the file again only when the sha256 differs.";
+	"so a reader holding a copy can tell whether it is current, and fetches the file again only when the sha256 differs. " +
+	"A Series file and a month file fetched together can still be from different updates of the files: a cache may hold one of them from before the other changed, " +
+	"and an update that stopped halfway leaves them so until the next one. " +
+	"So a reader checks the sha256 of every month file it fetches against the one its Series file lists; on a mismatch, it fetches the Series file again, then the month file, " +
+	"and compares again; while they still differ, it uses neither, and tries again later.";
 export const MONTHS =
 	"Each Series is split by month: every Run's point is in the file of the month the Run started in (UTC, by the Run's start), " +
 	"with series v1's entry for each pair of consecutive Runs under the month of the later Run, and the Series' file lists its months. " +

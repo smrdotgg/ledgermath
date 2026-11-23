@@ -69,7 +69,7 @@ export interface SplitFact {
  */
 export const SPLIT_FACTS: readonly SplitFact[] = [
 	{ fact: "binary", what: "binary.blob: the bytes that ran" },
-	{ fact: "runner", what: "runner: the manifest of runner/ that launched the binary" },
+	{ fact: "runner", what: "runner: the manifest of the runner that launched the binary, a blob listing each of its files with its hash" },
 	{ fact: "samples", what: "samples: LM_SAMPLES" },
 	{ fact: "image", what: "provider.image_id" },
 	{ fact: "cpuid", what: "dump section cpuid: the raw cpuid leaves of every CPU, without what is left out", section: "cpuid" },

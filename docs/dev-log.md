@@ -1166,7 +1166,7 @@ A migrated benchmark is done only when **all** of these hold:
   so no order prevents that window: ADR-0031 and the README give readers the rule (check a
   month file against its Series file's sha256; on a mismatch fetch the Series file again).
   The generator's own words (`MONTH_CONTRACT`) do not yet say so, and are left for a change
-  of their own. **Tests no longer depend on the committed switch**: one release-gate test
+  of their own (they do since 2026-11-23: that day's entry). **Tests no longer depend on the committed switch**: one release-gate test
   pins it to `off`, and a rehearsal sets it to each state (and the `console` attachment) in
   child processes and finds that only that test fails; `checkSetting` refuses an unknown or
   missing state or attachment. **The stack's wiring is type-checked in CI**
@@ -1328,4 +1328,38 @@ A migrated benchmark is done only when **all** of these hold:
   function). The alarm's own step-summary writes are asynchronous, abandoned after two
   seconds, and the alarm exits explicitly with its verdict's code (a test gives it a FIFO
   nobody reads). Not deployed; the switch stays off.
+- **2026-11-23** — The data API's own words, made whole for a reader who has only the API
+  (agreed with the maintainer that day, while the API is still private). **The month
+  contract gains the reader's rule**: `MONTH_CONTRACT`, written into `v1/index.json`'s
+  `months`, the schemas `series` and `series-month`, ADR-0030 and the README, now ends by
+  saying that a Series file and a month file fetched together can be from different
+  updates, and that a reader checks every month file it fetches against the sha256 its
+  Series file lists, fetches the Series file again and then the month file on a mismatch,
+  and uses neither while they still differ (ADR-0031, decision 8, which said the tree's
+  words did not yet). **No published word points into the repository**: series v1's and
+  requests v1's `counted` named `scripts/check-events.py`, a `--quick` stream and "the
+  binary's README"; split fact `runner` named `runner/`; the prices schema named
+  `schedule.json`. Each now states what it meant: series v1 lists its order rules (as it
+  did, now as the rule itself, with "numbered from 0 in order", and `quick: true` for a
+  developer's stream); requests v1 points to series v1's `counted` for the order rules and
+  states what makes a sample read as one request, clause by clause from `requests.ts`
+  (certificate events aside; a withheld line; a `request_failed` last, at `sample_ended`'s
+  `t`, with its phase's place in the order; a complete response in exactly a new or a
+  reused connection's order, its status, its body; the connection checks), and that the
+  stream must hold a request. No number changes. `tests/api-words.test.ts` builds the tree
+  and scans every string but the data (the Series' identity and params, each point and
+  pair, the unreadable Run files, groups, sections, what the requests recorded, the price
+  files), and fails on a repository path or root file, a source or document file, a README,
+  an ADR, an issue or pull request, a numbered section, the dev log, a function, a
+  program's option, GitHub, or a schema the tree does not serve; on `main` it found 21. Its
+  one exception is `docs`, the README's section on GitHub (ADR-0030, Costs); "the events
+  schema", which both definitions name and the tree does not serve, is left for a change of
+  its own. **What the next run does**: the month files' bytes do not change (Method words
+  are in the Series files and the list, never in a month file), so `layout` stays 1, and
+  `check-api.ts --previous` passes against the tree before without `new_baseline`: shown on
+  both test fixtures and on the real Derivations of 2026-11-19 (187 month files the same,
+  byte for byte). Editing `v1/facts.ts` changes both Methods' record keys, so that run
+  fetches and reduces every stdout blob once more (9,399 Runs on 2026-11-23), the cost
+  `methods/README.md` accepts. Neither Method needed a new version: nothing of theirs was
+  published.
 - _(agents: append your entry here, one per merged benchmark)_
