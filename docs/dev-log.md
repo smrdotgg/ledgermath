@@ -1328,4 +1328,17 @@ A migrated benchmark is done only when **all** of these hold:
   function). The alarm's own step-summary writes are asynchronous, abandoned after two
   seconds, and the alarm exits explicitly with its verdict's code (a test gives it a FIFO
   nobody reads). Not deployed; the switch stays off.
+- **2026-11-23** — The alarm also sends one Telegram message (ADR-0033), because the
+  maintainer may not see GitHub's notifications promptly. Whenever it writes on GitHub
+  (issue opened, comment, all-clear, drill), or had something to post and could not, it
+  sends one plain-text message last of all: fixed words, the verdict's counts, the issue's
+  and the run's addresses, nothing from S3, the check or the environment. Sent from inside
+  the alarm's own step: GitHub starts no workflow for an issue made with the workflow's own
+  token. Given up after 15 s; a message not sent is a warning in fixed words (never the
+  address, which holds the token), and the exit code, posts and marker are those of a run
+  without Telegram. The secrets are in the alarm step's `env` only (a test reads every file
+  under `.github`). Tests against a stand-in for Telegram: one message per kind of post,
+  none without a post; down, stalled headers, stalled body, 401, 429, not JSON, each the same
+  as no Telegram, bounded, the token never printed. The drill's Telegram message is what the
+  maintainer confirms before the API goes public.
 - _(agents: append your entry here, one per merged benchmark)_

@@ -1,7 +1,7 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative, sep } from "node:path";
 
 import { MAX_PUBLISH_AGE_MS } from "../scripts/lib/api-freshness";
 import { scheduledMinutes } from "./runs-schedule";
@@ -284,8 +284,8 @@ describe("the runs workflow", () => {
 		]);
 		const alarm = steps.at(-1) as Step;
 		expect(alarm.if).toBe("${{ !cancelled() && steps.runs-repository.outcome == 'success' }}");
-		// main's environment for the step, and two more: the bucket's name and the drill.
-		expect(Object.keys(alarm.env ?? {})).toEqual(["GITHUB_TOKEN", "COPY", "API_BUCKET", "ALARM_DRILL"]);
+		// main's environment for the step, and four more: the bucket's name, the drill, and the two Telegram secrets (ADR-0033).
+		expect(Object.keys(alarm.env ?? {})).toEqual(["GITHUB_TOKEN", "COPY", "API_BUCKET", "ALARM_DRILL", "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID"]);
 	});
 
 	test("the schedule's runs are at most 6 hours apart, which the alarm's 14 hours assume: two gaps, and two hours for a late start", () => {
@@ -311,6 +311,37 @@ describe("the runs workflow", () => {
 		// The publish job never sees it, and publishes to API_BUCKET as on any run.
 		expect(JSON.stringify(publish)).not.toMatch(/alarm_drill|ALARM_DRILL|drill/i);
 		expect(publish.env).toEqual({ API_BUCKET: "${{ vars.API_BUCKET }}" });
+	});
+
+	test("the Telegram secrets reach the alarm step alone, from its own environment: in no other step, job or workflow, and never in a workflow a pull request starts", () => {
+		const alarm = steps.find((step) => step.run?.includes("scripts/alarm.ts")) as Step;
+		expect(Object.fromEntries(Object.entries(alarm.env ?? {}).filter(([name]) => /TELEGRAM/i.test(name)))).toEqual({
+			TELEGRAM_BOT_TOKEN: "${{ secrets.TELEGRAM_BOT_TOKEN }}",
+			TELEGRAM_CHAT_ID: "${{ secrets.TELEGRAM_CHAT_ID }}",
+		});
+		// Every file under .github, at any depth: the workflows, and any action or workflow a later change adds.
+		const files = readdirSync(join(ROOT, ".github"), { recursive: true, withFileTypes: true })
+			.filter((entry) => entry.isFile())
+			.map((entry) => join(entry.parentPath, entry.name))
+			.map((path) => ({ name: relative(ROOT, path).split(sep).join("/"), text: readFileSync(path, "utf8") }));
+		expect(files.map((file) => file.name)).toContain(".github/workflows/runs.yml");
+		for (const { name, text } of files) {
+			// secrets.TELEGRAM_…, secrets['TELEGRAM_…'], in any case: twice in runs.yml (the two lines of the alarm step), nowhere else.
+			const references = text.match(/secrets\s*(\.|\[\s*['"])\s*TELEGRAM/gi) ?? [];
+			expect({ name, references: references.length }).toEqual({ name, references: name === ".github/workflows/runs.yml" ? 2 : 0 });
+			// Nor every secret at once, by any route.
+			expect({ name, everySecret: /toJSON\(\s*secrets\s*\)|secrets\s*:\s*inherit/i.test(text) }).toEqual({ name, everySecret: false });
+			if (name !== ".github/workflows/runs.yml") expect({ name, telegram: /TELEGRAM/i.test(text) }).toEqual({ name, telegram: false });
+		}
+		// In runs.yml, the two references are the alarm step's: no other step's, no job's or the workflow's environment, not the publish job.
+		for (const step of steps) if (step !== alarm) expect({ step: step.name ?? step.uses ?? step.run, telegram: /TELEGRAM/i.test(JSON.stringify(step)) }).toEqual({ step: step.name ?? step.uses ?? step.run, telegram: false });
+		expect(JSON.stringify(job.env ?? {})).not.toMatch(/TELEGRAM/i);
+		expect(JSON.stringify(publish)).not.toMatch(/TELEGRAM/i);
+		expect(JSON.stringify((workflow as { env?: unknown }).env ?? {})).not.toMatch(/TELEGRAM/i);
+		// The workflow runs on its schedule and by hand, never for a pull request, whose code could read the step's environment.
+		expect(Object.keys(workflow.on)).toEqual(["schedule", "workflow_dispatch"]);
+		// And the alarm is never pointed at a stand-in for Telegram: the tests' only.
+		expect(alarm.run).not.toContain("--telegram-endpoint");
 	});
 
 	test("tells the alarm when the prices workflow first existed on main, from the whole history", () => {

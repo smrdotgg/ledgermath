@@ -5,7 +5,7 @@
  *
  *     bun scripts/alarm.ts --runs DIR --copy succeeded|failed --schedule-changed-at ISO-8601
  *         [--prices-since ISO-8601] [--api-bucket NAME] [--drill yes|no] [--now 2026-11-12T22:40:00Z]
- *         [--schedule FILE] [--dry-run] [--api-endpoint URL]
+ *         [--schedule FILE] [--dry-run] [--api-endpoint URL] [--telegram-endpoint URL]
  *
  * A watched Series is one schedule.json runs (benchmark, params, build) on one
  * of its targets (instance type and zone), where the entry's instance_types,
@@ -72,9 +72,24 @@
  * and carries no state marker, so nothing the alarm reads back changes, and a
  * drill that cannot post does not change the alarm's exit code.
  *
- * GitHub is reached through IssueTracker, so tests use a fake. The real one
- * reads GITHUB_REPOSITORY and GITHUB_TOKEN, as a workflow sets them.
- * --dry-run prints what would be posted and posts nothing.
+ * Telegram (ADR-0033, scripts/lib/telegram.ts): whenever the alarm writes on
+ * GitHub (the issue opened, a comment, the all-clear, a drill), or had
+ * something to post and could not (GitHub refused it or could not be
+ * reached), it also sends the maintainer one plain-text message, last of all.
+ * pingText makes it from fixed words, the verdict's counts, the issue's
+ * number and this run's address: nothing S3, the check's child or the
+ * environment said. A pass that writes nothing sends nothing. It is sent
+ * with TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID (the check's child never sees
+ * them) and given up after PING_BUDGET_MS (pingSafely). It never changes the
+ * verdict, the posts, the marker or the exit code: a message that cannot be
+ * sent is a warning annotation and a line in the step summary, in fixed
+ * words, and with the secrets unset it is skipped with a notice.
+ * --telegram-endpoint is a stand-in for Telegram, for the tests.
+ *
+ * GitHub is reached through IssueTracker, and Telegram through Messenger, so
+ * tests use fakes. The real tracker reads GITHUB_REPOSITORY and GITHUB_TOKEN,
+ * as a workflow sets them. --dry-run prints what would be posted and sent,
+ * and posts and sends nothing.
  */
 
 import { createHash } from "node:crypto";
@@ -91,6 +106,7 @@ import { boundedText, clipText } from "./lib/api-upload";
 import { PRICE_FILE_PATH } from "./lib/prices";
 import { readRunFiles } from "./lib/run-files";
 import { RUNS_REPOSITORY_BLOB_URL } from "./lib/runs-repository";
+import { MAX_MESSAGE_CHARS, outcomeWords, SEND_BUDGET_MS, type SendOutcome, TelegramBot, type TelegramSetup, telegramFromEnvironment } from "./lib/telegram";
 
 export const MAX_AGE_MS = 48 * 3_600_000;
 /** Marks the alarm issue's body, so a later pass finds it without a label. */
@@ -621,10 +637,33 @@ export interface IssueTracker {
 }
 
 /** What a pass found: the stale Series, the price files if stale, and what it raised of the API bucket (apiAlarmState), or null. */
-interface Found {
+export interface Found {
 	stale: StaleSeries[];
 	prices: StalePrices | null;
 	api: string | null;
+}
+
+/** What the alarm judges from its inputs alone, before GitHub is asked anything: runAlarm's findings, and those of a pass that could not post. */
+export interface JudgeInputs {
+	schedule: Schedule;
+	runs: readonly RunFile[];
+	now: Date;
+	/** When the schedule last changed: a Series that has never had a Run is not stale until 48 hours after. */
+	scheduleChangedAt: Date;
+	/** The newest price file of the Runs repository, or null when it has none. */
+	newestPrices?: NewestPriceFile | null;
+	/** When the prices workflow first existed: no price file is not stale until 48 hours after. Null or absent: not known to exist. */
+	pricesSince?: Date | null;
+	/** What the check of the API bucket reported (checkInChild): strings only. Null or absent when it was not asked, and then nothing is said of it. */
+	api?: ApiReport | null;
+}
+
+export function judge(inputs: JudgeInputs): Found {
+	return {
+		stale: staleSeries(watchedSeries(inputs.schedule), inputs.runs, inputs.now, inputs.scheduleChangedAt),
+		prices: stalePrices(inputs.newestPrices ?? null, inputs.now, inputs.pricesSince ?? null),
+		api: inputs.api?.state ?? null,
+	};
 }
 
 export type AlarmOutcome =
@@ -659,34 +698,22 @@ function guarded(tracker: IssueTracker): IssueTracker {
 }
 
 /** One pass of the alarm. */
-export async function runAlarm(options: {
-	schedule: Schedule;
-	runs: readonly RunFile[];
-	now: Date;
-	/** When the schedule last changed: a Series that has never had a Run is not stale until 48 hours after. */
-	scheduleChangedAt: Date;
-	/** Whether this pass's copy job failed, so the Runs repository may be behind the bucket. */
-	copyFailed: boolean;
-	tracker: IssueTracker;
-	runUrlBase?: string;
-	/** The newest price file of the Runs repository, or null when it has none. */
-	newestPrices?: NewestPriceFile | null;
-	/** When the prices workflow first existed: no price file is not stale until 48 hours after. Null or absent: not known to exist. */
-	pricesSince?: Date | null;
-	/** What the check of the API bucket reported (checkInChild): strings only. Null or absent when it was not asked, and then nothing is said of it. */
-	api?: ApiReport | null;
-	/** The run whose log lists every stale Series, linked when the post cannot list them all. */
-	fullListAt?: string | null;
-}): Promise<AlarmOutcome> {
+export async function runAlarm(
+	options: JudgeInputs & {
+		/** Whether this pass's copy job failed, so the Runs repository may be behind the bucket. */
+		copyFailed: boolean;
+		tracker: IssueTracker;
+		runUrlBase?: string;
+		/** The run whose log lists every stale Series, linked when the post cannot list them all. */
+		fullListAt?: string | null;
+	},
+): Promise<AlarmOutcome> {
 	const tracker = guarded(options.tracker);
-	const stale = staleSeries(watchedSeries(options.schedule), options.runs, options.now, options.scheduleChangedAt);
-	const newestPrices = options.newestPrices ?? null;
-	const pricesSince = options.pricesSince ?? null;
-	const prices = stalePrices(newestPrices, options.now, pricesSince);
-	const pricesWatched = newestPrices !== null || pricesSince !== null;
+	const found = judge(options);
+	const { stale, prices } = found;
+	const pricesWatched = (options.newestPrices ?? null) !== null || (options.pricesSince ?? null) !== null;
 	const api = options.api ?? null;
-	const apiState = api?.state ?? null;
-	const found: Found = { stale, prices, api: apiState };
+	const apiState = found.api;
 	const open = await tracker.findOpen(ALARM_MARKER);
 	const last = open === null ? null : stateOf(open.lastPost);
 	const text = alarmText({
@@ -712,6 +739,154 @@ export async function runAlarm(options: {
 	if (last === null && allWell) return { action: "unchanged", issue: open.number, ...found };
 	await tracker.comment(open.number, text);
 	return { action: "commented", issue: open.number, ...found };
+}
+
+/** Where an issue of this repository is shown, followed by its number: the Telegram message links the alarm issue here. */
+export const ALARM_ISSUE_URL = "https://github.com/smrdotgg/ledgermath/issues/";
+
+/** What the pass's verdict wrote on GitHub, or that it had something to post and could not. */
+export type VerdictPost = { kind: "opened" | "commented" | "all-clear"; issue: number } | { kind: "not-posted" };
+/** What the drill wrote on GitHub, or that it could not. */
+export type DrillPost = { kind: "posted"; issue: number } | { kind: "not-posted" };
+
+/** Everything the Telegram message is made from: what was written, the verdict's counts and flags, and this run's address. */
+export interface PingFacts {
+	/** Null when the verdict wrote nothing (nothing to say, or nothing changed). */
+	verdict: VerdictPost | null;
+	/** Null when there was no drill. */
+	drill: DrillPost | null;
+	/** How many watched Series are stale, and how many there are. */
+	stale: number;
+	watched: number;
+	pricesStale: boolean;
+	apiRaised: boolean;
+	copyFailed: boolean;
+	/** This run's page, ACTIONS_RUN_URL and the numeric run id; anything else is left out. */
+	runUrl: string | null;
+}
+
+/** What a finished pass wrote, for its Telegram message: null when it wrote nothing. A comment on an issue with nothing stale is the all-clear. */
+export function verdictPost(outcome: AlarmOutcome): VerdictPost | null {
+	switch (outcome.action) {
+		case "none":
+		case "unchanged":
+			return null;
+		case "opened":
+			return { kind: "opened", issue: outcome.issue };
+		case "commented":
+			return { kind: outcome.stale.length === 0 && outcome.prices === null && outcome.api === null ? "all-clear" : "commented", issue: outcome.issue };
+	}
+}
+
+const isIssue = (issue: number): boolean => Number.isSafeInteger(issue) && issue > 0;
+const counted = (count: number): string => (Number.isSafeInteger(count) && count >= 0 ? String(count) : "?");
+
+/**
+ * The Telegram message, plain text: null when nothing was written or tried.
+ * Fixed words, the counts, the issue's number (a positive whole number, or
+ * else "the alarm issue" and no link) and this run's address (only when it is
+ * ACTIONS_RUN_URL and a number). At most two posts, each one line, so it is a
+ * few hundred characters, far under MAX_MESSAGE_CHARS, by construction.
+ */
+export function pingText(facts: PingFacts): string | null {
+	const { verdict, drill } = facts;
+	if (verdict === null && drill === null) return null;
+	const issue = (number: number): string => (isIssue(number) ? `issue #${number}` : "the alarm issue");
+	const lines: string[] = [];
+	if (verdict !== null) {
+		lines.push(
+			verdict.kind === "opened"
+				? `LedgerMath alarm: opened ${issue(verdict.issue)} on GitHub.`
+				: verdict.kind === "commented"
+					? `LedgerMath alarm: commented on ${issue(verdict.issue)}, because what it reports has changed.`
+					: verdict.kind === "all-clear"
+						? `LedgerMath alarm: all clear, said on ${issue(verdict.issue)}. Nothing it watches is stale now.`
+						: "LedgerMath alarm: COULD NOT POST ON GITHUB. GitHub refused the post or could not be reached, so the issue does not say what follows. The run's log says why.",
+		);
+		const now = [`${counted(facts.stale)} of ${counted(facts.watched)} watched Series stale (no Run for 48 hours)`];
+		if (facts.pricesStale) now.push("the price files stale (none new for 48 hours)");
+		if (facts.apiRaised) now.push("the data API not published for 14 hours, or its publishing could not be checked");
+		if (facts.copyFailed) now.push("the copy job failed on this pass");
+		lines.push(`Now: ${now.join("; ")}.`);
+	}
+	if (drill !== null) {
+		const head = verdict === null ? "LedgerMath alarm drill" : "And a drill";
+		lines.push(
+			drill.kind === "posted"
+				? `${head}: posted on ${issue(drill.issue)}, started by hand with alarm_drill. Nothing is wrong because of the drill. This is its Telegram message.`
+				: `${head}: it could not post on GitHub (GitHub refused it or could not be reached). Nothing is wrong because of the drill. This is its Telegram message.`,
+		);
+	}
+	const issues = new Set<number>();
+	for (const post of [verdict, drill]) if (post !== null && "issue" in post && isIssue(post.issue)) issues.add(post.issue);
+	for (const number of issues) lines.push(`Issue: ${ALARM_ISSUE_URL}${number}`);
+	const runUrl = facts.runUrl;
+	if (runUrl !== null && runUrl.startsWith(ACTIONS_RUN_URL) && /^[1-9][0-9]{0,19}$/.test(runUrl.slice(ACTIONS_RUN_URL.length))) lines.push(`Run: ${runUrl}`);
+	return lines.join("\n");
+}
+
+/** Where pingSafely says what came of the message: the log (stdout, where GitHub reads annotations) and the step summary. */
+export interface PingReport {
+	print(line: string): void;
+	summary(text: string): Promise<void> | void;
+}
+
+/** The most the alarm waits for its message, whatever the Messenger: a second past TelegramBot's own SEND_BUDGET_MS. */
+export const PING_BUDGET_MS = SEND_BUDGET_MS + 1_000;
+
+/** What the alarm did about Telegram. */
+export type PingResult = "nothing" | "sent" | "skipped" | "failed";
+
+/** A GitHub annotation of fixed words, escaped as the workflow command requires. */
+const annotation = (level: "notice" | "warning", words: string): string =>
+	`::${level} title=The alarm's Telegram message::${words.replaceAll("%", "%25").replaceAll("\r", "%0D").replaceAll("\n", "%0A")}`;
+
+/**
+ * Sends `text` (null: nothing was written, and nothing is sent) through
+ * `setup`'s Messenger, waiting at most budgetMs, then abandoning it. Never
+ * throws, and nothing it meets changes the alarm. A message not sent is a
+ * warning annotation and a line in the step summary in fixed words: of
+ * Telegram's answer, only a reason from a closed set (outcomeWords); never
+ * the request's address, which holds the token. With the secrets unset, a
+ * notice. The summary write is toStepSummary's: two seconds at most.
+ */
+export async function pingSafely(
+	text: string | null,
+	setup: TelegramSetup,
+	report: PingReport = { print: (line) => console.log(line), summary: (summary) => toStepSummary(summary) },
+	budgetMs = PING_BUDGET_MS,
+): Promise<PingResult> {
+	const say = async (level: "notice" | "warning", words: string, result: PingResult): Promise<PingResult> => {
+		report.print(annotation(level, words));
+		await report.summary(`### The alarm's Telegram message\n\n${words}\n`);
+		return result;
+	};
+	try {
+		if (text === null) {
+			report.print("telegram: the alarm wrote nothing on GitHub, so it sends no message");
+			return "nothing";
+		}
+		if (setup.kind === "absent") {
+			return await say("notice", `No Telegram message: ${setup.missing.join(" and ")} ${setup.missing.length === 1 ? "is" : "are"} not set (a fork, or the secrets were never set). Nothing else changes.`, "skipped");
+		}
+		if (setup.kind === "bad-token") return await say("warning", "The alarm's Telegram message was not sent: TELEGRAM_BOT_TOKEN is not shaped like a bot token.", "failed");
+		if (text.length > MAX_MESSAGE_CHARS) return await say("warning", `The alarm's Telegram message was not sent: it was over Telegram's limit of ${MAX_MESSAGE_CHARS} characters.`, "failed");
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		const late = new Promise<SendOutcome>((resolve) => {
+			timer = setTimeout(() => resolve({ kind: "timeout" }), budgetMs);
+		});
+		const outcome = await Promise.race([setup.messenger.send(text).catch((): SendOutcome => ({ kind: "no-answer" })), late]);
+		clearTimeout(timer);
+		if (outcome.kind === "sent") {
+			report.print("telegram: one message sent");
+			await report.summary("### The alarm's Telegram message\n\nSent: one message, saying what the alarm wrote on GitHub.\n");
+			return "sent";
+		}
+		const allowed = setup.messenger instanceof TelegramBot ? setup.messenger.budgetMs : budgetMs;
+		return await say("warning", `The alarm's Telegram message was not sent: ${outcomeWords(outcome, allowed)}. Nothing else changes.`, "failed");
+	} catch {
+		return "failed";
+	}
 }
 
 type Fetch = (url: string, init: RequestInit) => Promise<Response>;
@@ -802,13 +977,14 @@ async function main(): Promise<void> {
 			"api-bucket": { type: "string" },
 			drill: { type: "string" },
 			"api-endpoint": { type: "string" },
+			"telegram-endpoint": { type: "string" },
 			"dry-run": { type: "boolean" },
 		},
 	});
 	if (!values.runs || (values.copy !== "succeeded" && values.copy !== "failed") || values["schedule-changed-at"] === undefined) {
 		console.error(
 			"usage: bun scripts/alarm.ts --runs DIR --copy succeeded|failed --schedule-changed-at ISO-8601 [--prices-since ISO-8601] [--api-bucket NAME]\n" +
-				"         [--drill yes|no] [--now ISO-8601] [--schedule FILE] [--dry-run] [--api-endpoint URL]\n" +
+				"         [--drill yes|no] [--now ISO-8601] [--schedule FILE] [--dry-run] [--api-endpoint URL] [--telegram-endpoint URL]\n" +
 				'  --schedule-changed-at: when the schedule last changed, such as "$(git log -1 --first-parent --format=%cI -- schedule.json)"\n' +
 				'  --prices-since: when the prices workflow first existed, such as "$(git log --first-parent --reverse --format=%cI -- .github/workflows/prices.yml | sed -n 1p)"\n' +
 				"  --api-bucket: the API bucket, as API_BUCKET names it; empty or absent, it is not read\n" +
@@ -836,6 +1012,13 @@ async function main(): Promise<void> {
 		if (!repository || !token) throw new Error("GITHUB_REPOSITORY and GITHUB_TOKEN must be set, or pass --dry-run");
 		tracker = new GitHubIssues(repository, token);
 	}
+	// One Telegram message whenever the alarm writes on GitHub, or could not (ADR-0033): never in a dry run, which prints it.
+	const telegramEndpoint = values["telegram-endpoint"];
+	const telegram = telegramFromEnvironment(process.env, telegramEndpoint === undefined ? {} : { apiBase: telegramEndpoint });
+	const ping = async (text: string | null): Promise<void> => {
+		if (!values["dry-run"]) await pingSafely(text, telegram);
+		else if (text !== null) console.log(`--dry-run: would send to Telegram:\n${text}`);
+	};
 	// The check of the API bucket, whole, in a child killed after CHECK_BUDGET_MS: started before the Runs repository
 	// is read, so the wait overlaps that work, and awaited before anything is posted. It never throws.
 	const endpoint = values["api-endpoint"];
@@ -859,17 +1042,57 @@ async function main(): Promise<void> {
 	// This run's page: the repository's fixed address and the run id, which must be a number; nothing else from the environment.
 	const runId = process.env.GITHUB_RUN_ID ?? "";
 	const runUrl = /^[1-9][0-9]{0,19}$/.test(runId) ? `${ACTIONS_RUN_URL}${runId}` : null;
-	const outcome = await runAlarm({ schedule, runs, now, scheduleChangedAt, copyFailed, tracker, newestPrices, pricesSince, api, fullListAt: runUrl });
 	const watched = watchedSeries(schedule);
+	// Notes whether the pass tried to write, so that a failure can be told apart: it had something to post, or it could not read GitHub to know.
+	let tried = false;
+	const noting: IssueTracker = {
+		findOpen: (marker) => tracker.findOpen(marker),
+		open: (title, body) => {
+			tried = true;
+			return tracker.open(title, body);
+		},
+		comment: (issue, body) => {
+			tried = true;
+			return tracker.comment(issue, body);
+		},
+	};
+	let outcome: AlarmOutcome;
+	try {
+		outcome = await runAlarm({ schedule, runs, now, scheduleChangedAt, copyFailed, tracker: noting, newestPrices, pricesSince, api, fullListAt: runUrl });
+	} catch (error) {
+		// Said on Telegram when the pass had something to post (it tried to write, or something is stale); then the alarm fails as it did before, with its own error whatever the message met.
+		try {
+			const found = judge({ schedule, runs, now, scheduleChangedAt, newestPrices, pricesSince, api });
+			if (tried || found.stale.length > 0 || found.prices !== null || found.api !== null) {
+				await ping(
+					pingText({
+						verdict: { kind: "not-posted" },
+						drill: null,
+						stale: found.stale.length,
+						watched: watched.length,
+						pricesStale: found.prices !== null,
+						apiRaised: found.api !== null,
+						copyFailed,
+						runUrl,
+					}),
+				);
+			}
+		} catch {
+			// The alarm's own failure is what the job reports.
+		}
+		throw error;
+	}
 	// Those with no Run at all, whatever the schedule's age.
 	const neverRun = staleSeries(watched, runs, now, new Date(0)).filter((series) => series.newest === null).length;
 	if (copyFailed) console.log("the copy job failed on this pass: the Runs repository may be behind the bucket");
 	// Every stale Series, in the log and the step summary, which the issue points to when it cannot list them all.
 	for (const series of outcome.stale) console.log(`stale: ${describeSeries(series)} (newest ${series.newest?.startedAt ?? "none"})`);
 	if (outcome.stale.length > 0) await toStepSummary(staleList(outcome.stale, now));
+	let drill: DrillPost | null = null;
 	if (values.drill === "yes") {
 		const issue = await drillSafely(tracker, runUrl);
 		if (issue !== null && !values["dry-run"]) console.log(`drill: posted on issue #${issue}`);
+		drill = issue === null ? { kind: "not-posted" } : { kind: "posted", issue };
 	}
 	if (neverRun > 0 && now.getTime() - scheduleChangedAt.getTime() <= MAX_AGE_MS) {
 		console.log(
@@ -882,6 +1105,23 @@ async function main(): Promise<void> {
 	else console.log(`no price file; the prices workflow has existed since ${pricesSince.toISOString()}${outcome.prices === null ? ", so it is not stale yet" : ", stale"}`);
 	if (outcome.action !== "none" && !values["dry-run"]) {
 		console.log(outcome.action === "unchanged" ? `nothing changed since the last post on issue #${outcome.issue}` : `${outcome.action} issue #${outcome.issue}`);
+	}
+	// Last of all, so nothing the message meets delays anything else; and nothing it meets changes the exit code.
+	try {
+		await ping(
+			pingText({
+				verdict: verdictPost(outcome),
+				drill,
+				stale: outcome.stale.length,
+				watched: watched.length,
+				pricesStale: outcome.prices !== null,
+				apiRaised: outcome.api !== null,
+				copyFailed,
+				runUrl,
+			}),
+		);
+	} catch {
+		console.log(annotation("warning", "The alarm's Telegram message was not sent: it could not be made. Nothing else changes."));
 	}
 }
 
