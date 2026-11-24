@@ -13,7 +13,9 @@
  */
 
 import { afterAll, describe, expect, setDefaultTimeout, test } from "bun:test";
+import { once } from "node:events";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -334,17 +336,17 @@ describe("the message's words: fixed, from the verdict, at most a few hundred ch
 		);
 	});
 
-	test("a post that failed: not made, with or without the issue known; or unconfirmed, which never says it was not made", () => {
+	test("a post that failed: not made, with or without the issue known, in words that claim nothing of what the issue already says; or unconfirmed, which never says it was not made", () => {
 		expect(pingText(facts({ verdict: { kind: "not-posted", issue: null } }))).toBe(
 			[
-				"LedgerMath alarm: COULD NOT POST ON GITHUB. GitHub refused the post or could not be reached, so the alarm issue does not say what follows. The run's log says why.",
+				"LedgerMath alarm: COULD NOT POST ON GITHUB. This run could not post an update on the alarm issue. The run's log says why.",
 				"Now: 3 of 187 watched Series stale (no Run for 48 hours).",
 				`Run: ${RUN_URL}`,
 			].join("\n"),
 		);
 		expect(pingText(facts({ verdict: { kind: "not-posted", issue: 7 } }))).toBe(
 			[
-				"LedgerMath alarm: COULD NOT POST ON GITHUB. GitHub refused the post or could not be reached, so issue #7 does not say what follows. The run's log says why.",
+				"LedgerMath alarm: COULD NOT POST ON GITHUB. This run could not post an update on issue #7. The run's log says why.",
 				"Now: 3 of 187 watched Series stale (no Run for 48 hours).",
 				`Issue: ${ALARM_ISSUE_URL}7`,
 				`Run: ${RUN_URL}`,
@@ -353,14 +355,18 @@ describe("the message's words: fixed, from the verdict, at most a few hundred ch
 		const unconfirmed = pingText(facts({ verdict: { kind: "unconfirmed", issue: 7 } })) as string;
 		expect(unconfirmed).toBe(
 			[
-				"LedgerMath alarm: ITS POST ON GITHUB COULD NOT BE CONFIRMED. The post to issue #7 went out, but no whole answer came back, so it may or may not be there. The run's log says why.",
+				"LedgerMath alarm: ITS POST ON GITHUB COULD NOT BE CONFIRMED. GitHub did not confirm the write to issue #7, so the update may or may not be there. The run's log says why.",
 				"Now: 3 of 187 watched Series stale (no Run for 48 hours).",
 				`Issue: ${ALARM_ISSUE_URL}7`,
 				`Run: ${RUN_URL}`,
 			].join("\n"),
 		);
-		expect(unconfirmed).not.toContain("does not say");
-		expect((pingText(facts({ verdict: { kind: "unconfirmed", issue: null } })) as string).split("\n")[0]).toContain("The post to the alarm issue went out");
+		expect((pingText(facts({ verdict: { kind: "unconfirmed", issue: null } })) as string).split("\n")[0]).toContain("GitHub did not confirm the write to the alarm issue");
+		// No claim of what the issue says, nor of how the answer came: true of a refusal, of a failed read, of no answer and of a whole 503 alike.
+		for (const kind of ["not-posted", "unconfirmed"] as const) {
+			const text = pingText(facts({ verdict: { kind, issue: 7 } })) as string;
+			for (const claim of ["does not say", "what follows", "no whole answer", "went out"]) expect({ kind, claim, made: text.includes(claim) }).toEqual({ kind, claim, made: false });
+		}
 	});
 
 	test("a drill says it is one, and that nothing is wrong; with the verdict's post too, both in one message", () => {
@@ -373,12 +379,12 @@ describe("the message's words: fixed, from the verdict, at most a few hundred ch
 		);
 		expect(pingText(facts({ drill: { kind: "not-posted", issue: null } }))).toBe(
 			[
-				"LedgerMath alarm drill: it could not post on the alarm issue (GitHub refused it or could not be reached). Nothing is wrong because of the drill. This is its Telegram message.",
+				"LedgerMath alarm drill: this run could not post the drill on the alarm issue; the run's log says why. Nothing is wrong because of the drill. This is its Telegram message.",
 				`Run: ${RUN_URL}`,
 			].join("\n"),
 		);
 		expect((pingText(facts({ drill: { kind: "unconfirmed", issue: 41 } })) as string).split("\n")).toEqual([
-			"LedgerMath alarm drill: its post to issue #41 went out, but no whole answer came back, so it could not be confirmed. Nothing is wrong because of the drill. This is its Telegram message.",
+			"LedgerMath alarm drill: GitHub did not confirm the drill's write to issue #41, so it may or may not be there. Nothing is wrong because of the drill. This is its Telegram message.",
 			`Issue: ${ALARM_ISSUE_URL}41`,
 			`Run: ${RUN_URL}`,
 		]);
@@ -483,11 +489,27 @@ describe("what a failed write was: refused by GitHub, or gone out unconfirmed; a
 		expect(refused.thrown).toBeInstanceOf(GitHubRefused);
 		expect((refused.thrown as Error).message).toBe("GitHub POST /issues/7/comments: 422 Validation Failed");
 		expect(failedPost(refused.note)).toEqual({ kind: "not-posted", issue: 7 });
-		for (const answer of [() => new Response("Bad Gateway", { status: 502 }), () => new Response("{", { status: 201 })]) {
+		for (const answer of [() => new Response("Bad Gateway", { status: 502 }), () => Response.json({ message: "Service unavailable" }, { status: 503 }), () => new Response("{", { status: 201 })]) {
 			const unconfirmed = await attempt(answer, "comment");
 			expect(unconfirmed.note).toEqual({ issue: 7, wrote: true, failure: "unconfirmed" });
 			expect(failedPost(unconfirmed.note)).toEqual({ kind: "unconfirmed", issue: 7 });
 		}
+		// A 4xx whose body is cut off is refused all the same: its status is kept, and the message is the read's own, as before.
+		const cut = () =>
+			new Response(
+				new ReadableStream({
+					start(controller) {
+						controller.enqueue(new TextEncoder().encode("bad"));
+						controller.error(new Error("The socket connection was closed unexpectedly"));
+					},
+				}),
+				{ status: 422 },
+			);
+		const cutOff = await attempt(cut, "comment");
+		expect(cutOff.note).toEqual({ issue: 7, wrote: true, failure: "refused" });
+		expect(cutOff.thrown).toBeInstanceOf(GitHubRefused);
+		expect((cutOff.thrown as GitHubRefused).status).toBe(422);
+		expect((cutOff.thrown as Error).message).toBe("The socket connection was closed unexpectedly");
 		const unanswered = notingTracker({
 			findOpen: async () => null,
 			open: async () => {
@@ -512,6 +534,23 @@ describe("what a failed write was: refused by GitHub, or gone out unconfirmed; a
 		await expect(unread.tracker.findOpen(ALARM_MARKER)).rejects.toThrow("down");
 		expect(unread.note).toEqual({ issue: null, wrote: false, failure: "none" });
 		expect(failedPost(unread.note)).toEqual({ kind: "not-posted", issue: null });
+	});
+
+	test("the issue found open is noted before its comments are read, so a failure reading them still knows it; an issue an earlier phase learned is kept", async () => {
+		const comments503 = new GitHubIssues("smrdotgg/ledgermath", "a-token", async (url) =>
+			url.includes("/comments") ? Response.json({ message: "Service unavailable" }, { status: 503 }) : Response.json([{ number: 7, body: ALARM_MARKER }]),
+		);
+		const told: number[] = [];
+		const { tracker, note } = notingTracker(comments503);
+		await expect(tracker.findOpen(ALARM_MARKER, (issue) => told.push(issue))).rejects.toBeInstanceOf(GitHubRefused);
+		expect(note).toEqual({ issue: 7, wrote: false, failure: "none" });
+		expect(told).toEqual([7]);
+		expect(failedPost(note)).toEqual({ kind: "not-posted", issue: 7 });
+		// The drill starts from the issue the pass learned; its own lookup failing does not lose it.
+		const down = notingTracker({ findOpen: async () => Promise.reject(new GitHubRefused(503, "down")), open: async () => 0, comment: async () => {} }, 7);
+		await expect(down.tracker.findOpen(ALARM_MARKER)).rejects.toThrow("down");
+		expect(failedPost(down.note)).toEqual({ kind: "not-posted", issue: 7 });
+		for (const known of [0, -1, 1.5]) expect(notingTracker(new FakeIssues(), known).note.issue).toBeNull();
 	});
 });
 
@@ -636,18 +675,31 @@ describe("sending it: never failing, abandoned after its budget, a warning in fi
 /** How a FakeGitHub answers one POST: a status, with a JSON body naming the issue, or a status and a body of its own. */
 type Answer = number | { status: number; body: string };
 
-/** A stand-in for GitHub's issues API: the open issue it is given, if any, with no comments; each POST answered in turn from `answers`. */
+/**
+ * A stand-in for GitHub's issues API: the open issue it is given, if any,
+ * with no comments; each POST answered in turn from `answers`. `reads` makes
+ * reads fail with a 503: the issue's comments, or the list of issues from
+ * its nth reading on.
+ */
 class FakeGitHub {
 	readonly posts: Array<{ path: string; body: string }> = [];
 	private readonly server: ReturnType<typeof Bun.serve>;
+	private lists = 0;
 
-	constructor(answers: Answer[], open: { number: number; body: string } | null = null) {
+	constructor(answers: Answer[], open: { number: number; body: string } | null = null, reads: { commentsFail?: boolean; listFailsFrom?: number } = {}) {
 		this.server = Bun.serve({
 			port: 0,
 			hostname: "127.0.0.1",
 			fetch: async (request) => {
 				const path = new URL(request.url).pathname;
-				if (request.method === "GET") return Response.json(path.endsWith("/comments") || open === null ? [] : [open]);
+				if (request.method === "GET") {
+					const comments = path.endsWith("/comments");
+					if (!comments) this.lists++;
+					if ((comments && reads.commentsFail === true) || (!comments && reads.listFailsFrom !== undefined && this.lists >= reads.listFailsFrom)) {
+						return Response.json({ message: "Service unavailable" }, { status: 503 });
+					}
+					return Response.json(comments || open === null ? [] : [open]);
+				}
 				this.posts.push({ path, body: ((await request.json()) as { body: string }).body });
 				const answer = answers[this.posts.length - 1] ?? 500;
 				if (typeof answer !== "number") return new Response(answer.body, { status: answer.status });
@@ -663,6 +715,33 @@ class FakeGitHub {
 	stop(): void {
 		this.server.stop(true);
 	}
+}
+
+/** A stand-in for GitHub (node:http, which can drop a connection) showing issue #`open.number` open, that answers a POST with 422 headers and part of a body, then drops the connection. */
+async function cutGitHub(open: { number: number; body: string }) {
+	const posts: string[] = [];
+	const server = createServer((request, response) => {
+		const path = (request.url ?? "").split("?")[0] as string;
+		if (request.method === "GET") {
+			response.writeHead(200, { "content-type": "application/json" });
+			response.end(JSON.stringify(path.endsWith("/comments") ? [] : [open]));
+			return;
+		}
+		posts.push(path);
+		response.writeHead(422, { "content-length": "200" });
+		response.write('{"message":"Valid');
+		setTimeout(() => response.destroy(), 50);
+	});
+	server.listen(0, "127.0.0.1");
+	await once(server, "listening");
+	return {
+		url: `http://127.0.0.1:${(server.address() as { port: number }).port}`,
+		posts,
+		stop: () => {
+			server.closeAllConnections();
+			server.close();
+		},
+	};
 }
 
 interface ScriptOptions {
@@ -856,7 +935,7 @@ describe("the script, as the workflow's alarm step runs it: one message for each
 			expect(done.stderr).toContain("the drill's comment could not be posted");
 			const lines = theMessage(telegram).split("\n");
 			expect(lines[0]).toBe("LedgerMath alarm: commented on issue #7, because what it reports has changed.");
-			expect(lines[2]).toBe("And a drill: it could not post on issue #7 (GitHub refused it or could not be reached). Nothing is wrong because of the drill. This is its Telegram message.");
+			expect(lines[2]).toBe("And a drill: this run could not post the drill on issue #7; the run's log says why. Nothing is wrong because of the drill. This is its Telegram message.");
 			expect(lines.slice(3)).toEqual([`Issue: ${ALARM_ISSUE_URL}7`, `Run: ${RUN_URL}`]);
 		} finally {
 			github.stop();
@@ -905,9 +984,7 @@ describe("the script, as the workflow's alarm step runs it: one message for each
 			expect(done.stderr).toContain("422");
 			expect(github.posts).toHaveLength(1);
 			const text = theMessage(telegram);
-			expect(text.split("\n")[0]).toBe(
-				"LedgerMath alarm: COULD NOT POST ON GITHUB. GitHub refused the post or could not be reached, so the alarm issue does not say what follows. The run's log says why.",
-			);
+			expect(text.split("\n")[0]).toBe("LedgerMath alarm: COULD NOT POST ON GITHUB. This run could not post an update on the alarm issue. The run's log says why.");
 			expect(text).not.toContain("Issue:");
 			expect(text).toContain(`Run: ${RUN_URL}`);
 			expectNoSecrets(done, "refused");
@@ -925,8 +1002,92 @@ describe("the script, as the workflow's alarm step runs it: one message for each
 			expect(done.exitCode).toBe(1);
 			expect(github.posts.map((post) => post.path)).toEqual(["/repos/smrdotgg/ledgermath/issues/7/comments"]);
 			const lines = theMessage(telegram).split("\n");
-			expect(lines[0]).toBe("LedgerMath alarm: COULD NOT POST ON GITHUB. GitHub refused the post or could not be reached, so issue #7 does not say what follows. The run's log says why.");
+			expect(lines[0]).toBe("LedgerMath alarm: COULD NOT POST ON GITHUB. This run could not post an update on issue #7. The run's log says why.");
 			expect(lines.slice(2)).toEqual([`Issue: ${ALARM_ISSUE_URL}7`, `Run: ${RUN_URL}`]);
+		} finally {
+			github.stop();
+			telegram.stop();
+		}
+	});
+
+	test("GitHub refuses a comment with 422 and drops the connection mid-body: still could not post, never unconfirmed, with the issue's address", async () => {
+		const github = await cutGitHub({ number: 7, body: OLD_STATE });
+		const telegram = new TelegramStandin("ok");
+		try {
+			const done = await alarmScript({ stale: true, github: github.url, telegram: telegram.url });
+			expect(done.exitCode).toBe(1);
+			expect(github.posts).toEqual(["/repos/smrdotgg/ledgermath/issues/7/comments"]);
+			const lines = theMessage(telegram).split("\n");
+			expect(lines[0]).toBe("LedgerMath alarm: COULD NOT POST ON GITHUB. This run could not post an update on issue #7. The run's log says why.");
+			expect(lines.slice(2)).toEqual([`Issue: ${ALARM_ISSUE_URL}7`, `Run: ${RUN_URL}`]);
+		} finally {
+			github.stop();
+			telegram.stop();
+		}
+	});
+
+	test("GitHub answers a comment with a whole 503: the post could not be confirmed, in words true of a whole answer, with the issue's address", async () => {
+		const github = new FakeGitHub([{ status: 503, body: JSON.stringify({ message: "Service unavailable" }) }], { number: 7, body: OLD_STATE });
+		const telegram = new TelegramStandin("ok");
+		try {
+			const done = await alarmScript({ stale: true, github: github.url, telegram: telegram.url });
+			expect(done.exitCode).toBe(1);
+			expect(github.posts).toHaveLength(1);
+			const lines = theMessage(telegram).split("\n");
+			expect(lines[0]).toBe(
+				"LedgerMath alarm: ITS POST ON GITHUB COULD NOT BE CONFIRMED. GitHub did not confirm the write to issue #7, so the update may or may not be there. The run's log says why.",
+			);
+			expect(lines.slice(2)).toEqual([`Issue: ${ALARM_ISSUE_URL}7`, `Run: ${RUN_URL}`]);
+		} finally {
+			github.stop();
+			telegram.stop();
+		}
+	});
+
+	test("GitHub shows issue #7, holding this very verdict, then answers 503 for its comments: could not post an update, claiming nothing of what #7 says, with its address", async () => {
+		// The body the first pass would post: #7 already says what this pass would say.
+		const first = new FakeGitHub([201]);
+		const firstTelegram = new TelegramStandin("ok");
+		await alarmScript({ stale: true, github: first.url, telegram: firstTelegram.url });
+		first.stop();
+		firstTelegram.stop();
+		const github = new FakeGitHub([], { number: 7, body: first.posts[0]?.body ?? "" }, { commentsFail: true });
+		const telegram = new TelegramStandin("ok");
+		try {
+			const done = await alarmScript({ stale: true, github: github.url, telegram: telegram.url });
+			expect(done.exitCode).toBe(1);
+			expect(done.stderr).toContain("503");
+			expect(github.posts).toEqual([]);
+			const lines = theMessage(telegram).split("\n");
+			expect(lines[0]).toBe("LedgerMath alarm: COULD NOT POST ON GITHUB. This run could not post an update on issue #7. The run's log says why.");
+			expect(lines.slice(2)).toEqual([`Issue: ${ALARM_ISSUE_URL}7`, `Run: ${RUN_URL}`]);
+		} finally {
+			github.stop();
+			telegram.stop();
+		}
+	});
+
+	test("an unchanged verdict on issue #7, then a drill whose own lookup gets a 503: exit 0, and one message that keeps #7's address", async () => {
+		const first = new FakeGitHub([201]);
+		const firstTelegram = new TelegramStandin("ok");
+		await alarmScript({ stale: true, github: first.url, telegram: firstTelegram.url });
+		first.stop();
+		firstTelegram.stop();
+		const github = new FakeGitHub([], { number: 7, body: first.posts[0]?.body ?? "" }, { listFailsFrom: 2 });
+		const telegram = new TelegramStandin("ok");
+		try {
+			const done = await alarmScript({ stale: true, github: github.url, telegram: telegram.url, drill: true });
+			expect(done.exitCode).toBe(0);
+			expect(done.stdout).toContain("nothing changed since the last post on issue #7");
+			expect(done.stderr).toContain("the drill's comment could not be posted");
+			expect(github.posts).toEqual([]);
+			expect(theMessage(telegram)).toBe(
+				[
+					"LedgerMath alarm drill: this run could not post the drill on issue #7; the run's log says why. Nothing is wrong because of the drill. This is its Telegram message.",
+					`Issue: ${ALARM_ISSUE_URL}7`,
+					`Run: ${RUN_URL}`,
+				].join("\n"),
+			);
 		} finally {
 			github.stop();
 			telegram.stop();
@@ -943,10 +1104,9 @@ describe("the script, as the workflow's alarm step runs it: one message for each
 			const text = theMessage(telegram);
 			const lines = text.split("\n");
 			expect(lines[0]).toBe(
-				"LedgerMath alarm: ITS POST ON GITHUB COULD NOT BE CONFIRMED. The post to issue #7 went out, but no whole answer came back, so it may or may not be there. The run's log says why.",
+				"LedgerMath alarm: ITS POST ON GITHUB COULD NOT BE CONFIRMED. GitHub did not confirm the write to issue #7, so the update may or may not be there. The run's log says why.",
 			);
 			expect(text).not.toContain("COULD NOT POST");
-			expect(text).not.toContain("does not say what follows");
 			expect(lines.slice(2)).toEqual([`Issue: ${ALARM_ISSUE_URL}7`, `Run: ${RUN_URL}`]);
 		} finally {
 			github.stop();
@@ -998,7 +1158,7 @@ describe("the script, as the workflow's alarm step runs it: one message for each
 		}
 	});
 
-	test("with Bun's HTTP tracing switched on, in either mode, neither the token nor the chat is printed: the request is never traced", async () => {
+	test("with Bun's HTTP tracing switched on, in either mode, neither Telegram's keys nor GitHub's token is printed: no request carrying them is traced", async () => {
 		for (const mode of ["1", "curl"]) {
 			const github = new FakeGitHub([201]);
 			const telegram = new TelegramStandin("ok");
@@ -1008,6 +1168,10 @@ describe("the script, as the workflow's alarm step runs it: one message for each
 				// The message went, as on any run.
 				expect(theMessage(telegram)).toStartWith("LedgerMath alarm: opened issue #1 on GitHub.");
 				expectNoSecrets(done, `BUN_CONFIG_VERBOSE_FETCH=${mode}`);
+				// The alarm's GitHub token (alarmScript gives it HOSTILE[0]), in the Authorization header of every call to GitHub.
+				for (const [where, text] of Object.entries({ stdout: done.stdout, stderr: done.stderr, summary: done.summary })) {
+					expect({ mode, where, githubToken: text.includes(HOSTILE[0] as string) }).toEqual({ mode, where, githubToken: false });
+				}
 			} finally {
 				github.stop();
 				telegram.stop();

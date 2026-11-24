@@ -1352,4 +1352,11 @@ A migrated benchmark is done only when **all** of these hold:
   reading `timeout` is no longer taken for a timeout (a tagged result). Stalls are tested
   with a short deadline (`--telegram-budget-ms`, only ever shorter than 15 s), no test times
   a process, and the file runs in about 6 seconds instead of 33.
+- **2026-11-24** — The Telegram message, after a second verification (three small points).
+  The alarm's calls to GitHub are made with `verbose: false` too (Bun's `curl` trace printed
+  the workflow's token, as on `main`). The issue is noted as soon as it is found, before its
+  comments are read, and the drill starts from it; a refusal reads "this run could not post
+  an update", which claims nothing of what the issue says. A 4xx whose body is cut off keeps
+  its status (still "could not post"), and an unknown outcome reads "GitHub did not confirm
+  the write", true of a whole 503 too.
 - _(agents: append your entry here, one per merged benchmark)_

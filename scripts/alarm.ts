@@ -84,8 +84,10 @@
  * verdict, the posts, the marker or the exit code: a message that cannot be
  * sent is a warning annotation and a line in the step summary, in fixed
  * words, and with the secrets unset it is skipped with a notice. A write
- * that went out with no whole answer back is said to be unconfirmed, not
- * missing, and the issue's address is given whenever it is known
+ * GitHub did not confirm (no answer, a 5xx, an answer cut short) is said to
+ * be unconfirmed, not missing; one GitHub refused (a 4xx, even with its body
+ * cut off) is said to be not made, in words that claim nothing of what the
+ * issue already says; and the issue's address is given whenever it is known
  * (notingTracker). --telegram-endpoint is a stand-in for Telegram, and
  * --telegram-budget-ms a shorter wait than SEND_BUDGET_MS, for the tests.
  *
@@ -632,8 +634,8 @@ export interface OpenAlarm {
 }
 
 export interface IssueTracker {
-	/** The open issue whose body holds marker, or null. */
-	findOpen(marker: string): Promise<OpenAlarm | null>;
+	/** The open issue whose body holds marker, or null. `found`, when given, is told its number as soon as it is found, before anything else is read. */
+	findOpen(marker: string, found?: (issue: number) => void): Promise<OpenAlarm | null>;
 	/** Opens an issue and returns its number. */
 	open(title: string, body: string): Promise<number>;
 	comment(issue: number, body: string): Promise<void>;
@@ -770,9 +772,14 @@ export interface WriteNote {
 	failure: "none" | "refused" | "unconfirmed";
 }
 
-/** `tracker`, noting into `note` the issue it learns of and how a write fails; every call and its result or error pass through unchanged. */
-export function notingTracker(tracker: IssueTracker): { tracker: IssueTracker; note: WriteNote } {
-	const note: WriteNote = { issue: null, wrote: false, failure: "none" };
+/**
+ * `tracker`, noting into `note` the issue it learns of (starting from
+ * `known`, an issue an earlier phase learned) and how a write fails; every
+ * call and its result or error pass through unchanged. The issue found open
+ * is noted as soon as it is found, before its comments are read.
+ */
+export function notingTracker(tracker: IssueTracker, known: number | null = null): { tracker: IssueTracker; note: WriteNote } {
+	const note: WriteNote = { issue: known !== null && isIssue(known) ? known : null, wrote: false, failure: "none" };
 	const learn = (issue: number): void => {
 		if (isIssue(issue)) note.issue = issue;
 	};
@@ -788,8 +795,11 @@ export function notingTracker(tracker: IssueTracker): { tracker: IssueTracker; n
 	return {
 		note,
 		tracker: {
-			findOpen: async (marker) => {
-				const open = await tracker.findOpen(marker);
+			findOpen: async (marker, found) => {
+				const open = await tracker.findOpen(marker, (issue) => {
+					learn(issue);
+					found?.(issue);
+				});
 				if (open !== null) learn(open.number);
 				return open;
 			},
@@ -865,8 +875,8 @@ export function pingText(facts: PingFacts): string | null {
 					: verdict.kind === "all-clear"
 						? `LedgerMath alarm: all clear, said on ${issue(verdict.issue)}. Nothing it watches is stale now.`
 						: verdict.kind === "not-posted"
-							? `LedgerMath alarm: COULD NOT POST ON GITHUB. GitHub refused the post or could not be reached, so ${issue(verdict.issue)} does not say what follows. The run's log says why.`
-							: `LedgerMath alarm: ITS POST ON GITHUB COULD NOT BE CONFIRMED. The post to ${issue(verdict.issue)} went out, but no whole answer came back, so it may or may not be there. The run's log says why.`,
+							? `LedgerMath alarm: COULD NOT POST ON GITHUB. This run could not post an update on ${issue(verdict.issue)}. The run's log says why.`
+							: `LedgerMath alarm: ITS POST ON GITHUB COULD NOT BE CONFIRMED. GitHub did not confirm the write to ${issue(verdict.issue)}, so the update may or may not be there. The run's log says why.`,
 		);
 		const now = [`${counted(facts.stale)} of ${counted(facts.watched)} watched Series stale (no Run for 48 hours)`];
 		if (facts.pricesStale) now.push("the price files stale (none new for 48 hours)");
@@ -880,8 +890,8 @@ export function pingText(facts: PingFacts): string | null {
 			drill.kind === "posted"
 				? `${head}: posted on ${issue(drill.issue)}, started by hand with alarm_drill. Nothing is wrong because of the drill. This is its Telegram message.`
 				: drill.kind === "not-posted"
-					? `${head}: it could not post on ${issue(drill.issue)} (GitHub refused it or could not be reached). Nothing is wrong because of the drill. This is its Telegram message.`
-					: `${head}: its post to ${issue(drill.issue)} went out, but no whole answer came back, so it could not be confirmed. Nothing is wrong because of the drill. This is its Telegram message.`,
+					? `${head}: this run could not post the drill on ${issue(drill.issue)}; the run's log says why. Nothing is wrong because of the drill. This is its Telegram message.`
+					: `${head}: GitHub did not confirm the drill's write to ${issue(drill.issue)}, so it may or may not be there. Nothing is wrong because of the drill. This is its Telegram message.`,
 		);
 	}
 	const issues = new Set<number>();
@@ -958,7 +968,8 @@ export async function pingSafely(
 	}
 }
 
-type Fetch = (url: string, init: RequestInit) => Promise<Response>;
+/** Bun's fetch options: `verbose` decides whether Bun traces the request. */
+type Fetch = (url: string, init: RequestInit & { verbose?: boolean }) => Promise<Response>;
 
 /** GitHub answered a call with a status other than 2xx: thrown with the status, so a write it refused is told from one whose fate is not known. */
 export class GitHubRefused extends Error {
@@ -995,20 +1006,35 @@ export class GitHubIssues implements IssueTracker {
 				...(body === undefined ? {} : { "Content-Type": "application/json" }),
 			},
 			body: body === undefined ? undefined : JSON.stringify(body),
+			// Never traced, whatever BUN_CONFIG_VERBOSE_FETCH says: Bun's trace prints the Authorization header, the token, to stderr.
+			verbose: false,
 		});
-		if (!response.ok) throw new GitHubRefused(response.status, `GitHub ${method} ${path}: ${response.status} ${await response.text()}`);
+		if (!response.ok) {
+			// The status is kept even when the body cannot be read; the message is then the read's own, as before.
+			let said: string;
+			try {
+				said = await response.text();
+			} catch (error) {
+				throw new GitHubRefused(response.status, error instanceof Error ? error.message : String(error));
+			}
+			throw new GitHubRefused(response.status, `GitHub ${method} ${path}: ${response.status} ${said}`);
+		}
 		return response.json();
 	}
 
-	async findOpen(marker: string): Promise<OpenAlarm | null> {
+	async findOpen(marker: string, found?: (issue: number) => void): Promise<OpenAlarm | null> {
 		for (let page = 1; ; page++) {
 			const issues = (await this.call("GET", `/issues?state=open&per_page=100&page=${page}`)) as Array<{
 				number: number;
 				body?: string | null;
 				pull_request?: unknown;
 			}>;
-			const found = issues.find((issue) => issue.pull_request === undefined && (issue.body ?? "").includes(marker));
-			if (found !== undefined) return { number: found.number, lastPost: await this.lastPost(found.number, found.body ?? "") };
+			const marked = issues.find((issue) => issue.pull_request === undefined && (issue.body ?? "").includes(marker));
+			if (marked !== undefined) {
+				// Told before its comments are read, so a failure reading them still knows the issue.
+				found?.(marked.number);
+				return { number: marked.number, lastPost: await this.lastPost(marked.number, marked.body ?? "") };
+			}
 			if (issues.length < 100) return null;
 		}
 	}
@@ -1165,7 +1191,8 @@ async function main(): Promise<void> {
 	if (outcome.stale.length > 0) await toStepSummary(staleList(outcome.stale, now));
 	let drill: DrillPost | null = null;
 	if (values.drill === "yes") {
-		const drillCalls = notingTracker(tracker);
+		// Starting from the issue the pass learned, so the drill's own lookup failing does not lose it.
+		const drillCalls = notingTracker(tracker, verdictCalls.note.issue);
 		const issue = await drillSafely(drillCalls.tracker, runUrl);
 		if (issue !== null && !values["dry-run"]) console.log(`drill: posted on issue #${issue}`);
 		drill = issue === null ? failedPost(drillCalls.note) : { kind: "posted", issue };

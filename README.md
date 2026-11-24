@@ -1724,11 +1724,13 @@ on GitHub, it also sends the maintainer one plain-text Telegram message
 - **When.** The issue opened, a comment because something changed, the comment saying all
   is clear again, a drill; and when the alarm had something to post and it failed (after it
   tried to write, or with something stale), when the message matters most. The alarm then
-  fails as before. A failed post is said as one of two things: **it could not post** (GitHub
-  refused it with a 4xx, or could not be reached), or **its post could not be confirmed**
-  (the request went out and no whole answer came back: no answer, a 5xx, an answer cut
-  short), since such a post may well be on the issue. The issue's address is in the message
-  whenever the issue is known (found open, or the one a comment went to). A pass that writes
+  fails as before. A failed post is said as one of two things: **this run could not post an
+  update** (GitHub refused it with a 4xx, even one whose body is cut off, or could not be
+  reached or read), which claims nothing of what the issue already says; or **its post
+  could not be confirmed**, because GitHub did not confirm the write (no answer, a 5xx, an
+  answer cut short), since such a post may well be on the issue. The issue's address is in
+  the message whenever the issue is known: noted as soon as it is found, before its
+  comments are read, and kept for the drill. A pass that writes
   nothing sends nothing. One message per run, sent last, after every post: a run whose pass
   comments and which is also a drill sends one message saying both, and if only the drill's
   post fails, the message says so and the run still exits 0.
@@ -1751,8 +1753,9 @@ on GitHub, it also sends the maintainer one plain-text Telegram message
   could not be reached, gave no whole answer within 15 s, answered HTTP N, its answer was
   not understood, or it did not accept the message. Never the request's address, which
   holds the token, and nothing of Telegram's answer but its HTTP status; no second try. The
-  request is never traced by Bun (`verbose: false`), so setting `BUN_CONFIG_VERBOSE_FETCH`
-  to diagnose delivery prints neither key. A Telegram outage never fails the step, so it
+  request is never traced by Bun (`verbose: false`), nor are the alarm's calls to GitHub, so
+  setting `BUN_CONFIG_VERBOSE_FETCH` to diagnose delivery prints neither Telegram key nor
+  GitHub's token (the check's child never has that variable). A Telegram outage never fails the step, so it
   never skips the `publish` job. With the secrets unset (a fork, or never set), a notice and
   nothing else.
 - **The secrets stay in one place.** `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` are in the
@@ -1762,11 +1765,13 @@ on GitHub, it also sends the maintainer one plain-text Telegram message
   job's `secrets` by its parsed value, so `secrets: "inherit"` fails like `secrets: inherit`.
 - **Tests**, against a stand-in for Telegram: each kind of post sends exactly one message
   with its words, a drill one that says so, a run that comments and drills one, a pass with
-  no post none; a comment GitHub records and then cuts its answer short (unconfirmed, with
-  the issue's address), and a comment refused on a known issue; Telegram down, never
+  no post none; a comment GitHub records and then cuts its answer short, and a whole 503
+  (unconfirmed, with the issue's address); a comment refused on a known issue, with its body
+  whole or cut off; the issue's comments, or the drill's lookup, failing to be read (the
+  address kept); Telegram down, never
   sending its headers, stalling in its body, answering 401, 429, what is not JSON, or the
   word `timeout`: the same exit code, posts and marker as without Telegram, the token never
-  in the log or the step summary, even with Bun's tracing on; the secrets unset; nothing S3
+  in the log or the step summary, even with Bun's tracing on (nor GitHub's token); the secrets unset; nothing S3
   said in the message; the length bound. Stalls get a short deadline
   (`--telegram-budget-ms`, which the workflow never passes and which can only be shorter
   than 15 s), so the file runs in seconds.
