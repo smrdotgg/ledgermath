@@ -23,10 +23,11 @@ import {
 import type { DerivationsFile, SeriesDerivation } from "../methods/requests/v1/output";
 import { REQUESTS_RECORD, REQUESTS_RECORD_KEY, type RequestsRecord, type RunPhase, reduceRequests } from "../methods/requests/v1/record";
 import { addressBlock, readRequests } from "../methods/requests/v1/requests";
-import { readStream, type RunEvent, type RunFile } from "../methods/run";
+import { readStream, type RunEvent, type RunFile, schemaValidators } from "../methods/run";
 import * as series from "../methods/v1";
+import { failureText, outcome, REASON_CHARACTERS, SHOWN_REASONS } from "../methods/v1/facts";
 import { percentile } from "../methods/v1/numbers";
-import { SERIES_RECORD_KEY } from "../methods/v1/record";
+import { SERIES_RECORD, SERIES_RECORD_KEY } from "../methods/v1/record";
 import { DEFAULT_PHASES, HandMade, rampRequests, requestRun, requestStream } from "./hand-made-requests";
 
 // Each test derives a few hundred hand-made requests; a loaded machine can take longer than bun's five-second default.
@@ -441,6 +442,38 @@ describe("Method requests v1 over Runs", () => {
 		}
 	});
 
+	test("a Run whose counted requests that succeeded went over a new connection and over a reused one is failed, with why, and stops no Method", async () => {
+		// Sample 1 opens connection 1 and keeps it; sample 2 sends its request over it: each in its own connection's order.
+		const list = events(requestStream({ connection: "new", requests: [{}, {}] }));
+		const firstEnd = list.findIndex((e) => e.event === "sample_ended" && e.sample === 1);
+		const secondSent = list.findIndex((e) => e.event === "request_sent" && e.request === 2);
+		list.splice(firstEnd + 1, secondSent - firstEnd - 1, list.find((e) => e.event === "sample_started" && e.sample === 2) as RunEvent);
+		(list.find((e) => e.event === "request_sent" && e.request === 2) as RunEvent).connection = 1;
+		const text = `${list.map((e) => JSON.stringify(e)).join("\n")}\n`;
+		const reason =
+			"its counted requests that succeeded do not all have the same phases (1 with dns, connect, tls, send, first_byte, headers, body, total; 1 with send, first_byte, headers, body, total): " +
+			"one over a new connection has dns, connect and tls, one over a reused connection does not, and a Run's figures are of requests that all have the same phases";
+		// Each sample alone reads as one request; only the two together cannot be one Run's figures.
+		expect(readRequests(events(text)).problems).toEqual([]);
+		expect(readRequests(events(text)).succeeded.map((request) => Object.keys(request.phases).length)).toEqual([8, 5]);
+		// The record holds the reason and reads back. Before the rule, its record held two successes, did not read back, and the Method stopped.
+		const record = reduceRequests(bytes(text));
+		expect(record.problems).toEqual([reason]);
+		expect([record.succeeded, record.failed, record.phases]).toEqual([0, 0, {}]);
+		expect(REQUESTS_RECORD.fromJson(JSON.parse(JSON.stringify(REQUESTS_RECORD.toJson(record))))).not.toBeNull();
+		expect(requests.failures({ samples: 2, exit: { code: 0 } } as never, record)).toEqual([reason]);
+		// Derived beside a Run that counts: shown failed, with the reason, and in no figure; the other Run's figures are as alone.
+		const made = new HandMade();
+		requestRun(made, { startedAt: "2026-11-11T21:30:00Z", stream: { connection: "new", requests: [{}, {}] } });
+		made.run({ startedAt: "2026-11-11T21:35:00Z", benchmark: "http_get", binary: "http_get", params: requestRunParams(), samples: 2, exit: { code: 0 }, stdout: text });
+		const derivation = only(await derived(made));
+		const [counted, mixed] = derivation.points;
+		expect([counted?.counted, mixed?.counted, mixed?.failure]).toEqual([true, false, reason]);
+		const alone = new HandMade();
+		requestRun(alone, { startedAt: "2026-11-11T21:30:00Z", stream: { connection: "new", requests: [{}, {}] } });
+		expect(derivation.pool).toEqual(only(await derived(alone)).pool);
+	});
+
 	test("an exit 0 whose stream holds a failed warmup request or a failed setup of a kept connection contradicts its Run: in no figure; with exit 4 it counts", async () => {
 		const warmup = { connection: "new" as const, requests: [{}, {}], warmup: { fail: { phase: "tls" as const, error: "reset" } } };
 		const setup = { connection: "reused" as const, requests: [{}, {}], setupFailure: { phase: "tls", error: "reset" } };
@@ -508,6 +541,142 @@ describe("the reduced record of a Run, kept between runs", () => {
 		m.run({ startedAt: "2026-11-11T21:31:00Z", samplesNs: [1, 2, 3], crashAfter: 1, exit: { signal: 9 } });
 		return m;
 	}
+
+	test("no stream a Run counts by makes a record that does not read back, however its events are dropped, doubled, moved, renumbered or spliced", () => {
+		// A record that does not read back stops the whole Method (records.ts), so a Run must be failed, with why, instead.
+		const random = lcg(76);
+		const pick = <T>(list: readonly T[]): T => list[Math.floor(random() * list.length)] as T;
+		const specs: Array<Parameters<typeof requestStream>[0]> = [];
+		for (const connection of ["new", "reused"] as const) {
+			specs.push({ connection, requests: [{}, {}, {}] }, { connection, requests: [{}, { status: 503 }, {}] }, { connection, requests: [{}, {}], warmup: { fail: { phase: "first_byte", error: "timeout" } } });
+			for (const phase of ["dns", "connect", "tls", "send", "first_byte", "headers", "body"] as const) specs.push({ connection, requests: [{}, { fail: { phase, error: "reset" } }, {}] });
+		}
+		specs.push({ connection: "reused", requests: [{}, {}, {}, {}], requestsPerConnection: 2 }, { connection: "reused", requests: [{}, {}], setupFailure: { phase: "tls", error: "reset" } });
+		const bases = specs.map((spec) => events(requestStream(spec)));
+		let counted = 0;
+		for (let k = 0; k < 3000; k++) {
+			const list: RunEvent[] = pick(bases).map((e) => ({ ...e }));
+			for (let m = 1 + Math.floor(random() * 3); m > 0; m--) {
+				const i = Math.floor(random() * list.length);
+				const e = list[i] as RunEvent;
+				const kind = pick(["drop", "double", "move", "connection", "t", "status", "request", "splice", "closed", "withheld"] as const);
+				if (kind === "drop") list.splice(i, 1);
+				else if (kind === "double") list.splice(i, 0, { ...e });
+				else if (kind === "move") list.splice(Math.min(list.length - 1, i + 1), 0, ...list.splice(i, 1));
+				else if (kind === "connection" && "connection" in e) e.connection = pick([0, 1, 2, 99, "1", null]);
+				else if (kind === "t") e.t = Math.max(0, e.t + pick([-1, 1, -1000, 1000]));
+				else if (kind === "status" && e.event === "response_headers") e.status = pick([200, 301, 404, 500, 200.5, "200"]);
+				else if (kind === "request" && "request" in e) e.request = pick([0, 1, 2, "1"]);
+				else if (kind === "closed") list.splice(i, 0, { event: "connection_closed", t: e.t, connection: pick([0, 1, 2]), reason: "done", requests: 1 });
+				else if (kind === "withheld") list.splice(i, 0, { event: "line_withheld", t: e.t, withheld_event: pick(["first_byte", "certificate"]) });
+				else if (kind === "splice") {
+					// The next request reuses the connection of the one before: its own connection's events are dropped.
+					const end = list.findIndex((x, j) => j >= i && x.event === "sample_ended");
+					const start = list.findIndex((x, j) => j > end && x.event === "sample_started");
+					const sent = list.findIndex((x, j) => j > start && x.event === "request_sent");
+					const before = list.slice(0, Math.max(end, 0)).findLast((x) => x.event === "request_sent");
+					if (end >= 0 && start > end && sent > start && before !== undefined) {
+						(list[sent] as RunEvent).connection = before.connection;
+						list.splice(end + 1, sent - end - 1, list[start] as RunEvent);
+					}
+				}
+			}
+			const record = reduceRequests(bytes(`${list.map((e) => JSON.stringify(e)).join("\n")}\n`));
+			for (const code of [0, 4]) {
+				if (requests.failures({ samples: Math.max(record.counted ?? 1, 1), exit: { code } } as never, record).length > 0) continue;
+				counted++;
+				expect(REQUESTS_RECORD.fromJson(JSON.parse(JSON.stringify(REQUESTS_RECORD.toJson(record))))).not.toBeNull();
+			}
+		}
+		// Enough of them count for the search to mean something.
+		expect(counted).toBeGreaterThan(1000);
+	});
+
+	test("no stream makes either Method's reducer throw, whatever value a field holds: each Run is counted or failed with why, and its record reads back", () => {
+		// The events schema closes the six universal events and leaves a benchmark's own open, so a field may be absent, null,
+		// of any type, or a name an object lookup could take for its own. On main, three such streams stopped a Method: an
+		// observed event without its values (both Methods), request_sent.signing null, and a request_failed in phase constructor.
+		const ABSENT = Symbol("absent");
+		const values: unknown[] = [ABSENT, null, true, 0, -1, 0.5, 2 ** 53, "", "x", "1", "constructor", "__proto__", "toString", [], {}, { algorithm: null }];
+		const extra = ["request", "connection", "signing", "status", "fixture", "s3_checksum", "withheld_event", "address", "tls", "cipher", "group", "phase", "error", "method", "target", "values", "sample", "warmup", "repetitions"];
+		const names = ["constructor", "__proto__", "observed", "sample_started", "sample_ended", "request_failed", "response_ended", "request_sent", "line_withheld", "certificate", "connection_failed", "connection_closed"];
+		const plain: RunEvent[] = [
+			{ event: "started", t: 1000, schema: "ledgermath.events/1", wall_utc: "2026-11-11T21:35:00.000000000Z", clock: "CLOCK_MONOTONIC_RAW", clock_read_ns: 20 },
+			{ event: "observed", t: 2000, values: { bytes_per_repetition: 4096 } },
+			{ event: "sample_started", t: 3000, sample: 0, warmup: false, repetitions: 10 },
+			{ event: "sample_ended", t: 9000, sample: 0 },
+			{ event: "verified", t: 10000, checksum: "0x0000000000000001" },
+			{ event: "finished", t: 11000 },
+		];
+		const bases = [
+			plain,
+			events(requestStream({ connection: "new", requests: [{}, { fail: { phase: "send", error: "reset" } }] })),
+			events(requestStream({ connection: "reused", requests: [{}, { fail: { phase: "first_byte", error: "timeout" } }], setupFailure: { phase: "tls", error: "reset" } })),
+		];
+		const validate = schemaValidators().event;
+		const tally = { tried: 0, accepted: 0, counted: 0 };
+		const judge = (list: RunEvent[], how: string): void => {
+			tally.tried++;
+			if (list.every((event) => validate(event))) tally.accepted++;
+			const text = bytes(`${list.map((event) => JSON.stringify(event)).join("\n")}\n`);
+			const seriesRecord = SERIES_RECORD.reduce(text);
+			expect([how, SERIES_RECORD.fromJson(JSON.parse(JSON.stringify(SERIES_RECORD.toJson(seriesRecord)))) === null]).toEqual([how, false]);
+			outcome({ exit: { code: 0 }, samples: Math.max(seriesRecord.counted ?? 1, 1) } as never, seriesRecord);
+			const record = reduceRequests(text);
+			expect([how, REQUESTS_RECORD.fromJson(JSON.parse(JSON.stringify(REQUESTS_RECORD.toJson(record)))) === null]).toEqual([how, false]);
+			for (const code of [0, 4]) if (requests.failures({ samples: Math.max(record.counted ?? 1, 1), exit: { code } } as never, record).length === 0) tally.counted++;
+		};
+		for (const [b, base] of bases.entries()) {
+			for (let i = 0; i < base.length; i++) {
+				for (const field of new Set([...Object.keys(base[i] as RunEvent), ...extra])) {
+					for (const value of field === "event" ? names : values) {
+						const list = base.map((event) => ({ ...event }));
+						const event = list[i] as Record<string, unknown>;
+						if (value === ABSENT) delete event[field];
+						else event[field] = structuredClone(value);
+						judge(list, `stream ${b}, event ${i}: ${field} = ${value === ABSENT ? "absent" : JSON.stringify(value)}`);
+					}
+				}
+			}
+		}
+		// Enough of them are what the events schema accepts, and count, for the search to mean something.
+		expect(tally.accepted).toBeGreaterThan(tally.tried / 3);
+		expect(tally.counted).toBeGreaterThan(1000);
+	});
+
+	test("a stream with a million order problems, each line of it one the events schema accepts, is a failed Run whose point shows a bounded few of its reasons", async () => {
+		// Each "finished" after the first is one problem. Passing them all to one call as arguments threw on main
+		// (more arguments than a call takes), and joining them all would write megabytes into a month file and its
+		// Series file, past their ceilings, so that one Run stopped every publish.
+		const head = [
+			{ event: "started", t: 0, schema: "ledgermath.events/1", wall_utc: "2026-11-11T21:35:00.000000000Z", clock: "CLOCK_MONOTONIC_RAW", clock_read_ns: 20 },
+			{ event: "sample_started", t: 1, sample: 0, warmup: false, repetitions: 1 },
+			{ event: "sample_ended", t: 2, sample: 0 },
+			{ event: "verified", t: 3, checksum: "0x0000000000000001" },
+		];
+		const lines = 1_000_000;
+		const stdout = `${head.map((event) => JSON.stringify(event)).join("\n")}\n${'{"event":"finished","t":4}\n'.repeat(lines)}`;
+		expect(events(stdout).every((event) => schemaValidators().event(event))).toBe(true);
+		const seriesRecord = SERIES_RECORD.reduce(bytes(stdout));
+		expect(seriesRecord.problems.length).toBe(lines - 1);
+		expect(SERIES_RECORD.fromJson(JSON.parse(JSON.stringify(SERIES_RECORD.toJson(seriesRecord))))).not.toBeNull();
+		const record = reduceRequests(bytes(stdout));
+		expect(REQUESTS_RECORD.fromJson(JSON.parse(JSON.stringify(REQUESTS_RECORD.toJson(record))))).not.toBeNull();
+		expect(requests.failures({ samples: 1, exit: { code: 0 } } as never, record).length).toBe(lines - 1);
+		// Derived, the Run is failed, and its point shows the first reasons and how many more.
+		const made = new HandMade();
+		made.run({ startedAt: "2026-11-11T21:35:00Z", samples: 1, stdout });
+		const [point] = series.derive(made.files, await series.gather(made.files, made.fetch)).derivations[0]?.points ?? [];
+		expect(point?.counted).toBe(false);
+		expect(point?.failure).toStartWith(`line ${head.length + 2}: "finished" appears more than once`);
+		expect(point?.failure).toEndWith(`; and ${lines - 1 - SHOWN_REASONS} more reasons, not shown`);
+		expect((point?.failure ?? "").split("; ").length).toBe(SHOWN_REASONS + 1);
+		// The bound: at most SHOWN_REASONS reasons of REASON_CHARACTERS characters, whatever a reason quotes.
+		const long = failureText(Array.from({ length: 50 }, (_, i) => `${i}: ${"é".repeat(5_000_000)}`));
+		expect(long.length).toBeLessThan(SHOWN_REASONS * (REASON_CHARACTERS + 100) + 100);
+		expect(long).toContain(`… (the first ${REASON_CHARACTERS} of its 5000003 characters)`);
+		expect(failureText(["a", "b"])).toBe("a; b");
+	});
 
 	test("both Methods give the same bytes with no records, while making them, and from them alone, fetching no stream", async () => {
 		const m = await made();

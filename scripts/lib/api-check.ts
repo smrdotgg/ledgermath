@@ -27,7 +27,7 @@
  *   are the same.
  * - The table of contents gives the layout this build writes (LAYOUT).
  * - The tree holds exactly the files it should: the table of contents, the
- *   list, the five schemas, one Series file per Series of either file of
+ *   list, the six schemas, one Series file per Series of either file of
  *   Derivations, one month file per month in which a Run of that Series
  *   started (UTC, by the Run's start), and one per price file in the
  *   checkout; nothing else. Each is reached from the table of contents by
@@ -136,13 +136,19 @@ const seriesFile = (id: string): string => `v1/series/${id}.json`;
 const monthFile = (id: string, month: string): string => `v1/series/${id}/${month}.json`;
 const priceFile = (date: string): string => `v1/prices/${date}.json`;
 const schemaFile = (name: string): string => `v1/schemas/${name}.schema.json`;
-/** The schemas the tree serves, in the table of contents' order: the files each describes, and the file of this repository it is. */
+/**
+ * The schemas the tree serves, in the table of contents' order: the files each
+ * describes, and the file of this repository it is. The events schema
+ * describes no file of the tree but one line of a Run's stdout, which the
+ * Methods' definitions name; no file of the tree is of its kind.
+ */
 const SCHEMAS = [
 	{ name: "index", describes: "v1/index.json", source: "schemas/api/v1/index.schema.json", closed: true },
 	{ name: "series-list", describes: "v1/series.json", source: "schemas/api/v1/series-list.schema.json", closed: true },
 	{ name: "series", describes: "v1/series/<id>.json", source: "schemas/api/v1/series.schema.json", closed: true },
 	{ name: "series-month", describes: "v1/series/<id>/<yyyy-mm>.json", source: "schemas/api/v1/series-month.schema.json", closed: true },
 	{ name: "prices", describes: "v1/prices/<yyyy-mm-dd>.json", source: "schemas/prices.schema.json", closed: false },
+	{ name: "events", describes: "one line of a Run's stdout: the blob at blobs/sha256/<hex> that the Run file's stdout names", source: "schemas/events.schema.json", closed: false },
 ] as const;
 type SchemaName = (typeof SCHEMAS)[number]["name"];
 const SERIES_PATH = /^v1\/series\/([^/]+)\.json$/;

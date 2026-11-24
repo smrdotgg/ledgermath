@@ -854,7 +854,7 @@ path: the API has one host, and a wrong host gets the same answer everywhere. Th
 this list to it, and others hold the samples' and the built tree's every address to it.
 The addresses, as the request function matches them:
 
-- a schema: `^\/v1\/schemas\/(?:index|series-list|series|series-month|prices)\.schema\.json$`
+- a schema: `^\/v1\/schemas\/(?:index|series-list|series|series-month|prices|events)\.schema\.json$`
 - a month file: `^\/v1\/series\/[0-9a-f]{12}\/[0-9]{4}-(?:0[1-9]|1[0-2])\.json$`
 - a price file: `^\/v1\/prices\/(?:[0-9]{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|1[0-9]|2[0-8])|[0-9]{4}-(?:0[13-9]|1[0-2])-(?:29|30)|[0-9]{4}-(?:0[13578]|1[02])-31|(?:[0-9]{2}(?:0[48]|[2468][048]|[13579][26])|(?:[02468][048]|[13579][26])00)-02-29)\.json$`
 - a Series file: `^\/v1\/series\/[0-9a-f]{12}\.json$`
@@ -2600,7 +2600,7 @@ the maintainer's go.
 | `v1/series/<id>.json` | One Series: each Method's summary at the Derivations' own paths (percentiles, groups and their facts and figures, section counts, `counted_runs`, `failed_runs`), with the Method's definitions; the points of its newest 12 Runs (`newest_points`; `newest_runs` says how many); and `months`, each month a Run of it started in, oldest first, with the month file's `url`, its Runs, its first and last start, and the month file's `sha256` and size in `bytes` |
 | `v1/series/<id>/<yyyy-mm>.json` | One month of a Series: every point of the Runs that started that month (UTC), each Method's under its key, and series v1's `differed` entry for each pair of consecutive Runs whose later Run started that month. Every point gives its Run file's `sha256`, `evidence` (the Run file's address) and `boot_summary` (its boot's, or null when the Runs repository has none) |
 | `v1/prices/<yyyy-mm-dd>.json` | That day's price file, byte for byte |
-| `v1/schemas/<name>.schema.json` | `index`, `series-list`, `series`, `series-month` (kept in `schemas/api/v1/`) and `prices` |
+| `v1/schemas/<name>.schema.json` | `index`, `series-list`, `series`, `series-month` (kept in `schemas/api/v1/`) and `prices`; and `events`, the schema of one line of a Run's stdout (`schemas/events.schema.json`), which describes no file of the tree but is what both Methods' definitions hold a Run's events to |
 
 The evidence is linked, never copied: Run files, boot summaries and blobs, at the bucket's
 own keys under the same address (`/runs/…`, `/boots/…`, `/blobs/sha256/<hex>`). The base
@@ -2640,7 +2640,13 @@ address is `--base`, so a private or test address can stand in.
   only then may a file's bytes change without one of them. A past month is therefore not
   immutable: each entry of the Series file's months gives its month file's sha256 and size
   in bytes, so a reader holding a copy can tell whether it is current, and fetches the file
-  again only when the sha256 differs. (a) brings the Run's point, its pair entry, and the
+  again only when the sha256 differs. A Series file and a month file fetched together can
+  still be from different updates of the files: a cache may hold one of them from before
+  the other changed, and an update that stopped halfway leaves them so until the next one.
+  So a reader checks the sha256 of every month file it fetches against the one its Series
+  file lists; on a mismatch, it fetches the Series file again, then the month file, and
+  compares again; while they still differ, it uses neither, and tries again later. (a)
+  brings the Run's point, its pair entry, and the
   month's count and span; (b) turns a point's `boot_summary` from null into its address,
   and nothing else; (c) does what (a) does and, in that month and every later one, may
   change in the later points only what depends on earlier Runs: their group and requests
@@ -2659,11 +2665,9 @@ address is `--base`, so a private or test address can stand in.
   from before. No cache expiry repairs the first case. **The rule a reader follows:** verify
   a month file's bytes against the `sha256` its Series file lists; on a mismatch, fetch the
   Series file again and then the month file, and retry; while they still differ, use
-  neither, and retry later. The table of contents and the schemas (the contract's last
-  sentence, above) tell a reader that a held copy is current only when the sha256 matches,
-  and fetch again otherwise; they do not yet say to fetch the Series file again on a
-  mismatch, which is the generator's wording to change (`MONTH_CONTRACT` in
-  `scripts/lib/api.ts`), in a change of its own.
+  neither, and retry later. The table of contents and the schemas say the same, in the
+  contract's last sentences (above; `MONTH_CONTRACT` in `scripts/lib/api.ts`), so a reader
+  who has only the API has the rule too.
 - **The layout is a number.** `layout` in `v1/index.json` is `LAYOUT` in
   `scripts/lib/api.ts`: raise it whenever the build changes how it writes the files (the
   order of a file's fields, their white space, a field every file of a kind gains). Editing
@@ -2709,6 +2713,18 @@ address is `--base`, so a private or test address can stand in.
   change; if it does not, the Method or the tree is wrong.
 - **Each Method's part is labelled.** The 25 `http_get` Series carry both `series_v1` and
   `requests_v1`, each with its `method`; the others carry `series_v1` only.
+- **Words a reader of the API alone can follow.** Its first readers have the API and
+  nothing else, so no word the tree publishes (its own texts, each Method's definitions
+  and words, the price rules' words for what each selects, the schemas' descriptions)
+  names a file or directory of this repository, a README or a document's section, an
+  issue, a pull request, an ADR, a function of the code or a program's option: a
+  definition states its rule instead, and what it names, the tree serves (the events
+  schema, at `v1/schemas/events.schema.json`). `tests/api-words.test.ts` builds a tree and
+  scans every string but the data (what the Runs recorded, and what a Method derived from
+  them for one Series or one Run: a point's `failure`, a Run file's `path`; in a price
+  file, AWS's own words and identifiers), and fails on any such reference. One remains,
+  known: `docs`, the README's section on GitHub, which can be followed once the repository
+  is public.
 - **`v1` only ever gains fields.** The API's own schemas forbid no member they do not list, so
   a field added later fails no older reader; a change that would break one is a `v2` beside
   `v1`. The price files are the exception: each is the Runs repository's, byte for byte, and

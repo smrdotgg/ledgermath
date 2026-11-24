@@ -1166,7 +1166,7 @@ A migrated benchmark is done only when **all** of these hold:
   so no order prevents that window: ADR-0031 and the README give readers the rule (check a
   month file against its Series file's sha256; on a mismatch fetch the Series file again).
   The generator's own words (`MONTH_CONTRACT`) do not yet say so, and are left for a change
-  of their own. **Tests no longer depend on the committed switch**: one release-gate test
+  of their own (they do since 2026-11-23: that day's entry). **Tests no longer depend on the committed switch**: one release-gate test
   pins it to `off`, and a rehearsal sets it to each state (and the `console` attachment) in
   child processes and finds that only that test fails; `checkSetting` refuses an unknown or
   missing state or attachment. **The stack's wiring is type-checked in CI**
@@ -1328,6 +1328,40 @@ A migrated benchmark is done only when **all** of these hold:
   function). The alarm's own step-summary writes are asynchronous, abandoned after two
   seconds, and the alarm exits explicitly with its verdict's code (a test gives it a FIFO
   nobody reads). Not deployed; the switch stays off.
+- **2026-11-23** — The data API's own words, made whole for a reader who has only the API
+  (agreed with the maintainer that day, while the API is still private). **The month
+  contract gains the reader's rule**: `MONTH_CONTRACT`, written into `v1/index.json`'s
+  `months`, the schemas `series` and `series-month`, ADR-0030 and the README, now ends by
+  saying that a Series file and a month file fetched together can be from different
+  updates, and that a reader checks every month file it fetches against the sha256 its
+  Series file lists, fetches the Series file again and then the month file on a mismatch,
+  and uses neither while they still differ (ADR-0031, decision 8, which said the tree's
+  words did not yet). **No published word points into the repository**: series v1's and
+  requests v1's `counted` named `scripts/check-events.py`, a `--quick` stream and "the
+  binary's README"; split fact `runner` named `runner/`; the prices schema named
+  `schedule.json`. Each now states what it meant: series v1 lists its order rules (as it
+  did, now as the rule itself, with "numbered from 0 in order", and `quick: true` for a
+  developer's stream); requests v1 points to series v1's `counted` for the order rules and
+  states what makes a sample read as one request, clause by clause from `requests.ts`
+  (certificate events aside; a withheld line; a `request_failed` last, at `sample_ended`'s
+  `t`, with its phase's place in the order; a complete response in exactly a new or a
+  reused connection's order, its status, its body; the connection checks), and that the
+  stream must hold a request. No number changes. `tests/api-words.test.ts` builds the tree
+  and scans every string but the data (the Series' identity and params, each point and
+  pair, the unreadable Run files, groups, sections, what the requests recorded, the price
+  files), and fails on a repository path or root file, a source or document file, a README,
+  an ADR, an issue or pull request, a numbered section, the dev log, a function, a
+  program's option, GitHub, or a schema the tree does not serve; on `main` it found 21. Its
+  one exception is `docs`, the README's section on GitHub (ADR-0030, Costs); "the events
+  schema", which both definitions name and the tree does not serve, is left for a change of
+  its own. **What the next run does**: the month files' bytes do not change (Method words
+  are in the Series files and the list, never in a month file), so `layout` stays 1, and
+  `check-api.ts --previous` passes against the tree before without `new_baseline`: shown on
+  both test fixtures and on the real Derivations of 2026-11-19 (187 month files the same,
+  byte for byte). Editing `v1/facts.ts` changes both Methods' record keys, so that run
+  fetches and reduces every stdout blob once more (9,399 Runs on 2026-11-23), the cost
+  `methods/README.md` accepts. Neither Method needed a new version: nothing of theirs was
+  published.
 - **2026-11-23** — The alarm also sends one Telegram message (ADR-0033), because the
   maintainer may not see GitHub's notifications promptly. Whenever it writes on GitHub
   (issue opened, comment, all-clear, drill), or had something to post and could not, it
@@ -1359,6 +1393,53 @@ A migrated benchmark is done only when **all** of these hold:
   an update", which claims nothing of what the issue says. A 4xx whose body is cut off keeps
   its status (still "could not post"), and an unknown outcome reads "GitHub did not confirm
   the write", true of a whole 503 too.
+- **2026-11-24** — The data API's words, after an independent verification (the contract and
+  its copies agreed, no number changed; five things to fix). **Each definition now says
+  exactly what the code does**: requests v1's connection checks apply only where the reducer
+  makes them (not to a request with a withheld line), with each id compared only if present
+  and the latest `connection_secured` of an id kept across a reopening; exit 4 is what the
+  binary signals, and the Method does not require a failed request; a request is carried by
+  an *integer* `request`; and both definitions state that no sample starts before the
+  previous one's `sample_ended`. **A Run that follows the rules can no longer stop requests
+  v1**: two counted requests that succeeded, one over a new connection and one reusing it,
+  made a record that did not read back, which stopped the whole Method (`http_get` never does
+  this; another benchmark could). Such a Run is now failed, with the count of each set of
+  phases as its reason, and the definition says a Run's counted successes must all have the
+  same phases. A search over 20,000 streams, each event dropped, doubled, moved, renumbered
+  or spliced, found 460 counted streams whose record did not read back on `main`, all of this
+  kind, and none after; a test runs 3,000 of them every time. **The tree serves the events
+  schema** at `v1/schemas/events.schema.json`, the sixth schema, which describes no file of
+  the tree but is what both definitions hold a Run's events to, and they give its address;
+  its own words no longer name `scripts/check-events.py`, the dev log or `--quick`, and state
+  the order rules instead. The edge's served shapes take it from the same list. **The scan
+  of the words sees more**: each price rule's `selects` (LedgerMath's words in a price file,
+  and in the rule set the next file will carry), with AWS's header, products and terms left
+  out; `./`, `../` and `/` paths to the repository's files; and a field a row of the Series
+  list does not have today. **The first job has 60 minutes**, not 30: the first run after
+  this merges reduces about 9,400 streams again, about 13 minutes, and a job cut off saves no
+  cache, so every later run would start over. Shown again: on both fixtures and on the real
+  Derivations of 2026-11-19, `check-api.ts --previous` passes against `main`'s tree with no
+  `new_baseline` (187 month files the same, byte for byte; one file more, the events schema).
+- **2026-11-24** — The data API's words, after a second verification (four points). **No
+  stream stops a Method, whatever value a field holds.** Three did, each older than this
+  change: `request_sent.signing` null on a counted success (requests v1 read `.algorithm`
+  from it), a `request_failed` in phase `constructor` (a word, found on Object's prototype
+  instead of the phase table), and an `observed` event without its `values` object (both
+  Methods: the bytes per repetition were read from every stream, before the schema's verdict
+  counted). Each is read the small way now, and no real record changes (the 6,335 real Runs
+  whose stdout is on the dev box, and both fixtures, give `main`'s records exactly). A search
+  that sets each field of each event to absent, null, each JSON type and names such as
+  `constructor` and `__proto__` tried 447,926 streams (281,482 that the events schema
+  accepts): on `main` it found those three, now none; a test runs a smaller one every time.
+  A withheld certificate line is aside only when its `withheld_event` is the string
+  `certificate`. **The words**: requests v1 reads nothing into exit 4 but what the rule on
+  exit 0 implies (`methods/README.md` gives `http_get`'s causes: a failed or non-2xx request,
+  a failed setup of a kept connection, fewer requests than asked); a request never sent
+  compares the connection fields as values, both absent counting as equal, and only a sent
+  request needs an integer id; `failed` and the schemas' failure phase and kind give the
+  certificate exception and the bare `line_withheld` kind; the request facts give their
+  `(none)` and `(no algorithm)` fallbacks. GitHub Actions is off for the repository, so the
+  checks of `check.yml` ran on the dev box.
 - **2026-11-24** — The account ran out of free Actions minutes. Every job of every workflow
   now runs where the repository variable `LEDGERMATH_RUNNER` says, and on the hosted
   `ubuntu-24.04` when it is unset (a test holds every job to it). While the repository is
@@ -1370,4 +1451,19 @@ A migrated benchmark is done only when **all** of these hold:
   downloads go in `RUNNER_TEMP` and are removed. The README says what must happen before
   the repository is public: delete the variable, remove the runner, enable all four
   workflows.
+- **2026-11-24** — The data API's words, after a third verification (two points). **A
+  stream with a million problems no longer stops a Method**: both reducers and both verdicts
+  passed a whole list of problems to one `push(...)`, and past about a million arguments the
+  call throws; they now add them one by one. **One failed Run writes a bounded text**: a
+  failed Run's point showed every reason, so a stream with a problem on every line (or a
+  reason quoting a long value of the stream) would write megabytes into its month file and
+  Series file, past their ceilings, and stop every publish. A point now shows the first 10
+  reasons, each cut to its first 500 characters, then how many more there are
+  (`failureText` in `methods/v1/facts.ts`, about 5 KB at most), and both definitions and the
+  schemas' `failure` say so. A test reduces a stream of a million lines the events schema
+  accepts, each `finished` after the first a problem: it threw on `7935cb6`; now each record
+  reads back and the point holds 10 reasons and "and 999989 more reasons, not shown". No real
+  record or month file changes: the live data of 2026-11-24 00:36 hold 9,514 Runs and no
+  failed one. **Which withheld line gives the kind**: the request's first withheld line, in
+  stream order, that is not a certificate's, said in `failed` and the schemas.
 - _(agents: append your entry here, one per merged benchmark)_

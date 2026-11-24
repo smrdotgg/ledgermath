@@ -12,7 +12,7 @@
     "about": { "description": "What LedgerMath and this API are, in words.", "type": "string" },
     "versioning": { "description": "The rule the API's own v1 files keep, in words: v1 only ever gains fields; and its exception, the price files, which follow their own schema, closed.", "type": "string" },
     "figures": { "description": "How the numbers are written, in words: exactly as the Derivations hold them, never rounded.", "type": "string" },
-    "months": { "description": "How each Series is split by month, in words, and exactly when a month file's bytes change: for a given layout, for four causes only, a past month included, so a reader holding a copy compares the month file's sha256, which the Series' file gives, before trusting it.", "type": "string" },
+    "months": { "description": "How each Series is split by month, in words, and exactly when a month file's bytes change: for a given layout, for four causes only, a past month included, so a reader holding a copy compares the month file's sha256, which the Series' file gives, before trusting it; and what a reader does when a month file it fetched does not match its Series file.", "type": "string" },
     "layout": { "description": "How the files are written, as a number. It increases when LedgerMath changes how the files are written (the order of a file's fields, the white space between them, a field every file of a kind gains), so that any file's bytes may change without one of the four causes months gives; for a given layout, those four are the only causes. Editing a schema's words does not change it, nor do the data. A reader holding copies of month files made under another layout fetches them again.", "type": "integer", "minimum": 1 },
     "docs": {
       "description": "Where the API is described in words: an absolute https address with a host, and a path, query or fragment if any, written with the characters RFC 3986 allows.",
@@ -46,14 +46,14 @@
       }
     },
     "schemas": {
-      "description": "The JSON schema of each kind of file in v1.",
+      "description": "The JSON schema of each kind of file in v1, and of one line of a Run's stdout (events), which the Methods' definitions name.",
       "type": "array",
       "items": {
         "type": "object",
         "required": ["name", "describes", "url"],
         "properties": {
           "name": { "type": "string" },
-          "describes": { "description": "The files it describes, by path from the host's root.", "type": "string" },
+          "describes": { "description": "The files it describes, by path from the host's root; for a schema of what is not a file of v1, what it describes, in words.", "type": "string" },
           "url": { "$ref": "#/$defs/url" }
         }
       }

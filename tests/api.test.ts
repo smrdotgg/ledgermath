@@ -92,6 +92,7 @@ describe("the tree", () => {
 			"v1/index.json",
 			"v1/prices/2026-11-11.json",
 			"v1/prices/2026-11-12.json",
+			"v1/schemas/events.schema.json",
 			"v1/schemas/index.schema.json",
 			"v1/schemas/prices.schema.json",
 			"v1/schemas/series-list.schema.json",
@@ -100,9 +101,10 @@ describe("the tree", () => {
 			"v1/series.json",
 			...[fixture.http, fixture.memory, fixture.syscall].sort().flatMap((id) => [seriesPath(id), november(id)]),
 		]);
-		// The price files and their schema, byte for byte.
+		// The price files and their schema, byte for byte; and the schema of one line of a Run's stdout, which the Methods' definitions name.
 		expect(Buffer.from(tree.get("v1/prices/2026-11-12.json") as Uint8Array).equals(readFileSync(join(fixture.runs, "prices/2026/11/12/aws.json")))).toBe(true);
 		expect(Buffer.from(tree.get("v1/schemas/prices.schema.json") as Uint8Array).equals(readFileSync(join(ROOT, "schemas/prices.schema.json")))).toBe(true);
+		expect(Buffer.from(tree.get("v1/schemas/events.schema.json") as Uint8Array).equals(readFileSync(join(ROOT, "schemas/events.schema.json")))).toBe(true);
 	});
 
 	test("matches its schemas, closed, and the check finds no problem", () => {
@@ -127,7 +129,9 @@ describe("the tree", () => {
 		});
 		expect(index.prices.files.map((file: Json) => file.date)).toEqual(["2026-11-11", "2026-11-12"]);
 		expect(index.prices.newest).toEqual({ date: "2026-11-12", path: "prices/2026/11/12/aws.json", url: `${DEFAULT_BASE}/v1/prices/2026-11-12.json` });
-		expect(index.schemas.map((schema: Json) => schema.name)).toEqual(["index", "series-list", "series", "series-month", "prices"]);
+		expect(index.schemas.map((schema: Json) => schema.name)).toEqual(["index", "series-list", "series", "series-month", "prices", "events"]);
+		// The events schema describes no file of the tree, and says what it does describe.
+		expect(index.schemas.at(-1)).toEqual({ name: "events", describes: "one line of a Run's stdout: the blob at blobs/sha256/<hex> that the Run file's stdout names", url: `${DEFAULT_BASE}/v1/schemas/events.schema.json` });
 		expect(index.schemas.find((schema: Json) => schema.name === "series-month").describes).toBe("v1/series/<id>/<yyyy-mm>.json");
 		expect(index.docs).toBe("https://example.test/docs");
 		expect(index.evidence.blob_url_template).toBe(`${DEFAULT_BASE}/blobs/sha256/{hex}`);
@@ -644,15 +648,17 @@ describe("the check fails loudly", () => {
 			}),
 		);
 		expect(emptied.slice(0, 3)).toEqual([
-			"v1/index.json: /schemas has 0 items, not 5, as the tree and the Derivations make it",
+			"v1/index.json: /schemas has 0 items, not 6, as the tree and the Derivations make it",
 			"v1/index.json: prices: /files has 0 items, not 2, as the price files in the tree make it",
 			`v1/index.json: prices: /newest is null, not {"date":"2026-11-12","path":"prices/2026/11/12/aws.json","url":"${DEFAULT_BASE}/v1/prices/2026-11-12.json"}, as the price files in the tree make it`,
 		]);
-		// With no schema listed, no file's kind is described; and nothing leads to the price files now.
+		// With no schema listed, no file's kind is described; and nothing leads to the price files now, nor to the events schema, which no file of the tree names as its own.
 		const schemas = [...tree.keys()].filter((path) => path.startsWith("v1/schemas/"));
 		expect(emptied.slice(3).filter((problem) => problem.endsWith("is of no kind of file a schema listed in v1/index.json describes")).length).toBe(tree.size - schemas.length);
 		expect(emptied.filter((problem) => problem.endsWith("is a schema, but v1/index.json does not list it"))).toEqual(schemas.map((path) => `${path} is a schema, but v1/index.json does not list it`));
-		expect(emptied.filter((problem) => problem.includes("no link leads to it"))).toEqual(["v1/prices/2026-11-11.json", "v1/prices/2026-11-12.json"].map((path) => `${path} is in the tree, but no link leads to it from v1/index.json`));
+		expect(emptied.filter((problem) => problem.includes("no link leads to it"))).toEqual(
+			["v1/prices/2026-11-11.json", "v1/prices/2026-11-12.json", "v1/schemas/events.schema.json"].map((path) => `${path} is in the tree, but no link leads to it from v1/index.json`),
+		);
 		const count = check(edit("v1/index.json", (index) => (index.series.count = 2)));
 		expect(count).toEqual(["v1/index.json: /series/count is 2, not 3, as the tree and the Derivations make it"]);
 	});
@@ -792,7 +798,7 @@ describe("the commands", () => {
 		const build = Bun.spawnSync([bun, "scripts/build-api.ts", "--derivations", fixture.derivationsPath, "--requests-derivations", fixture.requestsPath, "--runs", fixture.runs, "--out", out], { cwd: ROOT });
 		expect(build.stderr.toString()).toBe("");
 		expect(build.exitCode).toBe(0);
-		expect(build.stdout.toString()).toContain("3 Series, 3 month files, 2 price files, 5 schemas");
+		expect(build.stdout.toString()).toContain("3 Series, 3 month files, 2 price files, 6 schemas");
 		const written = readdirSync(join(out, "v1", "series"), { recursive: true }).map(String).sort();
 		expect(written).toEqual([fixture.http, fixture.memory, fixture.syscall].sort().flatMap((id) => [id, `${id}.json`, join(id, `${NOVEMBER}.json`)]).sort());
 		for (const [path, bytes] of tree) {

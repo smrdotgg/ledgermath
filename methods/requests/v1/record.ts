@@ -95,7 +95,23 @@ export function reduceRequests(stdout: Uint8Array): RequestsRecord {
 	if (!record.holds_requests || record.problems.length > 0) return record;
 	const read = readRequests(stream.events);
 	if (read.problems.length > 0) {
-		record.problems.push(...read.problems);
+		// One by one: a stream may have more problems than a call takes arguments.
+		for (const problem of read.problems) record.problems.push(problem);
+		return record;
+	}
+	// A Run's figures need every counted request that succeeded to have the same phases: each phase's tally holds
+	// one time of each. Requests over a new connection have dns, connect and tls, over a reused one not, so a Run
+	// with both is failed, with why, rather than kept in a record no reader takes back.
+	const phaseSets = new Map<string, number>();
+	for (const request of read.succeeded) {
+		const set = PHASES.filter((phase) => request.phases[phase] !== undefined).join(", ");
+		phaseSets.set(set, (phaseSets.get(set) ?? 0) + 1);
+	}
+	if (phaseSets.size > 1) {
+		record.problems.push(
+			`its counted requests that succeeded do not all have the same phases (${[...phaseSets].map(([set, n]) => `${n} with ${set}`).join("; ")}): ` +
+				"one over a new connection has dns, connect and tls, one over a reused connection does not, and a Run's figures are of requests that all have the same phases",
+		);
 		return record;
 	}
 	record.succeeded = read.succeeded.length;
