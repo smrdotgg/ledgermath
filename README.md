@@ -792,10 +792,11 @@ in front of two private buckets of `production-runs`: $0 a month for CloudFront,
 CloudFront overage charge whatever strangers download (S3 still bills each request that
 misses the cache: "What it still costs", below). ADR-0031 records the design. It is built
 and **on** (`PUBLIC_API.state` in `infra/runs/public-blobs.ts`, which was `"off"`, then
-`"dark"`, before it): the distribution is enabled, with its certificate, its
+`"dark"`, before it): deployed, the distribution is enabled, with its certificate, its
 `api.ledgermath.com` records, its web ACL and its Free plan, and serves the four served
 prefixes publicly, and each bucket's policy grants it `GetObject` under its served
-prefixes and nothing more ("Turning it on, on `production-runs`", below). The file keeps the name of the
+prefixes and nothing more ("Turning it on, on `production-runs`", below; what of `on` has
+been seen working is in "Seen on the first deploy" and "Not verified yet"). The file keeps the name of the
 design it grew from, which served blobs alone at the distribution's `*.cloudfront.net`
 name ("What became of public blobs", below).
 
