@@ -441,6 +441,38 @@ describe("Method requests v1 over Runs", () => {
 		}
 	});
 
+	test("a Run whose counted requests that succeeded went over a new connection and over a reused one is failed, with why, and stops no Method", async () => {
+		// Sample 1 opens connection 1 and keeps it; sample 2 sends its request over it: each in its own connection's order.
+		const list = events(requestStream({ connection: "new", requests: [{}, {}] }));
+		const firstEnd = list.findIndex((e) => e.event === "sample_ended" && e.sample === 1);
+		const secondSent = list.findIndex((e) => e.event === "request_sent" && e.request === 2);
+		list.splice(firstEnd + 1, secondSent - firstEnd - 1, list.find((e) => e.event === "sample_started" && e.sample === 2) as RunEvent);
+		(list.find((e) => e.event === "request_sent" && e.request === 2) as RunEvent).connection = 1;
+		const text = `${list.map((e) => JSON.stringify(e)).join("\n")}\n`;
+		const reason =
+			"its counted requests that succeeded do not all have the same phases (1 with dns, connect, tls, send, first_byte, headers, body, total; 1 with send, first_byte, headers, body, total): " +
+			"one over a new connection has dns, connect and tls, one over a reused connection does not, and a Run's figures are of requests that all have the same phases";
+		// Each sample alone reads as one request; only the two together cannot be one Run's figures.
+		expect(readRequests(events(text)).problems).toEqual([]);
+		expect(readRequests(events(text)).succeeded.map((request) => Object.keys(request.phases).length)).toEqual([8, 5]);
+		// The record holds the reason and reads back. Before the rule, its record held two successes, did not read back, and the Method stopped.
+		const record = reduceRequests(bytes(text));
+		expect(record.problems).toEqual([reason]);
+		expect([record.succeeded, record.failed, record.phases]).toEqual([0, 0, {}]);
+		expect(REQUESTS_RECORD.fromJson(JSON.parse(JSON.stringify(REQUESTS_RECORD.toJson(record))))).not.toBeNull();
+		expect(requests.failures({ samples: 2, exit: { code: 0 } } as never, record)).toEqual([reason]);
+		// Derived beside a Run that counts: shown failed, with the reason, and in no figure; the other Run's figures are as alone.
+		const made = new HandMade();
+		requestRun(made, { startedAt: "2026-11-11T21:30:00Z", stream: { connection: "new", requests: [{}, {}] } });
+		made.run({ startedAt: "2026-11-11T21:35:00Z", benchmark: "http_get", binary: "http_get", params: requestRunParams(), samples: 2, exit: { code: 0 }, stdout: text });
+		const derivation = only(await derived(made));
+		const [counted, mixed] = derivation.points;
+		expect([counted?.counted, mixed?.counted, mixed?.failure]).toEqual([true, false, reason]);
+		const alone = new HandMade();
+		requestRun(alone, { startedAt: "2026-11-11T21:30:00Z", stream: { connection: "new", requests: [{}, {}] } });
+		expect(derivation.pool).toEqual(only(await derived(alone)).pool);
+	});
+
 	test("an exit 0 whose stream holds a failed warmup request or a failed setup of a kept connection contradicts its Run: in no figure; with exit 4 it counts", async () => {
 		const warmup = { connection: "new" as const, requests: [{}, {}], warmup: { fail: { phase: "tls" as const, error: "reset" } } };
 		const setup = { connection: "reused" as const, requests: [{}, {}], setupFailure: { phase: "tls", error: "reset" } };
@@ -508,6 +540,56 @@ describe("the reduced record of a Run, kept between runs", () => {
 		m.run({ startedAt: "2026-11-11T21:31:00Z", samplesNs: [1, 2, 3], crashAfter: 1, exit: { signal: 9 } });
 		return m;
 	}
+
+	test("no stream a Run counts by makes a record that does not read back, however its events are dropped, doubled, moved, renumbered or spliced", () => {
+		// A record that does not read back stops the whole Method (records.ts), so a Run must be failed, with why, instead.
+		const random = lcg(76);
+		const pick = <T>(list: readonly T[]): T => list[Math.floor(random() * list.length)] as T;
+		const specs: Array<Parameters<typeof requestStream>[0]> = [];
+		for (const connection of ["new", "reused"] as const) {
+			specs.push({ connection, requests: [{}, {}, {}] }, { connection, requests: [{}, { status: 503 }, {}] }, { connection, requests: [{}, {}], warmup: { fail: { phase: "first_byte", error: "timeout" } } });
+			for (const phase of ["dns", "connect", "tls", "send", "first_byte", "headers", "body"] as const) specs.push({ connection, requests: [{}, { fail: { phase, error: "reset" } }, {}] });
+		}
+		specs.push({ connection: "reused", requests: [{}, {}, {}, {}], requestsPerConnection: 2 }, { connection: "reused", requests: [{}, {}], setupFailure: { phase: "tls", error: "reset" } });
+		const bases = specs.map((spec) => events(requestStream(spec)));
+		let counted = 0;
+		for (let k = 0; k < 3000; k++) {
+			const list: RunEvent[] = pick(bases).map((e) => ({ ...e }));
+			for (let m = 1 + Math.floor(random() * 3); m > 0; m--) {
+				const i = Math.floor(random() * list.length);
+				const e = list[i] as RunEvent;
+				const kind = pick(["drop", "double", "move", "connection", "t", "status", "request", "splice", "closed", "withheld"] as const);
+				if (kind === "drop") list.splice(i, 1);
+				else if (kind === "double") list.splice(i, 0, { ...e });
+				else if (kind === "move") list.splice(Math.min(list.length - 1, i + 1), 0, ...list.splice(i, 1));
+				else if (kind === "connection" && "connection" in e) e.connection = pick([0, 1, 2, 99, "1", null]);
+				else if (kind === "t") e.t = Math.max(0, e.t + pick([-1, 1, -1000, 1000]));
+				else if (kind === "status" && e.event === "response_headers") e.status = pick([200, 301, 404, 500, 200.5, "200"]);
+				else if (kind === "request" && "request" in e) e.request = pick([0, 1, 2, "1"]);
+				else if (kind === "closed") list.splice(i, 0, { event: "connection_closed", t: e.t, connection: pick([0, 1, 2]), reason: "done", requests: 1 });
+				else if (kind === "withheld") list.splice(i, 0, { event: "line_withheld", t: e.t, withheld_event: pick(["first_byte", "certificate"]) });
+				else if (kind === "splice") {
+					// The next request reuses the connection of the one before: its own connection's events are dropped.
+					const end = list.findIndex((x, j) => j >= i && x.event === "sample_ended");
+					const start = list.findIndex((x, j) => j > end && x.event === "sample_started");
+					const sent = list.findIndex((x, j) => j > start && x.event === "request_sent");
+					const before = list.slice(0, Math.max(end, 0)).findLast((x) => x.event === "request_sent");
+					if (end >= 0 && start > end && sent > start && before !== undefined) {
+						(list[sent] as RunEvent).connection = before.connection;
+						list.splice(end + 1, sent - end - 1, list[start] as RunEvent);
+					}
+				}
+			}
+			const record = reduceRequests(bytes(`${list.map((e) => JSON.stringify(e)).join("\n")}\n`));
+			for (const code of [0, 4]) {
+				if (requests.failures({ samples: Math.max(record.counted ?? 1, 1), exit: { code } } as never, record).length > 0) continue;
+				counted++;
+				expect(REQUESTS_RECORD.fromJson(JSON.parse(JSON.stringify(REQUESTS_RECORD.toJson(record))))).not.toBeNull();
+			}
+		}
+		// Enough of them count for the search to mean something.
+		expect(counted).toBeGreaterThan(1000);
+	});
 
 	test("both Methods give the same bytes with no records, while making them, and from them alone, fetching no stream", async () => {
 		const m = await made();
