@@ -5,7 +5,7 @@ import { join, resolve } from "node:path";
 import type { SeriesDerivation } from "../methods/v1/output";
 import { checkAnswer, type CheckReport, type NumberStatus } from "../scripts/lib/answer-check";
 import { citationMismatch, NUMBERS, parameterUnit, seriesMoment, statAt } from "../scripts/lib/citation";
-import { type LedgerData, loadLedger, openLocation } from "../scripts/lib/ledger-data";
+import { type LedgerData, loadLedger, openLocation, type TreeSeries } from "../scripts/lib/ledger-data";
 import { findPrices, type PriceMatch } from "../scripts/lib/lookup";
 import { agrees, parseUnit, type Quantity, quantities, quantityWords } from "../scripts/lib/quantity";
 import { type Fixture, makeFixture } from "./lookup-fixtures";
@@ -15,10 +15,16 @@ setDefaultTimeout(60_000);
 const ROOT = resolve(import.meta.dir, "..");
 let fixture: Fixture;
 let data: LedgerData;
+/** The prices each word finds, read once. */
+const prices: Record<string, PriceMatch[]> = {};
+/** The memory_read Series on c6i.8xlarge, as its Series file holds it. */
+let memoryFile: TreeSeries;
 
 beforeAll(async () => {
 	fixture = await makeFixture();
 	data = await loadLedger(openLocation(fixture.directory));
+	for (const word of ["data-transfer-out-to-internet", "m5.large", "ebs-gp3-throughput", "GET"]) prices[word] = (await findPrices(data, [word])).matches;
+	memoryFile = (await data.series(fixture.c6i.series.id)) as TreeSeries;
 });
 afterAll(() => rmSync(fixture.directory, { recursive: true, force: true }));
 
@@ -104,7 +110,7 @@ function context(): Context {
 	const tcp = fixture.tcp;
 	const memory = fixture.c6i;
 	const at = seriesMoment(tcp);
-	const transfer = findPrices(data, ["data-transfer-out-to-internet"]).matches;
+	const transfer = prices["data-transfer-out-to-internet"] as PriceMatch[];
 	return {
 		tcp,
 		memory,
@@ -114,11 +120,11 @@ function context(): Context {
 		timeCitation: `[lm:series/${tcp.series.id}/time_per_repetition_ns/p50@v1,${at}]`,
 		countCitation: `[lm:series/${tcp.series.id}/bytes_per_second/count@v1,${at}]`,
 		links: tcp.runs.map((r) => r.path).join("\n"),
-		price: findPrices(data, ["m5.large"]).matches[0] as PriceMatch,
+		price: prices["m5.large"]?.[0] as PriceMatch,
 		egress: transfer.find((p) => p.begin_range === "0" && p.end_range === "10240") as PriceMatch,
 		secondTier: transfer.find((p) => p.begin_range === "10240") as PriceMatch,
-		gp3: findPrices(data, ["ebs-gp3-throughput"]).matches[0] as PriceMatch,
-		get: findPrices(data, ["GET"]).matches[0] as PriceMatch,
+		gp3: prices["ebs-gp3-throughput"]?.[0] as PriceMatch,
+		get: prices.GET?.[0] as PriceMatch,
 	};
 }
 
@@ -290,7 +296,7 @@ describe("a citation of the Series as of a moment", () => {
 					const stored = group === null ? series.percentiles[number] : series.groups.find((g) => g.id === group)?.percentiles[number];
 					if (stored === null || stored === undefined) continue;
 					for (const stat of ["p5", "p50", "p95", "count"] as const) {
-						expect(statAt(series, number, stat, group, moment)?.value).toBe(stat === "count" ? stored.count : stored[stat]);
+						expect(statAt(series.points, number, stat, group, moment)?.value).toBe(stat === "count" ? stored.count : stored[stat]);
 					}
 				}
 			}
@@ -329,7 +335,7 @@ describe("a tier's range", () => {
 		expect((await checkAnswer(`The first tier ends at 10 TB ${end}.`, data)).pass).toBe(true);
 		expect((await checkAnswer(`The first tier ends at 10000 GB ${end}.`, data)).problems[0]?.message).toContain("expected 10240 GB, the tier's endRange; found 10000 GB");
 		// The last tier's end is AWS's word "Inf": cited as it is, it accounts for no number, and a number before it does not match.
-		const last = findPrices(data, ["data-transfer-out-to-internet"]).matches.find((p) => p.end_range === "Inf") as PriceMatch;
+		const last = (await findPrices(data, ["data-transfer-out-to-internet"])).matches.find((p) => p.end_range === "Inf") as PriceMatch;
 		expect(last.end_range_citation).toBe(`[lm:${last.file}#${last.sku}/${last.rate_code}/endRange]`);
 		const inf = await checkAnswer(`The last tier has no end: Inf ${last.end_range_citation}.`, data);
 		expect(inf.pass).toBe(true);
@@ -488,7 +494,7 @@ describe("the second trial's lines", () => {
 	});
 
 	test("a parameter whose key ends in a unit matches its value bare or in that unit, never in another", () => {
-		const resolved = { ok: true as const, kind: "param" as const, series: context().memory, key: "gap_mean_ms", value: 200 };
+		const resolved = { ok: true as const, kind: "param" as const, series: memoryFile, key: "gap_mean_ms", value: 200 };
 		const one = (text: string) => quantities(text)[0] as Quantity;
 		expect(citationMismatch(resolved, one("200 ms"))).toBeNull();
 		expect(citationMismatch(resolved, one("0.2 s"))).toBeNull();
@@ -502,19 +508,28 @@ describe("the second trial's lines", () => {
 });
 
 describe("links, markers and what is not a number", () => {
-	test("a Run link is the bare path or its address in the Runs repository; the bytes must be the Derivation's", async () => {
+	test("a Run link is the bare path, its address in the data API or in the Runs repository; it is a Run of a cited Series; the bytes must be the Derivation's", async () => {
 		const c = context();
 		const path = c.tcp.runs[0]?.path as string;
 		const base = `${c.time} ns ${c.timeCitation}\n`;
-		for (const link of [path, `https://github.com/smrdotgg/ledgermath-runs/blob/main/${path}`, `https://raw.githubusercontent.com/smrdotgg/ledgermath-runs/main/${path}`, `[the Run](${path})`]) {
+		for (const link of [
+			path,
+			`https://api.ledgermath.com/${path}`,
+			`https://github.com/smrdotgg/ledgermath-runs/blob/main/${path}`,
+			`https://raw.githubusercontent.com/smrdotgg/ledgermath-runs/main/${path}`,
+			`[the Run](${path})`,
+		]) {
 			expect((await checkAnswer(base + link, data)).pass, link).toBe(true);
 		}
 		for (const link of [`https://example.com/${path}`, `https://github.com/someone/else/blob/main/${path}`]) {
 			const report = await checkAnswer(base + link, data);
 			expect(report.problems.map((p) => p.message), link).toContain(
-				`Run link: ${link} is neither the bare path ${path}, a relative path ending with it, nor its address in the Runs repository (https://github.com/smrdotgg/ledgermath-runs/blob/main/${path})`,
+				`Run link: ${link} is neither the bare path ${path}, a relative path ending with it, its address in the data API (https://api.ledgermath.com/${path}) nor its address in the Runs repository (https://github.com/smrdotgg/ledgermath-runs/blob/main/${path})`,
 			);
 		}
+		// A Run of a Series the answer does not cite, beside one of the Series it cites.
+		const other = c.memory.runs[0]?.path as string;
+		expect((await checkAnswer(`${base}${path}\n${other}`, data)).problems.map((p) => p.message)).toEqual([`Run link: ${other} is not a Run of any Series the answer cites (${c.tcp.series.id})`]);
 		const full = join(fixture.directory, path);
 		const original = readFileSync(full, "utf8");
 		try {

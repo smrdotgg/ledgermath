@@ -8,21 +8,27 @@
  * hold, it says so and lists what they do hold. It derives no new numbers:
  * the percentiles across Runs are Method series version 1's, those across
  * requests Method requests version 1's, the prices AWS's, verbatim.
+ *
+ * It reads the data API's tree (scripts/lib/ledger-data.ts), and only the
+ * files each answer needs: about and series, the table of contents and the
+ * list of Series; show, those and one Series file, and month files only for
+ * Runs older than the Series file's newest points; prices, the table of
+ * contents and one price file.
  */
 
 import type { Stats } from "../../methods/requests/v1/numbers";
-import type { Pool, PoolSummary, SeriesDerivation as RequestsSeries } from "../../methods/requests/v1/output";
+import type { Pool, PoolSummary, Recorded } from "../../methods/requests/v1/output";
 import { PHASES, type Phase } from "../../methods/requests/v1/requests";
 import { compareText, type ParamValue } from "../../methods/run";
-import type { Point, SeriesDerivation, Stat } from "../../methods/v1/output";
 import { BENCHMARK_NOTES, variantNotes } from "./benchmark-notes";
 import {
 	attributeCitation,
 	benchmarkCitation,
+	leastRequests,
+	momentOf,
 	NUMBER_UNIT,
 	NUMBERS,
 	type NumberName,
-	leastRequests,
 	paramCitation,
 	priceCitation,
 	REQUEST_PERCENTILES,
@@ -34,11 +40,10 @@ import {
 	requestStatCitation,
 	requestTailCitation,
 	seriesCitation,
-	seriesMoment,
 } from "./citation";
-import type { LedgerData, LoadedPrices } from "./ledger-data";
-import { agrees, type Dims, quantities } from "./quantity";
+import { type LedgerData, type LoadedPrices, type MonthEntry, seriesPoints, type StatSummary, type TreeRow, type TreeSeries, type TreeSeriesPoint } from "./ledger-data";
 import type { PriceSource } from "./prices";
+import { agrees, type Dims, quantities } from "./quantity";
 
 // ---------------------------------------------------------------- words
 
@@ -110,7 +115,9 @@ export function rateText(bytesPerSecond: number): string {
 	return `${checkedText(bytesPerSecond, dims, bytesPerSecond / ds, du)} (${checkedText(bytesPerSecond, dims, bytesPerSecond / bs, bu)})`;
 }
 
-const numberText = (name: NumberName, value: number): string => (name === "time_per_repetition_ns" ? timeText(value) : rateText(value));
+/** A Derivation's value as text; null is how the Method writes an infinite one. */
+const numberText = (name: NumberName, value: number | null): string =>
+	value === null ? "infinite (the Method writes it as null)" : name === "time_per_repetition_ns" ? timeText(value) : rateText(value);
 
 /** A Run's start, to the second. */
 const atSecond = (iso: string): string => `${iso.slice(0, 19)}Z`;
@@ -118,7 +125,8 @@ const atSecond = (iso: string): string => `${iso.slice(0, 19)}Z`;
 // ---------------------------------------------------------------- Series
 
 export interface CitedValue {
-	value: number;
+	/** Null when the Method's value is infinite, which it writes as null. */
+	value: number | null;
 	unit: string;
 	text: string;
 	citation: string;
@@ -136,6 +144,8 @@ export interface NumberStats {
 
 export interface SeriesSummary {
 	id: string;
+	/** The address of its Series file, as the list of Series gives it. */
+	url: string;
 	benchmark: string;
 	params: Record<string, ParamValue>;
 	params_citations: Record<string, string>;
@@ -151,7 +161,6 @@ export interface SeriesSummary {
 	runs: number;
 	counted: number;
 	failed: number;
-	boots: number;
 	first_run_at: string | null;
 	newest_run_at: string | null;
 	/** The start of the newest Run, to the second: the moment the Series' citations are of. */
@@ -161,36 +170,56 @@ export interface SeriesSummary {
 	requests: boolean;
 }
 
-function summary(series: SeriesDerivation, data?: LedgerData): SeriesSummary {
-	const { id, benchmark, params, build } = series.series;
+/** What a row of the list of Series, or a Series file, says of its Series. */
+interface Head {
+	id: string;
+	url: string;
+	benchmark: string;
+	params: Record<string, ParamValue>;
+	build: string;
+	instance_type: string | null;
+	availability_zone_id: string | null;
+	runs: number;
+	oldest_run_started_at: string;
+	newest_run_started_at: string;
+}
+
+function summary(head: Head, counts: { counted: number; failed: number; groups: number; requests: boolean }): SeriesSummary {
+	const { id, benchmark, params, build } = head;
 	const note = BENCHMARK_NOTES[benchmark];
-	const times = series.points.map((point) => point.started_at).sort(compareText);
-	const counted = series.points.filter((point) => point.counted).length;
 	return {
 		id,
+		url: head.url,
 		benchmark,
 		params,
 		params_citations: Object.fromEntries(Object.keys(params).sort(compareText).map((key) => [key, paramCitation(id, key)])),
 		build,
-		instance_type: series.series.instance_type,
-		availability_zone_id: series.series.availability_zone_id,
+		instance_type: head.instance_type,
+		availability_zone_id: head.availability_zone_id,
 		measures: note?.measures ?? null,
 		measures_citation: benchmarkCitation(benchmark),
 		variant: note === undefined ? [] : variantNotes(note, params),
 		repetition: note?.repetition ?? null,
 		bytes: note?.bytes ?? null,
 		caveat: note?.caveat ?? null,
-		runs: series.points.length,
-		counted,
-		failed: series.points.length - counted,
-		boots: new Set(series.points.map((point) => point.boot)).size,
-		first_run_at: times[0] ?? null,
-		newest_run_at: times[times.length - 1] ?? null,
-		data_through: seriesMoment(series),
-		groups: series.groups.length,
-		requests: data?.requests?.derivations.some((d) => d.series.id === id) ?? false,
+		runs: head.runs,
+		counted: counts.counted,
+		failed: counts.failed,
+		first_run_at: head.oldest_run_started_at,
+		newest_run_at: head.newest_run_started_at,
+		data_through: momentOf(head.newest_run_started_at),
+		groups: counts.groups,
+		requests: counts.requests,
 	};
 }
+
+const rowSummary = (row: TreeRow): SeriesSummary =>
+	summary(row, {
+		counted: row.derivations.series_v1?.counted_runs ?? 0,
+		failed: row.derivations.series_v1?.failed_runs ?? 0,
+		groups: row.derivations.series_v1?.groups ?? 0,
+		requests: row.derivations.requests_v1 !== undefined,
+	});
 
 /** What names a Series: its id, benchmark, params, build, instance type and zone ID. */
 function fieldText(s: SeriesSummary): string {
@@ -213,7 +242,7 @@ function matchingSeries(all: SeriesSummary[], words: string[]): SeriesSummary[] 
 }
 
 /** A number's percentiles, each with a citation of the Series as of `moment` under Method version `version`. */
-function numberStats(id: string, name: NumberName, stat: Stat | null, version: number, moment: string, group?: string): NumberStats | null {
+function numberStats(id: string, name: NumberName, stat: StatSummary | null, version: number, moment: string, group?: string): NumberStats | null {
 	if (stat === null) return null;
 	const { unit } = NUMBER_UNIT[name];
 	const cited = (which: "p5" | "p50" | "p95"): CitedValue => ({
@@ -245,8 +274,8 @@ export interface SeriesList {
 	not_held: NotHeld | null;
 }
 
-function sortedSummaries(data: LedgerData): SeriesSummary[] {
-	return data.derivations.derivations.map((series) => summary(series, data)).sort(
+async function sortedSummaries(data: LedgerData): Promise<SeriesSummary[]> {
+	return (await data.list()).series.map(rowSummary).sort(
 		(a, b) =>
 			compareText(a.benchmark, b.benchmark) ||
 			compareText(a.instance_type ?? "", b.instance_type ?? "") ||
@@ -265,11 +294,10 @@ const countBy = (values: string[]): Map<string, number> => {
 /** "memory_read (8 Series), sort (5 Series)". */
 const listed = (counts: Map<string, number>): string => (counts.size === 0 ? "none" : [...counts].map(([name, n]) => `${name} (${n} Series)`).join(", "));
 
-function seriesNotHeld(data: LedgerData, words: string[], all: SeriesSummary[]): NotHeld {
+function seriesNotHeld(words: string[], all: SeriesSummary[]): NotHeld {
 	const lines: string[] = [`LedgerMath holds no Series matching all of: ${words.join(" ")}.`];
 	const benchmarks = countBy(all.map((s) => s.benchmark));
 	const types = countBy(all.map((s) => s.instance_type ?? "(no instance type)"));
-	const priced = new Set(data.prices?.file.measured.instance_types ?? []);
 	for (const word of words) {
 		const matching = matchingSeries(all, [word]);
 		if (matching.length > 0) {
@@ -277,24 +305,27 @@ function seriesNotHeld(data: LedgerData, words: string[], all: SeriesSummary[]):
 			continue;
 		}
 		if (word in BENCHMARK_NOTES) lines.push(`"${word}" is a LedgerMath benchmark, but this data holds no Series of it yet.`);
-		else if (priced.has(word)) lines.push(`"${word}" is an instance type LedgerMath prices (${data.prices?.path}), but this data holds no Series of it yet.`);
 		else lines.push(`"${word}" matches no Series.`);
 	}
 	lines.push(`Benchmarks with Series: ${listed(benchmarks)}.`);
 	lines.push(`Instance types with Series: ${listed(types)}.`);
+	lines.push("Whether LedgerMath holds a price for something: prices <word>.");
 	lines.push("A number LedgerMath does not hold is not measured here; do not stand one in for it without saying so.");
 	return { asked: words, lines };
 }
 
-export function listSeries(data: LedgerData, words: string[]): SeriesList {
-	const all = sortedSummaries(data);
+export async function listSeries(data: LedgerData, words: string[]): Promise<SeriesList> {
+	const all = await sortedSummaries(data);
 	const series = matchingSeries(all, words);
-	return { words, series, not_held: series.length === 0 ? seriesNotHeld(data, words, all) : null };
+	return { words, series, not_held: series.length === 0 ? seriesNotHeld(words, all) : null };
 }
 
 export interface RunLink {
 	path: string;
+	/** Where to read it at the location: its path in a directory, its address under a web address. */
 	link: string;
+	/** Its address in the data API, as the tree writes it. */
+	evidence: string;
 	started_at: string;
 	group: string;
 	counted: boolean;
@@ -303,10 +334,6 @@ export interface RunLink {
 
 export interface GroupDetail {
 	id: string;
-	runs: number;
-	counted: number;
-	first_run_at: string | null;
-	newest_run_at: string | null;
 	/** The split facts whose values differ from group A's, with what each is. */
 	differs_from_first: Array<{ fact: string; what: string }>;
 	numbers: NumberStats[];
@@ -314,6 +341,7 @@ export interface GroupDetail {
 
 export interface SeriesDetail extends SeriesSummary {
 	method: string;
+	/** Where its figures were read: its Series file. */
 	derivations: string;
 	numbers: NumberStats[];
 	group_details: GroupDetail[];
@@ -431,7 +459,7 @@ function valuesText(values: ReadonlyArray<string | null>): string {
  * its own connection, TLS, address blocks). The path between box and server
  * is not stated: the Runs' dumps record it.
  */
-export function describeRequests(series: RequestsSeries): string[] {
+export function describeRequests(series: { params: Record<string, ParamValue>; pool: Pool; recorded: Recorded }): string[] {
 	const facts = new Map(series.pool.facts.map((f) => [f.fact as string, f.values.map(({ value }) => value)]));
 	const seen = (fact: string): string | null => {
 		const values = facts.get(fact);
@@ -448,7 +476,7 @@ export function describeRequests(series: RequestsSeries): string[] {
 					.join("; ") + (recorded.without_service > 0 ? "; some Runs name no Service" : "");
 	const region = valuesText(recorded.regions.map(({ value }) => value));
 	lines.push(
-		`What the Runs record: params ${paramsText(series.series.params)}; ${service}; the box in Region ${region}, as its provider names it.` +
+		`What the Runs record: params ${paramsText(series.params)}; ${service}; the box in Region ${region}, as its provider names it.` +
 			(series.pool.requests === 0 ? " No request succeeded, so the requests show nothing more." : ""),
 	);
 	if (series.pool.requests > 0) {
@@ -469,31 +497,32 @@ export function describeRequests(series: RequestsSeries): string[] {
 	return lines;
 }
 
-function requestDetail(data: LedgerData, series: RequestsSeries): RequestDetail {
-	const requests = data.requests as NonNullable<LedgerData["requests"]>;
-	const id = series.series.id;
+function requestDetail(file: TreeSeries, from: string): RequestDetail | null {
+	const requests = file.derivations.requests_v1;
+	if (requests === undefined) return null;
+	const id = file.id;
 	const version = requests.method.version;
-	const moment = seriesMoment(series);
+	const moment = momentOf(file.newest_run_started_at);
 	const names = (phase: Phase): string => requests.phases.find((p) => p.phase === phase)?.name ?? phase;
-	const counted = series.points.filter((point) => point.counted).length;
+	const counted = requests.counted_runs;
 	const notes: string[] = [
 		"Percentiles here are across requests, each request one sample, pooled across the counted Runs; a percentile is given only when the requests support it (a 99th needs 100, a 99.9th 1000), with how many requests are ranked at or above it.",
 		`Pooled percentiles are read from histograms of ${requests.histogram.bins_per_doubling} bins per doubling of time: within ${(requests.histogram.precision * 100).toFixed(2)}% of the exact figure.`,
-		...describeRequests(series),
+		...describeRequests({ params: file.params, pool: requests.pool, recorded: requests.recorded }),
 	];
 	if (counted === 1) notes.push("One counted Run: the requests are those of one box at one time; the spread across boxes is not known yet.");
-	if (series.groups.length > 1) notes.push(`Split into ${series.groups.length} groups by Method series v1's split facts; the Series-wide figures mix them.`);
-	if (series.pool.by.length > 0) notes.push(`The requests differed in ${series.pool.by.map((b) => b.fact).join(" and ")}: the figures by each value are below; the Series-wide figures mix them.`);
+	if (requests.groups.length > 1) notes.push(`Split into ${requests.groups.length} groups by Method series v1's split facts; the Series-wide figures mix them.`);
+	if (requests.pool.by.length > 0) notes.push(`The requests differed in ${requests.pool.by.map((b) => b.fact).join(" and ")}: the figures by each value are below; the Series-wide figures mix them.`);
 	return {
 		method: `${requests.method.name} version ${version}`,
-		derivations: data.requestsFrom ?? "",
+		derivations: from,
 		data_through: moment,
-		runs: series.points.length,
+		runs: file.runs,
 		counted,
-		failed_runs: series.points.length - counted,
-		pool: poolFigures(id, series.pool, PHASES, names, version, moment, null),
-		groups: series.groups.length < 2 ? [] : series.groups.map((group) => ({ id: group.id, pool: poolFigures(id, group.pool, ["total", "first_byte"], names, version, moment, { group: group.id }) })),
-		by: series.pool.by.map((breakdown) => ({
+		failed_runs: requests.failed_runs,
+		pool: poolFigures(id, requests.pool, PHASES, names, version, moment, null),
+		groups: requests.groups.length < 2 ? [] : requests.groups.map((group) => ({ id: group.id, pool: poolFigures(id, group.pool, ["total", "first_byte"], names, version, moment, { group: group.id }) })),
+		by: requests.pool.by.map((breakdown) => ({
 			fact: breakdown.fact,
 			what: requests.request_facts.find((f) => f.fact === breakdown.fact)?.what ?? "",
 			values: breakdown.values.map((value) => ({
@@ -510,10 +539,11 @@ export type ShowResult =
 	| { found: "many"; words: string[]; series: SeriesSummary[] }
 	| { found: "none"; not_held: NotHeld };
 
-function runLink(data: LedgerData, point: Point): RunLink {
+function runLink(data: LedgerData, point: TreeSeriesPoint): RunLink {
 	return {
 		path: point.path,
 		link: data.location.link(point.path),
+		evidence: point.evidence,
 		started_at: point.started_at,
 		group: point.group,
 		counted: point.counted,
@@ -521,18 +551,42 @@ function runLink(data: LedgerData, point: Point): RunLink {
 	};
 }
 
-function detail(data: LedgerData, series: SeriesDerivation, runs: number | "all"): SeriesDetail {
-	const base = summary(series);
-	const id = series.series.id;
-	const version = data.derivations.method.version;
-	const whatOf = new Map(data.derivations.split_on.map((fact) => [fact.fact, fact.what]));
-	const first = series.groups[0];
+const newestFirst = (a: TreeSeriesPoint, b: TreeSeriesPoint): number => compareText(b.started_at, a.started_at) || compareText(a.path, b.path);
+
+/**
+ * The month files to read to list a Series' newest `runs` Runs: none when its
+ * Series file's newest points hold them; otherwise its months, newest first,
+ * until they hold that many.
+ */
+function monthsFor(runs: number | "all") {
+	return (file: TreeSeries): MonthEntry[] => {
+		const held = file.derivations.series_v1?.newest_points.length ?? 0;
+		if (held >= file.runs || (runs !== "all" && runs <= held)) return [];
+		const months = [...file.months].sort((a, b) => compareText(b.month, a.month));
+		if (runs === "all") return months;
+		const wanted: MonthEntry[] = [];
+		let total = 0;
+		for (const month of months) {
+			if (total >= runs) break;
+			wanted.push(month);
+			total += month.runs;
+		}
+		return wanted;
+	};
+}
+
+function detail(data: LedgerData, file: TreeSeries, points: TreeSeriesPoint[], runs: number | "all", from: string): SeriesDetail {
+	const v1 = file.derivations.series_v1;
+	const base = summary(file, { counted: v1?.counted_runs ?? 0, failed: v1?.failed_runs ?? 0, groups: v1?.groups.length ?? 0, requests: file.derivations.requests_v1 !== undefined });
+	const id = file.id;
+	const version = v1?.method.version ?? 1;
+	const whatOf = new Map((v1?.split_on ?? []).map((fact) => [fact.fact, fact.what]));
+	const groups = v1?.groups ?? [];
+	const first = groups[0];
 	const groupDetails: GroupDetail[] =
-		series.groups.length < 2
+		groups.length < 2
 			? []
-			: series.groups.map((group) => {
-					const points = series.points.filter((point) => point.group === group.id);
-					const times = points.map((point) => point.started_at).sort(compareText);
+			: groups.map((group) => {
 					const differs =
 						first === undefined || group.id === first.id
 							? []
@@ -542,16 +596,12 @@ function detail(data: LedgerData, series: SeriesDerivation, runs: number | "all"
 									.map((fact) => ({ fact, what: whatOf.get(fact) ?? "" }));
 					return {
 						id: group.id,
-						runs: points.length,
-						counted: points.filter((point) => point.counted).length,
-						first_run_at: times[0] ?? null,
-						newest_run_at: times[times.length - 1] ?? null,
 						differs_from_first: differs,
 						numbers: NUMBERS.flatMap((name) => numberStats(id, name, group.percentiles[name], version, base.data_through, group.id) ?? []),
 					};
 				});
-	const newestFirst = [...series.points].sort((a, b) => compareText(b.started_at, a.started_at) || compareText(a.path, b.path));
-	const shown = runs === "all" ? newestFirst : newestFirst.slice(0, runs);
+	const sorted = [...points].sort(newestFirst);
+	const shown = runs === "all" ? sorted : sorted.slice(0, runs);
 	const notes: string[] = [];
 	if (base.counted === 1) notes.push("One counted Run: its 5th, 50th and 95th percentiles are the same value, and no spread is known.");
 	else if (base.counted > 1 && base.counted < 21) {
@@ -559,39 +609,48 @@ function detail(data: LedgerData, series: SeriesDerivation, runs: number | "all"
 			`${base.counted} counted Runs: the 5th and 95th percentiles lie between the two lowest and the two highest Runs, so the spread is that of ${base.counted} boxes, not yet a distribution.`,
 		);
 	}
-	if (series.groups.length > 1) {
+	if (groups.length > 1) {
 		notes.push(
-			`Split into ${series.groups.length} groups: a recorded fact Method series v1 splits on differs between them. The Series-wide percentiles mix the groups; say which one an estimate uses, or use the Series-wide spread as the range.`,
+			`Split into ${groups.length} groups: a recorded fact Method series v1 splits on differs between them. The Series-wide percentiles mix the groups; say which one an estimate uses, or use the Series-wide spread as the range.`,
 		);
 	}
 	if (base.caveat !== null) notes.push(base.caveat);
-	const requestSeries = data.requests?.derivations.find((d) => d.series.id === id) ?? null;
+	const requestFigures = requestDetail(file, from);
 	notes.push(
-		requestSeries === null
+		requestFigures === null
 			? "LedgerMath holds no 99th percentile of this Series: its percentiles are across Runs (5th, 50th, 95th). Only Series of requests (Method requests) have percentiles across requests, up to the 99th and 99.9th."
 			: "Its percentiles across Runs above stop at the 95th; its percentiles across requests (Method requests, below) go to the 99th and 99.9th where the requests support them.",
 	);
 	return {
 		...base,
-		method: `${data.derivations.method.name} version ${data.derivations.method.version}`,
-		derivations: data.derivationsFrom,
-		numbers: NUMBERS.flatMap((name) => numberStats(id, name, series.percentiles[name], version, base.data_through) ?? []),
+		method: `series version ${version}`,
+		derivations: from,
+		numbers: v1 === undefined ? [] : NUMBERS.flatMap((name) => numberStats(id, name, v1.percentiles[name], version, base.data_through) ?? []),
 		group_details: groupDetails,
 		runs_list: shown.map((point) => runLink(data, point)),
 		runs_shown: shown.length,
 		notes,
-		request_figures: requestSeries === null ? null : requestDetail(data, requestSeries),
+		request_figures: requestFigures,
 	};
 }
 
-export function showSeries(data: LedgerData, words: string[], runs: number | "all"): ShowResult {
-	const exact = words.length === 1 ? data.derivations.derivations.find((d) => d.series.id === words[0]) : undefined;
-	if (exact !== undefined) return { found: "one", series: detail(data, exact, runs) };
-	const list = listSeries(data, words);
-	if (list.not_held !== null) return { found: "none", not_held: list.not_held };
-	if (list.series.length > 1) return { found: "many", words, series: list.series };
-	const only = data.derivations.derivations.find((d) => d.series.id === list.series[0]?.id) as SeriesDerivation;
-	return { found: "one", series: detail(data, only, runs) };
+/** One Series by its id, or the Series matching every word; for one, its Series file and the month files the Runs to list need. */
+export async function showSeries(data: LedgerData, words: string[], runs: number | "all"): Promise<ShowResult> {
+	const all = await sortedSummaries(data);
+	const exact = words.length === 1 ? all.find((s) => s.id === words[0]) : undefined;
+	let id = exact?.id;
+	if (id === undefined) {
+		const matching = matchingSeries(all, words);
+		if (matching.length === 0) return { found: "none", not_held: seriesNotHeld(words, all) };
+		if (matching.length > 1) return { found: "many", words, series: matching };
+		id = (matching[0] as SeriesSummary).id;
+	}
+	const read = await data.seriesWithMonths(id, monthsFor(runs));
+	if (read === null) return { found: "none", not_held: seriesNotHeld(words, all) };
+	const newest = read.series.derivations.series_v1?.newest_points ?? [];
+	const points = read.months.length === 0 ? newest : seriesPoints(read.months);
+	const path = data.pathOf(read.series.url);
+	return { found: "one", series: detail(data, read.series, points, runs, path === null ? read.series.url : data.location.link(path)) };
 }
 
 // ---------------------------------------------------------------- prices
@@ -609,7 +668,6 @@ export interface PriceMatch {
 	description: string;
 	begin_range: string;
 	end_range: string;
-	/** Where the tier begins and ends, in AWS's unit; null for "Inf", which cites nothing. */
 	/** Where the tier begins and ends, in AWS's unit; AWS writes the last tier's end as the word "Inf", and its citation is of that word. */
 	begin_range_citation: string;
 	end_range_citation: string;
@@ -735,14 +793,14 @@ export function priceFileHolds(prices: LoadedPrices): string[] {
 	return lines;
 }
 
-export function findPrices(data: LedgerData, words: string[]): PriceResult {
-	const prices = data.prices;
+export async function findPrices(data: LedgerData, words: string[]): Promise<PriceResult> {
+	const prices = await data.prices();
 	if (prices === null) {
 		return {
 			words,
 			file: null,
 			matches: [],
-			not_held: { asked: words, lines: [`There is no price file at ${data.location.base}, so LedgerMath holds no price here.`] },
+			not_held: { asked: words, lines: [`The data at ${data.location.base} hold no price file, so LedgerMath holds no price here.`] },
 		};
 	}
 	const matches = allPrices(prices).filter((match) => words.every((word) => wordMatches(word, priceSearchText(match))));
@@ -767,11 +825,13 @@ export function findPrices(data: LedgerData, words: string[]): PriceResult {
 
 export interface About {
 	location: string;
-	synthetic: string | null;
+	/** The list of Series it was read from. */
 	derivations: string;
 	method: string;
+	layout: number;
 	runs_read: number;
 	series: number;
+	runs: number;
 	counted_runs: number;
 	failed_runs: number;
 	unreadable_runs: number;
@@ -780,76 +840,67 @@ export interface About {
 	benchmarks: Record<string, number>;
 	benchmarks_without_series: string[];
 	instance_types: Record<string, number>;
-	/** Method requests' Derivations: where from, and how many Series of requests. */
-	requests_derivations: string | null;
+	/** How many Series have percentiles across their requests (Method requests). */
 	request_series: number;
 	price_files: string[];
 	price_file: string | null;
-	price_file_fetched_at: string | null;
-	price_region: string | null;
-	price_file_holds: string[];
+	price_file_date: string | null;
 }
 
-export function about(data: LedgerData): About {
-	const all = sortedSummaries(data);
-	const times = data.derivations.derivations.flatMap((d) => d.points.map((p) => p.started_at)).sort(compareText);
-	const counted = all.reduce((sum, s) => sum + s.counted, 0);
-	const failed = all.reduce((sum, s) => sum + s.failed, 0);
+export async function about(data: LedgerData): Promise<About> {
+	const list = await data.list();
+	const all = await sortedSummaries(data);
+	const firsts = all.map((s) => s.first_run_at as string).sort(compareText);
+	const newests = all.map((s) => s.newest_run_at as string).sort(compareText);
 	const benchmarks = countBy(all.map((s) => s.benchmark));
+	const v1 = list.methods.series_v1;
+	const inUse = data.index.prices.files.find((entry) => entry.path === data.pricesPath) ?? null;
+	const listPath = data.pathOf(list.url);
 	return {
 		location: data.location.base,
-		synthetic: data.derivations.synthetic ?? null,
-		derivations: data.derivationsFrom,
-		method: `${data.derivations.method.name} version ${data.derivations.method.version}`,
-		runs_read: data.derivations.runs_read,
+		derivations: listPath === null ? list.url : data.location.link(listPath),
+		method: `${v1?.method.name ?? "series"} version ${v1?.method.version ?? 1}`,
+		layout: data.index.layout,
+		runs_read: v1?.runs_read ?? 0,
 		series: all.length,
-		counted_runs: counted,
-		failed_runs: failed,
-		unreadable_runs: data.derivations.unreadable.length,
-		first_run_at: times[0] ?? null,
-		newest_run_at: times[times.length - 1] ?? null,
+		runs: all.reduce((sum, s) => sum + s.runs, 0),
+		counted_runs: all.reduce((sum, s) => sum + s.counted, 0),
+		failed_runs: all.reduce((sum, s) => sum + s.failed, 0),
+		unreadable_runs: v1?.unreadable.length ?? 0,
+		first_run_at: firsts[0] ?? null,
+		newest_run_at: newests.at(-1) ?? null,
 		benchmarks: Object.fromEntries(benchmarks),
 		benchmarks_without_series: Object.keys(BENCHMARK_NOTES)
 			.filter((name) => !benchmarks.has(name))
 			.sort(compareText),
 		instance_types: Object.fromEntries(countBy(all.map((s) => s.instance_type ?? "(no instance type)"))),
-		requests_derivations: data.requestsFrom,
-		request_series: data.requests?.derivations.length ?? 0,
+		request_series: all.filter((s) => s.requests).length,
 		price_files: data.priceFiles,
-		price_file: data.prices?.path ?? null,
-		price_file_fetched_at: data.prices?.file.fetched_at ?? null,
-		price_region: data.prices?.file.measured.region ?? null,
-		price_file_holds: data.prices === null ? [] : priceFileHolds(data.prices),
+		price_file: inUse?.path ?? null,
+		price_file_date: inUse?.date ?? null,
 	};
 }
 
 // ---------------------------------------------------------------- text
 
-const SYNTHETIC = (why: string): string[] => [`SYNTHETIC DATA, NOT MEASURED: ${why}`, ""];
-
-function banner(data: LedgerData): string[] {
-	return data.derivations.synthetic === undefined ? [] : SYNTHETIC(data.derivations.synthetic);
-}
-
-export function aboutText(data: LedgerData, a: About): string {
+export function aboutText(a: About): string {
 	const lines = [
-		...banner(data),
-		`LedgerMath data at ${a.location}`,
-		`Derivations: ${a.derivations}, Method ${a.method}: ${a.runs_read} Run files read, ${a.series} Series, ${a.counted_runs} counted Runs, ${a.failed_runs} failed, ${a.unreadable_runs} unreadable.`,
+		`LedgerMath data at ${a.location} (the data API, version 1, layout ${a.layout})`,
+		`Series: ${a.derivations}, Method ${a.method}: ${a.runs_read} Run files read, ${a.series} Series, ${a.counted_runs} counted Runs, ${a.failed_runs} failed, ${a.unreadable_runs} unreadable.`,
 		`Runs started from ${a.first_run_at === null ? "-" : atSecond(a.first_run_at)} to ${a.newest_run_at === null ? "-" : atSecond(a.newest_run_at)}.`,
 		`Benchmarks with Series: ${listed(new Map(Object.entries(a.benchmarks)))}.`,
 		`Benchmarks with no Series in this data: ${a.benchmarks_without_series.length === 0 ? "none" : a.benchmarks_without_series.join(", ")}.`,
 		`Instance types with Series: ${listed(new Map(Object.entries(a.instance_types)))}.`,
 		"Percentiles across Runs: the 5th, 50th and 95th of every Series (Method series); no 99th percentile across Runs.",
-		a.requests_derivations === null
-			? "Percentiles across requests: none in this data (no requests-derivations.json), so no 99th percentile at all."
-			: `Percentiles across requests (Method requests): ${a.request_series} Series of requests, each phase of an HTTPS GET to S3 up to the 99th and 99.9th percentile where the requests support them, from ${a.requests_derivations}.`,
+		a.request_series === 0
+			? "Percentiles across requests: none in this data, so no 99th percentile at all."
+			: `Percentiles across requests (Method requests): ${a.request_series} Series of requests, each phase of an HTTPS GET to S3 up to the 99th and 99.9th percentile where the requests support them.`,
 	];
 	if (a.price_file === null) lines.push("Price files: none.");
 	else {
 		lines.push(
-			`Price files: ${a.price_files.length}; in use ${a.price_file} (fetched ${a.price_file_fetched_at}, Region ${a.price_region}). It holds:`,
-			...a.price_file_holds.map((line) => `  ${line}`),
+			`Price files: ${a.price_files.length}, from ${a.price_files[0]} to ${a.price_files.at(-1)}; in use ${a.price_file}, the price file of ${a.price_file_date}.`,
+			"What it holds, AWS's On-Demand prices in AWS's words: prices <word> finds them, and lists everything the file holds when no price matches.",
 		);
 	}
 	lines.push("Anything not listed here is not held. LedgerMath holds measurements and prices; it does not estimate.");
@@ -869,7 +920,7 @@ function seriesLines(series: SeriesSummary[]): string[] {
 		}
 		lines.push(
 			`  ${s.id}  ${s.instance_type ?? "(no instance type)"}  ${s.availability_zone_id ?? "-"}  ${paramsText(s.params)}  build ${s.build}  ` +
-				`${s.counted} counted of ${s.runs} Runs, ${s.boots} boots, newest ${s.newest_run_at === null ? "-" : atSecond(s.newest_run_at)}` +
+				`${s.counted} counted of ${s.runs} Runs, newest ${s.newest_run_at === null ? "-" : atSecond(s.newest_run_at)}` +
 				`${s.groups > 1 ? `, split into ${s.groups} groups` : ""}${s.requests ? ", percentiles across requests: show it" : ""}`,
 		);
 		for (const note of s.variant) lines.push(`      this set: ${note}`);
@@ -877,8 +928,8 @@ function seriesLines(series: SeriesSummary[]): string[] {
 	return lines;
 }
 
-export function seriesListText(data: LedgerData, list: SeriesList): string {
-	const lines = [...banner(data)];
+export function seriesListText(list: SeriesList): string {
+	const lines: string[] = [];
 	if (list.not_held !== null) lines.push(...list.not_held.lines);
 	else {
 		lines.push(
@@ -899,8 +950,8 @@ function numberLines(stats: NumberStats, indent: string): string[] {
 	return [`${indent}${label}, across ${stats.count} counted Runs ${stats.count_citation}:`, ...rows];
 }
 
-export function showText(data: LedgerData, result: ShowResult): string {
-	const lines = [...banner(data)];
+export function showText(result: ShowResult): string {
+	const lines: string[] = [];
 	if (result.found === "none") lines.push(...result.not_held.lines);
 	else if (result.found === "many") {
 		lines.push(`${result.series.length} Series match ${result.words.join(" ")}; show one by its id, or add words:`, "", ...seriesLines(result.series));
@@ -918,7 +969,7 @@ export function showText(data: LedgerData, result: ShowResult): string {
 		if (s.repetition !== null) lines.push(`  one repetition: ${s.repetition}`);
 		if (s.bytes !== null) lines.push(`  bytes per second counts: ${s.bytes}`);
 		lines.push(
-			`  Runs: ${s.runs} (${s.counted} counted, ${s.failed} failed) from ${s.boots} boots, ${s.first_run_at === null ? "-" : atSecond(s.first_run_at)} to ${s.newest_run_at === null ? "-" : atSecond(s.newest_run_at)}`,
+			`  Runs: ${s.runs} (${s.counted} counted, ${s.failed} failed), ${s.first_run_at === null ? "-" : atSecond(s.first_run_at)} to ${s.newest_run_at === null ? "-" : atSecond(s.newest_run_at)}`,
 			`  data through ${s.data_through}, the newest Run's start: each citation below is of the Series as it stood then, under Method ${s.method}`,
 			"",
 		);
@@ -927,8 +978,9 @@ export function showText(data: LedgerData, result: ShowResult): string {
 		for (const note of s.notes) lines.push(`Note: ${note}`);
 		if (s.notes.length > 0) lines.push("");
 		for (const group of s.group_details) {
-			const differs = group.differs_from_first.length === 0 ? "" : `; differs from group A in: ${group.differs_from_first.map((d) => `${d.fact} (${d.what})`).join("; ")}`;
-			lines.push(`Group ${group.id}: ${group.runs} Runs (${group.counted} counted), ${group.first_run_at === null ? "-" : atSecond(group.first_run_at)} to ${group.newest_run_at === null ? "-" : atSecond(group.newest_run_at)}${differs}`);
+			const differs = group.differs_from_first.length === 0 ? "" : `: differs from group A in: ${group.differs_from_first.map((d) => `${d.fact} (${d.what})`).join("; ")}`;
+			lines.push(`Group ${group.id}${differs}`);
+			if (group.numbers.length === 0) lines.push("  no counted Run: no number.");
 			for (const stats of group.numbers) lines.push(...numberLines(stats, "  "));
 			lines.push("");
 		}
@@ -937,11 +989,7 @@ export function showText(data: LedgerData, result: ShowResult): string {
 		for (const run of s.runs_list) {
 			lines.push(`  ${run.link}  ${atSecond(run.started_at)}  group ${run.group}  ${run.counted ? "counted" : `failed: ${run.failure}`}`);
 		}
-		lines.push(
-			"",
-			"Cite a number with the citation printed beside it, and link at least one of these Runs in the answer.",
-			`Method ${s.method}, from ${s.derivations}.`,
-		);
+		lines.push("", "Cite a number with the citation printed beside it, and link at least one of these Runs in the answer.", `Method ${s.method}, from ${s.derivations}.`);
 	}
 	return `${lines.join("\n")}\n`;
 }
@@ -983,8 +1031,8 @@ function requestLines(r: RequestDetail): string[] {
 	return lines;
 }
 
-export function pricesText(data: LedgerData, result: PriceResult): string {
-	const lines = [...banner(data)];
+export function pricesText(result: PriceResult): string {
+	const lines: string[] = [];
 	if (result.not_held !== null) lines.push(...result.not_held.lines);
 	else {
 		const first = result.matches[0] as PriceMatch;

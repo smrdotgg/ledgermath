@@ -5,9 +5,10 @@
  * scripts/lib/answer-check.ts says exactly what it checks; the citation
  * syntax is in scripts/lib/citation.ts and skills/ledgermath/SKILL.md.
  *
- *     bun scripts/check-answer.ts [--data LOCATION] [--derivations FILE] [--requests-derivations FILE] [--question FILE] [--verbose] [--json] ANSWER
+ *     bun scripts/check-answer.ts [--data LOCATION] [--question FILE] [--verbose] [--json] ANSWER
  *
- *   --data LOCATION   the data the answer was written from, as for scripts/lookup.ts; default $LEDGERMATH_DATA
+ *   --data LOCATION   the data the answer was written from, as for scripts/lookup.ts; default
+ *                     $LEDGERMATH_DATA, then https://api.ledgermath.com
  *   --question FILE   the question; its numbers count as given
  *   --verbose         list every number and citation, and how each was accounted for
  *
@@ -18,25 +19,22 @@ import { existsSync, readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 
 import { checkAnswer, reportText } from "./lib/answer-check";
-import { loadLedger, openLocation } from "./lib/ledger-data";
+import { LedgerError, loadLedger, locationFrom, openLocation } from "./lib/ledger-data";
 
-const USAGE = "usage: bun scripts/check-answer.ts [--data LOCATION] [--derivations FILE] [--requests-derivations FILE] [--question FILE] [--verbose] [--json] ANSWER";
+const USAGE = "usage: bun scripts/check-answer.ts [--data LOCATION] [--question FILE] [--verbose] [--json] ANSWER";
 
 async function main(): Promise<number> {
 	const { values, positionals } = parseArgs({
 		allowPositionals: true,
 		options: {
 			data: { type: "string" },
-			derivations: { type: "string" },
-			"requests-derivations": { type: "string" },
 			question: { type: "string" },
 			verbose: { type: "boolean", default: false },
 			json: { type: "boolean", default: false },
 		},
 	});
-	const base = values.data ?? process.env.LEDGERMATH_DATA;
 	const [answerPath] = positionals;
-	if (answerPath === undefined || positionals.length !== 1 || base === undefined || base === "") {
+	if (answerPath === undefined || positionals.length !== 1) {
 		console.error(USAGE);
 		return 2;
 	}
@@ -46,7 +44,8 @@ async function main(): Promise<number> {
 			return 2;
 		}
 	}
-	const data = await loadLedger(openLocation(base), { derivations: values.derivations, requestsDerivations: values["requests-derivations"] });
+	const { base, isDefault } = locationFrom(values.data, process.env.LEDGERMATH_DATA);
+	const data = await loadLedger(openLocation(base), { isDefault });
 	const report = await checkAnswer(readFileSync(answerPath, "utf8"), data, values.question === undefined ? "" : readFileSync(values.question, "utf8"));
 	process.stdout.write(values.json ? `${JSON.stringify(report, null, 2)}\n` : reportText(report, { answer: answerPath, data: base, verbose: values.verbose }));
 	return report.pass ? 0 : 1;
@@ -56,7 +55,7 @@ if (import.meta.main) {
 	main()
 		.then((code) => process.exit(code))
 		.catch((error: unknown) => {
-			console.error(error instanceof Error ? error.message : String(error));
+			console.error(error instanceof LedgerError ? error.message : error instanceof Error ? error.message : String(error));
 			process.exit(2);
 		});
 }

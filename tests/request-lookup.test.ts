@@ -1,5 +1,7 @@
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 
 import { checkAnswer } from "../scripts/lib/answer-check";
 import { requestFailedCitation, requestRunsCitation, requestStatCitation, requestTailCitation, resolveCitation, seriesMoment } from "../scripts/lib/citation";
@@ -10,6 +12,7 @@ import * as requests from "../methods/requests/v1";
 import * as series from "../methods/v1";
 import { HandMade, rampRequests, requestRun } from "./hand-made-requests";
 import { makeRequestFixture, type RequestFixture } from "./request-lookup-fixtures";
+import { writeTree } from "./tree-fixture";
 
 setDefaultTimeout(120_000);
 
@@ -47,22 +50,22 @@ function cited(value: unknown, found: Array<{ value: number; citation: string; t
 }
 
 describe("the lookup tool and Series of requests", () => {
-	test("about says what percentiles it holds: across Runs to the 95th, across requests to the 99th and 99.9th", () => {
-		const text = aboutText(data, about(data));
+	test("about says what percentiles it holds: across Runs to the 95th, across requests to the 99th and 99.9th", async () => {
+		const text = aboutText(await about(data));
 		expect(text).toContain("Percentiles across Runs: the 5th, 50th and 95th of every Series (Method series); no 99th percentile across Runs.");
 		expect(text).toContain("Percentiles across requests (Method requests): 3 Series of requests");
-		const without = aboutText(bareData, about(bareData));
-		expect(without).toContain("Percentiles across requests: none in this data (no requests-derivations.json), so no 99th percentile at all.");
+		const without = aboutText(await about(bareData));
+		expect(without).toContain("Percentiles across requests: none in this data, so no 99th percentile at all.");
 	});
 
-	test("series marks the Series that have percentiles across requests", () => {
-		const text = seriesListText(data, listSeries(data, ["http_get"]));
+	test("series marks the Series that have percentiles across requests", async () => {
+		const text = seriesListText(await listSeries(data, ["http_get"]));
 		expect(text.match(/percentiles across requests: show it/g)?.length).toBe(3);
-		expect(seriesListText(data, listSeries(data, ["memory_read"]))).not.toContain("percentiles across requests");
+		expect(seriesListText(await listSeries(data, ["memory_read"]))).not.toContain("percentiles across requests");
 	});
 
 	test("show gives each phase's percentiles across requests, how many requests stand at or above each tail figure, and every citation resolves to the number beside it", async () => {
-		const answer = showSeries(data, [fixture.small.series.id], 10);
+		const answer = await showSeries(data, [fixture.small.series.id], 10);
 		if (answer.found !== "one") throw new Error("expected one Series");
 		const figures = answer.series.request_figures;
 		expect(figures).not.toBeNull();
@@ -80,7 +83,7 @@ describe("the lookup tool and Series of requests", () => {
 			if (!resolved.ok) throw new Error(`${citation}: ${resolved.reason}`);
 			expect(resolved.kind === "requests" ? resolved.value : Number.NaN).toBe(value);
 		}
-		const text = showText(data, answer);
+		const text = showText(answer);
 		expect(text).toContain("Percentiles across requests, Method requests version 1");
 		expect(text).toContain(`p99   ${(p99?.value?.text ?? "").padEnd(14)} ${p99?.value?.citation}, 4 requests at or above it ${p99?.at_or_above?.citation}`);
 		expect(text).toContain(
@@ -93,19 +96,19 @@ describe("the lookup tool and Series of requests", () => {
 		expect(text).not.toMatch(/internet gateway|same Region|SigV4/);
 	});
 
-	test("a percentile the requests cannot support is not given, and says why", () => {
-		const answer = showSeries(data, [fixture.big.series.id], 10);
+	test("a percentile the requests cannot support is not given, and says why", async () => {
+		const answer = await showSeries(data, [fixture.big.series.id], 10);
 		if (answer.found !== "one") throw new Error("expected one Series");
 		const total = answer.series.request_figures?.pool.phases.find((phase) => phase.phase === "total");
 		expect(total?.percentiles.find((pct) => pct.name === "p99")?.not_reported).toBe("not reported: 40 requests, and a 99th percentile needs at least 100");
-		expect(showText(data, answer)).toContain("p99   not reported: 40 requests, and a 99th percentile needs at least 100");
+		expect(showText(answer)).toContain("p99   not reported: 40 requests, and a 99th percentile needs at least 100");
 	});
 
-	test("a Series without requests says it holds no 99th percentile, which is true", () => {
-		const answer = showSeries(data, [fixture.memory], 10);
+	test("a Series without requests says it holds no 99th percentile, which is true", async () => {
+		const answer = await showSeries(data, [fixture.memory], 10);
 		if (answer.found !== "one") throw new Error("expected one Series");
 		expect(answer.series.request_figures).toBeNull();
-		expect(showText(data, answer)).toContain("LedgerMath holds no 99th percentile of this Series: its percentiles are across Runs (5th, 50th, 95th).");
+		expect(showText(answer)).toContain("LedgerMath holds no 99th percentile of this Series: its percentiles are across Runs (5th, 50th, 95th).");
 	});
 });
 
@@ -128,7 +131,7 @@ describe("every value the tool prints, cited back with its own citation, passes 
 	test("for every Series of the fixture, Method series' and Method requests' figures alike", async () => {
 		const lines: string[] = [];
 		for (const derivation of fixture.derivations.derivations) {
-			const shown = showSeries(data, [derivation.series.id], "all");
+			const shown = await showSeries(data, [derivation.series.id], "all");
 			if (shown.found !== "one") throw new Error("expected one Series");
 			for (const { value, citation, text } of [...cited(shown.series.numbers), ...cited(shown.series.request_figures)]) lines.push(`${text ?? String(value)} ${citation}`);
 			lines.push(shown.series.runs_list[0]?.path as string);
@@ -142,15 +145,25 @@ describe("every value the tool prints, cited back with its own citation, passes 
 });
 
 describe("what the tool says a Series of requests measured", () => {
+	/** The notes show prints for the one Series of requests these Runs make, read from the tree the generator writes for them. */
 	async function notesOf(build: (made: HandMade) => void): Promise<string> {
 		const made = new HandMade();
 		build(made);
-		const v1 = series.derive(made.files, await series.gather(made.files, made.fetch));
-		const r = requests.derive(made.files, await requests.gather(made.files, made.fetch));
-		const loaded = { ...data, derivations: v1, requests: r, requestsFrom: "made by hand" } as LedgerData;
-		const answer = showSeries(loaded, [r.derivations[0]?.series.id as string], 1);
-		if (answer.found !== "one") throw new Error("expected one Series");
-		return (answer.series.request_figures?.notes ?? []).join("\n");
+		const v1 = JSON.parse(series.serialize(series.derive(made.files, await series.gather(made.files, made.fetch))));
+		const r = JSON.parse(requests.serialize(requests.derive(made.files, await requests.gather(made.files, made.fetch))));
+		const directory = mkdtempSync(join(tmpdir(), "request-notes-"));
+		try {
+			for (const file of made.files) {
+				mkdirSync(dirname(join(directory, file.path)), { recursive: true });
+				writeFileSync(join(directory, file.path), `${JSON.stringify(file.record, null, 2)}\n`);
+			}
+			writeTree(directory, v1, r);
+			const answer = await showSeries(await loadLedger(openLocation(directory)), [r.derivations[0]?.series.id as string], 1);
+			if (answer.found !== "one") throw new Error("expected one Series");
+			return (answer.series.request_figures?.notes ?? []).join("\n");
+		} finally {
+			rmSync(directory, { recursive: true, force: true });
+		}
 	}
 
 	test("unsigned requests are said to be unsigned, from their own events, and nothing is said of the path", async () => {
@@ -203,7 +216,7 @@ describe("citations of Method requests", () => {
 		expect(await reason(`requests/${id}/total/p99`)).toContain("with @v<version>,<moment> at its end");
 		expect(await reason(`requests/${id}/total/max/at_or_above@v1,${moment}`)).toContain("at_or_above follows a percentile");
 		const missing = await resolveCitation(inside(requestStatCitation(id, "total", "p99", 1, moment)), bareData);
-		expect(missing.ok ? "" : missing.reason).toContain("the data loaded hold no Derivations of Method requests");
+		expect(missing.ok ? "" : missing.reason).toContain("has no figures of Method requests");
 		// Method series v1 still holds no 99th percentile.
 		expect(await reason(`series/${id}/time_per_repetition_ns/p99@v1,${moment}`)).toContain("not a LedgerMath citation");
 	});

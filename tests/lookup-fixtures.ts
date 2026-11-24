@@ -1,18 +1,23 @@
 /**
  * A data location for the lookup tool's and the answer checker's tests: Run
- * files from tests/hand-made-runs.ts, their Derivations from Method series v1,
- * and the sample price file (tests/samples/prices), laid out as the Runs
- * repository with a derivations file. Nothing in it was measured.
+ * files from tests/hand-made-runs.ts, their Derivations from Method series v1
+ * (and Method requests v1, which derives none of them), and the sample price
+ * file (tests/samples/prices), laid out as the Runs repository, with the data
+ * API's tree the generator writes from them beside runs/ (tests/tree-fixture.ts).
+ * Nothing in it was measured.
  */
 
 import { copyFileSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
+import * as requests from "../methods/requests/v1";
+import type { DerivationsFile as RequestsFile } from "../methods/requests/v1/output";
 import { derive, gather, serialize } from "../methods/v1";
 import type { DerivationsFile, SeriesDerivation } from "../methods/v1/output";
 import { HandMade } from "./hand-made-runs";
 import { SAMPLE_FILE, SAMPLE_PATH } from "./prices-fixtures";
+import { writeTree } from "./tree-fixture";
 
 export const ALL_AVX2 = { size_bytes: 1073741824, threads: "all", path: "avx2" };
 const GiB = 1073741824;
@@ -62,9 +67,10 @@ export async function makeFixture(): Promise<Fixture> {
 		made.run({ startedAt: `2026-11-1${i + 2}T04:14:00Z`, benchmark: "tcp_echo", binary: "tcp_echo", params: { size_bytes: 32768 }, samplesNs: samples(ns), bytesPerRepetition: 32768 }),
 	);
 
-	const derivations = derive(made.files, await gather(made.files, made.fetch));
+	// As a reader of the files would have them, not the objects the Methods returned.
+	const derivations = JSON.parse(serialize(derive(made.files, await gather(made.files, made.fetch)))) as DerivationsFile;
+	const none = JSON.parse(requests.serialize(requests.derive(made.files, await requests.gather(made.files, made.fetch)))) as RequestsFile;
 	const directory = mkdtempSync(join(tmpdir(), "lookup-"));
-	writeFileSync(join(directory, "derivations.json"), serialize(derivations));
 	for (const file of made.files) {
 		const path = join(directory, file.path);
 		mkdirSync(dirname(path), { recursive: true });
@@ -72,6 +78,7 @@ export async function makeFixture(): Promise<Fixture> {
 	}
 	mkdirSync(join(directory, dirname(SAMPLE_PATH)), { recursive: true });
 	copyFileSync(SAMPLE_FILE, join(directory, SAMPLE_PATH));
+	writeTree(directory, derivations, none);
 
 	const find = (benchmark: string, type: string): SeriesDerivation => {
 		const found = derivations.derivations.find((d) => d.series.benchmark === benchmark && d.series.instance_type === type);
