@@ -40,8 +40,9 @@ as the base the build started from (last section).
 | `scripts/lib/offer-file.ts`, `scripts/lib/prices.ts`, `scripts/lib/price-file-check.ts` | Reading AWS's offer files without holding them in memory; the cut, the download and the price file; whether a price file holds together |
 | `.github/workflows/prices.yml` | The price fetch, twice a day, adding at most one file a day to the Runs repository |
 | `skills/ledgermath/SKILL.md` | The agent skill: napkin math from LedgerMath's numbers, every number cited or marked as an assumption |
-| `scripts/lookup.ts` | The lookup tool the skill uses: the Series, one Series' percentiles and Runs, prices by word, each number beside its citation (`scripts/lib/lookup.ts`, `scripts/lib/citation.ts`, `scripts/lib/ledger-data.ts`; what each benchmark measures, `scripts/lib/benchmark-notes.ts`) |
+| `scripts/lookup.ts` | The lookup tool the skill uses, reading the data API: the Series, one Series' percentiles and Runs, prices by word, each number beside its citation (`scripts/lib/lookup.ts`, `scripts/lib/citation.ts`, `scripts/lib/ledger-data.ts`; what each benchmark measures, `scripts/lib/benchmark-notes.ts`) |
 | `scripts/check-answer.ts` | Checks an answer written with the skill: every number from the question, cited, an assumption, recomputed arithmetic, or a repeat; every citation resolving in the data (`scripts/lib/answer-check.ts`, `scripts/lib/quantity.ts`) |
+| `scripts/assemble-location.ts` | Puts together a directory the lookup tool reads, from the artifact `api` and a clone of the Runs repository: data for a trial while the API is not served |
 | `site/` | The placeholder website: one page, SolidJS 2, prerendered to static files (section "The website" below); `.github/workflows/site.yml` builds and checks it, and deploys it to Vercel (`site/deploy/`) at https://ledgermath.com |
 | `CONTRIBUTING.md` | How to add a benchmark in any language, a target, a Method version, and what a pull request says |
 | `LICENSE`, `NOTICE`, `THIRD-PARTY-NOTICES.md` | The code's licence (Apache-2.0), its notice, and what comes from other projects, with their licences (section "Licence" below) |
@@ -2354,25 +2355,40 @@ game to 30 million players?" as napkin math: a model of a few factors, each take
 LedgerMath with its citation or marked as an assumption, the arithmetic shown, and a range
 from the 5th and 95th percentiles.
 
-`scripts/lookup.ts` is what it reads LedgerMath with. Its input is a location holding
-`derivations.json` (Method series v1's output), `requests-derivations.json` (Method
-requests v1's, if there is one), `runs/` and `prices/`: a clone of the Runs repository with
-the derivations files beside `runs/`, or a base web address serving the same paths (a web address cannot be listed, so the newest price file there is found by trying
-each of the last 14 days). It derives no number of its own and reads no clock.
+`scripts/lookup.ts` is what it reads LedgerMath with, and it reads the data API ("The data
+API", below; ADR-0034), the API's first reader. Its location is
+`https://api.ledgermath.com` unless `--data` or `LEDGERMATH_DATA` gives another: a web
+address, or a directory laid out the same way, `v1/` with `runs/` and `boots/` beside it
+(below, "Data for a trial"). It follows the tree's links from `v1/index.json`, read under
+the location whatever address the tree was built for, and reads only what each command
+needs: `about` and `series` the table of contents and the list of Series; `show` those and
+the Series' file, and its month files only for Runs older than the 12 newest it holds
+(newest month first); `prices` the table of contents and one price file. It derives no
+number of its own and reads no clock, and keeps the contract the tree gives a reader: a
+`layout` it does not know is refused, plainly, before anything else is read; a month file
+must have the sha256 and size its Series file lists, and on a mismatch, or a month file
+missing (404, or 403 as S3 answers behind the API), it reads the Series file again, then
+the month file, three times in all, two seconds apart; while they still differ it uses
+neither and says, in words, that the data are being updated and to try again in a few
+minutes (in a directory: that it holds two builds). Every request has 20 seconds, start to
+last byte, and every file the size ceiling the tree's check gives its kind (`CEILINGS`; a
+Run file 1 MB); nothing else is retried (`scripts/lib/ledger-data.ts`).
 
 ```bash
-bun scripts/lookup.ts --data DIR about                  # what the data hold
-bun scripts/lookup.ts --data DIR series memory_read     # the Series matching every word
-bun scripts/lookup.ts --data DIR show cdd7309941eb      # one Series: p5, p50, p95, groups, Runs; and for a
+bun scripts/lookup.ts about                             # what the data hold
+bun scripts/lookup.ts series memory_read                # the Series matching every word
+bun scripts/lookup.ts show cdd7309941eb                 # one Series: p5, p50, p95, groups, Runs; and for a
                                                         # Series of requests each phase's p50 to p99.9 across requests
-bun scripts/lookup.ts --data DIR prices c6i.8xlarge     # prices matching every word, in AWS's words
-bun scripts/check-answer.ts --data DIR --question q.txt answer.md
+bun scripts/lookup.ts prices c6i.8xlarge                # prices matching every word, in AWS's words
+bun scripts/check-answer.ts --question q.txt answer.md
+bun scripts/lookup.ts --data DIR about                  # the same, from a directory (or another address)
 ```
 
 Every number the tool prints has its citation beside it, in a syntax the checker resolves
-(`scripts/lib/citation.ts`): `[lm:series/<id>/<number>/<p5|p50|p95|count>@v1,<moment>]` for
-a Series' percentile or its number of counted Runs, with the Run files behind it linked as
-`runs/<yyyy>/<mm>/<dd>/<id>.json`; `[lm:prices/<yyyy>/<mm>/<dd>/aws.json#<sku>/<rate code>]`
+(`scripts/lib/citation.ts`) in the same tree: `[lm:series/<id>/<number>/<p5|p50|p95|count>@v1,<moment>]` for
+a Series' percentile or its number of counted Runs (in its Series file, under `series_v1`), with the Run files behind it linked as
+`runs/<yyyy>/<mm>/<dd>/<id>.json` (or that file's address in the data API or the Runs repository; a
+link must be a Run of a Series the answer cites, with the bytes its point's `sha256` gives); `[lm:prices/<yyyy>/<mm>/<dd>/aws.json#<sku>/<rate code>]`
 for a price, the file, SKU and rate code of "Citing a price" above (`/beginRange` or
 `/endRange` after it for its tier's bounds); `[assumption: <where it comes from>]` for
 anything else. A figure across a Series' requests is
@@ -2385,11 +2401,13 @@ or of the requests with one value of a fact they record
 
 `<moment>` is the start of the Series' newest Run, to the second: a citation is of the
 Series as it stood then, under Method series version 1. When more Runs have arrived, the
-checker recomputes the cited statistic from the Runs that had started by that moment (each
+checker recomputes the cited statistic from the Runs that had started by that moment, read
+from the month files up to it (each
 Run's number depends on that Run alone, so the population then is the Derivation's points
 up to it, through Method version 1's own `percentile`). A figure across requests, pooled
 from histograms, is checked against the pooled figures Method requests v1 keeps on each
-Run, as they stood through it. It is the Series' own newest Run,
+Run, as they stood through it (a group's: the Derivation's `group_through`, recovered from
+`group_through_as_of_run` by the month schema's rule). It is the Series' own newest Run,
 not the file's, because boots of one instance type never overlap and upload all their Runs
 at once, while another type's boot still running when the Derivations were made can add
 Runs that started earlier.
@@ -2409,6 +2427,36 @@ the cited figure, in its unit, passes whatever the words around it call it, so a
 block described as the Series', passes as long as the value and the citation agree. Every
 value the lookup tool prints reads back, under the checker's rule, as the value its
 citation names (a value exactly halfway at six digits is printed with a digit more).
+
+`tests/lookup-tree.test.ts` holds the tools to the tree: built by the generator from the
+golden test's fixture, read from a directory and through an injected `fetch` (no test asks
+the network), it checks each command's answers, how many files each reads, every break of
+the contract above, the limits against `CEILINGS`, and that every command line
+`skills/ledgermath/SKILL.md` shows runs.
+
+### Data for a trial
+
+The skill's trial (#47) gives fresh agents the skill and three questions. Until the API is
+served, they get a directory instead: the tree the latest run of the `runs` workflow kept
+(the artifact `api`, 7 days) and the Run files and boot summaries it links, from a clone of
+the Runs repository. `scripts/assemble-location.ts` puts it together, reading it as the
+tools do (a known layout, every month file's sha256, every Run file's sha256), and copies
+nothing until all of it holds; the same inputs give the same directory.
+
+```bash
+cd <an empty working directory, on a disk with room for about 200 MB>
+gh run list --repo smrdotgg/ledgermath --workflow runs.yml --branch main --limit 5   # the newest run that kept api
+gh run download <run id> --repo smrdotgg/ledgermath --name api --dir api
+gh repo clone smrdotgg/ledgermath-runs ledgermath-runs     # or git pull in a clone you have
+bun <checkout>/scripts/assemble-location.ts --api api --runs ledgermath-runs --out location
+LEDGERMATH_DATA=$PWD/location bun <checkout>/scripts/lookup.ts about
+```
+
+Give each agent the skill and the location (`LEDGERMATH_DATA`, or `--data` on every
+command). On 2026-11-24, from run 45282492212: 394 files of `v1/`, 9,399 Run files and 254
+boot summaries, 109 MB, put together in under a second; every number and citation `show`
+prints for each of the 187 Series is the one the tool printed from that run's files of
+Derivations before it read the tree.
 
 ## The data API
 
@@ -2612,7 +2660,7 @@ The build takes about 1.0 s and the check about 1.8 s on the dev machine, and co
 tree with the one before about 2 s more. Between the trees of two snapshots of that day in
 which every Series gained one Run, every one of the 187 month files changed, each for
 cause (a) only. The lookup tool and
-the agent skill still read the files of Derivations.
+the agent skill read this tree ("The agent skill").
 
 ### The API bucket
 
