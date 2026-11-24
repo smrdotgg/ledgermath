@@ -1359,4 +1359,15 @@ A migrated benchmark is done only when **all** of these hold:
   an update", which claims nothing of what the issue says. A 4xx whose body is cut off keeps
   its status (still "could not post"), and an unknown outcome reads "GitHub did not confirm
   the write", true of a whole 503 too.
+- **2026-11-24** — The account ran out of free Actions minutes. Every job of every workflow
+  now runs where the repository variable `LEDGERMATH_RUNNER` says, and on the hosted
+  `ubuntu-24.04` when it is unset (a test holds every job to it). While the repository is
+  private it names a self-hosted runner on the development machine, and only `runs` and
+  `prices` are enabled. Read for a machine that persists, both needed one change: Bun's
+  package cache goes in `RUNNER_TEMP`, which the runner empties for every job, so nothing
+  piles up. The rest already leaves nothing behind: `actions/checkout` cleans the
+  workspace, the clone of the Runs repository and every output included, and the price
+  downloads go in `RUNNER_TEMP` and are removed. The README says what must happen before
+  the repository is public: delete the variable, remove the runner, enable all four
+  workflows.
 - _(agents: append your entry here, one per merged benchmark)_
