@@ -29,9 +29,9 @@
 			"additionalProperties": false,
 			"properties": {
 				"subject": {
-					"description": "A design, v1 to v8, or a reference site as ref:<host>, e.g. ref:vercel.com.",
+					"description": "A design, v1 to v9, or a reference site as ref:<host>, e.g. ref:vercel.com.",
 					"type": "string",
-					"pattern": "^(v[1-8]|ref:[a-z0-9][a-z0-9.-]*)$"
+					"pattern": "^(v[1-9]|ref:[a-z0-9][a-z0-9.-]*)$"
 				},
 				"scores": {
 					"type": "object",

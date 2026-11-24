@@ -30,7 +30,7 @@ import { build, type Plugin } from "vite";
 // Real paths: Vite loads modules by their real path, and the publish script builds checkpoints in a
 // temporary worktree whose node_modules is a link to this one's.
 export const SITE = realpathSync(resolve(import.meta.dir, "..", ".."));
-export const SLOTS = ["v1", "v2", "v3", "v4", "v5", "v6", "v7", "v8"] as const;
+export const SLOTS = ["v1", "v2", "v3", "v4", "v5", "v6", "v7", "v8", "v9"] as const;
 export type Slot = (typeof SLOTS)[number];
 export type Page = Slot | "picker";
 

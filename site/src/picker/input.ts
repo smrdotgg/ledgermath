@@ -11,8 +11,8 @@ import type { WordCount } from "../../scripts/variations/words";
 
 export type { WordCount };
 
-export type Slot = "v1" | "v2" | "v3" | "v4" | "v5" | "v6" | "v7" | "v8";
-export const SLOTS: readonly Slot[] = ["v1", "v2", "v3", "v4", "v5", "v6", "v7", "v8"];
+export type Slot = "v1" | "v2" | "v3" | "v4" | "v5" | "v6" | "v7" | "v8" | "v9";
+export const SLOTS: readonly Slot[] = ["v1", "v2", "v3", "v4", "v5", "v6", "v7", "v8", "v9"];
 
 export type DesignStatus = {
 	slot: Slot;

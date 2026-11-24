@@ -16,5 +16,5 @@
 	"include": ["src", "scripts", "deploy", "vite.config.ts"],
 	// The eight designs are type-checked one at a time, each by its own `bun run
 	// check:variation v<n>`, so that one design's error cannot fail another's checks or CI.
-	"exclude": ["src/variations/v1", "src/variations/v2", "src/variations/v3", "src/variations/v4", "src/variations/v5", "src/variations/v6", "src/variations/v7", "src/variations/v8"]
+	"exclude": ["src/variations/v1", "src/variations/v2", "src/variations/v3", "src/variations/v4", "src/variations/v5", "src/variations/v6", "src/variations/v7", "src/variations/v8", "src/variations/v9"]
 }

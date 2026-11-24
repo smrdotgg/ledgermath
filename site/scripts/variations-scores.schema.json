@@ -73,7 +73,7 @@
 				"required": ["design", "level", "round", "commit", "tag", "path"],
 				"additionalProperties": false,
 				"properties": {
-					"design": { "type": "string", "pattern": "^v[1-8]$" },
+					"design": { "type": "string", "pattern": "^v[1-9]$" },
 					"level": { "type": "number" },
 					"round": { "type": "integer" },
 					"commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },

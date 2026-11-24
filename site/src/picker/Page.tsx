@@ -1,4 +1,4 @@
-// The picker at /: a tool for looking at the eight designs, not a ninth design. It lists each
+// The picker at /: a tool for looking at the nine designs, not a tenth design. It lists each
 // design (its meta.json), whether it builds, its forms (the same design with more or less text,
 // tags home/v<n>/form-<name>), its frozen checkpoints, each with how many words a visitor reads
 // on it (scripts/variations/words.ts), and the judges' scores per round
