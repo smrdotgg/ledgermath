@@ -772,6 +772,10 @@ async function alarmScript(options: ScriptOptions) {
 	const child = Bun.spawn(
 		[
 			"bun",
+			// The script reads PUBLIC_API, and these tests are written for "off" (API_BUCKET unset raises nothing):
+			// the switch is set to that fixture, not taken from what is committed, which the release gate alone reads.
+			"--preload",
+			join(ROOT, "tests", "rehearse-switch.ts"),
 			join(ROOT, "scripts", "alarm.ts"),
 			"--runs",
 			runs,
@@ -798,6 +802,8 @@ async function alarmScript(options: ScriptOptions) {
 				GITHUB_REPOSITORY: "smrdotgg/ledgermath",
 				GITHUB_TOKEN: HOSTILE[0] as string,
 				GITHUB_RUN_ID: RUN_ID,
+				LM_PUBLIC_API_STATE: "off",
+				LM_PUBLIC_API_PLAN: "code",
 				...(secrets === "none" ? {} : { TELEGRAM_BOT_TOKEN: TOKEN }),
 				...(secrets === "both" ? { TELEGRAM_CHAT_ID: CHAT } : {}),
 				...options.env,

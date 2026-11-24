@@ -3,7 +3,9 @@
  * --preload`): sets the public API's switch to LM_PUBLIC_API_STATE and
  * LM_PUBLIC_API_PLAN before any test reads it, as the commit that turns it on
  * would, so the rehearsal shows that only the release gate depends on the
- * committed state. Not a test file; nothing else loads it.
+ * committed state. Also preloaded by tests/alarm-telegram.test.ts into the
+ * alarm script it runs as a child, to give that script its fixture's state
+ * ("off") rather than the committed one. Not a test file.
  */
 
 import { PUBLIC_API } from "../infra/runs/public-blobs";
