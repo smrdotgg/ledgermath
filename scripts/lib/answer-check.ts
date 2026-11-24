@@ -37,10 +37,11 @@
  * bracket, across a line break, but not past a blank line or the next
  * marker), a quantity written in words (quantityWords: with a magnitude word,
  * or before a unit, unless every word is in the question), a Run link that is
- * neither the bare path, a relative path ending with it, nor the Runs
- * repository's address of it (or one that names no Run of the data, or a file
- * whose bytes differ from the Derivation's), and a cited Series none of whose
- * Runs the answer links.
+ * neither the bare path, a relative path ending with it, its address in the
+ * data API nor the Runs repository's address of it (or one that is no Run of a
+ * Series the answer cites, or a file whose bytes differ from the sha256 its
+ * point in the data gives), and a cited Series none of whose Runs the answer
+ * links.
  *
  * Not numbers: what is inside a citation or marker; a quotation that is
  * verbatim text of a price record (its description, or the catalog words)
@@ -66,7 +67,7 @@
 import { createHash } from "node:crypto";
 
 import { citationMismatch, NUMBER_UNIT, type Resolved, resolveCitation, RUN_PATH, seriesMoment } from "./citation";
-import type { LedgerData } from "./ledger-data";
+import { findPoint, findRun, type LedgerData, LIMITS, type TreeSeriesPoint } from "./ledger-data";
 import { agrees, type Dims, dimsWords, multiply, type Quantity, quantities, quantityWords, readable, sameDims } from "./quantity";
 import { RUNS_REPOSITORY } from "./runs-repository";
 
@@ -263,10 +264,16 @@ function findMarkers(text: string): Marker[] {
 	return markers;
 }
 
-/** The whole token a Run path is written in: from the last space, (, <, quote or backtick before it. */
+/** Whether a link starting at `start` is the destination of a Markdown link, [text](here), or of an autolink, <here>: then it is kept exactly. */
+function explicitLink(text: string, start: number): boolean {
+	const opener = text.charAt(start - 1);
+	return opener === "<" || (opener === "(" && text.charAt(start - 2) === "]");
+}
+
+/** The start of the token a Run path is written in: from the last space, (, [, <, quote, backtick or * (bold) before it. */
 function linkToken(text: string, start: number, end: number): string {
 	let from = start;
-	while (from > 0 && !/[\s(<"'`[]/.test(text.charAt(from - 1))) from--;
+	while (from > 0 && !/[\s(<"'`[*]/.test(text.charAt(from - 1))) from--;
 	return text.slice(from, end);
 }
 
@@ -482,15 +489,15 @@ function describe(resolved: Resolved): string {
 	if (!resolved.ok) return resolved.reason;
 	switch (resolved.kind) {
 		case "measured":
-			return `${resolved.stat} of ${resolved.number}${resolved.group === null ? "" : ` (group ${resolved.group})`} of Series ${resolved.series.series.id} (${resolved.series.series.benchmark} on ${resolved.series.series.instance_type}) as of ${resolved.moment}: ${resolved.value}${resolved.stat === "count" ? " counted Runs" : ` ${NUMBER_UNIT[resolved.number].unit}`}`;
+			return `${resolved.stat} of ${resolved.number}${resolved.group === null ? "" : ` (group ${resolved.group})`} of Series ${resolved.series.id} (${resolved.series.benchmark} on ${resolved.series.instance_type}) as of ${resolved.moment}: ${resolved.value}${resolved.stat === "count" ? " counted Runs" : ` ${NUMBER_UNIT[resolved.number].unit}`}`;
 		case "requests": {
 			const scope = resolved.group !== null ? ` (group ${resolved.group})` : resolved.by !== null ? ` (requests with ${resolved.by.fact} ${resolved.by.value})` : "";
 			const what = resolved.phase === null ? resolved.stat : `${resolved.stat} of ${resolved.phase}`;
 			const unit = resolved.unit === "ns" ? " ns" : resolved.stat === "runs" ? " counted Runs" : " requests";
-			return `${what}${scope} of the requests of Series ${resolved.series.series.id} (${resolved.series.series.benchmark} on ${resolved.series.series.instance_type}) as of ${resolved.moment}, Method requests v1: ${resolved.value}${unit}`;
+			return `${what}${scope} of the requests of Series ${resolved.series.id} (${resolved.series.benchmark} on ${resolved.series.instance_type}) as of ${resolved.moment}, Method requests v1: ${resolved.value}${unit}`;
 		}
 		case "param":
-			return `parameter ${resolved.key} of Series ${resolved.series.series.id}: ${String(resolved.value)}`;
+			return `parameter ${resolved.key} of Series ${resolved.series.id}: ${String(resolved.value)}`;
 		case "price":
 			return `${resolved.usd} USD per ${resolved.awsUnit} ("${resolved.description}"), price file of ${resolved.date}`;
 		case "attribute":
@@ -628,6 +635,10 @@ export async function checkAnswer(answer: string, data: LedgerData, question = "
 	const notes: Problem[] = [];
 	const citations: CheckedCitation[] = [];
 	const runLinks: CheckReport["run_links"] = [];
+	/** The Run links written as an address other than the Runs repository's: each must be its point's evidence link, rebased on the location. */
+	const addressed = new Set<CheckReport["run_links"][number]>();
+	/** Addresses and paths of no Run path's shape: each a Run link when it is a cited point's evidence link, or that link where these data were read. */
+	const evidenceLinks: Array<{ line: number; link: string; address: boolean }> = [];
 	const all: Num[] = [];
 	const steps: Step[] = [];
 	const citedSeries = new Map<string, number>();
@@ -663,7 +674,7 @@ export async function checkAnswer(answer: string, data: LedgerData, question = "
 	const citedParams = new Map<string, Set<string>>();
 	for (const resolved of resolvedOf.values()) {
 		if (!resolved.ok || (resolved.kind !== "measured" && resolved.kind !== "param" && resolved.kind !== "requests")) continue;
-		for (const [key, value] of Object.entries(resolved.series.series.params)) citedParams.set(key, new Set([...(citedParams.get(key) ?? []), String(value)]));
+		for (const [key, value] of Object.entries(resolved.series.params)) citedParams.set(key, new Set([...(citedParams.get(key) ?? []), String(value)]));
 	}
 	const questionWords = new Set((question.toLowerCase().match(/[a-z]+/g) ?? []) as string[]);
 
@@ -685,16 +696,31 @@ export async function checkAnswer(answer: string, data: LedgerData, question = "
 			if (/[\p{L}\p{N}]/u.test(quoted) && recordTexts.some((record) => record.includes(quoted))) masked = blank(masked, m.index, m.index + m[0].length);
 		}
 		for (const m of masked.matchAll(RUN_PATH)) {
-			const token = linkToken(masked, m.index, m.index + m[0].length);
-			const prefix = token.slice(0, token.length - m[0].length);
-			const ok = isRelativePrefix(prefix) || RUNS_REPOSITORY_PREFIXES.some((p) => p.test(prefix)) || (data.location.isUrl && token === data.location.link(m[0]));
-			runLinks.push({
-				line,
-				link: token,
-				path: m[0],
-				problem: ok ? null : `${token} is neither the bare path ${m[0]}, a relative path ending with it, nor its address in the Runs repository (https://github.com/${RUNS_REPOSITORY}/blob/main/${m[0]})`,
-			});
-			masked = blank(masked, m.index - prefix.length, m.index + m[0].length);
+			const before = linkToken(masked, m.index, m.index + m[0].length);
+			const prefix = before.slice(0, before.length - m[0].length);
+			// The whole link: what follows .json up to a space or a closing mark. Written bare in prose, a sentence's own
+			// punctuation may be left after it; the destination of a Markdown link or an autolink is kept to its last character.
+			const end = m.index + m[0].length;
+			const after = /^[^\s)\]>"'`*<|]*/.exec(masked.slice(end))?.[0] ?? "";
+			const goesOn = explicitLink(masked, m.index - prefix.length) ? after : after.replace(/[.,;:!?]+$/, "");
+			const token = `${before}${goesOn}`;
+			const entry = { line, link: token, path: m[0], problem: null as string | null };
+			if (goesOn !== "") entry.problem = `${token} is not a Run file's address: it goes on after ${m[0]} (${goesOn})`;
+			runLinks.push(entry);
+			// A bare or relative path, or the Runs repository's address, is judged now; any other address against the cited point's own evidence link, once it is found.
+			if (!isRelativePrefix(prefix) && !RUNS_REPOSITORY_PREFIXES.some((p) => p.test(prefix))) addressed.add(entry);
+			masked = blank(masked, m.index - prefix.length, end + after.length);
+		}
+		// Any other address or path may be a cited point's evidence link, or that link where these data were read, as show
+		// prints it, whatever its path looks like: kept, with the same rule for its end, to be matched once the cited Series are known.
+		const here = data.location.link("");
+		for (const m of masked.matchAll(/[^\s()[\]<>"'`*|]+\/[^\s()[\]<>"'`*|]+/g)) {
+			const link = explicitLink(masked, m.index) ? m[0] : m[0].replace(/[.,;:!?]+$/, "");
+			const address = link.startsWith(`${data.treeBase}/`) || (data.location.isUrl && link.startsWith(here));
+			if (!address && (data.location.isUrl || /^[a-z][a-z0-9+.-]*:/i.test(link))) continue;
+			evidenceLinks.push({ line, link, address });
+			// A path in a directory is no number; an address is masked already.
+			if (!address && link.endsWith(".json")) masked = blank(masked, m.index, m.index + link.length);
 		}
 		for (const m of masked.matchAll(PARAMETER)) {
 			if (citedParams.get(m[1] as string)?.has(m[2] as string)) masked = blank(masked, m.index, m.index + m[0].length);
@@ -778,11 +804,11 @@ export async function checkAnswer(answer: string, data: LedgerData, question = "
 				unresolved = { line, message: `${marker.text} does not resolve: ${resolved.reason}` };
 				problems.push(unresolved);
 			} else if (resolved.kind === "measured" || resolved.kind === "param" || resolved.kind === "requests") {
-				if (!citedSeries.has(resolved.series.series.id)) citedSeries.set(resolved.series.series.id, line);
+				if (!citedSeries.has(resolved.series.id)) citedSeries.set(resolved.series.id, line);
 				if ((resolved.kind === "measured" || resolved.kind === "requests") && resolved.asOf === "earlier") {
 					notes.push({
 						line,
-						message: `${marker.text} is of Series ${resolved.series.series.id} as of ${resolved.moment}; the data loaded go to ${seriesMoment(resolved.series)}, so it was checked against the ${resolved.runs} counted Runs that started by ${resolved.moment}`,
+						message: `${marker.text} is of Series ${resolved.series.id} as of ${resolved.moment}; the data loaded go to ${seriesMoment(resolved.series)}, so it was checked against the ${resolved.runs} counted Runs that started by ${resolved.moment}`,
 					});
 				}
 			}
@@ -889,19 +915,44 @@ export async function checkAnswer(answer: string, data: LedgerData, question = "
 
 	reportUnaccounted(all, steps, problems);
 
-	// Run links: each a Run of the data, with the bytes the Derivation cites.
-	const runsByPath = new Map<string, { series: string; sha256: string }>();
-	for (const derivation of data.derivations.derivations) for (const run of derivation.runs) runsByPath.set(run.path, { series: derivation.series.id, sha256: run.sha256 });
-	for (const derivation of data.requests?.derivations ?? []) for (const run of derivation.runs) runsByPath.set(run.path, { series: derivation.series.id, sha256: run.sha256 });
+	// Run links: each a Run of a Series the answer cites, by its path; read at its point's evidence link, as every
+	// link of the data is followed, and with the bytes its point's sha256 gives.
 	const linkedSeries = new Set<string>();
+	const cited = [...citedSeries.keys()];
+	// An address or path that is a cited point's evidence link, or that link where these data were read, is a link to that Run.
+	const byEvidence = new Map<CheckReport["run_links"][number], { series: string; point: TreeSeriesPoint }>();
+	if (cited.length > 0) {
+		for (const { line, link, address } of evidenceLinks) {
+			const isIts = (point: TreeSeriesPoint): boolean => {
+				if (point.evidence === link) return true;
+				const at = data.pathOf(point.evidence);
+				return at !== null && data.location.link(at) === link;
+			};
+			// The month files are searched only for what can be a Run file's link: an address under the tree's or these data's, or a file's path.
+			const found = await findPoint(data, cited, isIts, null, !(address || link.endsWith(".json")));
+			if (found === null) continue;
+			const entry = { line, link, path: found.point.path, problem: null as string | null };
+			runLinks.push(entry);
+			byEvidence.set(entry, found);
+		}
+	}
 	for (const link of runLinks) {
 		if (link.problem === null) {
-			const cited = runsByPath.get(link.path);
-			const bytes = await data.location.read(link.path);
-			if (bytes === null) link.problem = `no Run file ${link.path} at ${data.location.base}`;
-			else if (cited === undefined) link.problem = `${link.path} is in no Series of ${data.derivationsFrom}${data.requestsFrom === null ? "" : ` or ${data.requestsFrom}`}`;
-			else if (createHash("sha256").update(bytes).digest("hex") !== cited.sha256) link.problem = `${link.path} is not the file the Derivation cites (sha256 differs)`;
-			else linkedSeries.add(cited.series);
+			const found = byEvidence.get(link) ?? (await findRun(data, cited, link.path));
+			if (found === null) link.problem = `${link.path} is not a Run of any Series the answer cites${cited.length === 0 ? " (it cites none)" : ` (${cited.join(", ")})`}`;
+			else {
+				const { evidence } = found.point;
+				const at = data.pathOf(evidence);
+				const shown = at === null ? null : data.location.link(at);
+				if (addressed.has(link) && link.link !== evidence && !(data.location.isUrl && link.link === shown)) {
+					link.problem = `${link.link} is neither the bare path ${link.path}, a relative path ending with it, its address in the data API (${evidence}${shown !== null && shown !== evidence && data.location.isUrl ? `, or ${shown} where these data were read` : ""}) nor its address in the Runs repository (https://github.com/${RUNS_REPOSITORY}/blob/main/${link.path})`;
+				} else {
+					const { bytes } = await data.readLinked(evidence, LIMITS.run, "a Run file");
+					if (bytes === null) link.problem = `no Run file ${link.path} at ${shown ?? evidence}`;
+					else if (createHash("sha256").update(bytes).digest("hex") !== found.point.sha256) link.problem = `${link.path} is not the file the Derivation cites (sha256 differs)`;
+					else linkedSeries.add(found.series);
+				}
+			}
 		}
 		if (link.problem !== null) problems.push({ line: link.line, message: `Run link: ${link.problem}` });
 	}

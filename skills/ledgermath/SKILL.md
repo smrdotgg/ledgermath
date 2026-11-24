@@ -20,21 +20,27 @@ Region or provider, a 99th percentile of anything but a request's phases) is not
 
 From a checkout of the LedgerMath repository (`bun install` once):
 
-    bun scripts/lookup.ts --data <location> <command>
+    bun scripts/lookup.ts about
 
-`<location>` is a directory holding `derivations.json`, `runs/` and `prices/`, or a web
-address serving them; `LEDGERMATH_DATA` can hold it instead. If you were given the tool or
-the data at other paths, use those.
+It reads LedgerMath's data from https://api.ledgermath.com. If you were given the data in
+a directory or at another address, pass it to every command,
+`bun scripts/lookup.ts --data <location> about`, or set `LEDGERMATH_DATA` to it. Such a
+directory holds `v1/` with `runs/` and `boots/` beside it. If you were given the tool at
+another path, use that.
 
 | Command | Answers |
 |---|---|
-| `about` | What the data hold: benchmarks, instance types, the price file and its date. Run it first. |
+| `about` | What the data hold: benchmarks, instance types, the price files and their dates. Run it first. |
 | `series [WORD...]` | The Series matching every word: `series memory_read c6i.8xlarge`, `series disk instance_store` |
 | `show <id> [--runs N\|all]` | One Series: p5, p50, p95 with citations, what it measures, how many Runs, its groups, its Runs; for a Series of requests, each phase's percentiles across requests too |
 | `prices WORD...` | Prices matching every word: `prices c6i.8xlarge`, `prices transfer`, `prices GET`, `prices gp3` |
 
 `--json` gives the same answer as JSON. When something is not held, the tool says so and
 lists what is.
+
+If the tool says LedgerMath's data are being updated and to try again in a few minutes,
+two of its files did not agree, so it used neither and gave no number. Wait a few minutes
+and run the same command again; do not put a number from anywhere else in its place.
 
 ## Series of requests
 
@@ -89,8 +95,8 @@ every counted Run, not of one; a figure `by/address_block/…` is of those reque
    prices, name the price file by its path. An answer from prices alone says that no Series
    was used.
 7. **Check the answer**, if you have the checker:
-   `bun scripts/check-answer.ts --data <location> --question <question file> <answer file>`.
-   Fix every problem it reports. It checks numbers, not meaning: a figure written with the
+   `bun scripts/check-answer.ts --question <question file> <answer file>`, with
+   `--data <location>` as for the tool. Fix every problem it reports. It checks numbers, not meaning: a figure written with the
    right citation passes even if your words call it something else (the pooled 99th
    percentile called "the first Run's", a figure of one address block called the Series'),
    so the words around each number are yours to get right.
@@ -103,7 +109,7 @@ the same unit.
 
 | Number | Citation, right after it on its line |
 |---|---|
-| A Series' percentile | `[lm:series/<id>/<number>/<p5\|p50\|p95>@v1,<moment>]`, and at least one of its Runs in the answer: `runs/<yyyy>/<mm>/<dd>/<id>.json` |
+| A Series' percentile | `[lm:series/<id>/<number>/<p5\|p50\|p95>@v1,<moment>]`, and at least one of its Runs in the answer, as `show` prints it: `runs/<yyyy>/<mm>/<dd>/<id>.json` |
 | How many Runs it is over | `[lm:series/<id>/<number>/count@v1,<moment>]` |
 | A percentile across a Series' requests | `[lm:requests/<id>/<phase>/<p50\|p90\|p95\|p99\|p99.9\|min\|max>@v1,<moment>]` |
 | How many requests are at or above it | `[lm:requests/<id>/<phase>/<p90\|p95\|p99\|p99.9>/at_or_above@v1,<moment>]` |
@@ -115,7 +121,9 @@ the same unit.
 | Anything else | `[assumption: <where it comes from>]` |
 
 `<moment>` is when the Series' newest Run started: the citation is of the Series as it
-stood then, so it can be checked after more Runs arrive.
+stood then, so it can be checked after more Runs arrive. The one exception is a figure of
+the requests with one value of a fact (`…/by/address_block/…`): it is held only as of the
+Series' newest Run, so once more Runs arrive it can no longer be checked.
 
 - A marker goes directly after its number, on the same line: it belongs to the nearest
   number before it and to no other.

@@ -1,10 +1,12 @@
 /**
  * A data location holding Series of requests, for the lookup tool's and the
  * answer checker's tests: hand-made http_get Runs (tests/hand-made-requests.ts)
- * and a memory_read Run, their Derivations from Method series v1
- * (derivations.json) and Method requests v1 (requests-derivations.json), and
- * the sample price file, laid out as the Runs repository. Nothing in it was
- * measured.
+ * and a memory_read Run, their Derivations from Method series v1 and Method
+ * requests v1, and the sample price file, laid out as the Runs repository,
+ * with the data API's tree the generator writes from them beside runs/
+ * (tests/tree-fixture.ts). With `withoutRequests`, the tree is cut from no
+ * Derivations of Method requests, as though it derived none. Nothing in it
+ * was measured.
  */
 
 import { copyFileSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
@@ -17,6 +19,7 @@ import * as series from "../methods/v1";
 import type { DerivationsFile } from "../methods/v1/output";
 import { HandMade, rampRequests, requestRun } from "./hand-made-requests";
 import { SAMPLE_FILE, SAMPLE_PATH } from "./prices-fixtures";
+import { writeTree } from "./tree-fixture";
 
 export interface RequestFixture {
 	directory: string;
@@ -61,11 +64,10 @@ export async function makeRequestFixture(options: { withoutRequests?: boolean } 
 	});
 	made.run({ startedAt: "2026-11-12T22:10:00Z" });
 
-	const derivations = series.derive(made.files, await series.gather(made.files, made.fetch));
-	const requestsFile = requests.derive(made.files, await requests.gather(made.files, made.fetch));
+	// As a reader of the files would have them, not the objects the Methods returned.
+	const derivations = JSON.parse(series.serialize(series.derive(made.files, await series.gather(made.files, made.fetch)))) as DerivationsFile;
+	const requestsFile = JSON.parse(requests.serialize(requests.derive(made.files, await requests.gather(made.files, made.fetch)))) as RequestsFile;
 	const directory = mkdtempSync(join(tmpdir(), "request-lookup-"));
-	writeFileSync(join(directory, "derivations.json"), series.serialize(derivations));
-	if (!options.withoutRequests) writeFileSync(join(directory, "requests-derivations.json"), requests.serialize(requestsFile));
 	for (const file of made.files) {
 		const path = join(directory, file.path);
 		mkdirSync(dirname(path), { recursive: true });
@@ -73,6 +75,7 @@ export async function makeRequestFixture(options: { withoutRequests?: boolean } 
 	}
 	mkdirSync(join(directory, dirname(SAMPLE_PATH)), { recursive: true });
 	copyFileSync(SAMPLE_FILE, join(directory, SAMPLE_PATH));
+	writeTree(directory, derivations, options.withoutRequests ? { ...requestsFile, derivations: [] } : requestsFile);
 	const find = (bytes: number): RequestsSeries => {
 		const found = requestsFile.derivations.find((d) => d.series.params.object_bytes === bytes && d.series.instance_type === "c6i.8xlarge");
 		if (found === undefined) throw new Error(`no Series of requests of ${bytes} bytes`);

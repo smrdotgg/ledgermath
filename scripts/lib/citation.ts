@@ -24,10 +24,16 @@
  *   [lm:prices/<yyyy>/<mm>/<dd>/aws.json#<sku>/<rate code>/endRange]     where it ends ("Inf" cites nothing)
  *   [lm:prices/<yyyy>/<mm>/<dd>/aws.json#<sku>/attributes/<name>]    AWS's catalog words for a product
  *   [lm:benchmark/<name>]                         what a benchmark measures: words, which cite no number
- *   runs/<yyyy>/<mm>/<dd>/<run id>.json           a Run: the bare path, or its address in the Runs repository
+ *   runs/<yyyy>/<mm>/<dd>/<run id>.json           a Run: the bare path, or its address (the data API's, or the Runs repository's)
  *   [assumption: <where it comes from>]           a number LedgerMath does not hold
  *
  * A citation belongs to the nearest number before it on its line.
+ *
+ * Each resolves in the data API's tree (scripts/lib/ledger-data.ts): a Series
+ * citation in its Series file (v1/series/<id>.json) under the Method's key,
+ * series_v1 or requests_v1, as of the Series' newest Run, and, when it is of
+ * an earlier moment, in the month files up to that moment; a price citation in
+ * the price file the table of contents lists under that path.
  *
  * The moment is the Series' own newest Run, not the file's: boots of one
  * instance type never overlap and upload all their Runs at once, so no Run of
@@ -36,13 +42,12 @@
  */
 
 import type { Stats } from "../../methods/requests/v1/numbers";
-import type { PoolSummary, SeriesDerivation as RequestsSeries } from "../../methods/requests/v1/output";
+import type { PoolSummary } from "../../methods/requests/v1/output";
 import { PHASES, type Phase, REQUEST_FACTS, type RequestFact } from "../../methods/requests/v1/requests";
 import type { ParamValue } from "../../methods/run";
 import { percentile } from "../../methods/v1/numbers";
-import type { Point, SeriesDerivation } from "../../methods/v1/output";
 import { BENCHMARK_NOTES } from "./benchmark-notes";
-import type { LedgerData } from "./ledger-data";
+import { type LedgerData, type MonthEntry, requestPoints, seriesPoints, type TreeRequestsPoint, type TreeSeries, type TreeSeriesPoint } from "./ledger-data";
 import { agrees, type Dims, dimsWords, multiply, parseUnit, type Quantity, quantities, readable, sameDims, sameUnit, type Unit, unitAtom } from "./quantity";
 
 export const NUMBERS = ["time_per_repetition_ns", "bytes_per_second"] as const;
@@ -59,8 +64,13 @@ export const NUMBER_UNIT: Readonly<Record<NumberName, { dims: Dims; toBase: numb
 /** A Run's start to the second, as a citation writes it. */
 export const momentOf = (startedAt: string): string => `${startedAt.slice(0, 19)}Z`;
 
-/** The start of the Series' newest Run, to the second: the moment its citations are of. */
-export function seriesMoment(series: { points: ReadonlyArray<{ started_at: string }> }): string {
+/**
+ * The start of the Series' newest Run, to the second: the moment its
+ * citations are of. Of a Series file (or a row), its newest_run_started_at;
+ * of points, the latest start among them.
+ */
+export function seriesMoment(series: { newest_run_started_at: string } | { points: ReadonlyArray<{ started_at: string }> }): string {
+	if ("newest_run_started_at" in series) return momentOf(series.newest_run_started_at);
 	let newest = "";
 	for (const point of series.points) if (point.started_at > newest) newest = point.started_at;
 	return momentOf(newest);
@@ -113,7 +123,7 @@ export type Resolved =
 	| {
 			ok: true;
 			kind: "measured";
-			series: SeriesDerivation;
+			series: TreeSeries;
 			number: NumberName;
 			stat: StatName;
 			group: string | null;
@@ -128,7 +138,7 @@ export type Resolved =
 	| {
 			ok: true;
 			kind: "requests";
-			series: RequestsSeries;
+			series: TreeSeries;
 			group: string | null;
 			by: { fact: RequestFact; value: string } | null;
 			/** The phase, or null for runs and failed. */
@@ -145,7 +155,7 @@ export type Resolved =
 			/** The counted Runs the figure is pooled from. */
 			runs: number;
 	  }
-	| { ok: true; kind: "param"; series: SeriesDerivation; key: string; value: ParamValue }
+	| { ok: true; kind: "param"; series: TreeSeries; key: string; value: ParamValue }
 	| { ok: true; kind: "price"; path: string; date: string; sku: string; rateCode: string; usd: number; awsUnit: string; unit: Unit | null; description: string }
 	| { ok: true; kind: "range"; path: string; date: string; sku: string; rateCode: string; end: "beginRange" | "endRange"; text: string; awsUnit: string; unit: Unit | null; description: string }
 	| { ok: true; kind: "attribute"; path: string; date: string; sku: string; name: string; text: string }
@@ -156,48 +166,84 @@ type Json = Record<string, unknown>;
 const isObject = (value: unknown): value is Json => typeof value === "object" && value !== null && !Array.isArray(value);
 
 /** The counted Runs' values of a number, for one Series or group, among the Runs that started by a moment. */
-function valuesBy(series: SeriesDerivation, number: NumberName, group: string | null, moment: string): number[] {
-	const value = (point: Point): number | null => point[number];
-	return series.points
+function valuesBy(points: readonly TreeSeriesPoint[], number: NumberName, group: string | null, moment: string): number[] {
+	const value = (point: TreeSeriesPoint): number | null => point[number];
+	return points
 		.filter((point) => momentOf(point.started_at) <= moment && (group === null || point.group === group) && point.counted && value(point) !== null)
 		.map((point) => value(point) as number);
 }
 
 /**
- * A Series' statistic as it stood at a moment. Each Run's number depends on
- * that Run alone, so the population then is the Derivation's points that
- * started by then, and the percentile is Method series v1's own.
+ * A Series' statistic as it stood at a moment, from its points (Method series
+ * v1's, as the month files hold them). Each Run's number depends on that Run
+ * alone, so the population then is the points that started by then, and the
+ * percentile is Method series v1's own.
  */
-export function statAt(series: SeriesDerivation, number: NumberName, stat: StatName, group: string | null, moment: string): { value: number; runs: number } | null {
-	const values = valuesBy(series, number, group, moment);
+export function statAt(
+	points: readonly TreeSeriesPoint[] | readonly Pick<TreeSeriesPoint, "started_at" | "group" | "counted" | NumberName>[],
+	number: NumberName,
+	stat: StatName,
+	group: string | null,
+	moment: string,
+): { value: number; runs: number } | null {
+	const values = valuesBy(points as readonly TreeSeriesPoint[], number, group, moment);
 	if (values.length === 0) return null;
 	const value = stat === "count" ? values.length : percentile(values, stat === "p5" ? 5 : stat === "p50" ? 50 : 95);
 	return { value, runs: values.length };
 }
 
-function resolveSeries(match: RegExpExecArray, data: LedgerData): Resolved {
-	const [, id, group, number, stat, version, moment] = match as unknown as [string, string, string | undefined, NumberName, StatName, string, string];
-	const series = data.derivations.derivations.find((d) => d.series.id === id);
-	if (series === undefined) return { ok: false, reason: `no Series ${id} in ${data.derivationsFrom}` };
-	if (Number(version) !== data.derivations.method.version) {
-		return { ok: false, reason: `it cites Method series version ${version}; the data loaded are version ${data.derivations.method.version}` };
+/** The month files that hold every Run started by a moment (yyyy-mm-ddThh:mm:ssZ). */
+const monthsBy = (moment: string) => (series: TreeSeries): MonthEntry[] => series.months.filter((entry) => entry.month <= moment.slice(0, 7));
+
+/** Said of a Series whose file was read again after one of its month files did not match it. */
+const READ_AGAIN = " (its Series file was read again, after a month file did not match it)";
+
+/**
+ * Why a citation of Method `method` cannot be checked against a Series file
+ * (none, not that Method's, another version, no such group, or it ends before
+ * the cited moment), or null when it can. Asked of the Series file first read,
+ * and again of the one that comes back with its month files, which may be a
+ * later read of it.
+ */
+function citable(series: TreeSeries | null, id: string, method: "series_v1" | "requests_v1", version: string, group: string | undefined, moment: string, data: LedgerData, again: boolean): Resolved | null {
+	const why = (reason: string): Resolved => ({ ok: false, reason: `${reason}${again ? READ_AGAIN : ""}` });
+	if (series === null) return why(`no Series ${id} in ${data.location.link("v1/series.json")}`);
+	const block = series.derivations[method];
+	const name = method === "series_v1" ? "series" : "requests";
+	if (block === undefined) {
+		return why(method === "series_v1" ? `Series ${id} has no figures of Method series version 1` : `Series ${id} has no figures of Method requests: the data loaded hold none of it (it is not a Series of requests)`);
 	}
-	if (group !== undefined && !series.groups.some((g) => g.id === group)) return { ok: false, reason: `Series ${id} has no group ${group}` };
+	if (Number(version) !== block.method.version) return why(`it cites Method ${name} version ${version}; the data loaded are version ${block.method.version}`);
+	if (group !== undefined && !block.groups.some((g) => g.id === group)) return why(`Series ${id} has no group ${group}`);
 	const loaded = seriesMoment(series);
-	if (moment > loaded) {
-		return { ok: false, reason: `it cites Series ${id} as of ${moment}, but the data loaded hold its Runs only to ${loaded}: it is of data the checker does not have` };
-	}
-	const at = statAt(series, number, stat, group ?? null, moment);
-	if (at === null) return { ok: false, reason: `Series ${id}${group === undefined ? "" : ` group ${group}`} has no ${number} from a counted Run that started by ${moment}` };
-	if (moment === loaded) {
-		const percentiles = group === undefined ? series.percentiles : (series.groups.find((g) => g.id === group)?.percentiles ?? null);
+	if (moment > loaded) return why(`it cites Series ${id} as of ${moment}, but the data loaded hold its Runs only to ${loaded}: it is of data the checker does not have`);
+	return null;
+}
+
+async function resolveSeries(match: RegExpExecArray, data: LedgerData): Promise<Resolved> {
+	const [, id, group, number, stat, version, moment] = match as unknown as [string, string, string | undefined, NumberName, StatName, string, string];
+	const series = await data.series(id);
+	const first = citable(series, id, "series_v1", version, group, moment, data, false);
+	if (first !== null || series === null) return first as Resolved;
+	const v1 = series.derivations.series_v1 as NonNullable<TreeSeries["derivations"]["series_v1"]>;
+	const none = (again: boolean): Resolved => ({ ok: false, reason: `Series ${id}${group === undefined ? "" : ` group ${group}`} has no ${number} from a counted Run that started by ${moment}${again ? READ_AGAIN : ""}` });
+	if (moment === seriesMoment(series)) {
+		// As of the Series' newest Run: its Series file's own figures.
+		const percentiles = group === undefined ? v1.percentiles : (v1.groups.find((g) => g.id === group)?.percentiles ?? null);
 		const stored = percentiles?.[number] ?? null;
-		if (stored !== null) {
-			const value = stat === "count" ? stored.count : stored[stat];
-			return { ok: true, kind: "measured", series, number, stat, group: group ?? null, value, moment, asOf: "current", runs: stored.count };
-		}
+		if (stored === null) return none(false);
+		const value = stat === "count" ? stored.count : stored[stat];
+		if (value === null) return { ok: false, reason: `Series ${id}${group === undefined ? "" : ` group ${group}`}'s ${stat} of ${number} is infinite (the Method writes it as null): no number states it` };
+		return { ok: true, kind: "measured", series, number, stat, group: group ?? null, value, moment, asOf: "current", runs: stored.count };
 	}
-	return { ok: true, kind: "measured", series, number, stat, group: group ?? null, value: at.value, moment, asOf: moment === loaded ? "current" : "earlier", runs: at.runs };
+	// As of an earlier moment: recomputed from the points of the Runs that started by then, held to the Series file that came back with them.
+	const read = await data.seriesWithMonths(id, monthsBy(moment));
+	const again = read !== null && read.series !== series;
+	const second = citable(read?.series ?? null, id, "series_v1", version, group, moment, data, again);
+	if (second !== null || read === null) return second as Resolved;
+	const at = statAt(seriesPoints(read.months), number, stat, group ?? null, moment);
+	if (at === null) return none(again);
+	return { ok: true, kind: "measured", series: read.series, number, stat, group: group ?? null, value: at.value, moment, asOf: moment === seriesMoment(read.series) ? "current" : "earlier", runs: at.runs };
 }
 
 const PCT_WORDS: Record<RequestPercentile, { words: string; perMille: number }> = {
@@ -221,22 +267,34 @@ export function requestStatMissing(stats: Stats | undefined, phase: Phase, stat:
 	return null;
 }
 
-function resolveRequests(match: RegExpExecArray, data: LedgerData): Resolved {
+/**
+ * The Derivation's group_through of each point, from the tree's
+ * group_through_as_of_run, by the tree's own rule (ADR-0030, rule 9): in a
+ * Series of more than one group, a point before the first point whose group
+ * differs from the first point's takes its through; every other point takes
+ * group_through_as_of_run as it is. `points` are every point from the
+ * Series' first, in order, at least to the last one asked about.
+ */
+function groupThrough(points: readonly TreeRequestsPoint[], groups: number, i: number): PoolSummary | null {
+	const point = points[i] as TreeRequestsPoint;
+	if (groups < 2) return point.group_through_as_of_run;
+	const first = points.findIndex((p) => p.group !== points[0]?.group);
+	return first < 0 || i < first ? point.through : point.group_through_as_of_run;
+}
+
+async function resolveRequests(match: RegExpExecArray, data: LedgerData): Promise<Resolved> {
 	const [, id, group, fact, factValue, phase, stat, tail, runsWord, failedWord, failedPhase, failedKind, version, moment] = match as unknown as Array<string | undefined>;
-	const requests = data.requests;
-	if (requests === null) return { ok: false, reason: "the data loaded hold no Derivations of Method requests (requests-derivations.json beside derivations.json)" };
-	const series = requests.derivations.find((d) => d.series.id === id);
-	if (series === undefined) return { ok: false, reason: `no Series of requests ${id} in ${data.requestsFrom}` };
-	if (Number(version) !== requests.method.version) {
-		return { ok: false, reason: `it cites Method requests version ${version}; the data loaded are version ${requests.method.version}` };
-	}
-	if (group !== undefined && !series.groups.some((g) => g.id === group)) return { ok: false, reason: `Series ${id} has no group ${group}` };
+	const at = moment as string;
+	const file = await data.series(id as string);
+	const first = citable(file, id as string, "requests_v1", version as string, group, at, data, false);
+	if (first !== null || file === null) return first as Resolved;
+	const requests = file.derivations.requests_v1 as NonNullable<TreeSeries["derivations"]["requests_v1"]>;
+	let series = file;
 	if (fact !== undefined && failedWord !== undefined) return { ok: false, reason: "failed requests are counted per Series and per group, not by what a request recorded of its connection" };
 	if (tail !== undefined && !(REQUEST_PERCENTILES as readonly string[]).includes(stat as string)) return { ok: false, reason: "at_or_above follows a percentile: p50, p90, p95, p99 or p99.9" };
 	const loaded = seriesMoment(series);
-	const at = moment as string;
-	if (at > loaded) return { ok: false, reason: `it cites Series ${id} as of ${at}, but the data loaded hold its Runs only to ${loaded}: it is of data the checker does not have` };
-	const asOf = at === loaded ? "current" : "earlier";
+	let asOf: "current" | "earlier" = at === loaded ? "current" : "earlier";
+	let again = false;
 
 	// The figures as they stood at the moment.
 	let summary: { runs: number; requests: number; failed: number; phases: Partial<Record<Phase, Stats>>; failures: PoolSummary["failures"] } | null;
@@ -246,7 +304,7 @@ function resolveRequests(match: RegExpExecArray, data: LedgerData): Resolved {
 		if (asOf === "earlier") {
 			return { ok: false, reason: `the breakdown by ${fact} is held only as of Series ${id}'s newest Run (${loaded}); this citation is of ${at}: check it against the Derivations of that moment` };
 		}
-		const pool = group === undefined ? series.pool : (series.groups.find((g) => g.id === group) as (typeof series.groups)[number]).pool;
+		const pool = group === undefined ? requests.pool : (requests.groups.find((g) => g.id === group) as (typeof requests.groups)[number]).pool;
 		const value = pool.by.find((b) => b.fact === fact)?.values.find((v) => v.value === factValue);
 		if (value === undefined) {
 			const values = pool.by.find((b) => b.fact === fact)?.values.map((v) => v.value) ?? [];
@@ -254,20 +312,41 @@ function resolveRequests(match: RegExpExecArray, data: LedgerData): Resolved {
 		}
 		summary = { runs: value.runs, requests: value.requests, failed: 0, phases: value.phases, failures: [] };
 	} else if (asOf === "current") {
-		const pool = group === undefined ? series.pool : (series.groups.find((g) => g.id === group) as (typeof series.groups)[number]).pool;
+		const pool = group === undefined ? requests.pool : (requests.groups.find((g) => g.id === group) as (typeof requests.groups)[number]).pool;
 		summary = pool.runs === 0 ? null : pool;
 	} else {
-		const before = series.points.filter((point) => momentOf(point.started_at) <= at && (group === undefined || point.group === group));
-		const last = before.at(-1);
-		summary = last === undefined ? null : group === undefined || series.groups.length < 2 ? last.through : last.group_through;
+		// The figures each point holds as they stood through its Run, from the month files up to the moment,
+		// held to the Series file that came back with them, which may be a later read of it.
+		const read = await data.seriesWithMonths(id as string, monthsBy(at));
+		again = read !== null && read.series !== file;
+		const second = citable(read?.series ?? null, id as string, "requests_v1", version as string, group, at, data, again);
+		if (second !== null || read === null) return second as Resolved;
+		series = read.series;
+		asOf = at === seriesMoment(series) ? "current" : "earlier";
+		const points = requestPoints(read.months);
+		const groups = series.derivations.requests_v1?.groups.length ?? 0;
+		let last = -1;
+		points.forEach((point, i) => {
+			if (momentOf(point.started_at) <= at && (group === undefined || point.group === group)) last = i;
+		});
+		summary = last < 0 ? null : group === undefined || groups < 2 ? (points[last] as TreeRequestsPoint).through : groupThrough(points, groups, last);
 	}
-	if (summary === null) return { ok: false, reason: `Series ${id}${group === undefined ? "" : ` group ${group}`} has no counted Run that started by ${at}` };
-	const base = { ok: true as const, kind: "requests" as const, series, group: group ?? null, by, moment: at, asOf: asOf as "current" | "earlier", runs: summary.runs };
+	const scope = `Series ${id}${group === undefined ? "" : ` group ${group}`}`;
+	if (summary === null) return { ok: false, reason: `${scope} has no counted Run that started by ${at}${again ? READ_AGAIN : ""}` };
+	const base = { ok: true as const, kind: "requests" as const, series, group: group ?? null, by, moment: at, asOf, runs: summary.runs };
 	if (runsWord !== undefined) return { ...base, phase: null, stat: "runs", unit: "count", countsRuns: true, value: summary.runs };
 	if (failedWord !== undefined) {
 		if (failedPhase === undefined) return { ...base, phase: null, stat: "failed", unit: "count", countsRuns: false, value: summary.failed };
-		const count = summary.failures.find((f) => f.phase === failedPhase && f.kind === failedKind)?.count ?? 0;
-		return { ...base, phase: null, stat: `failed/${failedPhase}/${failedKind}`, unit: "count", countsRuns: false, value: count };
+		// A failure entry is cited only as the data list it: one they do not list is not a count of zero.
+		const entry = summary.failures.find((f) => f.phase === failedPhase && f.kind === failedKind);
+		if (entry === undefined) {
+			const held = summary.failures.map((f) => `failed/${f.phase}/${f.kind}`);
+			return {
+				ok: false,
+				reason: `${scope} lists no failed requests of phase ${failedPhase} and kind ${failedKind} as of ${at}; it lists ${held.length === 0 ? "none of any phase and kind (its failed requests, all phases, are cited as failed)" : held.join(", ")}`,
+			};
+		}
+		return { ...base, phase: null, stat: `failed/${failedPhase}/${failedKind}`, unit: "count", countsRuns: false, value: entry.count };
 	}
 	const stats = summary.phases[phase as Phase];
 	const missing = requestStatMissing(stats, phase as Phase, stat as string);
@@ -326,10 +405,10 @@ export async function resolveCitation(inside: string, data: LedgerData): Promise
 	m = PARAM.exec(inside);
 	if (m !== null) {
 		const [, id, key] = m as unknown as [string, string, string];
-		const series = data.derivations.derivations.find((d) => d.series.id === id);
-		if (series === undefined) return { ok: false, reason: `no Series ${id} in ${data.derivationsFrom}` };
-		if (!(key in series.series.params)) return { ok: false, reason: `Series ${id} has no parameter ${key}` };
-		return { ok: true, kind: "param", series, key, value: series.series.params[key] as ParamValue };
+		const series = await data.series(id);
+		if (series === null) return { ok: false, reason: `no Series ${id} in ${data.location.link("v1/series.json")}` };
+		if (!(key in series.params)) return { ok: false, reason: `Series ${id} has no parameter ${key}` };
+		return { ok: true, kind: "param", series, key, value: series.params[key] as ParamValue };
 	}
 	m = PRICE.exec(inside);
 	if (m !== null) return resolvePrice(m[1] as string, m[2] as string, { rateCode: m[3] as string, end: m[4] as "beginRange" | "endRange" | undefined }, data);
