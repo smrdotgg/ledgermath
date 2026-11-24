@@ -10,7 +10,8 @@
 # them as a second artifact, api, for a week, and opens (or comments on) one
 # issue when a watched Series has had no Run for 48 hours, the newest price
 # file (prices.yml) is more than 48 hours old, or the API bucket's table of
-# contents is more than 14 hours old. It writes nothing to the API bucket and
+# contents is more than 14 hours old, and sends the maintainer one Telegram
+# message each time it writes there. It writes nothing to the API bucket and
 # does not publish: its alarm only reads, in a child process killed after 20
 # seconds, when that table of contents was last written, and whatever S3
 # answers, or the check meets, is a finding the alarm reports, never a failure
@@ -31,6 +32,9 @@
 #   variable RUNS_BUCKET           the scheduled stage's bucket output
 #   secret   RUNS_REPO_DEPLOY_KEY  the private half of a deploy key of
 #                                  smrdotgg/ledgermath-runs with write access
+#   secret   TELEGRAM_BOT_TOKEN    the bot the alarm's Telegram message is sent
+#   secret   TELEGRAM_CHAT_ID      from, and the maintainer's chat with it;
+#                                  while either is unset, no message is sent
 # and, once the scheduled stage is deployed with an API bucket (README, "The
 # data API", "The API bucket"):
 #   variable API_BUCKET            the scheduled stage's apiBucket output; while
@@ -57,12 +61,13 @@ on:
         default: false
       # alarm_drill makes the alarm, after its ordinary pass, post one comment
       # on its issue (opening it if none is open) saying it is a drill and
-      # that nothing is wrong, so the maintainer sees whether its notification
-      # arrives (README, "Turning it on", step 0). It reads nothing and changes
-      # no state the alarm reads back. Only by hand: a scheduled run has no
-      # inputs. The publish job never sees it.
+      # that nothing is wrong, and send one Telegram message saying the same,
+      # so the maintainer sees whether its notification arrives (README,
+      # "Turning it on", step 0). It reads nothing and changes no state the
+      # alarm reads back. Only by hand: a scheduled run has no inputs. The
+      # publish job never sees it.
       alarm_drill:
-        description: "Drill the alarm: post one comment on the alarm issue saying it is a drill; nothing else changes, publishing is untouched"
+        description: "Drill the alarm: post one comment on the alarm issue, and send one Telegram message, saying it is a drill; nothing else changes, publishing is untouched"
         type: boolean
         default: false
 
@@ -265,6 +270,19 @@ jobs:
       # or changes what the alarm says of the Series and price files. With the
       # input alarm_drill, the alarm also posts one drill comment on its
       # issue, which changes nothing it reads back.
+      #
+      # Whenever the alarm writes on GitHub (the issue opened, a comment, the
+      # all-clear, a drill), or had something to post and could not, it also
+      # sends the maintainer one Telegram message, last of all (ADR-0033). It
+      # is sent from inside the alarm, in this step: GitHub starts no workflow
+      # for an issue or comment made with the workflow's own token
+      # (docs.github.com, "Triggering a workflow from a workflow"), so no
+      # workflow on issue events could do it. The two Telegram secrets are in
+      # this step's environment and nowhere else in any workflow (a test holds
+      # that), and this workflow never runs for a pull request. The check's
+      # child never sees them. The message is given up after 16 seconds; one
+      # not sent is a warning, never a failure of this step, so the publish
+      # job is never skipped for it; with the secrets unset (a fork), a notice.
       - name: Check for watched Series with no Run, and price files, for 48 hours
         if: ${{ !cancelled() && steps.runs-repository.outcome == 'success' }}
         env:
@@ -272,6 +290,8 @@ jobs:
           COPY: ${{ steps.copy.outcome == 'success' && steps.push.outcome == 'success' && 'succeeded' || 'failed' }}
           API_BUCKET: ${{ vars.API_BUCKET }}
           ALARM_DRILL: ${{ inputs.alarm_drill == true && 'yes' || 'no' }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
           changed="$(git log -1 --first-parent --format=%cI -- schedule.json)"
           prices_since="$(git log --first-parent --reverse --format=%cI -- .github/workflows/prices.yml | sed -n 1p)"
