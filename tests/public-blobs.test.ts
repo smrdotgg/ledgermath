@@ -161,14 +161,15 @@ const REHEARSAL = process.env.LM_PUBLIC_API_STATE !== undefined;
 
 /**
  * RELEASED_STATE: the state the public API is released in, which the
- * committed switch must hold. "dark": everything is made, the distribution
- * disabled, and nothing is public in what is merged. Each commit that moves
+ * committed switch must hold. "on": the distribution serves the four served
+ * prefixes at https://api.ledgermath.com, and both buckets' policies carry
+ * their grant, in what is merged. Each commit that moves
  * the public API through its states (README, "The public data API", "Turning
  * it on") sets PUBLIC_API.state and this, together, on purpose, to the state
  * it deploys; the release gate below and the rehearsal both read it, and no
  * other test reads the committed switch.
  */
-const RELEASED_STATE: PublicApiState = "dark";
+const RELEASED_STATE: PublicApiState = "on";
 /** The release gate, as the JUnit report names it. */
 const GATE = "tests/public-blobs.test.ts > the switch > RELEASE GATE: the committed switch is the released state, for production-runs";
 

@@ -1505,4 +1505,20 @@ A migrated benchmark is done only when **all** of these hold:
   scope-down's Or hold a Not and the Not only a plain statement. `PUBLIC_API` stays `dark`,
   `plan: "code"`. No AWS call was made for this change; the checks of `check.yml` ran on the
   dev box.
+- **2026-11-24** — The public API's switch goes from `dark` to `on` (README, "Turning it
+  on, on `production-runs`", step 4), with `RELEASED_STATE` in the same commit, on the
+  maintainer's go, after `dark` was deployed with the scope-down above and checked (step 2,
+  17:45 UTC: the Free plan `ACTIVE`, covering the distribution and the web ACL; the
+  distribution disabled and `Deployed`; the certificate `ISSUED`). Deployed, `on` enables
+  the distribution, puts the request function in the 404 function's place on the four
+  served behaviours, and gives both buckets' policies their grant, after the deploy's own
+  check that an ACTIVE plan covers the distribution; the data API and its evidence are then
+  public at `https://api.ledgermath.com`. Its `plan` stays `"code"`. The sentences that
+  said the switch was `dark`, or that nothing is served, now say `on` (the README's opening
+  of "The public data API", its costs, "The data API", "The API bucket", "Setting it up",
+  and the `publish` job's comment in `runs.yml`); the ADRs, records of what was decided,
+  are left as they are. **Nothing else read the committed switch differently under `on`**:
+  the alarm treats every state but `off` alike (an unset `API_BUCKET` is raised), and
+  `tests/alarm-telegram.test.ts` already gives its child `off`. GitHub Actions is off for
+  the repository, so the checks of `check.yml` ran on the dev box.
 - _(agents: append your entry here, one per merged benchmark)_
