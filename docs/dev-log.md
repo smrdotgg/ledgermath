@@ -1420,4 +1420,24 @@ A migrated benchmark is done only when **all** of these hold:
   cache, so every later run would start over. Shown again: on both fixtures and on the real
   Derivations of 2026-11-19, `check-api.ts --previous` passes against `main`'s tree with no
   `new_baseline` (187 month files the same, byte for byte; one file more, the events schema).
+- **2026-11-24** — The data API's words, after a second verification (four points). **No
+  stream stops a Method, whatever value a field holds.** Three did, each older than this
+  change: `request_sent.signing` null on a counted success (requests v1 read `.algorithm`
+  from it), a `request_failed` in phase `constructor` (a word, found on Object's prototype
+  instead of the phase table), and an `observed` event without its `values` object (both
+  Methods: the bytes per repetition were read from every stream, before the schema's verdict
+  counted). Each is read the small way now, and no real record changes (the 6,335 real Runs
+  whose stdout is on the dev box, and both fixtures, give `main`'s records exactly). A search
+  that sets each field of each event to absent, null, each JSON type and names such as
+  `constructor` and `__proto__` tried 447,926 streams (281,482 that the events schema
+  accepts): on `main` it found those three, now none; a test runs a smaller one every time.
+  A withheld certificate line is aside only when its `withheld_event` is the string
+  `certificate`. **The words**: requests v1 reads nothing into exit 4 but what the rule on
+  exit 0 implies (`methods/README.md` gives `http_get`'s causes: a failed or non-2xx request,
+  a failed setup of a kept connection, fewer requests than asked); a request never sent
+  compares the connection fields as values, both absent counting as equal, and only a sent
+  request needs an integer id; `failed` and the schemas' failure phase and kind give the
+  certificate exception and the bare `line_withheld` kind; the request facts give their
+  `(none)` and `(no algorithm)` fallbacks. GitHub Actions is off for the repository, so the
+  checks of `check.yml` ran on the dev box.
 - _(agents: append your entry here, one per merged benchmark)_
