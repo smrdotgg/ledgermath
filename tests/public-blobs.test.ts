@@ -69,6 +69,7 @@ import {
 import { DISTRIBUTION_NAME } from "../infra/runs/public-blobs-guard";
 import { PRODUCTION_STAGE, runsStageApp } from "../infra/runs/stages";
 import { blobsFromBucket, PUBLIC_REQUESTS_PER_SECOND, publicBlobStore } from "../scripts/lib/blobs";
+import { FREE_PLAN_MANAGED_GROUPS, FREE_PLAN_WAF_RULES, freePlanMessage, freePlanRefusals } from "./free-plan-waf";
 import { failedTests, readJunit } from "./junit";
 import { S3Standin } from "./s3-standin";
 
@@ -1192,6 +1193,9 @@ describe("the web ACL", () => {
 	});
 
 	test("counts every request together, from any address, whatever its path, and blocks them all over 6,000 in 5 minutes", () => {
+		// The scope-down matches every request: from Antarctica, or not from Antarctica (a request whose country WAF cannot tell
+		// included). A CONSTANT rule must have one, and the Free plan allows no string, size or regex match to write it with.
+		const fromAntarctica = { geoMatchStatement: { countryCodes: ["AQ"] } };
 		expect(rate(TOTAL_RULE)).toEqual({
 			name: TOTAL_RULE,
 			priority: 3,
@@ -1201,21 +1205,69 @@ describe("the web ACL", () => {
 					limit: 6_000,
 					aggregateKeyType: "CONSTANT",
 					evaluationWindowSec: 300,
-					scopeDownStatement: {
-						byteMatchStatement: {
-							fieldToMatch: { uriPath: {} },
-							positionalConstraint: "STARTS_WITH",
-							searchString: "/",
-							textTransformations: [{ priority: 0, type: "NONE" }],
-						},
-					},
+					scopeDownStatement: { orStatement: { statements: [fromAntarctica, { notStatement: { statements: [fromAntarctica] } }] } },
 				},
 			},
 			visibilityConfig: { cloudwatchMetricsEnabled: true, metricName: `${NAMES.webAcl}-ceiling`, sampledRequestsEnabled: true },
 		});
-		expect(TOTAL_RATE_LIMIT).toEqual({ requests: 6_000, windowSeconds: 300, pathPrefix: "/" });
-		// Every path a behaviour serves is counted.
-		for (const served of SERVED) expect(`/${served.prefix}`.startsWith(TOTAL_RATE_LIMIT.pathPrefix)).toBe(true);
+		expect(TOTAL_RATE_LIMIT).toEqual({ requests: 6_000, windowSeconds: 300 });
+	});
+
+	test("uses only what the CloudFront Free plan was seen to accept, at every depth, in at most its 5 rules", () => {
+		const refusals = freePlanRefusals(rules);
+		if (refusals.length > 0) throw new Error(freePlanMessage(refusals));
+		expect(FREE_PLAN_WAF_RULES).toBe(FREE_PLAN.wafRules);
+		// A managed group added to the list is not thereby accepted: the walk names the two that were seen.
+		expect([...FREE_PLAN_MANAGED_GROUPS]).toEqual([...MANAGED_RULE_GROUPS]);
+	});
+
+	test("the Free plan's walk refuses what the plan refused, and anything not seen accepted, nested or not", () => {
+		const total = rate(TOTAL_RULE);
+		const totalWith = (scopeDownStatement: unknown) => ({
+			...total,
+			statement: { rateBasedStatement: { ...total.statement.rateBasedStatement, scopeDownStatement } },
+		});
+		const uriStartsWithSlash = {
+			byteMatchStatement: { fieldToMatch: { uriPath: {} }, positionalConstraint: "STARTS_WITH", searchString: "/", textTransformations: [{ priority: 0, type: "NONE" }] },
+		};
+		const others = rules.filter((rule) => rule.name !== TOTAL_RULE);
+		const cases: Array<[string, unknown[], string]> = [
+			// The rule as built before 2026-11-24, which the Free plan refused ("String match statement", PRO).
+			["the byte match on the URI path", [...others, totalWith(uriStartsWithSlash)], "statement.rateBasedStatement.scopeDownStatement.byteMatchStatement is a statement of a type"],
+			[
+				"a size constraint (refused, PRO)",
+				[...others, totalWith({ sizeConstraintStatement: { fieldToMatch: { uriPath: {} }, comparisonOperator: "GE", size: 0, textTransformations: [{ priority: 0, type: "NONE" }] } })],
+				"sizeConstraintStatement is a statement of a type",
+			],
+			["a byte match inside the Or", [...others, totalWith({ orStatement: { statements: [{ geoMatchStatement: { countryCodes: ["AQ"] } }, uriStartsWithSlash] } })], "orStatement.statements[1].byteMatchStatement"],
+			["an And", [...others, totalWith({ andStatement: { statements: [{ geoMatchStatement: { countryCodes: ["AQ"] } }] } })], "andStatement is a statement of a type"],
+			[
+				"a geographic match on a forwarded address (header-based)",
+				[...others, totalWith({ geoMatchStatement: { countryCodes: ["AQ"], forwardedIpConfig: { headerName: "X-Forwarded-For", fallbackBehavior: "MATCH" } } })],
+				"geoMatchStatement.forwardedIpConfig is a field",
+			],
+			[
+				"a third managed group",
+				[...rules, { name: "AWSManagedRulesCommonRuleSet", priority: 4, overrideAction: { none: {} }, statement: { managedRuleGroupStatement: { vendorName: "AWS", name: "AWSManagedRulesCommonRuleSet" } }, visibilityConfig: total.visibilityConfig }],
+				'names the group "AWSManagedRulesCommonRuleSet"',
+			],
+			[
+				"a rate rule on a forwarded address",
+				[...others, { ...total, statement: { rateBasedStatement: { limit: 6_000, aggregateKeyType: "FORWARDED_IP", evaluationWindowSec: 300 } } }],
+				'aggregates by "FORWARDED_IP"',
+			],
+			["a custom response (Pro)", [...others, { ...total, action: { block: { customResponse: { responseCode: 429 } } } }], "its action is"],
+			["a challenge (Business)", [...others, { ...total, action: { challenge: {} } }], "its action is"],
+			["a rule's labels", [...others, { ...total, ruleLabels: [{ name: "x" }] }], "ruleLabels is a field"],
+			["6 rules", [...rules, rate(PER_ADDRESS_RULE), rate(PER_ADDRESS_RULE)], "the web ACL has 6 rules, and the CloudFront Free plan allows 5"],
+		];
+		for (const [what, refused, says] of cases) {
+			const refusals = freePlanRefusals(refused);
+			if (!refusals.some((refusal) => refusal.includes(says))) throw new Error(`${what}: expected a refusal saying ${JSON.stringify(says)}, got ${JSON.stringify(refusals)}`);
+			const message = freePlanMessage(refusals);
+			expect(message).toContain("CloudFront Free plan");
+			expect(message).toContain("must first be shown to be accepted");
+		}
 	});
 
 	test("has a description WAF accepts, which the stack uses", () => {

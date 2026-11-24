@@ -54,7 +54,8 @@
  * The plan allows, and so this uses, only what the Free plan supports: AWS
  * managed cache and response-headers policies (custom ones are a Business
  * feature), CloudFront Functions (included), no access logs (Pro), at most 5
- * cache behaviours (5 used) and 5 WAF rules (4 used), Origin Access Control,
+ * cache behaviours (5 used) and 5 WAF rules (4 used, and none with a string,
+ * size or regex match: everyRequest), Origin Access Control,
  * one distribution and one apex domain per plan, and no legacy
  * ForwardedValues. Because the policies are managed, each header a reader
  * gets comes from one of three places: the object itself (the tree's
@@ -345,11 +346,11 @@ export const RATE_LIMIT = { requests: 1_500, windowSeconds: 300 } as const;
 /**
  * The rate limit on all requests together, from every address: 6,000 in any
  * 5 minutes (20 a second), counted by one WAF rate-based rule whose
- * aggregation is CONSTANT ("count all"), scoped down to URI paths that start
- * with "/", which is every path: each request that can reach a bucket (the
- * tree, Run files, boot summaries, blobs) is counted, and so are those
- * CloudFront answers from its cache or a function answers. Over it, every
- * request is refused, for everyone, until the rate falls.
+ * aggregation is CONSTANT ("count all"), scoped down to every request
+ * (everyRequest): each request that can reach a bucket (the tree, Run files,
+ * boot summaries, blobs) is counted, and so are those CloudFront answers from
+ * its cache or a function answers. Over it, every request is refused, for
+ * everyone, until the rate falls.
  *
  * AWS enforces it approximately, and says so
  * (docs.aws.amazon.com/waf/latest/developerguide/waf-rule-statement-type-rate-based-caveats.html):
@@ -361,7 +362,7 @@ export const RATE_LIMIT = { requests: 1_500, windowSeconds: 300 } as const;
  * is no hard cap on S3 request charges. monthAtTotalLimit gives what a month
  * costs at exactly this rate throughout; bursts can exceed it.
  */
-export const TOTAL_RATE_LIMIT = { requests: 6_000, windowSeconds: 300, pathPrefix: "/" } as const;
+export const TOTAL_RATE_LIMIT = { requests: 6_000, windowSeconds: 300 } as const;
 
 /** S3 Standard GET and HEAD requests in us-east-2, USD per 1,000 (AWS's Price List API, publication of 2026-11-19: $0.004 per 10,000). */
 export const S3_GET_USD_PER_THOUSAND = 0.0004;
@@ -804,13 +805,13 @@ export interface VisibilityConfig {
 	sampledRequestsEnabled: boolean;
 }
 
-export interface UriPrefixMatch {
-	byteMatchStatement: {
-		fieldToMatch: { uriPath: Record<string, never> };
-		positionalConstraint: "STARTS_WITH";
-		searchString: string;
-		textTransformations: Array<{ priority: number; type: "NONE" }>;
-	};
+export interface GeoMatch {
+	geoMatchStatement: { countryCodes: string[] };
+}
+
+/** A scope-down statement that matches every request (everyRequest): Or(from a country, Not(from it)). */
+export interface EveryRequestMatch {
+	orStatement: { statements: [GeoMatch, { notStatement: { statements: [GeoMatch] } }] };
 }
 
 export interface RateRule {
@@ -820,9 +821,43 @@ export interface RateRule {
 	statement: {
 		rateBasedStatement:
 			| { limit: number; aggregateKeyType: "IP"; evaluationWindowSec: number }
-			| { limit: number; aggregateKeyType: "CONSTANT"; evaluationWindowSec: number; scopeDownStatement: UriPrefixMatch };
+			| { limit: number; aggregateKeyType: "CONSTANT"; evaluationWindowSec: number; scopeDownStatement: EveryRequestMatch };
 	};
 	visibilityConfig: VisibilityConfig;
+}
+
+/**
+ * The country of everyRequest's two geographic matches: Antarctica. Any
+ * country would do, since the statement matches every request whichever it
+ * names; this is the one the scope-down was seen accepted with.
+ */
+export const EVERY_REQUEST_COUNTRY = "AQ";
+
+/**
+ * The total rule's scope-down statement, which matches every request: from
+ * Antarctica, or not from Antarctica. A request is from a country or it is
+ * not, and one whose country WAF cannot tell is not from Antarctica, so it
+ * matches too. The shape is odd on purpose. A rate-based rule that counts all
+ * requests together (aggregation CONSTANT) must have a scope-down statement;
+ * this one must match every request, so that no request reaches a bucket
+ * uncounted; and the CloudFront Free plan allows no string match, size
+ * constraint or regular expression to write "every path" with. The rule as
+ * first built matched URI paths that start with "/" (a byte match), and on
+ * 2026-11-24 the Free plan refused it: the production-runs web ACL was "not
+ * eligible for this subscription tier", and WAF refused the same rule on a
+ * subscribed web ACL in the development account
+ * (WAFFeatureNotIncludedInPricingPlanException, "String match statement",
+ * PRO; a size constraint likewise). It accepted this one, with the other
+ * three rules, and the subscription stayed ACTIVE. tests/free-plan-waf.ts
+ * holds every statement of every rule to what the plan was seen to accept.
+ * It is as deep as the provider allows: the installed @pulumi/aws (7.20.0)
+ * bridges a Terraform schema in which a scope-down's Or may hold a Not, and
+ * the Not only a plain statement such as a geographic match, never another
+ * Or, And or Not (Pulumi's mocks do not run the provider; `sst diff` does).
+ */
+export function everyRequest(): EveryRequestMatch {
+	const fromCountry = (): GeoMatch => ({ geoMatchStatement: { countryCodes: [EVERY_REQUEST_COUNTRY] } });
+	return { orStatement: { statements: [fromCountry(), { notStatement: { statements: [fromCountry()] } }] } };
 }
 
 export interface ManagedRule {
@@ -899,14 +934,9 @@ export function webAclRules(metricPrefix: string): WebAclRule[] {
 				limit: TOTAL_RATE_LIMIT.requests,
 				aggregateKeyType: "CONSTANT",
 				evaluationWindowSec: TOTAL_RATE_LIMIT.windowSeconds,
-				scopeDownStatement: {
-					byteMatchStatement: {
-						fieldToMatch: { uriPath: {} },
-						positionalConstraint: "STARTS_WITH",
-						searchString: TOTAL_RATE_LIMIT.pathPrefix,
-						textTransformations: [{ priority: 0, type: "NONE" }],
-					},
-				},
+				// CONSTANT needs a scope-down; it must match every request, and the
+				// Free plan allows no string, size or regex match: everyRequest.
+				scopeDownStatement: everyRequest(),
 			},
 		},
 		visibilityConfig: visibility(`${metricPrefix}-ceiling`),

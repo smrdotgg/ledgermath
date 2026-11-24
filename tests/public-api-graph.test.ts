@@ -27,9 +27,12 @@ import {
 	publicApiPlan,
 	REQUEST_FUNCTION_CODE,
 	servedPrefixes,
+	TOTAL_RULE,
+	webAclRules,
 } from "../infra/runs/public-blobs";
 import { DISTRIBUTION_NAME } from "../infra/runs/public-blobs-guard";
 import { watchPermissions } from "../infra/runs/plan-watch";
+import { freePlanMessage, freePlanRefusals } from "./free-plan-waf";
 
 setDefaultTimeout(60_000);
 
@@ -254,6 +257,20 @@ run("the public API's resources, built for each state under Pulumi's mocks", () 
 			});
 		}
 		expect(b.byName("PublicApiWebAcl").inputs).toMatchObject({ region: "us-east-1", scope: "CLOUDFRONT" });
+	});
+
+	test("the web ACL is given webAclRules, in every state, and all of it is what the CloudFront Free plan was seen to accept", () => {
+		const fromAntarctica = { geoMatchStatement: { countryCodes: ["AQ"] } };
+		for (const b of built.values()) {
+			const rules = b.byName("PublicApiWebAcl").inputs.rules as Any[];
+			expect(rules).toEqual(webAclRules(publicApiNames("ledgermath", STAGE).webAcl));
+			const refusals = freePlanRefusals(rules);
+			if (refusals.length > 0) throw new Error(freePlanMessage(refusals));
+			// The total rule's scope-down, as the provider is given it: every request, by geographic matches alone.
+			expect(rules.find((rule) => rule.name === TOTAL_RULE)?.statement.rateBasedStatement.scopeDownStatement).toEqual({
+				orStatement: { statements: [fromAntarctica, { notStatement: { statements: [fromAntarctica] } }] },
+			});
+		}
 	});
 
 	test("the plan subscription names the distribution and the web ACL; the watch is given the distribution and only its permissions", () => {
