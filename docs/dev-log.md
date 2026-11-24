@@ -1521,4 +1521,27 @@ A migrated benchmark is done only when **all** of these hold:
   the alarm treats every state but `off` alike (an unset `API_BUCKET` is raised), and
   `tests/alarm-telegram.test.ts` already gives its child `off`. GitHub Actions is off for
   the repository, so the checks of `check.yml` ran on the dev box.
+- **2026-11-24** — **The README says what turning the public API on showed.** `dark` was
+  deployed again at 17:42 UTC (`8c6923a`, #86) and `on` at 17:51 UTC (`d38e76d`, #85); the
+  data API has been public at `https://api.ledgermath.com` since. A new paragraph, "Seen
+  when it was turned on", takes from "Not verified yet" what the deploys settled: Cloud
+  Control creates the subscription (33 seconds, `FREE`, `ACTIVE`); the Free plan takes the
+  distribution as built, the managed response-headers policy included; the `on` deploy's
+  guard, its 170-second update and each bucket's one statement; the watch's runs in both
+  states; the name resolving once enabled; step 5's checks from outside; the lookup tool
+  and the trial of #47 against the live API. Still not verified: the viewer-response
+  function on a `304`, the watch's disabling, whether a distribution update moves the plan
+  out of `ACTIVE` for a while, the rate limits under load, and the plan's emails and
+  overage. **Step 5's commands now show what they say.** Two headers come only when asked
+  as a browser asks: `access-control-allow-origin: *` only to a request that carries
+  `Origin` (the evidence's function adds it regardless), and `content-encoding: gzip` with
+  a weak `etag` to a `GET` that sends `accept-encoding: gzip`, a `HEAD` showing them only
+  once a compressed copy is cached. So the CORS check sends `-H 'Origin: …'`, the
+  compression check is `curl -sS -o /dev/null -D -`, and the headers paragraph says the
+  same; ADR-0031's decision 4 records it. **Also seen, while checking the commands**: a Run
+  file asked for with `Origin`, on a miss at the edge, came with the Runs bucket's own CORS
+  headers (`access-control-expose-headers: ETag` among them; the bucket has SST's default
+  CORS, the API bucket none), so the readers' note no longer says the `ETag` can never be
+  read across origins. "Data for a trial" and the layout table no longer say the API is not
+  served. Documentation only: no code, test or infrastructure changed.
 - _(agents: append your entry here, one per merged benchmark)_

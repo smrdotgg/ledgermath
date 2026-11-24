@@ -42,7 +42,7 @@ as the base the build started from (last section).
 | `skills/ledgermath/SKILL.md` | The agent skill: napkin math from LedgerMath's numbers, every number cited or marked as an assumption |
 | `scripts/lookup.ts` | The lookup tool the skill uses, reading the data API: the Series, one Series' percentiles and Runs, prices by word, each number beside its citation (`scripts/lib/lookup.ts`, `scripts/lib/citation.ts`, `scripts/lib/ledger-data.ts`; what each benchmark measures, `scripts/lib/benchmark-notes.ts`) |
 | `scripts/check-answer.ts` | Checks an answer written with the skill: every number from the question, cited, an assumption, recomputed arithmetic, or a repeat; every citation resolving in the data (`scripts/lib/answer-check.ts`, `scripts/lib/quantity.ts`) |
-| `scripts/assemble-location.ts` | Puts together a directory the lookup tool reads, from the artifact `api` and a clone of the Runs repository: data for a trial while the API is not served |
+| `scripts/assemble-location.ts` | Puts together a directory the lookup tool reads, from the artifact `api` and a clone of the Runs repository: data for a trial from one run's files instead of the API |
 | `site/` | The placeholder website: one page, SolidJS 2, prerendered to static files (section "The website" below); `.github/workflows/site.yml` builds and checks it, and deploys it to Vercel (`site/deploy/`) at https://ledgermath.com |
 | `CONTRIBUTING.md` | How to add a benchmark in any language, a target, a Method version, and what a pull request says |
 | `LICENSE`, `NOTICE`, `THIRD-PARTY-NOTICES.md` | The code's licence (Apache-2.0), its notice, and what comes from other projects, with their licences (section "Licence" below) |
@@ -795,8 +795,10 @@ and **on** (`PUBLIC_API.state` in `infra/runs/public-blobs.ts`, which was `"off"
 `"dark"`, before it): deployed, the distribution is enabled, with its certificate, its
 `api.ledgermath.com` records, its web ACL and its Free plan, and serves the four served
 prefixes publicly, and each bucket's policy grants it `GetObject` under its served
-prefixes and nothing more ("Turning it on, on `production-runs`", below; what of `on` has
-been seen working is in "Seen on the first deploy" and "Not verified yet"). The file keeps the name of the
+prefixes and nothing more ("Turning it on, on `production-runs`", below). It has been
+public since 2026-11-24, 17:51 UTC: what the deploys showed is in "Seen on the first
+deploy" and "Seen when it was turned on", and what is still unseen in "Not verified yet",
+all below. The file keeps the name of the
 design it grew from, which served blobs alone at the distribution's `*.cloudfront.net`
 name ("What became of public blobs", below).
 
@@ -825,16 +827,22 @@ at the host's root, exactly as the tree's links already give them, and nothing e
 | `/boots/…` | the Runs bucket (`boots/`), boot summaries | `public, max-age=31536000, immutable`, from the function | `application/json`, from the function | `*` | yes, when asked |
 | `/blobs/sha256/…` | the Runs bucket (`blobs/sha256/`), blobs at `/blobs/sha256/<hex>` | `public, max-age=31536000, immutable`, from the function | as stored (`binary/octet-stream`) | `*` | no |
 
-Every response also carries the bucket's `ETag` (weak, `W/"…"`, when CloudFront compressed
-it: CloudFront turns a strong ETag weak when it compresses), `Last-Modified` and
-`Content-Length`. The AWS managed response-headers policy `CORS-and-SecurityHeadersPolicy`
-adds `Access-Control-Allow-Origin: *` and `X-Content-Type-Options: nosniff` (with
+Every response from a bucket also carries its `ETag` (weak, `W/"…"`, when CloudFront
+compressed it: CloudFront turns a strong ETag weak when it compresses), `Last-Modified`
+and, when it is not compressed, `Content-Length`. The AWS managed response-headers policy
+`CORS-and-SecurityHeadersPolicy` adds `X-Content-Type-Options: nosniff` (with
 `Referrer-Policy`, `Strict-Transport-Security`, `X-Frame-Options: SAMEORIGIN` and
-`X-XSS-Protection`) to every response, errors included; the evidence also gets
-`Content-Security-Policy: default-src 'none'; sandbox` from the function. "Compressed":
-CloudFront compresses JSON with gzip or Brotli for a reader that sends `Accept-Encoding`;
-the bytes a reader decodes are the stored ones, whose sha256 the tree gives. Blobs are
-never compressed, so the bytes served are the bytes their address hashes.
+`X-XSS-Protection`) to every response, errors included. It adds
+`Access-Control-Allow-Origin: *` only to a request that carries an `Origin` header, which
+is what a browser sends when a page of another site calls `fetch()`; then every response
+gets it, errors included. A request without `Origin`, such as a plain `curl`, does not get
+it from the policy (seen on 2026-11-24). The evidence's function adds it anyway, `Origin`
+or not, to every evidence response below 400, with `Content-Security-Policy: default-src
+'none'; sandbox`. "Compressed": CloudFront compresses JSON with gzip or Brotli for a `GET`
+that sends `Accept-Encoding`, and says so with `Content-Encoding` and `Vary:
+Accept-Encoding`; a `HEAD` shows them only once a compressed copy is already in the edge's
+cache. The bytes a reader decodes are the stored ones, whose sha256 the tree gives. Blobs
+are never compressed, so the bytes served are the bytes their address hashes.
 
 **Only the keys the project writes, and only at one host.** Under each prefix, only keys of
 the shapes the project writes there are served: the tree's kinds (`TREE_KINDS` in
@@ -882,10 +890,13 @@ A new kind of file, or a new shape of id, is served only once it is added there.
   fetched again at all.
 - **`GET` and `HEAD` only.** `OPTIONS` gets 403, so a browser's CORS preflight fails: a
   plain `fetch()`, with no custom request header, needs none and works from any origin. A
-  script on another origin cannot read the `ETag` header (it is not in
-  `Access-Control-Expose-Headers`), though the browser's own cache still uses it. Both are
-  the managed response-headers policy's: on the Free plan no custom one can be used, and
-  the managed ones that answer preflights or expose headers are not this one.
+  script on another origin should not count on reading the `ETag` header: the managed
+  policy does not put it in `Access-Control-Expose-Headers`, though the browser's own cache
+  still uses it. (A Run file, boot summary or blob sometimes comes with the Runs bucket's
+  own CORS headers, which do expose it: "Seen when it was turned on", below. A file of the
+  tree never does.) Both are the managed response-headers policy's: on the Free plan no
+  custom one can be used, and the managed ones that answer preflights or expose headers are
+  not this one.
 
 **Why these cache times**, held to ADR-0030's contract:
 
@@ -1313,7 +1324,8 @@ step each time.
    `api.ledgermath.com`, pointing at the distribution's `*.cloudfront.net` name. `dig +short
    api.ledgermath.com` gives nothing while the distribution is disabled, although the
    records are there (seen on 2026-11-24): CloudFront's addresses come only once it is
-   enabled (step 4, or 3).
+   enabled (step 4, or 3). On 2026-11-24 it gave three addresses a minute after the deploy
+   of `on`.
 3. Only if step 1 failed because AWS refused to subscribe a disabled distribution: set
    `state: "closed"` (and `RELEASED_STATE`), merge, deploy (the distribution is enabled, answering 404 to
    everything; with `plan: "code"` this deploy creates the subscription), and check the
@@ -1323,27 +1335,40 @@ step each time.
    stops if not; it checks once, so a plan cancelled after that is left to the watch. The
    distribution is enabled (or stays so), the request function takes the 404 function's
    place on the four served behaviours, and both bucket policies get their grant; it takes
-   a few minutes to reach every edge.
-5. Check, from anywhere, with no credentials:
+   a few minutes to reach every edge (the update took 170 seconds on 2026-11-24).
+5. Check, from anywhere, with no credentials. Two of the headers come only when the request
+   is made as a browser makes it, so two of the commands ask that way:
    - `curl -sSI https://api.ledgermath.com/v1/index.json`: 200, `content-type:
-     application/json`, `cache-control: public, max-age=300`,
-     `access-control-allow-origin: *`, an `etag`; with `-H 'accept-encoding: gzip'`,
-     `content-encoding: gzip` and a weak `etag`;
-   - the same for a Series file, and for a month file whose `sha256` (from its Series
-     file's `months`) is that of `curl -sS <its url> | sha256sum`;
+     application/json`, `cache-control: public, max-age=300`, an `etag`,
+     `x-content-type-options: nosniff`;
+   - `curl -sSI -H 'Origin: https://example.com' https://api.ledgermath.com/v1/index.json`:
+     the same, and `access-control-allow-origin: *`. The managed policy sends that header
+     only to a request that carries `Origin`, as a browser's `fetch()` from another site
+     does; without one it is absent, and that is not a fault;
+   - `curl -sS -o /dev/null -D - -H 'accept-encoding: gzip'
+     https://api.ledgermath.com/v1/index.json`: `content-encoding: gzip`, a weak `etag`
+     (`W/"…"`) and `vary: Accept-Encoding`. This is a `GET` that throws the body away and
+     prints the headers, not a `HEAD`: a `HEAD` gets no body, so CloudFront compresses
+     nothing for it, and shows these headers only once a compressed copy is already in the
+     edge's cache. The first `curl -sSI` with that header showed neither;
+   - the first command for a Series file, and for a month file whose `sha256` (from its
+     Series file's `months`) is that of `curl -sS <its url> | sha256sum`;
    - `curl -sSI` of a point's `evidence` and its `boot_summary`: 200, `content-type:
-     application/json`, `cache-control: public, max-age=31536000, immutable`; of
+     application/json`, `cache-control: public, max-age=31536000, immutable`,
+     `x-content-type-options: nosniff`, and `access-control-allow-origin: *` (the
+     function adds it, `Origin` or not); of
      `https://api.ledgermath.com/blobs/sha256/<hex>` for a blob a Run file names: 200, the
      same `cache-control`, `content-type: binary/octet-stream`, no `content-encoding`;
-   - 404 for `/`, `/source/<commit>.tar.gz` and `/logs/…` (a key the Runs bucket holds,
-     from `aws s3 ls`), and for `/v1/nothing.json` and `/runs/<a Run file's path>.bak`
-     (from the request function: no served shape); 403 from S3 for
-     `/v1/series/000000000000.json` (a served shape, no object); 403 for
+   - 404 for `/`, `/source/<commit>.tar.gz` and `/logs/…` (any key: the default
+     behaviour's function answers before a bucket is asked), and for `/v1/nothing.json`
+     and `/runs/<a Run file's path>.bak` (from the request function: no served shape); 403
+     from S3 for `/v1/series/000000000000.json` (a served shape, no object); 403 for
      `http://api.ledgermath.com/`;
    - 403 for `curl -sSI https://<publicApi.domainName>/v1/index.json`, the distribution's
      own name, and for `curl -sSI -H 'host: example.org' https://api.ledgermath.com/v1/index.json`
      (CloudFront may refuse the second itself, as no alternate name matches it);
-   - `curl -sSI -X OPTIONS https://api.ledgermath.com/v1/index.json`: 403.
+   - `curl -sSI -X OPTIONS https://api.ledgermath.com/v1/index.json` and the same with
+     `-X POST`: 403.
 
 With `plan: "console"` the deploy makes no subscription and prints the console steps
 instead, to take after step 1 (or 3): in the CloudFront console, signed in to the stage's
@@ -1409,31 +1434,60 @@ showed why and what the plan takes. Seen:
 - **`dig +short api.ledgermath.com` gives nothing while the distribution is disabled**,
   although the alias records are in the zone and point at it (step 2).
 
-**Not verified yet.** That Cloud Control creates the subscription once the web ACL is
-eligible (the type is registered, `FULLY_MUTABLE`, and its list handler answers in both
-accounts, read-only, on 2026-11-14; the deploy of 2026-11-24 reached Cloud Control, which
-passed on the plan's refusal of the web ACL); that the Free plan takes the managed
-response-headers policy and a distribution of two origins, five behaviours and an alternate
-domain name under its one apex domain (AWS's feature table allows managed policies, 5
-behaviours and one apex domain per plan, and the refusal of 2026-11-24 named the web ACL
-alone, which suggests the distribution is eligible but does not show it; one report says
-the console refused a response-headers policy, likely a custom one: if AWS refuses the plan
-over it, the subscription fails while the distribution is still disabled; drop
-`responseHeadersPolicyId` in `distributionArgs`, and the viewer-response function still
-gives the evidence CORS and `nosniff`, though the tree would then lose
-`Access-Control-Allow-Origin`, and the evidence function would have to be put on `/v1/`
-too); what the functions do with real requests at CloudFront's edges (the tests run their
-code, not CloudFront); that CloudFront runs the viewer-response function for a `304` too,
+**Seen when it was turned on, 2026-11-24.** `dark` was deployed again at 17:42 UTC
+(`8c6923a`, #86), with the total rule's new scope-down, and `on` at 17:51 UTC (`d38e76d`,
+#85). The data API has been public at `https://api.ledgermath.com` since then. Seen:
+
+- **Cloud Control creates the subscription.** With the web ACL eligible, the deploy of
+  `dark` created `PublicApiFreePlan` (`aws:cloudcontrol:Resource`,
+  `AWS::PricingPlanManager::Subscription`) in 33 seconds. `aws pricing-plan-manager
+  list-subscriptions` showed it tier `FREE`, status `ACTIVE`, covering the distribution and
+  the web ACL.
+- **The Free plan takes the distribution as built**: two origins, five behaviours, the
+  alternate name `api.ledgermath.com`, the managed response-headers policy and the Origin
+  Access Control. Nothing had to be dropped.
+- **The deploy of `on`.** The guard saw the plan `ACTIVE` and allowed it. The
+  distribution's update took 170 seconds. Each bucket's policy got one statement, `Sid`
+  `PublicApiThroughCloudFront`: `s3:GetObject` for `cloudfront.amazonaws.com`, with
+  `AWS:SourceArn` this distribution, on `v1/*` in the API bucket and on `runs/*`, `boots/*`
+  and `blobs/sha256/*` in the Runs bucket.
+- **The watch runs every five minutes.** While `dark`, it logged no action, "the
+  distribution is disabled (Deployed)". After `on`, no action, "the FREE plan ... is
+  ACTIVE".
+- **The name resolves once the distribution is enabled.** `dig +short api.ledgermath.com`
+  gave three addresses a minute after the deploy of `on`, and nothing while the
+  distribution was disabled.
+- **Step 5's checks pass from outside, with no credentials**: every answer and header the
+  step lists. So the functions, the grants and the one host work at CloudFront's edges as
+  the tests say they do. Two headers came only when asked as a browser asks, and step 5's
+  commands were corrected for them: `access-control-allow-origin: *` comes from the managed
+  policy only to a request that carries `Origin`; and `content-encoding: gzip`, with a weak
+  `etag` and `vary: Accept-Encoding`, comes to a `GET` with `accept-encoding: gzip`, while
+  the first `curl -sSI` with that header showed neither.
+- **The Runs bucket answers CORS itself.** A Run file asked for with an `Origin` header
+  came, on a miss at the edge, with S3's own `access-control-allow-methods: POST, GET,
+  HEAD, DELETE, PUT`, `access-control-expose-headers: ETag` and `access-control-max-age:
+  0`, from the Runs bucket's CORS configuration (SST's default for a bucket; the API bucket
+  has none). A copy the edge had cached from a request without `Origin` came without them.
+  They change nothing that is served: the distribution still takes only `GET` and `HEAD`.
+- **The first reader works against it.** With no local data, `bun scripts/lookup.ts
+  about` and `show` read `https://api.ledgermath.com`, and the six answers of the trial of
+  #47 pass `scripts/check-answer.ts` against it.
+
+**Not verified yet.** That CloudFront runs the viewer-response function for a `304` too,
 so a revalidated Run file keeps its `cache-control` (AWS documents only that it does not
 for 400 and above); that `cloudfront:UpdateDistribution` alone lets the watch disable a
 distribution with a web ACL (the Service Authorization Reference lists no other dependency
-for it); whether an ordinary update of the distribution's configuration, such as the deploy
-of `on` itself, moves its subscription out of `ACTIVE` for a while (AWS documents
-`SYNC_IN_PROGRESS` for changes to the subscription, not to the distribution; if an update
-does it too, the watch disables a distribution it finds in that state, right after a deploy
-of `on` if that is when, and it takes a `dark` deploy to recover); the watch's own
-behaviour against AWS; and everything about `on`: the grants, the served answers and
-headers of step 5, and the plan's limits and emails under real traffic.
+for it); the rest of the watch's behaviour against AWS, since it has had nothing to
+disable: its tag, its retries, its disabling; whether an ordinary update of the
+distribution's configuration, such as the deploy of `on` itself, moves its subscription
+out of `ACTIVE` for a while (AWS documents `SYNC_IN_PROGRESS` for changes to the
+subscription, not to the distribution; the watch's first run after the deploy of `on`
+found the plan `ACTIVE`, which shows it was not out of it then, not that it never leaves
+it; if an update does it, the watch disables a distribution it finds in that state, and it
+takes a `dark` deploy to recover); the rate limits under real load; and the plan under
+real traffic: its emails at 50%, 80% and 100%, and what AWS does when the allowance is
+exceeded.
 
 **Changing or cancelling the plan: deploy `dark` first.** The deploy and the watch count a
 plan only while its status is `ACTIVE`. While AWS applies a change to a subscription it
@@ -2613,10 +2667,12 @@ above, every way out of the location, the limits against `CEILINGS`, and that ev
 
 ### Data for a trial
 
-The skill's trial (#47) gives fresh agents the skill and three questions. Until the API is
-served, they get a directory instead: the tree the latest run of the `runs` workflow kept
-(the artifact `api`, 7 days) and the Run files and boot summaries it links, from a clone of
-the Runs repository. `scripts/assemble-location.ts` puts it together, reading it as the
+The skill's trial (#47) gives fresh agents the skill and three questions. Since
+2026-11-24 the API is served, and the tools read `https://api.ledgermath.com` when given
+no location ("The public data API"). Before that, agents got a directory instead, and a
+trial can still use one, to pin its data to one run: the tree the latest run of the
+`runs` workflow kept (the artifact `api`, 7 days) and the Run files and boot summaries it
+links, from a clone of the Runs repository. `scripts/assemble-location.ts` puts it together, reading it as the
 tools do (every file the table of contents lists, each price file as `prices` reads it,
 every month file's sha256, every Run file's sha256), and copies nothing until all of it
 holds; the same inputs give the same directory.
