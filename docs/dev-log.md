@@ -1480,4 +1480,29 @@ A migrated benchmark is done only when **all** of these hold:
   suite, so it did not see this. The child now gets its fixture's state, `off`, through
   `tests/rehearse-switch.ts`. GitHub Actions is off for the repository, so the checks of
   `check.yml` ran on the dev box.
+- **2026-11-24** — **The Free plan refused the public API's web ACL, and the total rule
+  now has a scope-down it accepts.** The first deploy of `dark` to `production-runs`
+  (`a2b2b68`, 17:10 UTC) made everything but the subscription, which failed: the web ACL
+  was "not eligible for this subscription tier". A throwaway web ACL and disabled
+  distribution in the development account showed why: the plan gates WAF's features beyond
+  AWS's table, and refused the total rule's scope-down, a byte match on the URI path
+  (`WAFFeatureNotIncludedInPricingPlanException`, "String match statement", `PRO`; a size
+  constraint likewise), while it accepted the same rule scoped down by "from Antarctica, or
+  not from Antarctica", a geographic match and its negation, which matches every request.
+  That is the rule now (`everyRequest`; `TOTAL_RATE_LIMIT.pathPrefix` is gone); its limit,
+  window, aggregation, action, name and priority are unchanged. It also showed that AWS
+  subscribes a disabled distribution (so `closed` is not needed for that); the deploy
+  showed that the guard reads the stage's state under SST and that ACM issues the
+  certificate by the record in the delegated zone. The README's "Not verified" paragraph is now "Seen on the first deploy"
+  and "Not verified yet". **A test now refuses what the plan has not been seen to accept**
+  (`tests/free-plan-waf.ts`): every statement of every rule, nested ones included, must be
+  one of the two managed groups, a rate-based statement by `IP` or `CONSTANT`, a geographic
+  match, Or or Not, with the fields seen; actions a plain block or no override; at most 5
+  rules. It fails on `a2b2b68`, naming the byte match; `tests/public-blobs.test.ts` runs it
+  on `webAclRules` and `tests/public-api-graph.test.ts` on the web ACL's inputs as the
+  stack builds them. The installed provider (`@pulumi/aws` 7.20.0) allows exactly this
+  depth: its schema, dumped locally with `pulumi-resource-aws -get-provider-info`, lets a
+  scope-down's Or hold a Not and the Not only a plain statement. `PUBLIC_API` stays `dark`,
+  `plan: "code"`. No AWS call was made for this change; the checks of `check.yml` ran on the
+  dev box.
 - _(agents: append your entry here, one per merged benchmark)_

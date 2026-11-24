@@ -1016,12 +1016,18 @@ for), evaluated in this order after the two managed rule groups:
    can spread across many addresses; WAF counts each on its own.
 2. **A limit on all requests together** (the total limit): 6,000 in any 5 minutes, 20 a
    second, counted from every address as one (aggregation `CONSTANT`, "count all", which
-   needs a scope-down statement: here, URI paths that start with `/`, which is every path).
-   Every request that can reach a bucket (the tree, Run files, boot summaries, blobs) is
-   counted, so none reaches S3 uncounted; so are the ones CloudFront answers from its cache,
-   and the 404s the function answers, since WAF sees a request before either. In the design
-   this grew from, it counted `/blobs/` alone, the only path that reached a bucket; now four
-   prefixes do, and a 403 for a missing key is never cached, so it counts them all.
+   needs a scope-down statement: here, one that matches every request, "from Antarctica, or
+   not from Antarctica", a geographic match and its negation, which together leave nothing
+   out, a request whose country WAF cannot tell included). The odd shape is the Free plan's
+   doing: it allows no string match, size constraint or regular expression in a rule, so
+   "every path" cannot be written as a match on the path, which is how the rule was first
+   built and what the plan refused on the first deploy ("Seen on the first deploy", below;
+   `everyRequest` in `infra/runs/public-blobs.ts`). Every request that can reach a bucket
+   (the tree, Run files, boot summaries, blobs) is counted, so none reaches S3 uncounted; so
+   are the ones CloudFront answers from its cache, and the 404s the function answers, since
+   WAF sees a request before either. In the design this grew from, it counted `/blobs/`
+   alone, the only path that reached a bucket; now four prefixes do, and a 403 for a
+   missing key is never cached, so it counts them all.
 
    *What it is.* A rate limit that AWS enforces approximately, on every request, those that
    can reach a bucket among them. At its rate, all month, 6,000 × 288 × 31 = 53,568,000
@@ -1049,9 +1055,13 @@ its own rule without using up the total. Beside them, two free AWS managed rule 
 `AWSManagedRulesAmazonIpReputationList` and `AWSManagedRulesKnownBadInputsRuleSet`: 4
 rules of the Free plan's 5. `AWSManagedRulesCommonRuleSet`, the console's third default,
 is left out: it guards applications that parse what they are sent, and it blocks requests
-without a `User-Agent`. AWS accepted the four rules as written (`aws wafv2
-check-capacity`, read-only, on 2026-11-14: 231 capacity units), which says they are valid
-rules, not that the Free plan takes them ("Not verified", below).
+without a `User-Agent`. The Free plan takes these four rules as written: on 2026-11-24 a
+web ACL on the plan held all four, 231 capacity units, and the plan stayed `ACTIVE` ("Seen
+on the first deploy", below). It counts each managed group as one of its 5 rules, though
+each holds several. `tests/free-plan-waf.ts` holds every statement of every rule, nested
+ones included, to what the plan was seen to accept (the two managed groups, rate-based
+rules by address or counting all, geographic matches, Or, Not), and at most 5 rules; a new
+kind of statement must first be shown to be accepted by a web ACL on the plan.
 
 **What it still costs.** S3 bills a GET for every request that misses CloudFront's cache,
 $0.0004 per 1,000 in us-east-2 (AWS's Price List API, publication of 2026-11-19: $0.004 per
@@ -1296,7 +1306,12 @@ step each time.
    us-east-1 --profile tabot-production --certificate-arn <publicApi.certificateArn>`
    says `ISSUED`; `aws cloudfront get-distribution --profile tabot-production --id
    <publicApi.distributionId>` says `Enabled` false, `Status` `Deployed`, alias
-   `api.ledgermath.com`; `dig +short api.ledgermath.com` gives CloudFront's addresses.
+   `api.ledgermath.com`; `aws route53 list-resource-record-sets --profile tabot-production
+   --hosted-zone-id Z03039811C7UWLHZE7CZQ` lists the `A` and `AAAA` alias records of
+   `api.ledgermath.com`, pointing at the distribution's `*.cloudfront.net` name. `dig +short
+   api.ledgermath.com` gives nothing while the distribution is disabled, although the
+   records are there (seen on 2026-11-24): CloudFront's addresses come only once it is
+   enabled (step 4, or 3).
 3. Only if step 1 failed because AWS refused to subscribe a disabled distribution: set
    `state: "closed"` (and `RELEASED_STATE`), merge, deploy (the distribution is enabled, answering 404 to
    everything; with `plan: "code"` this deploy creates the subscription), and check the
@@ -1351,36 +1366,72 @@ distribution still uncovered once its 60 minutes are up, by its next run and wit
 propagation after that, if CloudFront answers it (above); there is no fixed maximum for
 what that window costs.
 
-**Not verified, because nothing has been deployed.** That the program, run by SST, sees
-`PULUMI_BACKEND_URL` and the stage's state at the path the guard expects (seen with Pulumi
-3.215, the version SST 4.17 runs, and a local file backend, not yet under SST; if not,
-every deploy of `production-runs`, `off` included, stops with "the stage's state could not
-be read", and `sst diff`, which only warns, shows it first); that Cloud Control creates the
-subscription (the type is registered, `FULLY_MUTABLE`, and its list handler answers in both
-accounts, read-only, on 2026-11-14); that AWS subscribes a disabled distribution (if not,
-`closed`); that the Free plan takes the managed response-headers policy (AWS's feature
-table allows managed ones; one report says the console refused a response-headers policy,
-likely a custom one: if AWS refuses the plan over it, the subscription fails while the
-distribution is still disabled; drop `responseHeadersPolicyId` in `distributionArgs`, and
-the viewer-response function still gives the evidence CORS and `nosniff`, though the tree
-would then lose `Access-Control-Allow-Origin`, and the evidence function would have to be
-put on `/v1/` too); that the Free plan takes a distribution of two origins, five
-behaviours and an alternate domain name under its one apex domain (AWS's feature table
-says 5 behaviours and one apex domain per plan); that ACM issues the certificate by the
-record in the delegated zone (the zone and its `CAA` record were read, read-only, on
-2026-11-19); that CloudFront runs the viewer-response function for a `304` too, so a
-revalidated Run file keeps its `cache-control` (AWS documents only that it does not for
-400 and above); that the Free plan
-counts each managed rule group as one of its 5 rules, and takes a string match on the URI
-path in a scope-down (regular expressions are a Business feature; a string match is not
-listed as a paid one); that `cloudfront:UpdateDistribution` alone lets the watch disable a
+**Seen on the first deploy, 2026-11-24.** `bunx sst deploy --stage production-runs` of
+`dark` (`a2b2b68`) made everything but the Free plan subscription, and a throwaway web ACL
+and disabled distribution in the development account, tried by hand with the AWS CLI,
+showed why and what the plan takes. Seen:
+
+- **The program, run by SST, reads the stage's state where the guard expects it.** `sst
+  diff` and `sst deploy` ran the guard with no complaint; it read the stage's state and
+  reported that no distribution was deployed before the deploy.
+- **ACM issued the certificate by the record in the delegated zone**, inside the deploy.
+- **The deploy made the rest**: the distribution, disabled, `Deployed`, with the comment
+  `state=dark plan=code`; the web ACL with its four rules; the three functions; the Origin
+  Access Control; the `A` and `AAAA` alias records. Nothing was public.
+- **The Free plan gates WAF's features, and the total rule's first scope-down was one it
+  refuses.** The subscription failed: `InvalidRequest: ... The following resources are not
+  eligible for this subscription tier:` the web ACL. On a web ACL already on the plan, in
+  the development account, WAF refused the total rule as built, a byte match on the URI
+  path, with `WAFFeatureNotIncludedInPricingPlanException`, `DisallowedFeatures`: "String
+  match statement", `RequiredPricingPlan` `PRO`; a size constraint was refused the same way
+  ("Size constraint statement", `PRO`). It accepted the rate-based rule itself, its
+  `CONSTANT` aggregation included, with a scope-down of geographic matches: the total rule
+  as it is now. With it the web ACL held all four rules, 231 capacity units, and the plan
+  stayed `ACTIVE`, so the plan counts each managed group as one of its 5 rules. AWS's own
+  table (CloudFront Developer Guide, "flat-rate pricing plans") lists for Free 5 WAF rules
+  and "IP-based rate limiting", for Pro header-based filtering, custom responses and WAF
+  logs, and for Business regular expressions, challenges and Bot Control; it does not list
+  string matches, which is why the first version was thought to be allowed. How it was
+  tried, and how to try a new kind of statement before a rule uses it: in the development
+  account, make a web ACL (scope `CLOUDFRONT`, us-east-1) and a disabled distribution that
+  names it, subscribe the two (`aws pricing-plan-manager create-subscription --region
+  us-east-1 --plan-family CloudFront --plan-tier FREE --resource-arns <distribution> <web
+  ACL>`), then `aws wafv2 update-web-acl` it with the rule: WAF either takes it or names
+  each feature the plan disallows and the plan it needs. Afterwards, cancel the
+  subscription and delete both.
+- **AWS subscribes a disabled distribution to the Free plan.** `aws pricing-plan-manager
+  create-subscription --plan-family CloudFront --plan-tier FREE` succeeded for a disabled,
+  `Deployed` distribution whose web ACL had the two managed groups and the per-address
+  limit: `SYNC_IN_PROGRESS`, then `ACTIVE` within half a minute. So `closed` is not needed
+  for that reason.
+- **`dig +short api.ledgermath.com` gives nothing while the distribution is disabled**,
+  although the alias records are in the zone and point at it (step 2).
+
+**Not verified yet.** That Cloud Control creates the subscription once the web ACL is
+eligible (the type is registered, `FULLY_MUTABLE`, and its list handler answers in both
+accounts, read-only, on 2026-11-14; the deploy of 2026-11-24 reached Cloud Control, which
+passed on the plan's refusal of the web ACL); that the Free plan takes the managed
+response-headers policy and a distribution of two origins, five behaviours and an alternate
+domain name under its one apex domain (AWS's feature table allows managed policies, 5
+behaviours and one apex domain per plan, and the refusal of 2026-11-24 named the web ACL
+alone, which suggests the distribution is eligible but does not show it; one report says
+the console refused a response-headers policy, likely a custom one: if AWS refuses the plan
+over it, the subscription fails while the distribution is still disabled; drop
+`responseHeadersPolicyId` in `distributionArgs`, and the viewer-response function still
+gives the evidence CORS and `nosniff`, though the tree would then lose
+`Access-Control-Allow-Origin`, and the evidence function would have to be put on `/v1/`
+too); what the functions do with real requests at CloudFront's edges (the tests run their
+code, not CloudFront); that CloudFront runs the viewer-response function for a `304` too,
+so a revalidated Run file keeps its `cache-control` (AWS documents only that it does not
+for 400 and above); that `cloudfront:UpdateDistribution` alone lets the watch disable a
 distribution with a web ACL (the Service Authorization Reference lists no other dependency
 for it); whether an ordinary update of the distribution's configuration, such as the deploy
 of `on` itself, moves its subscription out of `ACTIVE` for a while (AWS documents
 `SYNC_IN_PROGRESS` for changes to the subscription, not to the distribution; if an update
 does it too, the watch disables a distribution it finds in that state, right after a deploy
-of `on` if that is when, and it takes a `dark` deploy to recover); and the watch's own
-behaviour against AWS.
+of `on` if that is when, and it takes a `dark` deploy to recover); the watch's own
+behaviour against AWS; and everything about `on`: the grants, the served answers and
+headers of step 5, and the plan's limits and emails under real traffic.
 
 **Changing or cancelling the plan: deploy `dark` first.** The deploy and the watch count a
 plan only while its status is `ACTIVE`. While AWS applies a change to a subscription it
