@@ -2479,14 +2479,19 @@ needs: `about` and `series` the table of contents and the list of Series; `show`
 the Series' file, and its month files only for Runs older than the 12 newest it holds
 (newest month first); `prices` the table of contents and one price file. It derives no
 number of its own and reads no clock, and keeps the contract the tree gives a reader: a
-`layout` it does not know is refused, plainly, before anything else is read; a month file
-must have the sha256 and size its Series file lists, and on a mismatch, or a month file
-missing (404, or 403 as S3 answers behind the API), it reads the Series file again, then
-the month file, three times in all, two seconds apart; while they still differ it uses
-neither and says, in words, that the data are being updated and to try again in a few
-minutes (in a directory: that it holds two builds). Every request has 20 seconds, start to
-last byte, and every file the size ceiling the tree's check gives its kind (`CEILINGS`; a
-Run file 1 MB); nothing else is retried (`scripts/lib/ledger-data.ts`).
+month file must have the sha256 and size its Series file lists, whether just read or held
+from an earlier read, and on a mismatch, or a month file missing (404, or 403 as S3
+answers behind the API), it reads the Series file again, then the month file, three times
+in all, two seconds apart; while they still differ it uses neither and says, in words,
+that the data are being updated and to try again in a few minutes (in a directory: that it
+holds two builds). A citation checked against month files is held to the Series file that
+came back with them. `layout` is read and shown by `about`, never refused: by the tree's
+own words a new layout changes how the files are written, not what a reader reads. Every
+request has 20 seconds, start to last byte, and every file the size ceiling the tree's
+check gives its kind (`CEILINGS`; a Run file 1 MB); nothing else is retried. Nothing outside
+the location is read: a link is a plain path of safe characters below the tree's address,
+the address it resolves to keeps the location's origin and path, a redirect is refused,
+and in a directory no symbolic link may lead out of it (`scripts/lib/ledger-data.ts`).
 
 ```bash
 bun scripts/lookup.ts about                             # what the data hold
@@ -2501,8 +2506,9 @@ bun scripts/lookup.ts --data DIR about                  # the same, from a direc
 Every number the tool prints has its citation beside it, in a syntax the checker resolves
 (`scripts/lib/citation.ts`) in the same tree: `[lm:series/<id>/<number>/<p5|p50|p95|count>@v1,<moment>]` for
 a Series' percentile or its number of counted Runs (in its Series file, under `series_v1`), with the Run files behind it linked as
-`runs/<yyyy>/<mm>/<dd>/<id>.json` (or that file's address in the data API or the Runs repository; a
-link must be a Run of a Series the answer cites, with the bytes its point's `sha256` gives); `[lm:prices/<yyyy>/<mm>/<dd>/aws.json#<sku>/<rate code>]`
+`runs/<yyyy>/<mm>/<dd>/<id>.json` (or that file's address in the Runs repository, or in the data API as its point's
+`evidence` gives it; a link is read whole, so nothing may follow `.json` but a sentence's punctuation, and it must be a
+Run of a Series the answer cites, whose file, read at its point's `evidence`, has the bytes its `sha256` gives); `[lm:prices/<yyyy>/<mm>/<dd>/aws.json#<sku>/<rate code>]`
 for a price, the file, SKU and rate code of "Citing a price" above (`/beginRange` or
 `/endRange` after it for its tier's bounds); `[assumption: <where it comes from>]` for
 anything else. A figure across a Series' requests is
@@ -2544,8 +2550,9 @@ citation names (a value exactly halfway at six digits is printed with a digit mo
 
 `tests/lookup-tree.test.ts` holds the tools to the tree: built by the generator from the
 golden test's fixture, read from a directory and through an injected `fetch` (no test asks
-the network), it checks each command's answers, how many files each reads, every break of
-the contract above, the limits against `CEILINGS`, and that every command line
+the network; one asks a server on the machine itself, to see the tools' own fetch refuse a
+redirect), it checks each command's answers, how many files each reads, every break of the contract
+above, every way out of the location, the limits against `CEILINGS`, and that every command line
 `skills/ledgermath/SKILL.md` shows runs.
 
 ### Data for a trial
@@ -2554,8 +2561,9 @@ The skill's trial (#47) gives fresh agents the skill and three questions. Until 
 served, they get a directory instead: the tree the latest run of the `runs` workflow kept
 (the artifact `api`, 7 days) and the Run files and boot summaries it links, from a clone of
 the Runs repository. `scripts/assemble-location.ts` puts it together, reading it as the
-tools do (a known layout, every month file's sha256, every Run file's sha256), and copies
-nothing until all of it holds; the same inputs give the same directory.
+tools do (every file the table of contents lists, each price file as `prices` reads it,
+every month file's sha256, every Run file's sha256), and copies nothing until all of it
+holds; the same inputs give the same directory.
 
 ```bash
 cd <an empty working directory, on a disk with room for about 200 MB>
