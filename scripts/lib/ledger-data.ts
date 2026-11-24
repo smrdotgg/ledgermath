@@ -682,19 +682,34 @@ export function requestPoints(months: readonly TreeMonth[]): TreeRequestsPoint[]
  * file's newest points first, then in the month its path names, then in its
  * other months, newest first. Null when it is a Run of none of them.
  */
-export async function findRun(data: LedgerData, ids: readonly string[], path: string): Promise<{ series: string; point: TreeSeriesPoint } | null> {
+export function findRun(data: LedgerData, ids: readonly string[], path: string): Promise<{ series: string; point: TreeSeriesPoint } | null> {
+	return findPoint(data, ids, (point) => point.path === path, pathMonth(path));
+}
+
+/**
+ * The first point of the Series given that `matches`: in each Series file's
+ * newest points first, then (unless `newestOnly`) in the month `named`, then
+ * in the other months, newest first. Null when none does.
+ */
+export async function findPoint(
+	data: LedgerData,
+	ids: readonly string[],
+	matches: (point: TreeSeriesPoint) => boolean,
+	named: string | null,
+	newestOnly = false,
+): Promise<{ series: string; point: TreeSeriesPoint } | null> {
 	for (const id of ids) {
 		const series = await data.series(id);
-		const newest = series?.derivations.series_v1?.newest_points.find((point) => point.path === path);
+		const newest = series?.derivations.series_v1?.newest_points.find(matches);
 		if (newest !== undefined) return { series: id, point: newest };
 	}
-	const named = pathMonth(path);
+	if (newestOnly) return null;
 	for (const pass of ["named", "others"] as const) {
 		for (const id of ids) {
 			const loaded = await data.seriesWithMonths(id, (series) =>
 				series.months.filter((entry) => (pass === "named" ? entry.month === named : entry.month !== named)).sort((a, b) => (a.month < b.month ? 1 : -1)),
 			);
-			const point = loaded === null ? undefined : seriesPoints(loaded.months).find((p) => p.path === path);
+			const point = loaded === null ? undefined : seriesPoints(loaded.months).find(matches);
 			if (point !== undefined) return { series: id, point };
 		}
 	}

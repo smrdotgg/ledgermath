@@ -574,6 +574,41 @@ describe("a Run link is read whole, and at its point's evidence link", () => {
 			const report = await checkAnswer(answerWith(link), directory);
 			expect(report.problems.map((p) => p.message), link).toContain(`Run link: ${link} is not a Run file's address: it goes on after ${run()} (${after})`);
 		}
+		// The destination of a Markdown link or an autolink is the link a reader follows, to its last character: a period in it is part of it.
+		// Written bare in prose, a sentence's period after it is not.
+		for (const written of [`[source](${DEFAULT_LOCATION}/${run()}.)`, `<${DEFAULT_LOCATION}/${run()}.>`, `[source](${run()}.)`]) {
+			const destination = written.slice(written.indexOf(written.startsWith("<") ? "<" : "(") + 1, -1);
+			const report = await checkAnswer(answerWith(written), directory);
+			expect(report.problems.map((p) => p.message), written).toContain(`Run link: ${destination} is not a Run file's address: it goes on after ${run()} (.)`);
+		}
+		for (const written of [`(see ${run()}.)`, `${DEFAULT_LOCATION}/${run()}.`]) expect((await checkAnswer(answerWith(written), directory)).problems, written).toEqual([]);
+	});
+
+	test("the evidence link show prints is a link to its Run whatever its path looks like, at a web address and in a directory", async () => {
+		// A tree whose evidence is served at evidence/<yyyy>/<mm>/<dd>/<id>.json: no runs/ in the address.
+		const renamed = (path: string): string => path.replace(/^runs\//, "evidence/");
+		const moved = (text: string): string => text.replaceAll(`${DEFAULT_LOCATION}/runs/`, `${DEFAULT_LOCATION}/evidence/`);
+		const MIRROR = "https://mirror.invalid";
+		const fetch: Fetch = async (url) => {
+			const path = url.slice(MIRROR.length + 1);
+			if (path.startsWith("runs/")) return new Response("", { status: 404 });
+			if (path === seriesPath(fixture.memory)) return new Response(moved(new TextDecoder().decode(bytesOf(path))));
+			return new Response(new Uint8Array(readFileSync(join(fixture.runs, path.replace(/^evidence\//, "runs/")))));
+		};
+		const evidence = (data: LedgerData) => showSeries(data, [fixture.memory], 1).then((shown) => (shown.found === "one" ? shown.series.runs_list[0] : undefined));
+		const web = await loadLedger(openLocation(MIRROR, { fetch }));
+		const printed = await evidence(web);
+		expect(printed?.link).toBe(`${MIRROR}/${renamed(run())}`);
+		for (const link of [printed?.link as string, `${DEFAULT_LOCATION}/${renamed(run())}`, `[the Run](${printed?.link}).`, run()]) {
+			expect((await checkAnswer(answerWith(link), web)).problems, link).toEqual([]);
+		}
+		// In a directory, show prints the path, and the checker reads it as that Run, with no number in it.
+		const local = await loadLedger(openLocation(copyWith({ [seriesPath(fixture.memory)]: moved(new TextDecoder().decode(bytesOf(seriesPath(fixture.memory)))), [renamed(run())]: readFileSync(join(fixture.runs, run())) })));
+		const there = await evidence(local);
+		expect(there?.link).toBe(renamed(run()));
+		const report = await checkAnswer(answerWith(there?.link as string), local);
+		expect(report.problems).toEqual([]);
+		expect(report.run_links.map((l) => [l.link, l.path])).toEqual([[renamed(run()), run()]]);
 	});
 
 	test("when the tree moves a Run's evidence, show prints where it is, and the checker reads it there", async () => {

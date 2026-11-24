@@ -67,7 +67,7 @@
 import { createHash } from "node:crypto";
 
 import { citationMismatch, NUMBER_UNIT, type Resolved, resolveCitation, RUN_PATH, seriesMoment } from "./citation";
-import { findRun, type LedgerData, LIMITS } from "./ledger-data";
+import { findPoint, findRun, type LedgerData, LIMITS, type TreeSeriesPoint } from "./ledger-data";
 import { agrees, type Dims, dimsWords, multiply, type Quantity, quantities, quantityWords, readable, sameDims } from "./quantity";
 import { RUNS_REPOSITORY } from "./runs-repository";
 
@@ -262,6 +262,12 @@ function findMarkers(text: string): Marker[] {
 		markers.push({ start, end, kind: "assumption", text: joined, inside: source, malformed });
 	}
 	return markers;
+}
+
+/** Whether a link starting at `start` is the destination of a Markdown link, [text](here), or of an autolink, <here>: then it is kept exactly. */
+function explicitLink(text: string, start: number): boolean {
+	const opener = text.charAt(start - 1);
+	return opener === "<" || (opener === "(" && text.charAt(start - 2) === "]");
 }
 
 /** The start of the token a Run path is written in: from the last space, (, [, <, quote, backtick or * (bold) before it. */
@@ -631,6 +637,8 @@ export async function checkAnswer(answer: string, data: LedgerData, question = "
 	const runLinks: CheckReport["run_links"] = [];
 	/** The Run links written as an address other than the Runs repository's: each must be its point's evidence link, rebased on the location. */
 	const addressed = new Set<CheckReport["run_links"][number]>();
+	/** Addresses and paths of no Run path's shape: each a Run link when it is a cited point's evidence link, or that link where these data were read. */
+	const evidenceLinks: Array<{ line: number; link: string; address: boolean }> = [];
 	const all: Num[] = [];
 	const steps: Step[] = [];
 	const citedSeries = new Map<string, number>();
@@ -690,10 +698,11 @@ export async function checkAnswer(answer: string, data: LedgerData, question = "
 		for (const m of masked.matchAll(RUN_PATH)) {
 			const before = linkToken(masked, m.index, m.index + m[0].length);
 			const prefix = before.slice(0, before.length - m[0].length);
-			// The whole link: what follows .json up to a space or a closing mark, of which only a sentence's own punctuation may be left.
+			// The whole link: what follows .json up to a space or a closing mark. Written bare in prose, a sentence's own
+			// punctuation may be left after it; the destination of a Markdown link or an autolink is kept to its last character.
 			const end = m.index + m[0].length;
 			const after = /^[^\s)\]>"'`*<|]*/.exec(masked.slice(end))?.[0] ?? "";
-			const goesOn = after.replace(/[.,;:!?]+$/, "");
+			const goesOn = explicitLink(masked, m.index - prefix.length) ? after : after.replace(/[.,;:!?]+$/, "");
 			const token = `${before}${goesOn}`;
 			const entry = { line, link: token, path: m[0], problem: null as string | null };
 			if (goesOn !== "") entry.problem = `${token} is not a Run file's address: it goes on after ${m[0]} (${goesOn})`;
@@ -701,6 +710,17 @@ export async function checkAnswer(answer: string, data: LedgerData, question = "
 			// A bare or relative path, or the Runs repository's address, is judged now; any other address against the cited point's own evidence link, once it is found.
 			if (!isRelativePrefix(prefix) && !RUNS_REPOSITORY_PREFIXES.some((p) => p.test(prefix))) addressed.add(entry);
 			masked = blank(masked, m.index - prefix.length, end + after.length);
+		}
+		// Any other address or path may be a cited point's evidence link, or that link where these data were read, as show
+		// prints it, whatever its path looks like: kept, with the same rule for its end, to be matched once the cited Series are known.
+		const here = data.location.link("");
+		for (const m of masked.matchAll(/[^\s()[\]<>"'`*|]+\/[^\s()[\]<>"'`*|]+/g)) {
+			const link = explicitLink(masked, m.index) ? m[0] : m[0].replace(/[.,;:!?]+$/, "");
+			const address = link.startsWith(`${data.treeBase}/`) || (data.location.isUrl && link.startsWith(here));
+			if (!address && (data.location.isUrl || /^[a-z][a-z0-9+.-]*:/i.test(link))) continue;
+			evidenceLinks.push({ line, link, address });
+			// A path in a directory is no number; an address is masked already.
+			if (!address && link.endsWith(".json")) masked = blank(masked, m.index, m.index + link.length);
 		}
 		for (const m of masked.matchAll(PARAMETER)) {
 			if (citedParams.get(m[1] as string)?.has(m[2] as string)) masked = blank(masked, m.index, m.index + m[0].length);
@@ -899,9 +919,26 @@ export async function checkAnswer(answer: string, data: LedgerData, question = "
 	// link of the data is followed, and with the bytes its point's sha256 gives.
 	const linkedSeries = new Set<string>();
 	const cited = [...citedSeries.keys()];
+	// An address or path that is a cited point's evidence link, or that link where these data were read, is a link to that Run.
+	const byEvidence = new Map<CheckReport["run_links"][number], { series: string; point: TreeSeriesPoint }>();
+	if (cited.length > 0) {
+		for (const { line, link, address } of evidenceLinks) {
+			const isIts = (point: TreeSeriesPoint): boolean => {
+				if (point.evidence === link) return true;
+				const at = data.pathOf(point.evidence);
+				return at !== null && data.location.link(at) === link;
+			};
+			// The month files are searched only for what can be a Run file's link: an address under the tree's or these data's, or a file's path.
+			const found = await findPoint(data, cited, isIts, null, !(address || link.endsWith(".json")));
+			if (found === null) continue;
+			const entry = { line, link, path: found.point.path, problem: null as string | null };
+			runLinks.push(entry);
+			byEvidence.set(entry, found);
+		}
+	}
 	for (const link of runLinks) {
 		if (link.problem === null) {
-			const found = await findRun(data, cited, link.path);
+			const found = byEvidence.get(link) ?? (await findRun(data, cited, link.path));
 			if (found === null) link.problem = `${link.path} is not a Run of any Series the answer cites${cited.length === 0 ? " (it cites none)" : ` (${cited.join(", ")})`}`;
 			else {
 				const { evidence } = found.point;
