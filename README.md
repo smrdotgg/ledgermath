@@ -155,6 +155,44 @@ The archive is `--aws-lc-archive FILE`, or `$AWS_LC_ARCHIVE` as for the Makefile
 next, as `AWS_LC_DIR`; a box has no such cache and builds it every boot. The stand-in is not S3: a throwaway CA, answers in a millisecond, no signature
 checked. These scenarios show the path, not S3's numbers.
 
+## Where the workflows run
+
+Every job of every workflow under `.github/workflows/` runs where the repository variable
+`LEDGERMATH_RUNNER` says: `runs-on: ${{ vars.LEDGERMATH_RUNNER || 'ubuntu-24.04' }}`
+(`tests/workflow-runners.test.ts` holds every job to it).
+
+- **Unset or empty:** GitHub's hosted runner `ubuntu-24.04`, as before. A public repository
+  must have this.
+- **`ledgermath-dev-box`:** the self-hosted runner on the development machine (name
+  `tabot-dev-box`, user service `github-runner-ledgermath`, under
+  `/mnt/local/actions-runner/`, with a home directory of its own).
+
+Why: the account ran out of free Actions minutes on 2026-11-24. Jobs on a self-hosted
+runner cost no minutes, and hosted runners are free for a public repository. So while the
+repository is private, the variable names the development machine.
+
+While it does, only `runs` and `prices` are enabled. They start by schedule or by hand, so
+they always use `main`'s workflow file. `check` and `site` stay disabled: they start on
+pushes and use the pushed branch's own file, and older branches still name the hosted
+runner. `check`'s scratch job also needs Docker, which the machine's runner cannot use. Run
+their commands locally before a merge.
+
+The runner keeps its machine between jobs. `actions/checkout` cleans the workspace
+(`git clean -ffdx`), the runner empties `RUNNER_TEMP` for every job, and Bun's package
+cache is kept in `RUNNER_TEMP`. `setup-bun` keeps Bun 1.4.4 in the runner's home
+directory and reuses it.
+
+**The runner is for the private repository only.** A public repository must never have a
+self-hosted runner: a stranger's pull request could then run on the machine. **Before the
+repository is made public**, in this order:
+
+1. Delete the repository variable `LEDGERMATH_RUNNER` (Settings → Secrets and variables →
+   Actions → Variables).
+2. Stop and remove the runner: `systemctl --user disable --now github-runner-ledgermath`,
+   then in `/mnt/local/actions-runner/runner` run `./config.sh remove --token <a removal
+   token from Settings → Actions → Runners>`. Check that the runner is gone from that page.
+3. Enable all four workflows: `check`, `prices`, `runs` and `site`.
+
 ## The daily box: a `-runs` stage
 
 Any SST stage whose name ends in `-runs` deploys `infra/runs/stack.ts`. Every other stage

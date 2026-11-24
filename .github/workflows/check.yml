@@ -1,5 +1,11 @@
 # Checks the build and the record, off the box. No measured Run goes through
 # Docker: the scratch container only shows that the binary runs alone.
+#
+# Every job runs where the repository variable LEDGERMATH_RUNNER says, and on
+# GitHub's hosted runner when it is unset (README, "Where the workflows run").
+# The scratch job needs Docker, which the development machine's runner cannot
+# use, so this workflow stays disabled while that runner is in use; its
+# commands are run by hand before a merge.
 name: check
 
 on:
@@ -12,7 +18,7 @@ permissions:
 jobs:
   scratch:
     name: every static build runs alone in a FROM scratch container
-    runs-on: ubuntu-24.04
+    runs-on: ${{ vars.LEDGERMATH_RUNNER || 'ubuntu-24.04' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -44,7 +50,7 @@ jobs:
 
   test:
     name: bun test
-    runs-on: ubuntu-24.04
+    runs-on: ${{ vars.LEDGERMATH_RUNNER || 'ubuntu-24.04' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
