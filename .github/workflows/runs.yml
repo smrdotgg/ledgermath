@@ -82,7 +82,13 @@ jobs:
   runs:
     name: copy the Runs, derive, build the page and the data API, check for stale Series
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    # Room for a run that must reduce every stream again: when a change to the
+    # Methods' reducing code gives their records new keys (methods/records.ts),
+    # the next run fetches and reduces every Run's stdout once more, about 13
+    # minutes for 9,400 Runs on 2026-11-23 and growing with them. The cache is
+    # saved only when the job succeeds, so a job cut off there would lose all
+    # of that work and every later run would start over, without end.
+    timeout-minutes: 60
     # One at a time with every other runs job and every prices run; of those
     # waiting, GitHub keeps only the newest (cancel-in-progress false: the one
     # running is never cancelled).

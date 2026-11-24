@@ -177,7 +177,7 @@ describe("the runs workflow", () => {
 		expect(text).not.toMatch(/aws s3 (cp|sync)|s3:\/\/|sst deploy|vercel/i);
 	});
 
-	test("the first job does not publish: no step of it uploads or checks a bucket of the tree, only the alarm names the API bucket, to read it, and the alarm is its last step, within its own 30 minutes", () => {
+	test("the first job does not publish: no step of it uploads or checks a bucket of the tree, only the alarm names the API bucket, to read it, and the alarm is its last step, within its own 60 minutes", () => {
 		const publishing = /upload-api|check-api-bucket|download-artifact|group: api-bucket/;
 		const alarm = steps.find((step) => step.run?.includes("scripts/alarm.ts")) as Step;
 		for (const step of steps) {
@@ -189,7 +189,8 @@ describe("the runs workflow", () => {
 		expect(JSON.stringify(job.env)).not.toMatch(/API_BUCKET|api-bucket/);
 		expect(JSON.stringify(job.env)).not.toMatch(publishing);
 		expect(job.needs).toBeUndefined();
-		expect(job["timeout-minutes"]).toBe(30);
+		// Room to reduce every stream again after the records' keys change (about 13 minutes on 2026-11-23): a job cut off saves no cache, and the next starts over.
+		expect(job["timeout-minutes"]).toBe(60);
 		expect(steps.at(-1)?.run).toContain("bun scripts/alarm.ts");
 		// Its caches are saved by its own success, whatever any other job does.
 		expect(steps.some((step) => step.uses?.startsWith("actions/cache@"))).toBe(true);
