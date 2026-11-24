@@ -106,15 +106,16 @@ export interface PublicApiSetting {
  * (stack.ts, sourceArchive), so the state is in git, and a routine deploy
  * that forgot a variable cannot delete the distribution or disable it.
  * Turning it on is a change of `state`, reviewed and merged, and deployed in
- * the order the README gives ("The public data API", "Turning it on"); the
- * commit that does it also changes the one test that pins it to "off"
- * (tests/public-blobs.test.ts, "RELEASE GATE"). Its type is
+ * the order the README gives ("The public data API", "Turning it on"); each
+ * commit that changes it also changes the one test that pins it, to the
+ * state it sets (tests/public-blobs.test.ts, RELEASED_STATE, "RELEASE
+ * GATE"). Its type is
  * PublicApiSetting, not the literal, so the type check sees every state's
  * branch whatever is committed.
  */
 export const PUBLIC_API: PublicApiSetting = {
 	stage: "production-runs",
-	state: "off",
+	state: "dark",
 	plan: "code",
 };
 
