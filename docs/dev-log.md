@@ -1480,4 +1480,19 @@ A migrated benchmark is done only when **all** of these hold:
   suite, so it did not see this. The child now gets its fixture's state, `off`, through
   `tests/rehearse-switch.ts`. GitHub Actions is off for the repository, so the checks of
   `check.yml` ran on the dev box.
+- **2026-11-24** — The public API's switch goes from `dark` to `on` (README, "Turning it
+  on, on `production-runs`", step 4), with `RELEASED_STATE` in the same commit, on the
+  maintainer's go, to be deployed only after `dark` is deployed and the Free plan is seen
+  `ACTIVE` (step 2). Deployed, `on` enables the distribution, puts the request function in
+  the 404 function's place on the four served behaviours, and gives both buckets' policies
+  their grant, after the deploy's own check that an ACTIVE plan covers the distribution;
+  the data API and its evidence are then public at `https://api.ledgermath.com`. Its
+  `plan` stays `"code"`. The sentences that said the switch was `dark`, or that nothing is
+  served, now say `on` (the README's opening of "The public data API", its costs, "The data
+  API", "The API bucket", "Setting it up", and the `publish` job's comment in `runs.yml`);
+  the ADRs, records of what was decided, are left as they are. **Nothing else read the
+  committed switch differently under `on`**: the alarm treats every state but `off` alike
+  (an unset `API_BUCKET` is raised), and `tests/alarm-telegram.test.ts` already gives its
+  child `off`. GitHub Actions is off for the repository, so the checks of `check.yml` ran
+  on the dev box.
 - _(agents: append your entry here, one per merged benchmark)_

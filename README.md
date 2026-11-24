@@ -27,7 +27,7 @@ as the base the build started from (last section).
 | `scripts/check-disk-runs.ts` | Checks that every disk Run in such a directory found the disk it declares, that its evidence adds up, and that its dump bears it out |
 | `scripts/check-targets.ts` | Checks `schedule.json`'s targets' `vcpus`, their zone offerings and `vcpu_quota.limit` against AWS, read-only, in the account of the stage it is given; needs AWS access, so not part of `bun test` |
 | `scripts/box-in-container/` | Boots `runner/box.sh` in Amazon Linux 2023 with S3 and shutdown stubbed, in several scenarios, `http_get` against a stand-in for S3 among them |
-| `infra/runs/` | The `-runs` SST stage: stack, launch Lambda, reaper, user-data, the schedule's check (`schedule.ts`), the targets and their launch schedules (`placement.ts`), which account a stage deploys to and which one stage is scheduled (`stages.ts`), what stops SST acting on another account than a stage's (`deploy-account.ts`), the workflow's AWS role, the `s3_fixtures` Service's bucket, objects and role (`fixtures.ts`), AWS-LC's source archive (`tls-archive.ts`), the data API's private bucket and the workflow's permission to upload to it (`api-bucket.ts`), the public data API's CloudFront distribution on the Free plan at `api.ledgermath.com`, for one stage, off until switched on (`public-blobs.ts`, named for the design it grew from; what a deploy may do from what is deployed, `public-blobs-guard.ts`; the resources, `public-blobs-stack.ts`; the watch that disables it without a plan, `plan-watch.ts`, `plan-watch-handler.ts`) |
+| `infra/runs/` | The `-runs` SST stage: stack, launch Lambda, reaper, user-data, the schedule's check (`schedule.ts`), the targets and their launch schedules (`placement.ts`), which account a stage deploys to and which one stage is scheduled (`stages.ts`), what stops SST acting on another account than a stage's (`deploy-account.ts`), the workflow's AWS role, the `s3_fixtures` Service's bucket, objects and role (`fixtures.ts`), AWS-LC's source archive (`tls-archive.ts`), the data API's private bucket and the workflow's permission to upload to it (`api-bucket.ts`), the public data API's CloudFront distribution on the Free plan at `api.ledgermath.com`, for one stage, behind one switch (`public-blobs.ts`, named for the design it grew from; what a deploy may do from what is deployed, `public-blobs-guard.ts`; the resources, `public-blobs-stack.ts`; the watch that disables it without a plan, `plan-watch.ts`, `plan-watch-handler.ts`) |
 | `methods/` | Methods, versioned, turning Runs into Derivations (`methods/README.md`): `series` v1 (`v1/`) one number per Run for every Series; `requests` v1 (`requests/v1/`) each phase of a request across requests, for the Series of requests; `records.ts` the reduced record of a stream, kept between runs |
 | `scripts/copy-runs.ts` | The copy job: the bucket's Run files and boot summaries into the Runs repository |
 | `scripts/copy-bucket.ts` | Copies one `-runs` bucket into another, across two accounts, only ever adding, and checks the copy (`scripts/lib/bucket-copy.ts`): the move to the production account |
@@ -791,11 +791,11 @@ The data API ("The data API", below) and the evidence it links are served from o
 in front of two private buckets of `production-runs`: $0 a month for CloudFront, and no
 CloudFront overage charge whatever strangers download (S3 still bills each request that
 misses the cache: "What it still costs", below). ADR-0031 records the design. It is built
-and **dark** (`PUBLIC_API.state` in `infra/runs/public-blobs.ts`, which was `"off"` before
-it): the distribution exists, disabled, with its certificate, its
-`api.ledgermath.com` records, its web ACL and its Free plan, and serves nothing; nothing is
-public, and neither bucket's policy grants anything, until the state says `on` ("Turning
-it on, on `production-runs`", below). The file keeps the name of the
+and **on** (`PUBLIC_API.state` in `infra/runs/public-blobs.ts`, which was `"off"`, then
+`"dark"`, before it): the distribution is enabled, with its certificate, its
+`api.ledgermath.com` records, its web ACL and its Free plan, and serves the four served
+prefixes publicly, and each bucket's policy grants it `GetObject` under its served
+prefixes and nothing more ("Turning it on, on `production-runs`", below). The file keeps the name of the
 design it grew from, which served blobs alone at the distribution's `*.cloudfront.net`
 name ("What became of public blobs", below).
 
@@ -1065,9 +1065,10 @@ from outside the account), but count it. The plan's 5 GB of S3 storage credits o
 much of the buckets' storage. The rest is fixed: the hosted zone of `api.ledgermath.com`,
 $0.50 a month, exists already, on or off; alias queries to CloudFront are free; the
 certificate is free; the watch's 8,640 invocations a month are within Lambda's free tier.
-Off, nothing of this exists; `dark`, as merged, it all exists and serves nothing, so it
-bills only the fixed part. Either way the API bucket and its upload cost cents a month
-("The data API", "The API bucket").
+Off, nothing of this exists; `dark`, it all exists and serves nothing, so it bills only
+the fixed part; `on`, as merged, it serves, and S3's misses above are billed on top. In
+every state the API bucket and its upload cost cents a month ("The data API", "The API
+bucket").
 
 **The states.** `PUBLIC_API.state`, on `production-runs`:
 
@@ -2588,13 +2589,13 @@ Derivations before it read the tree.
 Issue #64, ADR-0030. LedgerMath's numbers, for agents first, as a tree of small static JSON
 files, each kind with a JSON schema. `scripts/build-api.ts` cuts it from the two files of
 Derivations and the Runs repository's price files, laid out exactly as it will be served
-from `https://api.ledgermath.com`. Nothing is served yet: the `runs` workflow builds the
+from `https://api.ledgermath.com`. The `runs` workflow builds the
 tree, checks it, against the tree the latest earlier run that checked its own kept too,
 keeps it for a week as the artifact `api`, beside `page`, and, in a job of its own,
 `publish`, uploads it to the stage's private API bucket ("The API bucket", below). The
-serving is built and off ("The public data API: CloudFront on
-the Free plan at `api.ledgermath.com`", under "The daily box"), and goes public only on
-the maintainer's go.
+serving is built and on, on the maintainer's go ("The public data API: CloudFront on
+the Free plan at `api.ledgermath.com`", under "The daily box"): CloudFront serves the
+bucket's tree there.
 
 | Path | Holds |
 |------|-------|
@@ -3027,7 +3028,7 @@ bucket with no table of contents and raises it on the alarm issue ("The alarm", 
 API's publishing"): expected, and the run after says the data API is published. To stop
 the upload, `gh variable delete API_BUCKET --repo smrdotgg/ledgermath`; the alarm then stops
 reading the bucket, and raises nothing for it while `PUBLIC_API` is `off`, but raises it in
-any other state, `dark` (as merged) included ("The alarm", "The data API's publishing").
+any other state, `on` (as merged) included ("The alarm", "The data API's publishing").
 
 ```bash
 # Locally, with the profile of the stage whose bucket it is, in a subshell, so that this shell keeps no keys.

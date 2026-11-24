@@ -313,9 +313,10 @@ jobs:
   # schemas first, then month files and price files, Series files, the list
   # and the table of contents, each phase whole before the next; it deletes
   # nothing; and, last, makes the table of contents record this run even when
-  # nothing else changed. The bucket grants nothing to anyone until the public
-  # API is turned on (infra/runs/public-blobs.ts, PUBLIC_API), so nothing here
-  # is public. A failure is this job's alone, red, its summary naming the phase
+  # nothing else changed. The bucket grants nothing to anyone but, while the
+  # public API is on (infra/runs/public-blobs.ts, PUBLIC_API, "on" as merged),
+  # its CloudFront distribution, so what this uploads is served publicly at
+  # https://api.ledgermath.com. A failure is this job's alone, red, its summary naming the phase
   # and the keys; the next run repairs the bucket. When publishing stops,
   # however it stops, the table of contents is not written again, and the
   # first job's alarm in a later run says so once it is more than 14 hours

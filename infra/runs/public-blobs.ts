@@ -115,7 +115,7 @@ export interface PublicApiSetting {
  */
 export const PUBLIC_API: PublicApiSetting = {
 	stage: "production-runs",
-	state: "dark",
+	state: "on",
 	plan: "code",
 };
 
