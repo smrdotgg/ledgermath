@@ -46,14 +46,14 @@
       }
     },
     "schemas": {
-      "description": "The JSON schema of each kind of file in v1.",
+      "description": "The JSON schema of each kind of file in v1, and of one line of a Run's stdout (events), which the Methods' definitions name.",
       "type": "array",
       "items": {
         "type": "object",
         "required": ["name", "describes", "url"],
         "properties": {
           "name": { "type": "string" },
-          "describes": { "description": "The files it describes, by path from the host's root.", "type": "string" },
+          "describes": { "description": "The files it describes, by path from the host's root; for a schema of what is not a file of v1, what it describes, in words.", "type": "string" },
           "url": { "$ref": "#/$defs/url" }
         }
       }

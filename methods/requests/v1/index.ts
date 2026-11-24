@@ -57,7 +57,7 @@ export const DEFINITIONS: Record<string, string> = {
 	series:
 		"Method series v1's Series: the Runs that share a benchmark, params, build, instance type and zone ID. A Series is " +
 		"this Method's when any of its Runs' streams holds a request (a response_ended or request_failed event carrying " +
-		"`request`); every Run of it is then shown, counted or not.",
+		"an integer `request`); every Run of it is then shown, counted or not.",
 	request:
 		"One counted sample of the stream (warmup false): the events from its sample_started to its sample_ended. Its " +
 		"phases are differences of event timestamps, in nanoseconds of the Run's clock (see phases). A request over a " +
@@ -106,29 +106,36 @@ export const DEFINITIONS: Record<string, string> = {
 		"Method series v1's groups: within a Series, the Runs whose split facts are all equal, lettered in the order each " +
 		"first appears; the same letters series v1 gives the same Runs.",
 	counted:
-		"A Run counts when its binary exited 0 or 4 (4: the Run completed and holds at least one failed request), every " +
-		"stdout line is an event that matches the events schema and the stream obeys every order rule Method series v1's " +
-		"definition counted lists, the stream has as many counted samples as the Run asked for (fewer: the Run was cut " +
+		"A Run counts when its binary exited 0 or 4 (the binary exits 4 to say the Run completed and holds a failed " +
+		"request; the Method does not require that one did), every stdout line is an event that matches the events " +
+		"schema (which the data API serves at v1/schemas/events.schema.json), the stream obeys every order rule Method " +
+		"series v1's definition counted lists (among them that no sample starts at a t earlier than the previous " +
+		"sample's sample_ended), the stream has as many counted samples as the Run asked for (fewer: the Run was cut " +
 		"short), every timestamp is a whole number a JavaScript number holds exactly (at most 2^53 − 1), the stream holds " +
-		"a request (a response_ended or request_failed carrying request), every sample in it, the warmup's included, " +
-		"reads as one request, every connection_failed outside a sample has a phase and an error that are words of a-z, " +
-		"0-9 and _ starting with a letter, and an exit 0 has no failed request, no failed warmup request and no failed " +
-		"setup of a kept connection. A sample reads as one request when every event in it that names a request names " +
-		"the sample's number and, its certificate events and a certificate's withheld line aside, either it holds a " +
-		"line_withheld (the request then failed in phase record); or it ends with a request_failed at sample_ended's t, " +
-		"whose phase is dns, connect, tls, send, first_byte, headers or body, whose phase and error are such words, and " +
-		"before which come the first events of a new connection's order or a reused one's (below), up " +
-		"to where that phase got: dns after none or name_resolved, connect and tls after connection_opened, send after " +
-		"connection_secured or, over a reused connection, after none, first_byte after request_sent, headers after " +
-		"first_byte, body after response_headers; or its events are exactly a new connection's order, name_resolved, " +
-		"connection_opened, connection_secured, request_sent, first_byte, response_headers, response_ended, or a reused " +
-		"one's, its last four, with every phase at least 0, sample_ended at response_ended's t, a status " +
-		"(response_headers.status) that is a whole number, and, when the status is 2xx, a body that matched " +
-		"(response_ended.fixture and .s3_checksum both \"match\"). And over a new connection, the connection it opened " +
-		"is the one it secured and the one it sent its request on; a request it sent went over a connection that a " +
-		"connection_opened and a connection_secured before it describe (its address; its TLS version, cipher and " +
-		"group) and no connection_closed has closed since. Any other Run is failed: shown, with the reasons, and in no " +
-		"figure. A counted Run's failed requests are counted; its succeeded requests are in the figures.",
+		"a request (a response_ended or request_failed carrying an integer request), every sample in it, the warmup's " +
+		"included, reads as one request, the counted requests that succeeded all have the same phases (all over a new " +
+		"connection, or all over a reused one), every connection_failed outside a sample has a phase and an error that " +
+		"are words of a-z, 0-9 and _ starting with a letter, and an exit 0 has no failed request, no failed warmup " +
+		"request and no failed setup of a kept connection. A sample reads as one request when every event in it that " +
+		"names a request names the sample's number and, its certificate events and a certificate's withheld line " +
+		"aside, either it holds a line_withheld (the request then failed in phase record, and nothing more of it is " +
+		"read); or it ends with a request_failed at sample_ended's t, whose phase is dns, connect, tls, send, " +
+		"first_byte, headers or body, whose phase and error are such words, before which come the first events of a " +
+		"new connection's order or a reused one's (below), up to where that phase got (dns after none or " +
+		"name_resolved, connect and tls after connection_opened, send after connection_secured or, over a reused " +
+		"connection, after none, first_byte after request_sent, headers after first_byte, body after " +
+		"response_headers), and whose connection holds (below); or its events are exactly a new connection's order, " +
+		"name_resolved, connection_opened, connection_secured, request_sent, first_byte, response_headers, " +
+		"response_ended, or a reused one's, its last four, and its connection holds, every phase is at least 0, " +
+		"sample_ended is at response_ended's t, its status (response_headers.status) is a whole number, and, when the " +
+		"status is 2xx, its body matched (response_ended.fixture and .s3_checksum both \"match\"). Its connection holds " +
+		"when, over a new connection, its connection_secured, if present, names the connection its connection_opened " +
+		"names, and so does its request_sent, if present; and when its request_sent, if present, names an integer " +
+		"connection whose latest connection_opened gave a non-empty address, whose latest connection_secured, even " +
+		"one from before that opening, gave a non-empty TLS version, cipher and group, and which no connection_closed " +
+		"has closed since its latest connection_opened, all as of the sample's end. Any other Run is failed: shown, " +
+		"with the reasons, and in no figure. A counted Run's failed requests are counted; its succeeded requests are " +
+		"in the figures.",
 };
 
 // ---------------------------------------------------------------- gather

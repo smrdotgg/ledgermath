@@ -33,10 +33,11 @@
     {"name":"series-list","describes":"v1/series.json","url":"https://api.ledgermath.com/v1/schemas/series-list.schema.json"},
     {"name":"series","describes":"v1/series/<id>.json","url":"https://api.ledgermath.com/v1/schemas/series.schema.json"},
     {"name":"series-month","describes":"v1/series/<id>/<yyyy-mm>.json","url":"https://api.ledgermath.com/v1/schemas/series-month.schema.json"},
-    {"name":"prices","describes":"v1/prices/<yyyy-mm-dd>.json","url":"https://api.ledgermath.com/v1/schemas/prices.schema.json"}
+    {"name":"prices","describes":"v1/prices/<yyyy-mm-dd>.json","url":"https://api.ledgermath.com/v1/schemas/prices.schema.json"},
+    {"name":"events","describes":"one line of a Run's stdout: the blob at blobs/sha256/<hex> that the Run file's stdout names","url":"https://api.ledgermath.com/v1/schemas/events.schema.json"}
   ],
   "evidence": {
-    "about": "The evidence is served under the same address as the API: each point links its Run file (evidence), at runs/<yyyy>/<mm>/<dd>/<id>.json, and its boot's summary (boot_summary), at boots/<yyyy>/<mm>/<dd>/<boot>.json. A Run file names its binary, streams and dumps by hash, sha256:<hex>; each is a blob at blob_url_template with {hex} replaced by the 64 hex digits.",
+    "about": "The evidence is served under the same address as the API: each point links its Run file (evidence), at runs/<yyyy>/<mm>/<dd>/<id>.json, and its boot's summary (boot_summary), at boots/<yyyy>/<mm>/<dd>/<boot>.json. A Run file names its binary, streams and dumps by hash, sha256:<hex>; each is a blob at blob_url_template with {hex} replaced by the 64 hex digits. The blob its stdout names is what the binary printed, one event a line; the schema events, in schemas, gives the shape each line must have for a Method to count the Run.",
     "blob_url_template": "https://api.ledgermath.com/blobs/sha256/{hex}"
   }
 }

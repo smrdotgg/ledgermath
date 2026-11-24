@@ -78,7 +78,9 @@ Method asked for has no record of it, and then once for all of them.
   schemas) gives a new key, under which no record exists yet, so a record made by other
   code is never read. **The cost**, accepted: after such a change every stream is fetched
   and reduced once more (about 20 MB on 2026-11-11, growing by about 44 MB a day of
-  `http_get` streams), on the next run of the workflow. A change elsewhere (the derive
+  `http_get` streams), on the next run of the workflow: about 13 minutes for the 9,400 Runs
+  of 2026-11-23, so the workflow's first job has 60 minutes since 2026-11-24 (its cache is saved only when it
+  succeeds, and a job cut off would leave the next to start over). A change elsewhere (the derive
   step, the output's shape, the page) costs nothing. `scripts/derive.ts` removes the
   directories of records made by other code for the Methods it runs, which are never read,
   so the workflow's cache does not grow with every change. Packages imported by name (ajv) are
@@ -210,16 +212,26 @@ binary's contract (`benchmarks/http_get/README.md`). Then every Run of the Serie
 counted or not, so a Run whose stream breaks is shown with why. Nothing is keyed on a
 benchmark's name; a Series whose Runs' streams never hold a request is not this Method's.
 
-**A Run counts** when its binary exited 0 or 4 (4: the Run completed and holds at least one
-failed request), its stream passes every check `series` v1 makes (each line an event of the
-schema, every order rule of `scripts/check-events.py`), it has as many counted samples as
-the Run asked for (fewer: the Run was cut short, at its budget or because nothing was
-reachable), every timestamp is a safe integer (at most 2^53 − 1 ns, about 104 days of the
-clock: past that the parser has already rounded it), every request reads as below, and an
-exit 0 has no failed request, no failed warmup request and no failed setup of a kept
-connection (the binary's README makes each of these exit 4). Any other Run is failed:
-shown, with the reasons, in no figure. A Run that exited 1 (a body that did not match the
-Fixture) or was killed is failed.
+**A Run counts** when its binary exited 0 or 4 (the binary exits 4 when the Run completed
+and holds at least one failed request; the Method does not check that one did), its stream
+passes every check `series` v1 makes (each line an event of the schema, every order rule of
+`scripts/check-events.py`), it has as many counted samples as the Run asked for (fewer: the
+Run was cut short, at its budget or because nothing was reachable), every timestamp is a
+safe integer (at most 2^53 − 1 ns, about 104 days of the clock: past that the parser has
+already rounded it), every request reads as below, its counted requests that succeeded all
+have the same phases, and an exit 0 has no failed request, no failed warmup request and no
+failed setup of a kept connection (the binary's README makes each of these exit 4). Any
+other Run is failed: shown, with the reasons, in no figure. A Run that exited 1 (a body that
+did not match the Fixture) or was killed is failed.
+
+**The same phases.** A Run's figures tally each phase over its succeeded counted requests,
+one time of each, and the record that keeps them (below) holds to that. A request over a new
+connection has `dns`, `connect` and `tls`; one over a kept connection does not. `http_get`
+never mixes the two in one Run (a kept connection is reopened outside any sample), but a
+stream from another benchmark may, and until 2026-11-24 such a Run made a record that did
+not read back, which stopped the whole Method. Such a Run is now failed, with the count of
+each set of phases as its reason. Keeping both sets in one record, so that such a Run can
+count, is a larger change, left for when a benchmark needs it.
 
 ### One request
 

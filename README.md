@@ -815,7 +815,7 @@ path: the API has one host, and a wrong host gets the same answer everywhere. Th
 this list to it, and others hold the samples' and the built tree's every address to it.
 The addresses, as the request function matches them:
 
-- a schema: `^\/v1\/schemas\/(?:index|series-list|series|series-month|prices)\.schema\.json$`
+- a schema: `^\/v1\/schemas\/(?:index|series-list|series|series-month|prices|events)\.schema\.json$`
 - a month file: `^\/v1\/series\/[0-9a-f]{12}\/[0-9]{4}-(?:0[1-9]|1[0-2])\.json$`
 - a price file: `^\/v1\/prices\/(?:[0-9]{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|1[0-9]|2[0-8])|[0-9]{4}-(?:0[13-9]|1[0-2])-(?:29|30)|[0-9]{4}-(?:0[13578]|1[02])-31|(?:[0-9]{2}(?:0[48]|[2468][048]|[13579][26])|(?:[02468][048]|[13579][26])00)-02-29)\.json$`
 - a Series file: `^\/v1\/series\/[0-9a-f]{12}\.json$`
@@ -2430,7 +2430,7 @@ the maintainer's go.
 | `v1/series/<id>.json` | One Series: each Method's summary at the Derivations' own paths (percentiles, groups and their facts and figures, section counts, `counted_runs`, `failed_runs`), with the Method's definitions; the points of its newest 12 Runs (`newest_points`; `newest_runs` says how many); and `months`, each month a Run of it started in, oldest first, with the month file's `url`, its Runs, its first and last start, and the month file's `sha256` and size in `bytes` |
 | `v1/series/<id>/<yyyy-mm>.json` | One month of a Series: every point of the Runs that started that month (UTC), each Method's under its key, and series v1's `differed` entry for each pair of consecutive Runs whose later Run started that month. Every point gives its Run file's `sha256`, `evidence` (the Run file's address) and `boot_summary` (its boot's, or null when the Runs repository has none) |
 | `v1/prices/<yyyy-mm-dd>.json` | That day's price file, byte for byte |
-| `v1/schemas/<name>.schema.json` | `index`, `series-list`, `series`, `series-month` (kept in `schemas/api/v1/`) and `prices` |
+| `v1/schemas/<name>.schema.json` | `index`, `series-list`, `series`, `series-month` (kept in `schemas/api/v1/`) and `prices`; and `events`, the schema of one line of a Run's stdout (`schemas/events.schema.json`), which describes no file of the tree but is what both Methods' definitions hold a Run's events to |
 
 The evidence is linked, never copied: Run files, boot summaries and blobs, at the bucket's
 own keys under the same address (`/runs/…`, `/boots/…`, `/blobs/sha256/<hex>`). The base
@@ -2545,14 +2545,16 @@ address is `--base`, so a private or test address can stand in.
   `requests_v1`, each with its `method`; the others carry `series_v1` only.
 - **Words a reader of the API alone can follow.** Its first readers have the API and
   nothing else, so no word the tree publishes (its own texts, each Method's definitions
-  and words, the schemas' descriptions) names a file or directory of this repository, a
-  README or a document's section, an issue, a pull request, an ADR, a function of the code
-  or a program's option: a definition states its rule instead. `tests/api-words.test.ts`
-  builds a tree and scans every string but the data (what the Runs recorded, and what a
-  Method derived from them for one Series or one Run: a point's `failure`, a Run file's
-  `path`), and fails on any such reference. Two remain, both known: `docs`, the README's
-  section on GitHub, which can be followed once the repository is public; and "the events
-  schema", which both Methods' definitions name and the tree does not serve.
+  and words, the price rules' words for what each selects, the schemas' descriptions)
+  names a file or directory of this repository, a README or a document's section, an
+  issue, a pull request, an ADR, a function of the code or a program's option: a
+  definition states its rule instead, and what it names, the tree serves (the events
+  schema, at `v1/schemas/events.schema.json`). `tests/api-words.test.ts` builds a tree and
+  scans every string but the data (what the Runs recorded, and what a Method derived from
+  them for one Series or one Run: a point's `failure`, a Run file's `path`; in a price
+  file, AWS's own words and identifiers), and fails on any such reference. One remains,
+  known: `docs`, the README's section on GitHub, which can be followed once the repository
+  is public.
 - **`v1` only ever gains fields.** The API's own schemas forbid no member they do not list, so
   a field added later fails no older reader; a change that would break one is a `v2` beside
   `v1`. The price files are the exception: each is the Runs repository's, byte for byte, and

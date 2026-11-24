@@ -83,12 +83,13 @@ export const DEFINITIONS: Record<string, string> = {
 		"x[⌊h⌋] + (h − ⌊h⌋) × (x[⌊h⌋+1] − x[⌊h⌋]). Each number's percentiles are taken over that number's values, " +
 		"so the bytes-per-second percentiles are not the time percentiles inverted.",
 	counted:
-		"A Run counts when its binary exited 0, every stdout line is an event that matches the events schema, and the " +
-		"stream obeys every one of these order rules: started first and once (and without quick: true, which marks a " +
-		"developer's trial stream), finished last and once, samples numbered from 0 in order, each closed by its own " +
-		"sample_ended before the next starts and never ending before it starts, observed keys once, exactly one " +
-		"verified, and as many counted samples as the Run asked for. Any other Run is failed: shown, with the reasons, " +
-		"and in no percentile.",
+		"A Run counts when its binary exited 0, every stdout line is an event that matches the events schema (which " +
+		"the data API serves at v1/schemas/events.schema.json), and the stream obeys every one of these order rules: " +
+		"started first and once (and without quick: true, which marks a developer's trial stream); finished last and " +
+		"once; samples numbered from 0 in order, each starting only when none is open and at a t no earlier than the " +
+		"previous sample's sample_ended; every sample_ended closing the open sample, of the same number, at a t no " +
+		"earlier than its start, and every sample closed; each observed key once; exactly one verified; and as many " +
+		"counted samples as the Run asked for. Any other Run is failed: shown, with the reasons, and in no percentile.",
 	groups:
 		"Within a Series, the Runs whose split facts are all equal make one group. Groups are lettered in the order " +
 		"each first appears, and may interleave in time. A dump section is compared whole, apart from the per-boot " +

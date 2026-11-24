@@ -15,16 +15,17 @@
  *   (its failure reasons included) and each pair's entry, the Run files no
  *   Method could read with the validator's reasons, each group's facts, the
  *   dump sections, what the requests recorded and their pooled figures, the
- *   months. Its words are the Runs', or a Method's verdict on one Run, and
- *   change only with the Runs or a new Method version; they are listed, by
- *   place, in DATA. A price file is a record of the Runs repository, copied
- *   byte for byte and never edited: data, whole.
+ *   months; and in a price file, what AWS published, verbatim (the offer
+ *   file's header, products and terms), with the identifiers of where it came
+ *   from and what the schedule said was measured. Its words are the Runs',
+ *   AWS's, or a Method's verdict on one Run, and change only with them or a new
+ *   Method version; they are listed, by place, in DATA.
  * - **Prose** is everything else a file of the tree holds: the table of
  *   contents' words, each Method's definitions and words for what it splits
- *   on, leaves out, phases and facts, and in a schema every title,
- *   description and $comment. It is the same whatever Runs the tree is cut
- *   from. A place not listed as data is scanned, so a new field is prose until
- *   it is shown to be data.
+ *   on, leaves out, phases and facts, each price rule's words for what it
+ *   selects, and in a schema every title, description and $comment. It is the
+ *   same whatever Runs the tree is cut from. A place not listed as data is
+ *   scanned, so a new field is prose until it is shown to be data.
  *
  * What the scan finds is in REFERENCES; ALLOWED lists, by file, place and
  * text, the only exception, with why.
@@ -35,23 +36,37 @@ import { readdirSync } from "node:fs";
 import { join } from "node:path";
 
 import { API_SCHEMAS, buildApi, DEFAULT_BASE, DEFAULT_DOCS, readApiSchemas, readBootSummaries, readPriceFiles, writtenSchemaOf, type WrittenSchema } from "../scripts/lib/api";
+import { RULE_SETS } from "../scripts/lib/price-rules";
 import { makeApiFixture } from "./api-fixtures";
 
 setDefaultTimeout(60_000);
 
 const ROOT = join(import.meta.dir, "..");
 
+/** The kinds of file of the tree whose strings are scanned: the four the build writes, and the price files it copies. */
+type Kind = WrittenSchema | "prices";
+
+/** The kind of a file of the tree, from its path; undefined for a schema, whose words are found by keyword instead. */
+function kindOf(path: string): Kind | undefined {
+	return writtenSchemaOf(path) ?? (path.startsWith("v1/prices/") ? "prices" : undefined);
+}
+
 /**
- * The places in each kind of written file that hold data, as JSON Pointers;
- * `*` stands for one member of any name (a Method's key). Everything under
- * one of them is data.
+ * The places in each kind of file that hold data, as JSON Pointers; `*`
+ * stands for one member of any name (a Method's key, an index). Everything
+ * under one of them is data.
  */
-const DATA: Readonly<Record<WrittenSchema, readonly string[]>> = {
+const DATA: Readonly<Record<Kind, readonly string[]>> = {
 	// Each price file held: its date, its path in the Runs repository and its address.
 	index: ["/prices/newest", "/prices/files"],
 	"series-list": [
-		// One row per Series: its identity, params, counts and each Method's figures.
-		"/series",
+		// One row per Series: its identity and params; the rest of a row is counts, figures, links and the Methods' names.
+		"/series/*/id",
+		"/series/*/benchmark",
+		"/series/*/params",
+		"/series/*/build",
+		"/series/*/instance_type",
+		"/series/*/availability_zone_id",
 		// Run files no Method could read: their paths, ids, sha256 and the validator's reasons.
 		"/methods/*/unreadable",
 		// The dump sections the Runs hold, by name, and how often each changed.
@@ -65,8 +80,9 @@ const DATA: Readonly<Record<WrittenSchema, readonly string[]>> = {
 		"/instance_type",
 		"/availability_zone_id",
 		"/months",
-		// Each group's facts, read from the Runs, and its figures.
-		"/derivations/*/groups",
+		// Each group's facts, read from the Runs, and its pooled figures; its letter and its percentiles are scanned.
+		"/derivations/*/groups/*/facts",
+		"/derivations/*/groups/*/pool",
 		"/derivations/*/sections",
 		// The Region and the Service's inputs, as the Runs recorded them.
 		"/derivations/*/recorded",
@@ -87,6 +103,22 @@ const DATA: Readonly<Record<WrittenSchema, readonly string[]>> = {
 		// The facts and dump sections that changed between two Runs, by name.
 		"/derivations/*/differed",
 	],
+	prices: [
+		// What the schedule said was measured.
+		"/measured",
+		// Where each offer file came from, as AWS names it.
+		"/sources/*/offer_code",
+		"/sources/*/url",
+		"/sources/*/version",
+		"/sources/*/publication_date",
+		"/sources/*/sha256",
+		// AWS's words, verbatim: the offer file's header, the products selected and their terms.
+		"/sources/*/header",
+		"/sources/*/products",
+		"/sources/*/terms",
+		// The SKUs each rule selected, as AWS names them.
+		"/sources/*/selections/*/skus",
+	],
 };
 
 /** The words of a schema, by keyword: what JSON Schema gives people to read. */
@@ -104,6 +136,11 @@ const REFERENCES: ReadonlyArray<{ kind: string; pattern: RegExp }> = [
 	// scripts/check-events.py, runner/, docs/dev-log.md: not after a / or a word, so v1/schemas/… is not one.
 	{ kind: "a path in the repository", pattern: new RegExp(`(?<![\\w./-])(?:${DIRECTORIES.map(escape).join("|")})/`, "g") },
 	{ kind: "a file at the repository's root", pattern: new RegExp(`(?<![\\w./-])(?:${ROOT_FILES.map(escape).join("|")})(?![\\w-])`, "g") },
+	// ./schedule.json, ../docs/dev-log.md, /runner/: a file or directory of the repository, from somewhere in it or from its root.
+	{
+		kind: "a relative path to a file of the repository",
+		pattern: new RegExp(`(?<![\\w.-])(?:(?:\\.\\.?/)+|/)(?:(?:${DIRECTORIES.map(escape).join("|")})/|(?:${ROOT_FILES.map(escape).join("|")})(?![\\w-]))`, "g"),
+	},
 	{ kind: "a source or document file", pattern: /(?<![\w./-])[\w./-]*[\w-]\.(?:py|ts|tsx|js|mjs|cjs|md|c|h|sh|toml|ya?ml|lock)(?![\w-])/g },
 	{ kind: "a README", pattern: /\breadme\b/gi },
 	{ kind: "an ADR", pattern: /\bADR[- ]?\d+/gi },
@@ -145,7 +182,7 @@ interface Finding {
 
 const pointerOf = (segments: readonly string[]): string => segments.map((segment) => `/${segment.replaceAll("~", "~0").replaceAll("/", "~1")}`).join("");
 
-function isData(kind: WrittenSchema, segments: readonly string[]): boolean {
+function isData(kind: Kind, segments: readonly string[]): boolean {
 	return DATA[kind].some((place) => {
 		const parts = place.split("/").slice(1);
 		return parts.length <= segments.length && parts.every((part, i) => part === "*" || part === segments[i]);
@@ -155,7 +192,7 @@ function isData(kind: WrittenSchema, segments: readonly string[]): boolean {
 /** Every string a file holds, with its place, that is prose. */
 function proseOf(path: string, value: unknown): Array<{ pointer: string; text: string }> {
 	const out: Array<{ pointer: string; text: string }> = [];
-	const kind = writtenSchemaOf(path);
+	const kind = kindOf(path);
 	const isSchema = path.startsWith("v1/schemas/");
 	const walk = (node: unknown, segments: string[]): void => {
 		if (kind !== undefined && isData(kind, segments)) return;
@@ -170,19 +207,24 @@ function proseOf(path: string, value: unknown): Array<{ pointer: string; text: s
 	return out;
 }
 
+/** Each reference a text makes that a reader of the API cannot follow: its kind and the words. */
+function referencesIn(text: string): Array<{ kind: string; text: string }> {
+	return [
+		...REFERENCES.flatMap(({ kind, pattern }) => [...text.matchAll(pattern)].map((match) => ({ kind, text: match[0] }))),
+		...otherSchemas(text).map((name) => ({ kind: "a schema the tree does not serve", text: name })),
+	];
+}
+
 /** Every reference the prose of a tree makes that a reader of the API cannot follow, and the prose scanned. */
 function scanWords(tree: ReadonlyMap<string, Uint8Array>): { findings: Finding[]; scanned: Map<string, Set<string>> } {
 	const findings: Finding[] = [];
 	const scanned = new Map<string, Set<string>>();
 	for (const [path, bytes] of tree) {
-		// A price file is a record of the Runs repository, copied byte for byte and never edited: data, whole.
-		if (path.startsWith("v1/prices/")) continue;
 		const places = new Set<string>();
 		scanned.set(path, places);
 		for (const { pointer, text } of proseOf(path, JSON.parse(new TextDecoder().decode(bytes)))) {
 			places.add(pointer);
-			for (const { kind, pattern } of REFERENCES) for (const match of text.matchAll(pattern)) findings.push({ file: path, pointer, kind, text: match[0] });
-			for (const name of otherSchemas(text)) findings.push({ file: path, pointer, kind: "a schema the tree does not serve", text: name });
+			for (const found of referencesIn(text)) findings.push({ file: path, pointer, ...found });
 		}
 	}
 	return { findings, scanned };
@@ -215,7 +257,13 @@ describe("the words the data API publishes", () => {
 		for (const entry of ALLOWED) expect([entry.file, entry.pointer, findings.some((finding) => allowed(finding) === entry)]).toEqual([entry.file, entry.pointer, true]);
 	});
 
-	test("are scanned where they are: the table of contents, both Methods' words and every schema's descriptions", () => {
+	test("include each price rule's words for what it selects, as the next price file will carry them", () => {
+		const rules = [...RULE_SETS.values()].flatMap((set) => set.rules);
+		expect(rules.length).toBeGreaterThan(0);
+		for (const rule of rules) expect([rule.name, referencesIn(rule.selects)]).toEqual([rule.name, []]);
+	});
+
+	test("are scanned where they are: the table of contents, both Methods' words, the price rules' words and every schema's descriptions", () => {
 		const { scanned } = scanWords(tree);
 		const at = (file: string): Set<string> => scanned.get(file) ?? new Set();
 		for (const pointer of ["/about", "/versioning", "/figures", "/months", "/evidence/about", "/schemas/0/describes"]) expect([pointer, at("v1/index.json").has(pointer)]).toEqual([pointer, true]);
@@ -235,14 +283,17 @@ describe("the words the data API publishes", () => {
 		expect(seriesFiles.length).toBeGreaterThan(0);
 		for (const path of seriesFiles) expect([path, at(path).has("/derivations/series_v1/definitions/counted")]).toEqual([path, true]);
 		for (const { name } of API_SCHEMAS) expect([name, at(`v1/schemas/${name}.schema.json`).has("/description")]).toEqual([name, true]);
-		// What is data is not scanned: a point, a Run file no Method could read, a price file.
+		const prices = [...scanned.keys()].filter((path) => path.startsWith("v1/prices/"));
+		expect(prices.length).toBeGreaterThan(0);
+		for (const path of prices) expect([path, at(path).has("/sources/0/selections/0/selects")]).toEqual([path, true]);
+		// What is data is not scanned: a point, a Run file no Method could read, a row's identity, AWS's products and terms.
 		const month = [...scanned.keys()].find((path) => writtenSchemaOf(path) === "series-month") as string;
 		expect([...at(month)].some((pointer) => pointer.startsWith("/derivations/series_v1/points"))).toBe(false);
-		expect([...at("v1/series.json")].some((pointer) => pointer.includes("/unreadable"))).toBe(false);
-		expect([...scanned.keys()].some((path) => path.startsWith("v1/prices/"))).toBe(false);
+		expect([...at("v1/series.json")].some((pointer) => pointer.includes("/unreadable") || /^\/series\/\d+\/(?:id|benchmark|params|build)/.test(pointer))).toBe(false);
+		for (const path of prices) expect([...at(path)].filter((pointer) => /^\/sources\/\d+\/(?:header|products|terms)\//.test(pointer))).toEqual([]);
 	});
 
-	test("are told apart from data: a reference planted in prose is found, one in a point's failure is not", () => {
+	test("are told apart from data: a reference planted in prose is found, one in a point's failure or AWS's words is not", () => {
 		const encoder = new TextEncoder();
 		const planted = new Map(tree);
 		const edit = (path: string, change: (value: any) => void): void => {
@@ -260,13 +311,32 @@ describe("the words the data API publishes", () => {
 		edit("v1/schemas/series.schema.json", (value) => {
 			value.properties.months.description += " (ADR-0031, item 8)";
 		});
+		edit("v1/index.json", (value) => {
+			value.about += " See ./schedule.json.";
+		});
+		// A field a row of the list does not have today is prose until it is shown to be data; the row's identity is data.
+		edit("v1/series.json", (value) => {
+			value.series[0].note = "See scripts/check-events.py.";
+			value.series[0].benchmark = "scripts/check-events.py";
+		});
+		const price = [...tree.keys()].find((path) => path.startsWith("v1/prices/")) as string;
+		edit(price, (value) => {
+			value.sources[0].selections[0].selects += " As docs/prices.md says.";
+			const [sku] = Object.keys(value.sources[0].products);
+			value.sources[0].products[sku as string].attributes.note = "See scripts/fetch-prices.ts.";
+		});
 		const found = scanWords(planted).findings.filter((finding) => ALLOWED.every((entry) => entry.pointer !== finding.pointer));
 		expect(found.map(describeFinding).sort()).toEqual(
 			[
 				`v1/series.json /methods/series_v1/definitions/series: a path in the repository, "methods/"`,
 				`v1/series.json /methods/series_v1/definitions/series: a source or document file, "methods/README.md"`,
 				`v1/series.json /methods/series_v1/definitions/series: a README, "README"`,
+				`v1/series.json /series/0/note: a path in the repository, "scripts/"`,
+				`v1/series.json /series/0/note: a source or document file, "scripts/check-events.py"`,
 				`v1/schemas/series.schema.json /properties/months/description: an ADR, "ADR-0031"`,
+				`v1/index.json /about: a relative path to a file of the repository, "./schedule.json"`,
+				`${price} /sources/0/selections/0/selects: a path in the repository, "docs/"`,
+				`${price} /sources/0/selections/0/selects: a source or document file, "docs/prices.md"`,
 			].sort(),
 		);
 	});
@@ -285,7 +355,10 @@ describe("the words the data API publishes", () => {
 			["not a --quick stream", ["a program's command-line option"]],
 			["see https://github.com/smrdotgg/ledgermath", ["the repository on GitHub"]],
 			["checked against schedule.json", ["a file at the repository's root"]],
-			["matches events.schema.json", ["a schema the tree does not serve"]],
+			["See ./schedule.json.", ["a relative path to a file of the repository"]],
+			["as ../docs/dev-log.md says", ["a relative path to a file of the repository", "a source or document file", "the dev log"]],
+			["the files of /runner/", ["a relative path to a file of the repository"]],
+			["matches run.schema.json", ["a schema the tree does not serve"]],
 			// The tree's own addresses and words.
 			["For a given layout (the layout of v1/index.json), a month file's bytes change", []],
 			["each point links its Run file (evidence), at runs/<yyyy>/<mm>/<dd>/<id>.json", []],

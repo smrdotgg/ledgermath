@@ -1362,4 +1362,31 @@ A migrated benchmark is done only when **all** of these hold:
   fetches and reduces every stdout blob once more (9,399 Runs on 2026-11-23), the cost
   `methods/README.md` accepts. Neither Method needed a new version: nothing of theirs was
   published.
+- **2026-11-24** — The same change, after an independent verification (the contract and its
+  copies agreed, no number changed; five things to fix). **Each definition now says exactly
+  what the code does**: requests v1's connection checks apply only where the reducer makes
+  them (not to a request with a withheld line), with each id compared only if present and the
+  latest `connection_secured` of an id kept across a reopening; exit 4 is what the binary
+  signals, and the Method does not require a failed request; a request is carried by an
+  *integer* `request`; and both definitions state that no sample starts before the previous
+  one's `sample_ended`. **A Run that follows the rules can no longer stop requests v1**: two
+  counted requests that succeeded, one over a new connection and one reusing it, made a
+  record that did not read back, which stopped the whole Method (`http_get` never does this;
+  another benchmark could). Such a Run is now failed, with the count of each set of phases as
+  its reason, and the definition says a Run's counted successes must all have the same
+  phases. A search over 20,000 streams, each event dropped, doubled, moved, renumbered or
+  spliced, found 460 counted streams whose record did not read back on `main`, all of this
+  kind, and none after; a test runs 3,000 of them every time. **The tree serves the events
+  schema** at `v1/schemas/events.schema.json`, the sixth schema, which describes no file of
+  the tree but is what both definitions hold a Run's events to, and they give its address;
+  its own words no longer name `scripts/check-events.py`, the dev log or `--quick`, and state
+  the order rules instead. The edge's served shapes take it from the same list. **The scan of
+  the words sees more**: each price rule's `selects` (LedgerMath's words in a price file, and
+  in the rule set the next file will carry), with AWS's header, products and terms left out;
+  `./`, `../` and `/` paths to the repository's files; and a field a row of the Series list
+  does not have today. **The first job has 60 minutes**, not 30: the first run after this
+  merges reduces about 9,400 streams again, about 13 minutes, and a job cut off saves no
+  cache, so every later run would start over. Shown again: on both fixtures and on the real
+  Derivations of 2026-11-19, `check-api.ts --previous` passes against `main`'s tree with no
+  `new_baseline` (187 month files the same, byte for byte; one file more, the events schema).
 - _(agents: append your entry here, one per merged benchmark)_

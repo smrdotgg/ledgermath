@@ -8,7 +8,7 @@
  *     v1/series/<id>.json              one Series: each Method's summary, the newest Runs' points, its months
  *     v1/series/<id>/<yyyy-mm>.json    one month of a Series: every point of its Runs that started that month
  *     v1/prices/<yyyy-mm-dd>.json      that day's price file, byte for byte
- *     v1/schemas/<name>.schema.json    the schema of each kind of file
+ *     v1/schemas/<name>.schema.json    the schema of each kind of file, and of one line of a Run's stdout (events)
  *
  * It is a re-cut, not a Method: every number is the Derivations' own, written
  * as they hold it, and nothing is computed but counts of points, the times of
@@ -163,7 +163,8 @@ export const MONTHS =
 export const EVIDENCE =
 	"The evidence is served under the same address as the API: each point links its Run file (evidence), at runs/<yyyy>/<mm>/<dd>/<id>.json, " +
 	"and its boot's summary (boot_summary), at boots/<yyyy>/<mm>/<dd>/<boot>.json. A Run file names its binary, streams and dumps by hash, sha256:<hex>; " +
-	"each is a blob at blob_url_template with {hex} replaced by the 64 hex digits.";
+	"each is a blob at blob_url_template with {hex} replaced by the 64 hex digits. The blob its stdout names is what the binary printed, " +
+	"one event a line; the schema events, in schemas, gives the shape each line must have for a Method to count the Run.";
 
 export interface PriceSource {
 	/** prices/<yyyy>/<mm>/<dd>/aws.json */
@@ -237,8 +238,8 @@ export function readApiSchemas(): Map<SchemaName, Uint8Array> {
 	return new Map(API_SCHEMAS.map(({ name, source }) => [name, new Uint8Array(readFileSync(join(ROOT, source)))] as const));
 }
 
-/** The schemas of the files the build writes (every kind but the price files, which it copies). */
-export type WrittenSchema = Exclude<SchemaName, "prices">;
+/** The schemas of the files the build writes (every kind but the price files, which it copies, and the events schema, which describes no file of the tree). */
+export type WrittenSchema = Exclude<SchemaName, "prices" | "events">;
 /** Each written kind's schema, parsed: what fixes the order of the members of its files' objects (apiJson). */
 export type Shapes = Readonly<Record<WrittenSchema, Json>>;
 

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:ledgermath:events:1",
   "title": "Event",
-  "description": "One line of a benchmark's stdout. A benchmark prints a stream of these, one JSON object per line, and nothing else on stdout. The six universal events below have exactly the fields listed. A benchmark may also emit events of its own, under any other name, with any fields beside `event` and `t`. The order of the stream is checked by scripts/check-events.py. The contract in prose is docs/dev-log.md section 2.",
+  "description": "One line of a benchmark's stdout. A benchmark prints a stream of these, one JSON object per line, and nothing else on stdout. The six universal events below have exactly the fields listed. A benchmark may also emit events of its own, under any other name, with any fields beside `event` and `t`. A schema of one line cannot hold the stream's order, which is a rule of its own: started first and once, and in a stream that is recorded without quick: true; finished last and once; samples numbered from 0 in order, each starting only when none is open and at a t no earlier than the previous sample's sample_ended; every sample_ended closing the open sample, of the same number, at a t no earlier than its start, and every sample closed; each observed key once; exactly one verified; and at least one sample whose warmup is false.",
   "type": "object",
   "required": ["event", "t"],
   "properties": {
@@ -35,7 +35,7 @@
             "minimum": 0
           },
           "quick": {
-            "description": "True for a developer's --quick stream, which is never recorded.",
+            "description": "True for a developer's trial stream, from the binary's quick mode, which is never recorded.",
             "type": "boolean"
           }
         },
