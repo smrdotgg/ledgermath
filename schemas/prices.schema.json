@@ -15,7 +15,7 @@
       "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$"
     },
     "measured": {
-      "description": "What is measured, as schedule.json said when the file was cut: the inputs the rules were given besides the offer files.",
+      "description": "What is measured, as LedgerMath's schedule (which benchmarks run on which instance types, in which zone) said when the file was cut: the inputs the rules were given besides the offer files.",
       "type": "object",
       "additionalProperties": false,
       "required": ["region", "instance_types"],

@@ -35,6 +35,7 @@ import { countProblem } from "../../v1/stream";
 import {
 	type BlobMap,
 	type Facts,
+	failureText,
 	LEFT_OUT,
 	SPLIT_FACTS,
 	seriesId,
@@ -57,7 +58,7 @@ export const DEFINITIONS: Record<string, string> = {
 	series:
 		"Method series v1's Series: the Runs that share a benchmark, params, build, instance type and zone ID. A Series is " +
 		"this Method's when any of its Runs' streams holds a request (a response_ended or request_failed event carrying " +
-		"`request`); every Run of it is then shown, counted or not.",
+		"an integer `request`); every Run of it is then shown, counted or not.",
 	request:
 		"One counted sample of the stream (warmup false): the events from its sample_started to its sample_ended. Its " +
 		"phases are differences of event timestamps, in nanoseconds of the Run's clock (see phases). A request over a " +
@@ -67,9 +68,13 @@ export const DEFINITIONS: Record<string, string> = {
 		"checksum (response_ended.fixture and .s3_checksum both \"match\"). Only succeeded requests are in a time.",
 	failed:
 		"A counted request that holds a request_failed (counted by its phase and error) or whose status is not 2xx " +
-		"(phase response, kind status_<code>), or one of whose lines the binary withheld (phase record, kind " +
-		"line_withheld_<event>). Counted per Run and pooled; never in a time. The warmup request's failure and failed " +
-		"reused-connection setups (connection_failed, outside any sample) are counted apart.",
+		"(phase response, kind status_<code>), or one of whose lines the binary withheld (phase record, its kind from " +
+		"the first withheld line of the request, in stream order, that is not a certificate's: line_withheld_<event> " +
+		"when that line names the event it replaced as a word of a-z, 0-9 and _ starting with a letter, and " +
+		"line_withheld when it does not; one failure, however many lines were withheld). A withheld certificate line (its withheld_event the string " +
+		"certificate) is aside, like a certificate event: it is no failure. Counted per Run and pooled; never in a time. " +
+		"The warmup request's failure and failed reused-connection setups (connection_failed, outside any sample) are " +
+		"counted apart.",
 	per_run:
 		"For each phase of a counted Run: the count of its succeeded requests, the least and greatest time, and each " +
 		"percentile the count supports, exactly, by linear interpolation between closest ranks (R type 7): with n times " +
@@ -106,16 +111,37 @@ export const DEFINITIONS: Record<string, string> = {
 		"Method series v1's groups: within a Series, the Runs whose split facts are all equal, lettered in the order each " +
 		"first appears; the same letters series v1 gives the same Runs.",
 	counted:
-		"A Run counts when its binary exited 0 or 4 (4: the Run completed and holds at least one failed request), every " +
-		"stdout line is an event that matches the events schema and the stream obeys every order rule of " +
-		"scripts/check-events.py, the stream has as many counted samples as the Run asked for (fewer: the Run was cut " +
-		"short), every timestamp is a whole number a JavaScript number holds exactly (at most 2^53 − 1), every request " +
-		"in it reads as the binary's README says (every event naming a request names its sample's; a complete response's " +
-		"events in their order on one open connection, each phase at least 0, sample_ended at the clock read that ended " +
-		"the request; a failed request's events, before its request_failed, the start of that order up to where its " +
-		"phase says it got), and an exit 0 has no failed request, no failed warmup request and no failed setup of a kept " +
-		"connection. Any other Run is failed: shown, with the reasons, and in no figure. A counted Run's failed requests " +
-		"are counted; its succeeded requests are in the figures.",
+		"A Run counts when its binary exited 0 or 4 (the Method reads nothing into a 4 that it does not read into a 0, " +
+		"but for the last rule here, which holds an exit 0 alone), every stdout line is an event that matches the events " +
+		"schema (which the data API serves at v1/schemas/events.schema.json), the stream obeys every order rule Method " +
+		"series v1's definition counted lists (among them that no sample starts at a t earlier than the previous " +
+		"sample's sample_ended), the stream has as many counted samples as the Run asked for (fewer: the Run was cut " +
+		"short), every timestamp is a whole number a JavaScript number holds exactly (at most 2^53 − 1), the stream holds " +
+		"a request (a response_ended or request_failed carrying an integer request), every sample in it, the warmup's " +
+		"included, reads as one request, the counted requests that succeeded all have the same phases (all over a new " +
+		"connection, or all over a reused one), every connection_failed outside a sample has a phase and an error that " +
+		"are words of a-z, 0-9 and _ starting with a letter, and an exit 0 has no failed request, no failed warmup " +
+		"request and no failed setup of a kept connection. A sample reads as one request when every event in it that " +
+		"names a request names the sample's number and, its certificate events and a withheld certificate line (its " +
+		"withheld_event the string certificate) aside, either it holds a line_withheld (the request then failed in phase record, and nothing more of it is " +
+		"read); or it ends with a request_failed at sample_ended's t, whose phase is dns, connect, tls, send, " +
+		"first_byte, headers or body, whose phase and error are such words, before which come the first events of a " +
+		"new connection's order or a reused one's (below), up to where that phase got (dns after none or " +
+		"name_resolved, connect and tls after connection_opened, send after connection_secured or, over a reused " +
+		"connection, after none, first_byte after request_sent, headers after first_byte, body after " +
+		"response_headers), and whose connection holds (below); or its events are exactly a new connection's order, " +
+		"name_resolved, connection_opened, connection_secured, request_sent, first_byte, response_headers, " +
+		"response_ended, or a reused one's, its last four, and its connection holds, every phase is at least 0, " +
+		"sample_ended is at response_ended's t, its status (response_headers.status) is a whole number, and, when the " +
+		"status is 2xx, its body matched (response_ended.fixture and .s3_checksum both \"match\"). Its connection holds " +
+		"when, over a new connection, the connection field of its connection_secured, if present, equals that of its " +
+		"connection_opened as values do (both absent, or the same number, string, boolean or null), and so does that " +
+		"of its request_sent, if present; and when its request_sent, if present, names an integer connection whose " +
+		"latest connection_opened gave a non-empty address, whose latest connection_secured, even " +
+		"one from before that opening, gave a non-empty TLS version, cipher and group, and which no connection_closed " +
+		"has closed since its latest connection_opened, all as of the sample's end. Any other Run is failed: shown, " +
+		"with its reasons (the first 10, each cut to its first 500 characters, then how many more there are), and in " +
+		"no figure. A counted Run's failed requests are counted; its succeeded requests are in the figures.",
 };
 
 // ---------------------------------------------------------------- gather
@@ -205,7 +231,8 @@ export function failures(run: Run, record: RequestsRecord): string[] {
 	const exit = describeExit(run.exit);
 	if (exit !== null) reasons.push(exit);
 	if (run.exit.runner_signal !== undefined && exit !== null) reasons.push(`the runner was told to stop by signal ${run.exit.runner_signal}`);
-	reasons.push(...record.problems);
+	// One by one: a stream may have more problems than a call takes arguments.
+	for (const problem of record.problems) reasons.push(problem);
 	if (record.problems.length === 0 && !record.holds_requests) reasons.push("its stream holds no request (no response_ended or request_failed carrying request)");
 	const count = countProblem(record.counted, run.samples);
 	if (count.length > 0) reasons.push(record.counted !== null && record.counted < run.samples ? `${count[0]}: the Run was cut short` : (count[0] as string));
@@ -422,7 +449,7 @@ function deriveSeries(list: Analysed[]): SeriesDerivation {
 			boot: run.boot,
 			group,
 			counted,
-			failure: counted ? null : reasons.join("; "),
+			failure: counted ? null : failureText(reasons),
 			exit_code: "code" in run.exit ? run.exit.code : null,
 			counted_requests: record.counted,
 			succeeded: counted ? record.succeeded : 0,

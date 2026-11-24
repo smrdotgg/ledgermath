@@ -48,6 +48,17 @@ outputs is a new version, never an edit: version 2 of `series` goes in `v2/`, be
 the page learn to choose it. Rewriting a Method never touches a stored Run; only the Run
 record is forever.
 
+A Method's words (its definitions, and what it splits on, leaves out and does not split
+on, its phases and facts) are part of what it outputs, and the data API publishes them
+word for word to readers who have the API and nothing else. So they name nothing such a
+reader cannot fetch: no file or directory of this repository, no README or document
+section, no issue, pull request or ADR, no function of the code or option of a program; a
+definition states its rule instead (`tests/api-words.test.ts` scans every word a built tree
+publishes). Rewording a definition, every number the same, is still a change to what the
+version outputs: free until its data is first published, as on 2026-11-23, when both
+versions' definitions stopped naming `scripts/check-events.py` and the binary's README
+before the API was public; a new version after.
+
 ## The reduced record of a stream
 
 A Method reads a Run's events from its stdout blob, 4 KB for most benchmarks and 150 to
@@ -67,7 +78,9 @@ Method asked for has no record of it, and then once for all of them.
   schemas) gives a new key, under which no record exists yet, so a record made by other
   code is never read. **The cost**, accepted: after such a change every stream is fetched
   and reduced once more (about 20 MB on 2026-11-11, growing by about 44 MB a day of
-  `http_get` streams), on the next run of the workflow. A change elsewhere (the derive
+  `http_get` streams), on the next run of the workflow: about 13 minutes for the 9,400 Runs
+  of 2026-11-23, so the workflow's first job has 60 minutes since 2026-11-24 (its cache is saved only when it
+  succeeds, and a job cut off would leave the next to start over). A change elsewhere (the derive
   step, the output's shape, the page) costs nothing. `scripts/derive.ts` removes the
   directories of records made by other code for the Methods it runs, which are never read,
   so the workflow's cache does not grow with every change. Packages imported by name (ajv) are
@@ -114,7 +127,10 @@ Method asked for has no record of it, and then once for all of them.
   the Derivations need (`summarizeStream`, `v1/facts.ts`) and lets go, for every Run:
   those written before the runner stopped copying them into the record count as they did
   when version 1 read them there, byte for byte (`tests/samples/older-shape-derivations.json`).
-- **Failed Runs**: shown, with the reasons, in their group, in no percentile.
+- **Failed Runs**: shown, with the reasons, in their group, in no percentile. A point shows
+  the first 10 reasons, each cut to its first 500 characters, then how many more there are
+  (`failureText` in `v1/facts.ts`, for both Methods): a stream can have a problem on every
+  line, and one failed Run must not write more into a published file than its ceiling allows.
 
 ### What version 1 splits on, and why
 
@@ -199,16 +215,39 @@ binary's contract (`benchmarks/http_get/README.md`). Then every Run of the Serie
 counted or not, so a Run whose stream breaks is shown with why. Nothing is keyed on a
 benchmark's name; a Series whose Runs' streams never hold a request is not this Method's.
 
-**A Run counts** when its binary exited 0 or 4 (4: the Run completed and holds at least one
-failed request), its stream passes every check `series` v1 makes (each line an event of the
-schema, every order rule of `scripts/check-events.py`), it has as many counted samples as
-the Run asked for (fewer: the Run was cut short, at its budget or because nothing was
-reachable), every timestamp is a safe integer (at most 2^53 − 1 ns, about 104 days of the
-clock: past that the parser has already rounded it), every request reads as below, and an
-exit 0 has no failed request, no failed warmup request and no failed setup of a kept
-connection (the binary's README makes each of these exit 4). Any other Run is failed:
-shown, with the reasons, in no figure. A Run that exited 1 (a body that did not match the
-Fixture) or was killed is failed.
+**A Run counts** when its binary exited 0 or 4 (the Method reads nothing into a 4 that it
+does not read into a 0, but for the rule below that an exit 0 has no failure; `http_get`
+exits 4 when a request it made, the warmup's included, failed or was answered with a status
+that is not 2xx, when a setup of a kept connection failed, or when it made fewer requests
+than it was asked for, and 1 before any of these when a body did not match), its stream
+passes every check `series` v1 makes (each line an event of the schema, every order rule of
+`scripts/check-events.py`), it has as many counted samples as the Run asked for (fewer: the
+Run was cut short, at its budget or because nothing was reachable), every timestamp is a
+safe integer (at most 2^53 − 1 ns, about 104 days of the clock: past that the parser has
+already rounded it), every request reads as below, its counted requests that succeeded all
+have the same phases, and an exit 0 has no failed request, no failed warmup request and no
+failed setup of a kept connection (the binary's README makes each of these exit 4). Any
+other Run is failed: shown, with the reasons, in no figure. A Run that exited 1 (a body that
+did not match the Fixture) or was killed is failed.
+
+**The same phases.** A Run's figures tally each phase over its succeeded counted requests,
+one time of each, and the record that keeps them (below) holds to that. A request over a new
+connection has `dns`, `connect` and `tls`; one over a kept connection does not. `http_get`
+never mixes the two in one Run (a kept connection is reopened outside any sample), but a
+stream from another benchmark may, and until 2026-11-24 such a Run made a record that did
+not read back, which stopped the whole Method. Such a Run is now failed, with the count of
+each set of phases as its reason. Keeping both sets in one record, so that such a Run can
+count, is a larger change, left for when a benchmark needs it.
+
+**No stream stops a Method.** Whatever a Run's stdout holds, each Method's reducer gives a
+record that reads back, and the Run is counted or failed with its reasons. The events
+schema closes the six universal events and leaves a benchmark's own open, so a field may be
+absent, null, of any type, or a name such as `constructor` that an object lookup could take
+for its own. Three such streams stopped a Method until 2026-11-24: an `observed` event
+without its `values` (both Methods; the schema refuses it, but the reducer read it first),
+`request_sent.signing` null, and a `request_failed` in phase `constructor`.
+`tests/requests-method.test.ts` sets each field of each event of three streams to each such
+value, and to each event name, and holds both reducers to this.
 
 ### One request
 
@@ -235,7 +274,10 @@ timestamps, in nanoseconds of the Run's clock, exactly as the binary's README de
   `response_ended`'s `t`, and one `request` throughout. Only succeeded requests are timed.
 - **Failed**: it holds a `request_failed` (counted by its `phase` and `error`), or its
   status is not 2xx (phase `response`, kind `status_<code>`), or a line of it was withheld
-  (phase `record`, kind `line_withheld_<event>`). Counted per Run and pooled, never timed.
+  (phase `record`, its kind from the request's first withheld line, in stream order, that is
+  not a certificate's: `line_withheld_<event>` when that line names the event it replaced as
+  a word, and `line_withheld` when it does not; a withheld `certificate` line is aside, like
+  a certificate, and no failure). Counted per Run and pooled, never timed.
   The warmup request's failure, and reused-connection setups that failed outside any sample
   (`connection_failed`), are counted apart. A `request_failed` must be the sample's last
   event, at `sample_ended`'s `t`, and the events before it the start of the order above up
@@ -252,8 +294,9 @@ timestamps, in nanoseconds of the Run's clock, exactly as the binary's README de
 - **Its facts**, from the connection it went over and from what it sent: `address_block`
   (the /16 of the IPv4 address connected to, `a.b.0.0/16`; any other address whole),
   `cipher`, `tls_version` and `tls_group` (`connection_secured`'s `cipher`, `tls`, `group`),
-  `method` and `target` (`request_sent`'s), and `signing` (`request_sent.signing.algorithm`,
-  or `unsigned` when the request carries none).
+  `method` and `target` (`request_sent`'s, or `(none)`), and `signing`
+  (`request_sent.signing.algorithm`, `unsigned` when the request carries none, or
+  `(no algorithm)` when its signing is null, not an object, or names no algorithm).
 
 Anything else in a sample is a problem: the Run breaks the contract.
 
