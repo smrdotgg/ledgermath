@@ -1328,4 +1328,35 @@ A migrated benchmark is done only when **all** of these hold:
   function). The alarm's own step-summary writes are asynchronous, abandoned after two
   seconds, and the alarm exits explicitly with its verdict's code (a test gives it a FIFO
   nobody reads). Not deployed; the switch stays off.
+- **2026-11-23** — The alarm also sends one Telegram message (ADR-0033), because the
+  maintainer may not see GitHub's notifications promptly. Whenever it writes on GitHub
+  (issue opened, comment, all-clear, drill), or had something to post and could not, it
+  sends one plain-text message last of all: fixed words, the verdict's counts, the issue's
+  and the run's addresses, nothing from S3, the check or the environment. Sent from inside
+  the alarm's own step: GitHub starts no workflow for an issue made with the workflow's own
+  token. Given up after 15 s; a message not sent is a warning in fixed words (never the
+  address, which holds the token), and the exit code, posts and marker are those of a run
+  without Telegram. The secrets are in the alarm step's `env` only (a test reads every file
+  under `.github`). Tests against a stand-in for Telegram: one message per kind of post,
+  none without a post; down, stalled headers, stalled body, 401, 429, not JSON, each the same
+  as no Telegram, bounded, the token never printed. The drill's Telegram message is what the
+  maintainer confirms before the API goes public.
+- **2026-11-23** — The Telegram message, after an independent verification (five points).
+  The request is made with `verbose: false`: with `BUN_CONFIG_VERBOSE_FETCH` set, Bun's trace
+  printed both keys to stderr. A write that went out with no whole answer back (GitHub
+  recorded a comment, answered 201, and cut its JSON short) is now "could not be confirmed",
+  not "could not post", and the issue's address is in the message whenever the issue is
+  known, a refused comment included (`notingTracker`, `GitHubRefused`: a 4xx is refused,
+  anything else unconfirmed). The workflow test judges each job's `secrets` by its parsed
+  value (`secrets: "inherit"` passed it before) and must reject a set of fixtures. A body
+  reading `timeout` is no longer taken for a timeout (a tagged result). Stalls are tested
+  with a short deadline (`--telegram-budget-ms`, only ever shorter than 15 s), no test times
+  a process, and the file runs in about 6 seconds instead of 33.
+- **2026-11-24** — The Telegram message, after a second verification (three small points).
+  The alarm's calls to GitHub are made with `verbose: false` too (Bun's `curl` trace printed
+  the workflow's token, as on `main`). The issue is noted as soon as it is found, before its
+  comments are read, and the drill starts from it; a refusal reads "this run could not post
+  an update", which claims nothing of what the issue says. A 4xx whose body is cut off keeps
+  its status (still "could not post"), and an unknown outcome reads "GitHub did not confirm
+  the write", true of a whole 503 too.
 - _(agents: append your entry here, one per merged benchmark)_
