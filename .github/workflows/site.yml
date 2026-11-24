@@ -38,7 +38,7 @@ permissions:
 jobs:
   build:
     name: type-check, build and check the site
-    runs-on: ubuntu-24.04
+    runs-on: ${{ vars.LEDGERMATH_RUNNER || 'ubuntu-24.04' }}
     timeout-minutes: 10
     defaults:
       run:
@@ -72,7 +72,7 @@ jobs:
     name: deploy the built site to Vercel (production)
     needs: build
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
-    runs-on: ubuntu-24.04
+    runs-on: ${{ vars.LEDGERMATH_RUNNER || 'ubuntu-24.04' }}
     timeout-minutes: 10
     permissions:
       contents: read
@@ -173,7 +173,7 @@ jobs:
     # job rather than fail it. Same-repository branches are pushed by people
     # with write access, who could read the secret anyway.
     if: (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && !(github.ref == 'refs/heads/main' && github.event_name != 'pull_request')
-    runs-on: ubuntu-24.04
+    runs-on: ${{ vars.LEDGERMATH_RUNNER || 'ubuntu-24.04' }}
     timeout-minutes: 10
     permissions:
       contents: read
