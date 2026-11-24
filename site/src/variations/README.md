@@ -5,6 +5,11 @@ Eight very different designs of LedgerMath's home page, built side by side on th
 lives in its own directory, `site/src/variations/v<n>/`, and is built, screenshotted and
 checked on its own. Nothing here is merged to `main`: `main` deploys to the public site.
 
+A ninth slot, `v9`, is Semere's own layout, built from his whiteboard in the style of his site
+(smr.gg). It was not part of the scored climb and has no scores; the same rules apply to it. Its
+"Latest runs" list is the one thing on any page that does not come from `src/data/`: see
+`v9/rounds.ts`.
+
 ## What you may touch
 
 **Only your design's directory, `site/src/variations/v<n>/`.** Not another design's, not

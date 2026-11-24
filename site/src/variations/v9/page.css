@@ -1,0 +1,96 @@
+/* Geist Pixel Circle (geist npm 1.9.2), SIL OFL 1.1: see third-party-notices.txt.
+   font-display: block, not swap, as on smr.gg: swap would paint the fallback font for a moment. */
+@font-face { font-family: "Geist Pixel Circle"; src: url("./fonts/GeistPixel-Circle.woff2") format("woff2"); font-display: block; }
+
+/* smr.gg's colours: white on black, one grey for what matters less, one darker grey for rules.
+   The light scheme is the same page turned over. --dot is one dot of the font: .038em. */
+:root { color-scheme: dark light; --bg: #000; --fg: #fff; --muted: #7c7c7c; --rule: #444; --off: #2e2e2e; --dot: .038em; }
+@media (prefers-color-scheme: light) { :root { --bg: #fff; --fg: #000; --muted: #6a6a6a; --rule: #bbb; --off: #dcdcdc; } }
+
+html { background: var(--bg); color: var(--fg); -webkit-text-size-adjust: 100%; }
+.font-loading body { visibility: hidden; } /* set by the script in Document.tsx until the font is ready */
+/* "ss09" is the font's zero without a slash: a page of figures reads more easily with it. Remove it for the slashed zero.
+   The font is set by its long properties, not the `font` shorthand: the shorthand resets font-feature-settings, and the
+   build's minifier may move it after that line. */
+body { margin: 0; min-height: 100vh; display: flex; flex-direction: column; font-family: "Geist Pixel Circle", ui-monospace, Menlo, monospace; font-size: 1rem; line-height: 1.5; font-feature-settings: "ss09"; -webkit-font-smoothing: antialiased; }
+h1, h2, p, ul, ol { margin: 0; padding: 0; font: inherit; }
+ul, ol { list-style: none; }
+::selection { background: var(--fg); color: var(--bg); }
+
+/* Links, as smr.gg's footer link: quiet until pointed at. */
+a { color: inherit; text-decoration: underline; text-decoration-color: transparent; text-underline-offset: .25em; transition: color .2s, text-decoration-color .2s; }
+a:hover, a:focus-visible { color: var(--fg); text-decoration-color: var(--fg); outline: none; }
+
+.wrap { width: 100%; max-width: 72rem; margin: 0 auto; padding: 0 1.5rem; box-sizing: border-box; }
+main { flex: 1; }
+
+/* ---------------------------------------------------------------- header and footer */
+header.wrap { display: flex; justify-content: space-between; align-items: baseline; gap: 1.5rem; padding-top: 1.75rem; padding-bottom: 1.75rem; }
+.mark { font-size: 1.25rem; }
+nav { display: flex; gap: 1.75rem; color: var(--muted); }
+footer.wrap { display: flex; justify-content: center; flex-wrap: wrap; gap: .5rem 1.75rem; padding-top: 4rem; padding-bottom: 1.75rem; color: var(--muted); }
+
+/* ---------------------------------------------------------------- headline and latest runs */
+.hero { display: grid; grid-template-columns: minmax(0, 1fr) 19rem; gap: 2rem 4rem; align-items: end; padding: 5.5rem 0 5rem; }
+
+/* The headline is one column as wide as its longer line; the shorter line ends in a row of dots
+   that runs to the same edge (a stand-in until Semere chooses the art, as the daisies and the
+   church fill the last line on smr.gg). The dots sit on the baseline, one dot of the font each. */
+h1 { display: grid; grid-template-columns: fit-content(100%); font-size: clamp(2rem, 10.2vw, 4.5rem); line-height: 1.12; }
+h1 .line { display: flex; align-items: baseline; white-space: nowrap; }
+.fill { flex: 1; min-width: 1em; height: var(--dot); margin: 0 calc(var(--dot) * 2) 0 .32em;
+  background: radial-gradient(circle calc(var(--dot) / 2) at calc(100% - var(--dot) / 2) 50%, var(--muted) 96%, transparent) 0 0 / calc(var(--dot) * 3) var(--dot) space no-repeat; }
+.sub { margin-top: 1.5rem; max-width: 26em; font-size: 1.5rem; line-height: 2rem; }
+
+.latest h2 { color: var(--muted); padding-bottom: .75rem; }
+.latest li { display: grid; gap: .1rem; padding: .8rem 0; border-top: 1px solid var(--rule); }
+.latest li span { color: var(--muted); }
+
+/* ---------------------------------------------------------------- the three graphs */
+.graphs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 3rem 4rem; }
+.graph h2 { font-size: 1.25rem; line-height: 1.75rem; }
+.unit, .price, .note { color: var(--muted); }
+.graph ul { margin-top: 1.25rem; display: grid; gap: 1rem; }
+.graph li { display: grid; grid-template-columns: 1fr auto; gap: .4rem 1rem; align-items: baseline; }
+.graph .price { margin-left: .5em; }
+/* Dots drawn as on smr.gg: a dashed line whose dashes have no length and round ends, one per unit. */
+.bar { grid-column: 1 / -1; display: block; width: 100%; height: auto; overflow: visible; fill: none; stroke-width: .8; stroke-linecap: round; stroke-dasharray: 0 1; stroke-dashoffset: .5; }
+.bar .on { stroke: var(--fg); }
+.bar .off { stroke: var(--off); }
+
+/* ---------------------------------------------------------------- the table */
+.numbers { padding-top: 6rem; }
+.numbers h2 { font-size: 1.5rem; line-height: 2rem; }
+.scroll { margin-top: 1.5rem; overflow-x: auto; }
+.scroll:focus-visible { outline: 1px solid var(--rule); outline-offset: .5rem; }
+table { width: 100%; border-collapse: collapse; white-space: nowrap; font-variant-numeric: tabular-nums; }
+th, td { padding: .45rem 0 .45rem 2rem; font: inherit; text-align: right; vertical-align: baseline; }
+th:first-child, td:first-child { padding-left: 0; text-align: left; }
+thead th { padding-bottom: .9rem; }
+thead .price { display: block; }
+/* A row's name and, in a column of its own, the unit of its figures. */
+.head { display: grid; grid-template-columns: minmax(0, 1fr) 11rem; column-gap: 1.25rem; align-items: baseline; }
+.section th { padding-top: 1.75rem; color: var(--muted); border-bottom: 1px solid var(--rule); }
+.section span { position: sticky; left: 0; }
+tbody:first-of-type .section th { padding-top: 0; }
+
+/* ---------------------------------------------------------------- narrower screens */
+@media (max-width: 66rem) {
+  .hero { grid-template-columns: minmax(0, 1fr); align-items: start; padding: 3.5rem 0 4rem; }
+  .latest { max-width: 34rem; }
+  .graphs { grid-template-columns: minmax(0, 1fr); max-width: 34rem; }
+  .numbers { padding-top: 4.5rem; }
+}
+/* A phone: the table scrolls sideways inside its own box, under the rows' names, which stay put
+   and carry their unit on a line below. */
+@media (max-width: 44rem) {
+  .wrap { padding: 0 1rem; }
+  header.wrap { padding-top: 1.25rem; padding-bottom: 1.25rem; }
+  nav { gap: 1.1rem; }
+  .hero { padding: 2.5rem 0 3.5rem; }
+  .sub { margin-top: 1rem; font-size: 1.25rem; line-height: 1.75rem; }
+  th, td { padding-left: 1.25rem; }
+  tbody th[scope="row"], thead td { position: sticky; left: 0; z-index: 1; background: var(--bg); }
+  .head { grid-template-columns: 9rem; white-space: normal; }
+}
+@media (prefers-reduced-motion: reduce) { a { transition: none; } }
