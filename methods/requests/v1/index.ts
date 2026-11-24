@@ -68,8 +68,11 @@ export const DEFINITIONS: Record<string, string> = {
 	failed:
 		"A counted request that holds a request_failed (counted by its phase and error) or whose status is not 2xx " +
 		"(phase response, kind status_<code>), or one of whose lines the binary withheld (phase record, kind " +
-		"line_withheld_<event>). Counted per Run and pooled; never in a time. The warmup request's failure and failed " +
-		"reused-connection setups (connection_failed, outside any sample) are counted apart.",
+		"line_withheld_<event> when the withheld line names the event it replaced as a word of a-z, 0-9 and _ starting " +
+		"with a letter, and line_withheld when it does not). A withheld certificate line (its withheld_event the string " +
+		"certificate) is aside, like a certificate event: it is no failure. Counted per Run and pooled; never in a time. " +
+		"The warmup request's failure and failed reused-connection setups (connection_failed, outside any sample) are " +
+		"counted apart.",
 	per_run:
 		"For each phase of a counted Run: the count of its succeeded requests, the least and greatest time, and each " +
 		"percentile the count supports, exactly, by linear interpolation between closest ranks (R type 7): with n times " +
@@ -106,8 +109,8 @@ export const DEFINITIONS: Record<string, string> = {
 		"Method series v1's groups: within a Series, the Runs whose split facts are all equal, lettered in the order each " +
 		"first appears; the same letters series v1 gives the same Runs.",
 	counted:
-		"A Run counts when its binary exited 0 or 4 (the binary exits 4 to say the Run completed and holds a failed " +
-		"request; the Method does not require that one did), every stdout line is an event that matches the events " +
+		"A Run counts when its binary exited 0 or 4 (the Method reads nothing into a 4 that it does not read into a 0, " +
+		"but for the last rule here, which holds an exit 0 alone), every stdout line is an event that matches the events " +
 		"schema (which the data API serves at v1/schemas/events.schema.json), the stream obeys every order rule Method " +
 		"series v1's definition counted lists (among them that no sample starts at a t earlier than the previous " +
 		"sample's sample_ended), the stream has as many counted samples as the Run asked for (fewer: the Run was cut " +
@@ -117,8 +120,8 @@ export const DEFINITIONS: Record<string, string> = {
 		"connection, or all over a reused one), every connection_failed outside a sample has a phase and an error that " +
 		"are words of a-z, 0-9 and _ starting with a letter, and an exit 0 has no failed request, no failed warmup " +
 		"request and no failed setup of a kept connection. A sample reads as one request when every event in it that " +
-		"names a request names the sample's number and, its certificate events and a certificate's withheld line " +
-		"aside, either it holds a line_withheld (the request then failed in phase record, and nothing more of it is " +
+		"names a request names the sample's number and, its certificate events and a withheld certificate line (its " +
+		"withheld_event the string certificate) aside, either it holds a line_withheld (the request then failed in phase record, and nothing more of it is " +
 		"read); or it ends with a request_failed at sample_ended's t, whose phase is dns, connect, tls, send, " +
 		"first_byte, headers or body, whose phase and error are such words, before which come the first events of a " +
 		"new connection's order or a reused one's (below), up to where that phase got (dns after none or " +
@@ -129,9 +132,10 @@ export const DEFINITIONS: Record<string, string> = {
 		"response_ended, or a reused one's, its last four, and its connection holds, every phase is at least 0, " +
 		"sample_ended is at response_ended's t, its status (response_headers.status) is a whole number, and, when the " +
 		"status is 2xx, its body matched (response_ended.fixture and .s3_checksum both \"match\"). Its connection holds " +
-		"when, over a new connection, its connection_secured, if present, names the connection its connection_opened " +
-		"names, and so does its request_sent, if present; and when its request_sent, if present, names an integer " +
-		"connection whose latest connection_opened gave a non-empty address, whose latest connection_secured, even " +
+		"when, over a new connection, the connection field of its connection_secured, if present, equals that of its " +
+		"connection_opened as values do (both absent, or the same number, string, boolean or null), and so does that " +
+		"of its request_sent, if present; and when its request_sent, if present, names an integer connection whose " +
+		"latest connection_opened gave a non-empty address, whose latest connection_secured, even " +
 		"one from before that opening, gave a non-empty TLS version, cipher and group, and which no connection_closed " +
 		"has closed since its latest connection_opened, all as of the sample's end. Any other Run is failed: shown, " +
 		"with the reasons, and in no figure. A counted Run's failed requests are counted; its succeeded requests are " +

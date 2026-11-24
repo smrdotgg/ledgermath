@@ -212,8 +212,11 @@ binary's contract (`benchmarks/http_get/README.md`). Then every Run of the Serie
 counted or not, so a Run whose stream breaks is shown with why. Nothing is keyed on a
 benchmark's name; a Series whose Runs' streams never hold a request is not this Method's.
 
-**A Run counts** when its binary exited 0 or 4 (the binary exits 4 when the Run completed
-and holds at least one failed request; the Method does not check that one did), its stream
+**A Run counts** when its binary exited 0 or 4 (the Method reads nothing into a 4 that it
+does not read into a 0, but for the rule below that an exit 0 has no failure; `http_get`
+exits 4 when a request it made, the warmup's included, failed or was answered with a status
+that is not 2xx, when a setup of a kept connection failed, or when it made fewer requests
+than it was asked for, and 1 before any of these when a body did not match), its stream
 passes every check `series` v1 makes (each line an event of the schema, every order rule of
 `scripts/check-events.py`), it has as many counted samples as the Run asked for (fewer: the
 Run was cut short, at its budget or because nothing was reachable), every timestamp is a
@@ -232,6 +235,16 @@ stream from another benchmark may, and until 2026-11-24 such a Run made a record
 not read back, which stopped the whole Method. Such a Run is now failed, with the count of
 each set of phases as its reason. Keeping both sets in one record, so that such a Run can
 count, is a larger change, left for when a benchmark needs it.
+
+**No stream stops a Method.** Whatever a Run's stdout holds, each Method's reducer gives a
+record that reads back, and the Run is counted or failed with its reasons. The events
+schema closes the six universal events and leaves a benchmark's own open, so a field may be
+absent, null, of any type, or a name such as `constructor` that an object lookup could take
+for its own. Three such streams stopped a Method until 2026-11-24: an `observed` event
+without its `values` (both Methods; the schema refuses it, but the reducer read it first),
+`request_sent.signing` null, and a `request_failed` in phase `constructor`.
+`tests/requests-method.test.ts` sets each field of each event of three streams to each such
+value, and to each event name, and holds both reducers to this.
 
 ### One request
 
@@ -258,7 +271,9 @@ timestamps, in nanoseconds of the Run's clock, exactly as the binary's README de
   `response_ended`'s `t`, and one `request` throughout. Only succeeded requests are timed.
 - **Failed**: it holds a `request_failed` (counted by its `phase` and `error`), or its
   status is not 2xx (phase `response`, kind `status_<code>`), or a line of it was withheld
-  (phase `record`, kind `line_withheld_<event>`). Counted per Run and pooled, never timed.
+  (phase `record`, kind `line_withheld_<event>` when the line names the event it replaced as
+  a word, and `line_withheld` when it does not; a withheld `certificate` line is aside, like
+  a certificate, and no failure). Counted per Run and pooled, never timed.
   The warmup request's failure, and reused-connection setups that failed outside any sample
   (`connection_failed`), are counted apart. A `request_failed` must be the sample's last
   event, at `sample_ended`'s `t`, and the events before it the start of the order above up
@@ -275,8 +290,9 @@ timestamps, in nanoseconds of the Run's clock, exactly as the binary's README de
 - **Its facts**, from the connection it went over and from what it sent: `address_block`
   (the /16 of the IPv4 address connected to, `a.b.0.0/16`; any other address whole),
   `cipher`, `tls_version` and `tls_group` (`connection_secured`'s `cipher`, `tls`, `group`),
-  `method` and `target` (`request_sent`'s), and `signing` (`request_sent.signing.algorithm`,
-  or `unsigned` when the request carries none).
+  `method` and `target` (`request_sent`'s, or `(none)`), and `signing`
+  (`request_sent.signing.algorithm`, `unsigned` when the request carries none, or
+  `(no algorithm)` when its signing is null, not an object, or names no algorithm).
 
 Anything else in a sample is a problem: the Run breaks the contract.
 

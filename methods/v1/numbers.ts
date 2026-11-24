@@ -77,8 +77,10 @@ export function countedSamples(events: readonly RunEvent[]): SampleTime[] {
 export function observedBytesPerRepetition(events: readonly RunEvent[]): number | null {
 	for (const event of events) {
 		if (event.event !== "observed") continue;
-		const values = event.values as Record<string, unknown>;
-		const bytes = values.bytes_per_repetition;
+		// Read from every stream, a broken one included: an observed event without its values object must not stop the Method.
+		const values: unknown = event.values;
+		if (typeof values !== "object" || values === null) continue;
+		const bytes = (values as Record<string, unknown>).bytes_per_repetition;
 		if (typeof bytes === "number" && Number.isFinite(bytes) && bytes > 0) return bytes;
 	}
 	return null;

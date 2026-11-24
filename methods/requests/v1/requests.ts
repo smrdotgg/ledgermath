@@ -48,9 +48,11 @@ export const REQUEST_FACT_WORDS: Readonly<Record<RequestFact, string>> = {
 	cipher: "the TLS cipher suite negotiated (connection_secured.cipher)",
 	tls_version: "the TLS version negotiated (connection_secured.tls)",
 	tls_group: "the key-exchange group negotiated (connection_secured.group)",
-	method: "the request's method, as sent (request_sent.method)",
-	target: "the request's target, as sent (request_sent.target)",
-	signing: "how the request was signed, as sent: request_sent.signing.algorithm, or unsigned when the request carries no signing",
+	method: "the request's method, as sent (request_sent.method), or (none) when that is not a non-empty string",
+	target: "the request's target, as sent (request_sent.target), or (none) when that is not a non-empty string",
+	signing:
+		"how the request was signed, as sent: request_sent.signing.algorithm; unsigned when the request carries no signing, " +
+		"and (no algorithm) when its signing is not an object whose algorithm is a non-empty string",
 };
 
 /** A request that succeeded: each of its phases in nanoseconds, and its connection's facts. */
@@ -203,8 +205,8 @@ export function readRequests(events: readonly RunEvent[]): ReadRequests {
 		const problem = (words: string): void => {
 			result.problems.push(`${where}: ${words}`);
 		};
-		// A withheld line stands for the event it replaced: a certificate's is aside like the certificate.
-		const sequence = inside.filter((event) => !ASIDE.has(event.event) && !(event.event === "line_withheld" && ASIDE.has(String(event.withheld_event))));
+		// A withheld line stands for the event it replaced: a certificate's (withheld_event the string "certificate") is aside like the certificate.
+		const sequence = inside.filter((event) => !ASIDE.has(event.event) && !(event.event === "line_withheld" && typeof event.withheld_event === "string" && ASIDE.has(event.withheld_event)));
 		const keep = (outcome: Failure | null): void => {
 			if (outcome === null) return;
 			if (warmup) result.warmupFailure ??= outcome;
@@ -260,7 +262,8 @@ export function readRequests(events: readonly RunEvent[]): ReadRequests {
 			if (outcome === null) return;
 			const before = names.slice(0, failedAt);
 			const last = before.at(-1) ?? "";
-			const expected = LAST_BEFORE_FAILURE[outcome.phase];
+			// Only the table's own phases: "constructor", a word too, would otherwise find Object's.
+			const expected = Object.hasOwn(LAST_BEFORE_FAILURE, outcome.phase) ? LAST_BEFORE_FAILURE[outcome.phase] : undefined;
 			if (expected === undefined) return problem(`request_failed's phase ${JSON.stringify(outcome.phase)} is none of ${Object.keys(LAST_BEFORE_FAILURE).join(", ")}`);
 			const asNew = isPrefix(before, NEW_CONNECTION.slice(0, -1)) && expected.new.includes(last);
 			const asReused = isPrefix(before, REUSED_CONNECTION.slice(0, -1)) && expected.reused.includes(last);
@@ -316,7 +319,9 @@ export function readRequests(events: readonly RunEvent[]): ReadRequests {
 			);
 		}
 		if (!warmup) {
-			const signing = sent.signing as { algorithm?: unknown } | undefined;
+			// The events schema leaves a benchmark's own events open: signing may be null, or anything else that is not an object.
+			const signing: unknown = sent.signing;
+			const algorithm = typeof signing === "object" && signing !== null ? (signing as { algorithm?: unknown }).algorithm : undefined;
 			result.succeeded.push({
 				phases,
 				facts: {
@@ -326,7 +331,7 @@ export function readRequests(events: readonly RunEvent[]): ReadRequests {
 					tls_group: connection.group as string,
 					method: text(sent.method) ?? "(none)",
 					target: text(sent.target) ?? "(none)",
-					signing: signing === undefined ? "unsigned" : (text(signing.algorithm) ?? "(no algorithm)"),
+					signing: signing === undefined ? "unsigned" : (text(algorithm) ?? "(no algorithm)"),
 				},
 			});
 		}

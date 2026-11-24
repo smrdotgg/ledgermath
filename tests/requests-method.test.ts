@@ -23,10 +23,11 @@ import {
 import type { DerivationsFile, SeriesDerivation } from "../methods/requests/v1/output";
 import { REQUESTS_RECORD, REQUESTS_RECORD_KEY, type RequestsRecord, type RunPhase, reduceRequests } from "../methods/requests/v1/record";
 import { addressBlock, readRequests } from "../methods/requests/v1/requests";
-import { readStream, type RunEvent, type RunFile } from "../methods/run";
+import { readStream, type RunEvent, type RunFile, schemaValidators } from "../methods/run";
 import * as series from "../methods/v1";
+import { outcome } from "../methods/v1/facts";
 import { percentile } from "../methods/v1/numbers";
-import { SERIES_RECORD_KEY } from "../methods/v1/record";
+import { SERIES_RECORD, SERIES_RECORD_KEY } from "../methods/v1/record";
 import { DEFAULT_PHASES, HandMade, rampRequests, requestRun, requestStream } from "./hand-made-requests";
 
 // Each test derives a few hundred hand-made requests; a loaded machine can take longer than bun's five-second default.
@@ -589,6 +590,58 @@ describe("the reduced record of a Run, kept between runs", () => {
 		}
 		// Enough of them count for the search to mean something.
 		expect(counted).toBeGreaterThan(1000);
+	});
+
+	test("no stream makes either Method's reducer throw, whatever value a field holds: each Run is counted or failed with why, and its record reads back", () => {
+		// The events schema closes the six universal events and leaves a benchmark's own open, so a field may be absent, null,
+		// of any type, or a name an object lookup could take for its own. On main, three such streams stopped a Method: an
+		// observed event without its values (both Methods), request_sent.signing null, and a request_failed in phase constructor.
+		const ABSENT = Symbol("absent");
+		const values: unknown[] = [ABSENT, null, true, 0, -1, 0.5, 2 ** 53, "", "x", "1", "constructor", "__proto__", "toString", [], {}, { algorithm: null }];
+		const extra = ["request", "connection", "signing", "status", "fixture", "s3_checksum", "withheld_event", "address", "tls", "cipher", "group", "phase", "error", "method", "target", "values", "sample", "warmup", "repetitions"];
+		const names = ["constructor", "__proto__", "observed", "sample_started", "sample_ended", "request_failed", "response_ended", "request_sent", "line_withheld", "certificate", "connection_failed", "connection_closed"];
+		const plain: RunEvent[] = [
+			{ event: "started", t: 1000, schema: "ledgermath.events/1", wall_utc: "2026-11-11T21:35:00.000000000Z", clock: "CLOCK_MONOTONIC_RAW", clock_read_ns: 20 },
+			{ event: "observed", t: 2000, values: { bytes_per_repetition: 4096 } },
+			{ event: "sample_started", t: 3000, sample: 0, warmup: false, repetitions: 10 },
+			{ event: "sample_ended", t: 9000, sample: 0 },
+			{ event: "verified", t: 10000, checksum: "0x0000000000000001" },
+			{ event: "finished", t: 11000 },
+		];
+		const bases = [
+			plain,
+			events(requestStream({ connection: "new", requests: [{}, { fail: { phase: "send", error: "reset" } }] })),
+			events(requestStream({ connection: "reused", requests: [{}, { fail: { phase: "first_byte", error: "timeout" } }], setupFailure: { phase: "tls", error: "reset" } })),
+		];
+		const validate = schemaValidators().event;
+		const tally = { tried: 0, accepted: 0, counted: 0 };
+		const judge = (list: RunEvent[], how: string): void => {
+			tally.tried++;
+			if (list.every((event) => validate(event))) tally.accepted++;
+			const text = bytes(`${list.map((event) => JSON.stringify(event)).join("\n")}\n`);
+			const seriesRecord = SERIES_RECORD.reduce(text);
+			expect([how, SERIES_RECORD.fromJson(JSON.parse(JSON.stringify(SERIES_RECORD.toJson(seriesRecord)))) === null]).toEqual([how, false]);
+			outcome({ exit: { code: 0 }, samples: Math.max(seriesRecord.counted ?? 1, 1) } as never, seriesRecord);
+			const record = reduceRequests(text);
+			expect([how, REQUESTS_RECORD.fromJson(JSON.parse(JSON.stringify(REQUESTS_RECORD.toJson(record)))) === null]).toEqual([how, false]);
+			for (const code of [0, 4]) if (requests.failures({ samples: Math.max(record.counted ?? 1, 1), exit: { code } } as never, record).length === 0) tally.counted++;
+		};
+		for (const [b, base] of bases.entries()) {
+			for (let i = 0; i < base.length; i++) {
+				for (const field of new Set([...Object.keys(base[i] as RunEvent), ...extra])) {
+					for (const value of field === "event" ? names : values) {
+						const list = base.map((event) => ({ ...event }));
+						const event = list[i] as Record<string, unknown>;
+						if (value === ABSENT) delete event[field];
+						else event[field] = structuredClone(value);
+						judge(list, `stream ${b}, event ${i}: ${field} = ${value === ABSENT ? "absent" : JSON.stringify(value)}`);
+					}
+				}
+			}
+		}
+		// Enough of them are what the events schema accepts, and count, for the search to mean something.
+		expect(tally.accepted).toBeGreaterThan(tally.tried / 3);
+		expect(tally.counted).toBeGreaterThan(1000);
 	});
 
 	test("both Methods give the same bytes with no records, while making them, and from them alone, fetching no stream", async () => {
