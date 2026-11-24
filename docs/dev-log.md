@@ -1451,4 +1451,19 @@ A migrated benchmark is done only when **all** of these hold:
   downloads go in `RUNNER_TEMP` and are removed. The README says what must happen before
   the repository is public: delete the variable, remove the runner, enable all four
   workflows.
+- **2026-11-24** — The data API's words, after a third verification (two points). **A
+  stream with a million problems no longer stops a Method**: both reducers and both verdicts
+  passed a whole list of problems to one `push(...)`, and past about a million arguments the
+  call throws; they now add them one by one. **One failed Run writes a bounded text**: a
+  failed Run's point showed every reason, so a stream with a problem on every line (or a
+  reason quoting a long value of the stream) would write megabytes into its month file and
+  Series file, past their ceilings, and stop every publish. A point now shows the first 10
+  reasons, each cut to its first 500 characters, then how many more there are
+  (`failureText` in `methods/v1/facts.ts`, about 5 KB at most), and both definitions and the
+  schemas' `failure` say so. A test reduces a stream of a million lines the events schema
+  accepts, each `finished` after the first a problem: it threw on `7935cb6`; now each record
+  reads back and the point holds 10 reasons and "and 999989 more reasons, not shown". No real
+  record or month file changes: the live data of 2026-11-24 00:36 hold 9,514 Runs and no
+  failed one. **Which withheld line gives the kind**: the request's first withheld line, in
+  stream order, that is not a certificate's, said in `failed` and the schemas.
 - _(agents: append your entry here, one per merged benchmark)_

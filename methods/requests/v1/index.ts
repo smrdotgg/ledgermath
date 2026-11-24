@@ -35,6 +35,7 @@ import { countProblem } from "../../v1/stream";
 import {
 	type BlobMap,
 	type Facts,
+	failureText,
 	LEFT_OUT,
 	SPLIT_FACTS,
 	seriesId,
@@ -67,9 +68,10 @@ export const DEFINITIONS: Record<string, string> = {
 		"checksum (response_ended.fixture and .s3_checksum both \"match\"). Only succeeded requests are in a time.",
 	failed:
 		"A counted request that holds a request_failed (counted by its phase and error) or whose status is not 2xx " +
-		"(phase response, kind status_<code>), or one of whose lines the binary withheld (phase record, kind " +
-		"line_withheld_<event> when the withheld line names the event it replaced as a word of a-z, 0-9 and _ starting " +
-		"with a letter, and line_withheld when it does not). A withheld certificate line (its withheld_event the string " +
+		"(phase response, kind status_<code>), or one of whose lines the binary withheld (phase record, its kind from " +
+		"the first withheld line of the request, in stream order, that is not a certificate's: line_withheld_<event> " +
+		"when that line names the event it replaced as a word of a-z, 0-9 and _ starting with a letter, and " +
+		"line_withheld when it does not; one failure, however many lines were withheld). A withheld certificate line (its withheld_event the string " +
 		"certificate) is aside, like a certificate event: it is no failure. Counted per Run and pooled; never in a time. " +
 		"The warmup request's failure and failed reused-connection setups (connection_failed, outside any sample) are " +
 		"counted apart.",
@@ -138,8 +140,8 @@ export const DEFINITIONS: Record<string, string> = {
 		"latest connection_opened gave a non-empty address, whose latest connection_secured, even " +
 		"one from before that opening, gave a non-empty TLS version, cipher and group, and which no connection_closed " +
 		"has closed since its latest connection_opened, all as of the sample's end. Any other Run is failed: shown, " +
-		"with the reasons, and in no figure. A counted Run's failed requests are counted; its succeeded requests are " +
-		"in the figures.",
+		"with its reasons (the first 10, each cut to its first 500 characters, then how many more there are), and in " +
+		"no figure. A counted Run's failed requests are counted; its succeeded requests are in the figures.",
 };
 
 // ---------------------------------------------------------------- gather
@@ -229,7 +231,8 @@ export function failures(run: Run, record: RequestsRecord): string[] {
 	const exit = describeExit(run.exit);
 	if (exit !== null) reasons.push(exit);
 	if (run.exit.runner_signal !== undefined && exit !== null) reasons.push(`the runner was told to stop by signal ${run.exit.runner_signal}`);
-	reasons.push(...record.problems);
+	// One by one: a stream may have more problems than a call takes arguments.
+	for (const problem of record.problems) reasons.push(problem);
 	if (record.problems.length === 0 && !record.holds_requests) reasons.push("its stream holds no request (no response_ended or request_failed carrying request)");
 	const count = countProblem(record.counted, run.samples);
 	if (count.length > 0) reasons.push(record.counted !== null && record.counted < run.samples ? `${count[0]}: the Run was cut short` : (count[0] as string));
@@ -446,7 +449,7 @@ function deriveSeries(list: Analysed[]): SeriesDerivation {
 			boot: run.boot,
 			group,
 			counted,
-			failure: counted ? null : reasons.join("; "),
+			failure: counted ? null : failureText(reasons),
 			exit_code: "code" in run.exit ? run.exit.code : null,
 			counted_requests: record.counted,
 			succeeded: counted ? record.succeeded : 0,

@@ -90,7 +90,7 @@
     "point_boot": { "description": "The boot's id.", "type": "string" },
     "point_group": { "description": "The group its split facts put it in.", "type": "string" },
     "point_counted": { "description": "Whether the Method counts the Run. A Run it does not count is shown, with why, and is in no figure.", "type": "boolean" },
-    "point_failure": { "description": "Why it is not counted, or null.", "$ref": "#/$defs/string_or_null" },
+    "point_failure": { "description": "Why it is not counted, or null: the first 10 of its reasons, each cut to its first 500 characters, joined by \"; \", then how many more there are.", "$ref": "#/$defs/string_or_null" },
 
     "method_series": {
       "type": "object",
@@ -367,7 +367,7 @@
       "required": ["phase", "kind", "count"],
       "properties": {
         "phase": { "description": "request_failed.phase; response for a complete response whose status is not 2xx; record for a request one of whose lines the binary withheld (a withheld certificate line, its withheld_event the string certificate, is aside, like a certificate event, and no failure).", "type": "string" },
-        "kind": { "description": "request_failed.error; status_<code>; for a withheld line, line_withheld_<event> when it names the event it replaced as a word of a-z, 0-9 and _ starting with a letter, and line_withheld when it does not.", "type": "string" },
+        "kind": { "description": "request_failed.error; status_<code>; for a request with withheld lines, from the first of them in stream order that is not a certificate's: line_withheld_<event> when it names the event it replaced as a word of a-z, 0-9 and _ starting with a letter, and line_withheld when it does not.", "type": "string" },
         "count": { "type": "integer", "minimum": 1 }
       }
     },

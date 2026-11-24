@@ -25,7 +25,7 @@ import { REQUESTS_RECORD, REQUESTS_RECORD_KEY, type RequestsRecord, type RunPhas
 import { addressBlock, readRequests } from "../methods/requests/v1/requests";
 import { readStream, type RunEvent, type RunFile, schemaValidators } from "../methods/run";
 import * as series from "../methods/v1";
-import { outcome } from "../methods/v1/facts";
+import { failureText, outcome, REASON_CHARACTERS, SHOWN_REASONS } from "../methods/v1/facts";
 import { percentile } from "../methods/v1/numbers";
 import { SERIES_RECORD, SERIES_RECORD_KEY } from "../methods/v1/record";
 import { DEFAULT_PHASES, HandMade, rampRequests, requestRun, requestStream } from "./hand-made-requests";
@@ -642,6 +642,40 @@ describe("the reduced record of a Run, kept between runs", () => {
 		// Enough of them are what the events schema accepts, and count, for the search to mean something.
 		expect(tally.accepted).toBeGreaterThan(tally.tried / 3);
 		expect(tally.counted).toBeGreaterThan(1000);
+	});
+
+	test("a stream with a million order problems, each line of it one the events schema accepts, is a failed Run whose point shows a bounded few of its reasons", async () => {
+		// Each "finished" after the first is one problem. Passing them all to one call as arguments threw on main
+		// (more arguments than a call takes), and joining them all would write megabytes into a month file and its
+		// Series file, past their ceilings, so that one Run stopped every publish.
+		const head = [
+			{ event: "started", t: 0, schema: "ledgermath.events/1", wall_utc: "2026-11-11T21:35:00.000000000Z", clock: "CLOCK_MONOTONIC_RAW", clock_read_ns: 20 },
+			{ event: "sample_started", t: 1, sample: 0, warmup: false, repetitions: 1 },
+			{ event: "sample_ended", t: 2, sample: 0 },
+			{ event: "verified", t: 3, checksum: "0x0000000000000001" },
+		];
+		const lines = 1_000_000;
+		const stdout = `${head.map((event) => JSON.stringify(event)).join("\n")}\n${'{"event":"finished","t":4}\n'.repeat(lines)}`;
+		expect(events(stdout).every((event) => schemaValidators().event(event))).toBe(true);
+		const seriesRecord = SERIES_RECORD.reduce(bytes(stdout));
+		expect(seriesRecord.problems.length).toBe(lines - 1);
+		expect(SERIES_RECORD.fromJson(JSON.parse(JSON.stringify(SERIES_RECORD.toJson(seriesRecord))))).not.toBeNull();
+		const record = reduceRequests(bytes(stdout));
+		expect(REQUESTS_RECORD.fromJson(JSON.parse(JSON.stringify(REQUESTS_RECORD.toJson(record))))).not.toBeNull();
+		expect(requests.failures({ samples: 1, exit: { code: 0 } } as never, record).length).toBe(lines - 1);
+		// Derived, the Run is failed, and its point shows the first reasons and how many more.
+		const made = new HandMade();
+		made.run({ startedAt: "2026-11-11T21:35:00Z", samples: 1, stdout });
+		const [point] = series.derive(made.files, await series.gather(made.files, made.fetch)).derivations[0]?.points ?? [];
+		expect(point?.counted).toBe(false);
+		expect(point?.failure).toStartWith(`line ${head.length + 2}: "finished" appears more than once`);
+		expect(point?.failure).toEndWith(`; and ${lines - 1 - SHOWN_REASONS} more reasons, not shown`);
+		expect((point?.failure ?? "").split("; ").length).toBe(SHOWN_REASONS + 1);
+		// The bound: at most SHOWN_REASONS reasons of REASON_CHARACTERS characters, whatever a reason quotes.
+		const long = failureText(Array.from({ length: 50 }, (_, i) => `${i}: ${"é".repeat(5_000_000)}`));
+		expect(long.length).toBeLessThan(SHOWN_REASONS * (REASON_CHARACTERS + 100) + 100);
+		expect(long).toContain(`… (the first ${REASON_CHARACTERS} of its 5000003 characters)`);
+		expect(failureText(["a", "b"])).toBe("a; b");
 	});
 
 	test("both Methods give the same bytes with no records, while making them, and from them alone, fetching no stream", async () => {

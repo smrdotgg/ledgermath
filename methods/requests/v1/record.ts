@@ -95,7 +95,8 @@ export function reduceRequests(stdout: Uint8Array): RequestsRecord {
 	if (!record.holds_requests || record.problems.length > 0) return record;
 	const read = readRequests(stream.events);
 	if (read.problems.length > 0) {
-		record.problems.push(...read.problems);
+		// One by one: a stream may have more problems than a call takes arguments.
+		for (const problem of read.problems) record.problems.push(problem);
 		return record;
 	}
 	// A Run's figures need every counted request that succeeded to have the same phases: each phase's tally holds

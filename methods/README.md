@@ -127,7 +127,10 @@ Method asked for has no record of it, and then once for all of them.
   the Derivations need (`summarizeStream`, `v1/facts.ts`) and lets go, for every Run:
   those written before the runner stopped copying them into the record count as they did
   when version 1 read them there, byte for byte (`tests/samples/older-shape-derivations.json`).
-- **Failed Runs**: shown, with the reasons, in their group, in no percentile.
+- **Failed Runs**: shown, with the reasons, in their group, in no percentile. A point shows
+  the first 10 reasons, each cut to its first 500 characters, then how many more there are
+  (`failureText` in `v1/facts.ts`, for both Methods): a stream can have a problem on every
+  line, and one failed Run must not write more into a published file than its ceiling allows.
 
 ### What version 1 splits on, and why
 
@@ -271,7 +274,8 @@ timestamps, in nanoseconds of the Run's clock, exactly as the binary's README de
   `response_ended`'s `t`, and one `request` throughout. Only succeeded requests are timed.
 - **Failed**: it holds a `request_failed` (counted by its `phase` and `error`), or its
   status is not 2xx (phase `response`, kind `status_<code>`), or a line of it was withheld
-  (phase `record`, kind `line_withheld_<event>` when the line names the event it replaced as
+  (phase `record`, its kind from the request's first withheld line, in stream order, that is
+  not a certificate's: `line_withheld_<event>` when that line names the event it replaced as
   a word, and `line_withheld` when it does not; a withheld `certificate` line is aside, like
   a certificate, and no failure). Counted per Run and pooled, never timed.
   The warmup request's failure, and reused-connection setups that failed outside any sample

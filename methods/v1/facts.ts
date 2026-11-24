@@ -286,6 +286,37 @@ export interface Outcome {
 	samples: SampleTime[];
 }
 
+/** How many of a failed Run's reasons its point shows, and how many characters of each. */
+export const SHOWN_REASONS = 10;
+export const REASON_CHARACTERS = 500;
+
+/**
+ * A failed Run's reasons as its point shows them, in both Methods: the first
+ * SHOWN_REASONS, each cut to its first REASON_CHARACTERS characters (Unicode
+ * code points), and how many more there are. A stream can have a problem on
+ * every line, and a reason can quote what the stream holds, so one failed Run
+ * would otherwise write as much into a month file and its Series file as its
+ * stdout holds, past the files' ceilings, and stop every publish. At most
+ * about 5 KB.
+ */
+export function failureText(reasons: readonly string[]): string {
+	const shown = reasons.slice(0, SHOWN_REASONS).map(cutReason);
+	const more = reasons.length - shown.length;
+	if (more > 0) shown.push(`and ${more} more reason${more === 1 ? "" : "s"}, not shown`);
+	return shown.join("; ");
+}
+
+/** A reason cut to its first REASON_CHARACTERS code points, never inside one, saying how long it was. */
+function cutReason(reason: string): string {
+	let characters = 0;
+	let end = 0;
+	for (const character of reason) {
+		if (characters < REASON_CHARACTERS) end += character.length;
+		characters++;
+	}
+	return characters <= REASON_CHARACTERS ? reason : `${reason.slice(0, end)}… (the first ${REASON_CHARACTERS} of its ${characters} characters)`;
+}
+
 /**
  * Whether a Run counts. It counts when the binary exited 0, every stdout line
  * parsed as an event, every event matches schemas/events.schema.json, and the
@@ -308,7 +339,9 @@ export function outcome(run: Run, stream: StreamSummary): Outcome {
 	if (run.exit.runner_signal !== undefined && exit !== null) {
 		failures.push(`the runner was told to stop by signal ${run.exit.runner_signal}`);
 	}
-	failures.push(...stream.problems, ...countProblem(stream.counted, run.samples));
+	// One by one: a stream may have more problems than a call takes arguments.
+	for (const problem of stream.problems) failures.push(problem);
+	for (const problem of countProblem(stream.counted, run.samples)) failures.push(problem);
 	if (failures.length > 0) return { failures, samples: [] };
 	if (stream.samples instanceof Error) throw stream.samples;
 	return { failures, samples: stream.samples };
@@ -342,7 +375,7 @@ export function summarizeStream(stream: Stream): StreamSummary {
 		if (!validate(event)) problems.push(`event ${index + 1} does not match schemas/events.schema.json`);
 	});
 	const check = streamCheck(stream.events);
-	problems.push(...check.problems);
+	for (const problem of check.problems) problems.push(problem);
 	let samples: SampleTime[] | Error = [];
 	if (problems.length === 0) {
 		try {
