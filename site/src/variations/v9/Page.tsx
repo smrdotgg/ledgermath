@@ -2,7 +2,8 @@
 // rounds beside it, three graphs, the table, a footer) in the style of his site, smr.gg: Geist
 // Pixel Circle, black and white with one grey, and dots. Every figure comes from ../../data as
 // the snapshot holds it (see ../README.md); the only arithmetic is a change of unit, done by its
-// helpers. The rounds in "Latest runs" are the one thing from elsewhere: see ./rounds.ts.
+// helpers. The rounds in "Latest runs" are the one thing from elsewhere: see ./rounds.ts. The art
+// beside the headline, and the flag that chooses between its two pictures: ./art.tsx.
 import "./page.css";
 import {
 	type ByteUnit,
@@ -25,6 +26,7 @@ import {
 	type Shown,
 	snapshot,
 } from "../../data";
+import { HeadlineArt } from "./art";
 import { ROUNDS } from "./rounds";
 
 // ---------------------------------------------------------------- figures
@@ -155,7 +157,7 @@ export default function Page() {
 							<span class="line">Independent Cloud</span>
 							<span class="line">
 								Benchmarks
-								<span class="fill" aria-hidden="true" />
+								<HeadlineArt />
 							</span>
 						</h1>
 						<p class="sub">Open-source benchmarks, run on real cloud machines every day.</p>
