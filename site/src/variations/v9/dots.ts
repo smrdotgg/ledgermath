@@ -40,12 +40,6 @@ export class Dots {
 		return this.fill(Math.round(x + 0.17 * w), y, Math.round(w - 0.17 * w - 0.27 * h), Math.round(0.3 * h));
 	}
 
-	/** The first and last columns that hold a dot. */
-	span(): { left: number; right: number } {
-		const columns = [...this.rows.values()].flatMap((row) => [...row]);
-		return { left: Math.min(...columns), right: Math.max(...columns) };
-	}
-
 	/** The same dots, moved dx columns to the right. */
 	moved(dx: number): Dots {
 		const to = new Dots();

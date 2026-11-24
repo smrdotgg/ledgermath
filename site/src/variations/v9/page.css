@@ -41,36 +41,19 @@ h1 .line { display: flex; align-items: baseline; white-space: nowrap; }
 
 /* The art (art.tsx), drawn on the font's own grid: 1 SVG unit is 1 dot of the font, y = 0 is the
    baseline, and the SVG's box is the height of a capital letter (19 dots); a taller cloud overflows
-   upward. Every path is dashed so that each unit of its length is one dot, as wide as the font's.
-   The page holds two pictures and shows the one named on <html data-art>. */
-.art { display: none; flex: none; height: calc(var(--dot) * 19); margin: 0 calc(var(--dot) * 2) 0 calc(var(--dot) * 7); overflow: visible; fill: none; stroke: currentColor; stroke-width: 1; stroke-linecap: round; stroke-dasharray: 0 1; stroke-dashoffset: .5; }
-[data-art="ruler"] .art.ruler, [data-art="caliper"] .art.caliper { display: block; }
+   upward. Every path is dashed so that each unit of its length is one dot, as wide as the font's. */
+.art { display: block; flex: none; height: calc(var(--dot) * 19); margin: 0 calc(var(--dot) * 2) 0 calc(var(--dot) * 7); overflow: visible; fill: none; stroke: currentColor; stroke-width: 1; stroke-linecap: round; stroke-dasharray: 0 1; stroke-dashoffset: .5; }
 .art .far { stroke: var(--far); }
 .art .near { stroke: var(--near); }
-.caliper .narrow { opacity: 0; }
-/* The motion, for those who have not asked for less of it; without it each picture stands as drawn.
-   1, the ruler: the clouds drift to the right, one dot at a time so that every dot stays on the grid,
-   and each layer comes round again after 96 dots (SKY in art.tsx). The near layer moves a dot every
-   .9 s, the far one every 1.6 s.
-   2, the caliper: every 20 s its jaw opens 5 dots, the cloud it held gives way to another, and the
-   jaw shuts on that one, 9 dots further in for the narrow cloud (art.tsx checks the 9). */
+/* The motion, for those who have not asked for less of it; without it the picture stands as drawn.
+   The clouds drift to the right, one dot at a time so that every dot stays on the grid, and each
+   layer comes round again after 96 dots (SKY in art.tsx). The near layer moves a dot every .9 s,
+   the far one every 1.6 s. */
 @media (prefers-reduced-motion: no-preference) {
   .sky path { animation: v9-drift 86.4s steps(96) infinite; }
   .sky .far { animation-duration: 153.6s; }
-  .caliper .jaw { animation: v9-jaw 20s infinite; }
-  .caliper .wide { animation: v9-wide 20s infinite; }
-  .caliper .narrow { animation: v9-narrow 20s infinite; }
 }
 @keyframes v9-drift { to { transform: translateX(96px); } }
-@keyframes v9-jaw {
-  0%, 30% { transform: translateX(0); animation-timing-function: steps(5); }
-  35%, 45% { transform: translateX(5px); animation-timing-function: steps(14); }
-  52%, 80% { transform: translateX(-9px); animation-timing-function: steps(14); }
-  87%, 95% { transform: translateX(5px); animation-timing-function: steps(5); }
-  100% { transform: translateX(0); }
-}
-@keyframes v9-wide { 0%, 36% { opacity: 1; } 40%, 90% { opacity: 0; } 94%, 100% { opacity: 1; } }
-@keyframes v9-narrow { 0%, 40% { opacity: 0; } 44%, 86% { opacity: 1; } 90%, 100% { opacity: 0; } }
 .sub { margin-top: 1.5rem; max-width: 26em; font-size: 1.5rem; line-height: 2rem; }
 
 .latest h2 { color: var(--muted); padding-bottom: .75rem; }

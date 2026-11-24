@@ -1,5 +1,4 @@
 import type { JSX } from "@solidjs/web";
-import { CHOOSE_ART, DEFAULT_ART } from "./art";
 import pixel from "./fonts/GeistPixel-Circle.woff2";
 
 // As on smr.gg: the browser hides text until its font is ready (font-display: block), but the dot
@@ -9,10 +8,9 @@ import pixel from "./fonts/GeistPixel-Circle.woff2";
 const HOLD_UNTIL_FONT = `(()=>{const f='1em "Geist Pixel Circle"';if(document.fonts.check(f))return;const r=document.documentElement;r.classList.add("font-loading");document.fonts.load(f).finally(()=>r.classList.remove("font-loading"))})()`;
 
 // The whole <html> document around the page. The build adds the page's stylesheet to <head>.
-// data-art names the picture beside the headline; CHOOSE_ART may name the other (see ./art.tsx).
 export default function Document(props: { children?: JSX.Element }) {
 	return (
-		<html lang="en" data-art={DEFAULT_ART}>
+		<html lang="en">
 			<head>
 				<meta charset="utf-8" />
 				<meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -23,7 +21,6 @@ export default function Document(props: { children?: JSX.Element }) {
 				<meta name="description" content="Open-source benchmarks, run on real cloud machines every day. Every number links to the Runs behind it." />
 				<link rel="preload" href={pixel} as="font" type="font/woff2" crossorigin="anonymous" />
 				<script innerHTML={HOLD_UNTIL_FONT} />
-				<script innerHTML={CHOOSE_ART} />
 			</head>
 			<body>{props.children}</body>
 		</html>

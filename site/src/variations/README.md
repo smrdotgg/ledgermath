@@ -8,9 +8,8 @@ checked on its own. Nothing here is merged to `main`: `main` deploys to the publ
 A ninth slot, `v9`, is Semere's own layout, built from his whiteboard in the style of his site
 (smr.gg). It was not part of the scored climb and has no scores; the same rules apply to it. Its
 "Latest runs" list is the one thing on any page that does not come from `src/data/`: see
-`v9/rounds.ts`. The dot art beside its headline has two pictures, and a flag in `v9/art.tsx`
-(`ART_SHARE`) sets the share of page loads that draw each; `?art=ruler` or `?art=caliper` on the
-address shows one whatever the flag says.
+`v9/rounds.ts`. The dot art beside its headline, clouds drifting over a ruler, is drawn in
+`v9/art.tsx`.
 
 ## What you may touch
 

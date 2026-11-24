@@ -3,7 +3,7 @@
 // Pixel Circle, black and white with one grey, and dots. Every figure comes from ../../data as
 // the snapshot holds it (see ../README.md); the only arithmetic is a change of unit, done by its
 // helpers. The rounds in "Latest runs" are the one thing from elsewhere: see ./rounds.ts. The art
-// beside the headline, and the flag that chooses between its two pictures: ./art.tsx.
+// beside the headline: ./art.tsx.
 import "./page.css";
 import {
 	type ByteUnit,
