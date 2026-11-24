@@ -1200,17 +1200,25 @@ step each time.
    contents is more than 14 hours old, when it holds none, or when it cannot be read, and,
    once the state leaves `off`, when `API_BUCKET` is unset. Its
    tests cover each of those against a stand-in for S3, and the issue clearing itself when
-   publishing recovers. What no test can show is that the issue's notification reaches the
-   maintainer (GitHub notifies those who watch the repository, by web, email or mobile as
-   their settings say). Confirm it once, by hand, with the drill, which touches nothing
+   publishing recovers. Each time it writes on the issue it also sends the maintainer one
+   Telegram message, where the maintainer looks first ("The alarm", "A Telegram message");
+   its tests use a stand-in for Telegram. What no test can show is that the message reaches
+   the maintainer's phone (GitHub's own notification of the issue goes to those who watch
+   the repository, by web, email or mobile as their settings say, and arrives among many
+   others). Confirm it once, by hand, with the drill, which touches nothing
    shared: no variable changes, nothing the alarm reads back changes, and publishing goes on
    as on any run.
    1. Start the workflow by hand with the drill: Actions, `runs`, "Run workflow", tick
       "Drill the alarm" (the input `alarm_drill`), or
       `gh workflow run runs.yml --repo smrdotgg/ledgermath -f alarm_drill=true`. Its alarm
       runs as on any run, then posts one comment on the alarm issue, or opens the issue
-      with it if none is open, beginning "**This is a drill**" and linking the run.
-   2. See the notification arrive, where the maintainer expects to see it.
+      with it if none is open, beginning "**This is a drill**" and linking the run, and
+      then sends one Telegram message beginning "LedgerMath alarm drill" (or "And a drill",
+      after a line saying what the alarm's own pass posted), with the issue's and the run's
+      addresses.
+   2. See the Telegram message arrive: that is the one the maintainer confirms. If it does
+      not, the alarm step's log and summary say why, in a warning ("The alarm's Telegram
+      message was not sent: …") or a notice (the secrets unset).
    3. If the drill opened the issue, close it when it reports nothing else (no stale
       Series, price file or bucket); an issue already open stays as the alarm left it.
 
@@ -1465,9 +1473,9 @@ with_keys bun scripts/derive.ts --runs /tmp/ledgermath-runs --bucket "$BUCKET" -
 # The page.
 bun scripts/build-page.ts /tmp/page/derivations.json /tmp/page/index.html --requests /tmp/page/requests-derivations.json
 
-# The alarm, posting nothing; --now sets the clock, --copy says whether the copy job worked,
-# --schedule-changed-at says when main last changed schedule.json, --prices-since when the
-# prices workflow first existed on main.
+# The alarm, posting nothing and sending no Telegram message (it prints both instead); --now
+# sets the clock, --copy says whether the copy job worked, --schedule-changed-at says when
+# main last changed schedule.json, --prices-since when the prices workflow first existed on main.
 bun scripts/alarm.ts --runs /tmp/ledgermath-runs --copy succeeded --dry-run --now 2026-11-13T00:00:00Z \
   --schedule-changed-at "$(git log -1 --first-parent --format=%cI origin/main -- schedule.json)" \
   --prices-since "$(git log --first-parent --reverse --format=%cI origin/main -- .github/workflows/prices.yml | sed -n 1p)"
@@ -1525,11 +1533,15 @@ It needs:
 | Variable | `RUNS_BUCKET` | The scheduled stage's output `bucket`, the bucket's name |
 | Variable | `API_BUCKET` | The scheduled stage's output `apiBucket`, once the stage is deployed with it; while unset, the `publish` job is skipped, nothing is uploaded and the alarm does not read the bucket ("The data API", "The API bucket") |
 | Secret | `RUNS_REPO_DEPLOY_KEY` | The private half of an SSH key whose public half is a deploy key of `smrdotgg/ledgermath-runs` **with write access** (it pushes) |
+| Secret | `TELEGRAM_BOT_TOKEN` | The token of the Telegram bot the alarm's message comes from ("The alarm", "A Telegram message") |
+| Secret | `TELEGRAM_CHAT_ID` | The maintainer's chat with that bot; while either secret is unset, no message is sent and nothing fails |
 
 For the key: `ssh-keygen -t ed25519 -N '' -C ledgermath-runs-copy -f runs-deploy-key`,
 add `runs-deploy-key.pub` under the Runs repository's Settings → Deploy keys with
 "Allow write access", put the contents of `runs-deploy-key` in the secret, and delete
-both files. The alarm needs nothing more: the workflow asks for `issues: write`.
+both files. For its issue, the alarm needs nothing more: the workflow asks for
+`issues: write`. For its Telegram message, the two Telegram secrets, set in the
+repository's Settings → Secrets and variables → Actions.
 
 The role comes with the stage. A deploy of a `-runs` stage creates GitHub's OIDC provider
 for `token.actions.githubusercontent.com` in its account (audience `sts.amazonaws.com`; an
@@ -1688,12 +1700,14 @@ cancelled, never ran, or its preflight refused the bucket. In each, the table of
   raises changes (a stale bucket is named by when it was last written, so it stays the same
   while the bucket only grows older), and once more, on the open issue, when the data API is
   published again.
-- **A drill shows the route and touches nothing: exactly one notification.** Started by
+- **A drill shows the route and touches nothing: exactly one notification on GitHub, and
+  one Telegram message.** Started by
   hand with the input `alarm_drill` (Actions, `runs`, "Run workflow"), the alarm runs its
   ordinary pass and then posts one comment on the open alarm issue, saying it is a drill,
   with the run's link, and that nothing is wrong; with no issue open, it opens the alarm
   issue with those words as its body and posts no comment, since a second post would be a
-  second notification. It reads nothing, carries no state marker, and changes nothing the
+  second notification. Then it sends one Telegram message saying the same (below, "A
+  Telegram message"). It reads nothing, carries no state marker, and changes nothing the
   alarm reads back, so an open finding stays reported and the next pass writes as it would
   have. An issue opened only by a drill is closed by the maintainer. A drill that cannot post
   says so in the log and the step summary and does not fail the job, which exits as its
@@ -1701,10 +1715,72 @@ cancelled, never ran, or its preflight refused the bucket. In each, the table of
   job never sees the input; a scheduled run has no inputs.
 
 It reads with the first job's role, which may already list the API bucket and read its
-`v1/*` (`RunsApiUploadPolicy`); the role gains nothing. The alarm runs in the same workflow,
-so a workflow that does not run at all, or a first job that fails before the Runs
-repository is checked out (the alarm's condition), reports nothing here; GitHub's
-failed-run email is then the only word.
+`v1/*` (`RunsApiUploadPolicy`); the role gains nothing.
+
+**A Telegram message** (ADR-0033). GitHub's own notifications (email, the phone app) arrive
+among many others, and the maintainer looks at Telegram first. So whenever the alarm writes
+on GitHub, it also sends the maintainer one plain-text Telegram message
+(`scripts/lib/telegram.ts`, `pingText` and `pingSafely` in `scripts/alarm.ts`).
+
+- **When.** The issue opened, a comment because something changed, the comment saying all
+  is clear again, a drill; and when the alarm had something to post and it failed (after it
+  tried to write, or with something stale), when the message matters most. The alarm then
+  fails as before. A failed post is said as one of two things: **this run could not post an
+  update** (GitHub refused it with a 4xx, even one whose body is cut off, or could not be
+  reached or read), which claims nothing of what the issue already says; or **its post
+  could not be confirmed**, because GitHub did not confirm the write (no answer, a 5xx, an
+  answer cut short), since such a post may well be on the issue. The issue's address is in
+  the message whenever the issue is known: noted as soon as it is found, before its
+  comments are read, and kept for the drill. A pass that writes
+  nothing sends nothing. One message per run, sent last, after every post: a run whose pass
+  comments and which is also a drill sends one message saying both, and if only the drill's
+  post fails, the message says so and the run still exits 0.
+- **What it says.** Fixed words chosen by the code: which kind of post it was, the counts
+  from the alarm's verdict ("3 of 187 watched Series stale"), whether the price files are
+  stale, whether publishing is raised, whether the copy job failed, the issue's address
+  (its number, accepted only as a positive whole number) and the run's (the fixed Actions
+  address and `GITHUB_RUN_ID`, accepted only as a number). Nothing S3, the check's child or
+  the environment said, the same rule as for the issue; no `parse_mode`. At most a few
+  hundred characters, far under Telegram's limit of 4,096, by construction.
+- **Sent from inside the alarm, in its own step.** Not by a workflow started by issue
+  events: the alarm posts with the workflow's own token, and GitHub starts no workflow run
+  for an event made with that token (GitHub's docs, "Triggering a workflow from a
+  workflow"). One POST of the form fields `chat_id` and `text` to the Bot API's
+  `sendMessage`, with Bun's `fetch`: no new dependency.
+- **It never changes the alarm.** It comes after everything else and is given up after 15
+  seconds (a second more as a backstop, then two for the step summary's line): the verdict,
+  the posts, the marker and the exit code are those of a run without Telegram. A message
+  not sent is a warning annotation and a line in the step summary, in fixed words: Telegram
+  could not be reached, gave no whole answer within 15 s, answered HTTP N, its answer was
+  not understood, or it did not accept the message. Never the request's address, which
+  holds the token, and nothing of Telegram's answer but its HTTP status; no second try. The
+  request is never traced by Bun (`verbose: false`), nor are the alarm's calls to GitHub, so
+  setting `BUN_CONFIG_VERBOSE_FETCH` to diagnose delivery prints neither Telegram key nor
+  GitHub's token (the check's child never has that variable). A Telegram outage never fails the step, so it
+  never skips the `publish` job. With the secrets unset (a fork, or never set), a notice and
+  nothing else.
+- **The secrets stay in one place.** `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` are in the
+  alarm step's own environment and nowhere else in any workflow, and `runs.yml` never runs
+  for a pull request, so a stranger's pull request cannot reach them; the check's child
+  does not get them. A test reads every file under `.github` and fails otherwise, judging a
+  job's `secrets` by its parsed value, so `secrets: "inherit"` fails like `secrets: inherit`.
+- **Tests**, against a stand-in for Telegram: each kind of post sends exactly one message
+  with its words, a drill one that says so, a run that comments and drills one, a pass with
+  no post none; a comment GitHub records and then cuts its answer short, and a whole 503
+  (unconfirmed, with the issue's address); a comment refused on a known issue, with its body
+  whole or cut off; the issue's comments, or the drill's lookup, failing to be read (the
+  address kept); Telegram down, never
+  sending its headers, stalling in its body, answering 401, 429, what is not JSON, or the
+  word `timeout`: the same exit code, posts and marker as without Telegram, the token never
+  in the log or the step summary, even with Bun's tracing on (nor GitHub's token); the secrets unset; nothing S3
+  said in the message; the length bound. Stalls get a short deadline
+  (`--telegram-budget-ms`, which the workflow never passes and which can only be shorter
+  than 15 s), so the file runs in seconds.
+
+The alarm runs in the same workflow, so a workflow that does not run at all, or a first
+job that fails before the Runs repository is checked out (the alarm's condition), reports
+nothing here and sends no Telegram message; GitHub's failed-run email is then the only
+word.
 
 ## Moving the schedule to the production account
 
