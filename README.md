@@ -790,9 +790,11 @@ The data API ("The data API", below) and the evidence it links are served from o
 in front of two private buckets of `production-runs`: $0 a month for CloudFront, and no
 CloudFront overage charge whatever strangers download (S3 still bills each request that
 misses the cache: "What it still costs", below). ADR-0031 records the design. It is built
-and **off**: nothing is public, and nothing of it exists in AWS (no distribution, no
-certificate, no DNS record, no web ACL, no grant in either bucket's policy) until
-`PUBLIC_API.state` in `infra/runs/public-blobs.ts` says so. The file keeps the name of the
+and **dark** (`PUBLIC_API.state` in `infra/runs/public-blobs.ts`, which was `"off"` before
+it): the distribution exists, disabled, with its certificate, its
+`api.ledgermath.com` records, its web ACL and its Free plan, and serves nothing; nothing is
+public, and neither bucket's policy grants anything, until the state says `on` ("Turning
+it on, on `production-runs`", below). The file keeps the name of the
 design it grew from, which served blobs alone at the distribution's `*.cloudfront.net`
 name ("What became of public blobs", below).
 
@@ -1062,7 +1064,8 @@ from outside the account), but count it. The plan's 5 GB of S3 storage credits o
 much of the buckets' storage. The rest is fixed: the hosted zone of `api.ledgermath.com`,
 $0.50 a month, exists already, on or off; alias queries to CloudFront are free; the
 certificate is free; the watch's 8,640 invocations a month are within Lambda's free tier.
-Off, as merged, nothing of this exists; the API bucket and its upload cost cents a month
+Off, nothing of this exists; `dark`, as merged, it all exists and serves nothing, so it
+bills only the fixed part. Either way the API bucket and its upload cost cents a month
 ("The data API", "The API bucket").
 
 **The states.** `PUBLIC_API.state`, on `production-runs`:
@@ -2967,7 +2970,8 @@ changed. That first run's alarm, which comes before its own `publish` job, finds
 bucket with no table of contents and raises it on the alarm issue ("The alarm", "The data
 API's publishing"): expected, and the run after says the data API is published. To stop
 the upload, `gh variable delete API_BUCKET --repo smrdotgg/ledgermath`; the alarm then stops
-reading the bucket and raises nothing for it (while `PUBLIC_API` is `off`).
+reading the bucket, and raises nothing for it while `PUBLIC_API` is `off`, but raises it in
+any other state, `dark` (as merged) included ("The alarm", "The data API's publishing").
 
 ```bash
 # Locally, with the profile of the stage whose bucket it is, in a subshell, so that this shell keeps no keys.

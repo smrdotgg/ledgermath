@@ -1466,4 +1466,18 @@ A migrated benchmark is done only when **all** of these hold:
   record or month file changes: the live data of 2026-11-24 00:36 hold 9,514 Runs and no
   failed one. **Which withheld line gives the kind**: the request's first withheld line, in
   stream order, that is not a certificate's, said in `failed` and the schemas.
+- **2026-11-24** — The public API's switch goes from `off` to `dark` (README, "Turning it
+  on, on `production-runs`", step 1), with `RELEASED_STATE` in the same commit, after step
+  0, the alarm's drill, which the maintainer confirmed on 2026-11-24. Deployed, `dark`
+  makes everything but the bucket grants (the web ACL, the access control, the three
+  functions, the certificate and its validation record, the distribution, disabled, the
+  `api.ledgermath.com` alias records, the Free plan through Cloud Control, the watch) and
+  serves nothing. The sentences that said the switch was `off` now say `dark`. **One test
+  read the committed switch besides the release gate**: `tests/alarm-telegram.test.ts` runs
+  `scripts/alarm.ts` as a child, which imports `PUBLIC_API`, with `API_BUCKET` unset, and
+  its expectations were written for `off`; under `dark` five of its tests failed (the alarm,
+  rightly, raised the unset bucket). The rehearsal runs four test files, not the whole
+  suite, so it did not see this. The child now gets its fixture's state, `off`, through
+  `tests/rehearse-switch.ts`. GitHub Actions is off for the repository, so the checks of
+  `check.yml` ran on the dev box.
 - _(agents: append your entry here, one per merged benchmark)_
