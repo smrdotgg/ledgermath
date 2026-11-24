@@ -9,7 +9,7 @@
  */
 
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
 
@@ -20,7 +20,7 @@ import { requestStatCitation, resolveCitation, seriesMoment, statAt } from "../s
 import {
 	ATTEMPTS,
 	DEFAULT_LOCATION,
-	KNOWN_LAYOUTS,
+	type Fetch,
 	type LedgerData,
 	LedgerError,
 	LIMITS,
@@ -84,11 +84,11 @@ function filesUnder(root: string): string[] {
 		.sort();
 }
 
-/** A copy of the fixture's location, with some files replaced by other bytes: a directory holding two builds, or a file too large. */
-function copyWith(changes: Record<string, Uint8Array | string>): string {
+/** A copy of the fixture's location, with some files replaced by other bytes (a directory holding two builds, a file too large) or added, and those in `omit` left out. */
+function copyWith(changes: Record<string, Uint8Array | string>, omit: readonly string[] = []): string {
 	const copy = mkdtempSync(join(tmpdir(), "lookup-tree-copy-"));
 	made.push(copy);
-	for (const path of filesUnder(fixture.runs)) {
+	for (const path of [...new Set([...filesUnder(fixture.runs), ...Object.keys(changes)])].filter((p) => !omit.includes(p))) {
 		mkdirSync(dirname(join(copy, path)), { recursive: true });
 		writeFileSync(join(copy, path), changes[path] ?? readFileSync(join(fixture.runs, path)));
 	}
@@ -360,7 +360,7 @@ describe("the contract the tree gives a reader", () => {
 		const data = await web(asked, new Map([[memoryMonth(), () => new Response(stale(memoryMonth()))]]), { sleeps });
 		const error = await expectLedgerError(
 			resolveCitation(earlier(), data),
-			`${DEFAULT_LOCATION}/${memoryMonth()} does not have the sha256 Series ${fixture.memory}'s file lists for it`,
+			`${DEFAULT_LOCATION}/${memoryMonth()} does not have the sha256 and size Series ${fixture.memory}'s file lists for it`,
 			"Neither file was used",
 			"Try again in a few minutes.",
 		);
@@ -386,12 +386,16 @@ describe("the contract the tree gives a reader", () => {
 		}
 	});
 
-	test("a table of contents of a layout this tool does not know: said plainly, and nothing more is read", async () => {
-		expect(KNOWN_LAYOUTS).toContain(LAYOUT);
+	test("a table of contents of another layout is read as any other: a layout changes how files are written, not what they mean; about says which", async () => {
 		const asked: string[] = [];
-		const unknown = new TextDecoder().decode(bytesOf(INDEX)).replace(`"layout": ${LAYOUT},`, `"layout": ${LAYOUT + 1},`);
-		await expectLedgerError(web(asked, new Map([[INDEX, new Response(unknown)]])), `written in layout ${LAYOUT + 1}, which this tool does not know: it reads layout ${KNOWN_LAYOUTS.join(" or ")}. Nothing more was read.`, "git pull");
-		expect(asked).toEqual([INDEX]);
+		const other = new TextDecoder().decode(bytesOf(INDEX)).replace(`"layout": ${LAYOUT},`, `"layout": ${LAYOUT + 1},`);
+		const data = await web(asked, new Map([[INDEX, new Response(other)]]));
+		const a = await about(data);
+		expect(a.layout).toBe(LAYOUT + 1);
+		expect(aboutText(a)).toContain(`(the data API, version 1, layout ${LAYOUT + 1})`);
+		const shown = await showSeries(data, [fixture.memory], 10);
+		expect(shown.found).toBe("one");
+		expect(asked).toEqual([INDEX, LIST, seriesPath(fixture.memory)]);
 	});
 
 	test("a file larger than its limit is not read: by its Content-Length, by its body, and in a directory", async () => {
@@ -439,6 +443,224 @@ describe("the contract the tree gives a reader", () => {
 	});
 });
 
+describe("a retry that comes back with an older round of a Series", () => {
+	// Two rounds of one tree: 20 Runs of each Series, then 24 (the same first 20, byte for byte), four a day from 2026-11-01.
+	let older: LongFixture;
+	let fresh: LongFixture;
+	beforeAll(async () => {
+		older = await makeLongFixture(20);
+		fresh = await makeLongFixture(24);
+		made.push(older.runs, fresh.runs);
+		writeTree(older.runs, older.series, older.requests);
+		writeTree(fresh.runs, fresh.series, fresh.requests);
+	});
+	const MIRROR = "https://mirror.invalid";
+	/** The fresh round, but each Series file read after the first is the older round's, and November's month files are always the older round's. */
+	function mixed(): Promise<LedgerData> {
+		const reads = new Map<string, number>();
+		const fetch: Fetch = async (url) => {
+			const path = url.slice(MIRROR.length + 1);
+			const n = (reads.get(path) ?? 0) + 1;
+			reads.set(path, n);
+			const stale = path.endsWith("/2026-11.json") || (/^v1\/series\/[0-9a-f]{12}\.json$/.test(path) && n > 1);
+			return new Response(new Uint8Array(readFileSync(join(stale ? older.runs : fresh.runs, path))));
+		};
+		return loadLedger(openLocation(MIRROR, { fetch, sleep: async () => undefined }));
+	}
+
+	test("the citation is held to the Series that came back, and refused when it ends before the cited moment", async () => {
+		const points = fresh.series.derivations.find((d) => d.series.id === fresh.syscall)?.points ?? [];
+		const moment = `${points[21]?.started_at.slice(0, 19)}Z`;
+		const count = `[lm:series/${fresh.syscall}/time_per_repetition_ns/count@v1,${moment}]`;
+		const link = points[19]?.path as string;
+		// Against one round, it is 22 Runs.
+		const consistent = await loadLedger(openLocation(fresh.runs));
+		expect((await checkAnswer(`22 Runs ${count}\n${link}`, consistent)).pass).toBe(true);
+		// Against the mixed reads, the older round's 20 is not let through as the figure of that moment.
+		const report = await checkAnswer(`20 Runs ${count}\n${link}`, await mixed());
+		expect(report.pass).toBe(false);
+		expect(report.problems.map((p) => p.message).join("\n")).toContain(
+			`it cites Series ${fresh.syscall} as of ${moment}, but the data loaded hold its Runs only to ${points[19]?.started_at.slice(0, 19)}Z: it is of data the checker does not have (its Series file was read again, after a month file did not match it)`,
+		);
+		// The same for a citation of requests.
+		const requests = await resolveCitation(`requests/${fresh.http}/runs@v1,${`${(fresh.requests.derivations[0]?.points[21]?.started_at ?? "").slice(0, 19)}Z`}`, await mixed());
+		expect(requests.ok ? "resolved" : requests.reason).toContain("it is of data the checker does not have (its Series file was read again");
+	});
+});
+
+describe("nothing outside the location is read", () => {
+	const MIRROR = "https://mirror.invalid/data";
+	const listCopy = (): Uint8Array => bytesOf(LIST);
+
+	test("a link whose path a resolver would take out of the location, encoded or dotted, is refused before any request", async () => {
+		for (const way of ["v1/%2e%2e/%2e%2e/secret.json", "v1/..%2f..%2fsecret.json", "v1\\..\\..\\secret.json", "v1/series.json?x=../../secret.json"]) {
+			const asked: string[] = [];
+			// A server as fetch would reach it: the address normalised first.
+			const fetch: Fetch = async (url) => {
+				const pathname = new URL(url).pathname;
+				asked.push(pathname);
+				if (pathname === "/secret.json") return new Response(listCopy());
+				if (pathname === "/data/v1/index.json") return new Response(new TextDecoder().decode(bytesOf(INDEX)).replace(`"url": "${DEFAULT_LOCATION}/${LIST}"`, `"url": "${DEFAULT_LOCATION}/${way.replaceAll("\\", "\\\\")}"`));
+				return new Response("", { status: 404 });
+			};
+			const data = await loadLedger(openLocation(MIRROR, { fetch }));
+			await expectLedgerError(data.list(), "LedgerMath's data never lead outside the location they are read from");
+			expect(asked.filter((pathname) => !pathname.startsWith("/data/")), way).toEqual([]);
+		}
+	});
+
+	test("a redirect is refused, whether the fetch is the tools' own or injected", async () => {
+		// A stand-in for fetch: it follows a redirect unless told not to, as fetch does.
+		const fetch: Fetch = async (url, init) => {
+			const path = url.slice(MIRROR.length + 1);
+			if (path === LIST) {
+				if (init.redirect !== "manual") return new Response(listCopy());
+				return new Response(null, { status: 302, headers: { location: "https://elsewhere.invalid/series.json" } });
+			}
+			return new Response(path === INDEX ? bytesOf(INDEX) : "", { status: path === INDEX ? 200 : 404 });
+		};
+		await expectLedgerError((await loadLedger(openLocation(MIRROR, { fetch }))).list(), `${MIRROR}/${LIST} answered with a redirect (HTTP 302 to https://elsewhere.invalid/series.json)`, "follow no redirect");
+		// The tools' own fetch, against a server on this machine: the table of contents redirects to another path that holds it.
+		const server = Bun.serve({
+			port: 0,
+			hostname: "127.0.0.1",
+			fetch: (request) => (new URL(request.url).pathname === "/elsewhere.json" ? new Response(bytesOf(INDEX)) : Response.redirect("/elsewhere.json", 302)),
+		});
+		try {
+			await expectLedgerError(loadLedger(openLocation(`http://127.0.0.1:${server.port}`)), "answered with a redirect (HTTP 302", "follow no redirect");
+		} finally {
+			server.stop(true);
+		}
+	});
+
+	test("in a directory, a symbolic link out of it is refused; one inside it is followed", async () => {
+		const away = mkdtempSync(join(tmpdir(), "lookup-tree-away-"));
+		made.push(away);
+		writeFileSync(join(away, "series.json"), listCopy());
+		const out = copyWith({}, [LIST]);
+		symlinkSync(join(away, "series.json"), join(out, LIST));
+		await expectLedgerError((await loadLedger(openLocation(out))).list(), `${join(out, LIST)} leads outside the directory ${out}`);
+		// A directory linked from outside: the evidence beside v1/.
+		const linkedRuns = copyWith({}, filesUnder(fixture.runs).filter((p) => p.startsWith("runs/")));
+		symlinkSync(join(fixture.runs, "runs"), join(linkedRuns, "runs"));
+		const memory = fixture.series.derivations.find((d) => d.series.id === fixture.memory);
+		await expectLedgerError((await loadLedger(openLocation(linkedRuns))).readLinked(`${DEFAULT_LOCATION}/${memory?.points[0]?.path}`, LIMITS.run, "a Run file"), "leads outside the directory");
+		const within = copyWith({ "v1/series-real.json": listCopy() }, [LIST]);
+		symlinkSync("series-real.json", join(within, LIST));
+		expect((await (await loadLedger(openLocation(within))).list()).count).toBe(2);
+	});
+});
+
+describe("a Run link is read whole, and at its point's evidence link", () => {
+	const answerWith = (link: string): string => {
+		const memory = fixture.series.derivations.find((d) => d.series.id === fixture.memory);
+		const p50 = timeText(memory?.percentiles.time_per_repetition_ns?.p50 as number);
+		return `p50: ${p50} [lm:series/${fixture.memory}/time_per_repetition_ns/p50@v1,${seriesMoment(memory as { points: Array<{ started_at: string }> })}]\nSources: ${link}`;
+	};
+	const run = (): string => fixture.series.derivations.find((d) => d.series.id === fixture.memory)?.points.at(-1)?.path as string;
+
+	test("a link that goes on after .json is no Run's address; a sentence's punctuation and Markdown around it are", async () => {
+		for (const link of [`${run()}.`, `(${run()})`, `**${run()}**`, `${run()},`, `${run()};`, `[the Run](${DEFAULT_LOCATION}/${run()}).`, `<${DEFAULT_LOCATION}/${run()}>`, `\`${run()}\``]) {
+			const report = await checkAnswer(answerWith(link), directory);
+			expect(report.problems, link).toEqual([]);
+		}
+		for (const [link, after] of [
+			[`${DEFAULT_LOCATION}/${run()}.bak`, ".bak"],
+			[`${run()}.bak`, ".bak"],
+			[`${run()}/x`, "/x"],
+			[`${run()}?raw=1`, "?raw=1"],
+			[`${run()}_x`, "_x"],
+		] as const) {
+			const report = await checkAnswer(answerWith(link), directory);
+			expect(report.problems.map((p) => p.message), link).toContain(`Run link: ${link} is not a Run file's address: it goes on after ${run()} (${after})`);
+		}
+	});
+
+	test("when the tree moves a Run's evidence, show prints where it is, and the checker reads it there", async () => {
+		const MIRROR = "https://mirror.invalid";
+		const moved = (text: string): string => text.replaceAll(`${DEFAULT_LOCATION}/runs/`, `${DEFAULT_LOCATION}/archive/runs/`);
+		const fetch: Fetch = async (url) => {
+			const path = url.slice(MIRROR.length + 1);
+			if (path.startsWith("runs/")) return new Response("", { status: 404 });
+			if (path === seriesPath(fixture.memory)) return new Response(moved(new TextDecoder().decode(bytesOf(path))));
+			return new Response(new Uint8Array(readFileSync(join(fixture.runs, path.replace(/^archive\//, "")))));
+		};
+		const data = await loadLedger(openLocation(MIRROR, { fetch }));
+		const shown = await showSeries(data, [fixture.memory], 1);
+		if (shown.found !== "one") throw new Error("expected one Series");
+		expect(shown.series.runs_list[0]?.link).toBe(`${MIRROR}/archive/${run()}`);
+		expect(shown.series.runs_list[0]?.evidence).toBe(`${DEFAULT_LOCATION}/archive/${run()}`);
+		for (const link of [run(), `${MIRROR}/archive/${run()}`, `${DEFAULT_LOCATION}/archive/${run()}`]) {
+			expect((await checkAnswer(answerWith(link), data)).problems, link).toEqual([]);
+		}
+		expect((await checkAnswer(answerWith(`${MIRROR}/${run()}`), data)).problems.map((p) => p.message).join("\n")).toContain(`its address in the data API (${DEFAULT_LOCATION}/archive/${run()}, or ${MIRROR}/archive/${run()} where these data were read)`);
+	});
+});
+
+describe("a month file held from an earlier read", () => {
+	test("is checked against the Series file read again, and read again when the entry differs", async () => {
+		const novemberPath = monthPath(fixture.memory, "2026-11");
+		const decemberPath = monthPath(fixture.memory, "2026-12");
+		let seriesReads = 0;
+		let novemberReads = 0;
+		let decemberReads = 0;
+		const overrides = new Map<string, Override>([
+			[
+				seriesPath(fixture.memory),
+				() => {
+					seriesReads++;
+					if (seriesReads === 1) return new Response(bytesOf(seriesPath(fixture.memory)));
+					const file = JSON.parse(new TextDecoder().decode(bytesOf(seriesPath(fixture.memory)))) as { months: Array<{ bytes: number }> };
+					(file.months[0] as { bytes: number }).bytes += 1;
+					return new Response(JSON.stringify(file));
+				},
+			],
+			[novemberPath, () => (novemberReads++, new Response(bytesOf(novemberPath)))],
+			[decemberPath, () => (++decemberReads === 1 ? new Response("", { status: 404 }) : new Response(bytesOf(decemberPath)))],
+		]);
+		const data = await web([], overrides);
+		const memory = fixture.series.derivations.find((d) => d.series.id === fixture.memory);
+		const before = `${(memory?.points.at(-1)?.started_at ?? "").slice(0, 10)}T00:00:00Z`;
+		await expectLedgerError(resolveCitation(`series/${fixture.memory}/time_per_repetition_ns/count@v1,${before}`, data), "Try again in a few minutes.");
+		expect(novemberReads).toBe(ATTEMPTS);
+	});
+});
+
+describe("an error answer settles within the time limit", () => {
+	test("a 404 or a 500 whose body's cancellation never settles", async () => {
+		const MIRROR = "https://mirror.invalid";
+		for (const status of [404, 500]) {
+			const fetch: Fetch = async () => new Response(new ReadableStream({ cancel: () => new Promise<void>(() => undefined) }), { status });
+			const read = openLocation(MIRROR, { fetch, timeoutMs: 20 })
+				.read(INDEX, LIMITS.index, "the table of contents")
+				.then(
+					(bytes) => (bytes === null ? "not there" : "read"),
+					(error: unknown) => (error instanceof LedgerError ? "refused" : "failed"),
+				);
+			// Far past the limit: only a read that never settles loses this race.
+			const settled = await Promise.race([read, Bun.sleep(3000).then(() => "still pending")]);
+			expect(settled, String(status)).toBe(status === 404 ? "not there" : "refused");
+		}
+	});
+});
+
+describe("a failure entry of requests", () => {
+	test("is cited only as the data list it: an entry they do not list is refused, with what they list", async () => {
+		const derivation = fixture.requests.derivations.find((d) => d.series.id === fixture.http);
+		const moment = `${(derivation?.points.at(-1)?.started_at ?? "").slice(0, 19)}Z`;
+		const listed = derivation?.pool.failures[0];
+		if (listed === undefined) throw new Error("the fixture's Series of requests lists no failure");
+		const held = await resolveCitation(`requests/${fixture.http}/failed/${listed.phase}/${listed.kind}@v1,${moment}`, directory);
+		expect(held.ok && held.kind === "requests" ? held.value : null).toBe(listed.count);
+		const invented = await resolveCitation(`requests/${fixture.http}/failed/imaginary/typo@v1,${moment}`, directory);
+		expect(invented.ok ? "resolved" : invented.reason).toBe(
+			`Series ${fixture.http} lists no failed requests of phase imaginary and kind typo as of ${moment}; it lists ${derivation?.pool.failures.map((f) => `failed/${f.phase}/${f.kind}`).join(", ")}`,
+		);
+		const report = await checkAnswer(`0 requests [lm:requests/${fixture.http}/failed/imaginary/typo@v1,${moment}]\n${derivation?.points.at(-1)?.path}`, directory);
+		expect(report.pass).toBe(false);
+	});
+});
+
 describe("the limits", () => {
 	test("are the tree's own ceilings, kind for kind", () => {
 		const samples: Array<[keyof typeof LIMITS, string]> = [
@@ -477,11 +699,12 @@ describe("scripts/assemble-location.ts, the trial's data", () => {
 		const [stdout, stderr, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
 		return { code, stdout, stderr };
 	}
-	/** The artifact api as the workflow keeps it: the tree's files, v1/, and nothing else. */
-	function artifact(): string {
+	/** The artifact api as the workflow keeps it: the tree's files, v1/, and nothing else (but those in `omit`). */
+	function artifact(omit: readonly string[] = []): string {
 		const api = mkdtempSync(join(tmpdir(), "lookup-tree-api-"));
 		made.push(api);
 		for (const [path, bytes] of tree) {
+			if (omit.includes(path)) continue;
 			mkdirSync(dirname(join(api, path)), { recursive: true });
 			writeFileSync(join(api, path), bytes);
 		}
@@ -499,6 +722,29 @@ describe("scripts/assemble-location.ts, the trial's data", () => {
 		expect(filesUnder(out)).toEqual([...filesUnder(join(fixture.runs, "boots")).map((p) => `boots/${p}`), ...runFiles.map((p) => `runs/${p}`), ...[...tree.keys()]].sort());
 		const data = await loadLedger(openLocation(out));
 		expect(normalized(await showSeries(data, [fixture.http], "all")).replaceAll(out, "LOCATION")).toBe(normalized(await showSeries(directory, [fixture.http], "all")));
+	});
+
+	test("writes nothing when a file the table of contents lists is missing or is not what it says, and names it", async () => {
+		const cases: Array<{ name: string; omit: string[]; replace?: [string, Uint8Array]; expected: string }> = [
+			{ name: "a price file missing", omit: ["v1/prices/2026-11-11.json"], expected: "v1/prices/2026-11-11.json, the price file of 2026-11-11 the table of contents lists, is not there" },
+			{ name: "a schema missing", omit: ["v1/schemas/prices.schema.json"], expected: "the schema prices, which the table of contents lists, is not in" },
+			{
+				name: "a price file that is not that day's",
+				omit: [],
+				replace: ["v1/prices/2026-11-12.json", bytesOf("v1/prices/2026-11-11.json")],
+				expected: "v1/prices/2026-11-12.json is not a valid price file: prices/2026/11/12/aws.json is not under the UTC date it was fetched",
+			},
+		];
+		for (const { name, omit, replace, expected } of cases) {
+			const api = artifact(omit);
+			if (replace !== undefined) writeFileSync(join(api, replace[0]), replace[1]);
+			const out = join(api, "location");
+			const result = await assemble(api, fixture.runs, out);
+			expect(result.code, name).toBe(2);
+			expect(result.stderr, name).toContain("Nothing was written.");
+			expect(result.stderr, name).toContain(expected);
+			expect(filesUnder(api).some((p) => p.startsWith("location/")), name).toBe(false);
+		}
 	});
 
 	test("writes nothing when the clone lacks a Run file the tree links, and names it", async () => {
@@ -519,6 +765,16 @@ describe("scripts/assemble-location.ts, the trial's data", () => {
 });
 
 describe("skills/ledgermath/SKILL.md", () => {
+	test("says which citations cannot be checked once more Runs arrive, as the checker refuses them", async () => {
+		const skill = readFileSync(join(ROOT, "skills", "ledgermath", "SKILL.md"), "utf8").replace(/\s+/g, " ");
+		expect(skill).toContain("so it can be checked after more Runs arrive. The one exception is a figure of the requests with one value of a fact (`…/by/address_block/…`): it is held only as of the Series' newest Run");
+		// And the checker says the same of such a citation of an earlier moment.
+		const http = fixture.requests.derivations.find((d) => d.series.id === fixture.http);
+		const earlier = `${(http?.points[0]?.started_at ?? "").slice(0, 19)}Z`;
+		const resolved = await resolveCitation(`requests/${fixture.http}/by/address_block/52.219.0.0/16/total/count@v1,${earlier}`, directory);
+		expect(resolved.ok ? "resolved" : resolved.reason).toContain(`is held only as of Series ${fixture.http}'s newest Run`);
+	});
+
 	test("every command line it shows runs against the fixture's tree", async () => {
 		const skill = readFileSync(join(ROOT, "skills", "ledgermath", "SKILL.md"), "utf8");
 		const spans = [...skill.matchAll(/`([^`\n]+)`/g), ...skill.matchAll(/^ {4}(\S.*)$/gm)].map((m) => (m[1] as string).trim());

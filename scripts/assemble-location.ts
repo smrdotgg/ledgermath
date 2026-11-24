@@ -14,10 +14,12 @@
  * OUT gets v1/ byte for byte, and beside it every Run file and boot summary
  * the tree links, copied from the clone: the layout the tools read, as
  * https://api.ledgermath.com will serve it. It is read the way the tools read
- * it (scripts/lib/ledger-data.ts): the layout must be one they know, every
+ * it (scripts/lib/ledger-data.ts): every file the table of contents lists must
+ * be there (each price file read as prices reads it, each schema JSON), every
  * month file must have the sha256 its Series file lists, and every Run file
- * the sha256 its point gives; anything else stops it, naming the file. The
- * same inputs give the same directory. It writes only inside OUT.
+ * the sha256 its point gives; anything else stops it before it writes,
+ * naming the file. The same inputs give the same directory. It writes only
+ * inside OUT.
  *
  * Exit 0 when OUT is whole; 2 when it stopped.
  */
@@ -27,7 +29,7 @@ import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSyn
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { parseArgs } from "node:util";
 
-import { LedgerError, loadLedger, openLocation, seriesPoints } from "./lib/ledger-data";
+import { LedgerError, LIMITS, loadLedger, openLocation, seriesPoints } from "./lib/ledger-data";
 
 const USAGE = "usage: bun scripts/assemble-location.ts --api DIR --runs DIR --out DIR";
 
@@ -82,6 +84,25 @@ async function main(): Promise<void> {
 	}
 
 	const problems: string[] = [];
+	// Every other file the table of contents lists: each price file, read as prices reads it, and each schema.
+	for (const path of data.priceFiles) {
+		try {
+			if ((await data.readPrices(path)) === null) problems.push(`the price file ${path}: the table of contents lists it, and it cannot be found`);
+		} catch (error) {
+			problems.push(error instanceof Error ? error.message : String(error));
+		}
+	}
+	for (const schema of data.index.schemas ?? []) {
+		try {
+			const { path, bytes } = await data.readLinked(schema.url, LIMITS.schema, "a schema");
+			if (bytes === null) problems.push(`${path}: the schema ${schema.name}, which the table of contents lists, is not in ${api}`);
+			else JSON.parse(new TextDecoder().decode(bytes));
+		} catch (error) {
+			problems.push(`the schema ${schema.name}: ${error instanceof Error ? error.message : String(error)}`);
+		}
+	}
+	if (problems.length > 0) fail(`Nothing was written. The tree in ${api} is not whole:\n  ${problems.join("\n  ")}`);
+
 	for (const [path, sha256] of evidence) {
 		const from = join(runs, path);
 		if (!existsSync(from)) problems.push(`${path}: not in ${runs}`);

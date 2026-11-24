@@ -40,9 +40,7 @@ lists what is.
 
 If the tool says LedgerMath's data are being updated and to try again in a few minutes,
 two of its files did not agree, so it used neither and gave no number. Wait a few minutes
-and run the same command again; do not put a number from anywhere else in its place. If it
-says the data are in a layout it does not know, the checkout is older than the data: run
-`git pull` in it, then the command again.
+and run the same command again; do not put a number from anywhere else in its place.
 
 ## Series of requests
 
@@ -123,7 +121,9 @@ the same unit.
 | Anything else | `[assumption: <where it comes from>]` |
 
 `<moment>` is when the Series' newest Run started: the citation is of the Series as it
-stood then, so it can be checked after more Runs arrive.
+stood then, so it can be checked after more Runs arrive. The one exception is a figure of
+the requests with one value of a fact (`…/by/address_block/…`): it is held only as of the
+Series' newest Run, so once more Runs arrive it can no longer be checked.
 
 - A marker goes directly after its number, on the same line: it belongs to the nearest
   number before it and to no other.

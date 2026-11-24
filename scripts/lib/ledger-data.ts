@@ -16,25 +16,32 @@
  * another address, reads the same.
  *
  * The contract the tree gives a reader is kept:
- * - v1/index.json's layout must be one this tool knows (KNOWN_LAYOUTS);
- *   another is refused, plainly, and nothing more is read.
  * - A month file's bytes must have the sha256 (and size) its Series file
- *   lists. On a mismatch, or a month file missing, the Series file is read
- *   again, then the month file, up to ATTEMPTS times in all, with a pause
- *   between; while they still differ neither is used, and the error says to
- *   try again in a few minutes (a web address) or that the directory holds two
- *   builds (a directory).
+ *   lists, whether just read or held from an earlier read. On a mismatch, or a
+ *   month file missing, the Series file is read again, then the month file, up
+ *   to ATTEMPTS times in all, with a pause between; while they still differ
+ *   neither is used, and the error says to try again in a few minutes (a web
+ *   address) or that the directory holds two builds (a directory).
  * - Every request has a time limit (REQUEST_TIMEOUT_MS) and every file a size
  *   limit (LIMITS, the tree's own ceilings, CEILINGS in
  *   scripts/lib/api-check.ts); nothing is retried but the step above.
+ * - v1/index.json's layout is read and shown, never refused: by the tree's
+ *   own words a new layout changes how the files are written, not what a JSON
+ *   reader reads (only a v2 would).
+ *
+ * Nothing outside the location is read: a path is plain segments of safe
+ * characters (isInsidePath); at a web address the address it resolves to must
+ * keep the location's origin and path, and a redirect is refused; in a
+ * directory, the file a path resolves to, through any symbolic link, must be
+ * inside the directory.
  *
  * A file that is not there reads as null: 404, or 403, which is what S3
  * behind the API answers for a key it does not hold.
  */
 
 import { createHash } from "node:crypto";
-import { readFileSync, statSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { readFileSync, realpathSync, statSync } from "node:fs";
+import { join, resolve, sep } from "node:path";
 
 import type { Pool, PoolSummary, Point as RequestsPoint, Recorded } from "../../methods/requests/v1/output";
 import type { Point as SeriesPoint } from "../../methods/v1/output";
@@ -45,9 +52,6 @@ import { PRICE_FILE_PATH, type PriceFile } from "./prices";
 
 /** Where the data are read from when no location is given. */
 export const DEFAULT_LOCATION = "https://api.ledgermath.com";
-
-/** The layouts of v1/index.json this tool reads (LAYOUT in scripts/lib/api.ts, as of this tool). */
-export const KNOWN_LAYOUTS: readonly number[] = [1];
 
 /** How long one request may take, start to last byte. */
 export const REQUEST_TIMEOUT_MS = 20_000;
@@ -69,6 +73,7 @@ export const LIMITS = {
 	series: 1_000_000,
 	month: 5_000_000,
 	prices: 1_000_000,
+	schema: 256_000,
 	run: 1_000_000,
 } as const;
 
@@ -84,7 +89,8 @@ export function locationFrom(flag: string | undefined, environment: string | und
 	return { base: DEFAULT_LOCATION, isDefault: true };
 }
 
-export type Fetch = (url: string, init: { signal: AbortSignal }) => Promise<Response>;
+/** A fetch: the tools ask it never to follow a redirect, and refuse one. */
+export type Fetch = (url: string, init: { signal: AbortSignal; redirect: "manual" }) => Promise<Response>;
 
 export interface LocationOptions {
 	fetch?: Fetch;
@@ -99,9 +105,10 @@ export interface DataLocation {
 	isUrl: boolean;
 	/**
 	 * A file's bytes by its path in the location, or null when it is not there.
-	 * Throws a LedgerError when it is larger than `limit` bytes (`what` names
-	 * the kind of file), when a request takes longer than the time limit, or
-	 * when it cannot be read.
+	 * Throws a LedgerError when the path, or what it resolves to, leads outside
+	 * the location, when it is larger than `limit` bytes (`what` names the kind
+	 * of file), when a request takes longer than the time limit or is
+	 * redirected, or when it cannot be read.
 	 */
 	read(path: string, limit: number, what: string): Promise<Uint8Array | null>;
 	/** How a file is shown: its path in a directory, its address under a web address. */
@@ -111,9 +118,18 @@ export interface DataLocation {
 	sleep(ms: number): Promise<void>;
 }
 
-/** A path inside a location: relative, forward slashes, no "." or ".." parts. */
+/**
+ * A path inside a location: relative, forward slashes, and every part made of
+ * letters, digits and . _ ~ - only, never "." or "..": nothing a resolver could
+ * read as a way out (no %, \, ?, # or encoded dot). Every path the tree writes
+ * is of this kind.
+ */
 export function isInsidePath(path: string): boolean {
-	return path.length > 0 && !path.startsWith("/") && path.split("/").every((part) => part !== "" && part !== "." && part !== "..");
+	return path.length > 0 && path.split("/").every((part) => /^[A-Za-z0-9._~-]+$/.test(part) && part !== "." && part !== "..");
+}
+
+function outside(path: string, base: string): LedgerError {
+	return new LedgerError(`${path} is not a plain path inside ${base}, so it was not read: LedgerMath's data never lead outside the location they are read from.`);
 }
 
 const realSleep = (ms: number): Promise<void> => new Promise((done) => setTimeout(done, ms));
@@ -128,18 +144,24 @@ function directoryLocation(base: string, options: LocationOptions): DataLocation
 		base,
 		isUrl: false,
 		async read(path, limit, what) {
-			if (!isInsidePath(path)) return null;
+			if (!isInsidePath(path)) throw outside(path, base);
 			const full = join(root, ...path.split("/"));
-			let size: number;
+			// What the path resolves to, through any symbolic link, must be inside the directory, itself resolved.
+			let real: string;
+			let realRoot: string;
 			try {
-				const stat = statSync(full);
-				if (!stat.isFile()) return null;
-				size = stat.size;
+				real = realpathSync(full);
+				realRoot = realpathSync(root);
 			} catch {
 				return null;
 			}
-			if (size > limit) throw tooLarge(full, limit, what);
-			return new Uint8Array(readFileSync(full));
+			if (!real.startsWith(realRoot.endsWith(sep) ? realRoot : `${realRoot}${sep}`)) {
+				throw new LedgerError(`${full} leads outside the directory ${base} (to ${real}), so it was not read: LedgerMath's data never lead outside the location they are read from.`);
+			}
+			const stat = statSync(real);
+			if (!stat.isFile()) return null;
+			if (stat.size > limit) throw tooLarge(full, limit, what);
+			return new Uint8Array(readFileSync(real));
 		},
 		link: (path) => path,
 		pauseMs: options.pauseMs ?? 0,
@@ -162,7 +184,8 @@ async function readLimited(response: Response, limit: number, onTooLarge: () => 
 		if (done) break;
 		total += value.length;
 		if (total > limit) {
-			await reader.cancel().catch(() => undefined);
+			// Not awaited: a body whose cancellation never settles must not hold the answer.
+			reader.cancel().catch(() => undefined);
 			throw onTooLarge();
 		}
 		chunks.push(value);
@@ -176,17 +199,36 @@ async function readLimited(response: Response, limit: number, onTooLarge: () => 
 	return bytes;
 }
 
+/** Lets a response go without waiting on it: its body's cancellation may never settle. */
+function discard(response: Response, controller: AbortController): void {
+	controller.abort();
+	response.body?.cancel().catch(() => undefined);
+}
+
 function urlLocation(base: string, options: LocationOptions): DataLocation {
 	const prefix = base.endsWith("/") ? base : `${base}/`;
-	const fetchFile: Fetch = options.fetch ?? ((url, init) => fetch(url, { signal: init.signal }));
+	let root: URL;
+	try {
+		root = new URL(prefix);
+	} catch {
+		throw new LedgerError(`${base} is not a web address.`);
+	}
+	if (root.search !== "" || root.hash !== "") throw new LedgerError(`${base} is not a base address: it has a query or a fragment.`);
+	const fetchFile: Fetch = options.fetch ?? ((url, init) => fetch(url, { signal: init.signal, redirect: init.redirect }));
 	const timeoutMs = options.timeoutMs ?? REQUEST_TIMEOUT_MS;
 	const seconds = timeoutMs >= 1000 ? `${timeoutMs / 1000} s` : `${timeoutMs} ms`;
+	/** The address a path is read at, once resolved as a fetch resolves it: refused unless it keeps the location's origin and path. */
+	const addressOf = (path: string): string => {
+		if (!isInsidePath(path)) throw outside(path, base);
+		const resolved = new URL(path, root);
+		if (resolved.origin !== root.origin || !resolved.pathname.startsWith(root.pathname) || resolved.search !== "" || resolved.hash !== "") throw outside(path, base);
+		return resolved.href;
+	};
 	return {
 		base,
 		isUrl: true,
 		async read(path, limit, what) {
-			if (!isInsidePath(path)) return null;
-			const url = `${prefix}${path}`;
+			const url = addressOf(path);
 			const controller = new AbortController();
 			let timer: ReturnType<typeof setTimeout> | undefined;
 			const timeout = new Promise<never>((_, reject) => {
@@ -196,18 +238,25 @@ function urlLocation(base: string, options: LocationOptions): DataLocation {
 				}, timeoutMs);
 			});
 			try {
-				const response = await Promise.race([fetchFile(url, { signal: controller.signal }), timeout]);
+				const response = await Promise.race([fetchFile(url, { signal: controller.signal, redirect: "manual" }), timeout]);
+				if (response.type === "opaqueredirect" || (response.status >= 300 && response.status < 400)) {
+					const to = response.headers.get("location");
+					discard(response, controller);
+					throw new LedgerError(
+						`${url} answered with a redirect (HTTP ${response.status}${to === null ? "" : ` to ${to}`}), and the tools follow no redirect, so it was not read: LedgerMath's data never lead outside the location they are read from. Give the address the data are served at.`,
+					);
+				}
 				if (response.status === 404 || response.status === 403) {
-					await response.body?.cancel().catch(() => undefined);
+					discard(response, controller);
 					return null;
 				}
 				if (!response.ok) {
-					await response.body?.cancel().catch(() => undefined);
+					discard(response, controller);
 					throw new LedgerError(`${url} answered HTTP ${response.status}, so LedgerMath's data could not be read. Try again in a few minutes.`);
 				}
 				const length = Number(response.headers.get("content-length") ?? Number.NaN);
 				if (Number.isFinite(length) && length > limit) {
-					controller.abort();
+					discard(response, controller);
 					throw tooLarge(url, limit, what);
 				}
 				return await Promise.race([readLimited(response, limit, () => tooLarge(url, limit, what)), timeout]);
@@ -256,6 +305,7 @@ export interface TreeIndex {
 	newest_run_started_at: string | null;
 	series: { url: string; count: number };
 	prices: { newest: PriceEntry | null; files: PriceEntry[] };
+	schemas: Array<{ name: string; describes: string; url: string }>;
 }
 
 /** A Derivation's percentiles without the Runs behind them. A percentile is null when it is infinite (the Method writes it so). */
@@ -415,10 +465,14 @@ export interface LedgerData {
 	readPrices(path: string): Promise<LoadedPrices | null>;
 	/** The price file in use, or null. */
 	prices(): Promise<LoadedPrices | null>;
-	/** The path in the location of a link the tree writes, or null when it is not under the tree's own address. */
+	/** The path in the location of a link the tree writes, or null when it is not a plain path under the tree's own address. */
 	pathOf(url: string): string | null;
-	/** A Run file's bytes, by its path (runs/<yyyy>/<mm>/<dd>/<id>.json), or null. */
-	runFile(path: string): Promise<Uint8Array | null>;
+	/**
+	 * A file the tree links (a point's evidence, a schema), followed as every
+	 * link is: its path in the location, and its bytes or null when it is not
+	 * there. Throws a LedgerError when the link leads outside the tree.
+	 */
+	readLinked(url: string, limit: number, what: string): Promise<{ path: string; bytes: Uint8Array | null }>;
 }
 
 const decode = (bytes: Uint8Array): string => new TextDecoder().decode(bytes);
@@ -440,10 +494,11 @@ function parse(bytes: Uint8Array, where: string, schema: string, what: string): 
 
 /**
  * Reads the table of contents and checks it is one this tool can read: v1,
- * of a known layout, with its own address. Everything else is read when a
- * command needs it. `pricesDate` (yyyy-mm-dd) picks a price file other than
- * the newest. `isDefault` says the location was not given, so an error says
- * how to give one.
+ * with its own address. Its layout is read and shown, never refused (a new
+ * layout changes how files are written, not what they mean). Everything else
+ * is read when a command needs it. `pricesDate` (yyyy-mm-dd) picks a price
+ * file other than the newest. `isDefault` says the location was not given, so
+ * an error says how to give one.
  */
 export async function loadLedger(location: DataLocation, options: { pricesDate?: string; isDefault?: boolean } = {}): Promise<LedgerData> {
 	const hint = options.isDefault ? ` No location was given, so ${DEFAULT_LOCATION} was read; if you were given LedgerMath's data in a directory or at another address, pass it with --data.` : "";
@@ -459,13 +514,7 @@ export async function loadLedger(location: DataLocation, options: { pricesDate?:
 			`No LedgerMath data at ${location.base}: there is no ${INDEX_PATH} there. A location is a web address or a directory holding the data API's tree, v1/, with runs/ and boots/ beside it.${hint}`,
 		);
 	}
-	const raw = parse(bytes, location.link(INDEX_PATH), SCHEMAS.index, "the table of contents");
-	if (typeof raw.layout !== "number" || !KNOWN_LAYOUTS.includes(raw.layout)) {
-		throw new LedgerError(
-			`The data at ${location.base} are written in layout ${JSON.stringify(raw.layout)}, which this tool does not know: it reads layout ${KNOWN_LAYOUTS.join(" or ")}. Nothing more was read. Update the LedgerMath checkout the tool runs from (git pull) and try again.`,
-		);
-	}
-	const index = raw as unknown as TreeIndex;
+	const index = parse(bytes, location.link(INDEX_PATH), SCHEMAS.index, "the table of contents") as unknown as TreeIndex;
 	const own = `/${INDEX_PATH}`;
 	if (typeof index.url !== "string" || !index.url.endsWith(own)) throw new LedgerError(`${location.link(INDEX_PATH)} does not give its own address as …${own}, so its links cannot be followed.`);
 	const treeBase = index.url.slice(0, -own.length);
@@ -477,7 +526,9 @@ export async function loadLedger(location: DataLocation, options: { pricesDate?:
 	};
 	const readLink = async (url: string, limit: number, what: string): Promise<{ path: string; bytes: Uint8Array | null }> => {
 		const path = pathOf(url);
-		if (path === null) throw new LedgerError(`${url}, a link in LedgerMath's data, is not under the address the tree was built for, ${treeBase}, so it cannot be followed.`);
+		if (path === null) {
+			throw new LedgerError(`${url}, a link in LedgerMath's data, is not a plain path under the address the tree was built for, ${treeBase}, so it was not followed: LedgerMath's data never lead outside the location they are read from.`);
+		}
 		return { path, bytes: await location.read(path, limit, what) };
 	};
 
@@ -509,24 +560,28 @@ export async function loadLedger(location: DataLocation, options: { pricesDate?:
 		return value;
 	};
 
-	/** Month files read, by address and sha256: one whose bytes matched is not read again. */
-	const monthFiles = new Map<string, TreeMonth>();
+	/**
+	 * Month files read, by address, with the size and sha256 of the bytes read:
+	 * one is used again only when they are what the Series file now lists for
+	 * it, and it is of that Series and month; otherwise it is read again.
+	 */
+	const monthFiles = new Map<string, { bytes: number; sha256: string; value: TreeMonth }>();
 	const readMonths = async (series: TreeSeries, entries: readonly MonthEntry[]): Promise<{ months: TreeMonth[] } | { problem: string }> => {
 		const months: TreeMonth[] = [];
 		for (const entry of entries) {
-			const key = `${entry.url}#${entry.sha256}`;
-			const known = monthFiles.get(key);
-			if (known !== undefined) {
-				months.push(known);
+			const held = monthFiles.get(entry.url);
+			if (held !== undefined && held.bytes === entry.bytes && held.sha256 === entry.sha256 && held.value.id === series.id && held.value.month === entry.month) {
+				months.push(held.value);
 				continue;
 			}
 			const { path, bytes } = await readLink(entry.url, LIMITS.month, "a month file");
 			const shown = location.link(path);
 			if (bytes === null) return { problem: `${shown} is not there, although Series ${series.id}'s file lists it` };
-			if (bytes.length !== entry.bytes || sha256(bytes) !== entry.sha256) return { problem: `${shown} does not have the sha256 Series ${series.id}'s file lists for it` };
+			const hash = sha256(bytes);
+			if (bytes.length !== entry.bytes || hash !== entry.sha256) return { problem: `${shown} does not have the sha256 and size Series ${series.id}'s file lists for it` };
 			const value = parse(bytes, shown, SCHEMAS.month, "a month file") as unknown as TreeMonth;
 			if (value.id !== series.id || value.month !== entry.month) throw new LedgerError(`${shown} is not the month ${entry.month} of Series ${series.id}.`);
-			monthFiles.set(key, value);
+			monthFiles.set(entry.url, { bytes: bytes.length, sha256: hash, value });
 			months.push(value);
 		}
 		return { months };
@@ -598,7 +653,7 @@ export async function loadLedger(location: DataLocation, options: { pricesDate?:
 		readPrices,
 		prices: async () => (pricesPath === null ? null : readPrices(pricesPath)),
 		pathOf,
-		runFile: (path) => location.read(path, LIMITS.run, "a Run file"),
+		readLinked: readLink,
 	};
 }
 

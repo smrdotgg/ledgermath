@@ -67,7 +67,7 @@
 import { createHash } from "node:crypto";
 
 import { citationMismatch, NUMBER_UNIT, type Resolved, resolveCitation, RUN_PATH, seriesMoment } from "./citation";
-import { findRun, type LedgerData } from "./ledger-data";
+import { findRun, type LedgerData, LIMITS } from "./ledger-data";
 import { agrees, type Dims, dimsWords, multiply, type Quantity, quantities, quantityWords, readable, sameDims } from "./quantity";
 import { RUNS_REPOSITORY } from "./runs-repository";
 
@@ -264,10 +264,10 @@ function findMarkers(text: string): Marker[] {
 	return markers;
 }
 
-/** The whole token a Run path is written in: from the last space, (, <, quote or backtick before it. */
+/** The start of the token a Run path is written in: from the last space, (, [, <, quote, backtick or * (bold) before it. */
 function linkToken(text: string, start: number, end: number): string {
 	let from = start;
-	while (from > 0 && !/[\s(<"'`[]/.test(text.charAt(from - 1))) from--;
+	while (from > 0 && !/[\s(<"'`[*]/.test(text.charAt(from - 1))) from--;
 	return text.slice(from, end);
 }
 
@@ -629,6 +629,8 @@ export async function checkAnswer(answer: string, data: LedgerData, question = "
 	const notes: Problem[] = [];
 	const citations: CheckedCitation[] = [];
 	const runLinks: CheckReport["run_links"] = [];
+	/** The Run links written as an address other than the Runs repository's: each must be its point's evidence link, rebased on the location. */
+	const addressed = new Set<CheckReport["run_links"][number]>();
 	const all: Num[] = [];
 	const steps: Step[] = [];
 	const citedSeries = new Map<string, number>();
@@ -686,22 +688,19 @@ export async function checkAnswer(answer: string, data: LedgerData, question = "
 			if (/[\p{L}\p{N}]/u.test(quoted) && recordTexts.some((record) => record.includes(quoted))) masked = blank(masked, m.index, m.index + m[0].length);
 		}
 		for (const m of masked.matchAll(RUN_PATH)) {
-			const token = linkToken(masked, m.index, m.index + m[0].length);
-			const prefix = token.slice(0, token.length - m[0].length);
-			const ok =
-				isRelativePrefix(prefix) ||
-				RUNS_REPOSITORY_PREFIXES.some((p) => p.test(prefix)) ||
-				token === `${data.treeBase}/${m[0]}` ||
-				(data.location.isUrl && token === data.location.link(m[0]));
-			runLinks.push({
-				line,
-				link: token,
-				path: m[0],
-				problem: ok
-					? null
-					: `${token} is neither the bare path ${m[0]}, a relative path ending with it, its address in the data API (${data.treeBase}/${m[0]}) nor its address in the Runs repository (https://github.com/${RUNS_REPOSITORY}/blob/main/${m[0]})`,
-			});
-			masked = blank(masked, m.index - prefix.length, m.index + m[0].length);
+			const before = linkToken(masked, m.index, m.index + m[0].length);
+			const prefix = before.slice(0, before.length - m[0].length);
+			// The whole link: what follows .json up to a space or a closing mark, of which only a sentence's own punctuation may be left.
+			const end = m.index + m[0].length;
+			const after = /^[^\s)\]>"'`*<|]*/.exec(masked.slice(end))?.[0] ?? "";
+			const goesOn = after.replace(/[.,;:!?]+$/, "");
+			const token = `${before}${goesOn}`;
+			const entry = { line, link: token, path: m[0], problem: null as string | null };
+			if (goesOn !== "") entry.problem = `${token} is not a Run file's address: it goes on after ${m[0]} (${goesOn})`;
+			runLinks.push(entry);
+			// A bare or relative path, or the Runs repository's address, is judged now; any other address against the cited point's own evidence link, once it is found.
+			if (!isRelativePrefix(prefix) && !RUNS_REPOSITORY_PREFIXES.some((p) => p.test(prefix))) addressed.add(entry);
+			masked = blank(masked, m.index - prefix.length, end + after.length);
 		}
 		for (const m of masked.matchAll(PARAMETER)) {
 			if (citedParams.get(m[1] as string)?.has(m[2] as string)) masked = blank(masked, m.index, m.index + m[0].length);
@@ -896,17 +895,27 @@ export async function checkAnswer(answer: string, data: LedgerData, question = "
 
 	reportUnaccounted(all, steps, problems);
 
-	// Run links: each a Run of a Series the answer cites, with the bytes its point in the data gives.
+	// Run links: each a Run of a Series the answer cites, by its path; read at its point's evidence link, as every
+	// link of the data is followed, and with the bytes its point's sha256 gives.
 	const linkedSeries = new Set<string>();
 	const cited = [...citedSeries.keys()];
 	for (const link of runLinks) {
 		if (link.problem === null) {
-			const bytes = await data.runFile(link.path);
-			const found = bytes === null ? null : await findRun(data, cited, link.path);
-			if (bytes === null) link.problem = `no Run file ${link.path} at ${data.location.base}`;
-			else if (found === null) link.problem = `${link.path} is not a Run of any Series the answer cites${cited.length === 0 ? " (it cites none)" : ` (${cited.join(", ")})`}`;
-			else if (createHash("sha256").update(bytes).digest("hex") !== found.point.sha256) link.problem = `${link.path} is not the file the Derivation cites (sha256 differs)`;
-			else linkedSeries.add(found.series);
+			const found = await findRun(data, cited, link.path);
+			if (found === null) link.problem = `${link.path} is not a Run of any Series the answer cites${cited.length === 0 ? " (it cites none)" : ` (${cited.join(", ")})`}`;
+			else {
+				const { evidence } = found.point;
+				const at = data.pathOf(evidence);
+				const shown = at === null ? null : data.location.link(at);
+				if (addressed.has(link) && link.link !== evidence && !(data.location.isUrl && link.link === shown)) {
+					link.problem = `${link.link} is neither the bare path ${link.path}, a relative path ending with it, its address in the data API (${evidence}${shown !== null && shown !== evidence && data.location.isUrl ? `, or ${shown} where these data were read` : ""}) nor its address in the Runs repository (https://github.com/${RUNS_REPOSITORY}/blob/main/${link.path})`;
+				} else {
+					const { bytes } = await data.readLinked(evidence, LIMITS.run, "a Run file");
+					if (bytes === null) link.problem = `no Run file ${link.path} at ${shown ?? evidence}`;
+					else if (createHash("sha256").update(bytes).digest("hex") !== found.point.sha256) link.problem = `${link.path} is not the file the Derivation cites (sha256 differs)`;
+					else linkedSeries.add(found.series);
+				}
+			}
 		}
 		if (link.problem !== null) problems.push({ line: link.line, message: `Run link: ${link.problem}` });
 	}

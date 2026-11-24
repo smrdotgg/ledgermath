@@ -41,7 +41,7 @@ import {
 	requestTailCitation,
 	seriesCitation,
 } from "./citation";
-import { type LedgerData, type LoadedPrices, type MonthEntry, seriesPoints, type StatSummary, type TreeRow, type TreeSeries, type TreeSeriesPoint } from "./ledger-data";
+import { type LedgerData, LedgerError, type LoadedPrices, type MonthEntry, seriesPoints, type StatSummary, type TreeRow, type TreeSeries, type TreeSeriesPoint } from "./ledger-data";
 import type { PriceSource } from "./prices";
 import { agrees, type Dims, quantities } from "./quantity";
 
@@ -539,10 +539,15 @@ export type ShowResult =
 	| { found: "many"; words: string[]; series: SeriesSummary[] }
 	| { found: "none"; not_held: NotHeld };
 
+/** A Run as show lists it: its path, which names it in a citation, and its evidence link, followed as every link of the data is. */
 function runLink(data: LedgerData, point: TreeSeriesPoint): RunLink {
+	const at = data.pathOf(point.evidence);
+	if (at === null) {
+		throw new LedgerError(`${point.evidence}, the evidence of Run ${point.path}, is not a plain path under the address the tree was built for, ${data.treeBase}, so it was not followed.`);
+	}
 	return {
 		path: point.path,
-		link: data.location.link(point.path),
+		link: data.location.link(at),
 		evidence: point.evidence,
 		started_at: point.started_at,
 		group: point.group,

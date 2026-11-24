@@ -195,34 +195,55 @@ export function statAt(
 /** The month files that hold every Run started by a moment (yyyy-mm-ddThh:mm:ssZ). */
 const monthsBy = (moment: string) => (series: TreeSeries): MonthEntry[] => series.months.filter((entry) => entry.month <= moment.slice(0, 7));
 
+/** Said of a Series whose file was read again after one of its month files did not match it. */
+const READ_AGAIN = " (its Series file was read again, after a month file did not match it)";
+
+/**
+ * Why a citation of Method `method` cannot be checked against a Series file
+ * (none, not that Method's, another version, no such group, or it ends before
+ * the cited moment), or null when it can. Asked of the Series file first read,
+ * and again of the one that comes back with its month files, which may be a
+ * later read of it.
+ */
+function citable(series: TreeSeries | null, id: string, method: "series_v1" | "requests_v1", version: string, group: string | undefined, moment: string, data: LedgerData, again: boolean): Resolved | null {
+	const why = (reason: string): Resolved => ({ ok: false, reason: `${reason}${again ? READ_AGAIN : ""}` });
+	if (series === null) return why(`no Series ${id} in ${data.location.link("v1/series.json")}`);
+	const block = series.derivations[method];
+	const name = method === "series_v1" ? "series" : "requests";
+	if (block === undefined) {
+		return why(method === "series_v1" ? `Series ${id} has no figures of Method series version 1` : `Series ${id} has no figures of Method requests: the data loaded hold none of it (it is not a Series of requests)`);
+	}
+	if (Number(version) !== block.method.version) return why(`it cites Method ${name} version ${version}; the data loaded are version ${block.method.version}`);
+	if (group !== undefined && !block.groups.some((g) => g.id === group)) return why(`Series ${id} has no group ${group}`);
+	const loaded = seriesMoment(series);
+	if (moment > loaded) return why(`it cites Series ${id} as of ${moment}, but the data loaded hold its Runs only to ${loaded}: it is of data the checker does not have`);
+	return null;
+}
+
 async function resolveSeries(match: RegExpExecArray, data: LedgerData): Promise<Resolved> {
 	const [, id, group, number, stat, version, moment] = match as unknown as [string, string, string | undefined, NumberName, StatName, string, string];
 	const series = await data.series(id);
-	if (series === null) return { ok: false, reason: `no Series ${id} in ${data.location.link("v1/series.json")}` };
-	const v1 = series.derivations.series_v1;
-	if (v1 === undefined) return { ok: false, reason: `Series ${id} has no figures of Method series version 1` };
-	if (Number(version) !== v1.method.version) return { ok: false, reason: `it cites Method series version ${version}; the data loaded are version ${v1.method.version}` };
-	if (group !== undefined && !v1.groups.some((g) => g.id === group)) return { ok: false, reason: `Series ${id} has no group ${group}` };
-	const loaded = seriesMoment(series);
-	if (moment > loaded) {
-		return { ok: false, reason: `it cites Series ${id} as of ${moment}, but the data loaded hold its Runs only to ${loaded}: it is of data the checker does not have` };
-	}
-	const none: Resolved = { ok: false, reason: `Series ${id}${group === undefined ? "" : ` group ${group}`} has no ${number} from a counted Run that started by ${moment}` };
-	if (moment === loaded) {
+	const first = citable(series, id, "series_v1", version, group, moment, data, false);
+	if (first !== null || series === null) return first as Resolved;
+	const v1 = series.derivations.series_v1 as NonNullable<TreeSeries["derivations"]["series_v1"]>;
+	const none = (again: boolean): Resolved => ({ ok: false, reason: `Series ${id}${group === undefined ? "" : ` group ${group}`} has no ${number} from a counted Run that started by ${moment}${again ? READ_AGAIN : ""}` });
+	if (moment === seriesMoment(series)) {
 		// As of the Series' newest Run: its Series file's own figures.
 		const percentiles = group === undefined ? v1.percentiles : (v1.groups.find((g) => g.id === group)?.percentiles ?? null);
 		const stored = percentiles?.[number] ?? null;
-		if (stored === null) return none;
+		if (stored === null) return none(false);
 		const value = stat === "count" ? stored.count : stored[stat];
 		if (value === null) return { ok: false, reason: `Series ${id}${group === undefined ? "" : ` group ${group}`}'s ${stat} of ${number} is infinite (the Method writes it as null): no number states it` };
 		return { ok: true, kind: "measured", series, number, stat, group: group ?? null, value, moment, asOf: "current", runs: stored.count };
 	}
-	// As of an earlier moment: recomputed from the points of the Runs that started by then.
+	// As of an earlier moment: recomputed from the points of the Runs that started by then, held to the Series file that came back with them.
 	const read = await data.seriesWithMonths(id, monthsBy(moment));
-	if (read === null) return { ok: false, reason: `no Series ${id} in ${data.location.link("v1/series.json")}` };
+	const again = read !== null && read.series !== series;
+	const second = citable(read?.series ?? null, id, "series_v1", version, group, moment, data, again);
+	if (second !== null || read === null) return second as Resolved;
 	const at = statAt(seriesPoints(read.months), number, stat, group ?? null, moment);
-	if (at === null) return none;
-	return { ok: true, kind: "measured", series: read.series, number, stat, group: group ?? null, value: at.value, moment, asOf: moment === loaded ? "current" : "earlier", runs: at.runs };
+	if (at === null) return none(again);
+	return { ok: true, kind: "measured", series: read.series, number, stat, group: group ?? null, value: at.value, moment, asOf: moment === seriesMoment(read.series) ? "current" : "earlier", runs: at.runs };
 }
 
 const PCT_WORDS: Record<RequestPercentile, { words: string; perMille: number }> = {
@@ -263,21 +284,17 @@ function groupThrough(points: readonly TreeRequestsPoint[], groups: number, i: n
 
 async function resolveRequests(match: RegExpExecArray, data: LedgerData): Promise<Resolved> {
 	const [, id, group, fact, factValue, phase, stat, tail, runsWord, failedWord, failedPhase, failedKind, version, moment] = match as unknown as Array<string | undefined>;
+	const at = moment as string;
 	const file = await data.series(id as string);
-	if (file === null) return { ok: false, reason: `no Series ${id} in ${data.location.link("v1/series.json")}` };
-	const requests = file.derivations.requests_v1;
-	if (requests === undefined) return { ok: false, reason: `Series ${id} has no figures of Method requests: the data loaded hold none of it (it is not a Series of requests)` };
-	if (Number(version) !== requests.method.version) {
-		return { ok: false, reason: `it cites Method requests version ${version}; the data loaded are version ${requests.method.version}` };
-	}
-	const series = file;
-	if (group !== undefined && !requests.groups.some((g) => g.id === group)) return { ok: false, reason: `Series ${id} has no group ${group}` };
+	const first = citable(file, id as string, "requests_v1", version as string, group, at, data, false);
+	if (first !== null || file === null) return first as Resolved;
+	const requests = file.derivations.requests_v1 as NonNullable<TreeSeries["derivations"]["requests_v1"]>;
+	let series = file;
 	if (fact !== undefined && failedWord !== undefined) return { ok: false, reason: "failed requests are counted per Series and per group, not by what a request recorded of its connection" };
 	if (tail !== undefined && !(REQUEST_PERCENTILES as readonly string[]).includes(stat as string)) return { ok: false, reason: "at_or_above follows a percentile: p50, p90, p95, p99 or p99.9" };
 	const loaded = seriesMoment(series);
-	const at = moment as string;
-	if (at > loaded) return { ok: false, reason: `it cites Series ${id} as of ${at}, but the data loaded hold its Runs only to ${loaded}: it is of data the checker does not have` };
-	const asOf = at === loaded ? "current" : "earlier";
+	let asOf: "current" | "earlier" = at === loaded ? "current" : "earlier";
+	let again = false;
 
 	// The figures as they stood at the moment.
 	let summary: { runs: number; requests: number; failed: number; phases: Partial<Record<Phase, Stats>>; failures: PoolSummary["failures"] } | null;
@@ -298,24 +315,38 @@ async function resolveRequests(match: RegExpExecArray, data: LedgerData): Promis
 		const pool = group === undefined ? requests.pool : (requests.groups.find((g) => g.id === group) as (typeof requests.groups)[number]).pool;
 		summary = pool.runs === 0 ? null : pool;
 	} else {
-		// The figures each point holds as they stood through its Run, from the month files up to the moment.
+		// The figures each point holds as they stood through its Run, from the month files up to the moment,
+		// held to the Series file that came back with them, which may be a later read of it.
 		const read = await data.seriesWithMonths(id as string, monthsBy(at));
-		if (read === null) return { ok: false, reason: `no Series ${id} in ${data.location.link("v1/series.json")}` };
+		again = read !== null && read.series !== file;
+		const second = citable(read?.series ?? null, id as string, "requests_v1", version as string, group, at, data, again);
+		if (second !== null || read === null) return second as Resolved;
+		series = read.series;
+		asOf = at === seriesMoment(series) ? "current" : "earlier";
 		const points = requestPoints(read.months);
-		const groups = read.series.derivations.requests_v1?.groups.length ?? 0;
+		const groups = series.derivations.requests_v1?.groups.length ?? 0;
 		let last = -1;
 		points.forEach((point, i) => {
 			if (momentOf(point.started_at) <= at && (group === undefined || point.group === group)) last = i;
 		});
 		summary = last < 0 ? null : group === undefined || groups < 2 ? (points[last] as TreeRequestsPoint).through : groupThrough(points, groups, last);
 	}
-	if (summary === null) return { ok: false, reason: `Series ${id}${group === undefined ? "" : ` group ${group}`} has no counted Run that started by ${at}` };
-	const base = { ok: true as const, kind: "requests" as const, series, group: group ?? null, by, moment: at, asOf: asOf as "current" | "earlier", runs: summary.runs };
+	const scope = `Series ${id}${group === undefined ? "" : ` group ${group}`}`;
+	if (summary === null) return { ok: false, reason: `${scope} has no counted Run that started by ${at}${again ? READ_AGAIN : ""}` };
+	const base = { ok: true as const, kind: "requests" as const, series, group: group ?? null, by, moment: at, asOf, runs: summary.runs };
 	if (runsWord !== undefined) return { ...base, phase: null, stat: "runs", unit: "count", countsRuns: true, value: summary.runs };
 	if (failedWord !== undefined) {
 		if (failedPhase === undefined) return { ...base, phase: null, stat: "failed", unit: "count", countsRuns: false, value: summary.failed };
-		const count = summary.failures.find((f) => f.phase === failedPhase && f.kind === failedKind)?.count ?? 0;
-		return { ...base, phase: null, stat: `failed/${failedPhase}/${failedKind}`, unit: "count", countsRuns: false, value: count };
+		// A failure entry is cited only as the data list it: one they do not list is not a count of zero.
+		const entry = summary.failures.find((f) => f.phase === failedPhase && f.kind === failedKind);
+		if (entry === undefined) {
+			const held = summary.failures.map((f) => `failed/${f.phase}/${f.kind}`);
+			return {
+				ok: false,
+				reason: `${scope} lists no failed requests of phase ${failedPhase} and kind ${failedKind} as of ${at}; it lists ${held.length === 0 ? "none of any phase and kind (its failed requests, all phases, are cited as failed)" : held.join(", ")}`,
+			};
+		}
+		return { ...base, phase: null, stat: `failed/${failedPhase}/${failedKind}`, unit: "count", countsRuns: false, value: entry.count };
 	}
 	const stats = summary.phases[phase as Phase];
 	const missing = requestStatMissing(stats, phase as Phase, stat as string);
