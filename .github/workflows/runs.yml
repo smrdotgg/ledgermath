@@ -117,7 +117,7 @@ permissions: {}
 jobs:
   runs:
     name: copy the Runs, derive, build the page and the data API, check for stale Series
-    runs-on: ${{ vars.LEDGERMATH_RUNNER || 'ubuntu-24.04' }}
+    runs-on: ubuntu-24.04
     # Room for a run that must reduce every stream again: when a change to the
     # Methods' reducing code gives their records new keys (methods/records.ts),
     # the next run fetches and reduces every Run's stdout once more, about 13
@@ -150,8 +150,7 @@ jobs:
           bun-version: 1.4.4
 
       # Bun's package cache in the job's temporary directory, which the runner
-      # empties for every job, so nothing piles up on a runner that persists
-      # (README, "Where the workflows run").
+      # empties for every job.
       - run: bun install --frozen-lockfile
         env:
           BUN_INSTALL_CACHE_DIR: ${{ runner.temp }}/bun-cache
@@ -367,7 +366,7 @@ jobs:
     name: publish the data API's checked files to the private API bucket
     needs: runs
     if: ${{ needs.runs.result == 'success' && vars.API_BUCKET != '' }}
-    runs-on: ${{ vars.LEDGERMATH_RUNNER || 'ubuntu-24.04' }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: read # the scripts
@@ -445,7 +444,7 @@ jobs:
     name: rebuild the site from what the API bucket holds, and deploy it to production
     needs: publish
     if: ${{ needs.publish.result == 'success' && github.ref == 'refs/heads/main' }}
-    runs-on: ${{ vars.LEDGERMATH_RUNNER || 'ubuntu-24.04' }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: read # main's sources

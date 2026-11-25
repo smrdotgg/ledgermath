@@ -160,9 +160,10 @@ function otherSchemas(text: string): string[] {
 }
 
 /**
- * The only words the tree publishes that a reader cannot follow today, each
- * with why it stays. Every entry must still be found: one that is not fails
- * the test, so the list never outlives its reason.
+ * The only words the tree publishes that point outside the tree (to the
+ * repository, a document or a section of one), each with why it stays. Every
+ * entry must still be found: one that is not fails the test, so the list never
+ * outlives its reason.
  */
 const ALLOWED: ReadonlyArray<{ file: string; pointer: string; text: string; why: string }> = [
 	{
@@ -171,7 +172,7 @@ const ALLOWED: ReadonlyArray<{ file: string; pointer: string; text: string; why:
 		text: DEFAULT_DOCS,
 		why:
 			"The docs' address is the README's section on GitHub until the docs have pages of their own (ADR-0030, Costs); " +
-			"it is an address, not words, and it can be followed once the repository is public. Changing it is a decision of its own.",
+			"it is an address, not words, and it can be followed, the repository being public. Changing it is a decision of its own.",
 	},
 ];
 
