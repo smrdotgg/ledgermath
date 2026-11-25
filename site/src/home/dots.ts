@@ -1,8 +1,9 @@
-// Dot art on the grid of the font. One cell is one dot of Geist Pixel Circle (.038em of the text
+// Dot art on the grid of the font. One cell is one pixel of Geist Pixel (.038em of the text
 // beside it). x counts right from the art's left edge; y counts up from 0, the row that sits on the
 // baseline, and rows 0 to 18 are the height of a capital letter. `path()` gives the cells as SVG
 // path data for a stroke dashed "0 1" with round ends, which draws one dot for every unit of length
-// (see .art in page.css): the way the daisies and the church are drawn on smr.gg.
+// (see .art in site.css): the way the daisies and the church are drawn on smr.gg. The same path,
+// stroked without dashes, draws the cells as squares that touch, as the light scheme's font does.
 
 export class Dots {
 	/** The cells that are drawn: each row's columns. */

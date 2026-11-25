@@ -1,9 +1,10 @@
 // The home page: design v9, "Semere's whiteboard", as the maintainer chose it from the
 // home-page variations (issue #64): a header, a headline with the latest rounds beside it,
-// three graphs, the table, a footer, in the style of smr.gg (Geist Pixel Circle, black and
-// white with one grey, and dots). Every figure comes from ../data, from the tree the site is
-// built from; the only arithmetic is a change of unit, done by its helpers. The art beside the
-// headline: ./art.tsx. The header and footer are shared with the other pages: ../chrome.tsx.
+// three graphs, the table, a footer, in the style of smr.gg (Geist Pixel, black and white with
+// one grey: round dots in the dark scheme, squares in the light one). Every figure comes from
+// ../data, from the tree the site is built from; the only arithmetic is a change of unit, done by
+// its helpers. The art beside the headline: ./art.tsx. The header and footer are shared with the
+// other pages: ../chrome.tsx.
 //
 // What the tree may lack, the page leaves out rather than fill: without recent_rounds there is
 // no "Latest runs"; a cell whose Series is missing shows a dash.

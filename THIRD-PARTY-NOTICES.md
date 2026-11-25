@@ -16,7 +16,7 @@ advice.
 2. [In the published benchmark binaries](#2-in-the-published-benchmark-binaries): the GNU
    C Library; GCC's runtime library; AWS-LC
 3. [JavaScript packages](#3-javascript-packages): the tools; the website, `site/`, and
-   its font, Geist Pixel Circle
+   its fonts, Geist Pixel Circle and Geist Pixel Square
 4. [What is not listed](#4-what-is-not-listed)
 
 ## 1. In this repository
@@ -811,7 +811,7 @@ and are not published.
 The website (https://ledgermath.com) has its own packages, which `site/package.json` names
 at the versions `site/bun.lock` pins. They build and check it; none is in what is served.
 Its build (`bun run build` in `site/`) renders each page to HTML with Solid's server
-renderer and writes the site to `site/dist/client`: HTML, one stylesheet, the font below
+renderer and writes the site to `site/dist/client`: HTML, one stylesheet, the fonts below
 and the notices. Nothing hydrates and no JavaScript file is served; the one script, inline
 in each page, is LedgerMath's own.
 
@@ -827,13 +827,19 @@ in each page, is LedgerMath's own.
 | `typescript` | 7.0.2 | Apache-2.0 | Type checking (`bun run typecheck` in `site/`) |
 | `@types/bun` | 1.3.14 | MIT | Type definitions |
 
-**The font.** The site serves one font, Geist Pixel Circle,
-`site/src/fonts/GeistPixel-Circle.woff2`, whole and unchanged: byte for byte the file
-`dist/fonts/geist-pixel/GeistPixel-Circle.woff2` of the npm package `geist` 1.9.2
-(<https://github.com/vercel/geist-font>; sha256
-`eb52582a433e572688338d51b894852bef0bd9f18a296616d779051a225f904d`). Copyright (c) 2023
-Vercel, in collaboration with basement.studio. Licence: SIL Open Font License 1.1, which
-requires its copyright notice and the licence's text to travel with it. Both are in
+**The fonts.** The site serves two fonts of one family, Geist Pixel: Geist Pixel Circle in
+the dark colour scheme and Geist Pixel Square in the light one. Each is whole and
+unchanged, byte for byte the file of the same name in `dist/fonts/geist-pixel/` of the npm
+package `geist` 1.9.2 (<https://github.com/vercel/geist-font>):
+
+| File | sha256 |
+|---|---|
+| `site/src/fonts/GeistPixel-Circle.woff2` | `eb52582a433e572688338d51b894852bef0bd9f18a296616d779051a225f904d` |
+| `site/src/fonts/GeistPixel-Square.woff2` | `80887afede26bc861e92dbfbb17a775d769e46e7c84f336b1c9f17959f60606d` |
+
+Copyright (c) 2023 Vercel, in collaboration with basement.studio. Licence: SIL Open Font
+License 1.1, which requires its copyright notice and the licence's text to travel with the
+fonts. Both are in
 [`site/public/third-party-notices.txt`](site/public/third-party-notices.txt), which the
 build copies into the site as `third-party-notices.txt` and the pages link as "Licences",
 so they travel with it wherever it is put.
