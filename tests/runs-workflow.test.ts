@@ -246,7 +246,10 @@ describe("the runs workflow", () => {
 		const aws = steps.find((step) => step.uses?.startsWith("aws-actions/configure-aws-credentials@"));
 		expect(aws?.with).toEqual({ "role-to-assume": "${{ vars.RUNS_AWS_ROLE_ARN }}", "aws-region": "us-east-2" });
 		expect(job.env?.RUNS_BUCKET).toBe("${{ vars.RUNS_BUCKET }}");
-		expect(JSON.stringify(workflow)).not.toMatch(/aws-access-key-id|aws-secret-access-key/);
+		// Never a static key given to the action: OIDC only (the site job reads the keys the action gives as outputs).
+		for (const each of Object.values(workflow.jobs)) {
+			for (const step of each.steps) expect(Object.keys(step.with ?? {}).filter((input) => /^aws-(access-key-id|secret-access-key|session-token)$/.test(input))).toEqual([]);
+		}
 	});
 
 	test("checks out the Runs repository with the deploy key", () => {
@@ -556,7 +559,17 @@ describe("the site job: the home page rebuilt and deployed after every publish (
 	const key = (step: Step): string => step.uses?.split("@")[0] ?? (step.run ?? "").trim().split("\n")[0]!;
 
 	/** The production deploy's own steps, in order, as the rule names them: checkout, credentials, read, build, check, deploy, live check. */
-	const READ = 'bun scripts/read-api-tree.ts --bucket "$API_BUCKET" --out "$RUNNER_TEMP/tree"';
+	const READ = 'bun scripts/read-api-tree.ts --bucket "$API_BUCKET" --region us-east-2 --out "$RUNNER_TEMP/tree"';
+	/** The read step's environment: the bucket, and the role's keys from the credentials step's outputs. */
+	const READ_ENV = {
+		API_BUCKET: "${{ vars.API_BUCKET }}",
+		AWS_ACCESS_KEY_ID: "${{ steps.credentials.outputs.aws-access-key-id }}",
+		AWS_SECRET_ACCESS_KEY: "${{ steps.credentials.outputs.aws-secret-access-key }}",
+		AWS_SESSION_TOKEN: "${{ steps.credentials.outputs.aws-session-token }}",
+	};
+	const publishCredentials = () => publish.steps.find((step) => step.uses?.startsWith("aws-actions/configure-aws-credentials@"))?.with as Record<string, string>;
+	/** The credentials step of a production job: the publish job's role and Region, giving the keys as outputs, not to the environment. */
+	const CREDENTIALS_WITH = () => ({ ...publishCredentials(), "output-env-credentials": false as unknown as string, "output-credentials": true as unknown as string });
 	const ruleOrder = (steps: Step[]) =>
 		[
 			steps.findIndex((step) => step.uses?.startsWith("actions/checkout@")),
@@ -603,9 +616,10 @@ describe("the site job: the home page rebuilt and deployed after every publish (
 		expect([...order].sort((a, b) => a - b)).toEqual([...order]);
 		// main as it is now, never this run's commit, which main may have left; no credential kept in the clone.
 		expect(s[0]?.with).toEqual({ ref: "refs/heads/main", "persist-credentials": false as unknown as string });
-		// The publish job's role and region, exactly; the bucket the variable names, in the read step alone.
-		expect(s[3]?.with).toEqual(publish.steps.find((step) => step.uses?.startsWith("aws-actions/configure-aws-credentials@"))?.with as Record<string, string>);
-		expect(s[4]?.env).toEqual({ API_BUCKET: "${{ vars.API_BUCKET }}" });
+		// The publish job's role and region, the keys as outputs; the bucket the variable names and the keys, in the read step alone.
+		expect(s[3]?.with).toEqual(CREDENTIALS_WITH());
+		expect(s[3]?.id).toBe("credentials");
+		expect(s[4]?.env).toEqual(READ_ENV);
 		expect(s.filter((step) => JSON.stringify(step).includes("API_BUCKET")).length).toBe(1);
 		expect(s[7]?.env).toEqual({ LEDGERMATH_TREE: "${{ runner.temp }}/tree" });
 		for (const step of [s[5], s[6], s[7], s[8], s[12]]) expect(step?.["working-directory"]).toBe("site");
@@ -634,8 +648,9 @@ describe("the site job: the home page rebuilt and deployed after every publish (
 		expect(fresh).toBeGreaterThan(order[0]);
 		expect(fresh).toBeLessThan(order[1]);
 		for (const step of deploy.steps.slice(fresh + 1)) expect({ step: step.name, if: step.if }).toEqual({ step: step.name, if: "steps.fresh.outputs.deploy == 'true'" });
-		expect(deploy.steps[order[1]]?.with).toEqual(publish.steps.find((step) => step.uses?.startsWith("aws-actions/configure-aws-credentials@"))?.with as Record<string, string>);
-		expect(deploy.steps[order[2]]?.env).toEqual({ API_BUCKET: "${{ vars.API_BUCKET }}" });
+		expect(deploy.steps[order[1]]?.with).toEqual(CREDENTIALS_WITH());
+		expect(deploy.steps[order[1]]?.id).toBe("credentials");
+		expect(deploy.steps[order[2]]?.env).toEqual(READ_ENV);
 		// It deploys what it built in its turn, not the build job's artifact.
 		expect(JSON.stringify(deploy)).not.toMatch(/download-artifact|fetch-tree/);
 		// No other job of site.yml asks for an OIDC token or names the role or the bucket: a pull request, from a fork or not, gets neither.
@@ -645,6 +660,31 @@ describe("the site job: the home page rebuilt and deployed after every publish (
 		}
 		expect(siteWorkflow.permissions).toEqual({ contents: "read" });
 		expect(build.steps.find((step) => step.run?.includes("fetch-tree.ts"))?.if).toBeUndefined();
+	});
+
+	test("in each production job the role's keys reach one step, the read, and no other: the action does not export them, the build, the checks and the deploy never hold them, and the read gets the Region they were taken for", () => {
+		const keys = /AWS_(ACCESS_KEY_ID|SECRET_ACCESS_KEY|SESSION_TOKEN)|aws-(access-key-id|secret-access-key|session-token)/;
+		for (const [name, each] of [
+			["runs.yml site", site],
+			["site.yml deploy-production", siteWorkflow.jobs["deploy-production"] as Job],
+		] as const) {
+			const credentials = each.steps.filter((step) => step.uses?.startsWith("aws-actions/configure-aws-credentials@"));
+			expect({ name, credentials: credentials.length }).toEqual({ name, credentials: 1 });
+			const action = credentials[0] as Step;
+			expect({ name, export: action.with?.["output-env-credentials"], outputs: action.with?.["output-credentials"] }).toEqual({ name, export: false as unknown as string, outputs: true as unknown as string });
+			// The keys appear in exactly one step besides the action: the read, in its environment, from the action's outputs.
+			const holding = each.steps.filter((step) => step !== action && keys.test(JSON.stringify(step)));
+			expect({ name, holding: holding.map((step) => step.run) }).toEqual({ name, holding: [READ] });
+			const read = holding[0] as Step;
+			expect(Object.fromEntries(Object.entries(read.env ?? {}).filter(([key]) => key.startsWith("AWS_")))).toEqual({
+				AWS_ACCESS_KEY_ID: `\${{ steps.${action.id}.outputs.aws-access-key-id }}`,
+				AWS_SECRET_ACCESS_KEY: `\${{ steps.${action.id}.outputs.aws-secret-access-key }}`,
+				AWS_SESSION_TOKEN: `\${{ steps.${action.id}.outputs.aws-session-token }}`,
+			});
+			expect(JSON.stringify(each.env ?? {})).not.toMatch(keys);
+			// The Region the reader signs for is the one the credentials were taken for.
+			expect({ name, region: /--region (\S+)/.exec(read.run ?? "")?.[1] }).toEqual({ name, region: action.with?.["aws-region"] });
+		}
 	});
 
 	test("no workflow and no script decides a deploy from run ids or artifacts any more: the rule needs neither, and they cannot creep back", () => {

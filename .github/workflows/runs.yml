@@ -473,22 +473,32 @@ jobs:
         run: bun install --frozen-lockfile
 
       # The publish job's role. It may read and write the API bucket's v1/*;
-      # this job only reads (one GET per file, scripts/read-api-tree.ts).
+      # this job only reads (one GET per file, scripts/read-api-tree.ts). The
+      # keys are not put in the job's environment, where every later step (the
+      # installs, the build, the deploy) would hold them: they are this step's
+      # outputs, handed to the read step alone.
       - name: AWS credentials for the API bucket, through OIDC
         id: credentials
         uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
           role-to-assume: ${{ vars.RUNS_AWS_ROLE_ARN }}
           aws-region: us-east-2
+          output-env-credentials: false
+          output-credentials: true
 
       # The table of contents and the two files its links give, from the bucket
       # API_BUCKET names: of one publication (an upload by another run can be
       # under way, so a set that disagrees is read again), written all or none.
+      # The only step that holds the role's keys; the Region is the one the
+      # credentials were taken for.
       - name: The data API's files as the API bucket holds them now
         id: tree
         env:
           API_BUCKET: ${{ vars.API_BUCKET }}
-        run: bun scripts/read-api-tree.ts --bucket "$API_BUCKET" --out "$RUNNER_TEMP/tree"
+          AWS_ACCESS_KEY_ID: ${{ steps.credentials.outputs.aws-access-key-id }}
+          AWS_SECRET_ACCESS_KEY: ${{ steps.credentials.outputs.aws-secret-access-key }}
+          AWS_SESSION_TOKEN: ${{ steps.credentials.outputs.aws-session-token }}
+        run: bun scripts/read-api-tree.ts --bucket "$API_BUCKET" --region us-east-2 --out "$RUNNER_TEMP/tree"
 
       - name: The site's packages
         id: site-packages

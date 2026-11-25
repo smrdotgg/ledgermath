@@ -36,7 +36,7 @@
 
 import { existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { INDEX_PATH, parseIndex, parsePrices, parseSeriesList, publicationMismatches, treeFiles, TwoPublications } from "../src/data/tree";
+import { INDEX_PATH, parseIndex, parsePrices, parseSeriesList, publicationMismatches, TreeError, treeFiles, TwoPublications } from "../src/data/tree";
 
 export const INDEX_URL = "https://api.ledgermath.com/v1/index.json";
 /** How long one request may take, answer and body together. */
@@ -125,12 +125,12 @@ function parseJson(bytes: Uint8Array, url: string): unknown {
 	try {
 		text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
 	} catch {
-		throw new Error(`${url} is not UTF-8 text`);
+		throw new TreeError(url, "", `${url} is not UTF-8 text`);
 	}
 	try {
 		return JSON.parse(text);
 	} catch (error) {
-		throw new Error(`${url} is not JSON: ${error instanceof Error ? error.message : String(error)}`);
+		throw new TreeError(url, "", `${url} is not JSON: ${error instanceof Error ? error.message : String(error)}`);
 	}
 }
 
@@ -154,7 +154,7 @@ export async function fetchTree(dir: string, options: FetchOptions = {}): Promis
 	const fetchSet = async () => {
 		const indexBytes = await readFile({ url: indexUrl, path: INDEX_PATH }, limits.index);
 		const index = parseIndex(parseJson(indexBytes, indexUrl), indexUrl);
-		if (index.url !== indexUrl) throw new Error(`${indexUrl} gives its own address as ${index.url}: fetch the table of contents from where it says it is`);
+		if (index.url !== indexUrl) throw new TreeError(indexUrl, "url", `${indexUrl} gives its own address as ${index.url}: fetch the table of contents from where it says it is`);
 		const files = [{ path: INDEX_PATH, url: indexUrl, bytes: indexBytes }];
 		let list: ReturnType<typeof parseSeriesList> | null = null;
 		let prices: ReturnType<typeof parsePrices> | null = null;

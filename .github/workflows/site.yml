@@ -152,20 +152,28 @@ jobs:
         if: steps.fresh.outputs.deploy == 'true'
         run: bun install --frozen-lockfile
       # The runs workflow's role, which it may assume from main alone. It may
-      # read and write the API bucket's v1/*; this job only reads.
+      # read and write the API bucket's v1/*; this job only reads. The keys are
+      # this step's outputs, not the job's environment, so only the read step
+      # holds them, as in the runs workflow's site job.
       - name: AWS credentials for the API bucket, through OIDC
+        id: credentials
         if: steps.fresh.outputs.deploy == 'true'
         uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
           role-to-assume: ${{ vars.RUNS_AWS_ROLE_ARN }}
           aws-region: us-east-2
+          output-env-credentials: false
+          output-credentials: true
       # Inside the group, as the runs workflow's site job does: the bucket, not
       # the edge, whose cache can be five minutes behind.
       - name: The data API's files as the API bucket holds them now
         if: steps.fresh.outputs.deploy == 'true'
         env:
           API_BUCKET: ${{ vars.API_BUCKET }}
-        run: bun scripts/read-api-tree.ts --bucket "$API_BUCKET" --out "$RUNNER_TEMP/tree"
+          AWS_ACCESS_KEY_ID: ${{ steps.credentials.outputs.aws-access-key-id }}
+          AWS_SECRET_ACCESS_KEY: ${{ steps.credentials.outputs.aws-secret-access-key }}
+          AWS_SESSION_TOKEN: ${{ steps.credentials.outputs.aws-session-token }}
+        run: bun scripts/read-api-tree.ts --bucket "$API_BUCKET" --region us-east-2 --out "$RUNNER_TEMP/tree"
       - name: The site's packages
         if: steps.fresh.outputs.deploy == 'true'
         working-directory: site

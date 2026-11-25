@@ -183,6 +183,41 @@ export function clipText(text: string, limit = 300): string {
 export const ERROR_BODY_MS = 1_000;
 
 /**
+ * The error codes of S3's that S3ApiStore.read names in its words; any other
+ * code an answer carries is said only to be unknown, never quoted.
+ */
+export const S3_ERROR_CODES: ReadonlySet<string> = new Set([
+	"AccessDenied",
+	"AllAccessDisabled",
+	"ExpiredToken",
+	"InternalError",
+	"InvalidAccessKeyId",
+	"InvalidBucketName",
+	"InvalidToken",
+	"NoSuchBucket",
+	"NoSuchKey",
+	"PermanentRedirect",
+	"RequestTimeTooSkewed",
+	"RequestTimeout",
+	"ServiceUnavailable",
+	"SignatureDoesNotMatch",
+	"SlowDown",
+	"TemporaryRedirect",
+	"TokenRefreshRequired",
+]);
+
+/** What kind of error a thrown value is, by its code or name alone: never its message, which may quote an address. */
+function errorName(error: unknown): string {
+	if (typeof error === "object" && error !== null) {
+		const code = (error as { code?: unknown }).code;
+		if (typeof code === "string" && /^[A-Za-z0-9_]{1,40}$/.test(code)) return code;
+		const name = (error as { name?: unknown }).name;
+		if (typeof name === "string" && /^[A-Za-z0-9_]{1,40}$/.test(name)) return name;
+	}
+	return "an error";
+}
+
+/**
  * At most `limit` bytes of a stream, read for at most `ms`, as text: whatever
  * came before it ended, broke, was aborted or ran out of time. Only the
  * first `limit` bytes are decoded, however large a chunk arrives. Cancels the
@@ -247,7 +282,15 @@ export class S3ApiStore implements ApiStore {
 		return this.options.credentials?.() ?? credentialsFromEnvironment();
 	}
 
-	private async send(method: "GET" | "HEAD" | "PUT", key: string, extra: Array<[string, string]>, payloadSha256: string, body?: Uint8Array, signal?: AbortSignal): Promise<Response> {
+	private async send(
+		method: "GET" | "HEAD" | "PUT",
+		key: string,
+		extra: Array<[string, string]>,
+		payloadSha256: string,
+		body?: Uint8Array,
+		signal?: AbortSignal,
+		redirect?: "manual",
+	): Promise<Response> {
 		if (hasDotSegment(key)) throw new Error(`${key}: a key with a "." or ".." segment cannot be sent by name`);
 		const canonicalUri = `/${encodeUriPath(this.bucket)}/${encodeUriPath(key)}`;
 		const url = new URL(`${this.endpoint}${canonicalUri}`);
@@ -269,7 +312,13 @@ export class S3ApiStore implements ApiStore {
 		});
 		const sent: Record<string, string> = Object.fromEntries(headers.filter(([name]) => name !== "host"));
 		sent.authorization = signed.authorization;
-		return (this.options.fetcher ?? fetch)(url, { method, headers: sent, ...(body === undefined ? {} : { body }), ...(signal === undefined ? {} : { signal }) });
+		return (this.options.fetcher ?? fetch)(url, {
+			method,
+			headers: sent,
+			...(body === undefined ? {} : { body }),
+			...(signal === undefined ? {} : { signal }),
+			...(redirect === undefined ? {} : { redirect }),
+		});
 	}
 
 	async head(key: string): Promise<StoredObject | null> {
@@ -333,30 +382,39 @@ export class S3ApiStore implements ApiStore {
 	 * The bytes of `key`: one signed GET, its whole answer within `timeoutMs`
 	 * and its body at most `limit` bytes (by Content-Length when S3 gives one,
 	 * and as it is read). What the site's rebuild reads of the tree
-	 * (scripts/read-api-tree.ts). Throws S3Refused for any answer but a 200
+	 * (scripts/read-api-tree.ts). It follows no redirect: the key was checked,
+	 * an address S3 points to was not, so a 3xx is a refusal (Redirect) and the
+	 * address is never asked. Throws S3Refused for any answer but a 200
 	 * (NoSuchKey for a missing key, which S3 answers 404 only to a requester that
 	 * may list the bucket; 403 to another), for no answer (NoAnswer, or Timeout
-	 * when the time ran out), and for a body over the limit (TooLarge).
+	 * when the time ran out), and for a body over the limit (TooLarge). Its words
+	 * are the key, the HTTP status and S3's error code when it is one of
+	 * S3_ERROR_CODES: never S3's own message, nor where a redirect points, which
+	 * are not this repository's to print in a public log.
 	 */
 	async read(key: string, { limit, timeoutMs }: { limit: number; timeoutMs: number }): Promise<Uint8Array> {
 		try {
 			this.credentials();
-		} catch (error) {
-			throw new S3Refused(null, "NoCredentials", clipText(error instanceof Error ? error.message : String(error)));
+		} catch {
+			throw new S3Refused(null, "NoCredentials", `GET ${this.name}/${key}: no AWS credentials in the environment`);
 		}
 		const signal = AbortSignal.timeout(timeoutMs);
 		let response: Response;
 		try {
-			response = await this.send("GET", key, [], EMPTY_SHA256, undefined, signal);
+			response = await this.send("GET", key, [], EMPTY_SHA256, undefined, signal, "manual");
 		} catch (error) {
 			if (signal.aborted) throw new S3Refused(null, "Timeout", `GET ${this.name}/${key}: no answer within ${timeoutMs} ms`);
-			throw new S3Refused(null, "NoAnswer", `GET ${this.name}/${key}: no answer (${clipText(error instanceof Error ? error.message : String(error))})`);
+			throw new S3Refused(null, "NoAnswer", `GET ${this.name}/${key}: no answer (${errorName(error)})`);
+		}
+		if (response.status >= 300 && response.status < 400) {
+			response.body?.cancel().catch(() => undefined);
+			throw new S3Refused(response.status, "Redirect", `GET ${this.name}/${key} answered ${response.status}, a redirect, which is not followed`);
 		}
 		if (response.status !== 200) {
 			const text = await boundedText(response.body, ERROR_BODY_BYTES, this.options.errorBodyMs ?? ERROR_BODY_MS);
-			const code = xmlElement(text, "Code") ?? `HTTP${response.status}`;
-			const said = xmlElement(text, "Message") ?? "";
-			throw new S3Refused(response.status, clipText(code, 64), `GET ${this.name}/${key} answered ${response.status} ${clipText(code, 64)}${said === "" ? "" : `: ${clipText(said)}`}`);
+			const found = xmlElement(text, "Code");
+			const code = found !== null && S3_ERROR_CODES.has(found) ? found : `HTTP${response.status}`;
+			throw new S3Refused(response.status, code, `GET ${this.name}/${key} answered ${response.status} ${found !== null && S3_ERROR_CODES.has(found) ? found : "with no error code this reader knows"}`);
 		}
 		const declared = Number(response.headers.get("content-length") ?? Number.NaN);
 		if (Number.isFinite(declared) && declared > limit) {
@@ -378,7 +436,7 @@ export class S3ApiStore implements ApiStore {
 			reader?.cancel().catch(() => undefined);
 			if (error instanceof S3Refused) throw error;
 			if (signal.aborted) throw new S3Refused(200, "Timeout", `GET ${this.name}/${key}: the body was not read within ${timeoutMs} ms`);
-			throw new S3Refused(200, "NoAnswer", `GET ${this.name}/${key}: reading the body: ${clipText(error instanceof Error ? error.message : String(error))}`);
+			throw new S3Refused(200, "NoAnswer", `GET ${this.name}/${key}: reading the body failed (${errorName(error)})`);
 		}
 		const bytes = new Uint8Array(size);
 		let at = 0;

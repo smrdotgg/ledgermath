@@ -1739,7 +1739,11 @@ A migrated benchmark is done only when **all** of these hold:
   of runs), and the orchestrator chose the bucket instead. The reader takes only the keys the
   table of contents' links give, under `v1/`, each with one signed GET bounded in time and
   size (`S3ApiStore.read`), holds the three files to one publication with `fetch-tree.ts`'s
-  retry, and writes all or none. **Times**: `5 0,6,12,18 * * *` replaces
+  retry, and writes all or none. After a third verification: the role's keys are the
+  credentials step's outputs, handed to the read step alone, never the job's environment;
+  the signed read follows no redirect; and the reader's errors name the file, the field, the
+  key, the status and a known S3 code, never a refused value or S3's message. **Times**:
+  `5 0,6,12,18 * * *` replaces
   `40 22 * * *` and `0 */6 * * *`, so a tree is cut once after each round. A round's last
   box has ended by HH+1:55 (a launch is at most ten minutes late, the reaper ends a box
   within 55 minutes), and a test holds the crons to `schedule.json` and those limits. The

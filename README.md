@@ -3487,7 +3487,10 @@ waits. Inside the group, in this order, each:
    commit, which main may have left); `deploy-production` deploys its own commit only if
    main has not moved on in the site's files (`site/deploy/fresh.ts`, below);
 2. takes AWS credentials with the role the `publish` job uses (`RUNS_AWS_ROLE_ARN`, which
-   may read and write the bucket's `v1/*`; these jobs only read);
+   may read and write the bucket's `v1/*`; these jobs only read). The action gives the keys
+   as its outputs, not to the job's environment (`output-env-credentials: false`), and only
+   the reading step is handed them, so the build, the checks and the deploy never hold them
+   (a test holds that);
 3. reads the tree from the bucket `API_BUCKET` names, itself (`scripts/read-api-tree.ts`):
    not `https://api.ledgermath.com`, whose cache can be five minutes behind an upload, and
    not an artifact;
@@ -3510,18 +3513,27 @@ Why that is enough:
 
 What it does not cover:
 
-- **An upload under way.** While a `publish` job writes, the bucket can hold files of two
-  publications (the table of contents is written last). The reader requires the three files
-  it reads to be of one publication, reads them again up to three times in all, ten seconds
-  apart, and otherwise fails, writing nothing; production then keeps the build it had. An
-  upload that stopped halfway leaves the bucket so until the next publish, and every deploy
-  fails meanwhile. The check compares what the files say of each other (addresses, the count
-  of Series, the newest Run, the price file's date), so two publications that differ only by
-  late-arriving files pass as one, and the page may show the newer list's figures under the
-  older table of contents' rounds until the next rebuild (ADR-0035).
-- **The minute between a publish and its rebuild.** Once `publish` has written the bucket,
-  the page shows the tree before until the `site` job deploys, about a minute later; the
-  edge itself may serve the previous table of contents for up to five minutes.
+- **What the "one publication" check can see.** While a `publish` job writes, the bucket can
+  hold files of two publications (the table of contents is written last). The check
+  compares only what the three files say about each other: the table of contents' address
+  and the Series list's, the count of Series, the newest Run's start, and the newest price
+  file's date. When they disagree, the reader reads them again, up to three times in all,
+  ten seconds apart, and then fails, writing nothing; production keeps the build it had. A
+  difference it cannot see passes: Runs or boot summaries that arrived late, or a Method's
+  figures that changed while all of those stayed the same. The page may then show the newer
+  list's figures under the older table of contents' rounds until the next rebuild.
+- **An upload that stopped halfway.** If the three files then disagree on something the
+  check compares, every deploy fails until the next publish repairs the bucket. If it
+  stopped before it changed any of the three, the previous files are still readable, and
+  the page is built from them.
+- **A publish whose final check failed.** If the upload finished and the `publish` job's own
+  last step (the check of the bucket) then failed, the bucket already holds the new tree, but
+  no `site` job runs: the page stays on the previous tree until the next successful publish,
+  a re-run of a `site` job, or a deploy by hand. The "about a minute" below holds for a
+  publish that succeeded.
+- **The minute between a publish and its rebuild.** Once a successful `publish` has written
+  the bucket, the page shows the tree before until the `site` job deploys, about a minute
+  later; the edge itself may serve the previous table of contents for up to five minutes.
 - **A deploy by hand from this machine**, which is outside the group (below).
 
 A publish (run N) and a push to main (commit C) that overlap end with ledgermath.com on C's
@@ -3539,12 +3551,17 @@ page needs, the Series list and the newest price file: each link must be under t
 contents' own address and a plain path to a JSON file under `v1/`, and that path is the key;
 it never builds one. Each read is one signed `GET` (`S3ApiStore.read`,
 `scripts/lib/api-upload.ts`), within 30 seconds and under its file's size limit, with the
-keys in the environment. The three files must be of one publication (the check and the retry
-of `site/scripts/fetch-tree.ts`, which it reuses), and it writes them all or none, into a
-new directory. `tests/read-api-tree.test.ts` holds it to that against a stand-in for S3: the
-ordinary case, two publications cured by a retry and not cured, a missing key, a refused
-key, a body that never ends and an answer that never comes, a file over its limit, and a
-link that leaves `v1/`.
+keys in the environment, following no redirect: a 3xx is a refusal, since the key was
+checked and an address S3 points to was not. The three files must be of one publication (the
+check and the retry of `site/scripts/fetch-tree.ts`, which it reuses), and it writes them all
+or none, into a new directory. When it fails, it names the file, the refused field, the key,
+the HTTP status and S3's error code from a closed list: never a value refused from a file
+(an address can carry a signature) and never S3's own message, which are not ours to print
+in a public log. `tests/read-api-tree.test.ts` holds it to that against a stand-in for S3:
+the ordinary case, two publications cured by a retry and not cured, a missing key, a refused
+key, a body that never ends and an answer that never comes, a file over its limit, a link
+that leaves `v1/`, a redirect (refused, its address never asked), and marker text in a
+refused address and in S3's message, which reaches neither stdout nor stderr.
 
 **When a rebuild fails.** The `site` job fails, red, and its last step names the step that
 failed, in an error at the top of the run's page and in the job's summary, and says what
@@ -3626,6 +3643,10 @@ directory, and runs `vercel deploy --prebuilt` on it. The Vercel CLI is pinned i
   for this repository's own branches, so no code from a fork runs where the token is. No
   pull request gets AWS credentials either: only `deploy-production`, on main, asks for an
   OIDC token, and the role trusts main alone (`infra/runs/github-role.ts`).
+
+So, once `site.yml` is enabled again: a pull request from a fork gets no credential of any
+kind; a pull request from a branch of this repository gets the Vercel token in its preview's
+deploy step, as it did before this change, and never the AWS role.
 
 The job writes the deployment's URL to the run's summary. Preview URLs need a Vercel login
 (the project's Vercel Authentication covers every deployment URL; only the custom domain is

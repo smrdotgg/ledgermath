@@ -85,7 +85,9 @@ describe("reading the tree from the API bucket", () => {
 	test("files that still disagree after every attempt: nothing is written", async () => {
 		standin.put(BUCKET, "v1/index.json", JSON.stringify({ ...json("v1/index.json"), newest_run_started_at: "2026-11-19T22:59:59.000000000Z" }), "application/json");
 		const dir = out();
-		await expect(readApiTree(BUCKET, dir, options({ attempts: 3 }))).rejects.toThrow("were of two publications of the API each of the 3 times they were fetched");
+		await expect(readApiTree(BUCKET, dir, options({ attempts: 3 }))).rejects.toThrow(
+			"the three files were of two publications each time they were read; they differ in the newest Run's start, in the table of contents and in the Series list",
+		);
 		expect(existsSync(dir)).toBe(false);
 		expect(standin.requests.length).toBe(9);
 	});
@@ -93,7 +95,7 @@ describe("reading the tree from the API bucket", () => {
 	test("a missing key fails the read, saying which, and writes nothing", async () => {
 		standin.buckets.get(BUCKET)?.objects.delete("v1/series.json");
 		const dir = out();
-		await expect(readApiTree(BUCKET, dir, options())).rejects.toThrow(`s3://${BUCKET}/v1/series.json (for https://api.ledgermath.com/v1/series.json): GET s3://${BUCKET}/v1/series.json answered 404 NoSuchKey`);
+		await expect(readApiTree(BUCKET, dir, options())).rejects.toThrow(new Error(`GET s3://${BUCKET}/v1/series.json answered 404 NoSuchKey`));
 		expect(existsSync(dir)).toBe(false);
 	});
 
@@ -143,9 +145,32 @@ describe("reading the tree from the API bucket", () => {
 			standin.requests.length = 0;
 			standin.put(BUCKET, "v1/index.json", JSON.stringify({ ...index, series: { ...index.series, url } }), "application/json");
 			const dir = out();
-			await expect(readApiTree(BUCKET, dir, options())).rejects.toThrow(/not a plain path to a JSON file under v1\/|not under the tree's base/);
+			await expect(readApiTree(BUCKET, dir, options())).rejects.toThrow(new Error("v1/index.json: the field series.url was refused by the site's checks (its value is not printed)"));
 			expect(standin.requests.map((request) => request.key)).toEqual(["v1/index.json"]);
 			expect(existsSync(dir)).toBe(false);
+		}
+	});
+
+	test("a redirect is refused, in words, and the address it points to is never asked", async () => {
+		const asked: string[] = [];
+		const elsewhere = Bun.serve({
+			port: 0,
+			hostname: "127.0.0.1",
+			fetch: (request) => {
+				asked.push(new URL(request.url).pathname);
+				return new Response(fixture("v1/series.json"), { headers: { "content-type": "application/json" } });
+			},
+		});
+		try {
+			for (const status of [301, 302, 307, 308]) {
+				standin.fault = (request) => (request.key === "v1/series.json" ? new Response(null, { status, headers: { location: `http://127.0.0.1:${elsewhere.port}/v1/series.json` } }) : undefined);
+				const dir = out();
+				await expect(readApiTree(BUCKET, dir, options())).rejects.toThrow(new Error(`GET s3://${BUCKET}/v1/series.json answered ${status}, a redirect, which is not followed`));
+				expect(existsSync(dir)).toBe(false);
+			}
+			expect(asked).toEqual([]);
+		} finally {
+			elsewhere.stop(true);
 		}
 	});
 });
@@ -190,5 +215,76 @@ describe("the command line", () => {
 			expect({ args, code: (await script(args)).code }).toEqual({ args, code: 2 });
 		}
 		expect((await script(["--bucket", "", "--out", out()])).stderr).toContain("is the repository variable API_BUCKET set?");
+	});
+
+	test("prints no value refused from a file and no message of S3's: it names the file, the field, the key, the status and a known code", async () => {
+		const index = json("v1/index.json");
+		const cases: Array<[string, () => void, string]> = [
+			[
+				"MARKER-LINK-SIGNATURE",
+				() => standin.put(BUCKET, "v1/index.json", JSON.stringify({ ...index, series: { ...index.series, url: "https://api.ledgermath.com/v1/series.json?X-Amz-Signature=MARKER-LINK-SIGNATURE" } }), "application/json"),
+				"v1/index.json: the field series.url was refused by the site's checks (its value is not printed)",
+			],
+			[
+				"MARKER-OWN-ADDRESS",
+				() => standin.put(BUCKET, "v1/index.json", JSON.stringify({ ...index, url: "https://api.ledgermath.com/v1/index.json?MARKER-OWN-ADDRESS" }), "application/json"),
+				"v1/index.json: the field url was refused by the site's checks (its value is not printed)",
+			],
+			[
+				"MARKER-S3-MESSAGE",
+				() => {
+					standin.fault = (request) => (request.key === "v1/series.json" ? new Response("<Error><Code>AccessDenied</Code><Message>MARKER-S3-MESSAGE</Message></Error>", { status: 403 }) : undefined);
+				},
+				`GET s3://${BUCKET}/v1/series.json answered 403 AccessDenied`,
+			],
+			[
+				"MARKER-S3-CODE",
+				() => {
+					standin.fault = (request) => (request.key === "v1/series.json" ? new Response("<Error><Code>MARKER-S3-CODE</Code><Message>x</Message></Error>", { status: 400 }) : undefined);
+				},
+				`GET s3://${BUCKET}/v1/series.json answered 400 with no error code this reader knows`,
+			],
+			[
+				"MARKER-REDIRECT-TARGET",
+				() => {
+					standin.fault = (request) => (request.key === "v1/index.json" ? new Response(null, { status: 307, headers: { location: "https://elsewhere.example/MARKER-REDIRECT-TARGET" } }) : undefined);
+				},
+				`GET s3://${BUCKET}/v1/index.json answered 307, a redirect, which is not followed`,
+			],
+		];
+		for (const [marker, arrange, said] of cases) {
+			standin.fault = undefined;
+			for (const key of KEYS) standin.put(BUCKET, key, fixture(key), "application/json");
+			arrange();
+			const dir = out();
+			const done = await script(["--bucket", BUCKET, "--out", dir, "--endpoint", standin.url]);
+			expect({ marker, code: done.code, said: done.stderr.trim() }).toEqual({ marker, code: 1, said: `no tree written: ${said}` });
+			expect({ marker, printed: `${done.stdout}${done.stderr}`.includes(marker) }).toEqual({ marker, printed: false });
+			expect(existsSync(dir)).toBe(false);
+		}
+	});
+});
+
+describe("files of two publications, one of them naming another address", () => {
+	test("are said to differ in what the check compares, without the addresses", async () => {
+		const standin = new S3Standin();
+		standin.start();
+		try {
+			standin.bucket(BUCKET, { readers: [READER] });
+			for (const key of KEYS) standin.put(BUCKET, key, fixture(key), "application/json");
+			standin.put(BUCKET, "v1/series.json", JSON.stringify({ ...json("v1/series.json"), index: "https://api.ledgermath.com/v1/index.json#MARKER-PAIR" }), "application/json");
+			const told: string[] = [];
+			const error = await readApiTree(BUCKET, out(), {
+				endpoint: standin.url,
+				credentials: () => ({ accessKeyId: READER, secretAccessKey: "secret" }),
+				retryWaitMs: 0,
+				onMismatch: (_, mismatches) => told.push(...mismatches),
+			}).catch((caught: Error) => caught);
+			expect(error).toBeInstanceOf(Error);
+			expect((error as Error).message).not.toContain("MARKER-PAIR");
+			expect((error as Error).message).toMatch(/^(the three files were of two publications each time they were read; they differ in the table of contents' address|v1\/series\.json: the field index was refused)/);
+		} finally {
+			standin.stop();
+		}
 	});
 });

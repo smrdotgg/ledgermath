@@ -142,8 +142,24 @@ export type Tree = {
 
 type Where = { file: string; path: string };
 
+/**
+ * A file of the tree that does not hold what the site reads: which file (its address, or its
+ * path), and where in it (a field's path, or "" for the whole file), beside the message, which
+ * may quote the value refused. A reader that must not print values says the file and the field.
+ */
+export class TreeError extends Error {
+	constructor(
+		readonly file: string,
+		readonly path: string,
+		message: string,
+	) {
+		super(message);
+		this.name = "TreeError";
+	}
+}
+
 function fail(where: Where, what: string): never {
-	throw new Error(`${where.file}: ${where.path || "the file"} ${what}`);
+	throw new TreeError(where.file, where.path, `${where.file}: ${where.path || "the file"} ${what}`);
 }
 
 const at = (where: Where, key: string | number): Where => ({
