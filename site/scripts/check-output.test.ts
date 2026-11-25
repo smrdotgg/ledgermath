@@ -8,7 +8,8 @@ import { dirname, join } from "node:path";
 import { checkOutput } from "./check-output";
 
 const TEXT = ["LedgerMath", "The site is on its way."];
-const BODY = "<main><h1>LedgerMath</h1><p>The site is on its way.</p></main>";
+const PAGES = [{ file: "index.html", text: TEXT }];
+const BODY = '<main><h1 id="top">LedgerMath</h1><p>The site is on its way.</p></main>';
 const PIXEL =
 	"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
 
@@ -32,7 +33,7 @@ function page(head: string, body = BODY): string {
 	return `<!DOCTYPE html><html lang="en"><head><title>LedgerMath</title>${head}</head><body>${body}</body></html>`;
 }
 
-const check = (files: Record<string, string>) => checkOutput(site(files), TEXT).problems;
+const check = (files: Record<string, string>, pages = PAGES) => checkOutput(site(files), pages).problems;
 
 describe("passes", () => {
 	test("a page with its text, its CSS and its script", () => {
@@ -44,9 +45,41 @@ describe("passes", () => {
 				"assets/app.js": 'import "./chunk.js";',
 				"assets/chunk.js": "",
 			}),
-			TEXT,
+			PAGES,
 		);
-		expect(result).toEqual({ problems: [], checked: 4 });
+		expect(result).toMatchObject({ problems: [], checked: 4 });
+	});
+
+	test("links inside the site, to a page, a file and an id, and links under the data API", () => {
+		expect(
+			check(
+				{
+					"index.html": page(
+						"",
+						`${BODY}<a href="/docs/">docs</a><a href="/notices.txt">notices</a><a href="/#top">top</a><a href="docs/#intro">intro</a><a href="https://api.ledgermath.com/v1/index.json">API</a>`,
+					),
+					"docs/index.html": page("", `<main><h1 id="intro">Docs</h1><a href="../">home</a><a href="/#top">top</a></main>`),
+					"notices.txt": "notices",
+				},
+				[...PAGES, { file: "docs/index.html", text: ["Docs"] }],
+			),
+		).toEqual([]);
+	});
+
+	test("weighs each page with what it loads, each file once, and gives the weights", () => {
+		const result = checkOutput(
+			site({
+				"index.html": page(`<link rel="stylesheet" href="/a.css"><link rel="preload" href="/f.woff2" as="font">`),
+				"a.css": "@font-face{src:url(/f.woff2)}",
+				"f.woff2": "x".repeat(1000),
+			}),
+			PAGES,
+		);
+		expect(result.problems).toEqual([]);
+		expect(result.weights).toHaveLength(1);
+		// The font, not compressible as a binary file, counts as it is, once; the HTML and CSS gzipped.
+		expect(result.weights[0]!.bytes).toBeGreaterThan(1000);
+		expect(result.weights[0]!.bytes).toBeLessThan(1400);
 	});
 
 	test("a data: URL in srcset, src, a style attribute and a <style> block, and a fragment-only href", () => {
@@ -60,12 +93,51 @@ describe("passes", () => {
 		).toEqual([]);
 	});
 
-	test("a link a reader follows to another origin", () => {
-		expect(check({ "index.html": page("", `${BODY}<a href="https://github.com/smrdotgg/ledgermath">source</a>`) })).toEqual([]);
-	});
 });
 
 describe("fails", () => {
+	test("a link to another origin than the data API's, the source repository's above all", () => {
+		expect(
+			check({
+				"index.html": page(
+					"",
+					`${BODY}<a href="https://github.com/smrdotgg/ledgermath">source</a><a href="https://ledgermath.com/docs/">docs</a><a href="//cdn.example.com/">cdn</a><a href="mailto:a@example.com">mail</a><a href="https://api.ledgermath.com.example.com/">lookalike</a>`,
+				),
+			}),
+		).toEqual([
+			"index.html links outside the site and the data API: https://github.com/smrdotgg/ledgermath",
+			"index.html links outside the site and the data API: https://ledgermath.com/docs/",
+			"index.html links outside the site and the data API: //cdn.example.com/",
+			"index.html links outside the site and the data API: mailto:a@example.com",
+			"index.html links outside the site and the data API: https://api.ledgermath.com.example.com/",
+		]);
+	});
+
+	test("a link to a page or file the site lacks, or to an id its page lacks", () => {
+		expect(
+			check({
+				"index.html": page("", `${BODY}<a href="/docs/">docs</a><a href="/docs/benchmarks/mutex">mutex</a><a href="#numbers">numbers</a><a href="/#numbers">numbers</a>`),
+			}),
+		).toEqual([
+			"index.html links to /docs/, which the site lacks",
+			"index.html links to /docs/benchmarks/mutex, which the site lacks",
+			"index.html links to #numbers, an id it lacks",
+			'index.html links to /#numbers, whose page has no id "numbers"',
+		]);
+	});
+
+	test("a page of PAGES that is missing, or misses its words", () => {
+		expect(check({ "index.html": page("") }, [...PAGES, { file: "docs/index.html", text: ["Docs"] }])).toEqual(["docs/index.html is missing"]);
+	});
+
+	test("a page heavier than the budget, with what it loads", () => {
+		// Random bytes in a binary file: counted as they are.
+		const heavy = Buffer.from(crypto.getRandomValues(new Uint8Array(60_000))).toString("latin1").repeat(6);
+		expect(check({ "index.html": page(`<link rel="preload" href="/f.woff2" as="font">`), "f.woff2": heavy })[0]).toMatch(
+			/^index\.html weighs \d+ bytes with what it loads, compressed: over the budget of 300000$/,
+		);
+	});
+
 	test("when the text is only inside a script", () => {
 		expect(
 			check({ "index.html": page(`<script>document.body.innerHTML="<h1>LedgerMath</h1><p>The site is on its way.</p>"</script>`, "") }),

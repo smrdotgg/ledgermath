@@ -1544,4 +1544,33 @@ A migrated benchmark is done only when **all** of these hold:
   CORS, the API bucket none), so the readers' note no longer says the `ETag` can never be
   read across origins. "Data for a trial" and the layout table no longer say the API is not
   served. Documentation only: no code, test or infrastructure changed.
+- **2026-11-25** — **Design v9 is the home page of `site/`, built from a published tree.**
+  The placeholder is gone. v9's page, document, styles, art, dots and font come from
+  `home-variations` (`44078e4`) unchanged, with the data module every design used; the
+  rest of that branch (eight designs, the picker, scores, checkpoints) stays there. Built
+  from the 2026-11-19 snapshot, the new page is the design's HTML byte for byte but for
+  its links, and its stylesheet and font are the same files. **The build reads a tree**:
+  a directory in the API's layout, the table of contents, the Series list and the newest
+  price file at the places its links give (`site/src/data/tree.ts`), named with `--tree`
+  or `LEDGERMATH_TREE`; with neither it fails. `site/scripts/fetch-tree.ts` fetches those
+  three files from `https://api.ledgermath.com`, following the table of contents' links
+  only, with a time and size limit on each request; `site.yml` now fetches a tree before
+  it builds. The data module is a function of the tree (`siteData`). "Latest runs" reads
+  the table of contents' `recent_rounds`, which another change is adding; the live API
+  has none yet, so today's page is built without the list, and the build says so in one
+  line. `rounds.ts` is gone. A missing headline Series shows a dash, a round's failed Runs
+  are shown as counted, and two Series matching one choice fail the build. **Links**: the
+  maintainer asked that the documentation links stay and lead somewhere real, so `/docs/`
+  is a placeholder page in the site's own style that says the documentation is being
+  written and links to the API's table of contents; every "Docs" link and each benchmark's
+  name go there, and `site/src/data/headline.ts` keeps each benchmark's planned page one
+  line away. No link to the repository. **Checks**: `bun run check` holds each page to its
+  fixed words, every link to the site or the API, every load to the site, and each page to
+  300 KB (`check-output.ts`), and every figure to the tree, moved back into the tree's unit
+  digit by digit (`check-figures.ts`); `check-live.ts` checks `/` and `/docs/`. The
+  Playwright checks (390 px, axe-core in light and dark, console, JavaScript off) are
+  `bun run check:browser`, run by hand. The site's notices are now the font's alone
+  (Geist Pixel Circle, OFL 1.1, byte for byte `geist` 1.9.2's), since no Solid code is
+  served; `tests/licences.test.ts` holds both notices to every font the site ships. Not
+  deployed: the orchestrator deploys.
 - _(agents: append your entry here, one per merged benchmark)_

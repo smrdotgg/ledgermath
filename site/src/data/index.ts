@@ -1,0 +1,244 @@
+/**
+ * LedgerMath's figures for the site's pages: one tree of the data API (./tree.ts), read at
+ * build time, turned into what the pages show by siteData.
+ *
+ * RULES FOR EVERY PAGE THAT USES THIS MODULE
+ *
+ * 1. Every figure shown comes from here, exactly as the tree holds it. No page invents,
+ *    estimates or computes a statistic: no averages across machines, no ratios (price per
+ *    GB/s, "3.2× faster"), no rankings presented as findings, no trends, no "typical" values.
+ *    The only arithmetic allowed is a change of unit (bytes to GB, nanoseconds to
+ *    milliseconds), and the helpers in ./figures do it exactly, on the decimal text. One
+ *    division is allowed, because it is a change of unit too: a figure of one repetition
+ *    divided by a headline choice's `per.count` when that is a power of ten (one repetition of
+ *    mutex is 10,000 critical sections), with `perUnit` or `formatDurationPerUnit`. No other
+ *    division, by anything.
+ * 2. Figures are exact. A helper's `short` form is rounded for scanning; when a page shows
+ *    it, the page gives `full` too (a `title` attribute, a second line, a footnote). Nothing
+ *    is rounded silently.
+ * 3. "The home table" is the headline selection (./headline): one Series per benchmark and
+ *    machine type, chosen by a written rule. A page may show more Series beside it, never
+ *    other figures for its rows. A cell whose Series the tree lacks shows no figure, and
+ *    says so; it is never filled from elsewhere.
+ * 4. Links go to the addresses in `links`: the API's, which the tree itself gives (each
+ *    row's `url` too), and the site's own (the home page, its table, the notices, and the
+ *    documentation, a placeholder at /docs/ for now: see ./headline). Nothing else: no page
+ *    links to or names the source repository, and `bun run check` fails on any link that is
+ *    neither inside the site nor under https://api.ledgermath.com/.
+ * 5. Import this module from the pages' components only (code that runs at build time).
+ *    Nothing runs in the browser but the page's one inline script, which waits for the font.
+ */
+
+import { benchmarkDocsUrl, DOCS_URL, HEADLINE_CHOICES, type HeadlineChoice } from "./headline";
+import type { PriceFile, SeriesRow, Tree } from "./tree";
+
+export * from "./figures";
+export { benchmarkDocsUrl, DOCS_URL, HEADLINE_CHOICES, plannedBenchmarkDocsUrl } from "./headline";
+export type { HeadlineChoice, Section } from "./headline";
+export type { Percentiles, SeriesRow, Tree } from "./tree";
+
+// ---------------------------------------------------------------- what siteData gives
+
+export type Machine = {
+	/** "m5.large" */
+	instanceType: string;
+	/** The facts AWS's price list gives for the type, as text, exactly as the price file holds them. */
+	vcpu: string;
+	memory: string;
+	processor: string;
+	/** The hourly On-Demand Linux price, from the newest price file. */
+	price: {
+		/** As the price file writes it: "0.0960000000" (US dollars per hour). See formatUsd. */
+		usdPerHour: string;
+		/** AWS's own words: "$0.096 per On Demand Linux m5.large Instance Hour". */
+		description: string;
+		unit: string;
+		sku: string;
+		rateCode: string;
+		effectiveDate: string;
+	};
+	/** Every Series of the tree measured on this type. */
+	series: SeriesRow[];
+};
+
+/** The figure that leads a headline cell (./headline's `lead`): the percentiles of the p50 rate, or of the time of one repetition. */
+export type LeadFigure = { kind: "rate" | "time"; p5: number; p50: number; p95: number; count: number };
+
+export type HeadlineCell = {
+	machine: Machine;
+	/** The one Series the choice selects on this machine type, or null when the tree has none. */
+	series: SeriesRow | null;
+	/** The Series' lead figure, or null when there is no Series or it has no such figure (no counted Run). */
+	figure: LeadFigure | null;
+};
+
+export type HeadlineRow = {
+	choice: HeadlineChoice;
+	/** One cell per machine type, in the order of `machines`. */
+	cells: HeadlineCell[];
+};
+
+/** One round of boots, newest first, as the table of contents' recent_rounds gives it. */
+export type Round = {
+	/** When the round's first boot started (UTC, to the nanosecond). */
+	startedAt: string;
+	/** Boots in the round: one machine each. */
+	boots: number;
+	runs: number;
+	failedRuns: number;
+};
+
+export type SiteLinks = {
+	/** The site's own pages and files. */
+	home: string;
+	/** The home page's table. */
+	numbers: string;
+	/** The notices of what the site ships (public/third-party-notices.txt). */
+	licences: string;
+	/** The documentation (./headline). */
+	docs: string;
+	/** Where a benchmark's name links (./headline). */
+	benchmarkDocs: (benchmark: string) => string;
+	/** The API's table of contents, as the tree gives its own address. */
+	index: string;
+	/** Every Series in one file. */
+	seriesList: string;
+	/** The newest price file. */
+	prices: string;
+	/** One Series' own file (each row's `url`). */
+	seriesFile: (row: SeriesRow) => string;
+};
+
+export type SiteData = {
+	/** Every Series in the tree, as its Series list gives them. */
+	series: readonly SeriesRow[];
+	/** The machine types the newest price file names, cheapest first by their hourly price (an ordering, not a statistic). */
+	machines: readonly Machine[];
+	/** The home table: one row per headline choice, each with one cell per machine type. */
+	headline: readonly HeadlineRow[];
+	/** The latest rounds of boots, newest first; null when the tree's table of contents gives none. */
+	rounds: readonly Round[] | null;
+	/** The region the price file was cut for, and the Series ran in. */
+	region: string;
+	/** When the tree's newest Run started (UTC, to the nanosecond). */
+	newestRunStartedAt: string;
+	/** The newest price file's date. */
+	priceDate: string;
+	links: SiteLinks;
+	/** What the build should say about the tree: what the page leaves out, and why. One line each. */
+	notes: readonly string[];
+};
+
+// ---------------------------------------------------------------- helpers
+
+/** True when the row's params include every one of `params`, with the same value. */
+export function hasParams(row: SeriesRow, params: Record<string, unknown>): boolean {
+	return Object.entries(params).every(([key, value]) => row.params[key] === value);
+}
+
+/** The figure that leads a headline cell, as the rule in ./headline names it, or null when the Series has none (no counted Run). */
+export function leadFigure(choice: HeadlineChoice, row: SeriesRow): LeadFigure | null {
+	const p = row.derivations.series_v1.percentiles;
+	const figure = choice.lead === "rate" ? p.bytes_per_second : p.time_per_repetition_ns;
+	return figure ? { kind: choice.lead, ...figure } : null;
+}
+
+function machine(prices: PriceFile, instanceType: string, series: readonly SeriesRow[]): Machine {
+	const file = "the newest price file";
+	const source = prices.sources.find((s) =>
+		s.selections.some((selection) => selection.rule === "ec2-instance-on-demand-linux" && selection.skus.some((sku) => s.products[sku]?.attributes.instanceType === instanceType)),
+	);
+	if (!source) throw new Error(`${file} has no On-Demand Linux product for ${instanceType}`);
+	const products = Object.values(source.products).filter((p) => p.attributes.instanceType === instanceType && p.attributes.operatingSystem === "Linux");
+	if (products.length !== 1) throw new Error(`${file} has ${products.length} Linux products for ${instanceType}, not one`);
+	const product = products[0]!;
+	const terms = Object.values(source.terms.OnDemand[product.sku] ?? {});
+	const dimensions = terms.flatMap((term) => Object.values(term.priceDimensions).map((dimension) => ({ term, dimension })));
+	if (dimensions.length !== 1) throw new Error(`${instanceType} has ${dimensions.length} On-Demand price dimensions in ${file}, not one`);
+	const { term, dimension } = dimensions[0]!;
+	if (dimension.unit !== "Hrs") throw new Error(`${instanceType}'s On-Demand price is per ${dimension.unit} in ${file}, not per hour`);
+	if (typeof dimension.pricePerUnit?.USD !== "string" || !/^\d+(\.\d+)?$/.test(dimension.pricePerUnit.USD)) {
+		throw new Error(`${instanceType}'s On-Demand price in ${file} is not a decimal in US dollars: ${JSON.stringify(dimension.pricePerUnit?.USD)}`);
+	}
+	const a = product.attributes;
+	return {
+		instanceType,
+		vcpu: a.vcpu ?? "",
+		memory: a.memory ?? "",
+		processor: a.physicalProcessor ?? "",
+		price: {
+			usdPerHour: dimension.pricePerUnit.USD,
+			description: dimension.description,
+			unit: dimension.unit,
+			sku: product.sku,
+			rateCode: dimension.rateCode,
+			effectiveDate: term.effectiveDate,
+		},
+		series: series.filter((row) => row.instance_type === instanceType),
+	};
+}
+
+// ---------------------------------------------------------------- siteData
+
+/** Everything the pages show, from TREE. Throws when the tree contradicts itself; see `notes` for what it lacks. */
+export function siteData(tree: Tree): SiteData {
+	const notes: string[] = [];
+	const series = tree.seriesList.series;
+
+	for (const row of series) {
+		if (!row.url.startsWith(tree.base)) throw new Error(`Series ${row.id}'s address ${row.url} is not under the tree's base ${tree.base}`);
+	}
+
+	const machines = tree.prices.measured.instance_types
+		.map((type) => machine(tree.prices, type, series))
+		.sort((a, b) => Number(a.price.usdPerHour) - Number(b.price.usdPerHour) || a.instanceType.localeCompare(b.instanceType));
+	for (const m of machines) if (m.series.length === 0) notes.push(`no Series ran on ${m.instanceType}: its column shows no figures`);
+	const unpriced = [...new Set(series.map((row) => row.instance_type))].filter((type) => !machines.some((m) => m.instanceType === type)).sort();
+	if (unpriced.length > 0) notes.push(`Series ran on ${unpriced.join(", ")}, which the newest price file does not price: the table leaves them out`);
+
+	const unchosen = [...new Set(series.map((row) => row.benchmark))].filter((name) => !HEADLINE_CHOICES.some((c) => c.benchmark === name)).sort();
+	if (unchosen.length > 0) notes.push(`no headline choice in src/data/headline.ts for ${unchosen.join(", ")}: the table leaves them out`);
+
+	const headline = HEADLINE_CHOICES.map((choice): HeadlineRow => ({
+		choice,
+		cells: machines.map((m): HeadlineCell => {
+			const found = m.series.filter((row) => row.benchmark === choice.benchmark && row.build === choice.build && hasParams(row, choice.params));
+			if (found.length > 1) {
+				throw new Error(`headline ${choice.benchmark} on ${m.instanceType}: ${found.length} Series match its settings (${found.map((row) => row.id).join(", ")}), so the rule in src/data/headline.ts no longer says which to show`);
+			}
+			const row = found[0] ?? null;
+			const figure = row ? leadFigure(choice, row) : null;
+			if (!row) notes.push(`no Series for ${choice.benchmark} on ${m.instanceType}: its cell shows no figure`);
+			else if (!figure) notes.push(`Series ${row.id} (${choice.benchmark} on ${m.instanceType}) has no ${choice.lead} figure: its cell shows none`);
+			return { machine: m, series: row, figure };
+		}),
+	}));
+
+	const recent = tree.index.recent_rounds;
+	let rounds: Round[] | null = null;
+	if (!recent) notes.push(`${tree.paths.index} has no recent_rounds: the page is built without "Latest runs"`);
+	else if (recent.rounds.length === 0) notes.push(`${tree.paths.index} lists no round in recent_rounds: the page is built without "Latest runs"`);
+	else rounds = recent.rounds.map((r) => ({ startedAt: r.started_at, boots: r.boots, runs: r.runs, failedRuns: r.failed_runs }));
+
+	return {
+		series,
+		machines,
+		headline,
+		rounds,
+		region: tree.prices.measured.region,
+		newestRunStartedAt: tree.index.newest_run_started_at,
+		priceDate: tree.index.prices.newest.date,
+		links: {
+			home: "/",
+			numbers: "/#numbers",
+			licences: "/third-party-notices.txt",
+			docs: DOCS_URL,
+			benchmarkDocs: benchmarkDocsUrl,
+			index: tree.index.url,
+			seriesList: tree.index.series.url,
+			prices: tree.index.prices.newest.url,
+			seriesFile: (row) => row.url,
+		},
+		notes,
+	};
+}
