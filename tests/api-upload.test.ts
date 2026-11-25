@@ -113,13 +113,15 @@ describe("the tree's objects", () => {
 		}
 	});
 
-	test("are uploaded leaves first and the table of contents last: schemas; month files and price files; Series files; the list; the table of contents", () => {
-		expect(UPLOAD_PHASES).toEqual(["schemas", "month files and price files", "Series files", "the list of Series", "the table of contents"]);
+	test("are uploaded leaves first and the table of contents last: schemas; month files and price files; Series files; the list and each benchmark's list; the table of contents", () => {
+		expect(UPLOAD_PHASES).toEqual(["schemas", "month files and price files", "Series files", "the lists of Series", "the table of contents"]);
 		expect(treeObject("v1/schemas/series-month.schema.json").phase).toBe(0);
+		expect(treeObject("v1/schemas/benchmark.schema.json").phase).toBe(0);
 		expect(treeObject("v1/series/0cacb5fd6fae/2026-11.json").phase).toBe(1);
 		expect(treeObject("v1/prices/2026-11-19.json").phase).toBe(1);
 		expect(treeObject("v1/series/0cacb5fd6fae.json").phase).toBe(2);
 		expect(treeObject("v1/series.json").phase).toBe(3);
+		expect(treeObject("v1/benchmarks/memory_read.json").phase).toBe(3);
 		expect(treeObject("v1/index.json").phase).toBe(4);
 	});
 
@@ -128,7 +130,8 @@ describe("the tree's objects", () => {
 		let down = 0;
 		for (const [path, bytes] of TREE) {
 			const text = new TextDecoder().decode(bytes);
-			const links = [...text.matchAll(/"https:\/\/api\.ledgermath\.com\/(v1\/[^"]+)"/g)].map((match) => match[1] as string).filter((link) => link !== path);
+			// A template (a Series file's address with {id} for its id) is no link to a file.
+			const links = [...text.matchAll(/"https:\/\/api\.ledgermath\.com\/(v1\/[^"{]+)"/g)].map((match) => match[1] as string).filter((link) => link !== path);
 			for (const link of links) {
 				expect(phaseOf.has(link)).toBe(true);
 				const up = link === "v1/index.json" || link === "v1/series.json" || (treeObject(path).kind === "a month file" && path.startsWith(link.replace(/\.json$/, "/")));
@@ -781,9 +784,9 @@ describe("the scripts", () => {
 		standin.fault = (request) => (request.method === "PUT" && request.key === list ? new Response("<Error><Code>InternalError</Code></Error>", { status: 500 }) : undefined);
 		const uploaded = await run("upload-api.ts", tree, summary);
 		expect(uploaded.exitCode).toBe(1);
-		expect(uploaded.stderr).toContain("stopped in phase 4 of 5, the list of Series: 1 write failed, the first v1/series.json");
+		expect(uploaded.stderr).toContain("stopped in phase 4 of 5, the lists of Series: 1 write failed, the first v1/series.json");
 		const text = readFileSync(summary, "utf8");
-		expect(text).toContain("**The upload stopped in phase 4 of 5, the list of Series.** No later phase was started.");
+		expect(text).toContain("**The upload stopped in phase 4 of 5, the lists of Series.** No later phase was started.");
 		expect(text).toContain("- `v1/series.json`: PUT");
 		expect(text).toContain("The next run's upload writes what is still missing and repairs it.");
 		expect(standin.requests.some((request) => request.method === "PUT" && request.key === "v1/index.json")).toBe(false);

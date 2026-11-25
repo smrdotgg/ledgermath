@@ -1827,4 +1827,25 @@ A migrated benchmark is done only when **all** of these hold:
   dated addition, and its open item) and ADR-0008's note say the same. The data API's
   words are unchanged: it carries no description of a benchmark. No benchmark, build,
   Method or workflow changed.
+- **2026-11-25** — **The data API lists each benchmark's Series in a file of its own,
+  gives a template of a Series file's address, and says what each group's figures rest on**
+  (ADR-0030, rule 13). An agent with a fetch tool alone had to fetch all of
+  `v1/series.json` (197 KB) to find one Series. Now `v1/index.json` lists each benchmark
+  (`benchmarks.list`: name, address, Series, Runs, newest Run) and
+  `v1/benchmarks/<benchmark>.json` holds its rows of the list, byte for byte, so any Series'
+  figures are two requests from the table of contents (at most 256 KB, then 1 MB; 57.3 KB
+  and about 300 KB at most on 2026-11-25), or one with its id and
+  `series.series_file_url_template`. A benchmark's name goes into an address only when it is
+  1 to 64 characters of what the Run schema admits, and a row only when it takes at most
+  16,384 bytes as JSON with no white space; any other Series is in `v1/series.json` alone,
+  counted, and keeps its file, so no Run can stop a publish or swell the new files. Each
+  group of a Series file gains its counted and failed Runs and its oldest and newest start,
+  and each Series its boots: counts and starts of what the Derivations hold (each group's
+  list of Runs, each point's start, `counted` and boot), not new statistics. That field in
+  every Series file and row raises `layout` to 2: no month file changes, but the first run
+  after the merge needs `new_baseline`, started by hand. The edge must serve the new shapes
+  before any tree links them, and only a deploy made by hand teaches it, so the shapes came
+  first in a pull request of their own (`SERVED_AHEAD`), to be merged and deployed before the
+  one that writes the files; the README's "Deploy" gives the steps. The lookup tool and the
+  skill are unchanged and pass.
 - _(agents: append your entry here, one per merged benchmark)_

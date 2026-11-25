@@ -60,7 +60,8 @@ const DATA: Readonly<Record<Kind, readonly string[]>> = {
 	// Each price file held: its date, its path in the Runs repository and its address; each of the newest rounds of boots: what the boot
 	// summaries recorded (each boot's start and instance type, its summary's address) and counts of what they and the points hold; and each
 	// summary left out of them, by its path and address. The words (about, and why each summary is left out) are scanned.
-	index: ["/prices/newest", "/prices/files", "/recent_rounds/rounds", "/recent_rounds/left_out/summaries/*/path", "/recent_rounds/left_out/summaries/*/boot_summary"],
+	// And each benchmark's list: the benchmark's name, as the Runs give it, its address and counts.
+	index: ["/prices/newest", "/prices/files", "/recent_rounds/rounds", "/recent_rounds/left_out/summaries/*/path", "/recent_rounds/left_out/summaries/*/boot_summary", "/benchmarks/list"],
 	"series-list": [
 		// One row per Series: its identity and params; the rest of a row is counts, figures, links and the Methods' names.
 		"/series/*/id",
@@ -73,6 +74,16 @@ const DATA: Readonly<Record<Kind, readonly string[]>> = {
 		"/methods/*/unreadable",
 		// The dump sections the Runs hold, by name, and how often each changed.
 		"/methods/*/sections",
+	],
+	benchmark: [
+		// The benchmark's name, as its Runs give it; and each row's identity and params, as in the list.
+		"/benchmark",
+		"/series/*/id",
+		"/series/*/benchmark",
+		"/series/*/params",
+		"/series/*/build",
+		"/series/*/instance_type",
+		"/series/*/availability_zone_id",
 	],
 	series: [
 		"/id",
@@ -270,9 +281,14 @@ describe("the words the data API publishes", () => {
 	test("are scanned where they are: the table of contents, both Methods' words, the price rules' words and every schema's descriptions", () => {
 		const { scanned } = scanWords(tree);
 		const at = (file: string): Set<string> => scanned.get(file) ?? new Set();
-		for (const pointer of ["/about", "/versioning", "/figures", "/months", "/recent_rounds/about", "/recent_rounds/left_out/summaries/0/why", "/evidence/about", "/schemas/0/describes"]) {
+		for (const pointer of ["/about", "/versioning", "/figures", "/months", "/recent_rounds/about", "/recent_rounds/left_out/summaries/0/why", "/series/about", "/benchmarks/about", "/evidence/about", "/schemas/0/describes"]) {
 			expect([pointer, at("v1/index.json").has(pointer)]).toEqual([pointer, true]);
 		}
+		// Each benchmark's name and entry are data, not scanned; nor is a benchmark's list's name or rows.
+		expect([...at("v1/index.json")].filter((pointer) => pointer.startsWith("/benchmarks/list"))).toEqual([]);
+		const benchmarkLists = [...scanned.keys()].filter((path) => writtenSchemaOf(path) === "benchmark");
+		expect(benchmarkLists.length).toBeGreaterThan(0);
+		for (const path of benchmarkLists) expect([path, [...at(path)].filter((pointer) => pointer === "/benchmark" || /^\/series\/\d+\/(?:id|benchmark|params|build)/.test(pointer))]).toEqual([path, []]);
 		// Every sentence a summary can be left out for is held to the same scan, not only the one the fixture shows.
 		for (const [kind, why] of Object.entries(LEFT_OUT_WHY)) expect([kind, referencesIn(why)]).toEqual([kind, []]);
 		// A round's instance types and its boots' addresses are data, not scanned.

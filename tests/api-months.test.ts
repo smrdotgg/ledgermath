@@ -757,6 +757,7 @@ describe("the check keeps up with the months", () => {
 		expect(CEILINGS.map((ceiling) => [ceiling.kind, ceiling.bytes])).toEqual([
 			["the table of contents", 100_000],
 			["the list of Series", 1_000_000],
+			["a benchmark's list of Series", 256_000],
 			["a Series file", 1_000_000],
 			["a month file", 5_000_000],
 			["a price file", 1_000_000],
@@ -811,7 +812,7 @@ describe("the published words name only what a reader can fetch", () => {
 				}
 			}
 		};
-		for (const source of ["schemas/api/v1/index.schema.json", "schemas/api/v1/series-list.schema.json", "schemas/api/v1/series.schema.json", "schemas/api/v1/series-month.schema.json", "schemas/prices.schema.json"]) {
+		for (const source of ["schemas/api/v1/index.schema.json", "schemas/api/v1/series-list.schema.json", "schemas/api/v1/benchmark.schema.json", "schemas/api/v1/series.schema.json", "schemas/api/v1/series-month.schema.json", "schemas/prices.schema.json"]) {
 			walk(JSON.parse(readFileSync(join(ROOT, source), "utf8")), source);
 		}
 		expect(found).toEqual([]);
@@ -898,9 +899,17 @@ describe("the schemas of the split", () => {
 		expect(month.differed.required).toEqual(["from", "to", "facts", "sections"]);
 	});
 
+	test("a benchmark's list and the list of every Series define a row word for word, and everything a row refers to, so each writes a row in the same bytes", () => {
+		const benchmark = read("benchmark").$defs as Json;
+		const list = read("series-list").$defs as Json;
+		expect(Object.keys(benchmark).sort()).toEqual(["bytes_per_second_summary", "method_requests", "method_series", "number_or_null", "params", "phase_stats", "request_stats", "row", "stat_summary", "time", "url"]);
+		for (const name of Object.keys(benchmark)) expect([name, benchmark[name]]).toEqual([name, list[name]]);
+		expect(read("benchmark").properties.series.items).toEqual(read("series-list").properties.series.items);
+	});
+
 	test("are each a valid JSON Schema, by the 2020-12 meta-schema", () => {
 		const ajv = new Ajv2020({ strict: true });
-		for (const source of ["schemas/api/v1/index.schema.json", "schemas/api/v1/series-list.schema.json", "schemas/api/v1/series.schema.json", "schemas/api/v1/series-month.schema.json", "schemas/prices.schema.json"]) {
+		for (const source of ["schemas/api/v1/index.schema.json", "schemas/api/v1/series-list.schema.json", "schemas/api/v1/benchmark.schema.json", "schemas/api/v1/series.schema.json", "schemas/api/v1/series-month.schema.json", "schemas/prices.schema.json"]) {
 			const schema = JSON.parse(readFileSync(join(ROOT, source), "utf8"));
 			expect([source, ajv.validateSchema(schema)]).toEqual([source, true]);
 			expect(() => ajv.compile(schema)).not.toThrow();

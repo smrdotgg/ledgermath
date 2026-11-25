@@ -2,9 +2,9 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:ledgermath:api:v1:index",
   "title": "LedgerMath data API, version 1: the table of contents",
-  "description": "v1/index.json: where the list of Series, the price files, the schemas, the evidence and the docs are. Start here. Every address a reader needs is written in the files, so a reader never builds one from an id; the one exception is a blob named by hash inside a Run file, whose address is evidence.blob_url_template. Version 1 only ever gains fields: a field, once in a v1 file, keeps its name, its type and its meaning, and a reader ignores any field it does not know. That is why no object in this schema, nor in series-list, series and series-month, forbids members it does not list. A change that would break a reader is published as v2, beside v1. The price files are the exception: each is the day's price file as LedgerMath keeps it, byte for byte, and follows its own schema, ledgermath.prices/1, whose root and LedgerMath's own objects are closed.",
+  "description": "v1/index.json: where the list of Series, each benchmark's list of Series, the price files, the schemas, the evidence and the docs are. Start here. Every address a reader needs is written in the files, so a reader never builds one from an id; there are two exceptions, each given as a template: a blob named by hash inside a Run file, whose address is evidence.blob_url_template, and a Series' file, whose address is series.series_file_url_template, for a reader who holds the Series' id and nothing else. Version 1 only ever gains fields: a field, once in a v1 file, keeps its name, its type and its meaning, and a reader ignores any field it does not know. That is why no object in this schema, nor in series-list, benchmark, series and series-month, forbids members it does not list. A change that would break a reader is published as v2, beside v1. The price files are the exception: each is the day's price file as LedgerMath keeps it, byte for byte, and follows its own schema, ledgermath.prices/1, whose root and LedgerMath's own objects are closed.",
   "type": "object",
-  "required": ["schema", "schema_url", "url", "about", "versioning", "figures", "months", "layout", "docs", "newest_run_started_at", "recent_rounds", "series", "prices", "schemas", "evidence"],
+  "required": ["schema", "schema_url", "url", "about", "versioning", "figures", "months", "layout", "docs", "newest_run_started_at", "recent_rounds", "series", "benchmarks", "prices", "schemas", "evidence"],
   "properties": {
     "schema": { "description": "What this file is, and which version of its shape.", "const": "ledgermath.api.index/1" },
     "schema_url": { "description": "The address of this schema.", "$ref": "#/$defs/url" },
@@ -57,13 +57,31 @@
     "series": {
       "description": "The list of Series.",
       "type": "object",
-      "required": ["url", "schema_url", "count", "series_file_schema_url", "month_file_schema_url"],
+      "required": ["url", "schema_url", "count", "series_file_schema_url", "month_file_schema_url", "series_file_url_template", "about"],
       "properties": {
         "url": { "description": "v1/series.json: one row per Series, each with the address of its own file.", "$ref": "#/$defs/url" },
         "schema_url": { "description": "The schema of v1/series.json.", "$ref": "#/$defs/url" },
         "count": { "description": "How many Series it lists.", "type": "integer", "minimum": 0 },
         "series_file_schema_url": { "description": "The schema of one Series' file, v1/series/<id>.json: its summary, its newest Runs and its months.", "$ref": "#/$defs/url" },
-        "month_file_schema_url": { "description": "The schema of one month of a Series, v1/series/<id>/<yyyy-mm>.json: every point of the Runs that started that month. A Series' file gives the address, sha256 and size of each of its months; months, above, says when a month file changes.", "$ref": "#/$defs/url" }
+        "month_file_schema_url": { "description": "The schema of one month of a Series, v1/series/<id>/<yyyy-mm>.json: every point of the Runs that started that month. A Series' file gives the address, sha256 and size of each of its months; months, above, says when a month file changes.", "$ref": "#/$defs/url" },
+        "series_file_url_template": {
+          "description": "A Series' file's address: replace {id} with the Series' id, 12 lower-case hex digits, as a row (id) gives it, in the list of every Series or a benchmark's list, and as a Series' file and a citation of the Series name it. For a reader who holds an id and nothing else; every other address of a Series is written in the files. A Series' file gives the address of each of its month files.",
+          "type": "string",
+          "pattern": "^https?://.*/v1/series/\\{id\\}\\.json$"
+        },
+        "about": { "description": "Where the Series are listed, and what a Series' id is and where a reader finds one, in words.", "type": "string" }
+      }
+    },
+    "benchmarks": {
+      "description": "Each benchmark's list of Series: a file per benchmark, v1/benchmarks/<benchmark>.json, holding that benchmark's rows of the list of every Series, so that a reader finds a Series without fetching the whole list. about says what each file holds and what is left out of every one.",
+      "type": "object",
+      "required": ["about", "schema_url", "count", "left_out", "list"],
+      "properties": {
+        "about": { "description": "What a benchmark's list holds, which benchmarks and Series have none, and what each entry of list gives, in words.", "type": "string" },
+        "schema_url": { "description": "The schema of a benchmark's list, v1/benchmarks/<benchmark>.json.", "$ref": "#/$defs/url" },
+        "count": { "description": "How many benchmarks have a list: the entries of list.", "type": "integer", "minimum": 0 },
+        "left_out": { "description": "How many Series are in no benchmark's list, for either reason about gives; each is in the list of every Series, v1/series.json, and has its own file.", "type": "integer", "minimum": 0 },
+        "list": { "description": "One entry per benchmark that has a list, by name.", "type": "array", "items": { "$ref": "#/$defs/benchmark" } }
       }
     },
     "prices": {
@@ -144,6 +162,18 @@
         "runs_in_no_series": { "$ref": "#/$defs/runs_in_no_series" },
         "build_failures": { "$ref": "#/$defs/build_failures" },
         "not_run": { "$ref": "#/$defs/not_run" }
+      }
+    },
+    "benchmark": {
+      "description": "One benchmark's list of Series: where it is, and what it lists.",
+      "type": "object",
+      "required": ["name", "url", "series", "runs", "newest_run_started_at"],
+      "properties": {
+        "name": { "description": "The benchmark's name, as its Runs give it: 1 to 64 characters, a lower-case letter, then lower-case letters, digits and underscores.", "type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$" },
+        "url": { "description": "The address of its list, v1/benchmarks/<benchmark>.json.", "$ref": "#/$defs/url" },
+        "series": { "description": "How many Series its list holds.", "type": "integer", "minimum": 0 },
+        "runs": { "description": "How many Runs those Series hold, counted or not.", "type": "integer", "minimum": 0 },
+        "newest_run_started_at": { "description": "When the newest Run of those Series started; null when its list holds none.", "anyOf": [{ "$ref": "#/$defs/time" }, { "type": "null" }] }
       }
     },
     "instance_type": { "description": "An instance type as a summary in a round names it: 1 to 64 letters, digits, dots, hyphens or underscores, so it is written as many bytes as characters.", "type": "string", "pattern": "^[A-Za-z0-9._-]{1,64}$" },

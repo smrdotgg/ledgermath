@@ -5,17 +5,21 @@
  *
  *     v1/index.json                    the table of contents, and the newest rounds of boots
  *     v1/series.json                   one row per Series, and each Method's own words
+ *     v1/benchmarks/<benchmark>.json   one benchmark's rows of the list, byte for byte
  *     v1/series/<id>.json              one Series: each Method's summary, the newest Runs' points, its months
  *     v1/series/<id>/<yyyy-mm>.json    one month of a Series: every point of its Runs that started that month
  *     v1/prices/<yyyy-mm-dd>.json      that day's price file, byte for byte
  *     v1/schemas/<name>.schema.json    the schema of each kind of file, and of one line of a Run's stdout (events)
  *
  * It is a re-cut, not a Method: every number is the Derivations' own, written
- * as they hold it, and nothing is computed but counts of points, the times of
- * a Series' (and a month's) oldest and newest Run, each month file's sha256
- * and size, and the counts of the newest rounds of boots, from the boot
- * summaries and the points (recentRounds()). Every address a reader needs is
- * written in the files, under one base address; the evidence (Run files, boot
+ * as they hold it, and nothing is computed but counts of points (and of the
+ * boots they name), the times of a Series' (and a month's, and a group's)
+ * oldest and newest Run, each benchmark's counts of Series and Runs and its
+ * newest Run, each month file's sha256 and size, and the counts of the newest
+ * rounds of boots, from the boot summaries and the points (recentRounds()).
+ * Every address a reader needs is written in the files, under one base
+ * address, but for two templates the table of contents gives (a blob's, and a
+ * Series file's for a reader holding its id); the evidence (Run files, boot
  * summaries, blobs) is linked under the same base, never copied.
  *
  * What grows with a Series' Runs is in its month files, never in its Series
@@ -46,6 +50,7 @@ import { existsSync, lstatSync, readdirSync, readFileSync } from "node:fs";
 import { join, relative, resolve, sep } from "node:path";
 
 import type { DerivationsFile as RequestsFile, SeriesDerivation as RequestsDerivation, Point as RequestsPoint, Stats } from "../../methods/requests/v1/output";
+import { BENCHMARK_NAME, BENCHMARK_NAME_CHARACTERS } from "../../infra/runs/api-bucket";
 import { isServedKey } from "../../infra/runs/public-blobs";
 import { canonicalJson, compareText } from "../../methods/run";
 import type { DerivationsFile as SeriesFile, SeriesDerivation, Point as SeriesPoint, Stat } from "../../methods/v1/output";
@@ -86,8 +91,12 @@ export const NEWEST_RUNS = 12;
  * human starts the workflow by hand declaring a new baseline (its input
  * new_baseline), and even then no Series and no Run the tree before published
  * may be missing from it.
+ *
+ * 2, since 2026-11-25: every Series file and every row of the list gained the
+ * Series' boots, and every group of a Series file its counted and failed Runs
+ * and the starts of its oldest and newest Run. No month file's bytes changed.
  */
-export const LAYOUT = 1;
+export const LAYOUT = 2;
 
 /**
  * How many of the newest rounds of boots v1/index.json gives (recent_rounds):
@@ -131,11 +140,35 @@ export type SchemaName = (typeof API_SCHEMAS)[number]["name"];
 export const SCHEMA_IDS = {
 	index: "ledgermath.api.index/1",
 	"series-list": "ledgermath.api.series-list/1",
+	benchmark: "ledgermath.api.benchmark/1",
 	series: "ledgermath.api.series/1",
 	"series-month": "ledgermath.api.series-month/1",
 } as const;
 
+/**
+ * A benchmark's name as the address of its list of Series takes it
+ * (infra/runs/api-bucket.ts, BENCHMARK_NAME, which the edge serves): 1 to
+ * BENCHMARK_NAME_CHARACTERS characters, a lower-case letter, then lower-case
+ * letters, digits and underscores. The Series of a benchmark named otherwise
+ * are in the list of every Series alone, and counted (benchmarks.left_out).
+ */
+export const BENCHMARK_FILE_NAME = new RegExp(`^${BENCHMARK_NAME}$`);
+export { BENCHMARK_NAME_CHARACTERS };
+/**
+ * The most bytes a row may take, written as JSON with no white space (as its
+ * line in v1/series.json holds it, which takes as many bytes whatever the
+ * order of its members), to be listed in its benchmark's list of Series. A
+ * longer row is in v1/series.json alone, and its benchmark's list counts it
+ * (left_out): so what one Series' strings (its params, build, instance type
+ * and zone ID, taken from its Runs, none bounded by the Run schema) can add
+ * to a benchmark's list is bounded. The largest row on 2026-11-25 was 2,527
+ * bytes with its boots (http_get, with requests v1's pooled phases), the
+ * others up to 830.
+ */
+export const ROW_BYTES = 16_384;
+
 export const schemaPath = (name: SchemaName): string => `v1/schemas/${name}.schema.json`;
+export const benchmarkPath = (name: string): string => `v1/benchmarks/${name}.json`;
 export const seriesPath = (id: string): string => `v1/series/${id}.json`;
 export const monthPath = (id: string, month: string): string => `v1/series/${id}/${month}.json`;
 export const pricePath = (date: string): string => `v1/prices/${date}.json`;
@@ -160,12 +193,14 @@ export function monthOf(startedAt: string): string {
 
 export const VERSIONING =
 	"Version 1 only ever gains fields. A field, once in a v1 file, keeps its name, its type and its meaning, and a reader ignores any field it does not know: " +
-	"that is why no object in the schemas index, series-list, series and series-month forbids members it does not list. A new Method, or a new version of one, is a new key beside the old ones. " +
+	"that is why no object in the schemas index, series-list, benchmark, series and series-month forbids members it does not list. A new Method, or a new version of one, is a new key beside the old ones. " +
 	"A change that would break a reader is published as v2, beside v1. The price files are the exception: each is the day's price file as LedgerMath keeps it, byte for byte, " +
 	"and follows its own schema, ledgermath.prices/1, whose root and LedgerMath's own objects are closed (AWS's objects within it are open).";
 export const FIGURES =
 	"Every number is exactly as the Methods' Derivations hold it: nothing is rounded, and nothing is computed that the Derivations do not hold, " +
-	"apart from counts of a Series' Runs (in all, in a month, counted and not), the start times of its oldest and newest Run (in all, in a month), taken from its points, " +
+	"apart from counts of a Series' Runs (in all, in a month, in a group, counted and not) and of the boots they were made on, " +
+	"the start times of its oldest and newest Run (in all, in a month, in a group), taken from its points, " +
+	"the counts of each benchmark's Series and of their Runs and the start of their newest Run, and how many Series are in no benchmark's list (benchmarks), " +
 	"each month file's sha256 and size in bytes, and the counts of each of the newest rounds of boots (recent_rounds), taken from the boot summaries and the points. " +
 	"A duration is in nanoseconds of the Run's clock unless its field's name says otherwise; a moment is a UTC time, to the nanosecond, as the Run records it.";
 export const ABOUT =
@@ -236,6 +271,25 @@ export const ROUNDS =
 	`and becomes one round with the round before or after it when the boot started within ${ROUND_GAP_MINUTES} minutes of both, so that a round further back moves into the list or out of it. ` +
 	"A summary that arrives in conflict with one already read (naming its boot, or listing one of its Runs) takes that boot out of its round, which may split the round in two. " +
 	"A Run file that arrives late moves its Run from in no Series to counted or failed. And the list moves on as new rounds arrive, the oldest leaving it.";
+/** Where the Series are listed, and what a Series' id is and where a reader finds one, in the API's own words: v1/index.json's series.about. */
+export const SERIES_FILES =
+	"The list of every Series (url) gives one row per Series, and each benchmark's list (benchmarks) that benchmark's rows; a row gives the Series' identity, " +
+	"a summary of each Method's Derivation of it and the address of its file (url). A Series' id is 12 lower-case hex digits, " +
+	"the first of the sha256 of its key (benchmark, params, build, instance type, zone ID) as canonical JSON: a row gives it (id), as do the Series' file and a citation of the Series. " +
+	"A reader who holds an id and nothing else gets the Series' file at series_file_url_template, {id} replaced by the id. " +
+	"A Series' file gives the address of each of its month files, so no other address need be built.";
+/** What a benchmark's list of Series holds, and what is left out of every one, in the API's own words: v1/index.json's benchmarks.about. */
+export const BENCHMARKS =
+	"Each benchmark's Series are listed in a file of their own, v1/benchmarks/<benchmark>.json, at the url its entry of list gives: " +
+	"the benchmark's rows of the list of every Series, v1/series.json, byte for byte and in the same order, under a head like the list's (count, newest_run_started_at) with the benchmark's name and left_out, " +
+	"so that from this file a reader reaches any Series' figures in two requests: the benchmark's list, whose row of the Series gives a summary of each Method's Derivation of it " +
+	"and the address of its file, then that file. Each entry of list gives the benchmark's name, its list's address, how many Series the list holds (series), " +
+	"how many Runs they hold (runs) and when the newest of them started (newest_run_started_at). " +
+	`A benchmark has a list when its name is 1 to ${BENCHMARK_NAME_CHARACTERS} characters, a lower-case letter, then lower-case letters, digits and underscores; ` +
+	"the Series of a benchmark named otherwise are in v1/series.json alone. " +
+	`A Series is in its benchmark's list when its row takes at most ${ROW_BYTES} bytes written as JSON with no white space, as its line in v1/series.json holds it; ` +
+	"a longer one is in v1/series.json alone, and its benchmark's list counts it (left_out). left_out here counts every Series in no benchmark's list, for either reason. " +
+	"So what one Series can add to a benchmark's list, and one benchmark to this file, is bounded. Every Series, listed or not, has its own file.";
 export const EVIDENCE =
 	"The evidence is served under the same address as the API: each point links its Run file (evidence), at runs/<yyyy>/<mm>/<dd>/<id>.json, " +
 	"and its boot's summary (boot_summary), at boots/<yyyy>/<mm>/<dd>/<boot>.json. A Run file names its binary, streams and dumps by hash, sha256:<hex>; " +
@@ -393,13 +447,14 @@ export function apiShapes(schemas: ReadonlyMap<SchemaName, Uint8Array>): Shapes 
 		if (!isJson(schema)) throw new Error(`the schema ${name} is not a JSON object`);
 		return schema;
 	};
-	return { index: shape("index"), "series-list": shape("series-list"), series: shape("series"), "series-month": shape("series-month") };
+	return { index: shape("index"), "series-list": shape("series-list"), benchmark: shape("benchmark"), series: shape("series"), "series-month": shape("series-month") };
 }
 
 /** The schema a file of the tree is written by, from its path; undefined for a file the build copies (a price file, a schema) or no file of the tree. */
 export function writtenSchemaOf(path: string): WrittenSchema | undefined {
 	if (path === INDEX_PATH) return "index";
 	if (path === LIST_PATH) return "series-list";
+	if (/^v1\/benchmarks\/[^/]+\.json$/.test(path)) return "benchmark";
 	if (/^v1\/series\/[^/]+\.json$/.test(path)) return "series";
 	if (/^v1\/series\/[^/]+\/[^/]+\.json$/.test(path)) return "series-month";
 	return undefined;
@@ -486,6 +541,8 @@ interface RowRequestsV1 {
 export interface Row extends Pick<SeriesDerivation["series"], "id" | "benchmark" | "params" | "build" | "instance_type" | "availability_zone_id"> {
 	url: string;
 	runs: number;
+	/** The distinct boots its points name. */
+	boots: number;
 	oldest_run_started_at: string;
 	newest_run_started_at: string;
 	derivations: { series_v1: RowSeriesV1; requests_v1?: RowRequestsV1 };
@@ -777,9 +834,12 @@ function recentRounds(
  * not have, the two Methods citing different Runs for one Series, a point
  * that is not its Run, Runs out of time order, a price file's path or date
  * twice; on Derivations whose lists of Runs the tree leaves out could not
- * be recovered from it (recoverable(), asOfRun()). A boot summary never stops
- * it: one the rounds of boots cannot be told from is left out of them, and
- * listed (recentRounds()).
+ * be recovered from it (recoverable(), asOfRun()), or a group of no Run. A
+ * boot summary never stops it: one the rounds of boots cannot be told from is
+ * left out of them, and listed (recentRounds()). Nor does a Series' benchmark
+ * or row: a Series of a benchmark whose name the address does not take
+ * (BENCHMARK_FILE_NAME), or whose row is longer than ROW_BYTES, is in no
+ * benchmark's list, only in the list of every Series, and counted.
  */
 export function buildApi(sources: ApiSources): Map<string, Uint8Array> {
 	const base = normalizeBase(sources.base);
@@ -859,8 +919,23 @@ export function buildApi(sources: ApiSources): Map<string, Uint8Array> {
 			instance_type: derivation.series.instance_type,
 			availability_zone_id: derivation.series.availability_zone_id,
 		};
-		const head = { id, url: at(seriesPath(id)), ...identity, runs: derivation.runs.length, oldest_run_started_at: oldest, newest_run_started_at: latest };
+		const head = {
+			id,
+			url: at(seriesPath(id)),
+			...identity,
+			runs: derivation.runs.length,
+			boots: new Set(points.map((point) => point.boot)).size,
+			oldest_run_started_at: oldest,
+			newest_run_started_at: latest,
+		};
 		const ofRequests = requests.get(id);
+		/** A group's Runs, counted and not, and the starts of its oldest and newest, from its points (in time order): what its figures rest on. */
+		const groupSpan = (what: string, members: ReadonlyArray<{ started_at: string; counted: boolean }>) => {
+			const first = members[0];
+			const last = members[members.length - 1];
+			if (first === undefined || last === undefined) throw new Error(`Series ${id}: ${what} has no Run`);
+			return { ...pointCounts(members), oldest_run_started_at: first.started_at, newest_run_started_at: last.started_at };
+		};
 
 		const seriesCounts = pointCounts(points);
 		const seriesPercentiles = { time_per_repetition_ns: summary(derivation.percentiles.time_per_repetition_ns), bytes_per_second: summary(derivation.percentiles.bytes_per_second) };
@@ -929,6 +1004,7 @@ export function buildApi(sources: ApiSources): Map<string, Uint8Array> {
 			groups: derivation.groups.map((group) => ({
 				id: group.id,
 				facts: group.facts,
+				...groupSpan(`series v1's group ${group.id}`, points.filter((point) => point.group === group.id)),
 				percentiles: { time_per_repetition_ns: summary(group.percentiles.time_per_repetition_ns), bytes_per_second: summary(group.percentiles.bytes_per_second) },
 			})),
 			sections: derivation.sections,
@@ -949,7 +1025,12 @@ export function buildApi(sources: ApiSources): Map<string, Uint8Array> {
 						...requestsCounts,
 						recorded: ofRequests.recorded,
 						pool: ofRequests.pool,
-						groups: ofRequests.groups.map((group) => ({ id: group.id, facts: group.facts, pool: group.pool })),
+						groups: ofRequests.groups.map((group) => ({
+							id: group.id,
+							facts: group.facts,
+							...groupSpan(`requests v1's group ${group.id}`, ofRequests.points.filter((point) => point.group === group.id)),
+							pool: group.pool,
+						})),
 						newest_points: (requestsPoints as ApiRequestsPoint[]).slice(-NEWEST_RUNS),
 					};
 		files.set(
@@ -1008,6 +1089,46 @@ export function buildApi(sources: ApiSources): Map<string, Uint8Array> {
 		}, shapes["series-list"]),
 	);
 
+	// Each benchmark's list of Series: its rows of the list, in the list's order (benchmark first), each as the list writes it. A Series of a
+	// benchmark whose name the address does not take, or whose row is longer than ROW_BYTES, is in the list alone, and counted.
+	const ofBenchmark = new Map<string, Row[]>();
+	let inNoBenchmarkList = 0;
+	for (const row of rows) {
+		if (!BENCHMARK_FILE_NAME.test(row.benchmark)) {
+			inNoBenchmarkList++;
+			continue;
+		}
+		const known = ofBenchmark.get(row.benchmark);
+		if (known === undefined) ofBenchmark.set(row.benchmark, [row]);
+		else known.push(row);
+	}
+	const benchmarkEntries: Array<{ name: string; url: string; series: number; runs: number; newest_run_started_at: string | null }> = [];
+	for (const [name, ofIt] of [...ofBenchmark].sort(([a], [b]) => compareText(a, b))) {
+		const listed = ofIt.filter((row) => encoder.encode(JSON.stringify(row)).length <= ROW_BYTES);
+		inNoBenchmarkList += ofIt.length - listed.length;
+		let newestListed: string | null = null;
+		for (const row of listed) if (newestListed === null || compareText(row.newest_run_started_at, newestListed) > 0) newestListed = row.newest_run_started_at;
+		const url = at(benchmarkPath(name));
+		files.set(
+			benchmarkPath(name),
+			apiJson(
+				{
+					schema: SCHEMA_IDS.benchmark,
+					schema_url: at(schemaPath("benchmark")),
+					index: at(INDEX_PATH),
+					url,
+					benchmark: name,
+					count: listed.length,
+					left_out: ofIt.length - listed.length,
+					newest_run_started_at: newestListed,
+					series: listed,
+				},
+				shapes.benchmark,
+			),
+		);
+		benchmarkEntries.push({ name, url, series: listed.length, runs: listed.reduce((total, row) => total + row.runs, 0), newest_run_started_at: newestListed });
+	}
+
 	const prices = [...sources.prices].sort((a, b) => compareText(a.path, b.path));
 	const priceEntries: Array<{ date: string; path: string; url: string }> = [];
 	for (const price of prices) {
@@ -1045,6 +1166,15 @@ export function buildApi(sources: ApiSources): Map<string, Uint8Array> {
 				count: rows.length,
 				series_file_schema_url: at(schemaPath("series")),
 				month_file_schema_url: at(schemaPath("series-month")),
+				series_file_url_template: at(seriesPath("{id}")),
+				about: SERIES_FILES,
+			},
+			benchmarks: {
+				about: BENCHMARKS,
+				schema_url: at(schemaPath("benchmark")),
+				count: benchmarkEntries.length,
+				left_out: inNoBenchmarkList,
+				list: benchmarkEntries,
 			},
 			prices: {
 				schema_url: at(schemaPath("prices")),

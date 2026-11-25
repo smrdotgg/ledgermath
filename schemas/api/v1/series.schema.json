@@ -2,9 +2,9 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:ledgermath:api:v1:series",
   "title": "LedgerMath data API, version 1: one Series",
-  "description": "v1/series/<id>.json: one Series, its summary and its newest Runs. A Series is the Runs of one benchmark, parameter set (params), build, instance type and Availability Zone ID. Under derivations, keyed <method name>_v<version>, is each Method's Derivation of it, at the same paths and in the same words as LedgerMath's Method writes it, with the Method's own definitions beside it: the percentiles, the groups its split facts make and their facts and figures, how often each dump section changed, how many Runs it counts and does not, and the points of the newest Runs (newest_points; as many as newest_runs says). What grows with every Run is not here: every Run's point, and what differed between consecutive Runs, is in the file of the month the Run started in, which months lists with its address, and the Series' points are those of its month files, oldest month first. The lists of Run ids behind each percentile and in each group are not repeated either; each is recovered from those points by the rule its field's description gives. So the number of points this file holds is bounded, by newest_runs; its summaries still grow with what the data hold: a group for each new combination of the machine's split facts, a value for each new distinct value of a request fact, an entry in months for each month. Each point also gives the sha256 of its Run file and the addresses of its evidence: the Run file (evidence) and its boot's summary (boot_summary). Numbers are exactly as the Derivation holds them; a duration is in nanoseconds of the Run's clock unless its field's name says otherwise. The file changes when the Series gains a Run, a Method first applies to it or a Method's words change, or a boot summary of one of its Runs arrives (that month file's sha256 changes, and the point too when it is a newest one). Version 1 only ever gains fields: a field, once in a v1 file, keeps its name, its type and its meaning, and a reader ignores any field it does not know, which is why no object in this schema forbids members it does not list. A new Method, or a new version of one, is a new key beside the old ones. A change that would break a reader is published as v2, beside v1.",
+  "description": "v1/series/<id>.json: one Series, its summary and its newest Runs. A Series is the Runs of one benchmark, parameter set (params), build, instance type and Availability Zone ID. Under derivations, keyed <method name>_v<version>, is each Method's Derivation of it, at the same paths and in the same words as LedgerMath's Method writes it, with the Method's own definitions beside it: the percentiles, the groups its split facts make and their facts and figures, how often each dump section changed, how many Runs it counts and does not, and the points of the newest Runs (newest_points; as many as newest_runs says). What grows with every Run is not here: every Run's point, and what differed between consecutive Runs, is in the file of the month the Run started in, which months lists with its address, and the Series' points are those of its month files, oldest month first. The lists of Run ids behind each percentile and in each group are not repeated either; each is recovered from those points by the rule its field's description gives. So the number of points this file holds is bounded, by newest_runs; its summaries still grow with what the data hold: a group for each new combination of the machine's split facts, a value for each new distinct value of a request fact, an entry in months for each month. Each point also gives the sha256 of its Run file and the addresses of its evidence: the Run file (evidence) and its boot's summary (boot_summary). Numbers are exactly as the Derivation holds them; a duration is in nanoseconds of the Run's clock unless its field's name says otherwise. The file changes when the Series gains a Run, a Method first applies to it or a Method's words change, or a boot summary of one of its Runs arrives (that month file's sha256 changes, and the point too when it is a newest one), and when LedgerMath changes how the files are written (the layout of v1/index.json increases). Version 1 only ever gains fields: a field, once in a v1 file, keeps its name, its type and its meaning, and a reader ignores any field it does not know, which is why no object in this schema forbids members it does not list. A new Method, or a new version of one, is a new key beside the old ones. A change that would break a reader is published as v2, beside v1.",
   "type": "object",
-  "required": ["schema", "schema_url", "index", "id", "url", "benchmark", "params", "build", "instance_type", "availability_zone_id", "runs", "oldest_run_started_at", "newest_run_started_at", "newest_runs", "months", "derivations"],
+  "required": ["schema", "schema_url", "index", "id", "url", "benchmark", "params", "build", "instance_type", "availability_zone_id", "runs", "boots", "oldest_run_started_at", "newest_run_started_at", "newest_runs", "months", "derivations"],
   "properties": {
     "schema": { "description": "What this file is, and which version of its shape.", "const": "ledgermath.api.series/1" },
     "schema_url": { "description": "The address of this schema.", "$ref": "#/$defs/url" },
@@ -21,6 +21,7 @@
     "instance_type": { "description": "The EC2 instance type, as the provider names it.", "anyOf": [{ "type": "string" }, { "type": "null" }] },
     "availability_zone_id": { "description": "The Availability Zone ID, as the provider names it.", "anyOf": [{ "type": "string" }, { "type": "null" }] },
     "runs": { "description": "Runs in the Series, counted or not.", "type": "integer", "minimum": 1 },
+    "boots": { "description": "How many boots its Runs were made on: the distinct boots its points name, counted or not. A boot is one fresh machine; each point names its boot (boot) and links its summary (boot_summary).", "type": "integer", "minimum": 1 },
     "oldest_run_started_at": { "description": "When its oldest Run started.", "$ref": "#/$defs/time" },
     "newest_run_started_at": { "description": "When its newest Run started: the moment a citation of the Series as it stands names.", "$ref": "#/$defs/time" },
     "newest_runs": { "description": "How many of the Series' newest Runs each Method's newest_points holds: this many, or every Run when the Series has fewer. The same in every Series file.", "type": "integer", "minimum": 1 },
@@ -184,15 +185,23 @@
       }
     },
     "series_group": {
-      "description": "The Runs whose split facts are all equal. Lettered A, B, C… in the order each first appears; groups may interleave in time. Its Runs are not listed: they are the points whose group is its id, counted or not, in order of start, then Run id, as the month files hold them.",
+      "description": "The Runs whose split facts are all equal. Lettered A, B, C… in the order each first appears; groups may interleave in time. Its Runs are not listed: they are the points whose group is its id, counted or not, in order of start, then Run id, as the month files hold them. How many there are and when the oldest and newest started are given here, taken from those points: what its percentiles rest on.",
       "type": "object",
-      "required": ["id", "facts", "percentiles"],
+      "required": ["id", "facts", "counted_runs", "failed_runs", "oldest_run_started_at", "newest_run_started_at", "percentiles"],
       "properties": {
         "id": { "type": "string" },
         "facts": { "$ref": "#/$defs/facts" },
+        "counted_runs": { "$ref": "#/$defs/group_counted_runs" },
+        "failed_runs": { "$ref": "#/$defs/group_failed_runs" },
+        "oldest_run_started_at": { "$ref": "#/$defs/group_oldest_run_started_at" },
+        "newest_run_started_at": { "$ref": "#/$defs/group_newest_run_started_at" },
         "percentiles": { "$ref": "#/$defs/series_percentiles" }
       }
     },
+    "group_counted_runs": { "description": "Its Runs the Method counts: its points with counted true.", "type": "integer", "minimum": 0 },
+    "group_failed_runs": { "description": "Its Runs the Method does not count: its points with counted false. Its Runs, counted or not, number counted_runs and failed_runs together.", "type": "integer", "minimum": 0 },
+    "group_oldest_run_started_at": { "description": "When its oldest Run started, counted or not.", "$ref": "#/$defs/time" },
+    "group_newest_run_started_at": { "description": "When its newest Run started, counted or not.", "$ref": "#/$defs/time" },
     "section_counts": {
       "type": "object",
       "required": ["section", "runs", "changed_within_run", "pairs", "changed_between_runs", "split_on"],
@@ -260,12 +269,16 @@
         "groups": {
           "type": "array",
           "items": {
-            "description": "Method series v1's group of the same letter: the same Runs. Its Runs are not listed: they are the points whose group is its id, counted or not, in order of start, then Run id, as the month files hold them.",
+            "description": "Method series v1's group of the same letter: the same Runs. Its Runs are not listed: they are the points whose group is its id, counted or not, in order of start, then Run id, as the month files hold them. How many there are and when the oldest and newest started are given here, taken from this Method's points, which count Runs as this Method does: what its pooled figures rest on.",
             "type": "object",
-            "required": ["id", "facts", "pool"],
+            "required": ["id", "facts", "counted_runs", "failed_runs", "oldest_run_started_at", "newest_run_started_at", "pool"],
             "properties": {
               "id": { "type": "string" },
               "facts": { "$ref": "#/$defs/facts" },
+              "counted_runs": { "$ref": "#/$defs/group_counted_runs" },
+              "failed_runs": { "$ref": "#/$defs/group_failed_runs" },
+              "oldest_run_started_at": { "$ref": "#/$defs/group_oldest_run_started_at" },
+              "newest_run_started_at": { "$ref": "#/$defs/group_newest_run_started_at" },
               "pool": { "$ref": "#/$defs/pool" }
             }
           }

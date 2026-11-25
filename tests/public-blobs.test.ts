@@ -1063,15 +1063,18 @@ describe("the shapes of key served", () => {
 		expect(schema.source).toContain(`(?:${API_SCHEMAS.map((entry) => entry.name).join("|")})`);
 	});
 
-	test("serve ahead of the build only shapes no file of the tree has yet, each exactly, and nothing near them, at the edge as in the list", () => {
-		// No file the build writes is of a shape served ahead: not the golden tree's, the schemas it copies or a price file; nor is any key the tree's kinds take.
+	test("serve ahead of the build only shapes no file of the tree has yet (none now); and each benchmark's list of Series and its schema exactly, and nothing near them, at the edge as in the list", () => {
+		// No file the build writes is of a shape served ahead: not the golden tree's, the schemas it copies or a price file. A shape the build
+		// writes belongs in TREE_KINDS (a schema's name in API_SCHEMAS), which the upload and the check know.
 		const written = [...filesUnder(join(import.meta.dir, "api-golden")), ...API_SCHEMAS.map(({ name }) => `v1/schemas/${name}.schema.json`), "v1/prices/2026-11-19.json"];
 		expect(written.length).toBeGreaterThan(10);
 		for (const path of written) expect([path, SERVED_AHEAD.filter((kind) => kind.path.test(path)).map((kind) => kind.kind)]).toEqual([path, []]);
+		expect(SERVED_AHEAD).toEqual([]);
 		const longest = `a${"b_9".repeat((BENCHMARK_NAME_CHARACTERS - 1) / 3)}`;
 		expect(longest.length).toBe(BENCHMARK_NAME_CHARACTERS);
 		const served = ["v1/benchmarks/memory_read.json", "v1/benchmarks/a.json", "v1/benchmarks/compressed_memory_read.json", `v1/benchmarks/${longest}.json`, "v1/schemas/benchmark.schema.json"];
-		for (const key of served) expect([key, TREE_KINDS.filter((kind) => kind.path.test(key)).length, SERVED_AHEAD.filter((kind) => kind.path.test(key)).length]).toEqual([key, 0, 1]);
+		for (const key of served) expect([key, TREE_KINDS.filter((kind) => kind.path.test(key)).length]).toEqual([key, 1]);
+		expect(written).toContain("v1/benchmarks/memory_read.json");
 		const refused = [
 			"v1/benchmarks/.json",
 			`v1/benchmarks/${longest}c.json`,

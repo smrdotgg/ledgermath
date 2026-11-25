@@ -1,0 +1,13 @@
+{
+  "schema": "ledgermath.api.benchmark/1",
+  "schema_url": "https://api.ledgermath.com/v1/schemas/benchmark.schema.json",
+  "index": "https://api.ledgermath.com/v1/index.json",
+  "url": "https://api.ledgermath.com/v1/benchmarks/memory_read.json",
+  "benchmark": "memory_read",
+  "count": 1,
+  "left_out": 0,
+  "newest_run_started_at": "2026-12-01T04:12:00.000000000Z",
+  "series": [
+    {"id":"0cacb5fd6fae","url":"https://api.ledgermath.com/v1/series/0cacb5fd6fae.json","benchmark":"memory_read","params":{"path":"scalar","size_bytes":1073741824,"threads":1},"build":"static","instance_type":"c6i.8xlarge","availability_zone_id":"use2-az3","runs":5,"boots":5,"oldest_run_started_at":"2026-11-12T04:12:00.000000000Z","newest_run_started_at":"2026-12-01T04:12:00.000000000Z","derivations":{"series_v1":{"method":{"name":"series","version":1},"counted_runs":4,"failed_runs":1,"groups":2,"percentiles":{"time_per_repetition_ns":{"count":4,"p5":70760,"p50":77510,"p95":88510},"bytes_per_second":{"count":4,"p5":12152782656728.514,"p50":13867372160775.598,"p95":15183628584843.64}}}}}
+  ]
+}

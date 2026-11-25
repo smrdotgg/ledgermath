@@ -15,7 +15,7 @@ import { dirname, join } from "node:path";
 
 import type { DerivationsFile as RequestsFile } from "../methods/requests/v1/output";
 import type { DerivationsFile as SeriesFile } from "../methods/v1/output";
-import { type ApiSources, apiJson, buildApi, DEFAULT_BASE, monthPath, readApiSchemas, readBootFiles, readBootSummaries, readPriceFiles, seriesPath } from "../scripts/lib/api";
+import { type ApiSources, apiJson, buildApi, DEFAULT_BASE, LAYOUT, monthPath, readApiSchemas, readBootFiles, readBootSummaries, readPriceFiles, seriesPath } from "../scripts/lib/api";
 import { checkApi, checkStability } from "../scripts/lib/api-check";
 import { type ApiFixture, makeApiFixture } from "./api-fixtures";
 
@@ -264,8 +264,15 @@ describe("3. the previous tree is whole, and its history is honoured across a ch
 		expect(checkStability(missing, directory, { newBaseline: true }).problems).toEqual([]);
 		// A tree of a later layout.
 		const later = copyOf(directory);
-		writeFileSync(join(later, "v1/index.json"), written("v1/index.json", { ...readJson(later, "v1/index.json"), layout: 2 }));
-		expect(checkStability(later, directory).problems).toEqual([expect.stringContaining(`${later} is a tree of layout 2, this tree of layout 1`)]);
+		writeFileSync(join(later, "v1/index.json"), written("v1/index.json", { ...readJson(later, "v1/index.json"), layout: LAYOUT + 1 }));
+		expect(checkStability(later, directory).problems).toEqual([expect.stringContaining(`${later} is a tree of layout ${LAYOUT + 1}, this tree of layout ${LAYOUT}`)]);
+		// A tree of the layout before, as the first run after a raise of layout finds the tree the run before kept: refused, unless declared;
+		// declared, its Series and Runs are all still here.
+		const earlier = copyOf(directory);
+		writeFileSync(join(earlier, "v1/index.json"), written("v1/index.json", { ...readJson(earlier, "v1/index.json"), layout: LAYOUT - 1 }));
+		expect(checkStability(earlier, directory).problems).toEqual([expect.stringContaining(`${earlier} is a tree of layout ${LAYOUT - 1}, this tree of layout ${LAYOUT}`)]);
+		const raised = checkStability(earlier, directory, { newBaseline: true });
+		expect([raised.compared, raised.problems, raised.published]).toEqual([false, [], { series: 3, runs: 9, monthFiles: 5, seriesFilesWithPoints: 0, unread: 0 }]);
 		// The layout on main before the split: no layout in the index, every point in the Series file, no month file.
 		const before = writeTree(tree, (path) => !/^v1\/series\//.test(path));
 		const index = readJson(before, "v1/index.json");
@@ -279,7 +286,7 @@ describe("3. the previous tree is whole, and its history is honoured across a ch
 			mkdirSync(join(before, "v1", "series"), { recursive: true });
 			writeFileSync(join(before, seriesPath(id)), heldOrder(file));
 		}
-		expect(checkStability(before, directory).problems).toEqual([expect.stringContaining(`${before} is a tree of layout none (it was written before layout was), this tree of layout 1`)]);
+		expect(checkStability(before, directory).problems).toEqual([expect.stringContaining(`${before} is a tree of layout none (it was written before layout was), this tree of layout ${LAYOUT}`)]);
 		const declared = checkStability(before, directory, { newBaseline: true });
 		expect([declared.compared, declared.problems, declared.published]).toEqual([false, [], { series: 3, runs: 9, monthFiles: 0, seriesFilesWithPoints: 3, unread: 0 }]);
 		const lostSeries = checkStability(before, lost, { newBaseline: true });

@@ -27,7 +27,9 @@
  *   are the same.
  * - The table of contents gives the layout this build writes (LAYOUT).
  * - The tree holds exactly the files it should: the table of contents, the
- *   list, the six schemas, one Series file per Series of either file of
+ *   list, one list per benchmark whose name the address takes (1 to 64
+ *   characters, a lower-case letter, then lower-case letters, digits and
+ *   underscores), the seven schemas, one Series file per Series of either file of
  *   Derivations, one month file per month in which a Run of that Series
  *   started (UTC, by the Run's start), and one per price file in the
  *   checkout; nothing else. Each is reached from the table of contents by
@@ -51,14 +53,16 @@
  *   is in exactly one month file, that of the month it started in; each
  *   entry for a pair is filed under the month of its later Run.
  * - Each Series file equals what the Derivations hold for its Series: its
- *   identity, its count of Runs and the starts of its oldest and newest Run;
+ *   identity, its count of Runs and of the boots its points name, and the
+ *   starts of its oldest and newest Run;
  *   newest_runs, the design's 12; its months, exactly the month files of the
  *   tree, each with its address, count of Runs, oldest and newest start, and
  *   the sha256 and size of the month file as the tree holds it;
  *   under derivations, one key per Method that derives the Series, and under
  *   each the Method's words and its summary, value for value (the
  *   percentiles and groups without their lists of Runs; counted and failed
- *   Runs counted from the points); and the points of the newest 12 Runs,
+ *   Runs counted from the points, for the Series and for each group, with
+ *   each group's oldest and newest start); and the points of the newest 12 Runs,
  *   equal to the same points in the month files and to the Derivations'.
  * - What a Series file leaves out is recoverable from its month files: the
  *   Runs behind each of series v1's percentiles are the counted points (of
@@ -79,10 +83,18 @@
  *   row per Series, in the order of benchmark, instance type, zone ID,
  *   params, build; and each row's url is the address of the file of its id,
  *   and agrees with that file on every field they share.
+ * - Each benchmark's list holds the rows of that benchmark's Series that take
+ *   at most 16,384 bytes written as JSON with no white space, in the list's
+ *   order, each the row its Series file makes (so the list's, byte for byte),
+ *   and counts the rest as left out; its count and newest Run are right.
  * - The table of contents lists exactly the price files and the schemas the
  *   tree holds, with the newest price file marked, counts the Series right,
- *   gives every address as the base and the file's path, and gives the docs
- *   as an absolute https address with a host.
+ *   gives every address as the base and the file's path, gives the template
+ *   of a Series file's address as exactly the base and
+ *   /v1/series/{id}.json, gives each benchmark's list with its count of
+ *   Series and of their Runs and its newest Run, counts the Series in no
+ *   benchmark's list (a benchmark named otherwise, a row too long), and gives
+ *   the docs as an absolute https address with a host.
  * - The table of contents' recent_rounds holds, value for value, the newest
  *   rounds of boots and the boot summaries left out of them, as the
  *   checkout's boot summaries and the Derivations make them by the design
@@ -157,6 +169,7 @@ const ROOT = resolve(import.meta.dir, "..", "..");
 // The tree's layout, as ADR-0030 gives it.
 const INDEX = "v1/index.json";
 const LIST = "v1/series.json";
+const benchmarkFile = (name: string): string => `v1/benchmarks/${name}.json`;
 const seriesFile = (id: string): string => `v1/series/${id}.json`;
 const monthFile = (id: string, month: string): string => `v1/series/${id}/${month}.json`;
 const priceFile = (date: string): string => `v1/prices/${date}.json`;
@@ -170,6 +183,7 @@ const schemaFile = (name: string): string => `v1/schemas/${name}.schema.json`;
 const SCHEMAS = [
 	{ name: "index", describes: "v1/index.json", source: "schemas/api/v1/index.schema.json", closed: true },
 	{ name: "series-list", describes: "v1/series.json", source: "schemas/api/v1/series-list.schema.json", closed: true },
+	{ name: "benchmark", describes: "v1/benchmarks/<benchmark>.json", source: "schemas/api/v1/benchmark.schema.json", closed: true },
 	{ name: "series", describes: "v1/series/<id>.json", source: "schemas/api/v1/series.schema.json", closed: true },
 	{ name: "series-month", describes: "v1/series/<id>/<yyyy-mm>.json", source: "schemas/api/v1/series-month.schema.json", closed: true },
 	{ name: "prices", describes: "v1/prices/<yyyy-mm-dd>.json", source: "schemas/prices.schema.json", closed: false },
@@ -177,6 +191,11 @@ const SCHEMAS = [
 ] as const;
 type SchemaName = (typeof SCHEMAS)[number]["name"];
 const SERIES_PATH = /^v1\/series\/([^/]+)\.json$/;
+const BENCHMARK_PATH = /^v1\/benchmarks\/([^/]+)\.json$/;
+/** By the design: a benchmark has a list of its own when its name is 1 to 64 characters, a lower-case letter, then lower-case letters, digits and underscores. */
+const BENCHMARK_NAME = /^[a-z][a-z0-9_]{0,63}$/;
+/** By the design: a Series is in its benchmark's list when its row takes at most this many bytes written as JSON with no white space. */
+const ROW_BYTES = 16_384;
 const MONTH_PATH = /^v1\/series\/([^/]+)\/([^/]+)\.json$/;
 const TREE_PRICE = /^v1\/prices\/([0-9]{4})-([0-9]{2})-([0-9]{2})\.json$/;
 const SCHEMA_PATH = /^v1\/schemas\/[^/]+\.schema\.json$/;
@@ -233,14 +252,21 @@ export const CEILINGS: ReadonlyArray<{ kind: string; path: RegExp; bytes: number
 		path: /^v1\/index\.json$/,
 		bytes: 100_000,
 		whenHit:
-			"it was 6.3 KB with 9 price files on 2026-11-19, and 23.6 KB with 14 on 2026-11-24, once it gave the newest rounds of boots (13.3 KB for 8 rounds of five boots, about 300 bytes a boot: it grows with the boots a round holds, not with time; the summaries left out are at most 8 listed, each with one of a fixed few sentences); each day's price file adds 124 bytes to its list, which brings it here about 20 months on; listing the price files by month, as the Series are, changes v1's shape (v2), so decide that with the maintainer, and if the rounds grew, ask why a round holds so many boots before giving fewer",
+			"it was 6.3 KB with 9 price files on 2026-11-19, and 23.6 KB with 14 on 2026-11-24, once it gave the newest rounds of boots (13.3 KB for 8 rounds of five boots, about 300 bytes a boot: it grows with the boots a round holds, not with time; the summaries left out are at most 8 listed, each with one of a fixed few sentences); 29.3 KB with 15 on 2026-11-25, once it listed each benchmark's list (2.4 KB for 14 benchmarks, about 170 bytes a benchmark and at most about 310, and 2.3 KB of words); each day's price file adds 124 bytes to its list, which brings it here about 19 months on; listing the price files by month, as the Series are, changes v1's shape (v2), so decide that with the maintainer; if the rounds grew, ask why a round holds so many boots before giving fewer; if the benchmarks did, the list of them is what to move to a file of its own",
 	},
 	{
 		kind: "the list of Series",
 		path: /^v1\/series\.json$/,
 		bytes: 1_000_000,
 		whenHit:
-			"a row is about 1 KB, so this is about 950 Series; splitting the list (by benchmark, say) changes what v1/series.json holds, a v2 change, so decide it with the maintainer",
+			"a row is about 1 KB, so this is about 950 Series; splitting the list (by benchmark, say) changes what v1/series.json holds, a v2 change, so decide it with the maintainer; each benchmark's list already holds its rows, so a reader seldom needs this one",
+	},
+	{
+		kind: "a benchmark's list of Series",
+		path: BENCHMARK_PATH,
+		bytes: 256_000,
+		whenHit:
+			"a row it lists takes at most 16,384 bytes, and took up to 830 bytes, or 2,527 for http_get with requests v1's pooled phases, on 2026-11-25, so this is about 100 Series of requests or 300 of the others; the largest list was http_get's, 57 KB for 25 Series, that day: the benchmark runs on more machine types or parameter sets than then, or its rows grew; splitting a benchmark's list (by instance type, say) changes what its address holds, a v2 change, so decide it with the maintainer",
 	},
 	{
 		kind: "a Series file",
@@ -486,9 +512,23 @@ export function checkApi(sources: CheckSources): CheckResult {
 		.filter((path) => PRICE_FILE_PATH.test(path));
 	const dateOf = (path: string): string => path.replace(PRICE_FILE_PATH, "$1-$2-$3");
 	const ofWhich = (id: string): string => (seriesV1.has(id) ? "series v1" : "requests v1");
+	/** Each benchmark that has a list of its own, by the design: its name is one the address takes. Its Series, in the Derivations' id order. */
+	const byBenchmark = new Map<string, string[]>();
+	/** Series of a benchmark whose name the address does not take: in no benchmark's list. */
+	let unnamed = 0;
+	for (const id of ids) {
+		const name = lead(id).series.benchmark;
+		if (typeof name !== "string" || !BENCHMARK_NAME.test(name)) {
+			unnamed++;
+			continue;
+		}
+		byBenchmark.set(name, [...(byBenchmark.get(name) ?? []), id]);
+	}
+	const benchmarkNames = [...byBenchmark.keys()].sort(byText);
 	const expected = new Map<string, string>([
 		[INDEX, "the table of contents"],
 		[LIST, "the list of Series"],
+		...benchmarkNames.map((name) => [benchmarkFile(name), `the list of benchmark ${name}`] as [string, string]),
 		...SCHEMAS.map(({ name }) => [schemaFile(name), `the schema ${name}`] as [string, string]),
 		...ids.map((id) => [seriesFile(id), `Series ${id} of ${ofWhich(id)}`] as [string, string]),
 		...ids.flatMap((id) => [...(monthsOf.get(id)?.keys() ?? [])].map((month) => [monthFile(id, month), `the month ${month} of Series ${id}`] as [string, string])),
@@ -499,7 +539,9 @@ export function checkApi(sources: CheckSources): CheckResult {
 		if (expected.has(path)) continue;
 		const series = SERIES_PATH.exec(path);
 		const month = MONTH_PATH.exec(path);
-		if (series) problems.push(`${path} is in the tree, but Series ${series[1]} is in neither file of Derivations`);
+		const benchmark = BENCHMARK_PATH.exec(path);
+		if (benchmark) problems.push(`${path} is in the tree, but no Series of either file of Derivations is of a benchmark named ${benchmark[1]} that the address takes`);
+		else if (series) problems.push(`${path} is in the tree, but Series ${series[1]} is in neither file of Derivations`);
 		else if (month && monthsOf.has(month[1] as string)) problems.push(`${path} is in the tree, but no Run of Series ${month[1]} started in ${month[2]}`);
 		else if (month) problems.push(`${path} is in the tree, but Series ${month[1]} is in neither file of Derivations`);
 		else problems.push(`${path} is in the tree, but is no file the tree should hold`);
@@ -656,6 +698,8 @@ export function checkApi(sources: CheckSources): CheckResult {
 	// The table of contents.
 	/** The schemas the table of contents lists; undefined when it could not be read. */
 	let listedSchemas: Json[] | undefined;
+	/** The table of contents, read: its benchmarks are checked once the Series files have said what each row is. */
+	let indexValue: Json | undefined;
 	if (held.has(INDEX)) {
 		const index = parse(INDEX);
 		if (index !== undefined) {
@@ -667,6 +711,7 @@ export function checkApi(sources: CheckSources): CheckResult {
 				.filter((match): match is RegExpExecArray => match !== null)
 				.map((match) => ({ date: `${match[1]}-${match[2]}-${match[3]}`, path: `prices/${match[1]}/${match[2]}/${match[3]}/aws.json`, url: address(match[0]) }));
 			const ofIndex = (key: string): Json => (isObject(value[key]) ? value[key] : {});
+			indexValue = value;
 			compare(
 				INDEX,
 				value,
@@ -681,6 +726,10 @@ export function checkApi(sources: CheckSources): CheckResult {
 						count: ids.length,
 						series_file_schema_url: address(schemaFile("series")),
 						month_file_schema_url: address(schemaFile("series-month")),
+						// Not a file: the address of a Series' file with its id left out, which the Series files' own addresses fill in.
+						series_file_url_template: `${base}/v1/series/{id}.json`,
+						// Words, whose type the schema checks.
+						about: ofIndex("series").about,
 					},
 					schemas: SCHEMAS.filter(({ name }) => held.has(schemaFile(name))).map(({ name, describes }) => ({ name, describes, url: address(schemaFile(name)) })),
 				},
@@ -978,6 +1027,7 @@ export function checkApi(sources: CheckSources): CheckResult {
 				url: address(path),
 				...identity,
 				runs: derivation.runs.length,
+				boots: new Set(derivation.points.map((point) => point.boot)).size,
 				...(times === undefined ? {} : { oldest_run_started_at: times.oldest, newest_run_started_at: times.newest }),
 				newest_runs: NEWEST_RUNS,
 				months: monthEntries,
@@ -992,6 +1042,13 @@ export function checkApi(sources: CheckSources): CheckResult {
 		for (const month of heldMonths) if (!listedPaths.has(monthFile(id, month))) problems.push(`${path} does not list its month file ${monthFile(id, month)} among its months`);
 		const derivations = isObject(file.derivations) ? file.derivations : {};
 		members(`${path}: derivations`, derivations, methods.map(({ key }) => key));
+		/** What a group's figures rest on, from the Method's points of its letter: its Runs counted and not, and the starts of its oldest and newest. */
+		const restsOn = (name: string, points: readonly AnyPoint[], letter: string): Json => {
+			const ofGroup = points.filter((point) => point.group === letter);
+			const starts = ofGroup.map((point) => point.started_at).sort(byText);
+			if (starts.length === 0) problems.push(`${path}: ${name}'s group ${letter} has no point in its Derivation of Series ${id}`);
+			return { ...counts(ofGroup), oldest_run_started_at: starts[0], newest_run_started_at: starts[starts.length - 1] };
+		};
 		const parts: Record<string, Json> = {
 			...(ofSeries === undefined
 				? {}
@@ -1004,7 +1061,7 @@ export function checkApi(sources: CheckSources): CheckResult {
 							not_split_on: sources.series.not_split_on,
 							...counts(ofSeries.points),
 							percentiles: percentileSummaries(ofSeries.percentiles),
-							groups: ofSeries.groups.map((group) => ({ id: group.id, facts: group.facts, percentiles: percentileSummaries(group.percentiles) })),
+							groups: ofSeries.groups.map((group) => ({ id: group.id, facts: group.facts, ...restsOn("series v1", ofSeries.points, group.id), percentiles: percentileSummaries(group.percentiles) })),
 							sections: ofSeries.sections,
 						},
 					}),
@@ -1023,7 +1080,7 @@ export function checkApi(sources: CheckSources): CheckResult {
 							...counts(ofRequests.points),
 							recorded: ofRequests.recorded,
 							pool: ofRequests.pool,
-							groups: ofRequests.groups.map((group) => ({ id: group.id, facts: group.facts, pool: group.pool })),
+							groups: ofRequests.groups.map((group) => ({ id: group.id, facts: group.facts, ...restsOn("requests v1", ofRequests.points, group.id), pool: group.pool })),
 						},
 					}),
 		};
@@ -1055,7 +1112,24 @@ export function checkApi(sources: CheckSources): CheckResult {
 		}
 	}
 
+	/** The order of the rows of a list, by the design: benchmark, instance type, zone ID, params, build, then id. */
+	const byListOrder = (a: string, b: string): number => {
+		const order = (id: string): string[] => {
+			const { series } = lead(id);
+			return [series.benchmark, series.instance_type ?? "", series.availability_zone_id ?? "", canonical(series.params), series.build, id];
+		};
+		const x = order(a);
+		const y = order(b);
+		for (let i = 0; i < x.length; i++) {
+			const by = byText(x[i] as string, y[i] as string);
+			if (by !== 0) return by;
+		}
+		return 0;
+	};
+
 	// The list.
+	/** Each row of the list, by Series id: what each benchmark's list must repeat. */
+	const rowsOfList = new Map<string, Json>();
 	if (held.has(LIST)) {
 		const list = parse(LIST);
 		if (list !== undefined) {
@@ -1124,6 +1198,7 @@ export function checkApi(sources: CheckSources): CheckResult {
 				rowIds.add(id);
 				if (!seriesV1.has(id) && !requestsV1.has(id)) problems.push(`${LIST} has a row for Series ${id}, which is in neither file of Derivations`);
 				if (!isObject(row)) continue;
+				rowsOfList.set(id, row);
 				link(LIST, row.url);
 				if (row.url !== address(seriesFile(id))) problems.push(`${LIST}: the row of Series ${id} has url ${show(row.url)}, not ${address(seriesFile(id))}, the address of its file`);
 				const ofFile = rowsOfFiles.get(id);
@@ -1131,24 +1206,61 @@ export function checkApi(sources: CheckSources): CheckResult {
 				if (found !== null) problems.push(`${LIST}: the row of Series ${id} differs from its file ${seriesFile(id)}: ${found}`);
 			}
 			for (const id of ids) if (!rowIds.has(id)) problems.push(`${LIST} has no row for Series ${id} of ${ofWhich(id)}`);
-			const order = (id: string): string[] => {
-				const { series } = lead(id);
-				return [series.benchmark, series.instance_type ?? "", series.availability_zone_id ?? "", canonical(series.params), series.build, id];
-			};
-			const inOrder = ids
-				.filter((id) => rowIds.has(id))
-				.sort((a, b) => {
-					const x = order(a);
-					const y = order(b);
-					for (let i = 0; i < x.length; i++) {
-						const by = byText(x[i] as string, y[i] as string);
-						if (by !== 0) return by;
-					}
-					return 0;
-				});
+			const inOrder = ids.filter((id) => rowIds.has(id)).sort(byListOrder);
 			const listed = rows.map((row: unknown) => (isObject(row) ? String(row.id) : "")).filter((id: string) => inOrder.includes(id));
 			if (listed.join("\n") !== inOrder.join("\n")) problems.push(`${LIST}: the rows are not in the order of benchmark, instance type, zone ID, params, build`);
 		}
+	}
+
+	// Each benchmark's list: the rows of its Series that take at most ROW_BYTES written as JSON with no white space, in the list's order, each the
+	// Series' row as its file makes it (and so as the list holds it, byte for byte, both being written by the same definition of a row); and the
+	// table of contents' entry of it. A row is measured as its Series file makes it, or, when that file could not be read, as the list holds it.
+	const rowOfSeries = (id: string): Json | undefined => rowsOfFiles.get(id) ?? rowsOfList.get(id);
+	const rowBytes = (id: string): number | undefined => {
+		const row = rowOfSeries(id);
+		return row === undefined ? undefined : new TextEncoder().encode(JSON.stringify(row)).length;
+	};
+	const benchmarkEntries: Json[] = [];
+	let inNoBenchmarkList = unnamed;
+	for (const name of benchmarkNames) {
+		const all = [...(byBenchmark.get(name) ?? [])].sort(byListOrder);
+		const listed = all.filter((id) => (rowBytes(id) ?? 0) <= ROW_BYTES);
+		const leftOut = all.length - listed.length;
+		inNoBenchmarkList += leftOut;
+		const newestListed = listed.map((id) => span.get(id)?.newest).filter((time): time is string => time !== undefined).sort(byText).at(-1) ?? null;
+		const path = benchmarkFile(name);
+		benchmarkEntries.push({ name, url: address(path), series: listed.length, runs: listed.reduce((total, id) => total + lead(id).runs.length, 0), newest_run_started_at: newestListed });
+		if (!held.has(path)) continue;
+		const file = parse(path);
+		if (file === undefined) continue;
+		validate(path, file, "benchmark");
+		const value = isObject(file) ? file : {};
+		compare(
+			path,
+			value,
+			{ schema: "ledgermath.api.benchmark/1", schema_url: address(schemaFile("benchmark")), index: address(INDEX), url: address(path), benchmark: name, count: listed.length, left_out: leftOut, newest_run_started_at: newestListed },
+			"the tree and the Derivations make it",
+		);
+		for (const url of [value.schema_url, value.index, value.url]) link(path, url);
+		const rows = (Array.isArray(value.series) ? value.series : []).filter(isObject);
+		const ofRows = rows.map((row) => String(row.id));
+		if (ofRows.join("\n") !== listed.join("\n")) {
+			problems.push(
+				`${path} lists the Series ${show(ofRows)}, not ${show(listed)}: the Series of benchmark ${name} whose rows take at most ${ROW_BYTES} bytes written as JSON with no white space, in the order of instance type, zone ID, params, build`,
+			);
+		}
+		for (const row of rows) {
+			link(path, row.url);
+			const want = rowOfSeries(String(row.id));
+			const found = want === undefined ? null : difference(row, want);
+			if (found !== null) problems.push(`${path}: the row of Series ${String(row.id)} is not the one its file ${seriesFile(String(row.id))} makes, as ${LIST} holds it: ${found}`);
+		}
+	}
+	if (indexValue !== undefined) {
+		const ofBenchmarks = isObject(indexValue.benchmarks) ? indexValue.benchmarks : {};
+		compare(`${INDEX}: benchmarks`, ofBenchmarks, { schema_url: address(schemaFile("benchmark")), count: benchmarkEntries.length, left_out: inNoBenchmarkList, list: benchmarkEntries }, "the tree and the Derivations make it");
+		link(INDEX, ofBenchmarks.schema_url);
+		for (const entry of Array.isArray(ofBenchmarks.list) ? ofBenchmarks.list : []) if (isObject(entry)) link(INDEX, entry.url);
 	}
 
 	for (const path of checkoutPrices) {
@@ -1433,6 +1545,7 @@ function rowOf(file: Json): Json {
 		instance_type: file.instance_type,
 		availability_zone_id: file.availability_zone_id,
 		runs: file.runs,
+		boots: file.boots,
 		oldest_run_started_at: file.oldest_run_started_at,
 		newest_run_started_at: file.newest_run_started_at,
 		derivations: {

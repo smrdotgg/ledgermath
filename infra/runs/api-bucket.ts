@@ -61,14 +61,15 @@ export const TREE_CACHE_CONTROL = "public, max-age=300";
  * of the next, so that a reader who starts at the table of contents and
  * follows links down never finds one to a file that is not there yet. Each
  * file links down only to files of earlier phases: a month file to its
- * schema; a Series file to its month files and its schema; the list to the
- * Series files; the table of contents to the list, the price files and the
- * schemas. The links up (to the table of contents, the list, a month file's
- * own Series file) are to files a reader has come through; on the first
- * upload, or for a Series new this round, they are written a phase or more
- * later, and nothing links down to the files that carry them until then.
+ * schema; a Series file to its month files and its schema; the list, and
+ * each benchmark's list, to the Series files; the table of contents to the
+ * lists, the price files and the schemas. The links up (to the table of
+ * contents, the list, a month file's own Series file) are to files a reader
+ * has come through; on the first upload, or for a Series new this round,
+ * they are written a phase or more later, and nothing links down to the
+ * files that carry them until then.
  */
-export const UPLOAD_PHASES = ["schemas", "month files and price files", "Series files", "the list of Series", "the table of contents"] as const;
+export const UPLOAD_PHASES = ["schemas", "month files and price files", "Series files", "the lists of Series", "the table of contents"] as const;
 
 export interface TreeKind {
 	kind: string;
@@ -127,6 +128,7 @@ export const TREE_KINDS: readonly TreeKind[] = [
 	{ kind: "a price file", path: new RegExp(`^v1\\/prices\\/${calendarDate("-")}\\.json$`), phase: 1 },
 	{ kind: "a Series file", path: /^v1\/series\/[0-9a-f]{12}\.json$/, phase: 2 },
 	{ kind: "the list of Series", path: /^v1\/series\.json$/, phase: 3 },
+	{ kind: "a benchmark's list of Series", path: new RegExp(`^v1\\/benchmarks\\/${BENCHMARK_NAME}\\.json$`), phase: 3 },
 	{ kind: "the table of contents", path: /^v1\/index\.json$/, phase: 4 },
 ];
 
@@ -149,13 +151,11 @@ export interface AheadKind {
  * served shape. When the build writes it, its shape moves to TREE_KINDS (a
  * schema's name to API_SCHEMAS), and leaves this list.
  *
- * Now: each benchmark's list of Series, v1/benchmarks/<benchmark>.json, and
- * its schema.
+ * Now: none. Each benchmark's list of Series, v1/benchmarks/<benchmark>.json,
+ * and its schema were the first served so, and moved to TREE_KINDS and
+ * API_SCHEMAS when the build began writing them.
  */
-export const SERVED_AHEAD: readonly AheadKind[] = [
-	{ kind: "a benchmark's list of Series", path: new RegExp(`^v1\\/benchmarks\\/${BENCHMARK_NAME}\\.json$`) },
-	{ kind: "the schema of a benchmark's list of Series", path: /^v1\/schemas\/benchmark\.schema\.json$/ },
-];
+export const SERVED_AHEAD: readonly AheadKind[] = [];
 
 export interface TreeObject {
 	kind: string;
