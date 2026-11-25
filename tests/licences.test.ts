@@ -99,6 +99,19 @@ describe("THIRD-PARTY-NOTICES.md", () => {
 		}
 	});
 
+	test("names every font the website serves, with its sha256, and the site's own notices carry it", () => {
+		const listed = spawnSync("git", ["ls-files", "-z", "site/src", "site/public"], { cwd: ROOT, encoding: "utf8" });
+		if (listed.status !== 0) throw new Error(`git ls-files failed: ${listed.stderr}`);
+		const fonts = listed.stdout.split("\0").filter((path) => /\.(woff2?|ttf|otf|eot)$/i.test(path));
+		expect(fonts.length).toBeGreaterThan(0);
+		const siteNotices = read("site/public/third-party-notices.txt").toString("utf8");
+		for (const font of fonts) {
+			expect(notices).toContain(`\`${font}\``);
+			expect(notices).toContain(`\`${sha256(font)}\``);
+			expect(siteNotices).toContain(basename(font));
+		}
+	});
+
 	test("the sample Runs, recorded at the pinned release, list the binary package each source package is for", () => {
 		const dumps: string[] = [];
 		for (const sample of readdirSync(join(ROOT, "tests", "samples"), { withFileTypes: true })) {
