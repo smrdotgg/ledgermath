@@ -1,0 +1,35 @@
+{
+  "schema": "ledgermath.api.series-month/1",
+  "schema_url": "https://api.ledgermath.com/v1/schemas/series-month.schema.json",
+  "index": "https://api.ledgermath.com/v1/index.json",
+  "id": "0cacb5fd6fae",
+  "month": "2026-12",
+  "url": "https://api.ledgermath.com/v1/series/0cacb5fd6fae/2026-12.json",
+  "series_url": "https://api.ledgermath.com/v1/series/0cacb5fd6fae.json",
+  "benchmark": "memory_read",
+  "params": {
+    "path": "scalar",
+    "size_bytes": 1073741824,
+    "threads": 1
+  },
+  "build": "static",
+  "instance_type": "c6i.8xlarge",
+  "availability_zone_id": "use2-az3",
+  "runs": 1,
+  "oldest_run_started_at": "2026-12-01T04:12:00.000000000Z",
+  "newest_run_started_at": "2026-12-01T04:12:00.000000000Z",
+  "derivations": {
+    "series_v1": {
+      "method": {
+        "name": "series",
+        "version": 1
+      },
+      "points": [
+        {"run":"01a22fcd-6680-76da-8dac-cbb103294f39","path":"runs/2026/12/01/01a22fcd-6680-76da-8dac-cbb103294f39.json","sha256":"a53022c9c8081f8528239471806daf3a9035c5a7573ba7c42a19e542a00e1cf4","evidence":"https://api.ledgermath.com/runs/2026/12/01/01a22fcd-6680-76da-8dac-cbb103294f39.json","boot_summary":null,"started_at":"2026-12-01T04:12:00.000000000Z","boot":"boot-2026-12-01","group":"A","counted":true,"failure":null,"samples":[{"sample":1,"ns":7500000,"repetitions":100,"ns_per_repetition":75000},{"sample":2,"ns":7501000,"repetitions":100,"ns_per_repetition":75010},{"sample":3,"ns":7502000,"repetitions":100,"ns_per_repetition":75020}],"time_per_repetition_ns":75010,"bytes_per_repetition":1073741824,"bytes_per_second":14314649033462.205}
+      ],
+      "differed": [
+        {"from":"01a1dd67-a680-7a77-8758-308276605aac","to":"01a22fcd-6680-76da-8dac-cbb103294f39","facts":[],"sections":[{"section":"cpuinfo","effect":"not split on","keys":null},{"section":"devices","effect":"not split on","keys":["/sys/class/nvme/nvme0/serial"]},{"section":"kernel","effect":"left out","keys":["$ uname -a"]},{"section":"memory","effect":"not split on","keys":null},{"section":"provider","effect":"not split on","keys":["http://169.254.169.254/latest/meta-data/instance-id"]}]}
+      ]
+    }
+  }
+}

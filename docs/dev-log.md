@@ -1870,4 +1870,45 @@ A migrated benchmark is done only when **all** of these hold:
   model can and cannot show. The lookup tool's note for `mutex` carries a caveat for both one-thread sets.
   What LedgerMath does about either finding is not decided. No benchmark, build, Method,
   schema or workflow changed.
+- **2026-11-25** — **The data API lists each benchmark's Series in a file of its own,
+  gives templates of a Series file's and a list's address, and says what each group's figures rest on**
+  (ADR-0030, rule 13). An agent with a fetch tool alone had to fetch all of
+  `v1/series.json` (197 KB) to find one Series. Now `v1/index.json` lists each benchmark
+  (`benchmarks.list`: name, address, Series, Runs, newest Run) and
+  `v1/benchmarks/<benchmark>.json` holds its rows of the list, each row byte for byte, so a
+  Series its list holds is two requests from the table of contents (at most 256 KB, then
+  1.47 MB; 57.3 KB and about 300 KB at most on 2026-11-25), or one with its id and
+  `series.series_file_url_template`. Every benchmark whose name is 1 to 64 characters of what
+  the Run schema admits has its list, always, reached by the name every row gives, at
+  `benchmarks.benchmark_file_url_template`; no file but the table of contents links a list,
+  and the lists go up in a phase of their own before the list whose rows name them, so an
+  upload stopped anywhere leaves no reachable link hanging (a test stops it every way). It
+  can leave the files a reader reaches of different updates, their counts and rows
+  differing, so `benchmarks.about` gives the reader's rule for that, as `months` does for a
+  month file and its Series file: each file is true of its own update; fetch again later.
+  **No total of the Runs can stop a publish**, which the verification
+  showed the first build could not promise (18 Series with a param of 14,500 characters,
+  1,100 Series, or 501 benchmarks, each from valid Runs, put a file over its ceiling for
+  good): a row is listed only when it takes at most 16,384 bytes, a list holds as many rows
+  as fit in 250,000 bytes in its order, and the table of contents names as many benchmarks
+  as fit in 16,000; the rest are counted and found through `v1/series.json` or by name, and
+  every Series keeps its file. Each group of a Series file gains its counted and failed Runs
+  and its oldest and newest start, and each Series its boots: counts and starts of what the
+  Derivations hold (each group's list of Runs, each point's start, `counted` and boot), not
+  new statistics; the published schemas leave these optional, so files and schemas of
+  layouts 1 and 2 agree both ways, and the check requires them. That field in every Series
+  file and row raises `layout` to 2: no month file changes, the first run after the merge
+  needs `new_baseline`, started by hand, and its gate still compares every month file
+  (`MONTH_FILES_WRITTEN_SO_SINCE_LAYOUT`) unless the tree before is broken, when it is a
+  plain new baseline. The ceilings of the table of contents, the list and a Series file rose
+  by the most the additions can add (to 120,000, 1,050,000 and 1,470,000 bytes), so no tree
+  layout 1 accepted is refused for size; what one Run can add is still #81's to bound. The
+  edge must serve the new shapes before any tree
+  links them, and only a deploy made by hand teaches it, so the shapes came first in a pull
+  request of their own (#99, `SERVED_AHEAD`); and the `publish` job now asks the public edge
+  for one file of each kind, and every schema, before it uploads, stopping only on the edge's
+  own 404 (`scripts/check-api-edge.ts`). The README's "Deploy" gives the steps, the checks
+  after each, and why the change only goes forward once published. On the publication of
+  2026-11-25 the table of contents, re-cut, comes to 30,745 bytes. The lookup tool and the
+  skill are unchanged and pass.
 - _(agents: append your entry here, one per merged benchmark)_

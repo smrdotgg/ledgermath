@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 
+import { LAYOUT } from "../scripts/lib/api";
 import { BENCHMARK_NOTES } from "../scripts/lib/benchmark-notes";
 import { quantities } from "../scripts/lib/quantity";
 import { resolveCitation } from "../scripts/lib/citation";
@@ -95,7 +96,7 @@ describe("about", () => {
 		expect(a.runs).toBe(12);
 		expect(a.counted_runs).toBe(11);
 		expect(a.failed_runs).toBe(1);
-		expect(a.layout).toBe(1);
+		expect(a.layout).toBe(LAYOUT);
 		expect(a.benchmarks).toEqual({ memory_read: 2, syscall: 1, tcp_echo: 1 });
 		expect(a.instance_types).toEqual({ "c6i.8xlarge": 3, "m5.large": 1 });
 		expect(a.benchmarks_without_series).toContain("sort");

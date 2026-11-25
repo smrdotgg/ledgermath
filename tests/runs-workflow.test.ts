@@ -387,7 +387,7 @@ describe("the runs workflow", () => {
 		expect(publish.env).toEqual({ API_BUCKET: "${{ vars.API_BUCKET }}" });
 	});
 
-	test("the publish job takes this run's checked artifact api, checks the bucket, uploads with the run's id, and checks what the bucket holds, each step only after the one before succeeded", () => {
+	test("the publish job takes this run's checked artifact api, asks the public edge whether it serves every kind of file in it, checks the bucket, uploads with the run's id, and checks what the bucket holds, each step only after the one before succeeded", () => {
 		const command = (step: Step): string => (step.run as string).replace(/\s+/g, " ").trim();
 		const p = publish.steps;
 		expect(p.map((step) => step.uses?.split("@")[0] ?? command(step))).toEqual([
@@ -395,17 +395,20 @@ describe("the runs workflow", () => {
 			"oven-sh/setup-bun",
 			"bun install --frozen-lockfile",
 			"actions/download-artifact",
+			"bun scripts/check-api-edge.ts --tree api",
 			"aws-actions/configure-aws-credentials",
 			'bun scripts/upload-api.ts --tree api --bucket "$API_BUCKET" --run "$GITHUB_RUN_ID" --preflight',
 			'bun scripts/upload-api.ts --tree api --bucket "$API_BUCKET" --run "$GITHUB_RUN_ID"',
 			'bun scripts/check-api-bucket.ts --tree api --bucket "$API_BUCKET" --run "$GITHUB_RUN_ID"',
 		]);
 		expect(p[3]?.with).toEqual({ name: "api", path: "api" });
-		expect(p[4]?.with).toEqual({ "role-to-assume": "${{ vars.RUNS_AWS_ROLE_ARN }}", "aws-region": "us-east-2" });
+		expect(p[5]?.with).toEqual({ "role-to-assume": "${{ vars.RUNS_AWS_ROLE_ARN }}", "aws-region": "us-east-2" });
+		// The edge is asked before any credentials exist in the job, and with no environment of its own: it needs none.
+		expect(p[4]?.env).toBeUndefined();
 		// No step runs after a failure (no if of its own), and nothing hides one.
 		for (const step of p) expect(step.if).toBeUndefined();
 		expect(JSON.stringify(publish)).not.toContain("continue-on-error");
-		for (const script of ["upload-api", "check-api-bucket"]) expect(existsSync(join(ROOT, "scripts", `${script}.ts`))).toBe(true);
+		for (const script of ["check-api-edge", "upload-api", "check-api-bucket"]) expect(existsSync(join(ROOT, "scripts", `${script}.ts`))).toBe(true);
 	});
 
 	test("the next run's baseline is the artifact api, which the first job keeps only when its check passed, never how the run ended nor whether it has, so the publish job cannot change it", () => {

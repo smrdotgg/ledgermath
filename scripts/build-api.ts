@@ -73,7 +73,7 @@ function main(): void {
 	}
 	const count = (pattern: RegExp) => [...tree.keys()].filter((path) => pattern.test(path)).length;
 	console.log(
-		`data API v1: ${tree.size} files, ${bytes} bytes: ${count(/^v1\/series\/[^/]+\.json$/)} Series, ${count(/^v1\/series\/[^/]+\/[^/]+\.json$/)} month files, ` +
+		`data API v1: ${tree.size} files, ${bytes} bytes: ${count(/^v1\/series\/[^/]+\.json$/)} Series, ${count(/^v1\/benchmarks\/[^/]+\.json$/)} benchmark lists, ${count(/^v1\/series\/[^/]+\/[^/]+\.json$/)} month files, ` +
 			`${count(/^v1\/prices\//)} price files, ${count(/^v1\/schemas\//)} schemas, in ${Math.round(performance.now() - started)} ms -> ${out}`,
 	);
 }

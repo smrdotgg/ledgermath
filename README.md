@@ -694,18 +694,68 @@ change comes in two pull requests, in this order:
    (a schema's address too), with the README's list of addresses. The build writes nothing
    new, so merging it changes no tree.
 2. Merge it, and deploy `production-runs` from `main` as above (not within ten minutes of a
-   boot time). Check that the edge serves the shape now: `curl -sI
-   https://api.ledgermath.com/v1/benchmarks/memory_read.json` answers 403 (S3: a served
-   shape, no object yet), where before the deploy it answered 404 (the request function: no
-   served shape).
+   boot time). Then check four addresses (a status alone proves little: S3 and the web ACL
+   both answer 403, and only S3's says the shape reached the bucket):
+   - each new shape, for a file that does not exist yet: 403 from S3, its `Server` header
+     `AmazonS3` or its body S3's `<Code>AccessDenied</Code>`, as `curl -si` shows
+     (`https://api.ledgermath.com/v1/benchmarks/memory_read.json`,
+     `https://api.ledgermath.com/v1/schemas/benchmark.schema.json`); before the deploy, the
+     edge's own 404;
+   - a file that exists: 200 (`https://api.ledgermath.com/v1/index.json`);
+   - a path of no shape: 404 with the edge's own words, `curl -s
+     https://api.ledgermath.com/v1/notes.md` printing `Not found. LedgerMath's data API
+     starts at /v1/index.json; …`.
+
+   A check from one place reaches one edge location; a deploy reaches the others over some
+   minutes.
 3. Only then merge the second pull request, which makes the build write the files: their
    shape moves from `SERVED_AHEAD` to `TREE_KINDS` (a schema's name to `API_SCHEMAS`), which
    leaves what is served unchanged, so it needs no deploy. The next run of `runs` publishes
-   them, each phase whole before the next ("The API bucket").
-4. Check that each new address the table of contents gives answers 200.
+   them, each phase whole before the next ("The API bucket"). If it also raises `layout`
+   (`LAYOUT` in `scripts/lib/api.ts`), start `runs` by hand right after the merge (Actions,
+   `runs`, "Run workflow", on `main`, with `new_baseline` ticked). A scheduled run fails its
+   gate against the tree of the layout before: it still keeps its artifact `page`, with the
+   Derivations, but not the artifact `api`, and publishes nothing ("The data API", "A new
+   baseline is declared by a human"). Then check, from what `runs.yml` does: its first job
+   holds the concurrency group `runs`, which keeps one pending run and never cancels the one
+   running, so a newer scheduled run can take the place of your run only while yours is
+   pending; once your run's first job has kept its checked artifact `api` of the new layout,
+   a later scheduled run takes that as its baseline, even while your `publish` job waits;
+   and the `publish` job holds a group of its own, `api-bucket`, with its own pending slot,
+   so a newer run's `publish` job can take the place of yours there. So check two things:
+   that a run's first job of the new layout kept its artifact `api` (your run's, or a later
+   one's), and that a `publish` job after it succeeded. If either did not happen, start the
+   run by hand again the same way.
+4. Check that each new address the table of contents gives answers 200, and that the
+   table of contents gives the new `layout`.
 
-Merged out of order, the second pull request publishes links to 404s until the deploy; the
-table of contents and the files it links stay right, and nothing else breaks.
+**Merged out of order**, before the deploy, the second pull request's `publish` job stops
+the publish when the edge answers with its own refusal: its first step asks the public edge
+for one file of each kind in the tree, and every schema, and stops, naming the kind, when
+the edge answers one of them with its own 404 (`scripts/check-api-edge.ts`, "The API
+bucket"); the bucket, and so every reader, then keeps the tree before until the deploy,
+after which the next run publishes. If the public address cannot be reached at that moment,
+the step lets the upload go on, by design (the edge being down or slow never stops a
+publish), and the tree it publishes can link addresses the edge refuses until the deploy.
+
+**Forward only, from the first new key.** The `publish` job never deletes, and its
+preflight refuses a tree that lacks any key the bucket holds ("A key the tree does not
+have"), which `new_baseline` does not get past. So forward only starts with the first
+successful write of a new key, one the bucket did not hold and the change's writer alone
+writes (here the new schema, `v1/schemas/benchmark.schema.json`, in the upload's first
+phase, or a benchmark's list, in its fourth), not with any write: the verification failed
+only the new schema's write, the three existing schemas the change rewrites were updated in
+the same phase, and the old tree's preflight still passed afterwards. Once a new key is
+written, even by an upload that stopped there, reverting the change that writes it stops
+every later publish (a tree without the new files, "holds N keys the tree does not have,
+so nothing was uploaded"), and a fault found after that is fixed by a change forward. The
+safe reading is to treat the first write of the migration, whatever it wrote, as the point
+of no return. Likewise, any later change or rollback of the infrastructure must keep serving the
+shapes the published tree links, or the table of contents links to addresses that answer
+404.
+
+The lists of Series by benchmark (ADR-0030, rule 13) came this way: the shapes in one pull
+request (#99), the files, which raised `layout` to 2, in the next.
 
 Every deploy of a new commit also does three things a reader of `sst diff` may not expect,
 in whichever stage. The source archive's key is git `HEAD`'s commit, so a deploy of the
@@ -907,24 +957,22 @@ path: the API has one host, and a wrong host gets the same answer everywhere. Th
 this list to it, and others hold the samples' and the built tree's every address to it.
 The addresses, as the request function matches them:
 
-- a schema: `^\/v1\/schemas\/(?:index|series-list|series|series-month|prices|events)\.schema\.json$`
+- a schema: `^\/v1\/schemas\/(?:index|series-list|benchmark|series|series-month|prices|events)\.schema\.json$`
 - a month file: `^\/v1\/series\/[0-9a-f]{12}\/[0-9]{4}-(?:0[1-9]|1[0-2])\.json$`
 - a price file: `^\/v1\/prices\/(?:[0-9]{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|1[0-9]|2[0-8])|[0-9]{4}-(?:0[13-9]|1[0-2])-(?:29|30)|[0-9]{4}-(?:0[13578]|1[02])-31|(?:[0-9]{2}(?:0[48]|[2468][048]|[13579][26])|(?:[02468][048]|[13579][26])00)-02-29)\.json$`
 - a Series file: `^\/v1\/series\/[0-9a-f]{12}\.json$`
 - the list of Series: `^\/v1\/series\.json$`
-- the table of contents: `^\/v1\/index\.json$`
 - a benchmark's list of Series: `^\/v1\/benchmarks\/[a-z][a-z0-9_]{0,63}\.json$`
-- the schema of a benchmark's list of Series: `^\/v1\/schemas\/benchmark\.schema\.json$`
+- the table of contents: `^\/v1\/index\.json$`
 - a Run file: `^\/runs\/(?:[0-9]{4}\/(?:0[1-9]|1[0-2])\/(?:0[1-9]|1[0-9]|2[0-8])|[0-9]{4}\/(?:0[13-9]|1[0-2])\/(?:29|30)|[0-9]{4}\/(?:0[13578]|1[02])\/31|(?:[0-9]{2}(?:0[48]|[2468][048]|[13579][26])|(?:[02468][048]|[13579][26])00)\/02\/29)\/[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.json$`
 - a boot summary: `^\/boots\/(?:[0-9]{4}\/(?:0[1-9]|1[0-2])\/(?:0[1-9]|1[0-9]|2[0-8])|[0-9]{4}\/(?:0[13-9]|1[0-2])\/(?:29|30)|[0-9]{4}\/(?:0[13578]|1[02])\/31|(?:[0-9]{2}(?:0[48]|[2468][048]|[13579][26])|(?:[02468][048]|[13579][26])00)\/02\/29)\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.json$`
 - a blob: `^\/blobs\/sha256\/[0-9a-f]{64}$`
 
 A new kind of file, or a new shape of id, is served only once it is added there, and
-deployed. The last two are served ahead of the build (`SERVED_AHEAD` in
-`infra/runs/api-bucket.ts`): no file of either shape exists yet, so the edge answers a
-request for one with S3's 403, as for any missing key of a served shape, until the change
-that makes the build write them publishes its first tree ("A new kind of file in the data
-API", under "Deploy").
+deployed. A kind the build does not write yet is served ahead of it (`SERVED_AHEAD` in
+`infra/runs/api-bucket.ts`, empty now), so that the deploy can come before the first tree
+that links such a file ("A new kind of file in the data API", under "Deploy"). Each
+benchmark's list of Series and its schema were the first.
 
 **Notes for readers.**
 
@@ -2781,12 +2829,13 @@ bucket's tree there.
 
 | Path | Holds |
 |------|-------|
-| `v1/index.json` | The table of contents: the list's address, every price file held with the newest marked, the schemas, the docs, the template of a blob's address, `layout`, the number of the way the files are written, and `recent_rounds`, the newest 8 rounds of boots with their figures (below) |
-| `v1/series.json` | One row per Series, each on a line of its own: what it is, how many Runs, its oldest and newest Run, a summary of each Method's Derivation under `derivations.<method>_v<version>`, and the `url` of its file. Above the rows, each Method's own words, with the Run files it could not read (`methods.<method>_v<version>.unreadable`) |
-| `v1/series/<id>.json` | One Series: each Method's summary at the Derivations' own paths (percentiles, groups and their facts and figures, section counts, `counted_runs`, `failed_runs`), with the Method's definitions; the points of its newest 12 Runs (`newest_points`; `newest_runs` says how many); and `months`, each month a Run of it started in, oldest first, with the month file's `url`, its Runs, its first and last start, and the month file's `sha256` and size in `bytes` |
+| `v1/index.json` | The table of contents: the list's address, each benchmark's list with its counts (`benchmarks`, as many as fit its budget), every price file held with the newest marked, the schemas, the docs, the templates of a blob's address, a Series file's (`series.series_file_url_template`) and a benchmark's list's (`benchmarks.benchmark_file_url_template`), `layout`, the number of the way the files are written, and `recent_rounds`, the newest 8 rounds of boots with their figures (below) |
+| `v1/series.json` | One row per Series, each on a line of its own: what it is, how many Runs and on how many boots, its oldest and newest Run, a summary of each Method's Derivation under `derivations.<method>_v<version>`, and the `url` of its file. Above the rows, each Method's own words, with the Run files it could not read (`methods.<method>_v<version>.unreadable`) |
+| `v1/benchmarks/<benchmark>.json` | One benchmark's rows of `v1/series.json`, each row byte for byte and in the same order in files of one update, as many as fit its budget, under a head like the list's (`count`, `newest_run_started_at`), with how many of its Series are in `v1/series.json` alone (`left_out`, below) |
+| `v1/series/<id>.json` | One Series: its Runs and boots; each Method's summary at the Derivations' own paths (percentiles, groups and their facts and figures, each group with its `counted_runs`, `failed_runs` and the starts of its oldest and newest Run, section counts, `counted_runs`, `failed_runs`), with the Method's definitions; the points of its newest 12 Runs (`newest_points`; `newest_runs` says how many); and `months`, each month a Run of it started in, oldest first, with the month file's `url`, its Runs, its first and last start, and the month file's `sha256` and size in `bytes` |
 | `v1/series/<id>/<yyyy-mm>.json` | One month of a Series: every point of the Runs that started that month (UTC), each Method's under its key, and series v1's `differed` entry for each pair of consecutive Runs whose later Run started that month. Every point gives its Run file's `sha256`, `evidence` (the Run file's address) and `boot_summary` (its boot's, or null when the Runs repository has none) |
 | `v1/prices/<yyyy-mm-dd>.json` | That day's price file, byte for byte |
-| `v1/schemas/<name>.schema.json` | `index`, `series-list`, `series`, `series-month` (kept in `schemas/api/v1/`) and `prices`; and `events`, the schema of one line of a Run's stdout (`schemas/events.schema.json`), which describes no file of the tree but is what both Methods' definitions hold a Run's events to |
+| `v1/schemas/<name>.schema.json` | `index`, `series-list`, `benchmark`, `series`, `series-month` (kept in `schemas/api/v1/`) and `prices`; and `events`, the schema of one line of a Run's stdout (`schemas/events.schema.json`), which describes no file of the tree but is what both Methods' definitions hold a Run's events to |
 
 The evidence is linked, never copied: Run files, boot summaries and blobs, at the bucket's
 own keys under the same address (`/runs/…`, `/boots/…`, `/blobs/sha256/<hex>`). The base
@@ -2794,9 +2843,67 @@ address is `--base`, so a private or test address can stand in.
 
 - **A re-cut, not a Method.** Every number is a Derivation's, written exactly as the
   Derivation holds it, never rounded. The only figures added are taken from a Series'
-  points: its Runs (in all and in each month), how many each Method counts and does not,
-  its groups, and when its oldest and newest Run started (in all and in each month); and
-  the counts of the newest rounds of boots, from the boot summaries and the points.
+  points: its Runs (in all, in each month and in each group), how many each Method counts
+  and does not, the boots they name, its groups, and when its oldest and newest Run
+  started (in all, in each month and in each group); each benchmark's count of Series and
+  of their Runs and its newest Run, and how many Series are in no benchmark's list; and
+  the counts of the newest rounds of boots, from the boot summaries and the points. A
+  group's Runs and their starts are the Derivation's own list of the group's Runs (left out
+  of the files, as recoverable), counted and looked up in its points; a Series' boots, the
+  distinct boot ids its points hold.
+- **Each benchmark's list of Series** (ADR-0030, rule 13): so that a reader finds one
+  Series without fetching `v1/series.json` (197 KB for 187 Series on 2026-11-25, and
+  growing). Each list, `v1/benchmarks/<benchmark>.json`, holds rows of `v1/series.json`, each
+  row byte for byte the list's in files of one update (both schemas define a row word for
+  word alike: `tests/api-months.test.ts`), in its order. **Files of different updates**: the
+  upload writes the lists a phase before `v1/series.json` and two before the table of
+  contents ("The API bucket", below), and a stopped upload leaves them so until one
+  succeeds; on a rehearsal of two new Runs stopped after the lists, the reachable table of
+  contents said 40 `memory_read` Series and 2,336 Runs while the list it links held 41 and
+  2,337. As `months` gives the reader's rule for a month file and its Series file,
+  `benchmarks.about` gives it for these, word for word in the schema `benchmark`: "The table
+  of contents, a benchmark's list, the list of every Series and a Series' file are each
+  whole, but fetched together they can be of different updates of the files: an update
+  writes them one after another, a cache may hold one of them from before another changed,
+  and an update that stopped part way leaves them so until the next one. Their counts and
+  rows can then differ: one may hold a Series, or count a Run, that another does not. So a
+  reader takes each file as true of its own update; where two of them differ, it fetches
+  them again later, and they agree once both are of one update." **Every benchmark whose name an address takes
+  has its list, always**: 1 to 64 characters, a lower-case letter, then lower-case letters,
+  digits and underscores (what the Run schema admits for `benchmark`, which sets no length;
+  `BENCHMARK_NAME` in `infra/runs/api-bucket.ts`, which the edge serves). Once published, a
+  list must go on being written, since the upload refuses a tree that lacks a key the bucket
+  holds, so no list is ever dropped; the Series of a benchmark named otherwise are in
+  `v1/series.json` alone. Its address is `benchmarks.benchmark_file_url_template` with the
+  name in it, the name every row and every Series file gives (`benchmark`): the tree's
+  rule that every file is reached from the table of contents now reads "linked from a file
+  of the tree, or the list of a benchmark a row names, at the address the template gives",
+  and the set of lists is exactly the set of benchmarks whose names fit. No file links a
+  list but the table of contents, so no link points up or across to a file written in a
+  later phase of the upload. **No total of the Runs can stop a publish.** A list holds, of its Series whose rows take at most 16,384 bytes as JSON with no
+  white space (`ROW_BYTES`: a row's params, build, instance type and zone ID come from the
+  Runs, and the Run schema bounds none), in its order, as many as fit in 250,000 bytes, each
+  row counted as its bytes and 6 more (`LIST_BYTES`); the first that does not fit and every
+  one after it are left out and counted (`left_out`), so a list stays under its 256 KB
+  ceiling however many Series there are. The table of contents' `benchmarks.list` gives
+  each benchmark's `name`, the `url` of its list, how many Series it lists (`series`), how
+  many Runs they hold (`runs`) and when the newest started (`newest_run_started_at`): in name
+  order, as many as fit in 16,000 bytes (`BENCHMARKS_LISTED_BYTES`), so the table of
+  contents stays under its ceiling however many benchmarks there are. `benchmarks.count`
+  says how many have a list, `unlisted` how many of those `list` does not name, `left_out`
+  how many Series are in no list. **The promise**: a Series its benchmark's list holds is two
+  requests from the table of contents (the list, at most 256 KB, then the Series file, at
+  most 1.47 MB); a Series in no list is found through `v1/series.json`; every Series keeps its
+  file. A reader holding a Series' id gets its file in one, at
+  `series.series_file_url_template` with `{id}` replaced (a Series file lists its month
+  files' addresses, so no month file needs a template). `tests/api-bounds.test.ts` builds
+  18 Series of one benchmark with a param of 14,500 characters, 1,100 Series of one
+  benchmark and 501 benchmarks of names of 64 characters, each from valid Runs, and finds
+  each tree publishable with the right counts. On 2026-11-25 the lists, built from the
+  published `v1/series.json` by the build's own writer, were 3.9 to 57.3 KB (`http_get`'s 25
+  Series; `memory_read`'s 40 took 29.8 KB), the largest row 2,527 bytes, nothing left out
+  and every benchmark listed, and the table of contents, re-cut whole, came to 30,745 bytes
+  (24,526 before).
 - **The newest rounds of boots** (ADR-0030, rule 12): what was measured most recently, for
   the home page's "Latest runs" and for an agent asking whether the data are fresh.
   `recent_rounds.rounds` in `v1/index.json` holds the newest 8 rounds, newest first, each
@@ -2922,6 +3029,22 @@ address is `--base`, so a private or test address can stand in.
   other file's bytes change, so the next run is compared with the tree before as ever and
   needs no new baseline. The golden test fails on any change to the bytes and says so: if
   the change is on purpose, raise `layout`, unless only the table of contents changed.
+  `layout` is 2 since 2026-11-25 (ADR-0030, rule 13): every Series file and every row
+  gained `boots`, and every group its counted and failed Runs and the starts of its oldest
+  and newest Run; no month file's bytes changed. The first scheduled run after that change
+  fails its gate against the tree of layout 1, so the maintainer starts `runs` by hand with
+  `new_baseline` once it is merged ("A new kind of file in the data API", under "Deploy").
+  Since layout 2 writes month files as layout 1 did (`MONTH_FILES_WRITTEN_SO_SINCE_LAYOUT`
+  in `scripts/lib/api.ts`, which `tests/api-golden.test.ts` holds to a month file layout 1
+  wrote, kept in `tests/api-layout-1/`), that run's gate still compares every month file
+  with the tree before, by the four causes: the new baseline lets the Series files, the list
+  and the table of contents change, and no month file. It does so only when every file of
+  the tree before could be read and parsed and that tree is whole; a broken tree before is a
+  plain new baseline, as before, holding only the Series and Runs that can still be read of
+  it, since the new baseline is the way out of a broken previous tree. The published schemas of the kinds that existed
+  before leave every field layout 2 added optional, so a file fetched before and a schema
+  fetched today agree, and so do the reverse; the check requires the present build to write
+  them all (`tests/api-layouts.test.ts`).
 - **The gate against the tree before.** `check-api.ts --previous DIR` holds a tree to the
   contract against the tree before it. A previous tree of the same layout and base is
   compared strictly, always: it must be whole (every month file its Series files list
@@ -2992,10 +3115,22 @@ address is `--base`, so a private or test address can stand in.
   the base, so a Series that gained no Run, and none of whose boot summaries arrived, keeps
   its file byte for byte. The data's own moment, the start of the
   newest Run, is in `v1/index.json` and `v1/series.json`; no file says when it was made.
-- **Every file has a ceiling of bytes**: the table of contents 100 KB, the list and a Series
-  file 1 MB, a month file 5 MB, a price file 1 MB, a schema 256 KB (`CEILINGS` in
-  `scripts/lib/api-check.ts`, each with what to do when it is hit). The check fails a tree
-  with a file over its ceiling.
+- **Every file has a ceiling of bytes**: the table of contents 120,000 bytes, the list
+  1,050,000, a Series file 1,470,000, a benchmark's list 256,000, a month file 5 MB, a price
+  file 1 MB, a schema 256 KB (`CEILINGS` in `scripts/lib/api-check.ts`, each with what to do
+  when it is hit). The check fails a tree with a file over its ceiling. Layout 2 raised the
+  first three, from 100,000, 1,000,000 and 1,000,000, by the most its additions can add, so
+  that no tree the layout-1 check accepted is refused for size by the change
+  (`tests/api-ceilings.test.ts` derives each bound from the writer and builds the two trees
+  the verification found): the table of contents gains at most 19,851 bytes (the benchmarks
+  at their budget, the templates and words, the new schema's entry, longer words); a row of
+  the list at most 25 (its `boots`), against the 484 a layout-1 row takes at least, so the
+  list at most 4.9%; a group of a Series file at most 177 (its counts and starts), against
+  the 377 a layout-1 group takes at least, and the file 29 for its `boots`, so a Series file
+  at most 47%. **What one Run can add to the list, a Series file or a month file is still
+  unbounded**: a string of any length in its params, build, instance type or zone ID can
+  put a file over its ceiling and stop every publish. That is #81's to fix, not this
+  change's.
 - **What a Method left out is shown.** A failed Run is a point with `counted: false` and its
   `failure`, counted in the row as `failed_runs`. A Run file no Method could read is listed
   under its Method's `unreadable` in `v1/series.json`, with why and its `evidence`.
@@ -3076,10 +3211,11 @@ variable `API_BUCKET` is set (to the scheduled stage's `apiBucket` output); whil
 variable is unset the job is skipped, which is not an error. It has its own 15-minute
 timeout and only the permissions it uses (read the repository, ask for the OIDC token), and
 it downloads the artifact `api` this run kept, so it uploads exactly the tree that was
-checked. Its steps: "Check the API bucket before anything is written" (`scripts/upload-api.ts
---preflight`), "Upload the data API's files to the API bucket" (`scripts/upload-api.ts`),
-and "Check that the API bucket holds the data API's files" (`scripts/check-api-bucket.ts
---run`). When one fails, the `publish` job is red and the run is marked failed (GitHub's own
+checked. Its steps: "Check that the public edge serves every kind of file in the tree"
+(`scripts/check-api-edge.ts`, below), "Check the API bucket before anything is written"
+(`scripts/upload-api.ts --preflight`), "Upload the data API's files to the API bucket"
+(`scripts/upload-api.ts`), and "Check that the API bucket holds the data API's files"
+(`scripts/check-api-bucket.ts --run`). When one fails, the `publish` job is red and the run is marked failed (GitHub's own
 failed-run email goes to whoever last changed the workflow's schedule, per their
 notification settings), but the `runs` job stays green, its artifacts are kept, and the
 next run's baseline is this run's tree ("The data API"). Publishing that stops, however it
@@ -3142,12 +3278,28 @@ The commands below that upload from a laptop are for a bucket no `publish` job w
   the same and a reader that revalidates with it gets `304 Not Modified`; `Last-Modified`
   moves on, so a reader that revalidates by date alone fetches the same bytes again, at
   most once a round, and only after the five minutes its copy may be kept.
-- **In an order that never leaves a readable file linking one not there yet**, five phases,
-  each whole before the next starts: the schemas; the month files and price files; the
-  Series files; the list, `v1/series.json`; the table of contents, `v1/index.json`. Each
-  file links down only to files of earlier phases (a test reads every link of a built tree
-  to hold it to that); its links up, to the table of contents, the list or a month file's
-  own Series file, are to files a reader came through.
+- **In an order that never leaves a reachable link hanging**, six phases, each whole
+  before the next starts: the schemas; the month files and price files; the Series files;
+  each benchmark's list, `v1/benchmarks/<benchmark>.json`; the list, `v1/series.json`, whose
+  rows name every benchmark (so a row never names one whose list is not there yet); the
+  table of contents, `v1/index.json`. Each file links down only to files of earlier phases
+  (a test reads every link of a built tree to hold it to that); its links up, to the table
+  of contents, the list or a month file's own Series file, are to files a reader came
+  through. `tests/api-stopped.test.ts` stops an upload in each phase in turn, and by each of
+  its writes alone, on the move from layout 1 to layout 2 and on an ordinary publish that
+  brings a benchmark never seen before, and walks every link reachable from the table of
+  contents, the template's included: none names a file the bucket lacks. **What a stopped
+  upload can leave, truthfully:** files not yet reachable from the table of contents. A new
+  month file (phase 2) links its Series file, a Series new this round (phase 3), and both
+  link a table of contents that may not list them yet; a new benchmark's list (phase 4)
+  may stand before the list of every Series names it. A reader who asks for such a file by
+  its address, without following links from the table of contents, can find it, and its
+  link up to a file not written yet. They stay so until an upload succeeds: the next run,
+  six hours on, or longer while publishing stays stopped (the alarm raises it after 14
+  hours). No link reachable from the table of contents names a missing file; but the files
+  a reader reaches can be of different updates, their counts and rows differing (a list
+  written, `v1/series.json` and the table of contents not), as `benchmarks.about` tells a
+  reader ("The data API", above).
 - **A failed write fails the `publish` job, and the next run repairs the bucket.** It
   stops the upload once the writes of its phase have settled; no later phase starts; the
   step fails, and its summary names the phase, each key that failed and why. A month file changes in
@@ -3176,8 +3328,30 @@ uploaded it (`--run`, as the `publish` job passes it), that the table of content
 that run and no object a later one, so a stamp that did not happen fails the job. Each step
 writes what it did, or why it stopped, to the step summary.
 
-**Requests and time.** Each of the `publish` job's three steps (the preflight, the upload,
-the check) lists the whole bucket and sends one `HEAD` per file of the tree, so a run makes
+**The edge is asked first.** Before anything is uploaded, the `publish` job asks the public
+edge, at the tree's own address (its table of contents' `url`), for one file of each kind
+the tree holds, and for every schema (the edge serves schemas by a list of their names, so
+a new schema is a shape of its own). Only the edge's own refusal stops the job, naming the
+kind and saying to deploy `production-runs` first: a 404 whose body begins with the words
+of the edge's functions, `Not found. LedgerMath's data API` (`EDGE_NOT_FOUND_OPENING` in
+`infra/runs/public-blobs.ts`), which S3 never sends. Any other answer lets the upload go on:
+200, S3's 403 for a file not yet written, a redirect, WAF's 403, a 5xx, a timeout (10 s) or
+a network error, so the public address being down never stops a publish. Nothing is asked
+of a tree the public API does not serve: one built for another host than
+`api.ledgermath.com`, or while `PUBLIC_API.state` is not `on`. It is what makes the order of
+"A new kind of file in the data API" (under "Deploy") safe even when it is not followed: the
+code of a checkout always knows its own served shapes, the deployed edge may not. **What it
+shows is narrow, by design**, and its output says only that: how many addresses it asked,
+what each answered, and that the edge refused none. It asks one address of each kind, so an
+edge refusing another address of a kind passes (13 redirects pass too); and one question
+from one place reaches one edge location, while a deploy reaches the others over some
+minutes. `tests/api-edge.test.ts` holds it to all this against stand-ins running the request
+function's own code: each kind refused alone, an edge from before the benchmark lists, every
+kind answering, redirects everywhere, a name it does not ask, and each failure that must not
+stop the upload.
+
+**Requests and time.** Each of the `publish` job's three steps that read the bucket (the
+preflight, the upload, the check) lists the whole bucket and sends one `HEAD` per file of the tree, so a run makes
 three passes: 3 `HEAD`s per file of the tree and 3 listings of the whole bucket (a listing
 is one request per 1,000 keys), and a `PUT` per file written, with at most one more for the
 stamp. For the tree of 391 files that is 1,173 `HEAD`s and 3 listing requests a round. The

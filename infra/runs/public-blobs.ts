@@ -678,8 +678,15 @@ export function aliasRecordArgs<T>(type: (typeof ALIAS_RECORD_TYPES)[number], di
 	};
 }
 
-const NOT_FOUND_TEXT =
-	"Not found. LedgerMath's data API starts at /v1/index.json; its evidence is at /runs/..., /boots/... and /blobs/sha256/<hex>, as the files link it.\n";
+/**
+ * How the body of every 404 the edge's own functions answer begins: what
+ * tells the edge's refusal of an address of no served shape from any other
+ * answer (S3 answers a missing key of a served shape with its 403
+ * AccessDenied, in XML; scripts/lib/api-edge.ts reads it so). Kept as it is:
+ * the edge deployed may be older than this code.
+ */
+export const EDGE_NOT_FOUND_OPENING = "Not found. LedgerMath's data API";
+const NOT_FOUND_TEXT = `${EDGE_NOT_FOUND_OPENING} starts at /v1/index.json; its evidence is at /runs/..., /boots/... and /blobs/sha256/<hex>, as the files link it.\n`;
 
 /** The 404 the no-route function answers with, in CloudFront Functions JavaScript (cloudfront-js-2.0). */
 const NOT_FOUND_SOURCE = [

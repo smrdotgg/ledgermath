@@ -16,6 +16,7 @@
 export const API_SCHEMAS = [
 	{ name: "index", describes: "v1/index.json", source: "schemas/api/v1/index.schema.json" },
 	{ name: "series-list", describes: "v1/series.json", source: "schemas/api/v1/series-list.schema.json" },
+	{ name: "benchmark", describes: "v1/benchmarks/<benchmark>.json", source: "schemas/api/v1/benchmark.schema.json" },
 	{ name: "series", describes: "v1/series/<id>.json", source: "schemas/api/v1/series.schema.json" },
 	{ name: "series-month", describes: "v1/series/<id>/<yyyy-mm>.json", source: "schemas/api/v1/series-month.schema.json" },
 	{ name: "prices", describes: "v1/prices/<yyyy-mm-dd>.json", source: "schemas/prices.schema.json" },

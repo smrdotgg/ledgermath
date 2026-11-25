@@ -21,7 +21,7 @@ import { expect, setDefaultTimeout, test } from "bun:test";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
 
-import { API_SCHEMAS, buildApi, DEFAULT_BASE, LAYOUT, priceDate, readApiSchemas, readBootFiles, readBootSummaries, readPriceFiles } from "../scripts/lib/api";
+import { API_SCHEMAS, buildApi, DEFAULT_BASE, LAYOUT, MONTH_FILES_WRITTEN_SO_SINCE_LAYOUT, priceDate, readApiSchemas, readBootFiles, readBootSummaries, readPriceFiles } from "../scripts/lib/api";
 import { makeApiFixture } from "./api-fixtures";
 
 setDefaultTimeout(60_000);
@@ -91,6 +91,32 @@ test("every file the build writes from the small fixture is, byte for byte, its 
 		);
 	}
 	expect(written.size).toBeGreaterThanOrEqual(4);
+});
+
+test("while MONTH_FILES_WRITTEN_SO_SINCE_LAYOUT says month files are written as at a layout, the build writes a real month file of that layout byte for byte", async () => {
+	// tests/api-layout-1/ holds a month file as the build wrote it at layout 1 (main's tests/api-golden/ before layout 2), from the small fixture.
+	// Should a change write month files otherwise and leave the constant as it is, the gate, under a new baseline, would hold every month file of a
+	// layout-1 tree to the four causes and refuse them all: this fails first, saying to raise the constant with the change.
+	const kept = "v1/series/0cacb5fd6fae/2026-12.json";
+	const layout1 = readFileSync(join(import.meta.dir, "api-layout-1", kept));
+	const fixture = await makeApiFixture({ small: true });
+	const tree = buildApi({
+		base: DEFAULT_BASE,
+		docs: "https://example.test/docs",
+		series: fixture.series,
+		requests: fixture.requests,
+		prices: readPriceFiles(fixture.runs),
+		boots: readBootSummaries(fixture.runs),
+		bootFiles: readBootFiles(fixture.runs),
+		schemas: readApiSchemas(),
+	});
+	if (MONTH_FILES_WRITTEN_SO_SINCE_LAYOUT <= 1) {
+		expect([kept, Buffer.from(tree.get(kept) ?? []).equals(layout1), "a month file written otherwise than at layout 1: set MONTH_FILES_WRITTEN_SO_SINCE_LAYOUT to LAYOUT"]).toEqual([
+			kept,
+			true,
+			"a month file written otherwise than at layout 1: set MONTH_FILES_WRITTEN_SO_SINCE_LAYOUT to LAYOUT",
+		]);
+	}
 });
 
 /** What a developer whose change made the golden test fail must choose between. */

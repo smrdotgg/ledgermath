@@ -9,17 +9,23 @@ import type { DerivationsFile as SeriesFile } from "../methods/v1/output";
 import {
 	type ApiSources,
 	apiJson,
+	benchmarkPath,
+	BENCHMARKS,
 	buildApi,
 	DEFAULT_BASE,
+	LIST_UPDATES,
 	monthPath,
 	readApiSchemas,
 	readBootFiles,
 	readBootSummaries,
 	readPriceFiles,
+	ROW_BYTES,
+	SERIES_FILES,
 	seriesPath,
 	writerForm,
 } from "../scripts/lib/api";
-import { checkApi, closeSchema, difference } from "../scripts/lib/api-check";
+import { CEILINGS, checkApi, closeSchema, difference } from "../scripts/lib/api-check";
+import { isServedKey } from "../infra/runs/public-blobs";
 import { ADDRESS_PARAM, type ApiFixture, EMPTY_BOOT, FIRST_BOOT, makeApiFixture, OVERFLOW_X } from "./api-fixtures";
 
 // Deriving the hand-made Runs, and reading a whole tree back, can take longer than bun's five-second default on a loaded machine.
@@ -89,11 +95,15 @@ beforeAll(async () => {
 });
 
 describe("the tree", () => {
-	test("holds the table of contents, the list, one file per Series, one per price file and the schemas, laid out as served", () => {
+	test("holds the table of contents, the list, one list per benchmark, one file per Series, one per price file and the schemas, laid out as served", () => {
 		expect([...tree.keys()]).toEqual([
+			"v1/benchmarks/http_get.json",
+			"v1/benchmarks/memory_read.json",
+			"v1/benchmarks/syscall.json",
 			"v1/index.json",
 			"v1/prices/2026-11-11.json",
 			"v1/prices/2026-11-12.json",
+			"v1/schemas/benchmark.schema.json",
 			"v1/schemas/events.schema.json",
 			"v1/schemas/index.schema.json",
 			"v1/schemas/prices.schema.json",
@@ -128,10 +138,14 @@ describe("the tree", () => {
 			count: 3,
 			series_file_schema_url: `${DEFAULT_BASE}/v1/schemas/series.schema.json`,
 			month_file_schema_url: `${DEFAULT_BASE}/v1/schemas/series-month.schema.json`,
+			series_file_url_template: `${DEFAULT_BASE}/v1/series/{id}.json`,
+			about: SERIES_FILES,
 		});
+		// The template gives each Series file's address from its id, which is the address its row gives.
+		for (const row of json(tree, "v1/series.json").series) expect(index.series.series_file_url_template.replace("{id}", row.id)).toBe(row.url);
 		expect(index.prices.files.map((file: Json) => file.date)).toEqual(["2026-11-11", "2026-11-12"]);
 		expect(index.prices.newest).toEqual({ date: "2026-11-12", path: "prices/2026/11/12/aws.json", url: `${DEFAULT_BASE}/v1/prices/2026-11-12.json` });
-		expect(index.schemas.map((schema: Json) => schema.name)).toEqual(["index", "series-list", "series", "series-month", "prices", "events"]);
+		expect(index.schemas.map((schema: Json) => schema.name)).toEqual(["index", "series-list", "benchmark", "series", "series-month", "prices", "events"]);
 		// The events schema describes no file of the tree, and says what it does describe.
 		expect(index.schemas.at(-1)).toEqual({ name: "events", describes: "one line of a Run's stdout: the blob at blobs/sha256/<hex> that the Run file's stdout names", url: `${DEFAULT_BASE}/v1/schemas/events.schema.json` });
 		expect(index.schemas.find((schema: Json) => schema.name === "series-month").describes).toBe("v1/series/<id>/<yyyy-mm>.json");
@@ -247,7 +261,10 @@ describe("a Series", () => {
 		expect(file.derivations.series_v1.sections).toEqual(seriesV1.sections);
 		expect(file.derivations.series_v1.groups.map((group: Json) => [group.id, group.facts])).toEqual(seriesV1.groups.map((group) => [group.id, group.facts]));
 		for (const key of ["recorded", "pool"] as const) expect(file.derivations.requests_v1[key]).toEqual(requestsV1[key]);
-		expect(file.derivations.requests_v1.groups).toEqual(requestsV1.groups.map((group) => ({ id: group.id, facts: group.facts, pool: group.pool })));
+		// What each group's figures rest on, counted as its Method counts: the Run that exited 4 is counted by requests v1, not by series v1.
+		const restsOn = { oldest_run_started_at: "2026-11-12T22:20:00.000000000Z", newest_run_started_at: "2026-11-13T04:20:00.000000000Z" };
+		expect(file.derivations.requests_v1.groups).toEqual(requestsV1.groups.map((group) => ({ id: group.id, facts: group.facts, counted_runs: 2, failed_runs: 0, ...restsOn, pool: group.pool })));
+		expect(file.derivations.series_v1.groups.map((group: Json) => [group.counted_runs, group.failed_runs, group.oldest_run_started_at, group.newest_run_started_at])).toEqual([[1, 1, restsOn.oldest_run_started_at, restsOn.newest_run_started_at]]);
 		expect(file.derivations.requests_v1.definitions).toEqual(fixture.requests.definitions);
 		expect(file.derivations.series_v1.definitions).toEqual(fixture.series.definitions);
 		// The second Run exited 4 with one timed-out request: series v1 does not count it, requests v1 does.
@@ -282,13 +299,30 @@ describe("a Series", () => {
 		const month = json(tree, november(fixture.memory));
 		const derivation = fixture.series.derivations.find((d) => d.series.id === fixture.memory) as SeriesFile["derivations"][number];
 		expect(file.derivations.series_v1.groups.map((group: Json) => group.id)).toEqual(["A", "B"]);
+		// Each group with what its percentiles rest on: its Runs, counted and not, and the starts of its oldest and newest, from its points.
+		const restsOn: Record<string, Json> = {
+			A: { counted_runs: 2, failed_runs: 1, oldest_run_started_at: "2026-11-12T04:12:00.000000000Z", newest_run_started_at: "2026-11-15T04:12:00.000000000Z" },
+			B: { counted_runs: 1, failed_runs: 0, oldest_run_started_at: "2026-11-14T04:12:00.000000000Z", newest_run_started_at: "2026-11-14T04:12:00.000000000Z" },
+		};
 		expect(file.derivations.series_v1.groups).toEqual(
 			derivation.groups.map((group) => ({
 				id: group.id,
 				facts: group.facts,
+				...restsOn[group.id],
 				percentiles: { time_per_repetition_ns: summary(group.percentiles.time_per_repetition_ns as unknown as Json), bytes_per_second: summary(group.percentiles.bytes_per_second as unknown as Json) },
 			})),
 		);
+		// And they are what the Derivation's own lists hold: a group's count of Runs is its list's length; its oldest and newest, its first and last Run's start.
+		const startOf = new Map(derivation.points.map((point) => [point.run, point.started_at] as const));
+		for (const group of derivation.groups) {
+			const shown = file.derivations.series_v1.groups.find((one: Json) => one.id === group.id);
+			expect([group.id, shown.counted_runs + shown.failed_runs, shown.oldest_run_started_at, shown.newest_run_started_at]).toEqual([group.id, group.runs.length, startOf.get(group.runs[0] as string), startOf.get(group.runs.at(-1) as string)]);
+		}
+		// The Series' boots: the distinct boots its points name, in its file and its row.
+		const boots = new Set(derivation.points.map((point) => point.boot)).size;
+		expect(boots).toBeGreaterThan(1);
+		expect(file.boots).toBe(boots);
+		expect(json(tree, "v1/series.json").series.find((r: Json) => r.id === fixture.memory).boots).toBe(boots);
 		// What the file leaves out, each group's Runs, is the month file's points of its letter.
 		for (const group of derivation.groups) expect(month.derivations.series_v1.points.filter((point: Json) => point.group === group.id).map((point: Json) => point.run)).toEqual(group.runs);
 		const split = month.derivations.series_v1.differed.find((entry: Json) => entry.facts.includes("cpuid"));
@@ -339,6 +373,159 @@ describe("a Series", () => {
 		}
 		const p50 = derivation.percentiles.bytes_per_second?.p50 as number;
 		expect(text(tree, "v1/series.json")).toContain(`"p50":${JSON.stringify(p50)}`);
+	});
+});
+
+describe("a benchmark's list of Series", () => {
+	/** Each row of a list as it is written: its line without the indentation before it or the comma after it (the last row has none). */
+	const rowLines = (path: string): string[] =>
+		text(tree, path)
+			.split("\n")
+			.filter((line) => line.startsWith('    {"id":'))
+			.map((line) => line.trim().replace(/,$/, ""));
+
+	test("tells a reader, word for word in the table of contents, the schema benchmark, ADR-0030 and the README, that files of different updates can differ, and what to do", () => {
+		const flat = (value: string): string => value.replace(/\s+/g, " ");
+		const rule = flat(LIST_UPDATES);
+		// Each file is whole; fetched together they can be of different updates, for the causes the month files' rule gives; and what a reader does.
+		expect(rule).toContain("The table of contents, a benchmark's list, the list of every Series and a Series' file are each whole, but fetched together they can be of different updates of the files:");
+		expect(rule).toContain("a cache may hold one of them from before another changed, and an update that stopped part way leaves them so until the next one.");
+		expect(rule).toContain("Their counts and rows can then differ");
+		expect(rule).toContain("where two of them differ, it fetches them again later");
+		// Where a reader of benchmarks meets it: right after the promise of the same rows, which says when it holds.
+		const index = json(tree, "v1/index.json");
+		expect(index.benchmarks.about).toContain(`in files of one update, each row is the same, byte for byte, in the same order. ${LIST_UPDATES} `);
+		expect(index.benchmarks.about.indexOf(LIST_UPDATES)).toBeLessThan(index.benchmarks.about.indexOf("Every benchmark whose name"));
+		const schema = (name: string): Json => JSON.parse(readFileSync(join(ROOT, "schemas", "api", "v1", `${name}.schema.json`), "utf8"));
+		expect(schema("benchmark").description).toContain(`and in files of one update the same, value for value and byte for byte, in the same order;`);
+		expect(schema("benchmark").description).toContain(LIST_UPDATES);
+		expect(schema("series-list").description).toContain("byte for byte as they are here when both files are of one update");
+		// No published words promise the same rows without saying when.
+		for (const name of ["index", "series-list", "benchmark"]) expect([name, JSON.stringify(schema(name))]).not.toEqual([name, expect.stringMatching(/value for value and byte for byte, in the same order, by the same definition|byte for byte as they are here, so/)]);
+		expect(flat(readFileSync(join(ROOT, "docs", "adr", "0030-the-data-api-is-static-files-cut-from-the-derivations.md"), "utf8"))).toContain(rule);
+		expect(flat(readFileSync(join(ROOT, "README.md"), "utf8"))).toContain(rule);
+	});
+
+	test("holds its benchmark's rows of the list, each row byte for byte the list's and in its order, under the list's head; the table of contents gives each with its counts, and a row's name reaches its list at the template's address", () => {
+		const index = json(tree, "v1/index.json");
+		const list = json(tree, "v1/series.json");
+		expect(index.benchmarks.schema_url).toBe(`${DEFAULT_BASE}/v1/schemas/benchmark.schema.json`);
+		expect(index.benchmarks.about).toBe(BENCHMARKS);
+		expect(index.benchmarks.benchmark_file_url_template).toBe(`${DEFAULT_BASE}/v1/benchmarks/{benchmark}.json`);
+		expect([index.benchmarks.count, index.benchmarks.unlisted, index.benchmarks.left_out]).toEqual([3, 0, 0]);
+		// Each row's benchmark, at the template's address, is a list of the tree: a reader holding a name reaches its list.
+		for (const row of list.series) expect(tree.has(index.benchmarks.benchmark_file_url_template.replace("{benchmark}", row.benchmark).slice(`${DEFAULT_BASE}/`.length))).toBe(true);
+		// No Series file links its benchmark's list: a link to a file of a later phase could be left hanging by an upload that stopped.
+		for (const row of list.series) expect(Object.keys(json(tree, seriesPath(row.id)))).not.toContain("benchmark_url");
+		expect(index.benchmarks.list.map((entry: Json) => entry.name)).toEqual(["http_get", "memory_read", "syscall"]);
+		const allLines = rowLines("v1/series.json");
+		let rows = 0;
+		for (const entry of index.benchmarks.list) {
+			const path = benchmarkPath(entry.name);
+			expect(entry.url).toBe(`${DEFAULT_BASE}/${path}`);
+			const file = json(tree, path);
+			const ofList = list.series.filter((row: Json) => row.benchmark === entry.name);
+			const newest = ofList.map((row: Json) => row.newest_run_started_at).sort().at(-1);
+			const { series: _rows, ...head } = file;
+			expect(head).toEqual({
+				schema: "ledgermath.api.benchmark/1",
+				schema_url: `${DEFAULT_BASE}/v1/schemas/benchmark.schema.json`,
+				index: `${DEFAULT_BASE}/v1/index.json`,
+				url: entry.url,
+				benchmark: entry.name,
+				count: ofList.length,
+				left_out: 0,
+				newest_run_started_at: newest,
+			});
+			expect(file.series).toEqual(ofList);
+			// Each row byte for byte the list's row: one definition of a row. (A file's last row has no comma after it, so its line may differ by one byte.)
+			expect(rowLines(path)).toEqual(allLines.filter((line) => JSON.parse(line).benchmark === entry.name));
+			expect(entry).toEqual({ name: entry.name, url: entry.url, series: ofList.length, runs: ofList.reduce((total: number, row: Json) => total + row.runs, 0), newest_run_started_at: newest });
+			rows += file.series.length;
+		}
+		expect(rows).toBe(list.series.length);
+		// A row's bytes, written as JSON with no white space, are its line's: whatever the order of its members.
+		for (const [i, row] of list.series.entries()) expect(new TextEncoder().encode(JSON.stringify(reversedKeys(row))).length).toBe(new TextEncoder().encode(allLines[i] as string).length);
+	});
+
+	test("from the table of contents, a reader reaches any Series' figures in two requests, neither over its ceiling; with its id alone, in one", () => {
+		const index = json(tree, "v1/index.json");
+		const ceiling = (path: string): number => (CEILINGS.find((one) => one.path.test(path)) as (typeof CEILINGS)[number]).bytes;
+		const pathOf = (url: string): string => url.slice(`${DEFAULT_BASE}/`.length);
+		let reached = 0;
+		for (const row of json(tree, "v1/series.json").series) {
+			// First request: the benchmark's list, found by name in the table of contents.
+			const entry = index.benchmarks.list.find((one: Json) => one.name === row.benchmark);
+			const first = pathOf(entry.url);
+			expect((tree.get(first) as Uint8Array).length).toBeLessThanOrEqual(ceiling(first));
+			const listed = json(tree, first).series.find((one: Json) => one.id === row.id);
+			expect(listed.derivations.series_v1.percentiles).toEqual(row.derivations.series_v1.percentiles);
+			// Second request: the Series' file, at the row's url, with every figure.
+			const second = pathOf(listed.url);
+			expect((tree.get(second) as Uint8Array).length).toBeLessThanOrEqual(ceiling(second));
+			const file = json(tree, second);
+			expect([file.id, Object.keys(file.derivations)]).toEqual([row.id, Object.keys(row.derivations)]);
+			expect(file.derivations.series_v1.groups.length).toBe(row.derivations.series_v1.groups);
+			// With its id alone: the template, one request.
+			expect(pathOf(index.series.series_file_url_template.replace("{id}", row.id))).toBe(second);
+			reached++;
+		}
+		expect(reached).toBe(3);
+		expect(ceiling(benchmarkPath("memory_read"))).toBe(256_000);
+	});
+
+	test("leaves out, and counts, a Series of a benchmark whose name the address does not take, or whose row is too long; neither stops the build or the check, and every Series keeps its row and its file", () => {
+		const encoder = new TextEncoder();
+		const memoryLine = rowLines("v1/series.json").find((line) => JSON.parse(line).id === fixture.memory) as string;
+		const base = encoder.encode(memoryLine).length;
+		/** The fixture's sources with series v1's Derivations changed, the tree built from them, and what the check says of it. */
+		const built = (change: (series: SeriesFile) => void) => {
+			const sources = sourcesOf(fixture);
+			change(sources.series);
+			const changed = buildApi(sources);
+			const problems = checkApi({ tree: writeTree(changed), runs: fixture.runs, base: DEFAULT_BASE, series: sources.series, requests: sources.requests }).problems;
+			return { changed, problems, index: json(changed, "v1/index.json") };
+		};
+		const of = (series: SeriesFile, id: string) => (series.derivations.find((d) => d.series.id === id) as SeriesFile["derivations"][number]).series;
+		const longest = `s${"y".repeat(63)}`;
+		// A name of 64 characters is taken; one of 65, or one in upper case (which the Run schema would refuse), is not.
+		for (const [name, listed] of [
+			[longest, true],
+			[`${longest}s`, false],
+			["Syscall", false],
+			["sys-call", false],
+		] as const) {
+			const { changed, problems, index } = built((series) => (of(series, fixture.syscall).benchmark = name));
+			expect([name, problems]).toEqual([name, []]);
+			expect([name, index.benchmarks.left_out, changed.has(benchmarkPath(name))]).toEqual([name, listed ? 0 : 1, listed]);
+			expect(index.benchmarks.list.map((entry: Json) => entry.name)).toEqual(listed ? ["http_get", "memory_read", name].sort() : ["http_get", "memory_read"]);
+			expect(json(changed, "v1/series.json").series.some((row: Json) => row.id === fixture.syscall && row.benchmark === name)).toBe(true);
+			expect(changed.has(seriesPath(fixture.syscall))).toBe(true);
+			// Every link the table of contents gives is to a shape the edge serves.
+			for (const entry of index.benchmarks.list) expect([entry.url, isServedKey(entry.url.slice(`${DEFAULT_BASE}/`.length))]).toEqual([entry.url, true]);
+		}
+		// A row of exactly ROW_BYTES is listed; one byte more, and it is in the list alone, counted in its benchmark's list.
+		const padding = ROW_BYTES - base - ',"pad":""'.length;
+		for (const [extra, listed] of [
+			[0, true],
+			[1, false],
+		] as const) {
+			const { changed, problems, index } = built((series) => (of(series, fixture.memory).params.pad = "x".repeat(padding + extra)));
+			expect([extra, problems]).toEqual([extra, []]);
+			const row = json(changed, "v1/series.json").series.find((one: Json) => one.id === fixture.memory);
+			expect(encoder.encode(JSON.stringify(row)).length).toBe(ROW_BYTES + extra);
+			const file = json(changed, benchmarkPath("memory_read"));
+			expect([file.count, file.left_out, file.newest_run_started_at === null]).toEqual(listed ? [1, 0, false] : [0, 1, true]);
+			expect(index.benchmarks.left_out).toBe(listed ? 0 : 1);
+			expect(index.benchmarks.list.find((entry: Json) => entry.name === "memory_read")).toEqual({
+				name: "memory_read",
+				url: `${DEFAULT_BASE}/${benchmarkPath("memory_read")}`,
+				series: listed ? 1 : 0,
+				runs: listed ? 4 : 0,
+				newest_run_started_at: listed ? "2026-11-15T04:12:00.000000000Z" : null,
+			});
+			expect(changed.has(seriesPath(fixture.memory))).toBe(true);
+		}
 	});
 });
 
@@ -623,6 +810,7 @@ describe("the check fails loudly", () => {
 		expect(percentile).toEqual([
 			`${seriesPath(fixture.memory)}: series_v1: /percentiles/time_per_repetition_ns/p50 is ${p50 * 2}, not ${p50}, as series v1's Derivation of Series ${fixture.memory} holds it`,
 			`v1/series.json: the row of Series ${fixture.memory} differs from its file ${seriesPath(fixture.memory)}: /derivations/series_v1/percentiles/time_per_repetition_ns/p50 is ${p50}, not ${p50 * 2}`,
+			`v1/benchmarks/memory_read.json: the row of Series ${fixture.memory} is not the one its file ${seriesPath(fixture.memory)} makes, as v1/series.json holds it: /derivations/series_v1/percentiles/time_per_repetition_ns/p50 is ${p50}, not ${p50 * 2}`,
 		]);
 		const http = fixture.requests.derivations.find((d) => d.series.id === fixture.http) as RequestsFile["derivations"][number];
 		const pooled = check(edit(seriesPath(fixture.http), (file) => (file.derivations.requests_v1.pool.requests += 1)));
@@ -637,11 +825,22 @@ describe("the check fails loudly", () => {
 		const rowOf = (list: Json, id: string): Json => list.series.find((row: Json) => row.id === id);
 		const count = check(edit("v1/series.json", (list) => (rowOf(list, fixture.memory).runs = 5)));
 		expect(count).toEqual([`v1/series.json: the row of Series ${fixture.memory} differs from its file ${seriesPath(fixture.memory)}: /runs is 5, not 4`]);
-		const url = check(edit("v1/series.json", (list) => (rowOf(list, fixture.memory).url = `${DEFAULT_BASE}/${seriesPath(fixture.syscall)}`)));
-		expect(url).toEqual([
+		const elsewhere = (row: Json) => (row.url = `${DEFAULT_BASE}/${seriesPath(fixture.syscall)}`);
+		const url = check(edit("v1/series.json", (list) => elsewhere(rowOf(list, fixture.memory))));
+		const wrongInList = [
 			`v1/series.json: the row of Series ${fixture.memory} has url "${DEFAULT_BASE}/${seriesPath(fixture.syscall)}", not ${DEFAULT_BASE}/${seriesPath(fixture.memory)}, the address of its file`,
 			`v1/series.json: the row of Series ${fixture.memory} differs from its file ${seriesPath(fixture.memory)}: /url is "${DEFAULT_BASE}/${seriesPath(fixture.syscall)}", not "${DEFAULT_BASE}/${seriesPath(fixture.memory)}"`,
-			// Nothing else leads to the Series file, nor so to its month.
+		];
+		// Its benchmark's list still leads to the Series file.
+		expect(url).toEqual(wrongInList);
+		// The same in its benchmark's list too: nothing else leads to the Series file, nor so to its month.
+		const both = check((copy) => {
+			edit("v1/series.json", (list) => elsewhere(rowOf(list, fixture.memory)))(copy);
+			edit("v1/benchmarks/memory_read.json", (list) => elsewhere(rowOf(list, fixture.memory)))(copy);
+		});
+		expect(both).toEqual([
+			...wrongInList,
+			`v1/benchmarks/memory_read.json: the row of Series ${fixture.memory} is not the one its file ${seriesPath(fixture.memory)} makes, as v1/series.json holds it: /url is "${DEFAULT_BASE}/${seriesPath(fixture.syscall)}", not "${DEFAULT_BASE}/${seriesPath(fixture.memory)}"`,
 			`${seriesPath(fixture.memory)} is in the tree, but no link leads to it from v1/index.json`,
 			`${november(fixture.memory)} is in the tree, but no link leads to it from v1/index.json`,
 		]);
@@ -653,6 +852,41 @@ describe("the check fails loudly", () => {
 		expect(order).toEqual(["v1/series.json: the rows are not in the order of benchmark, instance type, zone ID, params, build"]);
 	});
 
+	test("when a template's address is not the base's, or the table of contents' totals of a benchmark are not its list's", () => {
+		const series = check(edit("v1/index.json", (index) => (index.series.series_file_url_template = "https://example.test/v1/series/{id}.json")));
+		expect(series).toEqual([`v1/index.json: /series/series_file_url_template is "https://example.test/v1/series/{id}.json", not "${DEFAULT_BASE}/v1/series/{id}.json", as the tree and the Derivations make it`]);
+		const benchmark = check(edit("v1/index.json", (index) => (index.benchmarks.benchmark_file_url_template = "https://example.test/v1/benchmarks/{benchmark}.json")));
+		expect(benchmark).toEqual([`v1/index.json: benchmarks: /benchmark_file_url_template is "https://example.test/v1/benchmarks/{benchmark}.json", not "${DEFAULT_BASE}/v1/benchmarks/{benchmark}.json", as the tree and the Derivations make it`]);
+		const runs = json(tree, "v1/index.json").benchmarks.list[1].runs as number;
+		const total = check(edit("v1/index.json", (index) => (index.benchmarks.list[1].runs += 1)));
+		expect(total).toEqual([`v1/index.json: benchmarks: /list/1/runs is ${runs + 1}, not ${runs}, as the tree and the Derivations make it`]);
+		const unlisted = check(edit("v1/index.json", (index) => (index.benchmarks.unlisted = 1)));
+		expect(unlisted).toEqual(["v1/index.json: benchmarks: /unlisted is 1, not 0, as the tree and the Derivations make it"]);
+		const words = check(edit("v1/index.json", (index) => delete index.series.about));
+		expect(words).toEqual([`v1/index.json: /series/about is absent, not "the words of where the Series are listed", as the tree and the Derivations make it`]);
+	});
+
+	test("when a benchmark's list lacks a row it should hold, or holds its rows out of order", () => {
+		// Two Series of one benchmark: the syscall Series named memory_read.
+		const series = structuredClone(fixture.series);
+		(series.derivations.find((d) => d.series.id === fixture.syscall) as SeriesFile["derivations"][number]).series.benchmark = "memory_read";
+		const merged = writeTree(buildApi({ ...sourcesOf(fixture), series }));
+		const path = "v1/benchmarks/memory_read.json";
+		const checkMerged = (change: (copy: string) => void): string[] => {
+			const copy = mkdtempSync(join(tmpdir(), "api-broken-"));
+			cpSync(merged, copy, { recursive: true });
+			change(copy);
+			return checkApi({ tree: copy, runs: fixture.runs, base: DEFAULT_BASE, series, requests: fixture.requests }).problems;
+		};
+		expect(checkMerged(() => {})).toEqual([]);
+		const ids = JSON.parse(readFileSync(join(merged, path), "utf8")).series.map((row: Json) => row.id) as string[];
+		expect(ids.length).toBe(2);
+		const missing = checkMerged(edit(path, (list) => list.series.pop()));
+		expect(missing).toEqual([expect.stringContaining(`${path} lists the Series ${JSON.stringify([ids[0]])}, not ${JSON.stringify(ids)}: of the Series of benchmark memory_read whose rows take at most 16384 bytes`)]);
+		const reordered = checkMerged(edit(path, (list) => list.series.reverse()));
+		expect(reordered).toEqual([expect.stringContaining(`${path} lists the Series ${JSON.stringify([...ids].reverse())}, not ${JSON.stringify(ids)}`)]);
+	});
+
 	test("when the table of contents does not list exactly the price files and schemas in the tree, or counts the Series wrong", () => {
 		const emptied = check(
 			edit("v1/index.json", (index) => {
@@ -662,7 +896,7 @@ describe("the check fails loudly", () => {
 			}),
 		);
 		expect(emptied.slice(0, 3)).toEqual([
-			"v1/index.json: /schemas has 0 items, not 6, as the tree and the Derivations make it",
+			"v1/index.json: /schemas has 0 items, not 7, as the tree and the Derivations make it",
 			"v1/index.json: prices: /files has 0 items, not 2, as the price files in the tree make it",
 			`v1/index.json: prices: /newest is null, not {"date":"2026-11-12","path":"prices/2026/11/12/aws.json","url":"${DEFAULT_BASE}/v1/prices/2026-11-12.json"}, as the price files in the tree make it`,
 		]);
@@ -812,7 +1046,7 @@ describe("the commands", () => {
 		const build = Bun.spawnSync([bun, "scripts/build-api.ts", "--derivations", fixture.derivationsPath, "--requests-derivations", fixture.requestsPath, "--runs", fixture.runs, "--out", out], { cwd: ROOT });
 		expect(build.stderr.toString()).toBe("");
 		expect(build.exitCode).toBe(0);
-		expect(build.stdout.toString()).toContain("3 Series, 3 month files, 2 price files, 6 schemas");
+		expect(build.stdout.toString()).toContain("3 Series, 3 benchmark lists, 3 month files, 2 price files, 7 schemas");
 		const written = readdirSync(join(out, "v1", "series"), { recursive: true }).map(String).sort();
 		expect(written).toEqual([fixture.http, fixture.memory, fixture.syscall].sort().flatMap((id) => [id, `${id}.json`, join(id, `${NOVEMBER}.json`)]).sort());
 		for (const [path, bytes] of tree) {

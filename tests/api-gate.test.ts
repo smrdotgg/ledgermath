@@ -9,14 +9,14 @@
 
 import { beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
 import type { DerivationsFile as RequestsFile } from "../methods/requests/v1/output";
 import type { DerivationsFile as SeriesFile } from "../methods/v1/output";
-import { type ApiSources, apiJson, buildApi, DEFAULT_BASE, monthPath, readApiSchemas, readBootFiles, readBootSummaries, readPriceFiles, seriesPath } from "../scripts/lib/api";
-import { checkApi, checkStability } from "../scripts/lib/api-check";
+import { type ApiSources, apiJson, buildApi, DEFAULT_BASE, LAYOUT, MONTH_FILES_WRITTEN_SO_SINCE_LAYOUT, monthPath, readApiSchemas, readBootFiles, readBootSummaries, readPriceFiles, seriesPath } from "../scripts/lib/api";
+import { checkApi, checkStability, describeStability } from "../scripts/lib/api-check";
 import { type ApiFixture, makeApiFixture } from "./api-fixtures";
 
 setDefaultTimeout(120_000);
@@ -264,8 +264,15 @@ describe("3. the previous tree is whole, and its history is honoured across a ch
 		expect(checkStability(missing, directory, { newBaseline: true }).problems).toEqual([]);
 		// A tree of a later layout.
 		const later = copyOf(directory);
-		writeFileSync(join(later, "v1/index.json"), written("v1/index.json", { ...readJson(later, "v1/index.json"), layout: 2 }));
-		expect(checkStability(later, directory).problems).toEqual([expect.stringContaining(`${later} is a tree of layout 2, this tree of layout 1`)]);
+		writeFileSync(join(later, "v1/index.json"), written("v1/index.json", { ...readJson(later, "v1/index.json"), layout: LAYOUT + 1 }));
+		expect(checkStability(later, directory).problems).toEqual([expect.stringContaining(`${later} is a tree of layout ${LAYOUT + 1}, this tree of layout ${LAYOUT}`)]);
+		// A tree of the layout before, as the first run after a raise of layout finds the tree the run before kept: refused, unless declared;
+		// declared, its Series and Runs are all still here.
+		const earlier = copyOf(directory);
+		writeFileSync(join(earlier, "v1/index.json"), written("v1/index.json", { ...readJson(earlier, "v1/index.json"), layout: LAYOUT - 1 }));
+		expect(checkStability(earlier, directory).problems).toEqual([expect.stringContaining(`${earlier} is a tree of layout ${LAYOUT - 1}, this tree of layout ${LAYOUT}`)]);
+		const raised = checkStability(earlier, directory, { newBaseline: true });
+		expect([raised.compared, raised.problems, raised.published]).toEqual([true, [], { series: 3, runs: 9, monthFiles: 5, seriesFilesWithPoints: 0, unread: 0 }]);
 		// The layout on main before the split: no layout in the index, every point in the Series file, no month file.
 		const before = writeTree(tree, (path) => !/^v1\/series\//.test(path));
 		const index = readJson(before, "v1/index.json");
@@ -279,7 +286,7 @@ describe("3. the previous tree is whole, and its history is honoured across a ch
 			mkdirSync(join(before, "v1", "series"), { recursive: true });
 			writeFileSync(join(before, seriesPath(id)), heldOrder(file));
 		}
-		expect(checkStability(before, directory).problems).toEqual([expect.stringContaining(`${before} is a tree of layout none (it was written before layout was), this tree of layout 1`)]);
+		expect(checkStability(before, directory).problems).toEqual([expect.stringContaining(`${before} is a tree of layout none (it was written before layout was), this tree of layout ${LAYOUT}`)]);
 		const declared = checkStability(before, directory, { newBaseline: true });
 		expect([declared.compared, declared.problems, declared.published]).toEqual([false, [], { series: 3, runs: 9, monthFiles: 0, seriesFilesWithPoints: 3, unread: 0 }]);
 		const lostSeries = checkStability(before, lost, { newBaseline: true });
@@ -317,5 +324,60 @@ describe("3. the previous tree is whole, and its history is honoured across a ch
 		expect(notWhole.problems).toContainEqual(
 			expect.stringMatching(new RegExp(`^the previous tree ${unlisted} is not whole, so it is no baseline: ${nov} has sha256 [0-9a-f]{64}, not "[0-9a-f]{64}" as ${seriesPath(fixture.syscall).replaceAll(".", "\\.")} lists it$`)),
 		);
+	});
+
+	test("a previous tree of an earlier layout that writes month files alike, with a new baseline declared: every month file is still compared by the four causes, and only the rest of the tree may change", () => {
+		expect(MONTH_FILES_WRITTEN_SO_SINCE_LAYOUT).toBeLessThan(LAYOUT);
+		const nov = monthPath(fixture.syscall, "2026-11");
+		const asLayout = (from: string, layout: number): string => {
+			const copy = copyOf(from);
+			writeFileSync(join(copy, "v1/index.json"), written("v1/index.json", { ...readJson(copy, "v1/index.json"), layout }));
+			return copy;
+		};
+		// The tree before the raise, its month files the same: compared, every one the same byte for byte.
+		const earlier = asLayout(directory, LAYOUT - 1);
+		const raised = checkStability(earlier, directory, { newBaseline: true });
+		expect([raised.compared, raised.acrossLayouts, raised.problems, raised.inBoth, raised.unchanged]).toEqual([true, true, [], 5, 5]);
+		expect(describeStability(raised, earlier).join("\n")).toContain("every month file was held to the four causes");
+		// Without the declaration, a change of layout is refused as ever.
+		expect(checkStability(earlier, directory).problems).toEqual([expect.stringContaining(`${earlier} is a tree of layout ${LAYOUT - 1}, this tree of layout ${LAYOUT}`)]);
+		// A month file the tree before held otherwise, with no cause: refused, the new baseline notwithstanding.
+		const edited = copyOf(directory);
+		const value = readJson(edited, nov);
+		value.derivations.series_v1.points[0].time_per_repetition_ns += 1;
+		writeFileSync(join(edited, nov), written(nov, value));
+		keepEntry(edited, nov);
+		const changed = checkStability(asLayout(edited, LAYOUT - 1), directory, { newBaseline: true });
+		expect(changed.compared).toBe(true);
+		expect(changed.problems).toEqual([expect.stringContaining(`${nov} changed since the previous tree in a way none of the four causes explains: /derivations/series_v1: the point of Run`)]);
+		// A tree before of a layout older than the month files' writing (0 reads as none): not compared, as a new baseline lets it be.
+		const older = checkStability(asLayout(directory, MONTH_FILES_WRITTEN_SO_SINCE_LAYOUT - 1), directory, { newBaseline: true });
+		expect([older.compared, older.problems]).toEqual([false, []]);
+		// And one that is not whole is a new baseline as before: nothing compared, nothing published missing.
+		const unlisted = copyOf(directory);
+		writeFileSync(join(unlisted, nov), written(nov, value));
+		const notWhole = checkStability(asLayout(unlisted, LAYOUT - 1), directory, { newBaseline: true });
+		expect([notWhole.compared, notWhole.problems]).toEqual([false, []]);
+
+		// A month the tree before holds whose bytes are what its Series file lists, but are no JSON: a plain new baseline, not a refusal.
+		const unparsable = asLayout(directory, LAYOUT - 1);
+		writeFileSync(join(unparsable, nov), "not JSON\n");
+		keepEntry(unparsable, nov);
+		const ofUnparsable = checkStability(unparsable, directory, { newBaseline: true });
+		expect([ofUnparsable.compared, ofUnparsable.acrossLayouts, ofUnparsable.problems, ofUnparsable.published?.unread]).toEqual([false, undefined, [], 1]);
+		expect(checkStability(unparsable, directory).problems).toEqual([expect.stringContaining(`${unparsable} is a tree of layout ${LAYOUT - 1}, this tree of layout ${LAYOUT}`)]);
+
+		// A month the tree before holds that cannot be read at all: a plain new baseline, and the gate does not throw. (Root reads it anyway.)
+		if (process.getuid?.() !== 0) {
+			const unreadable = asLayout(directory, LAYOUT - 1);
+			chmodSync(join(unreadable, nov), 0);
+			try {
+				const ofUnreadable = checkStability(unreadable, directory, { newBaseline: true });
+				expect([ofUnreadable.compared, ofUnreadable.problems, ofUnreadable.published?.unread]).toEqual([false, [], 1]);
+				expect(checkStability(unreadable, directory).problems).toEqual([expect.stringContaining(`${unreadable} is a tree of layout ${LAYOUT - 1}, this tree of layout ${LAYOUT}`)]);
+			} finally {
+				chmodSync(join(unreadable, nov), 0o644);
+			}
+		}
 	});
 });
