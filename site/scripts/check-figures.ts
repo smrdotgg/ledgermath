@@ -20,6 +20,9 @@
  *  - Every cell of the headline selection, in the table and in each graph, holds exactly one
  *    figure or one dash: none is blank. The table has a row for every headline choice, and the
  *    table's columns and each graph's lines are the machine types, in the data's order.
+ *  - The home page has exactly the graphs it is meant to have (GRAPH_BENCHMARKS in
+ *    src/data/headline.ts), by their headings, in that order: a graph missing whole, one more,
+ *    or two swapped, is a problem, though no figure on the page is wrong.
  *  - Each price is the newest price file's On-Demand price for its machine type, and each
  *    machine type's title gives the price file's facts and AWS's description of the price.
  *  - "Latest runs" is there only when the table of contents gives recent_rounds, and each round
@@ -38,6 +41,7 @@ import {
 	DURATION_UNITS,
 	formatCount,
 	formatMoment,
+	GRAPH_BENCHMARKS,
 	HEADLINE_CHOICES,
 	type HeadlineChoice,
 	NO_PERCENTILE,
@@ -345,7 +349,16 @@ export function checkFigures(html: string, tree: Tree, page = "index.html", { ho
 			}
 			for (const choice of HEADLINE_CHOICES) if (!seen.includes(choice)) say(`the table has no row for ${JSON.stringify(choice.label)}`);
 		}
-		for (const graph of elements(body, (e) => hasClass(e, "graph"))) {
+		// The graphs the page is meant to have, by their headings, in order: each line of a graph
+		// is checked below, but a graph missing whole leaves no line to check.
+		const graphs = elements(body, (e) => hasClass(e, "graph"));
+		const headings = graphs.map((graph) => {
+			const heading = elements(graph, (e) => e.tag === "h2")[0];
+			return heading ? textOf(heading).trim() : "";
+		});
+		const meant = GRAPH_BENCHMARKS.map((benchmark) => choices.get(benchmark)?.label ?? `(no headline choice for ${benchmark})`);
+		if (headings.join("\n") !== meant.join("\n")) say(`the page's graphs are ${JSON.stringify(headings)}; it is meant to have ${JSON.stringify(meant)}, in that order`);
+		for (const graph of graphs) {
 			const heading = elements(graph, (e) => e.tag === "h2")[0];
 			const label = heading ? textOf(heading).trim() : "";
 			if (!byLabel.has(label)) say(`a graph is headed ${JSON.stringify(label)}, which is no headline choice`);

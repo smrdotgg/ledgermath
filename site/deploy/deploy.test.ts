@@ -18,11 +18,23 @@ afterEach(() => {
 	for (const dir of made.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
-/** deploy.sh, with a stub CLI that prints OUTPUT, run on a one-file site. */
-function deploy(output: string, { target = "production", path = process.env.PATH ?? "" } = {}) {
+/** A git command in DIR, its output. */
+function git(dir: string, ...args: string[]): string {
+	const result = Bun.spawnSync(["git", "-c", "user.name=test", "-c", "user.email=test@example.test", ...args], { cwd: dir, stdout: "pipe", stderr: "pipe" });
+	if (result.exitCode !== 0) throw new Error(`git ${args.join(" ")}: ${result.stderr}`);
+	return result.stdout.toString().trim();
+}
+
+/** deploy.sh, with a stub CLI that prints OUTPUT, run on a one-file site; with `checkout`, the script's directory is a git checkout of one commit. */
+function deploy(output: string, { target = "production", path = process.env.PATH ?? "", checkout = false } = {}) {
 	const dir = mkdtempSync(join(tmpdir(), "deploy-test-"));
 	made.push(dir);
 	copyFileSync(SCRIPT, join(dir, "deploy.sh"));
+	if (checkout) {
+		git(dir, "init", "-q", "-b", "main");
+		git(dir, "add", "deploy.sh");
+		git(dir, "commit", "-q", "-m", "the site's sources");
+	}
 	mkdirSync(join(dir, "node_modules/.bin"), { recursive: true });
 	writeFileSync(join(dir, "output.json"), output);
 	const stub = join(dir, "node_modules/.bin/vercel");
@@ -47,6 +59,15 @@ describe("deploy.sh", () => {
 		expect(result.args).toContain("--prebuilt");
 		expect(result.args).toContain("--prod");
 		expect(result.args).toContain("commit=abc");
+	});
+
+	test("records the commit of the checkout it runs from, not GITHUB_SHA: the site job checks out main, which can be newer than the run's commit", () => {
+		const result = deploy(JSON.stringify(READY), { checkout: true });
+		expect(result.status).toBe(0);
+		const head = git(result.dir, "rev-parse", "HEAD");
+		expect(head).toMatch(/^[0-9a-f]{40}$/);
+		expect(result.args).toContain(`commit=${head}`);
+		expect(result.args).not.toContain("commit=abc");
 	});
 
 	test("prints the deployment the same way when the CLI nests it under deployment", () => {

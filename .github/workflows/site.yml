@@ -8,20 +8,24 @@
 # each page is under its size budget (site/scripts/check-output.ts); and every
 # figure on the pages is the tree's, exactly (site/scripts/check-figures.ts).
 # The same commands work locally inside site/. Keeps the built site as the
-# artifact `site`.
+# artifact `site`, which a preview deploys.
 #
-# Then one deploy job puts that artifact on Vercel as prebuilt files (Vercel
-# builds nothing; site/deploy/deploy.sh). On a push to main or a run by hand on
-# main, `deploy-production` deploys production, ledgermath.com, and checks the
-# live page (site/scripts/check-live.ts), unless main has moved on, in the
-# files this workflow's push trigger lists, since the run's commit
-# (site/deploy/fresh.ts): then this one skips the deploy and passes, and the
-# newer commit's own run, waiting in the same queue, deploys after it or
-# already has. A pull request from a branch of this repository, or a run by
-# hand on another branch, gets a preview deployment from `deploy-preview`.
-# A pull request from a fork gets no secrets, so its run skips both deploy
-# jobs and still passes; nothing a fork's code controls ever sees
-# VERCEL_TOKEN.
+# Production is not deployed from that artifact. On a push to main or a run by
+# hand on main, `deploy-production`, inside the production deploys'
+# concurrency group, builds the site again from what the API bucket holds when
+# its turn comes, checks it, deploys it to ledgermath.com as prebuilt files
+# (Vercel builds nothing; site/deploy/deploy.sh) and checks the live pages
+# (site/scripts/check-live.ts); unless main has moved on, in the files this
+# workflow's push trigger lists, since the run's commit (site/deploy/fresh.ts),
+# when it skips the deploy and passes, and the newer commit's own run, waiting
+# in the same queue, deploys after it or already has. The runs workflow's site
+# job, which rebuilds the site after every publish, deploys production in the
+# same queue by the same rule (runs.yml; README, "Where it is deployed";
+# ADR-0035). A pull request from a branch of this repository, or a run by hand
+# on another branch, gets a preview deployment from `deploy-preview`. A pull
+# request from a fork gets no secrets, so its run skips both deploy jobs and
+# still passes; nothing a fork's code controls ever sees VERCEL_TOKEN, and no
+# pull request is given AWS credentials.
 name: site
 
 on:
@@ -78,23 +82,27 @@ jobs:
           if-no-files-found: error
 
   # Production: a push to main, or a run by hand on main. A pull request
-  # never reaches this job, so the fork rule below does not arise here.
+  # never reaches this job, so the fork rule below does not arise here, and
+  # the role it assumes trusts main alone (infra/runs/github-role.ts).
   deploy-production:
-    name: deploy the built site to Vercel (production)
+    name: build the site from the API bucket and deploy it to Vercel (production)
     needs: build
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     runs-on: ${{ vars.LEDGERMATH_RUNNER || 'ubuntu-24.04' }}
-    timeout-minutes: 10
+    timeout-minutes: 15
     permissions:
       contents: read
+      id-token: write # the OIDC token AWS exchanges for the role, with which this job only reads the API bucket
     # Production deploys run one at a time, and a running one is never
     # cancelled mid-upload. `queue: max` keeps every job that arrives while
     # another runs (up to 100) waiting in the group, instead of GitHub's
     # default of one waiting job that the next arrival cancels; so none is
-    # dropped, and each takes its turn. Jobs arrive in the order their builds
-    # finish, not their commits' (and a re-run arrives whenever it is
-    # started), so each first checks that main has not moved on (the step
-    # "Production goes ahead only if...") and skips the deploy if it has.
+    # dropped, and each takes its turn. The runs workflow's site job holds the
+    # same group. Each reads the API bucket when its turn comes, so the last to
+    # run deploys the newest tree. Jobs arrive in the order their builds
+    # finish, not their commits' (and a re-run arrives whenever it is started),
+    # so each first checks that main has not moved on (the step "Production
+    # goes ahead only if..."), and skips the deploy if it has.
     concurrency:
       group: site-deploy-production
       queue: max
@@ -140,33 +148,73 @@ jobs:
             *) exit "$status" ;;
           esac
       # Every step from here is skipped when that step said not to deploy.
+      - name: The repository's packages
+        if: steps.fresh.outputs.deploy == 'true'
+        run: bun install --frozen-lockfile
+      # The runs workflow's role, which it may assume from main alone. It may
+      # read and write the API bucket's v1/*; this job only reads. The keys are
+      # this step's outputs, not the job's environment, so only the read step
+      # holds them, as in the runs workflow's site job.
+      - name: AWS credentials for the API bucket, through OIDC
+        id: credentials
+        if: steps.fresh.outputs.deploy == 'true'
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.RUNS_AWS_ROLE_ARN }}
+          aws-region: us-east-2
+          output-env-credentials: false
+          output-credentials: true
+      # Inside the group, as the runs workflow's site job does: the bucket, not
+      # the edge, whose cache can be five minutes behind.
+      - name: The data API's files as the API bucket holds them now
+        if: steps.fresh.outputs.deploy == 'true'
+        env:
+          API_BUCKET: ${{ vars.API_BUCKET }}
+          AWS_ACCESS_KEY_ID: ${{ steps.credentials.outputs.aws-access-key-id }}
+          AWS_SECRET_ACCESS_KEY: ${{ steps.credentials.outputs.aws-secret-access-key }}
+          AWS_SESSION_TOKEN: ${{ steps.credentials.outputs.aws-session-token }}
+        run: bun scripts/read-api-tree.ts --bucket "$API_BUCKET" --region us-east-2 --out "$RUNNER_TEMP/tree"
+      - name: The site's packages
+        if: steps.fresh.outputs.deploy == 'true'
+        working-directory: site
+        run: bun install --frozen-lockfile
+      - name: Build the site from those files into site/dist/client
+        if: steps.fresh.outputs.deploy == 'true'
+        working-directory: site
+        run: bun run build --tree "$RUNNER_TEMP/tree"
+      - name: Each page holds its fixed words outside its scripts, links and loads stay inside the site or the API, the budget holds, and every figure is the tree's
+        if: steps.fresh.outputs.deploy == 'true'
+        working-directory: site
+        env:
+          LEDGERMATH_TREE: ${{ runner.temp }}/tree
+        run: bun run check
+      - name: The site carries the notices of the code it ships (THIRD-PARTY-NOTICES.md, section 3)
+        if: steps.fresh.outputs.deploy == 'true'
+        working-directory: site
+        run: cmp public/third-party-notices.txt dist/client/third-party-notices.txt
       - name: The Vercel CLI, at the version site/deploy/package.json pins
         if: steps.fresh.outputs.deploy == 'true'
         working-directory: site/deploy
         run: bun install --frozen-lockfile
-      - name: The site the build job built and checked
-        if: steps.fresh.outputs.deploy == 'true'
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: site
-          path: ${{ runner.temp }}/site
       - name: Deploy as prebuilt files (${{ env.TARGET }})
         if: steps.fresh.outputs.deploy == 'true'
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
-        run: site/deploy/deploy.sh "$RUNNER_TEMP/site" "$TARGET" >"$RUNNER_TEMP/deployment.json"
+        run: site/deploy/deploy.sh site/dist/client "$TARGET" >"$RUNNER_TEMP/deployment.json"
       - name: The deployment's URL, in the job summary
         if: steps.fresh.outputs.deploy == 'true'
         run: |
           url=$(jq -er '.url' "$RUNNER_TEMP/deployment.json")
+          newest=$(jq -r '.newest_run_started_at' "$RUNNER_TEMP/tree/v1/index.json")
           {
             echo "### Site deployed to Vercel: $TARGET"
             echo
             echo "- Deployment: $url"
             echo "- Production: https://ledgermath.com/"
             echo "- Commit: $GITHUB_SHA"
+            echo "- Tree: as the API bucket held it when this job read it; newest Run $newest"
           } >>"$GITHUB_STEP_SUMMARY"
           echo "$url"
       - name: https://ledgermath.com/ and /docs/ answer 200 with their fixed words (src/pages.text.ts) in their HTML
@@ -175,8 +223,8 @@ jobs:
         run: bun scripts/check-live.ts https://ledgermath.com/
 
   # A preview: a pull request from a branch of this repository, or a run by
-  # hand on a branch other than main. Its steps are the production job's
-  # without the freshness check and the live check.
+  # hand on a branch other than main. It deploys the build job's artifact,
+  # built from the public API's tree, with no freshness check and no live check.
   deploy-preview:
     name: deploy the built site to Vercel (preview)
     needs: build

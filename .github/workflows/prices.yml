@@ -13,7 +13,8 @@ name: prices
 
 on:
   schedule:
-    # Hours away from runs.yml's times (22:40 and every six hours from 00:00).
+    # Hours away from runs.yml's times (00:05, 06:05, 12:05 and 18:05; a test
+    # holds them at least two hours apart).
     - cron: "17 3 * * *"
     # A second chance the same day, should GitHub drop or delay the first; it
     # adds nothing when the first worked.

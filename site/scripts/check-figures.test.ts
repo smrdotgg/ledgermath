@@ -247,6 +247,27 @@ describe("checkFigures refuses", () => {
 		expect(problems(column)).toContain('index.html: the table\'s columns are ["m5.large","c8i.2xlarge","c8a.2xlarge","i4i.2xlarge"]; the machine types are ["m5.large","c8i.2xlarge","c8a.2xlarge","i4i.2xlarge","c6i.8xlarge"]');
 	});
 
+	test("a graph missing whole, one more, or two swapped: every figure left on the page is right, but the graphs are not the page's three", () => {
+		const graph = (label: string) => new RegExp(`<section class="graph"><h2>${label}</h2>[\\s\\S]*?</section>`);
+		const meant = '["Read memory sequentially","Hash 64 bytes with SHA-256","Make a system call"]';
+		const hash = fixture.html.match(graph("Hash 64 bytes with SHA-256"))?.[0] ?? "";
+		const memory = fixture.html.match(graph("Read memory sequentially"))?.[0] ?? "";
+		expect(hash).not.toBe("");
+		expect(memory).not.toBe("");
+
+		const missing = fixture.html.replace(hash, "");
+		expect(problems(missing)).toEqual([`index.html: the page's graphs are ["Read memory sequentially","Make a system call"]; it is meant to have ${meant}, in that order`]);
+		const none = fixture.html.replace(/<div class="graphs">[\s\S]*?<\/div>(?=\s*<section class="numbers")/, '<div class="graphs"></div>');
+		expect(none).not.toBe(fixture.html);
+		expect(problems(none)).toEqual([`index.html: the page's graphs are []; it is meant to have ${meant}, in that order`]);
+		const swapped = fixture.html.replace(memory, "\u0000").replace(hash, memory).replace("\u0000", hash);
+		expect(problems(swapped)).toEqual([`index.html: the page's graphs are ["Hash 64 bytes with SHA-256","Read memory sequentially","Make a system call"]; it is meant to have ${meant}, in that order`]);
+		const more = fixture.html.replace(hash, `${hash}${hash}`);
+		expect(problems(more)).toEqual([
+			`index.html: the page's graphs are ["Read memory sequentially","Hash 64 bytes with SHA-256","Hash 64 bytes with SHA-256","Make a system call"]; it is meant to have ${meant}, in that order`,
+		]);
+	});
+
 	test("a dash whose title does not give the tree's reason", () => {
 		const html = lacking.html.replace("No figure: the data have no Series for this on m5.large.", "No figure: not measured.");
 		expect(checkFigures(html, lacking.tree).problems.some((p) => p.includes('says "No figure: not measured."; why the tree gives no figure there is "the data have no Series for this on m5.large"'))).toBe(true);

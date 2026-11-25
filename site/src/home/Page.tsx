@@ -17,6 +17,7 @@ import {
 	formatMoment,
 	formatRate,
 	formatUsd,
+	GRAPH_BENCHMARKS,
 	type HeadlineCell,
 	type HeadlineRow,
 	type LeadFigure,
@@ -80,13 +81,9 @@ const Dash = (props: { cell: HeadlineCell }) => <span title={`No figure: ${props
 const price = (usdPerHour: string) => `$${formatUsd(usdPerHour).full}/h`;
 
 // ---------------------------------------------------------------- the three graphs
-
-/**
- * The three benchmarks drawn above the table: of the sections where the machine types differ
- * (memory, compute, the operating system), one each. A choice of which rows to draw, made when
- * the page was designed; the figures are the table's own.
- */
-const GRAPHS = ["memory_read", "hash", "syscall"] as const;
+//
+// Which benchmarks are drawn above the table, and in what order: GRAPH_BENCHMARKS, in
+// ../data/headline.ts, where scripts/check-figures.ts reads it too.
 
 /** Dots in a full bar, and rows of dots in a bar's height. */
 const TRACK = 88;
@@ -198,7 +195,7 @@ export default function HomePage(props: { data: SiteData }) {
 				</div>
 
 				<div class="graphs">
-					{GRAPHS.map((name) => {
+					{GRAPH_BENCHMARKS.map((name) => {
 						const row = headline.find((r) => r.choice.benchmark === name);
 						if (!row) throw new Error(`no headline row for ${name}`);
 						return <Graph row={row} data={data} />;

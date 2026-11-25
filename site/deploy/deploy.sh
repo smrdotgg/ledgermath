@@ -60,7 +60,12 @@ args=(deploy "$out" --prebuilt --yes --json)
 if [ "$target" = production ]; then
   args+=(--prod)
 fi
-commit=${GITHUB_SHA:-$(git -C "$here" rev-parse HEAD 2>/dev/null || true)}
+# The deployment records the commit of the checkout this script is in, which is
+# the one the site was built from: the runs workflow's site job checks out main
+# as it is when the job starts, which can be newer than the run's GITHUB_SHA.
+# GITHUB_SHA only when the script is not in a git checkout.
+commit=$(git -C "$here" rev-parse HEAD 2>/dev/null || true)
+commit=${commit:-${GITHUB_SHA:-}}
 if [ -n "$commit" ]; then
   args+=(--meta "commit=$commit")
 fi

@@ -3,8 +3,10 @@ import { chmodSync, existsSync, mkdtempSync, readdirSync, readFileSync, writeFil
 import { tmpdir } from "node:os";
 import { join, relative, sep } from "node:path";
 
+import { LATEST_START_MS } from "../infra/runs/launch-event";
+import { MAX_AGE_MS } from "../infra/runs/reap-boxes";
 import { MAX_PUBLISH_AGE_MS } from "../scripts/lib/api-freshness";
-import { scheduledMinutes } from "./runs-schedule";
+import { bootRounds, scheduledMinutes } from "./runs-schedule";
 
 // They read the workflows; on a loaded machine even that can take longer than bun's five-second default.
 setDefaultTimeout(60_000);
@@ -28,15 +30,16 @@ interface Job {
 	if?: string;
 	"timeout-minutes"?: number;
 	permissions?: Record<string, string>;
-	concurrency?: { group: string; "cancel-in-progress": boolean };
+	concurrency?: { group: string; "cancel-in-progress"?: boolean; queue?: string };
 	env?: Record<string, string>;
+	outputs?: Record<string, string>;
 	steps: Step[];
 }
 
 interface Workflow {
 	on: { schedule: Array<{ cron: string }>; workflow_dispatch: { inputs?: Record<string, { description?: string; type?: string; default?: unknown }> } | null };
 	permissions: Record<string, string>;
-	concurrency?: { group: string; "cancel-in-progress": boolean };
+	concurrency?: Job["concurrency"];
 	jobs: Record<string, Job>;
 }
 
@@ -45,8 +48,11 @@ const job = workflow.jobs.runs as Job;
 const steps = job.steps;
 const runs = steps.flatMap((step) => (step.run === undefined ? [] : [step.run]));
 const publish = workflow.jobs.publish as Job;
+const site = workflow.jobs.site as Job;
+const siteWorkflow = Bun.YAML.parse(readFileSync(join(ROOT, ".github", "workflows", "site.yml"), "utf8")) as Workflow;
 
 const RUNS_WORKFLOW = ".github/workflows/runs.yml";
+const SITE_WORKFLOW = ".github/workflows/site.yml";
 
 /** Every file under .github, at any depth: the workflows, and any action or workflow a later change adds. */
 function githubFiles(): Array<{ name: string; text: string }> {
@@ -112,19 +118,123 @@ function telegramSecretProblems(files: Array<{ name: string; text: string }>): s
 	return problems;
 }
 
+/** The jobs whose deploy step may hold the Vercel token and the project's IDs, by workflow, and nothing else may. */
+const VERCEL_JOBS: Record<string, string[]> = { [RUNS_WORKFLOW]: ["site"], [SITE_WORKFLOW]: ["deploy-production", "deploy-preview"] };
+/** That step's environment, as far as Vercel goes: the three, by these names, from these. */
+const VERCEL_ENV: Array<[string, string]> = [
+	["VERCEL_TOKEN", "${{ secrets.VERCEL_TOKEN }}"],
+	["VERCEL_ORG_ID", "${{ vars.VERCEL_ORG_ID }}"],
+	["VERCEL_PROJECT_ID", "${{ vars.VERCEL_PROJECT_ID }}"],
+];
+
+/**
+ * Every way the files under .github let the Vercel token, or the project's
+ * IDs, out of the deploy steps that need them (ADR-0035): in runs.yml, the
+ * site job's deploy step alone; in site.yml, the deploy step of each of its
+ * two deploy jobs; nowhere else. Judged on the text (any reference to a
+ * VERCEL_ secret or variable, toJSON(secrets)) and on the parsed YAML (a job's
+ * `secrets` that is not a mapping; which steps' `env` hold them, and nothing
+ * else of a step, a job or a workflow naming them; runs.yml's triggers), so a
+ * spelling cannot slip past. Empty when there is none.
+ */
+function vercelSecretProblems(files: Array<{ name: string; text: string }>): string[] {
+	const problems: string[] = [];
+	for (const { name, text } of files) {
+		const allowed = VERCEL_JOBS[name] ?? [];
+		// secrets.VERCEL_…, secrets['VERCEL_…'], vars.VERCEL_…, in any case: one token and two IDs per deploy step allowed, none elsewhere.
+		const tokens = text.match(/secrets\s*(\.|\[\s*['"])\s*VERCEL/gi)?.length ?? 0;
+		const ids = text.match(/vars\s*(\.|\[\s*['"])\s*VERCEL/gi)?.length ?? 0;
+		if (tokens !== allowed.length) problems.push(`${name}: ${tokens} references to a VERCEL_ secret`);
+		if (ids !== 2 * allowed.length) problems.push(`${name}: ${ids} references to a VERCEL_ variable`);
+		if (/toJSON\(\s*(secrets|vars)\s*\)/i.test(text)) problems.push(`${name}: hands over every secret or variable with toJSON`);
+		if (allowed.length === 0 && /VERCEL_(TOKEN|ORG_ID|PROJECT_ID)/i.test(text)) problems.push(`${name}: names the Vercel token or the project's IDs`);
+		if (!/\.ya?ml$/.test(name)) continue;
+		let parsed: { on?: unknown; env?: unknown; jobs?: Record<string, { secrets?: unknown; env?: unknown; steps?: Step[] }> };
+		try {
+			parsed = Bun.YAML.parse(text) as typeof parsed;
+		} catch {
+			problems.push(`${name}: not YAML this check can read`);
+			continue;
+		}
+		const jobs = Object.entries(parsed?.jobs ?? {});
+		for (const [id, each] of jobs) {
+			const secrets = each?.secrets;
+			if (secrets !== undefined && (typeof secrets !== "object" || secrets === null || Array.isArray(secrets))) problems.push(`${name}: job ${id} hands over its secrets as ${JSON.stringify(secrets)}`);
+			if (secrets !== undefined && /VERCEL/i.test(JSON.stringify(secrets))) problems.push(`${name}: job ${id} hands a Vercel secret to a reusable workflow`);
+		}
+		if (allowed.length === 0) continue;
+		if (/VERCEL/i.test(JSON.stringify(parsed.env ?? {}))) problems.push(`${name}: the workflow's environment names VERCEL`);
+		for (const [id, each] of jobs) {
+			const steps = each?.steps ?? [];
+			if (/VERCEL/i.test(JSON.stringify(each?.env ?? {}))) problems.push(`${name}: job ${id}'s environment names VERCEL`);
+			const naming = steps.filter((step) => /VERCEL_(TOKEN|ORG_ID|PROJECT_ID)/i.test(JSON.stringify(step)));
+			const deploys = naming.filter((step) => /^site\/deploy\/deploy\.sh /.test(step.run ?? "") && JSON.stringify(Object.entries(step.env ?? {}).filter(([key, value]) => /VERCEL/i.test(key) || /VERCEL/i.test(String(value)))) === JSON.stringify(VERCEL_ENV));
+			const { env: _env, ...rest } = deploys[0] ?? {};
+			if (deploys.length === 1 && /VERCEL_(TOKEN|ORG_ID|PROJECT_ID)/i.test(JSON.stringify(rest))) problems.push(`${name}: job ${id}'s deploy step names the Vercel token or IDs outside its environment`);
+			const expected = allowed.includes(id) ? 1 : 0;
+			if (naming.length !== expected || deploys.length !== expected) problems.push(`${name}: job ${id} has ${naming.length} steps naming the Vercel token or IDs, ${deploys.length} of them a deploy step with exactly the three in its environment; ${expected} allowed`);
+		}
+		for (const id of allowed) if (!jobs.some(([each]) => each === id)) problems.push(`${name}: no job ${id}`);
+		if (name === RUNS_WORKFLOW) {
+			// Started on its schedule and by hand, never by a pull request, whose code could read the step's environment.
+			const on = parsed.on;
+			const triggers = typeof on === "string" ? [on] : Array.isArray(on) ? on.map(String) : Object.keys((on as object | null) ?? {});
+			if (triggers.join(",") !== "schedule,workflow_dispatch") problems.push(`${name}: started by ${triggers.join(", ")}`);
+		}
+		if (/pull_request_target/.test(text)) problems.push(`${name}: started by pull_request_target, which hands a fork's code the secrets`);
+	}
+	return problems;
+}
+
 describe("the runs workflow", () => {
-	test("runs at 22:40 UTC, every six hours, and by hand; its first job holds the group runs, shared with prices.yml, and the publish job only api-bucket", () => {
-		expect(workflow.on.schedule.map((entry) => entry.cron)).toEqual(["40 22 * * *", "0 */6 * * *"]);
+	test("runs at 00:05, 06:05, 12:05 and 18:05 UTC, and by hand; its first job holds the group runs, shared with prices.yml, the publish job only api-bucket, and the site job the production deploys' group", () => {
+		expect(workflow.on.schedule.map((entry) => entry.cron)).toEqual(["5 0,6,12,18 * * *"]);
+		expect(scheduledMinutes()).toEqual([5, 6 * 60 + 5, 12 * 60 + 5, 18 * 60 + 5]);
 		expect("workflow_dispatch" in workflow.on).toBe(true);
-		expect(Object.keys(workflow.jobs)).toEqual(["runs", "publish"]);
+		expect(Object.keys(workflow.jobs)).toEqual(["runs", "publish", "site"]);
 		// No group for the workflow as a whole: then a run would hold runs, the lock prices.yml shares, through its publish job too.
 		expect(workflow.concurrency).toBeUndefined();
 		// The first job holds runs exactly as long as the workflow did before the publish job: for itself.
 		expect(job.concurrency).toEqual({ group: "runs", "cancel-in-progress": false });
 		// The publish job holds api-bucket alone, so the next run's first job, and prices.yml, can start while it uploads.
 		expect(publish.concurrency).toEqual({ group: "api-bucket", "cancel-in-progress": false });
+		// The site job holds the group of site.yml's production deploys, keeping every waiting job, exactly as they do.
+		expect(site.concurrency).toEqual({ group: "site-deploy-production", queue: "max" });
+		expect(site.concurrency).toEqual(siteWorkflow.jobs["deploy-production"]?.concurrency as Job["concurrency"]);
 		const text = readFileSync(join(ROOT, ".github", "workflows", "runs.yml"), "utf8");
-		expect(text.match(/^\s*group:/gm)?.length).toBe(2);
+		expect(text.match(/^\s*group:/gm)?.length).toBe(3);
+	});
+
+	test("cuts a tree once after each round of boots has ended, never in the middle of one: after the latest a round's last box can end, before the next round's first boot", () => {
+		// A launch is refused when it is more than LATEST_START_MS late; the reaper, every few minutes, ends any box older than MAX_AGE_MS.
+		const reaper = Number(/const REAP_SCHEDULE = "rate\((\d+) minutes\)";/.exec(readFileSync(join(ROOT, "infra", "runs", "stack.ts"), "utf8"))?.[1]);
+		expect(reaper).toBe(5);
+		const latestEnd = (last: number) => last + (LATEST_START_MS + MAX_AGE_MS) / 60_000 + reaper;
+		const rounds = bootRounds();
+		expect(rounds).toEqual([4, 10, 16, 22].map((hour) => ({ first: hour * 60 + 10, last: hour * 60 + 50 })));
+		const starts = scheduledMinutes();
+		expect(starts.length).toBe(rounds.length);
+		rounds.forEach((round, i) => {
+			const next = (rounds[(i + 1) % rounds.length] as { first: number }).first + (i + 1 === rounds.length ? 1_440 : 0);
+			const inGap = starts.map((start) => (start >= round.first ? start : start + 1_440)).filter((start) => start < next);
+			expect({ round, starts: inGap.length }).toEqual({ round, starts: 1 });
+			// HH+1:55 for a round whose last box is at :50; the cut comes after it.
+			expect(inGap[0] as number).toBeGreaterThan(latestEnd(round.last));
+		});
+		expect(latestEnd(4 * 60 + 50)).toBe(5 * 60 + 55);
+	});
+
+	test("the words claim no more than the schedule gives: no tree is said to hold whole rounds, and each place names when one can still hold part of a round", () => {
+		const places = {
+			"runs.yml": readFileSync(join(ROOT, ".github", "workflows", "runs.yml"), "utf8").split("\n  workflow_dispatch:")[0] as string,
+			README: readFileSync(join(ROOT, "README.md"), "utf8").split("### The workflow")[1]?.split("It checks out this")[0] ?? "",
+			"ADR-0035": readFileSync(join(ROOT, "docs", "adr", "0035-the-home-page-is-rebuilt-after-every-publish.md"), "utf8"),
+		};
+		for (const [place, raw] of Object.entries(places)) {
+			const text = raw.replace(/\s*#\s*/g, " ").replace(/\s+/g, " ");
+			expect({ place, claims: /holds? whole rounds/.test(text) }).toEqual({ place, claims: false });
+			for (const said of ["started by hand", "more than four hours late", "does not confirm", "arrives late"]) expect({ place, said, found: text.includes(said) }).toEqual({ place, said, found: true });
+		}
 	});
 
 	test("gives the workflow no permission, and each job its own: the first may read contents and Actions, ask for an OIDC token and write issues", () => {
@@ -136,7 +246,10 @@ describe("the runs workflow", () => {
 		const aws = steps.find((step) => step.uses?.startsWith("aws-actions/configure-aws-credentials@"));
 		expect(aws?.with).toEqual({ "role-to-assume": "${{ vars.RUNS_AWS_ROLE_ARN }}", "aws-region": "us-east-2" });
 		expect(job.env?.RUNS_BUCKET).toBe("${{ vars.RUNS_BUCKET }}");
-		expect(JSON.stringify(workflow)).not.toMatch(/aws-access-key-id|aws-secret-access-key/);
+		// Never a static key given to the action: OIDC only (the site job reads the keys the action gives as outputs).
+		for (const each of Object.values(workflow.jobs)) {
+			for (const step of each.steps) expect(Object.keys(step.with ?? {}).filter((input) => /^aws-(access-key-id|secret-access-key|session-token)$/.test(input))).toEqual([]);
+		}
 	});
 
 	test("checks out the Runs repository with the deploy key", () => {
@@ -229,7 +342,9 @@ describe("the runs workflow", () => {
 		// The only command the flag is written in, and no step decides it.
 		expect(runs.join("\n").split("--allow-no-previous").length).toBe(2);
 		expect(text).not.toContain("outputs.comparable");
-		expect(text).not.toMatch(/GITHUB_OUTPUT/);
+		// No step of the first job writes an output (the site job's own decision, whether to deploy, is its only one).
+		expect(JSON.stringify(job)).not.toMatch(/GITHUB_OUTPUT/);
+		expect(JSON.stringify(publish)).not.toMatch(/GITHUB_OUTPUT/);
 		expect(build.id).toBe("api");
 		expect(build.if).toBe("${{ !cancelled() && steps.derive.outcome == 'success' }}");
 		expect(check.id).toBe("api-check");
@@ -239,8 +354,9 @@ describe("the runs workflow", () => {
 		expect(upload.with).toEqual({ name: "api", path: "api/", "if-no-files-found": "error", "retention-days": 7 as unknown as string });
 		// The same pinned action as the page's artifact.
 		expect(upload.uses).toBe(pageUpload.uses as string);
-		// No copy with the AWS CLI, no deploy, anywhere in the workflow.
-		expect(text).not.toMatch(/aws s3 (cp|sync)|s3:\/\/|sst deploy|vercel/i);
+		// No copy with the AWS CLI and no deploy of the stack anywhere in the workflow; Vercel only in the site job.
+		expect(text).not.toMatch(/aws s3 (cp|sync)|s3:\/\/|sst deploy/i);
+		expect(JSON.stringify({ runs: job, publish })).not.toMatch(/vercel/i);
 	});
 
 	test("the first job does not publish: no step of it uploads or checks a bucket of the tree, only the alarm names the API bucket, to read it, and the alarm is its last step, within its own 60 minutes", () => {
@@ -437,6 +553,247 @@ describe("the runs workflow", () => {
 	});
 });
 
+describe("the site job: the home page rebuilt and deployed after every publish (ADR-0035)", () => {
+	const s = site.steps;
+	/** An action by its name, a command by its first line. */
+	const key = (step: Step): string => step.uses?.split("@")[0] ?? (step.run ?? "").trim().split("\n")[0]!;
+
+	/** The production deploy's own steps, in order, as the rule names them: checkout, credentials, read, build, check, deploy, live check. */
+	const READ = 'bun scripts/read-api-tree.ts --bucket "$API_BUCKET" --region us-east-2 --out "$RUNNER_TEMP/tree"';
+	/** The read step's environment: the bucket, and the role's keys from the credentials step's outputs. */
+	const READ_ENV = {
+		API_BUCKET: "${{ vars.API_BUCKET }}",
+		AWS_ACCESS_KEY_ID: "${{ steps.credentials.outputs.aws-access-key-id }}",
+		AWS_SECRET_ACCESS_KEY: "${{ steps.credentials.outputs.aws-secret-access-key }}",
+		AWS_SESSION_TOKEN: "${{ steps.credentials.outputs.aws-session-token }}",
+	};
+	const publishCredentials = () => publish.steps.find((step) => step.uses?.startsWith("aws-actions/configure-aws-credentials@"))?.with as Record<string, string>;
+	/** The credentials step of a production job: the publish job's role and Region, giving the keys as outputs, not to the environment. */
+	const CREDENTIALS_WITH = () => ({ ...publishCredentials(), "output-env-credentials": false as unknown as string, "output-credentials": true as unknown as string });
+	const ruleOrder = (steps: Step[]) =>
+		[
+			steps.findIndex((step) => step.uses?.startsWith("actions/checkout@")),
+			steps.findIndex((step) => step.uses?.startsWith("aws-actions/configure-aws-credentials@")),
+			steps.findIndex((step) => step.run === READ),
+			steps.findIndex((step) => step.run?.startsWith("bun run build --tree")),
+			steps.findIndex((step) => step.run === "bun run check"),
+			steps.findIndex((step) => step.run?.startsWith("site/deploy/deploy.sh site/dist/client ")),
+			steps.findIndex((step) => step.run === "bun scripts/check-live.ts https://ledgermath.com/"),
+		] as const;
+
+	test("runs after the publish job, only when it succeeded and only on main, with its own 15 minutes, reading contents and asking for an OIDC token, nothing more", () => {
+		expect(site.needs).toBe("publish");
+		// Never when the publish job failed, was skipped or was cancelled. A scheduled run's ref is main.
+		expect(site.if).toBe("${{ needs.publish.result == 'success' && github.ref == 'refs/heads/main' }}");
+		expect(site["timeout-minutes"]).toBe(15);
+		expect(site.permissions).toEqual({ contents: "read", "id-token": "write" });
+		expect(site.env).toBeUndefined();
+		expect(site.outputs).toBeUndefined();
+		// The first job and the publish job are as they were: the site job adds no need to them.
+		expect(job.needs).toBeUndefined();
+		expect(publish.needs).toBe("runs");
+	});
+
+	test("inside the group, checks out main as it is now, takes the publish job's role, reads the tree from the API bucket, builds and checks the site from those bytes, deploys, and checks the live site, in that order, every step after the one before succeeded", () => {
+		expect(s.map(key)).toEqual([
+			"actions/checkout",
+			"oven-sh/setup-bun",
+			"bun install --frozen-lockfile",
+			"aws-actions/configure-aws-credentials",
+			READ,
+			"bun install --frozen-lockfile",
+			'bun run build --tree "$RUNNER_TEMP/tree"',
+			"bun run check",
+			"cmp public/third-party-notices.txt dist/client/third-party-notices.txt",
+			"bun install --frozen-lockfile",
+			'site/deploy/deploy.sh site/dist/client production >"$RUNNER_TEMP/deployment.json"',
+			"url=$(jq -er '.url' \"$RUNNER_TEMP/deployment.json\")",
+			"bun scripts/check-live.ts https://ledgermath.com/",
+			'failed="the checkout of main, or setting up Bun"',
+		]);
+		const order = ruleOrder(s);
+		expect(order.every((at) => at >= 0)).toBe(true);
+		expect([...order].sort((a, b) => a - b)).toEqual([...order]);
+		// main as it is now, never this run's commit, which main may have left; no credential kept in the clone.
+		expect(s[0]?.with).toEqual({ ref: "refs/heads/main", "persist-credentials": false as unknown as string });
+		// The publish job's role and region, the keys as outputs; the bucket the variable names and the keys, in the read step alone.
+		expect(s[3]?.with).toEqual(CREDENTIALS_WITH());
+		expect(s[3]?.id).toBe("credentials");
+		expect(s[4]?.env).toEqual(READ_ENV);
+		expect(s.filter((step) => JSON.stringify(step).includes("API_BUCKET")).length).toBe(1);
+		expect(s[7]?.env).toEqual({ LEDGERMATH_TREE: "${{ runner.temp }}/tree" });
+		for (const step of [s[5], s[6], s[7], s[8], s[12]]) expect(step?.["working-directory"]).toBe("site");
+		expect(s[9]?.["working-directory"]).toBe("site/deploy");
+		// Bun's package cache in the job's temporary directory, as everywhere on the runner that persists.
+		for (const step of [s[2], s[5], s[9]]) expect(step?.env).toEqual({ BUN_INSTALL_CACHE_DIR: "${{ runner.temp }}/bun-cache" });
+		// Nothing skips and nothing hides a failure: every step runs only after the one before succeeded, but the notice.
+		for (const step of s.slice(0, -1)) expect({ step: step.name ?? key(step), if: step.if }).toEqual({ step: step.name ?? key(step), if: undefined });
+		expect(JSON.stringify(site)).not.toContain("continue-on-error");
+		// Never the edge, never an artifact.
+		expect(JSON.stringify(site)).not.toMatch(/fetch-tree|api\.ledgermath\.com\/v1|artifact/);
+		for (const script of ["scripts/read-api-tree.ts", "site/deploy/deploy.sh", "site/scripts/build.ts", "site/scripts/check-live.ts"]) expect(existsSync(join(ROOT, script))).toBe(true);
+	});
+
+	test("site.yml's production deploy follows the same rule inside the same group, after its freshness check; its build job and its previews take no AWS credentials and build from the public API", () => {
+		const build = siteWorkflow.jobs.build as Job;
+		const deploy = siteWorkflow.jobs["deploy-production"] as Job;
+		const preview = siteWorkflow.jobs["deploy-preview"] as Job;
+		expect(deploy.if).toBe("github.ref == 'refs/heads/main' && github.event_name != 'pull_request'");
+		expect(deploy.permissions).toEqual({ contents: "read", "id-token": "write" });
+		const fresh = deploy.steps.findIndex((step) => step.id === "fresh");
+		const order = ruleOrder(deploy.steps);
+		expect(order.every((at) => at >= 0)).toBe(true);
+		expect([...order].sort((a, b) => a - b)).toEqual([...order]);
+		// The freshness check comes before the role is taken; every step after it runs only when it said to deploy.
+		expect(fresh).toBeGreaterThan(order[0]);
+		expect(fresh).toBeLessThan(order[1]);
+		for (const step of deploy.steps.slice(fresh + 1)) expect({ step: step.name, if: step.if }).toEqual({ step: step.name, if: "steps.fresh.outputs.deploy == 'true'" });
+		expect(deploy.steps[order[1]]?.with).toEqual(CREDENTIALS_WITH());
+		expect(deploy.steps[order[1]]?.id).toBe("credentials");
+		expect(deploy.steps[order[2]]?.env).toEqual(READ_ENV);
+		// It deploys what it built in its turn, not the build job's artifact.
+		expect(JSON.stringify(deploy)).not.toMatch(/download-artifact|fetch-tree/);
+		// No other job of site.yml asks for an OIDC token or names the role or the bucket: a pull request, from a fork or not, gets neither.
+		for (const each of [build, preview]) {
+			expect(each.permissions === undefined || each.permissions["id-token"] === undefined).toBe(true);
+			expect(JSON.stringify(each)).not.toMatch(/RUNS_AWS_ROLE_ARN|API_BUCKET|configure-aws-credentials|read-api-tree/);
+		}
+		expect(siteWorkflow.permissions).toEqual({ contents: "read" });
+		expect(build.steps.find((step) => step.run?.includes("fetch-tree.ts"))?.if).toBeUndefined();
+	});
+
+	test("in each production job the role's keys reach one step, the read, and no other: the action does not export them, the build, the checks and the deploy never hold them, and the read gets the Region they were taken for", () => {
+		const keys = /AWS_(ACCESS_KEY_ID|SECRET_ACCESS_KEY|SESSION_TOKEN)|aws-(access-key-id|secret-access-key|session-token)/;
+		for (const [name, each] of [
+			["runs.yml site", site],
+			["site.yml deploy-production", siteWorkflow.jobs["deploy-production"] as Job],
+		] as const) {
+			const credentials = each.steps.filter((step) => step.uses?.startsWith("aws-actions/configure-aws-credentials@"));
+			expect({ name, credentials: credentials.length }).toEqual({ name, credentials: 1 });
+			const action = credentials[0] as Step;
+			expect({ name, export: action.with?.["output-env-credentials"], outputs: action.with?.["output-credentials"] }).toEqual({ name, export: false as unknown as string, outputs: true as unknown as string });
+			// The keys appear in exactly one step besides the action: the read, in its environment, from the action's outputs.
+			const holding = each.steps.filter((step) => step !== action && keys.test(JSON.stringify(step)));
+			expect({ name, holding: holding.map((step) => step.run) }).toEqual({ name, holding: [READ] });
+			const read = holding[0] as Step;
+			expect(Object.fromEntries(Object.entries(read.env ?? {}).filter(([key]) => key.startsWith("AWS_")))).toEqual({
+				AWS_ACCESS_KEY_ID: `\${{ steps.${action.id}.outputs.aws-access-key-id }}`,
+				AWS_SECRET_ACCESS_KEY: `\${{ steps.${action.id}.outputs.aws-secret-access-key }}`,
+				AWS_SESSION_TOKEN: `\${{ steps.${action.id}.outputs.aws-session-token }}`,
+			});
+			expect(JSON.stringify(each.env ?? {})).not.toMatch(keys);
+			// The Region the reader signs for is the one the credentials were taken for.
+			expect({ name, region: /--region (\S+)/.exec(read.run ?? "")?.[1] }).toEqual({ name, region: action.with?.["aws-region"] });
+		}
+	});
+
+	test("no workflow and no script decides a deploy from run ids or artifacts any more: the rule needs neither, and they cannot creep back", () => {
+		const deploys = [site, siteWorkflow.jobs["deploy-production"] as Job];
+		const decided = /artifact|run-id|run_id|GITHUB_RUN_ID|run_attempt|actions\/runs|gh (api|run)|published\.ts|GH_TOKEN/i;
+		for (const each of deploys) {
+			expect(JSON.stringify(each)).not.toMatch(decided);
+			expect(each.permissions?.actions).toBeUndefined();
+		}
+		expect(existsSync(join(ROOT, "site", "deploy", "published.ts"))).toBe(false);
+		const scripts = [
+			join(ROOT, "scripts", "read-api-tree.ts"),
+			...readdirSync(join(ROOT, "site", "deploy")).filter((name) => /\.(ts|sh)$/.test(name)).map((name) => join(ROOT, "site", "deploy", name)),
+			...readdirSync(join(ROOT, "site", "scripts")).filter((name) => name.endsWith(".ts")).map((name) => join(ROOT, "site", "scripts", name)),
+		];
+		for (const path of scripts) {
+			const text = readFileSync(path, "utf8");
+			// GitHub's record of runs and artifacts, read by the API or the CLI, or a run's own ids: none of it.
+			expect({ path: relative(ROOT, path), decides: /actions\/(runs|artifacts|workflows)|GITHUB_RUN_(ID|ATTEMPT)|run_attempt|\bgh (api|run)\b|artifact-ids|download-artifact/i.test(text) }).toEqual({
+				path: relative(ROOT, path),
+				decides: false,
+			});
+		}
+	});
+
+	test("the Vercel token and the project's IDs reach only the site job's deploy step in runs.yml, and the two deploy steps in site.yml", () => {
+		const deploy = s.find((step) => step.id === "deploy") as Step;
+		expect(Object.entries(deploy.env ?? {})).toEqual(VERCEL_ENV);
+		const files = githubFiles();
+		expect(files.map((file) => file.name)).toEqual(expect.arrayContaining([RUNS_WORKFLOW, SITE_WORKFLOW]));
+		expect(vercelSecretProblems(files)).toEqual([]);
+	});
+
+	test("the check of the Vercel secrets rejects every way of letting them out: another step, the job's or workflow's environment, another job or workflow, every secret handed over, a pull request", () => {
+		const files = githubFiles();
+		const variant = (file: string, change: (text: string) => string, extra?: string) => [
+			...files.map((each) => (each.name === file ? { ...each, text: change(each.text) } : each)),
+			...(extra === undefined ? [] : [{ name: ".github/workflows/extra.yml", text: extra }]),
+		];
+		const same = (text: string): string => text;
+		const replaced = (from: string, to: string) => (text: string) => {
+			if (!text.includes(from)) throw new Error(`the workflow no longer holds ${JSON.stringify(from)}: the fixture needs updating`);
+			return text.replace(from, to);
+		};
+		const token = "          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}\n";
+		const fixtures: Array<[string, Array<{ name: string; text: string }>]> = [
+			["the token in the build step", variant(RUNS_WORKFLOW, replaced('        run: bun run build --tree "$RUNNER_TEMP/tree"\n', `        env:\n${token}        run: bun run build --tree "$RUNNER_TEMP/tree"\n`))],
+			["the token in the site job's environment", variant(RUNS_WORKFLOW, replaced("      group: site-deploy-production\n      queue: max\n", `      group: site-deploy-production\n      queue: max\n    env:\n  ${token}`))],
+			["the token in the first job's environment", variant(RUNS_WORKFLOW, replaced("      RUNS_BUCKET: ${{ vars.RUNS_BUCKET }}\n", "      RUNS_BUCKET: ${{ vars.RUNS_BUCKET }}\n      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}\n"))],
+			["a project ID in the live check", variant(RUNS_WORKFLOW, replaced("        run: bun scripts/check-live.ts https://ledgermath.com/\n\n", "        env:\n          VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}\n        run: bun scripts/check-live.ts https://ledgermath.com/\n\n"))],
+			["the token spelled another way, in a step's command", variant(RUNS_WORKFLOW, replaced("        run: bun scripts/check-live.ts https://ledgermath.com/\n\n", "        run: bun scripts/check-live.ts https://ledgermath.com/ ${{ secrets['VERCEL_TOKEN'] }}\n\n"))],
+			["the deploy step given another name for the token", variant(RUNS_WORKFLOW, replaced(token, "          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN_OTHER }}\n"))],
+			["the deploy step without the token", variant(RUNS_WORKFLOW, replaced(token, ""))],
+			["the token in site.yml's build job", variant(SITE_WORKFLOW, replaced("      - name: Type-check\n        run: bun run typecheck\n", `      - name: Type-check\n        env:\n${token}        run: bun run typecheck\n`))],
+			["a reference in another workflow", variant(RUNS_WORKFLOW, same, "name: extra\non: pull_request\njobs:\n  leak:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: echo hi\n        env:\n          T: ${{ secrets.VERCEL_TOKEN }}\n")],
+			["a project ID in another workflow", variant(RUNS_WORKFLOW, same, "name: extra\non: workflow_dispatch\njobs:\n  leak:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: echo ${{ vars.VERCEL_ORG_ID }}\n")],
+			["secrets: inherit", variant(RUNS_WORKFLOW, same, "name: extra\non: workflow_dispatch\njobs:\n  call:\n    uses: ./.github/workflows/reusable.yml\n    secrets: inherit\n")],
+			["the token handed to a reusable workflow", variant(RUNS_WORKFLOW, same, "name: extra\non: workflow_dispatch\njobs:\n  call:\n    uses: ./.github/workflows/reusable.yml\n    secrets:\n      token: ${{ secrets.VERCEL_TOKEN }}\n")],
+			["toJSON(secrets)", variant(RUNS_WORKFLOW, same, "name: extra\non: workflow_dispatch\njobs:\n  dump:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: echo hi\n        env:\n          ALL: ${{ toJSON(secrets) }}\n")],
+			["runs.yml started by a pull request", variant(RUNS_WORKFLOW, replaced("\non:\n", "\non:\n  pull_request:\n"))],
+			["site.yml started by pull_request_target", variant(SITE_WORKFLOW, replaced("on:\n  pull_request:\n", "on:\n  pull_request_target:\n"))],
+		];
+		for (const [label, fixture] of fixtures) expect({ label, rejected: vercelSecretProblems(fixture).length > 0 }).toEqual({ label, rejected: true });
+		expect(vercelSecretProblems(variant(RUNS_WORKFLOW, same))).toEqual([]);
+	});
+
+	test("when a step fails, the last step says which, and whether ledgermath.com serves the new build or the one it had", () => {
+		const last = s.at(-1) as Step;
+		expect(last.if).toBe("failure()");
+		const ids = ["packages", "credentials", "tree", "site-packages", "build", "check", "notices", "cli", "deploy", "summary", "live"];
+		const variable = (id: string) => id.toUpperCase().replace("-", "_");
+		expect(s.slice(2, -1).map((step) => step.id)).toEqual(ids);
+		expect(last.env).toEqual(Object.fromEntries(ids.map((id) => [variable(id), `\${{ steps.${id}.outcome }}`])));
+		const dir = mkdtempSync(join(tmpdir(), "site-job-failure-"));
+		const script = join(dir, "failure.sh");
+		writeFileSync(script, last.run as string);
+		/** The step's script, as Actions runs it (bash -e), with these outcomes. */
+		const notice = (outcomes: Record<string, string>) => {
+			const summary = join(dir, `summary-${Object.keys(outcomes).length}-${Object.values(outcomes).join("-")}.md`);
+			writeFileSync(summary, "");
+			const env: Record<string, string> = { PATH: process.env.PATH ?? "", GITHUB_STEP_SUMMARY: summary };
+			for (const id of ids) env[variable(id)] = outcomes[id] ?? "skipped";
+			const run = Bun.spawnSync(["bash", "-e", script], { env, stdout: "pipe", stderr: "pipe" });
+			expect(run.exitCode).toBe(0);
+			return { stdout: run.stdout.toString().trim(), summary: readFileSync(summary, "utf8") };
+		};
+		const built = { packages: "success", credentials: "success", tree: "success", "site-packages": "success", build: "success", check: "success", notices: "success", cli: "success" };
+		expect(notice({ packages: "success", credentials: "success", tree: "success", "site-packages": "success", build: "failure" }).stdout).toBe(
+			"::error title=Site not rebuilt::The step that failed: building the site from the bucket's files. Nothing was deployed: ledgermath.com serves the build it had.",
+		);
+		// deploy.sh calls Vercel with --prod before it reads the receipt: a failure of that step cannot say nothing was deployed.
+		const deployFailed = notice({ ...built, deploy: "failure" });
+		expect(deployFailed.stdout).toBe(
+			"::error title=Site not rebuilt::The step that failed: the deploy to Vercel. What ledgermath.com serves is not confirmed: Vercel may have moved production to the new deployment before its receipt was read. Check the project's deployments in Vercel.",
+		);
+		expect(deployFailed.stdout).not.toContain("Nothing was deployed");
+		expect(notice({ ...built, notices: "failure" }).stdout).toContain("Nothing was deployed: ledgermath.com serves the build it had.");
+		expect(notice({ packages: "success", credentials: "success", tree: "failure" }).stdout).toContain("The step that failed: reading the data API's files from the API bucket. Nothing was deployed");
+		expect(notice({ packages: "success", credentials: "failure" }).stdout).toContain("The step that failed: taking AWS credentials for the API bucket. Nothing was deployed");
+		const live = notice({ ...built, deploy: "success", summary: "success", live: "failure" });
+		expect(live.stdout).toBe(
+			"::error title=Site not rebuilt::The step that failed: the live check of https://ledgermath.com/. The deploy succeeded, so ledgermath.com serves the new build; a step after it failed.",
+		);
+		expect(live.summary).toBe("### Site not rebuilt\n\nThe step that failed: the live check of https://ledgermath.com/. The deploy succeeded, so ledgermath.com serves the new build; a step after it failed.\n");
+		expect(notice({ packages: "failure" }).stdout).toContain("The step that failed: installing the repository's packages.");
+		expect(notice({}).stdout).toContain("The step that failed: the checkout of main, or setting up Bun.");
+	});
+});
+
 describe("the check workflow", () => {
 	const check = Bun.YAML.parse(readFileSync(join(ROOT, ".github", "workflows", "check.yml"), "utf8")) as Workflow;
 	const testJob = check.jobs.test as { steps: Step[] };
@@ -555,8 +912,9 @@ describe("the prices workflow", () => {
 		expect(crons).toEqual(["17 3 * * *", "17 15 * * *"]);
 		expect("workflow_dispatch" in prices.on).toBe(true);
 		expect(Object.keys(prices.jobs).length).toBe(1);
-		// The runs workflow starts at 22:40 and on the hour every six hours; these start at least two hours from any of them.
-		const runsStarts = [22 * 60 + 40, 0, 6 * 60, 12 * 60, 18 * 60];
+		// These start at least two hours from any of the runs workflow's times, as its crons give them.
+		const runsStarts = scheduledMinutes();
+		expect(runsStarts.length).toBeGreaterThan(0);
 		for (const cron of crons) {
 			const [minute, hour] = cron.split(" ").map(Number) as [number, number];
 			const at = hour * 60 + minute;

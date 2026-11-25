@@ -1,13 +1,47 @@
 /**
  * The runs workflow's scheduled starts, read from its crons, for the tests
  * that hold the alarm's 14 hours (MAX_PUBLISH_AGE_MS, ADR-0032) to the
- * schedule it assumes. Not a test file; the alarm itself never reads it.
+ * schedule it assumes; and the rounds of boots schedule.json makes, for the
+ * test that holds those starts to once after each round (ADR-0035). Not a
+ * test file; the alarm itself never reads it.
  */
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 const WORKFLOW = join(import.meta.dir, "..", ".github", "workflows", "runs.yml");
+const SCHEDULE = join(import.meta.dir, "..", "schedule.json");
+
+/**
+ * The rounds of boots schedule.json makes each day, as minutes of the day (UTC): a boot less than
+ * an hour after the one before is in its round. A round may run past midnight.
+ */
+export function bootRounds(): Array<{ first: number; last: number }> {
+	const schedule = JSON.parse(readFileSync(SCHEDULE, "utf8")) as { targets: Array<{ boots_utc: string[] }> };
+	const boots = [
+		...new Set(
+			schedule.targets.flatMap((target) =>
+				target.boots_utc.map((time) => {
+					const [hour, minute] = time.split(":").map(Number) as [number, number];
+					return hour * 60 + minute;
+				}),
+			),
+		),
+	].sort((a, b) => a - b);
+	const rounds: Array<{ first: number; last: number }> = [];
+	for (const boot of boots) {
+		const round = rounds.at(-1);
+		if (round !== undefined && boot - round.last < 60) round.last = boot;
+		else rounds.push({ first: boot, last: boot });
+	}
+	// The day's last round and its first are one when they meet across midnight.
+	const [head, tail] = [rounds[0], rounds.at(-1)];
+	if (rounds.length > 1 && head !== undefined && tail !== undefined && head.first + 1_440 - tail.last < 60) {
+		rounds.shift();
+		tail.last = head.last + 1_440;
+	}
+	return rounds;
+}
 
 /** The values one field of a cron takes: N, a list of them, or * or *\/N over 0 to max. */
 function field(text: string, max: number): number[] {
