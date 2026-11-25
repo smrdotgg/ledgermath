@@ -1808,6 +1808,25 @@ A migrated benchmark is done only when **all** of these hold:
   which files, where the Runs are also served, and where the Methods and the data API are;
   `tests/licences.test.ts` fails while either file there holds "Placeholder" or "not decided
   yet".
+- **2026-11-25** — **Why `memory_read`'s static build is slower, written down, and left as
+  it is** (#84). The investigation of 2026-11-23 and 2026-11-24 found the cause of the gap
+  in the Runs recorded up to the check of 2026-11-18: where the 15-byte `scalar` loop lands
+  in the binary. In the static binary built on `m5.large`, `i4i.2xlarge` and `c6i.8xlarge`
+  it crosses a 64-byte line, in the dynamic one it does not, and on those three types'
+  Intel processors this loop ran slower when it crossed a line. Running a copy of the
+  scalar function placed elsewhere in each binary that ran switched the gap on and off;
+  linking only moved the code. The maintainer decided to document it and leave the
+  benchmark and its build as they are, for now. `benchmarks/memory_read/README.md` is new
+  and gives the figures, the recorded Runs' and the investigation's, each with its
+  conditions. `methods/README.md` says once that a figure can move with where its code
+  lands, and what a reader can see of it: static and dynamic are separate Series, and
+  within a Series a new binary hash puts a Run in another group, but the hash says only
+  that the bytes differ, not where a loop landed or why a figure moved; it adds that
+  `mutex` `one_cpu` moves too, cause under investigation. The lookup tool's note for
+  `memory_read`, the skill's "Check the fit" step, the root README, ADR-0029 (decision 4, a
+  dated addition, and its open item) and ADR-0008's note say the same. The data API's
+  words are unchanged: it carries no description of a benchmark. No benchmark, build,
+  Method or workflow changed.
 - **2026-11-25** — **The home page credits Napkin Math.** The maintainer asked for a credit
   and chose where from four placements: a third line under the headline, "Inspired by Simon
   Eskildsen's Napkin Math", grey, with the name a link to
@@ -1817,7 +1836,7 @@ A migrated benchmark is done only when **all** of these hold:
   address, and still fails any other, a page under the same repository included. The link
   is kept out of the data module, whose test that it names no other project stands.
   **A second credit behind a flag.** The maintainer also wanted the loudest placement, kept
-  off for now: a closing note between the table and the footer, "LedgerMath began as a port
+  off for now: a closing note, centred between the table and the footer, "LedgerMath began as a port
   of Simon Eskildsen's Napkin Math", beside a napkin drawn on the font's grid
   (`site/src/home/napkin.tsx`: a square on its corner, 43 dots across, with the sum
   4 × 365 ≈ 1.5k, the rounds of a year). This is the site's first feature flag, and it is

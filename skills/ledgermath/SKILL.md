@@ -79,6 +79,10 @@ every counted Run, not of one; a figure `by/address_block/…` is of those reque
    for a lightly loaded client. When the question's load is heavier, say so, and check it:
    requests per second × seconds per request is how many must be in flight at once, more
    than one connection can carry if it is above 1.
+   `memory_read` has a static and a dynamic Series of each set. Where they differ (the
+   `scalar` path on `m5.large`, `i4i.2xlarge` and `c6i.8xlarge`), the cause found is where
+   the scalar loop landed in each binary, not the kind of linking: never use the two to
+   say that dynamic (or static) linking is faster.
 4. **Multiply, one operation per line**: `label: a × b = c`, with no number in the label
    but a tier's or step's (`Tier 1`). Every operand is a number accounted for above, written
    with the same unit (`$1.36 per hour`, never `$1.36` for it). A line passes when its result
