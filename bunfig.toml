@@ -1,4 +1,7 @@
 # bun test at the root runs tests/ and leaves site/ alone: site/ has its own
 # package.json and tests, run with `bun test` inside site/ (README, "The website").
+# tests/no-network.ts refuses any request to another machine, in the tests and
+# in the Bun processes they start.
 [test]
 pathIgnorePatterns = ["site/**"]
+preload = ["./tests/no-network.ts"]
