@@ -1847,21 +1847,25 @@ A migrated benchmark is done only when **all** of these hold:
 - **2026-11-25** — **What `mutex`'s one-thread figures mean, written down** (#84). An
   investigation the same day, on machines started by hand, found two separate things. With
   an idle thread, on `c6i.8xlarge` and `i4i.2xlarge` (Ice Lake), one binary gives about
-  141,000 or about 184,000 ns per repetition, set by the physical host the boot lands on:
-  shown per boot, not per process; no recorded fact tells the hosts apart; the hosts differ
-  only while the sibling hardware thread is idle; the cause is unknown. Without an idle
-  thread, the figure moves with where `pthread_mutex_lock`, `pthread_mutex_unlock` and the
-  benchmark's loop land within a 64-byte line: up to 20% on Ice Lake, and from 11% faster
-  to 31% slower than the published binary on `m5.large`; the processor's front end is the
+  141,000 or about 184,000 ns per repetition from boot to boot, with one Run of 57 on
+  `c6i.8xlarge` between: within each boot tested every process gave the same level; no
+  recorded fact tells the levels apart; on the one fast box found, the difference did not
+  show with the sibling hardware thread busy; that the physical host sets the level is
+  inferred, and the cause is unknown. Without an idle thread, the figure moves with where
+  `pthread_mutex_lock`, `pthread_mutex_unlock` and the benchmark's loop land within a
+  64-byte line: across 125 relinked builds, 20% on Ice Lake, and from 11% faster to 31%
+  slower than the published binary on `m5.large`; the processor's front end is the
   inferred cause. `benchmarks/mutex/README.md` gains "What the one-thread figures mean",
   which keeps the recorded Runs' figures apart from the investigation's, says how the
   idle-thread Series' percentiles read (on `c6i.8xlarge` the median is the slow level and
   the 5th percentile the fast one), and says that the 18.57 ns and "about 14 ns" measured
-  on the development machine are a slow-level host's figures. `methods/README.md` replaces
-  "its cause is being investigated" with what was found, and gains "Hosts that differ in a
-  way no fact records": one Series can hold Runs from hosts no recorded fact tells apart,
-  version 1 does not split on it, and the spread between its percentiles can be two kinds
-  of host. The lookup tool's note for `mutex` carries a caveat for both one-thread sets.
+  on the development machine are the slow level's figures. `methods/README.md` replaces
+  "its cause is being investigated" with what was found, and gains "Boots that differ in a
+  way no fact records": one Series can hold Runs from boots that no recorded fact tells
+  apart, version 1 does not split on it, and the spread between its percentiles can be two
+  levels. After an independent verification, the README compares one set of builds on each
+  side of every comparison, gives the busy-sibling results process by process, and says
+  what the dump comparison and the front-end model can and cannot show. The lookup tool's note for `mutex` carries a caveat for both one-thread sets.
   What LedgerMath does about either finding is not decided. No benchmark, build, Method,
   schema or workflow changed.
 - _(agents: append your entry here, one per merged benchmark)_

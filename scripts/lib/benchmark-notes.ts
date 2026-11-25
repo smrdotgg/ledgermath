@@ -106,7 +106,7 @@ export const BENCHMARK_NOTES: Readonly<Record<string, BenchmarkNote>> = {
 		repetition:
 			"a fixed number of critical sections, by whichever threads win the lock: each Run observes how many (critical_sections_per_repetition), which the tool does not show; divide by it for one",
 		caveat:
-			"The one-thread sets (placement one_cpu) each carry a finding. With an idle thread, on some Intel instance types, one binary gives one of two levels, set by the physical host a boot lands on; no recorded fact tells the hosts apart and the cause is not known, so the spread between such a Series' percentiles can be two kinds of host, not noise: say which level an estimate uses, or carry both. Without an idle thread, the number moves with where glibc's lock and unlock and the benchmark's loop land in the binary: another binary of the same code can be faster or slower, and nothing in the Series says where its code landed.",
+			"The one-thread sets (placement one_cpu) each carry a finding. With an idle thread, on some Intel instance types, one binary gives one of two usual levels from boot to boot, and a Run can fall between them; no recorded fact tells the levels apart, the physical host is the inferred cause, not a shown one, and why is not known, so the spread between such a Series' percentiles can be two levels, not noise: say which level an estimate uses, or carry both. Without an idle thread, the number moves with where glibc's lock and unlock and the benchmark's loop land in the binary: another binary of the same code can be faster or slower, and nothing in the Series says where its code landed.",
 		variants: [
 			{
 				match: { threads: 1, idle_threads: 1 },
