@@ -1,0 +1,4 @@
+# tests/no-network.ts refuses any request to another machine, in site/'s tests
+# as in the root's.
+[test]
+preload = ["../tests/no-network.ts"]

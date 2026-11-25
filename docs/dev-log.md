@@ -1544,4 +1544,32 @@ A migrated benchmark is done only when **all** of these hold:
   CORS, the API bucket none), so the readers' note no longer says the `ETag` can never be
   read across origins. "Data for a trial" and the layout table no longer say the API is not
   served. Documentation only: no code, test or infrastructure changed.
+- **2026-11-25** — **The suite makes no request to any other machine.** `tests/check-answer.test.ts`
+  failed on `main`: one case ran `scripts/check-answer.ts` with no `--data` and no
+  `LEDGERMATH_DATA` and expected exit 2, which it got while `https://api.ledgermath.com`
+  did not answer; since the API went public (2026-11-24) the script read the live data and
+  exited 1. Nobody saw it because pushes start no CI. The case now gives the script the
+  Fixture's directory and checks the usage errors (no answer, two answers, an unknown flag)
+  that exit 2 before any data is read. **The guard**: `bunfig.toml` (and a new
+  `site/bunfig.toml`) preload `tests/no-network.ts` for `bun test`. It wraps
+  `globalThis.fetch`, `net.Socket.prototype.connect` (`node:net`, `node:tls`) and
+  `http.ClientRequest`'s `write`, `end` and `flushHeaders`, and refuses at once any host
+  that is not loopback, with an error that says a test reached for the network. The last
+  one is needed because Bun's `node:http` sends from native code, past `fetch` and `net`,
+  and a named import (`import { request } from "node:https"`, as the AWS SDK's ESM build
+  does) keeps the original function, so patching `https.request` would miss it; an IP
+  address such as 169.254.169.254 (the instance metadata service, which answers on the dev
+  box) skips `dns.lookup` too, so that cannot serve either. `net.connect` passes its
+  arguments to `connect` as one array, which the guard unpacks. The guard adds itself to
+  `BUN_OPTIONS` as `--preload=<path>`, so every Bun process a test starts with the test's
+  environment refuses the same (Bun splits `BUN_OPTIONS` at whitespace with no quoting, so
+  the guard stops the suite, saying why, when the checkout's path holds a space). Not
+  covered: a child given an environment of its own without `BUN_OPTIONS`, and programs that
+  are not Bun (Python, C), which their tests point at local stand-ins. `tests/no-network.test.ts`
+  proves it: `fetch`, `node:http`, `node:https` (to 169.254.169.254 by a named import),
+  `node:net` and `node:tls` to public hosts fail at once with the message; `scripts/lookup.ts`
+  in a child, at the default address, exits 2 with it; and a server on `127.0.0.1` is
+  reached from the test, by `node:http`, and from a child. The whole suite ran with the
+  guard on and found no other test that reached the network, so nothing opts in. The
+  README's "Tests" says so.
 - _(agents: append your entry here, one per merged benchmark)_

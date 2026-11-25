@@ -75,6 +75,14 @@ bun test
 python3 scripts/check-scratch.py    # needs Docker
 ```
 
+The suite makes no request to any other machine: what it checks never depends on a
+service. `bun test` preloads `tests/no-network.ts` (`bunfig.toml`, and `site/bunfig.toml`
+for the website's tests), which makes `fetch`, `node:http`, `node:https`, `node:net` and
+`node:tls` refuse at once any host that is not this machine (loopback, or a Unix socket),
+with an error that says the test reached for the network; it also names itself as a
+preload in `BUN_OPTIONS`, so every Bun script a test starts refuses the same. A test gives
+the code it runs a directory, a server on `127.0.0.1`, or a fetch of its own instead.
+
 `.github/workflows/check.yml` runs the tests, then `scripts/check-scratch.py`: it builds
 every benchmark that `schedule.json` builds static, and runs each binary as the only file
 in a `FROM scratch` container, once per parameter set with `--quick`, checking every

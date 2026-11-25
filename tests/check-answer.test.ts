@@ -591,7 +591,11 @@ describe("the script", () => {
 		expect(failed.stdout).toContain("Every number:");
 		const json = await check("--data", fixture.directory, "--json", bad);
 		expect(JSON.parse(json.stdout).pass).toBe(false);
-		expect((await check(bad)).code).toBe(2);
+		// Usage errors, given a location that needs no network, so the default address is never asked.
+		for (const usage of [[], [bad, good], ["--frobnicate", bad]]) {
+			const wrong = await check("--data", fixture.directory, ...usage);
+			expect(wrong.code, usage.join(" ")).toBe(2);
+		}
 		expect((await check("--data", fixture.directory, join(fixture.directory, "nowhere.md"))).code).toBe(2);
 	});
 });
