@@ -43,7 +43,7 @@ as the base the build started from (last section).
 | `scripts/lookup.ts` | The lookup tool the skill uses, reading the data API: the Series, one Series' percentiles and Runs, prices by word, each number beside its citation (`scripts/lib/lookup.ts`, `scripts/lib/citation.ts`, `scripts/lib/ledger-data.ts`; what each benchmark measures, `scripts/lib/benchmark-notes.ts`) |
 | `scripts/check-answer.ts` | Checks an answer written with the skill: every number from the question, cited, an assumption, recomputed arithmetic, or a repeat; every citation resolving in the data (`scripts/lib/answer-check.ts`, `scripts/lib/quantity.ts`) |
 | `scripts/assemble-location.ts` | Puts together a directory the lookup tool reads, from the artifact `api` and a clone of the Runs repository: data for a trial from one run's files instead of the API |
-| `site/` | The placeholder website: one page, SolidJS 2, prerendered to static files (section "The website" below); `.github/workflows/site.yml` builds and checks it, and deploys it to Vercel (`site/deploy/`) at https://ledgermath.com |
+| `site/` | The website: the home page (design v9) with every figure read at build time from a tree of the data API, and a placeholder at `/docs/`; SolidJS 2, rendered to static files (section "The website" below); `.github/workflows/site.yml` builds and checks it, and deploys it to Vercel (`site/deploy/`) at https://ledgermath.com |
 | `CONTRIBUTING.md` | How to add a benchmark in any language, a target, a Method version, and what a pull request says |
 | `LICENSE`, `NOTICE`, `THIRD-PARTY-NOTICES.md` | The code's licence (Apache-2.0), its notice, and what comes from other projects, with their licences (section "Licence" below) |
 | `third-party/` | glibc 2.34's `COPYING.LIB` and `LICENSES`, and `sources.lock.json`, the third-party source packages kept in the bucket beside the binaries |
@@ -3163,66 +3163,165 @@ Transfer into S3 is free.
 
 ## The website (`site/`)
 
-A placeholder: one page saying what LedgerMath is and that the site is on its way. It is
-there so the site's build and its checks are in place; the real website is still to be
-discussed, and nothing of it is designed yet.
+Two pages:
 
-It is SolidJS 2, built with Vite and Solid's Vite plugin (`@solidjs/vite-plugin`, in its
-server-rendering mode), and prerendered: `vite build` writes the browser's files to
-`site/dist/client` and a server bundle to `site/dist/server`, then
-`site/scripts/prerender.ts` renders each page once with that bundle into
-`site/dist/client` and removes the bundle. What is left is plain HTML, CSS and JavaScript
-for any static host, with each page's content in its HTML, so it reads with JavaScript off;
-the script then hydrates it. `site/` has its own `package.json` and `bun.lock`, apart from
-the root's, and needs only Bun (Vite runs under Bun, not Node).
+- **`/`, the home page.** Design v9, the one the maintainer chose from the home-page
+  variations (issue #64; the exploration stays on the branch `home-variations`, never
+  merged): a headline with the latest rounds of boots beside it, three graphs, the table of
+  all benchmarks (14 rows, one per benchmark, by the written rule in
+  `site/src/data/headline.ts`, × the 5 machine types, with their hourly prices), in Geist
+  Pixel Circle, black and white. Every figure is read at build time from a tree of the
+  data API and links to its Series file there. Each shows a median rounded to four
+  significant digits, with every digit, its 5th and 95th percentiles and its count of Runs
+  in its `title`.
+- **`/docs/`, a placeholder.** The documentation is not written yet. Until it is, every
+  link to it (the header's and footer's "Docs", each benchmark's name) goes to this page,
+  which says so and links to the API's table of contents. The real documentation replaces
+  it; `site/src/data/headline.ts` holds the documentation's addresses in one place, with
+  each benchmark's planned page (`/docs/benchmarks/<benchmark>`), so pointing the names at
+  their pages is a one-line change.
+
+The pages link nowhere but inside the site and under `https://api.ledgermath.com/`: no
+link goes to the source repository.
+
+**Built from a tree.** The build reads a directory in the data API's own layout: the
+table of contents (`v1/index.json`), the Series list and the newest price file, at the
+places the table of contents' links give (`site/src/data/tree.ts`). It is given
+explicitly, with `--tree DIR` or `LEDGERMATH_TREE=DIR`; with neither the build fails and
+says so, so the site is never built from old numbers by accident.
+`site/scripts/fetch-tree.ts` fetches exactly those three files from
+`https://api.ledgermath.com` into a new directory: it starts at the table of contents and
+follows only the links it gives, never building an address, with a time limit and a size
+limit on every request, and refuses anything that does not parse or does not say what it
+is (`ledgermath.api.index/1` for the table of contents). Later the `runs` workflow will
+build the site from the tree it has just built; the build needs only the directory.
+
+What a tree lacks, the page leaves out rather than fill, and the build says so in one line
+each (`note: …`):
+
+- no `recent_rounds` in the table of contents (the API does not give them yet): no "Latest
+  runs" list, and no gap where it was;
+- no Series for a headline cell, or one without a median (no Run counts yet, or the median
+  is null, which the schema allows for "infinite or undefined"): a dash, with why in its
+  `title`;
+- a 5th or 95th percentile given as null: the figure stands, and its `title` says the
+  percentile is infinite or undefined;
+- a machine type the price file names but no Series ran on: its column stays, with a dash
+  in every cell;
+- Series on a type the price file does not price, Series that name no instance type (the
+  schema allows null), a benchmark with no headline choice: left out of the table.
+
+The reader takes everything the Series list's schema allows, so no one Series can stop the
+build. A round with failed Runs says how many; it says "0 failed" only when the tree says
+0. Two Series that both match a headline choice on one machine type fail the build, since
+the rule no longer says which to show. An old tree still builds: the page shows the dates
+it holds. A table of contents that names no price file fails it: the columns and prices
+come from the newest one.
+
+**One publication.** The three files must be of the same publication of the API: the
+Series list must name the table of contents' address and give the address and count of
+Series the table of contents gives, both must give the same newest Run, and the newest
+price file must have been fetched on the date the table of contents gives it. A fetch that
+overlaps an upload, or meets a cache holding one file from before another changed, could
+otherwise pair one publication's table of contents with another's figures, and the page
+would show old figures under a new date. `fetch-tree` then fetches the whole set again, up
+to three times, ten seconds apart, and fails, writing nothing, if they still disagree; the
+build refuses a directory whose files disagree, saying it holds two publications.
+
+**Where it writes.** The build replaces its output whole, so it guards it: it refuses an
+empty `--out`, an output that is or holds the repository, one inside the repository
+anywhere but under `site/dist/`, and one that is, holds or is inside the tree it reads. It
+builds into new directories of its own with unique names (the server bundle under
+`site/dist/`, the site beside the output) and puts the site in the output's place only
+when the output is absent, empty or written by an earlier build, which it recognises by the
+file `.ledgermath-site-build` the build leaves in it (served with the site; it says only
+that the build wrote the directory). Anything else there is left as it is, and the build
+fails before writing anything. A `site/dist/client` from before this mark existed must be
+removed by hand once.
+
+It is SolidJS 2, built with Vite and Solid's Vite plugin (`site/scripts/build.ts`): Vite
+bundles `site/src/entry-server.tsx` for the server, the bundle renders each page once
+with Solid's server renderer, and the HTML, the stylesheet, the self-hosted font and
+`public/` are written to `site/dist/client`. Nothing hydrates and no JavaScript file is
+served: the pages read the same with JavaScript off, and the one script, inline, only
+holds the page back until the font has loaded. `site/` has its own `package.json` and
+`bun.lock`, apart from the root's, and needs only Bun (Vite runs under Bun, not Node).
 
 ```bash
 cd site
 bun install --frozen-lockfile
-bun run typecheck  # type-check
-bun test           # the checks' and the deploy scripts' own tests (scripts/*.test.ts, deploy/*.test.ts)
-bun run build      # site/dist/client
-bun run check      # checks site/dist/client, as the workflow does
-bun run preview    # serves site/dist/client at http://127.0.0.1:4173 (a port as argument to change it)
-bun run dev        # Vite's dev server, with hot reload
+bun run typecheck                       # type-check
+bun test                                # the data module's, the build's, the fetcher's, the checks' and the deploy scripts' tests, on fixtures/tree/
+bun run fetch-tree /path/to/tree        # the three files from https://api.ledgermath.com, into a new directory
+LEDGERMATH_TREE=/path/to/tree bun run build   # site/dist/client (or: bun run build --tree /path/to/tree)
+LEDGERMATH_TREE=/path/to/tree bun run check   # checks site/dist/client against that tree, as the workflow does
+bun run preview                         # serves site/dist/client at http://127.0.0.1:4173 (a port as argument to change it)
+bun run check:browser                   # by hand, before a change to the design (below)
 ```
 
+`site/fixtures/tree/` is a small tree for the tests only: the API as it was on
+2026-11-19, with `recent_rounds` added by hand (its README says how). Nothing published is
+built from it.
+
 `.github/workflows/site.yml` runs on pull requests and pushes to main that touch `site/` or
-the workflow, and by hand. It installs with the lockfile frozen, then runs the commands
-above in the same order: type-check, test, build, `bun run check`. It keeps the built site
-as the artifact `site`. `bun test` at the repository root leaves `site/` alone (root
-`bunfig.toml`); the site's tests run inside `site/`.
+the workflow, and by hand. It installs with the lockfile frozen, then type-checks, tests,
+fetches the tree as published (`bun scripts/fetch-tree.ts`), builds from it and runs
+`bun run check` with it. It keeps the built site as the artifact `site`. The workflow is
+disabled while the repository is private ("Where the workflows run"), so run these
+commands by hand before a merge. `bun test` at the repository root leaves `site/` alone
+(root `bunfig.toml`); the site's tests run inside `site/`.
 
-`bun run check` (`site/scripts/check-output.ts`) checks two things in `site/dist/client`:
+`bun run check` runs two scripts on `site/dist/client`:
 
-- `index.html` exists and holds each line of the page's text in its body, outside any
-  script or style, which shows the prerender ran. The lines are listed in
-  `site/src/App.text.ts`; change them there when the page's text changes.
-- No HTML, CSS or JavaScript file refers to a file the output lacks, or loads anything from
-  another origin. It reads `src`, `href`, `srcset`, `imagesrcset`, `poster` and
-  `xlink:href` on any HTML element, `url()` in `<style>` blocks and `style` attributes,
-  imports in inline scripts, `url()` and `@import` in CSS files, and `import`,
-  `export … from` and `import()` of a quoted path in JavaScript files. `data:`, `about:`,
-  `mailto:` and `tel:` URLs and fragment-only references (`#id`) are self-contained and
-  pass. A link a reader follows (`href` on `<a>` or `<area>`) may go to another origin; a
-  path it names must exist.
+- `site/scripts/check-output.ts`: each page exists and holds its fixed words
+  (`site/src/pages.text.ts`; change them there with the page) in its body, outside any
+  script or style, which shows the prerender ran; no HTML, CSS or JavaScript file refers to
+  a file the output lacks or loads anything from another origin; every link a reader
+  follows (`href` on `<a>` or `<area>`) goes to a file the site has (and, with a fragment,
+  to an id that page has) or under `https://api.ledgermath.com/`; and each page, with what
+  it loads, weighs under 300,000 bytes, text gzipped at level 9 (about 37 KB for the home
+  page, 31 KB for `/docs/`, most of it the font). It reads `src`, `href`, `srcset`,
+  `imagesrcset`, `poster` and `xlink:href` on any HTML element, `url()` in `<style>` blocks
+  and `style` attributes, imports in inline scripts, `url()` and `@import` in CSS files,
+  and `import`, `export … from` and `import()` of a quoted path in JavaScript files. It
+  does not read other file types, `image-set()` with bare strings, or URLs that JavaScript
+  builds as it runs, and it reads the HTML as text: a check on what an honest build
+  writes, not an HTML validator.
+- `site/scripts/check-figures.ts`: every figure on the pages is one the tree holds,
+  exactly. It goes back from the page to the tree: each link to a Series file must be a
+  Series of the tree, the one the headline selection names for its row and machine type,
+  and the median, percentiles and count in its `title`, moved back into the tree's unit
+  digit by digit, must be the tree's numbers; the figure shown must be that median to four
+  significant digits, and the row's unit the unit of its figures; a percentile the tree
+  gives as null must be said to be infinite or undefined. Dashes stand only where the tree
+  has no figure, with the data module's reason; every cell of the headline selection, in
+  the table and in each graph, holds exactly one figure or one dash, none blank, and the
+  columns are the machine types; prices and machine facts are the price file's; "Latest runs" is
+  there only when the tree gives rounds, and says what they say; the region is the price
+  file's. Anything else on a page that holds a digit and is not a fixed word fails, so a
+  new figure needs a rule there.
 
-It does not read other file types (SVG, JSON, a web manifest), `image-set()` with bare
-strings, or URLs that JavaScript builds as it runs, and it does not render the page: it
-reads the HTML as text, so it cannot tell that text which is in the HTML is not shown (text
-inside a `<template>`, say). It is a check on what an honest build writes, not an HTML
-validator.
+**The browser checks** (`bun run check:browser [DIR] [--shots OUT]`,
+`site/scripts/check-browser.ts`) are run by hand before a change to the design, not by
+`bun run check` or the workflow: the rebuild after each round of boots must be quick and
+needs no browser. They load each page in Playwright's Chromium (installed once with
+`bunx playwright install chromium` in `site/`) at 1440×900 and at 390×844, each in light
+and dark, and fail on a console error, a failed request or a request to another origin,
+a horizontal scroll at 390 px, an axe-core violation of WCAG 2.0 and 2.1 A and AA or of
+its structure rules, a page over the size budget as transferred, or a line with a figure
+that is missing with JavaScript off. `--shots OUT` also writes each page's first screen
+and whole page as PNG files.
 
-The built site carries Solid's runtime, so it also carries `third-party-notices.txt`
-(`THIRD-PARTY-NOTICES.md`, section 3).
+The built site serves one font, Geist Pixel Circle, and so carries
+`third-party-notices.txt`, its copyright and licence (`THIRD-PARTY-NOTICES.md`,
+section 3); the pages link it as "Licences".
 
 ### Where it is deployed
 
 The site is at https://ledgermath.com, hosted on Vercel (project `ledgermath`). Vercel only
-hosts files: the site is built in GitHub Actions, by the build job above, and Vercel is
-handed the finished files. The Vercel project has no Git repository connected, and
-Vercel's build system never runs. (The real site will be built from benchmark data that
-only the GitHub workflows have.)
+hosts files: the site is built in GitHub Actions, by the build job above (or by hand,
+below, while that workflow is disabled), and Vercel is handed the finished files. The
+Vercel project has no Git repository connected, and Vercel's build system never runs.
 
 The workflow's deploy job (`deploy-production` or `deploy-preview`) runs after the build
 job has passed, `bun run check` included. It takes the `site` artifact that job uploaded,
@@ -3233,10 +3332,12 @@ Vercel CLI is pinned in `site/deploy/package.json` and its `bun.lock`, apart fro
 site's own packages.
 
 - A push to main, or a run by hand on main, deploys production: ledgermath.com moves to
-  the new deployment. The job then fetches https://ledgermath.com/ and fails unless it
-  answers 200, without a redirect, with each line of `site/src/App.text.ts` in its HTML
-  outside any script (`site/scripts/check-live.ts`, the same test `bun run check` makes of
-  the built file), so the live page reads with JavaScript off.
+  the new deployment. The job then fetches https://ledgermath.com/ and
+  https://ledgermath.com/docs/ and fails unless each answers 200, without a redirect, with
+  each of its fixed words (`site/src/pages.text.ts`) in its HTML outside any script
+  (`site/scripts/check-live.ts`, the same test `bun run check` makes of the built files),
+  so the live pages are this site's and read with JavaScript off. It looks for the fixed
+  words, not the figures, which change with every tree.
 
   Production deploys run in the job `deploy-production`; its jobs, one per run, share one
   concurrency group: one runs at a time, and a running one is never cancelled, so no
@@ -3298,12 +3399,20 @@ The workflow needs, in the repository's settings:
 The Vercel CLI reads all three from the environment, so nothing runs `vercel login` or
 `vercel link`. Nor does anything run `vercel pull`: it fetches the project's settings and
 environment variables for a build, and this site is built without either. To deploy by
-hand, with the three in the environment:
+hand (the way it is deployed while `site.yml` is disabled), from a tree fetched now, with
+the three in the environment:
 
 ```bash
-cd site && bun run build && bun run check && cd ..
+cd site
+bun install --frozen-lockfile
+bun run fetch-tree /path/to/new-tree           # a directory that does not exist yet
+export LEDGERMATH_TREE=/path/to/new-tree
+bun run typecheck && bun test && bun run build && bun run check
+cmp public/third-party-notices.txt dist/client/third-party-notices.txt
+cd ..
 (cd site/deploy && bun install --frozen-lockfile)
 site/deploy/deploy.sh site/dist/client preview      # or production
+(cd site && bun scripts/check-live.ts)              # after production: / and /docs/ are this site's
 ```
 
 It prints the deployment as JSON; `.url` is its URL. It needs `jq`, and checks for it

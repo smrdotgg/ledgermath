@@ -2,7 +2,26 @@
 // `bun test` inside site/.
 
 import { describe, expect, test } from "bun:test";
-import { checkLive, checkLiveOnce } from "./check-live";
+import { DOCS, HOME } from "../src/pages.text";
+import { checkLive, checkLiveOnce, pageUrls } from "./check-live";
+
+describe("pageUrls", () => {
+	test("the home page and the documentation's placeholder, each with its own fixed words", () => {
+		const expected = [
+			{ url: "https://ledgermath.com/", text: HOME.text },
+			{ url: "https://ledgermath.com/docs/", text: DOCS.text },
+		];
+		expect(pageUrls("https://ledgermath.com/")).toEqual(expected);
+		expect(pageUrls("https://ledgermath.com")).toEqual(expected);
+		expect(pageUrls("https://preview.example.test/")[1]!.url).toBe("https://preview.example.test/docs/");
+	});
+
+	test("the placeholder's words are its own: the home page's do not stand in for them", () => {
+		expect(DOCS.text).toContain("The documentation is being written.");
+		expect(HOME.text).not.toContain("The documentation is being written.");
+		expect(HOME.text).toContain("All benchmarks");
+	});
+});
 
 const URL = "https://example.test/";
 const TEXT = ["LedgerMath", "The site is on its way."];
