@@ -21,8 +21,10 @@ LM_PARAM_SIZE_BYTES=1073741824 LM_PARAM_THREADS=1 LM_PARAM_PATH=scalar LM_SAMPLE
 | `LM_PARAM_THREADS` | `1`, `all` | `1` reads on the main thread, unpinned; `all` reads on one pinned thread per allowed CPU |
 | `LM_PARAM_PATH` | `scalar`, `avx2` | The read loop: `scalar`, a loop of five x86 instructions written in assembly, or `avx2`, four 32-byte loads per step |
 
-Unset, the variables mean 64 MiB, `1` and `avx2`. Any other value exits 2. `avx2` on a
-processor without AVX2 exits 1 and says so.
+Unset, the variables mean 64 MiB, `1` and `avx2`. Any positive multiple of 8 is accepted as
+a size, with at least one 8-byte word per allowed CPU when `threads` is `all`; `threads`
+takes only `1` or `all`, and `path` only `scalar` or `avx2`. Anything else exits 2. `avx2`
+on a processor without AVX2 exits 1 and says so.
 
 ## Observed
 
@@ -32,7 +34,7 @@ processor without AVX2 exits 1 and says so.
 | `threads_used` | Threads that read |
 | `path_taken` | The read loop that was dispatched: `scalar` or `avx2` |
 
-## Elision guard
+## Sum check
 
 The buffer holds 0, 1, 2 and so on, and one repetition returns the sum of what it read:
 0 + 1 + … + (*n* − 1). The program checks that sum before measuring and exits 1 if it is
@@ -45,38 +47,51 @@ as every benchmark is) and `dynamic`, which loads the C library at run time. Eac
 Series of its own. Both builds run the same read loops: the source is the same, and the
 `scalar` loop is the same five instructions in both binaries.
 
-**What the scheduled Runs show.** Over 604 pairs of Runs in the same boot, from 151 boots
-between 2026-11-10 and 2026-11-18 (the median of the per-boot ratio), the dynamic build
-is faster on the `scalar` path:
+**What the Runs recorded up to the check of 2026-11-18 show.** That check (issue #38,
+check 5) paired every counted `memory_read` Run with the other build's Run in the same
+boot: 604 pairs from 151 boots between 2026-11-10 and 2026-11-18. Most of those boots were
+started by the schedule; some, the first ones among them, were started by hand. The table gives,
+for the `scalar` path, the median over the boots of how much faster the dynamic build was
+than the static one in the same boot:
 
 | Instance type | Processor | One thread | All threads |
 |---|---|---|---|
 | `m5.large` | Intel Cascade Lake | 15.1% | 13.7% |
 | `i4i.2xlarge` | Intel Ice Lake | 4.6% | 13.7% |
 | `c6i.8xlarge` | Intel Ice Lake | 8.5% | 1.3% |
-| `c8i.2xlarge` | Intel Granite Rapids | none | none |
-| `c8a.2xlarge` | AMD Zen 5 | none | none |
+| `c8i.2xlarge` | Intel Granite Rapids | −0.5% | 0.0% |
+| `c8a.2xlarge` | AMD Zen 5 | 0.0% | 0.0% |
 
-There is no difference on the `avx2` path on any type (within 0.25%).
+On `m5.large`, `i4i.2xlarge` and `c6i.8xlarge` the dynamic build was faster in nearly
+every boot. On `c8i.2xlarge` and `c8a.2xlarge` neither build had a consistent advantage:
+the dynamic build was faster in 11 to 16 of the 29 or 30 boots. On the `avx2` path the medians were
+between −0.07% and +0.23% on every type and thread count: no difference.
 
 **What the difference is.** It is not static against dynamic linking. It is where the
 `scalar` loop lands in the binary. The loop is 15 bytes long, and code, like data, sits in
 memory in 64-byte lines. `m5.large`, `i4i.2xlarge` and `c6i.8xlarge` build the same bytes.
 In their static binary the loop starts 56 bytes into a line, so it crosses into the next
 line. In their dynamic binary it starts 24 bytes into a line and stays inside it. On the
-Intel processors of these three types, a loop that crosses a line runs slower. The two builds put the loop in
-different places only because the static binary carries about 1.3 KB of the C library's
-code ahead of the benchmark's own.
+Intel processors of these three types, this loop ran slower when it crossed a line. The
+two builds put the loop in different places only because the static binary carries about
+1.3 KB of rarely run code from the C library (glibc) and GCC's runtime library (libgcc)
+ahead of the benchmark's own code.
 
 **What it is not.** It does not show that dynamic linking is faster, or that a program
-linked statically gives up speed. Linking only moved the loop. Another compiler, a change
-to the harness or a longer source file would move it again, and could make the static
-build the fast one. Each build's number is the number of that binary, with the loop where
-that binary has it.
+linked statically gives up speed. For this loop, linking only moved it. Another compiler,
+a change to the harness or a longer source file can move it again, and could make the
+static build the fast one. What was tested is this one loop on these processors, not
+other loops or every change to come. Each build's number is the number of that binary,
+with the loop where that binary has it.
 
-**How it was shown.** An investigation on 2026-11-23 and 2026-11-24 (issue #84) moved the
-loop inside the exact binaries that ran, changing one 4-byte address in `main` and nothing
-else. These were one-off measurements on boxes started by hand, not Runs of the schedule:
+**How it was shown.** An investigation on 2026-11-23 and 2026-11-24 (issue #84) took the
+exact binaries that ran. In each, it copied the whole 24-byte scalar function, which holds
+the loop, into the body of the AVX2 function, which a `scalar` run never executes, at a
+chosen offset in a 64-byte line. Then it changed the 4-byte address in `main` that names
+the scalar function, so that `main` calls the copy. The loop's instructions stayed the
+same, and apart from the copy and that address every byte of the file stayed as it was:
+what ran was the same, only where it sits moved.
+These were one-off measurements on boxes started by hand, not Runs of the pipeline:
 1 GiB, `scalar`, the builds taken in turn within one boot, the median of five rounds (four
 for all threads). Figures in GB/s:
 
@@ -93,17 +108,17 @@ binary with its loop moved is as slow as the static one. Moving the loop to anot
 address with the same offset in its line changed nothing. On `c6i.8xlarge` with one
 thread, all 15 runs with the loop at 24 were faster than all 15 with it at 56.
 
-With a buffer small enough to stay in the processor's fastest cache, so that memory does
-not hide it, the loop that crosses a line loses 38 to 44% of its speed on `m5.large` and
-a third on `c6i.8xlarge`. From memory less of it shows, because the loop also waits for
+With a buffer small enough to stay in the processor's fastest cache (16 KiB, one thread),
+so that memory does not hide it, the loop that crosses a line lost 38 to 44% of its speed
+on `m5.large` and a third on `c6i.8xlarge`. From memory less of it shows, because the loop also waits for
 memory. That is likely why the gap is small on `c6i.8xlarge` with all threads, where each
 thread waits most; this reading was not tested on its own.
 
 `c8i.2xlarge` and `c8a.2xlarge` barely care. On `c8i.2xlarge` the compiler builds other
 bytes and neither build's loop crosses a line. On `c8a.2xlarge` the static loop crosses a
 line just as on the Intel types, and it makes no difference. Moved across a line on real
-boxes of both types, the loop lost about 1% from the fastest cache and nothing measurable
-from memory.
+boxes of both types, with one thread, the loop lost about 1% from the fastest cache and
+nothing measurable from memory.
 
 Why these processors are slower when the loop crosses a line is not measured: the
 machines expose no performance counters.
@@ -111,9 +126,11 @@ machines expose no performance counters.
 **What would remove it, and the decision.** Aligning the loop to the start of a 64-byte
 line (`.p2align 6` before it) would put it in the same place in both builds. On a real
 `m5.large`, built that way, both builds were equal and fast: 10.13 GB/s static and 10.08
-dynamic, against 8.86 and 10.12 for the builds as they are (one thread, five rounds; this
-box gave lower numbers than the one above for the same binary, with a gap of the same
-size). The maintainer decided on 2026-11-25 (issue #84) to document the finding and leave
+dynamic, against 8.86 and 10.12 for the builds as they are (1 GiB read from memory, one
+thread, five rounds). This box gave lower numbers than the one above for the same static
+binary, 8.86 against 9.88 GB/s, and a smaller gap between the builds as they are, in the
+same direction: the dynamic build was 13.4% faster there, against 21.0% on the first box
+(each the investigation's median of the per-round ratios). The maintainer decided on 2026-11-25 (issue #84) to document the finding and leave
 the benchmark and its build as they are, for now: no alignment of the loop, no new fact
 recorded about the build, no scheduled check of where code lands. The two Series stay as
 they are, and so does the difference between them.

@@ -206,16 +206,26 @@ version, never an edit to this one.
 A figure can move with where the measured code lands in the binary, while the code itself
 stays the same. `memory_read` shows it: its static and dynamic builds run the same 15-byte
 `scalar` loop, but at different places in a 64-byte line, and on three Intel instance types
-that alone makes one build's Series faster than the other's
-(`benchmarks/memory_read/README.md`, issue #84). `mutex` was also found to move with where
-its code lands, by 12 to 25% (issue #84); its cause is being investigated.
+that alone made one build's Series faster than the other's
+(`benchmarks/memory_read/README.md`, issue #84). `mutex` `one_cpu` with no idle thread was
+also found to move with where its code lands, by 12 to 25% on the three instance types
+tested (`m5.large`, `i4i.2xlarge`, `c8a.2xlarge`; issue #84); its cause is being
+investigated.
 
-Every Run records the exact binary that ran, and version 1 splits on it, so such a move is
-visible as a change of binary. Version 1 does not hold placement fixed. A change elsewhere
-in the binary (the harness, the compiler, the C library, the way it is linked) can land the
-measured code somewhere else and move the figure, with no change to the benchmark's own
-code. Within one binary, nothing in the Series says whether its code landed in a fast place
-or a slow one.
+What a reader can see of it:
+
+- **Two builds are two Series.** `build` is part of a Series' key (`v1/facts.ts`), so a
+  static and a dynamic build are never mixed in one Series.
+- **A new binary is a new group.** Every Run records the bytes that ran (`binary.blob`),
+  and the binary is one of version 1's split facts: within one Series, a Run with another
+  binary goes into another group. The Method still gives percentiles for the whole Series
+  as well as for each group.
+- **The hash says only that the bytes differ.** It does not say where a loop landed, or
+  why a figure moved. Version 1 does not hold placement fixed. A change elsewhere in the
+  binary (the harness, the compiler, the C library, the way it is linked) can land the
+  measured code somewhere else and move the figure, with no change to the benchmark's own
+  code. Within one binary, nothing in the Series says whether its code landed in a fast
+  place or a slow one.
 
 ## Method `requests`, version 1
 

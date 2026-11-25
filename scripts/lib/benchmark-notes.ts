@@ -50,7 +50,7 @@ export const BENCHMARK_NOTES: Readonly<Record<string, BenchmarkNote>> = {
 		repetition: "reads size_bytes once; with threads all, each thread reads its own slice of it",
 		bytes: "bytes read",
 		caveat:
-			"Build static and build dynamic run the same code. Where their Series differ (path scalar, on some Intel instance types), the cause is where the scalar loop landed in each binary: in the static one it crosses a cache line, in the dynamic one it does not. It does not show that dynamic linking is faster; another binary could move the loop and reverse the difference.",
+			"Build static and build dynamic run the same scalar loop. Where their Series differ (path scalar, on some Intel instance types), the cause found is where that loop landed in each binary: in the static one it crosses a cache line, in the dynamic one it does not. It does not show that dynamic linking is faster; another binary can move the loop and could reverse the difference.",
 		source: "benchmarks/memory_read/README.md",
 	},
 	compressed_memory_read: {

@@ -1779,19 +1779,52 @@ A migrated benchmark is done only when **all** of these hold:
   `bun run check:browser`, in light and dark. Not deployed to production by hand: once
   merged it reaches ledgermath.com with the next rebuild after a publish of the API (the
   `runs` workflow's `site` job builds from main).
+- **2026-11-25** — **The repository is public, and every job runs on GitHub's hosted
+  runner.** The maintainer gave the word on #47. The repository variable
+  `LEDGERMATH_RUNNER` was deleted, the self-hosted runner on the development machine
+  (there since 2026-11-24, when the account ran out of free Actions minutes) was stopped
+  and removed, `smrdotgg/ledgermath` was made public, and all four workflows (`check`,
+  `prices`, `runs`, `site`) were enabled; they run on hosted runners, free for a public
+  repository. `smrdotgg/ledgermath-runs` is made public once its README and licence are
+  copied there. **What this change does**: every job of every workflow says exactly
+  `runs-on: ubuntu-24.04`, and `tests/workflow-runners.test.ts` now holds every job to that
+  plain string, because a public repository must never route a job to a self-hosted runner,
+  where a stranger's pull request could run. It refuses, each shown on a made-up workflow, an
+  expression, a list, an object (`group:` or `labels:`), the word `self-hosted`, any other
+  label, and a job with no `runs-on` that is not a call to a reusable workflow in
+  `.github/workflows/` (one kept elsewhere is refused too, since the test cannot see where
+  its jobs run). No step changed: Bun's package cache stays in `RUNNER_TEMP`, which was
+  needed on the runner that kept its machine and is harmless on a fresh one; only the
+  comments that spoke of that runner changed. The README's "Where the workflows run" now
+  says where the jobs run and the rule, and drops the steps before going public; "The
+  website" and "Where it is deployed" no longer say `site.yml` is disabled, and say both
+  ways the page reaches production (the `site` job after every publish, `deploy-production`
+  after a push to main that touches `site/` or `site.yml`) and that the one group keeps them
+  apart. ADR-0029, ADR-0030 and ADR-0035 each gain a dated note that the condition they
+  waited on ended on 2026-11-25, and what holds now. The Runs repository's README
+  (`docs/runs-repository/`) gives the blobs' address
+  (`https://api.ledgermath.com/blobs/sha256/<hex>`) and the page's
+  (`https://ledgermath.com/`) in place of its two placeholders, says which workflow adds
+  which files, where the Runs are also served, and where the Methods and the data API are;
+  `tests/licences.test.ts` fails while either file there holds "Placeholder" or "not decided
+  yet".
 - **2026-11-25** — **Why `memory_read`'s static build is slower, written down, and left as
   it is** (#84). The investigation of 2026-11-23 and 2026-11-24 found the cause of the gap
-  recorded on 2026-11-18: where the 15-byte `scalar` loop lands in the binary. In the
-  static binary it crosses a 64-byte line, in the dynamic one it does not, and on the Intel
-  processors of `m5.large`, `i4i.2xlarge` and `c6i.8xlarge` a loop that crosses a line runs
-  slower. Moving the loop inside the binaries that ran switched the gap on and off; linking
-  only moved the code. The maintainer decided to document it and leave the benchmark and
-  its build as they are, for now. `benchmarks/memory_read/README.md` is new and gives the
-  figures, the pipeline's and the investigation's, each with its conditions;
-  `methods/README.md` says once that a figure can move with where its code lands, which
-  the Artifact's hash shows but nothing holds fixed (and that `mutex` moves too, cause
-  under investigation); the lookup tool's note for `memory_read`, the skill's "Check the
-  fit" step, the root README, ADR-0029 (decision 4, a dated addition, and its open item)
-  and ADR-0008's note say the same. The data API's words are unchanged: it carries no
-  description of a benchmark. No benchmark, build, Method or workflow changed.
+  in the Runs recorded up to the check of 2026-11-18: where the 15-byte `scalar` loop lands
+  in the binary. In the static binary built on `m5.large`, `i4i.2xlarge` and `c6i.8xlarge`
+  it crosses a 64-byte line, in the dynamic one it does not, and on those three types'
+  Intel processors this loop ran slower when it crossed a line. Running a copy of the
+  scalar function placed elsewhere in each binary that ran switched the gap on and off;
+  linking only moved the code. The maintainer decided to document it and leave the
+  benchmark and its build as they are, for now. `benchmarks/memory_read/README.md` is new
+  and gives the figures, the recorded Runs' and the investigation's, each with its
+  conditions. `methods/README.md` says once that a figure can move with where its code
+  lands, and what a reader can see of it: static and dynamic are separate Series, and
+  within a Series a new binary hash puts a Run in another group, but the hash says only
+  that the bytes differ, not where a loop landed or why a figure moved; it adds that
+  `mutex` `one_cpu` moves too, cause under investigation. The lookup tool's note for
+  `memory_read`, the skill's "Check the fit" step, the root README, ADR-0029 (decision 4, a
+  dated addition, and its open item) and ADR-0008's note say the same. The data API's
+  words are unchanged: it carries no description of a benchmark. No benchmark, build,
+  Method or workflow changed.
 - _(agents: append your entry here, one per merged benchmark)_
