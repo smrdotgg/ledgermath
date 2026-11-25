@@ -207,10 +207,12 @@ A figure can move with where the measured code lands in the binary, while the co
 stays the same. `memory_read` shows it: its static and dynamic builds run the same 15-byte
 `scalar` loop, but at different places in a 64-byte line, and on three Intel instance types
 that alone made one build's Series faster than the other's
-(`benchmarks/memory_read/README.md`, issue #84). `mutex` `one_cpu` with no idle thread was
-also found to move with where its code lands, by 12 to 25% on the three instance types
-tested (`m5.large`, `i4i.2xlarge`, `c8a.2xlarge`; issue #84); its cause is being
-investigated.
+(`benchmarks/memory_read/README.md`, issue #84). `mutex` `one_cpu` with no idle thread
+moves too. On Ice Lake it moved by up to 20%, in steps of one clock cycle per critical
+section, and on `m5.large` from 11% faster to 31% slower than the published binary, as
+`pthread_mutex_lock`, `pthread_mutex_unlock` and the benchmark's loop were moved within
+their 64-byte lines with their bytes unchanged. That the processor's front end causes it
+is inferred, not shown (`benchmarks/mutex/README.md`, issue #84).
 
 What a reader can see of it:
 
@@ -218,14 +220,41 @@ What a reader can see of it:
   static and a dynamic build are never mixed in one Series.
 - **A new binary is a new group.** Every Run records the bytes that ran (`binary.blob`),
   and the binary is one of version 1's split facts: within one Series, a Run with another
-  binary goes into another group. The Method still gives percentiles for the whole Series
-  as well as for each group.
+  binary goes into another group. One binary can also be in several groups, when another
+  split fact changes. The Method still gives percentiles for the whole Series as well as
+  for each group.
 - **The hash says only that the bytes differ.** It does not say where a loop landed, or
   why a figure moved. Version 1 does not hold placement fixed. A change elsewhere in the
   binary (the harness, the compiler, the C library, the way it is linked) can land the
   measured code somewhere else and move the figure, with no change to the benchmark's own
   code. Within one binary, nothing in the Series says whether its code landed in a fast
   place or a slow one.
+
+### Boots that differ in a way no fact records
+
+The Runs of one Series can come from boots that differ in a way nothing recorded shows.
+`mutex` `one_cpu` with an idle thread shows it: on `c6i.8xlarge` and `i4i.2xlarge`, with
+one binary, the Runs sit at one of two usual levels about 30% apart, from boot to boot,
+with one Run so far between them. Within each boot tested, with the sibling hardware
+thread idle or offline, every process gave the same level. No fact in the Run or its dumps tells the levels apart. That the level comes from
+the physical host a boot lands on is inferred, not shown, and the cause is not known
+(`benchmarks/mutex/README.md`, issue #84).
+
+What a reader can see of it:
+
+- **Version 1 does not split on it.** It splits only on recorded facts, so Runs at both
+  levels fall in one group whenever their split facts agree. In that `mutex` Series on
+  `c6i.8xlarge`, in its 57 Runs up to 2026-11-25 16:18 UTC, group B held 14 of the 15 fast
+  Runs, all 41 slow ones and the one Run between.
+- **The percentiles mix them.** The 5th, 50th and 95th percentiles are taken across every
+  counted Run of the Series, and of the group. When one level is rarer, the median is the
+  common level and the 5th or the 95th percentile can be the rarer one. The spread between
+  the percentiles is then two levels, not noise from Run to Run. In that `mutex` Series the
+  median is the slow level and the 5th percentile the fast one.
+- **Each counted Run's own number shows it.** Every counted Run's number is published with
+  the percentiles (a Run that does not count is published with its reason and no number).
+  Runs that cluster at separate levels, with few or none between, are the sign; version 1
+  does not look for levels.
 
 ## Method `requests`, version 1
 
