@@ -3304,7 +3304,8 @@ Two pages:
   the graphs' bars drawn in round dots or in squares to match. Every figure is read at build time from a tree of the
   data API and links to its Series file there. Each shows a median rounded to four
   significant digits, with every digit, its 5th and 95th percentiles and its count of Runs
-  in its `title`.
+  in its `title`. Under the headline the page credits the project LedgerMath began from:
+  "Inspired by Simon Eskildsen's Napkin Math", the name a link to its repository.
 - **`/docs/`, a placeholder.** The documentation is not written yet. Until it is, every
   link to it (the header's and footer's "Docs", each benchmark's name) goes to this page,
   which says so and links to the API's table of contents. The real documentation replaces
@@ -3312,8 +3313,20 @@ Two pages:
   each benchmark's planned page (`/docs/benchmarks/<benchmark>`), so pointing the names at
   their pages is a one-line change.
 
-The pages link nowhere but inside the site and under `https://api.ledgermath.com/`: no
-link goes to the source repository.
+The pages link inside the site and under `https://api.ledgermath.com/`, and to one address
+besides: Napkin Math's repository, from the home page's credit. A link that leaves the
+site must be named whole in `OUTSIDE_LINKS` (`site/src/pages.text.ts`), which holds that
+one address; `bun run check` fails on any other, so no link goes to the source repository.
+
+**Feature flags.** A flag is a part of a page that is in its HTML but hidden. A page names
+its flags in `site/src/pages.text.ts` (`flags`); with `?NAME` in the page's address, the
+inline script sets `data-NAME` on `<html>` and the stylesheet shows the part. There is one:
+`napkin`, on the home page (<https://ledgermath.com/?napkin>). It shows a closing note
+between the table and the footer, "LedgerMath began as a port of Simon Eskildsen's Napkin
+Math", with a napkin drawn beside it on the font's grid (`site/src/home/napkin.tsx`); the
+sum on the napkin is four rounds a day for a year. Without the parameter, or with
+JavaScript off, the note is not shown. To show a flagged part to everyone, remove the rule
+that hides it (`.closing` in `site/src/site.css`) and the flag.
 
 **Built from a tree.** The build reads a directory in the data API's own layout: the
 table of contents (`v1/index.json`), the Series list and the newest price file, at the
@@ -3376,6 +3389,7 @@ bundles `site/src/entry-server.tsx` for the server, the bundle renders each page
 with Solid's server renderer, and the HTML, the stylesheet, the two self-hosted fonts and
 `public/` are written to `site/dist/client`. Nothing hydrates and no JavaScript file is
 served: the pages read the same with JavaScript off, and the one script, inline, only
+sets the page's feature flags (above) and
 holds the page back until the font of the reader's colour scheme has loaded. `site/` has its own `package.json` and
 `bun.lock`, apart from the root's, and needs only Bun (Vite runs under Bun, not Node).
 
@@ -3412,10 +3426,11 @@ commands by hand before a merge. `bun test` at the repository root leaves `site/
   script or style, which shows the prerender ran; no HTML, CSS or JavaScript file refers to
   a file the output lacks or loads anything from another origin; every link a reader
   follows (`href` on `<a>` or `<area>`) goes to a file the site has (and, with a fragment,
-  to an id that page has) or under `https://api.ledgermath.com/`; and each page, with what
-  it loads, weighs under 300,000 bytes, text gzipped at level 9 (about 66 KB for the home
+  to an id that page has) or under `https://api.ledgermath.com/`, or is exactly one of
+  `OUTSIDE_LINKS`; and each page, with what
+  it loads, weighs under 300,000 bytes, text gzipped at level 9 (about 67 KB for the home
   page, 59 KB for `/docs/`, most of it the two fonts: the check counts both, and a browser
-  fetches only the one its colour scheme uses, about 38 KB and 31 KB in all). It reads `src`, `href`, `srcset`,
+  fetches only the one its colour scheme uses, about 39 KB and 31 KB in all). It reads `src`, `href`, `srcset`,
   `imagesrcset`, `poster` and `xlink:href` on any HTML element, `url()` in `<style>` blocks
   and `style` attributes, imports in inline scripts, `url()` and `@import` in CSS files,
   and `import`, `export … from` and `import()` of a quoted path in JavaScript files. It
@@ -3444,7 +3459,7 @@ commands by hand before a merge. `bun test` at the repository root leaves `site/
 `bun run check` or the workflow: the rebuild after each round of boots must be quick and
 needs no browser. They load each page in Playwright's Chromium (installed once with
 `bunx playwright install chromium` in `site/`) at 1440×900 and at 390×844, each in light
-and dark, and fail on a console error, a failed request or a request to another origin,
+and dark, and a page with feature flags again with each flag on, and fail on a console error, a failed request or a request to another origin,
 a horizontal scroll at 390 px, an axe-core violation of WCAG 2.0 and 2.1 A and AA or of
 its structure rules, a page over the size budget as transferred, or a line with a figure
 that is missing with JavaScript off. `--shots OUT` also writes each page's first screen

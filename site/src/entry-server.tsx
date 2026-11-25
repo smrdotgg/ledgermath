@@ -22,7 +22,7 @@ export function render(tree: Tree): RenderedSite {
 	const page = (meta: SitePage, body: () => JSX.Element) => ({
 		page: meta,
 		html: renderToString(() => (
-			<Document title={meta.title} description={meta.description}>
+			<Document title={meta.title} description={meta.description} flags={meta.flags}>
 				{body()}
 			</Document>
 		)),

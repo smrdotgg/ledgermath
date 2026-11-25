@@ -22,11 +22,14 @@
  *    says so; it is never filled from elsewhere.
  * 4. Links go to the addresses in `links`: the API's, which the tree itself gives (each
  *    row's `url` too), and the site's own (the home page, its table, the notices, and the
- *    documentation, a placeholder at /docs/ for now: see ./headline). Nothing else: no page
- *    links to or names the source repository, and `bun run check` fails on any link that is
- *    neither inside the site nor under https://api.ledgermath.com/.
+ *    documentation, a placeholder at /docs/ for now: see ./headline). Nothing else comes from
+ *    this module: it names no other project, and no link of its goes to the source repository.
+ *    A link that leaves the site is named in ../pages.text (OUTSIDE_LINKS) and used by the page
+ *    that has it, and `bun run check` fails on any link that is neither inside the site, nor
+ *    under https://api.ledgermath.com/, nor exactly one of those.
  * 5. Import this module from the pages' components only (code that runs at build time).
- *    Nothing runs in the browser but the page's one inline script, which waits for the font.
+ *    Nothing runs in the browser but the page's one inline script, which sets the page's
+ *    feature flags and waits for the font.
  */
 
 import { benchmarkDocsUrl, DOCS_URL, HEADLINE_CHOICES, type HeadlineChoice } from "./headline";

@@ -4,7 +4,10 @@
 // one grey: round dots in the dark scheme, squares in the light one). Every figure comes from
 // ../data, from the tree the site is built from; the only arithmetic is a change of unit, done by
 // its helpers. The art beside the headline: ./art.tsx. The header and footer are shared with the
-// other pages: ../chrome.tsx.
+// other pages: ../chrome.tsx. Under the headline the page credits Napkin Math, the project
+// LedgerMath began from, with the site's one link to another site (../pages.text.ts). A closing
+// note under the table says the same with a napkin drawn beside it (./napkin.tsx); it is behind
+// a flag, so the page shows it only when its address has ?napkin.
 //
 // What the tree may lack, the page leaves out rather than fill: without recent_rounds there is
 // no "Latest runs"; a cell whose Series is missing shows a dash.
@@ -29,7 +32,9 @@ import {
 	type SiteData,
 } from "../data";
 import { Footer, Header } from "../chrome";
+import { NAPKIN_MATH } from "../pages.text";
 import { HeadlineArt } from "./art";
+import { Napkin } from "./napkin";
 
 // ---------------------------------------------------------------- figures
 
@@ -190,6 +195,9 @@ export default function HomePage(props: { data: SiteData }) {
 							</span>
 						</h1>
 						<p class="sub">Open-source benchmarks, run on real cloud machines every day.</p>
+						<p class="credit">
+							Inspired by Simon Eskildsen's <a href={NAPKIN_MATH}>Napkin Math</a>.
+						</p>
 					</div>
 
 					{data.rounds && <Latest data={data} />}
@@ -257,6 +265,14 @@ export default function HomePage(props: { data: SiteData }) {
 						</table>
 					</div>
 				</section>
+
+				{/* Behind the flag `napkin` (../pages.text.ts): in the HTML, and shown when the address has ?napkin. */}
+				<div class="closing">
+					<Napkin />
+					<p>
+						LedgerMath began as a port of Simon Eskildsen's <a href={NAPKIN_MATH}>Napkin Math</a>.
+					</p>
+				</div>
 			</main>
 
 			<Footer links={links} />

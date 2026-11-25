@@ -4,7 +4,8 @@
 # check`: each page holds its fixed words (site/src/pages.text.ts) in its body
 # outside any script, so the prerender ran and it reads with JavaScript off;
 # nothing in the output refers to a file it lacks or loads from another
-# origin; every link goes inside the site or under https://api.ledgermath.com/;
+# origin; every link goes inside the site, under https://api.ledgermath.com/,
+# or to an address site/src/pages.text.ts names whole (OUTSIDE_LINKS);
 # each page is under its size budget (site/scripts/check-output.ts); and every
 # figure on the pages is the tree's, exactly (site/scripts/check-figures.ts).
 # The same commands work locally inside site/. Keeps the built site as the
