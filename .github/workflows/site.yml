@@ -1,9 +1,14 @@
-# Builds the placeholder website in site/ and checks what the build wrote with
-# `bun run check` (site/scripts/check-output.ts): index.html holds the page's
-# text (site/src/App.text.ts) in its body outside any script, so the prerender
-# ran and the page reads with JavaScript off, and nothing in the output refers
-# to a file it lacks or loads from another origin. The same commands work
-# locally inside site/. Keeps the built site as the artifact `site`.
+# Builds the website in site/ from the data API's tree as published now
+# (site/scripts/fetch-tree.ts fetches the files the pages read from
+# https://api.ledgermath.com) and checks what the build wrote with `bun run
+# check`: each page holds its fixed words (site/src/pages.text.ts) in its body
+# outside any script, so the prerender ran and it reads with JavaScript off;
+# nothing in the output refers to a file it lacks or loads from another
+# origin; every link goes inside the site or under https://api.ledgermath.com/;
+# each page is under its size budget (site/scripts/check-output.ts); and every
+# figure on the pages is the tree's, exactly (site/scripts/check-figures.ts).
+# The same commands work locally inside site/. Keeps the built site as the
+# artifact `site`.
 #
 # Then one deploy job puts that artifact on Vercel as prebuilt files (Vercel
 # builds nothing; site/deploy/deploy.sh). On a push to main or a run by hand on
@@ -51,12 +56,18 @@ jobs:
       - run: bun install --frozen-lockfile
       - name: Type-check
         run: bun run typecheck
-      - name: Test the output check against its fixtures
+      - name: Test the data module, the build, the checks and the deploy scripts against their fixtures
         run: bun test
-      - name: Build, then prerender into dist/client
+      - name: The data API's tree as published now, the files the pages read
+        run: bun scripts/fetch-tree.ts "$RUNNER_TEMP/tree"
+      - name: Build from that tree into dist/client
         run: bun run build
-      - name: index.html holds the page's text (src/App.text.ts) outside its scripts, and the output refers to no file it lacks
+        env:
+          LEDGERMATH_TREE: ${{ runner.temp }}/tree
+      - name: Each page holds its fixed words outside its scripts, links and loads stay inside the site or the API, the budget holds, and every figure is the tree's
         run: bun run check
+        env:
+          LEDGERMATH_TREE: ${{ runner.temp }}/tree
       - name: The site carries the notices of the code it ships (THIRD-PARTY-NOTICES.md, section 3)
         run: cmp public/third-party-notices.txt dist/client/third-party-notices.txt
       - name: Keep the built site
@@ -158,7 +169,7 @@ jobs:
             echo "- Commit: $GITHUB_SHA"
           } >>"$GITHUB_STEP_SUMMARY"
           echo "$url"
-      - name: https://ledgermath.com/ answers 200 with the page's text (src/App.text.ts) in its HTML
+      - name: https://ledgermath.com/ and /docs/ answer 200 with their fixed words (src/pages.text.ts) in their HTML
         if: steps.fresh.outputs.deploy == 'true'
         working-directory: site
         run: bun scripts/check-live.ts https://ledgermath.com/

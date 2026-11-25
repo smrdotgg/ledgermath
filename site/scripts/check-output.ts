@@ -1,9 +1,15 @@
 /**
- * Checks a built site: that DIR/index.html exists and holds each line of the
- * page's text (src/App.text.ts) in its body, outside any script or style (so
- * the page reads with JavaScript off, which proves the prerender), and that no
- * HTML, CSS or JavaScript file in DIR refers to a file DIR lacks, or loads
- * anything from another origin.
+ * Checks a built site:
+ *
+ *  - each page (src/pages.text.ts) exists and holds each of its fixed words in its body,
+ *    outside any script or style (so it reads with JavaScript off, which proves the prerender);
+ *  - no HTML, CSS or JavaScript file in DIR refers to a file DIR lacks, or loads anything from
+ *    another origin;
+ *  - every link a reader follows (href on <a> and <area>) goes inside the built site, to a file
+ *    it has (and, with a fragment, to an id that file has), or under https://api.ledgermath.com/:
+ *    nowhere else, so no link is dead and none leads to the source repository;
+ *  - each page, with everything it loads (stylesheets, fonts, images, scripts), weighs under
+ *    BUDGET_BYTES, text files weighed gzipped at level 9 as a host sends them, others as they are.
  *
  *     bun scripts/check-output.ts [DIR]     (DIR defaults to dist/client)
  *
@@ -15,10 +21,9 @@
  * - JavaScript: import, export ... from and import() of a quoted path.
  * A path starting with / is resolved against DIR, any other against the
  * referring file's directory; a query or fragment is dropped and %-escapes are
- * decoded. Fragment-only references and data:, about:, mailto: and tel: URLs
- * are self-contained and skipped. href on <a> and <area> is a link a reader
- * follows, not something the page loads, so it may go to another origin; if
- * it is a path, the file must still exist.
+ * decoded. Fragment-only loads and data:, about:, mailto: and tel: URLs are
+ * self-contained and skipped as loads; as links, a fragment must name an id of
+ * its page and any other scheme is outside the site.
  *
  * Not read: other file types (SVG, JSON, web manifests), image-set() with bare
  * strings, URLs JavaScript builds at run time, and whether the HTML renders as
@@ -29,9 +34,14 @@
 
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, extname, join, relative, resolve, sep } from "node:path";
-import { PAGE_TEXT } from "../src/App.text";
+import { PAGES } from "../src/pages.text";
 
-export type Result = { problems: string[]; checked: number };
+export type Result = { problems: string[]; checked: number; weights: { file: string; bytes: number }[] };
+
+/** The one origin, besides the site itself, that a link may go to. */
+export const API_ORIGIN = "https://api.ledgermath.com/";
+/** The most a page may weigh, with everything it loads, compressed as a host sends it. */
+export const BUDGET_BYTES = 300_000;
 
 /** A reference found in a file; `link` when a reader follows it rather than the page loading it. */
 type Reference = { url: string; link: boolean };
@@ -41,6 +51,7 @@ const SCHEME = /^[a-z][a-z0-9+.-]*:/i;
 const REFERENCE_ATTRIBUTES = new Set(["src", "href", "poster", "xlink:href"]);
 const SRCSET_ATTRIBUTES = new Set(["srcset", "imagesrcset"]);
 const LINK_ELEMENTS = new Set(["a", "area"]);
+const TEXT_FILES = /\.(html|css|js|mjs|json|svg|txt|xml)$/i;
 
 function files(at: string): string[] {
 	return readdirSync(at, { withFileTypes: true }).flatMap((entry) => {
@@ -49,10 +60,10 @@ function files(at: string): string[] {
 	});
 }
 
-const ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " " };
+const ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " " };
 
 /** Decodes the character references an attribute value or text is likely to hold. */
-function decodeEntities(text: string): string {
+export function decodeEntities(text: string): string {
 	return text.replace(/&(#x[0-9a-f]+|#[0-9]+|[a-z]+);/gi, (whole, name: string) => {
 		if (name[0] === "#") {
 			const code = name[1] === "x" || name[1] === "X" ? parseInt(name.slice(2), 16) : parseInt(name.slice(1), 10);
@@ -108,29 +119,45 @@ function jsReferences(js: string): string[] {
 	];
 }
 
-function htmlReferences(html: string): Reference[] {
-	const found: Reference[] = [];
-	const loads = (urls: string[]) => found.push(...urls.map((url) => ({ url, link: false })));
+/** Each tag of HTML outside comments, scripts and styles, with its element and attributes; and the references in its scripts and styles. */
+function htmlTags(html: string): { tags: { element: string; attributes: [string, string][] }[]; inline: string[] } {
+	const inline: string[] = [];
 	let text = html.replace(/<!--[\s\S]*?-->/g, "");
 	text = text.replace(/<script\b((?:[^>"']|"[^"]*"|'[^']*')*)>([\s\S]*?)<\/script\s*>/gi, (_, attributes: string, body: string) => {
-		loads(jsReferences(body));
+		inline.push(...jsReferences(body));
 		return `<script${attributes}>`;
 	});
 	text = text.replace(/<style\b[^>]*>([\s\S]*?)<\/style\s*>/gi, (_, body: string) => {
-		loads(cssReferences(body));
+		inline.push(...cssReferences(body));
 		return "";
 	});
-	for (const tag of text.matchAll(/<([a-z][\w:-]*)((?:[^>"']|"[^"]*"|'[^']*')*)>/gi)) {
-		const element = (tag[1] ?? "").toLowerCase();
-		for (const attribute of (tag[2] ?? "").matchAll(/([^\s"'=<>/]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g)) {
-			const name = (attribute[1] ?? "").toLowerCase();
-			const value = decodeEntities(attribute[2] ?? attribute[3] ?? attribute[4] ?? "");
+	const tags = [...text.matchAll(/<([a-z][\w:-]*)((?:[^>"']|"[^"]*"|'[^']*')*)>/gi)].map((tag) => ({
+		element: (tag[1] ?? "").toLowerCase(),
+		attributes: [...(tag[2] ?? "").matchAll(/([^\s"'=<>/]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g)].map(
+			(attribute): [string, string] => [(attribute[1] ?? "").toLowerCase(), decodeEntities(attribute[2] ?? attribute[3] ?? attribute[4] ?? "")],
+		),
+	}));
+	return { tags, inline };
+}
+
+function htmlReferences(html: string): Reference[] {
+	const { tags, inline } = htmlTags(html);
+	const found: Reference[] = inline.map((url) => ({ url, link: false }));
+	for (const { element, attributes } of tags) {
+		for (const [name, value] of attributes) {
 			if (REFERENCE_ATTRIBUTES.has(name)) found.push({ url: value, link: name === "href" && LINK_ELEMENTS.has(element) });
-			else if (SRCSET_ATTRIBUTES.has(name)) loads(srcsetUrls(value));
-			else if (name === "style") loads(cssReferences(value));
+			else if (SRCSET_ATTRIBUTES.has(name)) found.push(...srcsetUrls(value).map((url) => ({ url, link: false })));
+			else if (name === "style") found.push(...cssReferences(value).map((url) => ({ url, link: false })));
 		}
 	}
 	return found;
+}
+
+/** The ids an HTML page's elements carry: what a link's fragment may name. */
+export function htmlIds(html: string): Set<string> {
+	const ids = new Set<string>();
+	for (const { attributes } of htmlTags(html).tags) for (const [name, value] of attributes) if (name === "id") ids.add(value);
+	return ids;
 }
 
 function references(path: string, text: string): Reference[] {
@@ -148,7 +175,7 @@ function references(path: string, text: string): Reference[] {
 }
 
 /** The text of an HTML page's body as a reader sees it with JavaScript off, near enough. */
-function bodyText(html: string): string {
+export function bodyText(html: string): string {
 	return decodeEntities(
 		html
 			.replace(/<!--[\s\S]*?-->/g, "")
@@ -164,56 +191,124 @@ export function missingText(html: string, texts: readonly string[]): string[] {
 	return texts.filter((text) => !visible.includes(text));
 }
 
-/** Checks the built site in DIR against the page's TEXTS; see the comment at the top. */
-export function checkOutput(root: string, texts: readonly string[]): Result {
+/** The file a reference names, resolved as the comment at the top says, or null when it names nothing (a bare query). */
+function target(dir: string, from: string, reference: string): { file: string; fragment: string | null } | null {
+	const [beforeFragment = "", ...rest] = reference.split("#");
+	const fragment = rest.length > 0 ? rest.join("#") : null;
+	const raw = beforeFragment.split("?")[0] ?? "";
+	if (raw === "") return null;
+	let bare = raw;
+	try {
+		bare = decodeURIComponent(raw);
+	} catch {}
+	const path = bare.startsWith("/") ? join(dir, bare) : resolve(dirname(from), bare);
+	const file = existsSync(path) && statSync(path).isDirectory() ? join(path, "index.html") : path;
+	return { file, fragment };
+}
+
+const gzipped = (bytes: Uint8Array) => Bun.gzipSync(new Uint8Array(bytes), { level: 9 }).byteLength;
+
+/** What PAGE weighs with everything it loads (followed through stylesheets), each file counted once. */
+function weigh(dir: string, page: string): number {
+	const seen = new Set<string>();
+	let bytes = 0;
+	const visit = (file: string) => {
+		if (seen.has(file) || !existsSync(file) || !file.startsWith(dir + sep)) return;
+		seen.add(file);
+		const content = readFileSync(file);
+		bytes += TEXT_FILES.test(file) ? gzipped(content) : content.byteLength;
+		for (const { url, link } of references(file, content.toString("utf8"))) {
+			const reference = url.trim();
+			if (link || reference === "" || reference.startsWith("#") || SELF_CONTAINED.test(reference) || SCHEME.test(reference) || reference.startsWith("//")) continue;
+			const found = target(dir, file, reference);
+			if (found) visit(found.file);
+		}
+	};
+	visit(page);
+	return bytes;
+}
+
+/** Checks the built site in DIR against PAGES' words; see the comment at the top. */
+export function checkOutput(root: string, pages: readonly { file: string; text: readonly string[] }[] = PAGES): Result {
 	const dir = resolve(root);
 	const problems: string[] = [];
-	if (!existsSync(dir) || !statSync(dir).isDirectory()) return { problems: [`${root} is not a directory (run \`bun run build\` first)`], checked: 0 };
+	const weights: Result["weights"] = [];
+	if (!existsSync(dir) || !statSync(dir).isDirectory()) return { problems: [`${root} is not a directory (run \`bun run build\` first)`], checked: 0, weights };
 
-	const index = join(dir, "index.html");
-	if (!existsSync(index)) {
-		problems.push("index.html is missing");
-	} else {
-		for (const text of missingText(readFileSync(index, "utf8"), texts)) {
-			problems.push(`index.html does not hold, in its body outside any script: ${JSON.stringify(text)}`);
+	for (const page of pages) {
+		const path = join(dir, page.file);
+		if (!existsSync(path)) {
+			problems.push(`${page.file} is missing`);
+			continue;
 		}
+		for (const text of missingText(readFileSync(path, "utf8"), page.text)) {
+			problems.push(`${page.file} does not hold, in its body outside any script: ${JSON.stringify(text)}`);
+		}
+		const bytes = weigh(dir, path);
+		weights.push({ file: page.file, bytes });
+		if (bytes >= BUDGET_BYTES) problems.push(`${page.file} weighs ${bytes} bytes with what it loads, compressed: over the budget of ${BUDGET_BYTES}`);
 	}
+
+	const ids = new Map<string, Set<string>>();
+	const idsOf = (file: string) => {
+		let found = ids.get(file);
+		if (!found) ids.set(file, (found = htmlIds(readFileSync(file, "utf8"))));
+		return found;
+	};
 
 	let checked = 0;
 	for (const path of files(dir)) {
 		const name = relative(dir, path);
 		for (const { url, link } of references(path, readFileSync(path, "utf8"))) {
 			const reference = url.trim();
-			if (reference === "" || reference.startsWith("#") || SELF_CONTAINED.test(reference)) continue;
-			if (SCHEME.test(reference) || reference.startsWith("//")) {
-				if (!link) problems.push(`${name} loads from another origin: ${reference}`);
+			if (reference === "") continue;
+			if (link) {
+				checked += 1;
+				if (reference.startsWith("#")) {
+					if (extname(path) === ".html" && !idsOf(path).has(decodeURIComponent(reference.slice(1)))) problems.push(`${name} links to ${reference}, an id it lacks`);
+					continue;
+				}
+				if (SCHEME.test(reference) || reference.startsWith("//")) {
+					if (!reference.startsWith(API_ORIGIN)) problems.push(`${name} links outside the site and the data API: ${reference}`);
+					continue;
+				}
+				const found = target(dir, path, reference);
+				if (!found) continue; // "?query": the page itself
+				if (!found.file.startsWith(dir + sep)) problems.push(`${name} links outside the site: ${reference}`);
+				else if (!existsSync(found.file)) problems.push(`${name} links to ${reference}, which the site lacks`);
+				else if (found.fragment && extname(found.file) === ".html" && !idsOf(found.file).has(decodeURIComponent(found.fragment))) {
+					problems.push(`${name} links to ${reference}, whose page has no id ${JSON.stringify(found.fragment)}`);
+				}
 				continue;
 			}
-			const raw = reference.split(/[?#]/)[0] ?? "";
-			if (raw === "") continue; // "?query": the referring file itself
-			let bare = raw;
-			try {
-				bare = decodeURIComponent(raw);
-			} catch {}
-			const target = bare.startsWith("/") ? join(dir, bare) : resolve(dirname(path), bare);
-			const file = existsSync(target) && statSync(target).isDirectory() ? join(target, "index.html") : target;
+			if (reference.startsWith("#") || SELF_CONTAINED.test(reference)) continue;
+			if (SCHEME.test(reference) || reference.startsWith("//")) {
+				problems.push(`${name} loads from another origin: ${reference}`);
+				continue;
+			}
+			const found = target(dir, path, reference);
+			if (!found) continue; // "?query": the referring file itself
 			checked += 1;
-			if (!file.startsWith(dir + sep)) problems.push(`${name} refers outside the site: ${reference}`);
-			else if (!existsSync(file)) problems.push(`${name} refers to ${reference}, which the site lacks`);
+			if (!found.file.startsWith(dir + sep)) problems.push(`${name} refers outside the site: ${reference}`);
+			else if (!existsSync(found.file)) problems.push(`${name} refers to ${reference}, which the site lacks`);
 		}
 	}
-	return { problems, checked };
+	return { problems, checked, weights };
 }
 
 if (import.meta.main) {
 	const root = process.argv[2] ?? join(import.meta.dir, "..", "dist", "client");
-	const { problems, checked } = checkOutput(root, PAGE_TEXT);
+	const { problems, checked, weights } = checkOutput(root);
 	if (problems.length > 0) {
 		for (const problem of problems) console.error(problem);
-		if (problems.some((problem) => problem.startsWith("index.html does not hold"))) {
-			console.error("The page's text is listed in site/src/App.text.ts; change it there with the page (site/src/App.tsx).");
+		if (problems.some((problem) => problem.includes("does not hold"))) {
+			console.error("Each page's fixed words are listed in site/src/pages.text.ts; change them there with the page.");
 		}
 		process.exit(1);
 	}
-	console.log(`${relative(process.cwd(), resolve(root)) || "."}: index.html holds all ${PAGE_TEXT.length} lines of the page's text; ${checked} references, every one to a file the site has`);
+	const words = PAGES.map((page) => `${page.file} holds its ${page.text.length} fixed words`).join(", ");
+	const weighed = weights.map((w) => `${w.file} ${w.bytes.toLocaleString("en")}`).join(", ");
+	console.log(
+		`${relative(process.cwd(), resolve(root)) || "."}: ${words}; ${checked} references and links, each to a file the site has or a link under ${API_ORIGIN}; weights with what each page loads, compressed: ${weighed} bytes (budget ${BUDGET_BYTES.toLocaleString("en")})`,
+	);
 }

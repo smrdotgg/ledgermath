@@ -1,20 +1,20 @@
 /**
- * Checks the site as it is served: fetches URL and fails unless it answers
- * 200, without a redirect, with HTML that holds each line of the page's text
- * (src/App.text.ts) in its body outside any script or style, the same test
- * `bun run check` makes of the built index.html (missingText in
- * check-output.ts). So the page is up and reads with JavaScript off.
+ * Checks the site as it is served: fetches each page (src/pages.text.ts) under BASE, the home
+ * page and the documentation's placeholder, and fails unless each answers 200, without a
+ * redirect, with HTML that holds each of the page's fixed words in its body outside any script
+ * or style, the same test `bun run check` makes of the built files (missingText in
+ * check-output.ts). So the pages are up, are this site's, and read with JavaScript off. The
+ * figures change with every tree, so they are not what it looks for.
  * .github/workflows/site.yml runs it after each production deploy.
  *
- *     bun scripts/check-live.ts [URL]     (URL defaults to https://ledgermath.com/)
+ *     bun scripts/check-live.ts [BASE]     (BASE defaults to https://ledgermath.com/)
  *
  * A failed attempt is tried again, three attempts in all, ten seconds apart,
  * so a dropped connection, before the answer or while its body is read, does
- * not fail a deploy. Exit 0 when an attempt
- * passes, 1 when none does.
+ * not fail a deploy. Exit 0 when every page passes, 1 when one does not.
  */
 
-import { PAGE_TEXT } from "../src/App.text";
+import { PAGES } from "../src/pages.text";
 import { missingText } from "./check-output";
 
 export const SITE_URL = "https://ledgermath.com/";
@@ -67,12 +67,23 @@ export async function checkLive(
 	return problems;
 }
 
+/** The address of each of PAGES under BASE: "https://ledgermath.com/" and "https://ledgermath.com/docs/". */
+export function pageUrls(base: string, pages: readonly { path: string; text: readonly string[] }[] = PAGES): { url: string; text: readonly string[] }[] {
+	const root = base.endsWith("/") ? base : `${base}/`;
+	return pages.map((page) => ({ url: new URL(page.path.replace(/^\//, ""), root).href, text: page.text }));
+}
+
 if (import.meta.main) {
-	const url = process.argv[2] ?? SITE_URL;
-	const problems = await checkLive(url, PAGE_TEXT);
-	if (problems.length > 0) {
-		for (const problem of problems) console.error(problem);
-		process.exit(1);
+	const base = process.argv[2] ?? SITE_URL;
+	let failed = false;
+	for (const { url, text } of pageUrls(base)) {
+		const problems = await checkLive(url, text);
+		if (problems.length > 0) {
+			failed = true;
+			for (const problem of problems) console.error(problem);
+		} else {
+			console.log(`${url}: 200, and its HTML holds all ${text.length} of the page's fixed words outside any script`);
+		}
 	}
-	console.log(`${url}: 200, and its HTML holds all ${PAGE_TEXT.length} lines of the page's text outside any script`);
+	if (failed) process.exit(1);
 }
