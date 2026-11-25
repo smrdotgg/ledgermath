@@ -172,15 +172,16 @@ describe("the rule: raised by the first check made more than 14 hours after the 
 	 * The real schedule over three days. Each run's alarm checks alarmAfter(i)
 	 * after its slot (however late the job started, and however long it took to
 	 * reach the alarm step); its publish, unless it fails, lands publishAfter(i)
-	 * after that. In order of check. The 22:40 run before day one published at
-	 * 22:40.
+	 * after that. In order of check. The run before day one published at its
+	 * slot.
 	 */
 	function simulate(alarmAfter: (index: number) => number, publishAfter: (index: number) => number, fails: (index: number) => boolean) {
 		const runs = scheduledStarts(at("2026-11-20T23:00:00Z"), at("2026-11-23T23:00:00Z")).map((slot, index) => {
 			const check = slot.getTime() + alarmAfter(index);
 			return { index, slot: slot.getTime(), check, publish: fails(index) ? null : check + publishAfter(index) };
 		});
-		const publishes = [Date.parse("2026-11-20T22:40:00Z"), ...runs.flatMap((run) => (run.publish === null ? [] : [run.publish]))];
+		const before = scheduledStarts(at("2026-11-19T23:00:00Z"), at("2026-11-20T23:00:00Z")).at(-1) as Date;
+		const publishes = [before.getTime(), ...runs.flatMap((run) => (run.publish === null ? [] : [run.publish]))];
 		return runs
 			.sort((a, b) => a.check - b.check)
 			.map((run) => {
@@ -200,11 +201,13 @@ describe("the rule: raised by the first check made more than 14 hours after the 
 	});
 
 	test("one failed publish in the ordinary schedule stays quiet whenever every alarm checks less than two hours after its slot", () => {
+		const count = simulate(() => 0, () => 0, () => false).length;
+		expect(count).toBe(12);
 		for (let seed = 1; seed <= 10; seed++) {
 			const draw = random(seed);
 			const alarms = Array.from({ length: 20 }, () => Math.floor(draw() * 120) * MINUTE);
 			const publishes = Array.from({ length: 20 }, () => (1 + Math.floor(draw() * 15)) * MINUTE);
-			for (let failed = 0; failed < 15; failed++) {
+			for (let failed = 0; failed < count; failed++) {
 				const raised = simulate((i) => alarms[i] as number, (i) => publishes[i] as number, (i) => i === failed).filter((result) => result.raised);
 				expect({ seed, failed, raised: raised.length }).toEqual({ seed, failed, raised: 0 });
 			}
@@ -217,21 +220,31 @@ describe("the rule: raised by the first check made more than 14 hours after the 
 		expect(late.find((result) => result.index === 2)).toMatchObject({ age: 14 * HOUR + 2 * MINUTE, raised: true });
 	});
 
-	test("publishing that has stopped is raised by the first check after 14 hours: with on-time runs, 16 h 40 m to 19 h 20 m after the last scheduled publish", () => {
+	test("publishing that has stopped is raised by the first check after 14 hours: with on-time runs, 18 hours after the last scheduled publish, by the third run after it", () => {
 		const firsts: number[] = [];
-		for (let stopped = 0; stopped < 10; stopped++) {
+		for (let stopped = 0; stopped < 8; stopped++) {
 			const results = simulate(() => 0, () => 0, (i) => i > stopped).filter((result) => result.index > stopped);
 			const first = results.findIndex((result) => result.raised);
 			expect(results.slice(0, first).every((result) => !result.raised)).toBe(true);
 			expect(results.slice(first).every((result) => result.raised)).toBe(true);
+			expect(first).toBe(2);
 			firsts.push((results[first] as { age: number }).age);
 		}
-		expect(Math.min(...firsts)).toBe(16 * HOUR + 40 * MINUTE);
-		expect(Math.max(...firsts)).toBe(19 * HOUR + 20 * MINUTE);
+		expect(new Set(firsts)).toEqual(new Set([18 * HOUR]));
 	});
 
-	test("not promised: the 22:40 and 00:00 runs failing either side of their short gap pass unnoticed when the 06:00 run publishes", () => {
-		expect(simulate(() => 3 * MINUTE, () => MINUTE, (i) => i === 4 || i === 5).some((result) => result.raised)).toBe(false);
+	test("two failed publishes in a row are raised by the next run's check whenever every alarm checks less than two hours after its slot: the schedule has no short gap", () => {
+		for (let seed = 1; seed <= 10; seed++) {
+			const draw = random(seed);
+			const alarms = Array.from({ length: 20 }, () => Math.floor(draw() * 120) * MINUTE);
+			const publishes = Array.from({ length: 20 }, () => (1 + Math.floor(draw() * 15)) * MINUTE);
+			for (let failed = 0; failed + 2 < 12; failed++) {
+				const results = simulate((i) => alarms[i] as number, (i) => publishes[i] as number, (i) => i === failed || i === failed + 1);
+				const next = results.find((result) => result.index === failed + 2) as { raised: boolean; age: number };
+				expect({ seed, failed, raised: next.raised }).toEqual({ seed, failed, raised: true });
+				expect(results.filter((result) => result.raised).map((result) => result.index)).toEqual([failed + 2]);
+			}
+		}
 	});
 
 	test("the README states the threshold the code and these tests read", () => {

@@ -34,7 +34,7 @@ as the base the build started from (last section).
 | `scripts/derive.ts`, `scripts/build-page.ts` | Run the Methods over the Runs; turn their Derivations into the page |
 | `scripts/build-api.ts`, `scripts/check-api.ts`, `scripts/previous-api.ts` | Cut the Derivations and the price files into the data API's static files, laid out as they will be served; check what was written against its schemas, its links, the Derivations and the Runs repository, and against the tree before it; fetch that tree, the one the latest run that checked its tree kept (`scripts/lib/api.ts`, `scripts/lib/api-check.ts`; section "The data API") |
 | `scripts/alarm.ts` | Opens, or comments on, one issue when a watched Series has had no Run for 48 hours, the newest price file is more than 48 hours old, or the API bucket's table of contents is more than 14 hours old (or missing, or unreadable) |
-| `.github/workflows/runs.yml` | On a schedule: copy, push, derive, page, the data API's files, alarm |
+| `.github/workflows/runs.yml` | On a schedule: copy, push, derive, page, the data API's files, alarm; then publish the data API, and rebuild and deploy the website from what it published |
 | `scripts/fetch-prices.ts`, `scripts/check-prices.ts` | Make the day's price file from AWS's public price lists; check a price file by downloading its sources again and cutting them again |
 | `scripts/lib/price-rules.ts` | The selection rules, versioned: which of AWS's price records a price file keeps |
 | `scripts/lib/offer-file.ts`, `scripts/lib/prices.ts`, `scripts/lib/price-file-check.ts` | Reading AWS's offer files without holding them in memory; the cut, the download and the price file; whether a price file holds together |
@@ -43,7 +43,7 @@ as the base the build started from (last section).
 | `scripts/lookup.ts` | The lookup tool the skill uses, reading the data API: the Series, one Series' percentiles and Runs, prices by word, each number beside its citation (`scripts/lib/lookup.ts`, `scripts/lib/citation.ts`, `scripts/lib/ledger-data.ts`; what each benchmark measures, `scripts/lib/benchmark-notes.ts`) |
 | `scripts/check-answer.ts` | Checks an answer written with the skill: every number from the question, cited, an assumption, recomputed arithmetic, or a repeat; every citation resolving in the data (`scripts/lib/answer-check.ts`, `scripts/lib/quantity.ts`) |
 | `scripts/assemble-location.ts` | Puts together a directory the lookup tool reads, from the artifact `api` and a clone of the Runs repository: data for a trial from one run's files instead of the API |
-| `site/` | The website: the home page (design v9) with every figure read at build time from a tree of the data API, and a placeholder at `/docs/`; SolidJS 2, rendered to static files (section "The website" below); `.github/workflows/site.yml` builds and checks it, and deploys it to Vercel (`site/deploy/`) at https://ledgermath.com |
+| `site/` | The website: the home page (design v9) with every figure read at build time from a tree of the data API, and a placeholder at `/docs/`; SolidJS 2, rendered to static files (section "The website" below); `.github/workflows/site.yml` builds and checks it, and deploys it to Vercel (`site/deploy/`) at https://ledgermath.com, and the `runs` workflow rebuilds and deploys it after every publish |
 | `CONTRIBUTING.md` | How to add a benchmark in any language, a target, a Method version, and what a pull request says |
 | `LICENSE`, `NOTICE`, `THIRD-PARTY-NOTICES.md` | The code's licence (Apache-2.0), its notice, and what comes from other projects, with their licences (section "Licence" below) |
 | `third-party/` | glibc 2.34's `COPYING.LIB` and `LICENSES`, and `sources.lock.json`, the third-party source packages kept in the bucket beside the binaries |
@@ -172,7 +172,9 @@ runner cost no minutes, and hosted runners are free for a public repository. So 
 repository is private, the variable names the development machine.
 
 While it does, only `runs` and `prices` are enabled. They start by schedule or by hand, so
-they always use `main`'s workflow file. `check` and `site` stay disabled: they start on
+they always use `main`'s workflow file. `runs` also rebuilds and deploys the website after
+each publish (its job `site`; "Where it is deployed"), so the machine's runner deploys
+ledgermath.com: it needs `jq` and `gh`, which it has. `check` and `site` stay disabled: they start on
 pushes and use the pushed branch's own file, and older branches still name the hosted
 runner. `check`'s scratch job also needs Docker, which the machine's runner cannot use. Run
 their commands locally before a merge.
@@ -1647,9 +1649,19 @@ again and comparing with `cmp`.
 
 ### The workflow
 
-`.github/workflows/runs.yml` runs at 22:40 UTC (half an hour after the 22:10 boot), every
-six hours, and by hand (`workflow_dispatch`), its first job one at a time (the job holds the
-concurrency group `runs`, which `prices.yml` holds too). It checks out this
+`.github/workflows/runs.yml` runs at 00:05, 06:05, 12:05 and 18:05 UTC, once after each
+round of boots has ended, and by hand (`workflow_dispatch`), its first job one at a time
+(the job holds the concurrency group `runs`, which `prices.yml` holds too). **The times.**
+Rounds start at 04:10, 10:10, 16:10 and 22:10, with a box every ten minutes to :50. A
+launch more than ten minutes late is refused, and the reaper ends any box older than 50
+minutes within five minutes, so a round's last box has ended by HH+1:55 at the latest; the
+run comes ten minutes after that, and four hours before the next round. So each tree
+holds whole rounds. (Until 2026-11-25 a run at 22:40 also cut the 22:10 round while its
+last boxes were still running, and the tree showed it with only the boots that had ended.)
+`tests/runs-workflow.test.ts` holds the crons to `schedule.json` and those limits (ADR-0035).
+GitHub often starts a scheduled run late (7 to 15 minutes at the top of the hour on
+2026-11-24). A late start cuts the same round later; only a start more than four hours late
+would reach into the next one. It checks out this
 repository with its whole history (for the alarm's `--schedule-changed-at`), takes AWS
 credentials through OIDC, checks out `smrdotgg/ledgermath-runs` with the deploy key,
 runs the copy job, commits and pushes what it added, runs both Methods, builds the page,
@@ -1663,7 +1675,11 @@ failure of the job. A second job, `publish`, runs after it, only when it
 succeeded and `API_BUCKET` is set, and puts the checked tree into the API bucket ("The data
 API", "The API bucket"); its failure is its own and changes nothing of the first job's
 (its caches, its artifacts, the next run's baseline). It holds its own group, `api-bucket`,
-not `runs`, so the shared lock is held exactly as long as before it existed. Each Method runs on its own: when one fails, `derive.ts`
+not `runs`, so the shared lock is held exactly as long as before it existed. A third job,
+`site`, runs after `publish`, only when it succeeded and only on main: it builds the website
+from the same artifact `api`, checks it, deploys it to Vercel production and checks the live
+pages, so ledgermath.com's figures are the newest publish's ("The website", "Where it is
+deployed"). Each Method runs on its own: when one fails, `derive.ts`
 still writes the other's Derivations and, in place of the failed one's, a note saying why
 (`page/<name>.failed.json`); the page is built from what there is and says which part is
 missing and why, the artifact is kept, and the run still ends as failed. Between runs it keeps, in GitHub's cache, the dump blobs it
@@ -1683,6 +1699,8 @@ It needs:
 | Secret | `RUNS_REPO_DEPLOY_KEY` | The private half of an SSH key whose public half is a deploy key of `smrdotgg/ledgermath-runs` **with write access** (it pushes) |
 | Secret | `TELEGRAM_BOT_TOKEN` | The token of the Telegram bot the alarm's message comes from ("The alarm", "A Telegram message") |
 | Secret | `TELEGRAM_CHAT_ID` | The maintainer's chat with that bot; while either secret is unset, no message is sent and nothing fails |
+| Secret | `VERCEL_TOKEN` | For the `site` job's deploy step alone: the Vercel token `site.yml` uses ("Where it is deployed") |
+| Variable | `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID` | The same two IDs `site.yml` uses, also for that one step |
 
 For the key: `ssh-keygen -t ed25519 -N '' -C ledgermath-runs-copy -f runs-deploy-key`,
 add `runs-deploy-key.pub` under the Runs repository's Settings → Deploy keys with
@@ -1785,22 +1803,25 @@ cancelled, never ran, or its preflight refused the bucket. In each, the table of
   otherwise. Its inputs are that `Last-Modified` and the time of the check: no schedule, no
   run attempt, no start time, so a re-run of an old run, a run started by hand and a late
   run all judge alike, and none can clear a real alarm. What that means for the schedule,
-  whose runs are at most 6 hours apart (a test holds the crons to that): after one failed
-  publish, the next check comes at most 12 hours after the last publish, plus however late
-  that run's alarm step runs after its slot, so it stays quiet when the alarm runs less than
-  two hours after its slot (and may raise if it runs later: the 06:00 publish failing and the
-  noon run's alarm checking at 14:04 raises it). Publishing that has stopped is raised by the
-  first check made after 14 hours; with on-time runs, that is between 16 h 40 m (last publish
-  06:00, raised at 22:40) and 19 h 20 m (last publish 22:40, raised at 18:00) after the last
-  scheduled publish, and later by however late that check runs. What it does not promise:
-  two failed runs either side of the short gap from 22:40 to 00:00 can pass unnoticed when
-  the next publish succeeds; publishing has then recovered. Tests: ages either side of 14
-  hours; the real schedule over three days, each alarm checking up to three hours after its
-  slot, every check raised exactly when it is more than 14 hours after the last publish; one
-  failed publish with every alarm under two hours late (never raised); publishing stopped
-  after each run of a day with on-time runs (16 h 40 m to 19 h 20 m); a re-run of an old run,
-  which gets the same result as any run at that moment; the first publish, 2026-11-21
-  01:49:48 UTC, fresh until 15:49:48.
+  whose runs are 6 hours apart (00:05, 06:05, 12:05 and 18:05; a test holds the crons to at
+  most 6 hours): after one failed publish, the next check comes at most 12 hours after the
+  last publish, plus however late that run's alarm step runs after its slot, so it stays
+  quiet when the alarm runs less than two hours after its slot (and may raise if it runs
+  later: the 06:05 publish failing and the 12:05 run's alarm checking at 14:09 raises it).
+  Two failed publishes in a row are raised by the next run's check, when every alarm runs
+  less than two hours after its slot. Publishing that has stopped is raised by the first
+  check made after 14 hours; with on-time runs, that is 18 hours after the last scheduled
+  publish, by the third run after it, and later by however late that check runs. (Until
+  2026-11-25 the runs were at 00:00, 06:00, 12:00, 18:00 and 22:40: stopped publishing was
+  raised 16 h 40 m to 19 h 20 m after the last publish, and two failed runs either side of
+  the short gap from 22:40 to 00:00 could pass unnoticed. ADR-0035.) Tests: ages either side
+  of 14 hours; the real schedule over three days, each alarm checking up to three hours after
+  its slot, every check raised exactly when it is more than 14 hours after the last publish;
+  one failed publish with every alarm under two hours late (never raised); two failed in a
+  row, each pair of a day, with every alarm under two hours late (raised by the next check,
+  and only by it); publishing stopped after each run of a day with on-time runs (18 hours); a
+  re-run of an old run, which gets the same result as any run at that moment; the first
+  publish, 2026-11-21 01:49:48 UTC, fresh until 15:49:48.
 - **A bucket with no table of contents, or one that cannot be read, is raised at once.**
   No `v1/index.json` means no publish has ever finished there: expected only between
   setting `API_BUCKET` to a new bucket and its first publish (the run after the change
@@ -2118,12 +2139,13 @@ Rounds start at 04:10, 10:10, 16:10 and 22:10 UTC, with a box at :10, :20, :30, 
 A scheduled launch is refused more than ten minutes after its time, and the reaper ends a box
 at most 55 minutes after it started, so the last box of a round (`i4i.2xlarge`, launched at
 :50 or up to ten minutes later) has ended by HH+1:55 at the latest. The `runs` workflow runs
-at 00:00, 06:00, 12:00, 18:00 and 22:40. The cutover itself (steps 6 to 12) happens in one
-gap between rounds: after the 06:00 workflow run has finished, so that the Runs repository
-holds the 04:10 round, and before the 10:10 slot. No slot fires in it, so a deploy made in it
-can neither lose a round nor start one twice, as long as each has finished by its time in
-the table below. The gaps from 12:00 to 16:10 and from 18:00 to 22:10 serve as well, with
-every time six or twelve hours later.
+ten minutes after that, at 00:05, 06:05, 12:05 and 18:05 (it ran at 00:00, 06:00, 12:00,
+18:00 and 22:40 until 2026-11-25, when this was written). The cutover itself (steps 6 to 12)
+happens in one gap between rounds: after the 06:05 workflow run has finished, so that the
+Runs repository holds the 04:10 round, and before the 10:10 slot. No slot fires in it, so a
+deploy made in it can neither lose a round nor start one twice, as long as each has finished
+by its time in the table below. The gaps from 12:05 to 16:10 and from 18:05 to 22:10 serve as
+well, with every time six or twelve hours later.
 
 Before, on any day:
 
@@ -2197,7 +2219,7 @@ slot:
 6. **The last development round is complete**: `aws ec2 describe-instances --profile tabot-dev --region us-east-2 --filters Name=tag:ledgermath-stage,Values=smr-runs Name=instance-state-name,Values=pending,running`
    lists nothing, and `aws s3 ls "s3://$DEV_BUCKET/boots/<yyyy>/<mm>/<dd>/" --profile tabot-dev`
    holds that round's five boot summaries. Changes nothing.
-7. **Copy again and verify again**: `git -C /tmp/ledgermath-runs-verify pull` (the 06:00 run
+7. **Copy again and verify again**: `git -C /tmp/ledgermath-runs-verify pull` (the 06:05 run
    has added the round), `copy`, and `verify` with directories of its own, `--check-dir
    /tmp/prod-check-2 --source-check-dir /tmp/dev-source-2` (it refuses `/tmp/prod-check-1`
    and `/tmp/dev-source-1`, which hold the first verification's objects; remove those first
@@ -2314,7 +2336,7 @@ After the cutover:
     ```
 
     `"refused"` as the pattern shows the refusals, of which there should be none. The first
-    workflow run after that (normally the 12:00 one) copies, pushes and derives them; then, with its `page` artifact
+    workflow run after that (normally the 12:05 one) copies, pushes and derives them; then, with its `page` artifact
     (`gh run download <run> --repo smrdotgg/ledgermath -n page -D /tmp/page`), this prints
     every Series whose group changed at the move, and should print nothing:
 
@@ -2349,7 +2371,7 @@ After the cutover:
 
     Changes nothing.
 14. **Going back, if the production round fails** (no boxes, too few, Runs that do not
-    check out): in the next gap, after the 12:00 workflow run, with the times of steps 9
+    check out): in the next gap, after the 12:05 workflow run, with the times of steps 9
     and 10 six hours later (the first deploy succeeded by 15:00, the second by 15:30, going
     back over by 16:00). The production bucket now holds Runs and blobs the development
     bucket lacks, those of the box of step 3 and of every production round, and some are
@@ -3193,8 +3215,9 @@ says so, so the site is never built from old numbers by accident.
 `https://api.ledgermath.com` into a new directory: it starts at the table of contents and
 follows only the links it gives, never building an address, with a time limit and a size
 limit on every request, and refuses anything that does not parse or does not say what it
-is (`ledgermath.api.index/1` for the table of contents). Later the `runs` workflow will
-build the site from the tree it has just built; the build needs only the directory.
+is (`ledgermath.api.index/1` for the table of contents). The `runs` workflow builds the site
+from the tree it has just published, its artifact `api` ("Where it is deployed"); the build
+needs only the directory.
 
 What a tree lacks, the page leaves out rather than fill, and the build says so in one line
 each (`note: …`):
@@ -3265,8 +3288,11 @@ built from it.
 
 `.github/workflows/site.yml` runs on pull requests and pushes to main that touch `site/` or
 the workflow, and by hand. It installs with the lockfile frozen, then type-checks, tests,
-fetches the tree as published (`bun scripts/fetch-tree.ts`), builds from it and runs
-`bun run check` with it. It keeps the built site as the artifact `site`. The workflow is
+takes a tree, builds from it and runs `bun run check` with it. For production (a push to
+main, or a run by hand on main) the tree is the one the `runs` workflow published last, the
+artifact `api` of its newest run whose `publish` job succeeded
+(`site/deploy/published.ts newest`); for a preview, the tree as the API serves it now
+(`bun scripts/fetch-tree.ts`). It keeps the built site as the artifact `site`. The workflow is
 disabled while the repository is private ("Where the workflows run"), so run these
 commands by hand before a merge. `bun test` at the repository root leaves `site/` alone
 (root `bunfig.toml`); the site's tests run inside `site/`.
@@ -3296,7 +3322,10 @@ commands by hand before a merge. `bun test` at the repository root leaves `site/
   gives as null must be said to be infinite or undefined. Dashes stand only where the tree
   has no figure, with the data module's reason; every cell of the headline selection, in
   the table and in each graph, holds exactly one figure or one dash, none blank, and the
-  columns are the machine types; prices and machine facts are the price file's; "Latest runs" is
+  columns are the machine types; the home page has exactly its three graphs
+  (`GRAPH_BENCHMARKS` in `site/src/data/headline.ts`), by their headings, in order, so a
+  graph missing whole fails though no figure is wrong; prices and machine facts are the
+  price file's; "Latest runs" is
   there only when the tree gives rounds, and says what they say; the region is the price
   file's. Anything else on a page that holds a digit and is not a fixed word fails, so a
   new figure needs a rule there.
@@ -3319,11 +3348,83 @@ section 3); the pages link it as "Licences".
 ### Where it is deployed
 
 The site is at https://ledgermath.com, hosted on Vercel (project `ledgermath`). Vercel only
-hosts files: the site is built in GitHub Actions, by the build job above (or by hand,
-below, while that workflow is disabled), and Vercel is handed the finished files. The
-Vercel project has no Git repository connected, and Vercel's build system never runs.
+hosts files: the site is built in GitHub Actions, and Vercel is handed the finished files.
+Two jobs build and deploy production: the `runs` workflow's job `site`, after every publish
+of the data API, and `site.yml`'s, after a push to main (that workflow is disabled while the
+repository is private). It can also be deployed by hand (below). The Vercel project has no
+Git repository connected, and Vercel's build system never runs.
 
-The workflow's deploy job (`deploy-production` or `deploy-preview`) runs after the build
+**Kept fresh: rebuilt after every publish** (ADR-0035). The home page's figures are read
+when the site is built, so they are only as new as its last build. The `runs` workflow's
+third job, `site`, runs after its `publish` job, four times a day (00:05, 06:05, 12:05 and
+18:05 UTC, once after each round of boots, "The workflow"), and when the workflow is run by
+hand on main:
+
+- only when `publish` succeeded, so the page never shows figures the public API does not
+  hold. When `publish` failed, was skipped or was cancelled, it does not run;
+- it checks out main as it is when the job starts (not the run's commit), takes the run's
+  artifact `api`, the bytes `publish` uploaded, and builds the site from it. Not from
+  `https://api.ledgermath.com`: its cache can serve the previous table of contents for five
+  minutes after an upload;
+- it runs `bun run check` against that tree, compares the notices, deploys with
+  `site/deploy/deploy.sh site/dist/client production`, and runs `site/scripts/check-live.ts`.
+  The summary names the deployment, the tree (the run, and its newest Run) and main's
+  commit.
+
+A rebuild takes about a minute. Run by hand on the tree of 2026-11-25 00:15 UTC (run
+45516617507, newest Run 2026-11-24 23:07 UTC), the page held 85 figures (70 in the table, 15
+in the graphs), no dash, and 20 prices, and every one passed `bun run check`.
+
+**One production deploy at a time, never an older site over a newer one.** The `site` job
+and `site.yml`'s `deploy-production` hold one concurrency group, `site-deploy-production`
+(`queue: max`), each for its whole job: one runs at a time, a running one is never
+cancelled, and every one that arrives meanwhile waits. When its turn comes, each checks
+that what it would deploy is still current, and otherwise skips the deploy, passes, and
+says why in the run's summary:
+
+- **the site's sources are main's**: the `site` job checks out main inside the group;
+  `deploy-production` runs `site/deploy/fresh.ts` (below);
+- **the tree is the newest published**: no run of `runs.yml` on main later than the one
+  whose tree it would deploy has a `publish` job that succeeded
+  (`site/deploy/published.ts check RUN`, from GitHub's record of the runs, which is exact as
+  soon as a job ends; the run the API records, in the `x-amz-meta-ledgermath-run` header of
+  `v1/index.json`, can be five minutes old through CloudFront). The `site` job asks this of
+  its own run; `deploy-production`, of the run whose tree its build took, which is the
+  newest publish when the build ran (`site/deploy/published.ts newest`).
+
+So after any production deploy, ledgermath.com holds main's site as it was when that job's
+turn came, built from the newest tree published by then. The tree is never older than the
+one it held before: the newest published tree only moves forward (the upload refuses an
+older run), and deploys come one at a time. A skip leaves the deploy to a newer job that is
+sure to come: a later run's `site` job starts only after that run has published, so after
+the skipped job's tree was chosen and its sources were on main, and it deploys main's site
+with the newer tree. A publish (run N) and a push to main (commit C) that overlap end with
+ledgermath.com on C's site and N's tree, in either order:
+
+- **the publish first.** N's `site` job deploys main as it is when its turn comes, with
+  N's tree. C's run builds C from the newest tree published when its build runs, N's, and
+  deploys after the `site` job; or, if the `site` job's turn came after C was on main, both
+  deploy the same site, in either order.
+- **the push first.** C's build takes the tree published last before it, say M. If N
+  publishes before C's deploy has its turn, that deploy skips (a later run has published),
+  and N's `site` job, which started after C was on main, deploys C's site with N's tree,
+  before or after it. If C's deploy has its turn first, it deploys C with M, and N's `site`
+  job then deploys C with N.
+
+While `site.yml` is disabled, only the `site` job deploys production: a push to main reaches
+ledgermath.com with the next publish's rebuild, within six hours, or sooner by hand (below).
+
+**When a rebuild fails.** The `site` job fails, red, and its last step names the step that
+failed, in an error at the top of the run's page and in the job's summary, and says what
+ledgermath.com serves. A failure before the deploy (finding whether a later run has
+published, the build, `bun run check`, the notices, the Vercel CLI, the deploy itself)
+leaves production on the build it had. A failure after it (reading the deployment's URL,
+the live check) cannot undo the deploy, and says that the new build is served. The next
+publish rebuilds from scratch; to rebuild sooner, re-run the failed job (it skips if a later
+run has published since). Nothing tells the maintainer beyond the red run and GitHub's own
+failed-run e-mail (#87). The first job, its caches and `publish` are untouched by it.
+
+`site.yml`'s deploy job (`deploy-production` or `deploy-preview`) runs after the build
 job has passed, `bun run check` included. It takes the `site` artifact that job uploaded,
 builds nothing, and runs `site/deploy/deploy.sh`: that lays the files out as Vercel's
 Build Output API asks (`.vercel/output/static`, and a `config.json` saying
@@ -3340,7 +3441,8 @@ site's own packages.
   words, not the figures, which change with every tree.
 
   Production deploys run in the job `deploy-production`; its jobs, one per run, share one
-  concurrency group: one runs at a time, and a running one is never cancelled, so no
+  concurrency group with each other and with the `runs` workflow's `site` job (above): one
+  runs at a time, and a running one is never cancelled, so no
   upload is cut off. A job that arrives while another runs waits, and the group keeps
   every waiting job (`queue: max`; GitHub's default keeps one, and the next arrival
   cancels it), so none is dropped. GitHub runs the waiting jobs one by one, roughly in the
@@ -3358,7 +3460,10 @@ site's own packages.
   waits in the same group and deploys after this one, or already has; a newer commit that
   changed nothing under them started none, and then the older run's site is main's site
   and it deploys. If git itself fails in the check (a corrupt object, say), the job fails
-  rather than skip. So:
+  rather than skip. When the sources are current, the job then checks the tree, as the
+  `site` job does: if a run of `runs.yml` later than the one whose tree the build took has
+  published since, it skips likewise, and that run's `site` job deploys main's site with
+  the newer tree (above). A check that cannot read GitHub's record fails the job. So:
 
   - two pushes close together: ledgermath.com ends on the newer commit's site. The older
     commit's job skips if the newer commit is on main when it starts, which it always is
@@ -3372,10 +3477,11 @@ site's own packages.
   - a run by hand on main deploys main's tip, unless main moves on while it builds;
   - a run whose commit is no longer on main (main was force-pushed past it) skips.
 
-  Main's site is deployed by the run of the commit that last changed it. If that run's
-  build fails, someone cancels it, or it never starts (a push that skips CI),
-  ledgermath.com stays on an older site while every older run's job skips; run the
-  workflow by hand on main to deploy main's tip.
+  Main's site is deployed by the run of the commit that last changed it, and again by
+  every publish's rebuild. If that run's build fails, someone cancels it, or it never
+  starts (a push that skips CI), ledgermath.com stays on an older site while every older
+  run's job skips, until the next publish's rebuild; run the workflow by hand on main to
+  deploy main's tip sooner.
 - A pull request from a branch of this repository, or a run by hand on another branch,
   gets a preview deployment from the job `deploy-preview`, which ledgermath.com does not
   serve. A newer push cancels the preview before it.
@@ -3388,7 +3494,7 @@ The job writes the deployment's URL to the run's summary. Preview URLs need a Ve
 (the project's Vercel Authentication covers every deployment URL; only the custom domain is
 public), so CI checks only production.
 
-The workflow needs, in the repository's settings:
+The workflows need, in the repository's settings:
 
 | Name | Kind | What it is |
 |------|------|------------|
@@ -3396,16 +3502,32 @@ The workflow needs, in the repository's settings:
 | `VERCEL_ORG_ID` | variable | The ID of the Vercel team that owns the project |
 | `VERCEL_PROJECT_ID` | variable | The project's ID |
 
+Only deploy steps see them: in `runs.yml`, the `site` job's deploy step; in `site.yml`, the
+deploy step of each of its two deploy jobs. `tests/runs-workflow.test.ts` reads every file
+under `.github` and fails on a reference anywhere else, on secrets handed over whole
+(`secrets: inherit`, `toJSON(secrets)`), and on `runs.yml` being started by a pull request.
+
 The Vercel CLI reads all three from the environment, so nothing runs `vercel login` or
 `vercel link`. Nor does anything run `vercel pull`: it fetches the project's settings and
-environment variables for a build, and this site is built without either. To deploy by
-hand (the way it is deployed while `site.yml` is disabled), from a tree fetched now, with
-the three in the environment:
+environment variables for a build, and this site is built without either.
+
+**To deploy by hand.** The safe way goes through the queue: re-run the `site` job of the
+newest run of `runs.yml` (the run's page, "Re-run jobs"). It rebuilds main's site from that
+run's tree, by the rule above. (Running `runs.yml` by hand on main does the same after a
+whole pass of copying, deriving and publishing.) A deploy from this machine with
+`site/deploy/deploy.sh` is outside the queue and the rule: make it only while no production
+deploy of either workflow is running or waiting, and from the newest published tree, or it
+can put an older tree over a newer one until the next publish. With the three in the
+environment and `gh` logged in:
 
 ```bash
 cd site
 bun install --frozen-lockfile
-bun run fetch-tree /path/to/new-tree           # a directory that does not exist yet
+# The tree published last, the artifact api of the newest run of runs.yml whose publish job
+# succeeded (it prints the run's id), into a directory that does not exist yet. Or
+# `bun run fetch-tree /path/to/new-tree`, the tree the API serves now, which can lag a publish
+# by five minutes.
+bun deploy/published.ts newest --repository smrdotgg/ledgermath --out /path/to/new-tree
 export LEDGERMATH_TREE=/path/to/new-tree
 bun run typecheck && bun test && bun run build && bun run check
 cmp public/third-party-notices.txt dist/client/third-party-notices.txt

@@ -1589,4 +1589,28 @@ A migrated benchmark is done only when **all** of these hold:
   only when it is absent, empty or marked by an earlier build (`.ledgermath-site-build`).
   (4) The figure check passed a blank cell: every cell of the headline selection, in the
   table and the graphs, must now hold exactly one figure or one dash.
+- **2026-11-25** — **The home page is rebuilt and redeployed after every publish
+  (ADR-0035).** The `runs` workflow has a third job, `site`. After `publish` succeeds, and
+  on main only, it checks out main, builds the site from the run's artifact `api` (the bytes
+  just uploaded, never the live API, whose cache can lag five minutes), runs `bun run check`
+  and the notices' `cmp`, deploys to Vercel production and checks the live pages. **One
+  production deploy at a time**: it and `site.yml`'s `deploy-production` share the group
+  `site-deploy-production` (`queue: max`). Each deploys only if, when its turn comes, its
+  sources are main's (the `site` job checks out main; `fresh.ts` for `site.yml`) and no later
+  run of `runs.yml` has published (`site/deploy/published.ts`, from GitHub's record of the
+  runs); otherwise it skips and passes. `site.yml`'s production build now takes the newest
+  published artifact, by run, not the live API. **Times**: `5 0,6,12,18 * * *` replaces
+  `40 22 * * *` and `0 */6 * * *`, so a tree is cut once after each round. A round's last
+  box has ended by HH+1:55 (a launch is at most ten minutes late, the reaper ends a box
+  within 55 minutes), and a test holds the crons to `schedule.json` and those limits. The
+  orchestrator suggested 05:30; a boot that runs to its 35-minute budget, or launched late,
+  can still be running then. The alarm's 14 hours stand, since the runs are exactly six
+  hours apart: stopped publishing is now raised after 18 hours, and two failed publishes in
+  a row are no longer missed. **Failure**: the job is red, and its last step names the step
+  that failed and says what ledgermath.com serves; nothing else tells the maintainer (#87).
+  **Secrets**: a test holds `VERCEL_TOKEN` and the two IDs to the deploy steps, as the
+  Telegram test does. **Graphs**: `check-figures.ts` now fails when the home page lacks one
+  of its three graphs, has one more, or has them out of order (`GRAPH_BENCHMARKS`). The
+  job's commands, run by hand on run 45516617507's tree: 85 figures, 20 prices, no dash,
+  newest Run 2026-11-24 23:07 UTC. Not deployed: the orchestrator starts the first run.
 - _(agents: append your entry here, one per merged benchmark)_

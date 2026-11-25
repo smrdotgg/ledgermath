@@ -259,3 +259,12 @@ export const HEADLINE_CHOICES: readonly HeadlineChoice[] = [
 		readme: README("http_get"),
 	},
 ];
+
+/**
+ * The benchmarks the home page draws as graphs above the table, in this order: of the sections
+ * where the machine types differ (memory, compute, the operating system), one each. A choice of
+ * which rows to draw, made when the page was designed; the figures are the table's own. Each
+ * graph is headed by its benchmark's label, and scripts/check-figures.ts holds the page to
+ * exactly these graphs, by their headings, in this order.
+ */
+export const GRAPH_BENCHMARKS: readonly string[] = ["memory_read", "hash", "syscall"];
