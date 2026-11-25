@@ -724,7 +724,7 @@ change comes in two pull requests, in this order:
    and the `publish` job holds a group of its own, `api-bucket`, with its own pending slot,
    so a newer run's `publish` job can take the place of yours there. So check two things:
    that a run's first job of the new layout kept its artifact `api` (your run's, or a later
-   one's), and that a `publish` job after it succeeded. Only if neither happened, start the
+   one's), and that a `publish` job after it succeeded. If either did not happen, start the
    run by hand again the same way.
 4. Check that each new address the table of contents gives answers 200, and that the
    table of contents gives the new `layout`.
