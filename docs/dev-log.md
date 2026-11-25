@@ -1724,46 +1724,40 @@ A migrated benchmark is done only when **all** of these hold:
   one loses its link; the open case needs only the runner run twice by hand).
 - **2026-11-25** — **The home page is rebuilt and redeployed after every publish
   (ADR-0035).** The `runs` workflow has a third job, `site`. After `publish` succeeds, and
-  on main only, it checks out main, builds the site from the run's artifact `api` (the bytes
-  just uploaded, never the live API, whose cache can lag five minutes), runs `bun run check`
-  and the notices' `cmp`, deploys to Vercel production and checks the live pages. **One
-  production deploy at a time**: it and `site.yml`'s `deploy-production` share the group
-  `site-deploy-production` (`queue: max`). Each deploys only if, when its turn comes, its
-  sources are main's (the `site` job checks out main; `fresh.ts` for `site.yml`) and no later
-  run of `runs.yml` has published (`site/deploy/published.ts`, from GitHub's record of the
-  runs); otherwise it skips and passes. `site.yml`'s production build now takes the newest
-  published artifact, by run, not the live API. **Times**: `5 0,6,12,18 * * *` replaces
+  on main only, inside the concurrency group `site-deploy-production` (`queue: max`), which
+  `site.yml`'s `deploy-production` holds too, it checks out main as it is now, takes the
+  `publish` job's role (only reading), reads the tree from the API bucket itself
+  (`scripts/read-api-tree.ts`: not the edge, whose cache can be five minutes behind, and not
+  an artifact), builds and checks the site from exactly those bytes, deploys to Vercel
+  production and checks the live pages. **The rule**: each production deploy builds from what
+  the bucket holds when its turn comes, so the page shows what the public API held, and the
+  last deploy to run has the newest tree; no job asks whether its tree is the newest.
+  `site.yml`'s production deploy does the same after `fresh.ts`; its build job and previews
+  keep the public API and get no credentials. Two earlier versions of this change worked out
+  the published tree from GitHub's record of runs and artifacts; two verifications found ways
+  for each to be wrong (a run run again in full; an artifact that had expired; a short page
+  of runs), and the orchestrator chose the bucket instead. The reader takes only the keys the
+  table of contents' links give, under `v1/`, each with one signed GET bounded in time and
+  size (`S3ApiStore.read`), holds the three files to one publication with `fetch-tree.ts`'s
+  retry, and writes all or none. **Times**: `5 0,6,12,18 * * *` replaces
   `40 22 * * *` and `0 */6 * * *`, so a tree is cut once after each round. A round's last
   box has ended by HH+1:55 (a launch is at most ten minutes late, the reaper ends a box
   within 55 minutes), and a test holds the crons to `schedule.json` and those limits. The
   orchestrator suggested 05:30; a boot that runs to its 35-minute budget, or launched late,
   can still be running then. The alarm's 14 hours stand, since the runs are exactly six
   hours apart: stopped publishing is now raised after 18 hours, and two failed publishes in
-  a row are no longer missed. **Failure**: the job is red, and its last step names the step
-  that failed and says what ledgermath.com serves; nothing else tells the maintainer (#87).
-  **Secrets**: a test holds `VERCEL_TOKEN` and the two IDs to the deploy steps, as the
-  Telegram test does. **Graphs**: `check-figures.ts` now fails when the home page lacks one
-  of its three graphs, has one more, or has them out of order (`GRAPH_BENCHMARKS`). The
-  job's commands, run by hand on run 45516617507's tree: 85 figures, 20 prices, no dash,
-  newest Run 2026-11-24 23:07 UTC. Not deployed: the orchestrator starts the first run.
-- **2026-11-25** — **The site's rebuild, after an independent verification of #93.** (1) A
-  deploy carried only a run id, so after a run was run again in full the push's delayed
-  deploy passed the check and could put the first attempt's tree back; and the artifact
-  was downloaded by name, which a re-run holds more than once. A tree is now known by
-  `RUN/ARTIFACT`, the run and the id of the artifact `api` its `publish` job uploaded (of
-  the run's `api` artifacts made when that job started, the highest id, as the download
-  picks them; ids do not follow the order artifacts were made in). `check` deploys only the
-  exact newest identity, a later attempt counting as newer, and `download` takes the
-  artifact by id, holding it to its run, its name and its digest. The `site` job and
-  `site.yml` carry the identity from the moment a tree is taken to the deploy's check.
-  (2) A successful publish on a second page of jobs, or an empty page of runs claiming two,
-  read as nothing: every list is now read page by page while GitHub counts more, up to a
-  bound, or the check fails; the publish job is known by its names in `PUBLISH_JOB_NAMES`,
-  the first held to `runs.yml`'s by a test. (3) A failed deploy step said nothing was
-  deployed, though `deploy.sh` reads the receipt after Vercel was asked to move
-  production: it now says production is not confirmed and to check Vercel; and `deploy.sh`
-  records the commit of its checkout, not `GITHUB_SHA`. (4) The words say what the schedule
-  promises, and when a tree can still hold part of a round (a run started during one, a box
-  the reaper did not end). The job's commands, by hand on the newest published tree, took
-  `45516617507/14978675867`.
+  a row are no longer missed. The words say what the schedule promises, and when a tree can
+  still hold part of a round (a run started during one, a box the reaper did not end).
+  **Failure**: the job is red, and its last step names the step that failed and says what
+  ledgermath.com serves: the build it had before the deploy step, not confirmed after a
+  failed deploy step (`deploy.sh` reads the receipt after Vercel was asked to move
+  production), the new build after a confirmed one; nothing else tells the maintainer
+  (#87). `deploy.sh` records the commit of its checkout, not `GITHUB_SHA`. **Secrets**: a
+  test holds `VERCEL_TOKEN` and the two IDs to the deploy steps, as the Telegram test does,
+  and another that no production deploy or script reads run ids or artifacts. **Graphs**:
+  `check-figures.ts` now fails when the home page lacks one of its three graphs, has one
+  more, or has them out of order (`GRAPH_BENCHMARKS`). The job's commands, run by hand
+  against the production API bucket, stopping before the deploy: 85 figures, 20 prices, no
+  dash, three rounds (24 Nov 22:11, 16:11 and 10:11 UTC), newest Run 2026-11-24 23:07 UTC.
+  Not deployed: the orchestrator starts the first run.
 - _(agents: append your entry here, one per merged benchmark)_

@@ -555,12 +555,25 @@ describe("the site job: the home page rebuilt and deployed after every publish (
 	/** An action by its name, a command by its first line. */
 	const key = (step: Step): string => step.uses?.split("@")[0] ?? (step.run ?? "").trim().split("\n")[0]!;
 
-	test("runs after the publish job, only when it succeeded and only on main, with its own 15 minutes and permission to read contents and Actions, nothing more", () => {
+	/** The production deploy's own steps, in order, as the rule names them: checkout, credentials, read, build, check, deploy, live check. */
+	const READ = 'bun scripts/read-api-tree.ts --bucket "$API_BUCKET" --out "$RUNNER_TEMP/tree"';
+	const ruleOrder = (steps: Step[]) =>
+		[
+			steps.findIndex((step) => step.uses?.startsWith("actions/checkout@")),
+			steps.findIndex((step) => step.uses?.startsWith("aws-actions/configure-aws-credentials@")),
+			steps.findIndex((step) => step.run === READ),
+			steps.findIndex((step) => step.run?.startsWith("bun run build --tree")),
+			steps.findIndex((step) => step.run === "bun run check"),
+			steps.findIndex((step) => step.run?.startsWith("site/deploy/deploy.sh site/dist/client ")),
+			steps.findIndex((step) => step.run === "bun scripts/check-live.ts https://ledgermath.com/"),
+		] as const;
+
+	test("runs after the publish job, only when it succeeded and only on main, with its own 15 minutes, reading contents and asking for an OIDC token, nothing more", () => {
 		expect(site.needs).toBe("publish");
-		// Never when the publish job failed, was skipped or was cancelled: the page shows only figures the API holds. A scheduled run's ref is main.
+		// Never when the publish job failed, was skipped or was cancelled. A scheduled run's ref is main.
 		expect(site.if).toBe("${{ needs.publish.result == 'success' && github.ref == 'refs/heads/main' }}");
 		expect(site["timeout-minutes"]).toBe(15);
-		expect(site.permissions).toEqual({ contents: "read", actions: "read" });
+		expect(site.permissions).toEqual({ contents: "read", "id-token": "write" });
 		expect(site.env).toBeUndefined();
 		expect(site.outputs).toBeUndefined();
 		// The first job and the publish job are as they were: the site job adds no need to them.
@@ -568,13 +581,14 @@ describe("the site job: the home page rebuilt and deployed after every publish (
 		expect(publish.needs).toBe("runs");
 	});
 
-	test("checks out main as it is when the job starts, checks that the newest published tree is this run's, then downloads that tree by its identity, builds, checks, deploys production and checks the live pages, in that order", () => {
+	test("inside the group, checks out main as it is now, takes the publish job's role, reads the tree from the API bucket, builds and checks the site from those bytes, deploys, and checks the live site, in that order, every step after the one before succeeded", () => {
 		expect(s.map(key)).toEqual([
 			"actions/checkout",
 			"oven-sh/setup-bun",
-			"set +e",
 			"bun install --frozen-lockfile",
-			'bun site/deploy/published.ts download "$TREE" --repository "$GITHUB_REPOSITORY" --out "$RUNNER_TEMP/tree"',
+			"aws-actions/configure-aws-credentials",
+			READ,
+			"bun install --frozen-lockfile",
 			'bun run build --tree "$RUNNER_TEMP/tree"',
 			"bun run check",
 			"cmp public/third-party-notices.txt dist/client/third-party-notices.txt",
@@ -584,59 +598,76 @@ describe("the site job: the home page rebuilt and deployed after every publish (
 			"bun scripts/check-live.ts https://ledgermath.com/",
 			'failed="the checkout of main, or setting up Bun"',
 		]);
+		const order = ruleOrder(s);
+		expect(order.every((at) => at >= 0)).toBe(true);
+		expect([...order].sort((a, b) => a - b)).toEqual([...order]);
 		// main as it is now, never this run's commit, which main may have left; no credential kept in the clone.
 		expect(s[0]?.with).toEqual({ ref: "refs/heads/main", "persist-credentials": false as unknown as string });
-		// Exactly the tree the check named, RUN/ARTIFACT, downloaded by the artifact's id: never the artifact named api of a run, never the live API.
-		expect(s[4]?.env).toEqual({ GH_TOKEN: "${{ github.token }}", TREE: "${{ steps.newest.outputs.tree }}" });
-		expect(JSON.stringify(site)).not.toMatch(/fetch-tree|api\.ledgermath\.com\/v1|run-id|download-artifact|"name":"api"/);
-		expect(s[10]?.env).toEqual({ TREE: "${{ steps.newest.outputs.tree }}" });
-		expect(s[10]?.run).toContain('echo "- Tree: $TREE');
-		expect(s[6]?.env).toEqual({ LEDGERMATH_TREE: "${{ runner.temp }}/tree" });
-		for (const step of [s[3], s[5], s[6], s[7], s[11]]) expect(step?.["working-directory"]).toBe("site");
-		expect(s[8]?.["working-directory"]).toBe("site/deploy");
+		// The publish job's role and region, exactly; the bucket the variable names, in the read step alone.
+		expect(s[3]?.with).toEqual(publish.steps.find((step) => step.uses?.startsWith("aws-actions/configure-aws-credentials@"))?.with as Record<string, string>);
+		expect(s[4]?.env).toEqual({ API_BUCKET: "${{ vars.API_BUCKET }}" });
+		expect(s.filter((step) => JSON.stringify(step).includes("API_BUCKET")).length).toBe(1);
+		expect(s[7]?.env).toEqual({ LEDGERMATH_TREE: "${{ runner.temp }}/tree" });
+		for (const step of [s[5], s[6], s[7], s[8], s[12]]) expect(step?.["working-directory"]).toBe("site");
+		expect(s[9]?.["working-directory"]).toBe("site/deploy");
 		// Bun's package cache in the job's temporary directory, as everywhere on the runner that persists.
-		for (const step of [s[3], s[8]]) expect(step?.env).toEqual({ BUN_INSTALL_CACHE_DIR: "${{ runner.temp }}/bun-cache" });
-		for (const script of ["site/deploy/published.ts", "site/deploy/deploy.sh", "site/scripts/build.ts", "site/scripts/check-live.ts"]) expect(existsSync(join(ROOT, script))).toBe(true);
-	});
-
-	test("the newest-tree step decides the deploy as site.yml's freshness step does: 0 deploys, 3 skips and says why in the summary, anything else fails", () => {
-		const newest = s[2] as Step;
-		expect(newest.id).toBe("newest");
-		expect(newest.env).toEqual({ GH_TOKEN: "${{ github.token }}" });
-		// Asked of this run by its id alone, it names the run's tree, RUN/ARTIFACT, as the step's output tree.
-		expect(newest.run).toContain('verdict=$(bun site/deploy/published.ts check "$GITHUB_RUN_ID" --repository "$GITHUB_REPOSITORY" --github-output "$GITHUB_OUTPUT")');
-		const fresh = siteWorkflow.jobs["deploy-production"]?.steps.find((step) => step.id === "fresh") as Step;
-		const decision = (run: string) => run.slice(run.indexOf("status=$?"));
-		expect(decision(newest.run as string)).toBe(decision(fresh.run as string));
-		// Every step after it runs only when it said to deploy; nothing hides a failure.
-		for (const step of s.slice(3, -1)) expect({ step: step.name ?? key(step), if: step.if }).toEqual({ step: step.name ?? key(step), if: "steps.newest.outputs.deploy == 'true'" });
+		for (const step of [s[2], s[5], s[9]]) expect(step?.env).toEqual({ BUN_INSTALL_CACHE_DIR: "${{ runner.temp }}/bun-cache" });
+		// Nothing skips and nothing hides a failure: every step runs only after the one before succeeded, but the notice.
+		for (const step of s.slice(0, -1)) expect({ step: step.name ?? key(step), if: step.if }).toEqual({ step: step.name ?? key(step), if: undefined });
 		expect(JSON.stringify(site)).not.toContain("continue-on-error");
+		// Never the edge, never an artifact.
+		expect(JSON.stringify(site)).not.toMatch(/fetch-tree|api\.ledgermath\.com\/v1|artifact/);
+		for (const script of ["scripts/read-api-tree.ts", "site/deploy/deploy.sh", "site/scripts/build.ts", "site/scripts/check-live.ts"]) expect(existsSync(join(ROOT, script))).toBe(true);
 	});
 
-	test("site.yml's production deploy makes the same check, with the identity of the tree its build took, which the build downloaded by that identity", () => {
+	test("site.yml's production deploy follows the same rule inside the same group, after its freshness check; its build job and its previews take no AWS credentials and build from the public API", () => {
 		const build = siteWorkflow.jobs.build as Job;
 		const deploy = siteWorkflow.jobs["deploy-production"] as Job;
-		const published = build.steps.find((step) => step.id === "published") as Step;
-		expect(published.if).toBe("github.ref == 'refs/heads/main' && github.event_name != 'pull_request'");
-		expect((published.run ?? "").trim().split("\n")).toEqual([
-			'tree=$(bun deploy/published.ts newest --repository "$GITHUB_REPOSITORY")',
-			'bun deploy/published.ts download "$tree" --repository "$GITHUB_REPOSITORY" --out "$RUNNER_TEMP/tree"',
-			'echo "tree=$tree" >>"$GITHUB_OUTPUT"',
-		]);
-		expect(build.outputs).toEqual({ tree: "${{ steps.published.outputs.tree }}" });
-		expect(build.permissions).toEqual({ contents: "read", actions: "read" });
-		// A preview is still built from the tree the API serves now; production never is.
-		const fetch = build.steps.find((step) => step.run?.includes("fetch-tree.ts")) as Step;
-		expect(fetch.if).toBe("github.ref != 'refs/heads/main' || github.event_name == 'pull_request'");
-		const check = deploy.steps.find((step) => step.id === "newest") as Step;
-		expect(check.if).toBe("steps.fresh.outputs.deploy == 'true'");
-		expect(check.env).toEqual({ GH_TOKEN: "${{ github.token }}", TREE: "${{ needs.build.outputs.tree }}" });
-		expect(check.run).toContain('verdict=$(bun site/deploy/published.ts check "$TREE" --repository "$GITHUB_REPOSITORY")');
-		expect(JSON.stringify(siteWorkflow)).not.toMatch(/tree-run|outputs\.run\b/);
-		expect(deploy.permissions).toEqual({ contents: "read", actions: "read" });
-		const after = deploy.steps.slice(deploy.steps.indexOf(check) + 1);
-		expect(after.length).toBeGreaterThan(0);
-		for (const step of after) expect({ step: step.name, if: step.if }).toEqual({ step: step.name, if: "steps.newest.outputs.deploy == 'true'" });
+		const preview = siteWorkflow.jobs["deploy-preview"] as Job;
+		expect(deploy.if).toBe("github.ref == 'refs/heads/main' && github.event_name != 'pull_request'");
+		expect(deploy.permissions).toEqual({ contents: "read", "id-token": "write" });
+		const fresh = deploy.steps.findIndex((step) => step.id === "fresh");
+		const order = ruleOrder(deploy.steps);
+		expect(order.every((at) => at >= 0)).toBe(true);
+		expect([...order].sort((a, b) => a - b)).toEqual([...order]);
+		// The freshness check comes before the role is taken; every step after it runs only when it said to deploy.
+		expect(fresh).toBeGreaterThan(order[0]);
+		expect(fresh).toBeLessThan(order[1]);
+		for (const step of deploy.steps.slice(fresh + 1)) expect({ step: step.name, if: step.if }).toEqual({ step: step.name, if: "steps.fresh.outputs.deploy == 'true'" });
+		expect(deploy.steps[order[1]]?.with).toEqual(publish.steps.find((step) => step.uses?.startsWith("aws-actions/configure-aws-credentials@"))?.with as Record<string, string>);
+		expect(deploy.steps[order[2]]?.env).toEqual({ API_BUCKET: "${{ vars.API_BUCKET }}" });
+		// It deploys what it built in its turn, not the build job's artifact.
+		expect(JSON.stringify(deploy)).not.toMatch(/download-artifact|fetch-tree/);
+		// No other job of site.yml asks for an OIDC token or names the role or the bucket: a pull request, from a fork or not, gets neither.
+		for (const each of [build, preview]) {
+			expect(each.permissions === undefined || each.permissions["id-token"] === undefined).toBe(true);
+			expect(JSON.stringify(each)).not.toMatch(/RUNS_AWS_ROLE_ARN|API_BUCKET|configure-aws-credentials|read-api-tree/);
+		}
+		expect(siteWorkflow.permissions).toEqual({ contents: "read" });
+		expect(build.steps.find((step) => step.run?.includes("fetch-tree.ts"))?.if).toBeUndefined();
+	});
+
+	test("no workflow and no script decides a deploy from run ids or artifacts any more: the rule needs neither, and they cannot creep back", () => {
+		const deploys = [site, siteWorkflow.jobs["deploy-production"] as Job];
+		const decided = /artifact|run-id|run_id|GITHUB_RUN_ID|run_attempt|actions\/runs|gh (api|run)|published\.ts|GH_TOKEN/i;
+		for (const each of deploys) {
+			expect(JSON.stringify(each)).not.toMatch(decided);
+			expect(each.permissions?.actions).toBeUndefined();
+		}
+		expect(existsSync(join(ROOT, "site", "deploy", "published.ts"))).toBe(false);
+		const scripts = [
+			join(ROOT, "scripts", "read-api-tree.ts"),
+			...readdirSync(join(ROOT, "site", "deploy")).filter((name) => /\.(ts|sh)$/.test(name)).map((name) => join(ROOT, "site", "deploy", name)),
+			...readdirSync(join(ROOT, "site", "scripts")).filter((name) => name.endsWith(".ts")).map((name) => join(ROOT, "site", "scripts", name)),
+		];
+		for (const path of scripts) {
+			const text = readFileSync(path, "utf8");
+			// GitHub's record of runs and artifacts, read by the API or the CLI, or a run's own ids: none of it.
+			expect({ path: relative(ROOT, path), decides: /actions\/(runs|artifacts|workflows)|GITHUB_RUN_(ID|ATTEMPT)|run_attempt|\bgh (api|run)\b|artifact-ids|download-artifact/i.test(text) }).toEqual({
+				path: relative(ROOT, path),
+				decides: false,
+			});
+		}
 	});
 
 	test("the Vercel token and the project's IDs reach only the site job's deploy step in runs.yml, and the two deploy steps in site.yml", () => {
@@ -683,9 +714,10 @@ describe("the site job: the home page rebuilt and deployed after every publish (
 	test("when a step fails, the last step says which, and whether ledgermath.com serves the new build or the one it had", () => {
 		const last = s.at(-1) as Step;
 		expect(last.if).toBe("failure()");
-		const ids = ["newest", "packages", "tree", "build", "check", "notices", "cli", "deploy", "summary", "live"];
+		const ids = ["packages", "credentials", "tree", "site-packages", "build", "check", "notices", "cli", "deploy", "summary", "live"];
+		const variable = (id: string) => id.toUpperCase().replace("-", "_");
 		expect(s.slice(2, -1).map((step) => step.id)).toEqual(ids);
-		expect(last.env).toEqual(Object.fromEntries(ids.map((id) => [id.toUpperCase(), `\${{ steps.${id}.outcome }}`])));
+		expect(last.env).toEqual(Object.fromEntries(ids.map((id) => [variable(id), `\${{ steps.${id}.outcome }}`])));
 		const dir = mkdtempSync(join(tmpdir(), "site-job-failure-"));
 		const script = join(dir, "failure.sh");
 		writeFileSync(script, last.run as string);
@@ -694,14 +726,14 @@ describe("the site job: the home page rebuilt and deployed after every publish (
 			const summary = join(dir, `summary-${Object.keys(outcomes).length}-${Object.values(outcomes).join("-")}.md`);
 			writeFileSync(summary, "");
 			const env: Record<string, string> = { PATH: process.env.PATH ?? "", GITHUB_STEP_SUMMARY: summary };
-			for (const id of ids) env[id.toUpperCase()] = outcomes[id] ?? "skipped";
+			for (const id of ids) env[variable(id)] = outcomes[id] ?? "skipped";
 			const run = Bun.spawnSync(["bash", "-e", script], { env, stdout: "pipe", stderr: "pipe" });
 			expect(run.exitCode).toBe(0);
 			return { stdout: run.stdout.toString().trim(), summary: readFileSync(summary, "utf8") };
 		};
-		const built = { newest: "success", packages: "success", tree: "success", build: "success", check: "success", notices: "success", cli: "success" };
-		expect(notice({ newest: "success", packages: "success", tree: "success", build: "failure" }).stdout).toBe(
-			"::error title=Site not rebuilt::The step that failed: building the site from this run's tree. Nothing was deployed: ledgermath.com serves the build it had.",
+		const built = { packages: "success", credentials: "success", tree: "success", "site-packages": "success", build: "success", check: "success", notices: "success", cli: "success" };
+		expect(notice({ packages: "success", credentials: "success", tree: "success", "site-packages": "success", build: "failure" }).stdout).toBe(
+			"::error title=Site not rebuilt::The step that failed: building the site from the bucket's files. Nothing was deployed: ledgermath.com serves the build it had.",
 		);
 		// deploy.sh calls Vercel with --prod before it reads the receipt: a failure of that step cannot say nothing was deployed.
 		const deployFailed = notice({ ...built, deploy: "failure" });
@@ -710,13 +742,14 @@ describe("the site job: the home page rebuilt and deployed after every publish (
 		);
 		expect(deployFailed.stdout).not.toContain("Nothing was deployed");
 		expect(notice({ ...built, notices: "failure" }).stdout).toContain("Nothing was deployed: ledgermath.com serves the build it had.");
-		expect(notice({ newest: "success", tree: "failure" }).stdout).toContain("The step that failed: downloading the artifact the check named. Nothing was deployed");
+		expect(notice({ packages: "success", credentials: "success", tree: "failure" }).stdout).toContain("The step that failed: reading the data API's files from the API bucket. Nothing was deployed");
+		expect(notice({ packages: "success", credentials: "failure" }).stdout).toContain("The step that failed: taking AWS credentials for the API bucket. Nothing was deployed");
 		const live = notice({ ...built, deploy: "success", summary: "success", live: "failure" });
 		expect(live.stdout).toBe(
 			"::error title=Site not rebuilt::The step that failed: the live check of https://ledgermath.com/. The deploy succeeded, so ledgermath.com serves the new build; a step after it failed.",
 		);
 		expect(live.summary).toBe("### Site not rebuilt\n\nThe step that failed: the live check of https://ledgermath.com/. The deploy succeeded, so ledgermath.com serves the new build; a step after it failed.\n");
-		expect(notice({ newest: "failure" }).stdout).toContain("The step that failed: finding whether the newest published tree is this run's.");
+		expect(notice({ packages: "failure" }).stdout).toContain("The step that failed: installing the repository's packages.");
 		expect(notice({}).stdout).toContain("The step that failed: the checkout of main, or setting up Bun.");
 	});
 });

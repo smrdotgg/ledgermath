@@ -329,6 +329,66 @@ export class S3ApiStore implements ApiStore {
 		throw new S3Refused(response.status, clipText(code, 64), `GET ${this.name}/${key} answered ${response.status} ${clipText(code, 64)}${said === "" ? "" : `: ${clipText(said)}`}`);
 	}
 
+	/**
+	 * The bytes of `key`: one signed GET, its whole answer within `timeoutMs`
+	 * and its body at most `limit` bytes (by Content-Length when S3 gives one,
+	 * and as it is read). What the site's rebuild reads of the tree
+	 * (scripts/read-api-tree.ts). Throws S3Refused for any answer but a 200
+	 * (NoSuchKey for a missing key, which S3 answers 404 only to a requester that
+	 * may list the bucket; 403 to another), for no answer (NoAnswer, or Timeout
+	 * when the time ran out), and for a body over the limit (TooLarge).
+	 */
+	async read(key: string, { limit, timeoutMs }: { limit: number; timeoutMs: number }): Promise<Uint8Array> {
+		try {
+			this.credentials();
+		} catch (error) {
+			throw new S3Refused(null, "NoCredentials", clipText(error instanceof Error ? error.message : String(error)));
+		}
+		const signal = AbortSignal.timeout(timeoutMs);
+		let response: Response;
+		try {
+			response = await this.send("GET", key, [], EMPTY_SHA256, undefined, signal);
+		} catch (error) {
+			if (signal.aborted) throw new S3Refused(null, "Timeout", `GET ${this.name}/${key}: no answer within ${timeoutMs} ms`);
+			throw new S3Refused(null, "NoAnswer", `GET ${this.name}/${key}: no answer (${clipText(error instanceof Error ? error.message : String(error))})`);
+		}
+		if (response.status !== 200) {
+			const text = await boundedText(response.body, ERROR_BODY_BYTES, this.options.errorBodyMs ?? ERROR_BODY_MS);
+			const code = xmlElement(text, "Code") ?? `HTTP${response.status}`;
+			const said = xmlElement(text, "Message") ?? "";
+			throw new S3Refused(response.status, clipText(code, 64), `GET ${this.name}/${key} answered ${response.status} ${clipText(code, 64)}${said === "" ? "" : `: ${clipText(said)}`}`);
+		}
+		const declared = Number(response.headers.get("content-length") ?? Number.NaN);
+		if (Number.isFinite(declared) && declared > limit) {
+			response.body?.cancel().catch(() => undefined);
+			throw new S3Refused(200, "TooLarge", `GET ${this.name}/${key}: ${declared} bytes, over the limit of ${limit}`);
+		}
+		const chunks: Uint8Array[] = [];
+		let size = 0;
+		const reader = response.body?.getReader();
+		try {
+			for (;;) {
+				const read = await reader?.read();
+				if (read === undefined || read.done) break;
+				size += read.value.length;
+				if (size > limit) throw new S3Refused(200, "TooLarge", `GET ${this.name}/${key}: over the limit of ${limit} bytes`);
+				chunks.push(read.value);
+			}
+		} catch (error) {
+			reader?.cancel().catch(() => undefined);
+			if (error instanceof S3Refused) throw error;
+			if (signal.aborted) throw new S3Refused(200, "Timeout", `GET ${this.name}/${key}: the body was not read within ${timeoutMs} ms`);
+			throw new S3Refused(200, "NoAnswer", `GET ${this.name}/${key}: reading the body: ${clipText(error instanceof Error ? error.message : String(error))}`);
+		}
+		const bytes = new Uint8Array(size);
+		let at = 0;
+		for (const chunk of chunks) {
+			bytes.set(chunk, at);
+			at += chunk.length;
+		}
+		return bytes;
+	}
+
 	async put(file: TreeFile, run: number): Promise<void> {
 		if (parseRun(String(run)) === null) throw new Error(`${run} is not a run id: a positive whole number`);
 		const response = await this.send(

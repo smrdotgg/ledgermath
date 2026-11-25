@@ -25,6 +25,12 @@
  * older one. The files are written, byte for byte as served, once all three are fetched and
  * checked: into a directory beside DIR, which then takes DIR's name.
  *
+ * The same reading, check, retry and writing serve another source: given `read`, fetchTree reads
+ * each file through it instead of over HTTPS, by the file's place in the tree (its key), which
+ * comes from the link the table of contents gives. The runs workflow's rebuild reads the API
+ * bucket itself that way (scripts/read-api-tree.ts), not the edge, whose cache can be five
+ * minutes behind.
+ *
  * Exit 0 when the tree is written, 1 when it is not (with why), 2 on a bad command line.
  */
 
@@ -47,9 +53,18 @@ export const RETRY_WAIT_MS = 10_000;
 
 type Fetch = (url: string, init: RequestInit) => Promise<Response>;
 
+/**
+ * Reads one file of the tree, at most LIMIT bytes, or throws saying why: the file's address
+ * (`url`) and its place in the tree (`path`, v1/…, from that address by treePath), both from the
+ * table of contents' links, never built.
+ */
+export type ReadFile = (file: { url: string; path: string }, limit: number) => Promise<Uint8Array>;
+
 export type FetchOptions = {
 	index?: string;
 	get?: Fetch;
+	/** Reads each file instead of fetching it over HTTPS from its address. */
+	read?: ReadFile;
 	timeoutMs?: number;
 	limits?: { index: number; seriesList: number; prices: number };
 	attempts?: number;
@@ -133,16 +148,18 @@ export async function fetchTree(dir: string, options: FetchOptions = {}): Promis
 	const attempts = Math.max(1, options.attempts ?? ATTEMPTS);
 	const wait = options.retryWaitMs ?? RETRY_WAIT_MS;
 
+	const readFile: ReadFile = options.read ?? ((file, limit) => fetchBytes(file.url, limit, timeout, get));
+
 	/** The table of contents and the files it links, fetched and checked once, with what they disagree on. */
 	const fetchSet = async () => {
-		const indexBytes = await fetchBytes(indexUrl, limits.index, timeout, get);
+		const indexBytes = await readFile({ url: indexUrl, path: INDEX_PATH }, limits.index);
 		const index = parseIndex(parseJson(indexBytes, indexUrl), indexUrl);
 		if (index.url !== indexUrl) throw new Error(`${indexUrl} gives its own address as ${index.url}: fetch the table of contents from where it says it is`);
 		const files = [{ path: INDEX_PATH, url: indexUrl, bytes: indexBytes }];
 		let list: ReturnType<typeof parseSeriesList> | null = null;
 		let prices: ReturnType<typeof parsePrices> | null = null;
 		for (const file of treeFiles(index, indexUrl)) {
-			const bytes = await fetchBytes(file.url, limits[file.kind], timeout, get);
+			const bytes = await readFile(file, limits[file.kind]);
 			const json = parseJson(bytes, file.url);
 			if (file.kind === "seriesList") list = parseSeriesList(json, file.url);
 			else prices = parsePrices(json, file.url);

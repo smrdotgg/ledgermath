@@ -27,11 +27,12 @@
 # run ended) are untouched by it.
 #
 # The third, site, runs after the second, only when it succeeded and only on
-# main: it builds the website in site/ from that same artifact api, the tree
-# the API now serves, checks it, deploys it to Vercel production
-# (https://ledgermath.com) and checks the live pages, so the home page's
-# figures are those of the newest publish (ADR-0035). Its failure is its own
-# red job, and ledgermath.com keeps the build it had until a step deploys.
+# main: inside the production deploys' concurrency group, it reads the tree
+# from the API bucket itself (with the same role, only reading), builds the
+# website in site/ from exactly those bytes, checks it, deploys it to Vercel
+# production (https://ledgermath.com) and checks the live pages, so the home
+# page shows what the public API holds (ADR-0035). Its failure is its own red
+# job, and ledgermath.com keeps the build it had until a step deploys.
 #
 # It needs, in this repository's settings (README, "The Runs repository, the
 # Method and the page"):
@@ -412,52 +413,43 @@ jobs:
       - name: Check that the API bucket holds the data API's files
         run: bun scripts/check-api-bucket.ts --tree api --bucket "$API_BUCKET" --run "$GITHUB_RUN_ID"
 
-  # The home page, rebuilt from the tree this run published and deployed to
-  # Vercel production, after the publish job and apart from it (ADR-0035): only
-  # when that job succeeded, so the API serves this tree and the page never
-  # shows figures the public API does not hold; never when it failed, was
-  # skipped or was cancelled. Only on main: a scheduled run, or one by hand on
-  # main. It builds from the artifact api, the bytes the publish job uploaded,
-  # never from https://api.ledgermath.com, whose cache can serve the previous
-  # table of contents for five minutes after an upload.
+  # The home page, rebuilt from what the API bucket holds and deployed to Vercel
+  # production, after the publish job and apart from it (ADR-0035): only when
+  # that job succeeded (never when it failed, was skipped or was cancelled),
+  # and only on main (a scheduled run, or one by hand on main).
   #
-  # Production deploys take turns. This job and site.yml's deploy-production
-  # hold one concurrency group, site-deploy-production, each for its whole job:
-  # one runs at a time, a running one is never cancelled, and every one that
-  # arrives meanwhile waits (queue: max). When its turn comes, each deploys
-  # only what is current then, and otherwise skips the deploy and passes:
-  #  - the site's sources: this job checks out main as it is when the job
-  #    starts, never this run's commit, so it never puts an older site over a
-  #    newer one; site.yml's job deploys its own commit only if main has not
-  #    moved on in the site's files (site/deploy/fresh.ts);
-  #  - the tree: each deploys only the newest published tree, known by its
-  #    identity, RUN/ARTIFACT: the run that published it and the artifact api
-  #    its publish job uploaded (site/deploy/published.ts, from GitHub's record
-  #    of the runs). A run run again in full keeps its id and publishes another
-  #    artifact, so the run alone would not say which tree. This job asks for
-  #    its own run's tree, is told its identity, and downloads that artifact by
-  #    its id. A newer tree's own site job, which starts only after it has been
-  #    published, deploys main's site with it after this one, or already has.
-  # So after any production deploy, ledgermath.com holds main's site as it was
-  # when that job's turn came, built from the newest tree published by then,
-  # never older than the tree it held before (README, "Where it is deployed").
+  # The rule: production deploys take turns, and each builds the page from
+  # what the bucket holds when its turn comes. This job and site.yml's
+  # deploy-production hold one concurrency group, site-deploy-production, each
+  # for its whole job: one runs at a time, a running one is never cancelled,
+  # and every one that arrives meanwhile waits (queue: max). Inside the group,
+  # in this order, this job checks out main as it is now (never this run's
+  # commit, which main may have left), reads the tree from the API bucket
+  # itself (scripts/read-api-tree.ts: the bucket, not the edge, whose cache can
+  # be five minutes behind, and not an artifact), builds and checks the site
+  # from exactly those bytes, deploys, and checks the live site. So the page
+  # shows what the bucket, and so the public API, holds at that moment, whatever
+  # was run again and whichever artifact a job took; and since each deploy
+  # reads the bucket afresh, the last one to run deploys the newest tree. One
+  # that gets its turn late reads the same bucket and deploys the same page
+  # again. No job asks whether its tree is the newest.
   #
-  # A failure (the check, the download, the build, its checks, the deploy, the
-  # live check) is this job's own, red, with a notice naming the step and
-  # saying what ledgermath.com serves: before the deploy step, the build it
-  # had; after a failed deploy step, not confirmed (Vercel may have moved
-  # production before the receipt was read); after one that succeeded, the new
-  # build. Nothing else tells the maintainer yet (#87). The first job, its
-  # caches and the publish job are untouched by it.
+  # A failure (reading the bucket, the build, its checks, the deploy, the live
+  # check) is this job's own, red, with a notice naming the step and saying
+  # what ledgermath.com serves: before the deploy step, the build it had; after
+  # a failed deploy step, not confirmed (Vercel may have moved production
+  # before the receipt was read); after one that succeeded, the new build.
+  # Nothing else tells the maintainer yet (#87). The first job, its caches and
+  # the publish job are untouched by it.
   site:
-    name: rebuild the site from the tree this run published, and deploy it to production
+    name: rebuild the site from what the API bucket holds, and deploy it to production
     needs: publish
     if: ${{ needs.publish.result == 'success' && github.ref == 'refs/heads/main' }}
     runs-on: ${{ vars.LEDGERMATH_RUNNER || 'ubuntu-24.04' }}
     timeout-minutes: 15
     permissions:
       contents: read # main's sources
-      actions: read # which runs have published which artifact api, and that artifact
+      id-token: write # the OIDC token AWS exchanges for the role, with which this job only reads the API bucket
     concurrency:
       group: site-deploy-production
       queue: max
@@ -473,58 +465,45 @@ jobs:
         with:
           bun-version: 1.4.4
 
-      # Exit 0: the newest published tree is this run's, and its identity,
-      # RUN/ARTIFACT (this run and the artifact api its publish job uploaded),
-      # becomes the step's output tree; 3: a newer tree has been published, so
-      # skip; anything else: the check failed, and so does the job.
-      - name: Production goes ahead only if the newest published tree is this run's
-        id: newest
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set +e
-          verdict=$(bun site/deploy/published.ts check "$GITHUB_RUN_ID" --repository "$GITHUB_REPOSITORY" --github-output "$GITHUB_OUTPUT")
-          status=$?
-          set -e
-          echo "$verdict"
-          case $status in
-            0) echo deploy=true >>"$GITHUB_OUTPUT" ;;
-            3)
-              echo deploy=false >>"$GITHUB_OUTPUT"
-              { echo "### Site not deployed to Vercel: production"; echo; echo "$verdict"; } >>"$GITHUB_STEP_SUMMARY"
-              ;;
-            *) exit "$status" ;;
-          esac
-
-      # Every step from here is skipped when that step said not to deploy. Bun's
-      # package cache is in the job's temporary directory, as in the first job.
-      - name: The site's packages
+      # Bun's package cache in the job's temporary directory, as in the first job.
+      - name: The repository's packages
         id: packages
-        if: steps.newest.outputs.deploy == 'true'
+        env:
+          BUN_INSTALL_CACHE_DIR: ${{ runner.temp }}/bun-cache
+        run: bun install --frozen-lockfile
+
+      # The publish job's role. It may read and write the API bucket's v1/*;
+      # this job only reads (one GET per file, scripts/read-api-tree.ts).
+      - name: AWS credentials for the API bucket, through OIDC
+        id: credentials
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.RUNS_AWS_ROLE_ARN }}
+          aws-region: us-east-2
+
+      # The table of contents and the two files its links give, from the bucket
+      # API_BUCKET names: of one publication (an upload by another run can be
+      # under way, so a set that disagrees is read again), written all or none.
+      - name: The data API's files as the API bucket holds them now
+        id: tree
+        env:
+          API_BUCKET: ${{ vars.API_BUCKET }}
+        run: bun scripts/read-api-tree.ts --bucket "$API_BUCKET" --out "$RUNNER_TEMP/tree"
+
+      - name: The site's packages
+        id: site-packages
         working-directory: site
         env:
           BUN_INSTALL_CACHE_DIR: ${{ runner.temp }}/bun-cache
         run: bun install --frozen-lockfile
 
-      # Exactly the artifact the check named, by its id: never "the artifact
-      # named api" of this run, which a run run again in full holds more than once.
-      - name: The data API's files this run published, the artifact the check named
-        id: tree
-        if: steps.newest.outputs.deploy == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TREE: ${{ steps.newest.outputs.tree }}
-        run: bun site/deploy/published.ts download "$TREE" --repository "$GITHUB_REPOSITORY" --out "$RUNNER_TEMP/tree"
-
-      - name: Build the site from this run's tree into site/dist/client
+      - name: Build the site from those files into site/dist/client
         id: build
-        if: steps.newest.outputs.deploy == 'true'
         working-directory: site
         run: bun run build --tree "$RUNNER_TEMP/tree"
 
       - name: Each page holds its fixed words outside its scripts, links and loads stay inside the site or the API, the budget holds, and every figure is the tree's
         id: check
-        if: steps.newest.outputs.deploy == 'true'
         working-directory: site
         env:
           LEDGERMATH_TREE: ${{ runner.temp }}/tree
@@ -532,13 +511,11 @@ jobs:
 
       - name: The site carries the notices of the code it ships (THIRD-PARTY-NOTICES.md, section 3)
         id: notices
-        if: steps.newest.outputs.deploy == 'true'
         working-directory: site
         run: cmp public/third-party-notices.txt dist/client/third-party-notices.txt
 
       - name: The Vercel CLI, at the version site/deploy/package.json pins
         id: cli
-        if: steps.newest.outputs.deploy == 'true'
         working-directory: site/deploy
         env:
           BUN_INSTALL_CACHE_DIR: ${{ runner.temp }}/bun-cache
@@ -548,7 +525,6 @@ jobs:
       # project's IDs.
       - name: Deploy as prebuilt files (production)
         id: deploy
-        if: steps.newest.outputs.deploy == 'true'
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
@@ -557,9 +533,6 @@ jobs:
 
       - name: The deployment's URL, in the job summary
         id: summary
-        if: steps.newest.outputs.deploy == 'true'
-        env:
-          TREE: ${{ steps.newest.outputs.tree }}
         run: |
           url=$(jq -er '.url' "$RUNNER_TEMP/deployment.json")
           newest=$(jq -r '.newest_run_started_at' "$RUNNER_TEMP/tree/v1/index.json")
@@ -568,14 +541,13 @@ jobs:
             echo
             echo "- Deployment: $url"
             echo "- Production: https://ledgermath.com/"
-            echo "- Tree: $TREE (this run, and the artifact api its publish job uploaded); newest Run $newest"
+            echo "- Tree: as the API bucket held it when this job read it; newest Run $newest"
             echo "- Site: main at $(git rev-parse HEAD)"
           } >>"$GITHUB_STEP_SUMMARY"
           echo "$url"
 
       - name: https://ledgermath.com/ and /docs/ answer 200 with their fixed words (src/pages.text.ts) in their HTML
         id: live
-        if: steps.newest.outputs.deploy == 'true'
         working-directory: site
         run: bun scripts/check-live.ts https://ledgermath.com/
 
@@ -589,9 +561,10 @@ jobs:
       - name: Say which step failed, and what ledgermath.com serves
         if: failure()
         env:
-          NEWEST: ${{ steps.newest.outcome }}
           PACKAGES: ${{ steps.packages.outcome }}
+          CREDENTIALS: ${{ steps.credentials.outcome }}
           TREE: ${{ steps.tree.outcome }}
+          SITE_PACKAGES: ${{ steps.site-packages.outcome }}
           BUILD: ${{ steps.build.outcome }}
           CHECK: ${{ steps.check.outcome }}
           NOTICES: ${{ steps.notices.outcome }}
@@ -601,14 +574,15 @@ jobs:
           LIVE: ${{ steps.live.outcome }}
         run: |
           failed="the checkout of main, or setting up Bun"
-          for step in NEWEST PACKAGES TREE BUILD CHECK NOTICES CLI DEPLOY SUMMARY LIVE; do
+          for step in PACKAGES CREDENTIALS TREE SITE_PACKAGES BUILD CHECK NOTICES CLI DEPLOY SUMMARY LIVE; do
             [ "${!step}" = failure ] || continue
             case $step in
-              NEWEST) failed="finding whether the newest published tree is this run's" ;;
-              PACKAGES) failed="installing the site's packages" ;;
-              TREE) failed="downloading the artifact the check named" ;;
-              BUILD) failed="building the site from this run's tree" ;;
-              CHECK) failed="bun run check, against this run's tree" ;;
+              PACKAGES) failed="installing the repository's packages" ;;
+              CREDENTIALS) failed="taking AWS credentials for the API bucket" ;;
+              TREE) failed="reading the data API's files from the API bucket" ;;
+              SITE_PACKAGES) failed="installing the site's packages" ;;
+              BUILD) failed="building the site from the bucket's files" ;;
+              CHECK) failed="bun run check, against the bucket's files" ;;
               NOTICES) failed="comparing the notices" ;;
               CLI) failed="installing the Vercel CLI" ;;
               DEPLOY) failed="the deploy to Vercel" ;;
