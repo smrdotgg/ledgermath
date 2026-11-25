@@ -100,13 +100,26 @@ export function calendarDate(separator: string): string {
 /** A month of the calendar, yyyy-mm, months 01 to 12: a month file's name. */
 export const CALENDAR_MONTH = "[0-9]{4}-(?:0[1-9]|1[0-2])";
 
+/** The most characters of a benchmark's name that the address of its list of Series takes. */
+export const BENCHMARK_NAME_CHARACTERS = 64;
+/**
+ * A benchmark's name as the address of its list of Series takes it,
+ * unanchored: what the Run schema admits for a benchmark (a lower-case
+ * letter, then lower-case letters, digits and underscores), at most
+ * BENCHMARK_NAME_CHARACTERS long. The Run schema sets no length; a benchmark
+ * is a directory of the repository, and the longest name on 2026-11-25 was
+ * 22 characters (compressed_memory_read). A Series whose benchmark's name is
+ * anything else has no such list, and is in the list of every Series alone.
+ */
+export const BENCHMARK_NAME = `[a-z][a-z0-9_]{0,${BENCHMARK_NAME_CHARACTERS - 1}}`;
+
 /**
  * Every kind of file the build writes (scripts/lib/api.ts), and its upload
  * phase. Each pattern admits what the build can write and nothing more: the
  * schemas by the build's own list of them (API_SCHEMAS), a Series by its
  * 12-hex id, a month and a day as calendar values. The public serving
- * serves these and no other key under v1/ (infra/runs/public-blobs.ts,
- * SERVED).
+ * serves these, and the shapes it serves ahead of the build (SERVED_AHEAD),
+ * and no other key under v1/ (infra/runs/public-blobs.ts, SERVED).
  */
 export const TREE_KINDS: readonly TreeKind[] = [
 	{ kind: "a schema", path: new RegExp(`^v1\\/schemas\\/(?:${API_SCHEMAS.map((schema) => schema.name).join("|")})\\.schema\\.json$`), phase: 0 },
@@ -115,6 +128,33 @@ export const TREE_KINDS: readonly TreeKind[] = [
 	{ kind: "a Series file", path: /^v1\/series\/[0-9a-f]{12}\.json$/, phase: 2 },
 	{ kind: "the list of Series", path: /^v1\/series\.json$/, phase: 3 },
 	{ kind: "the table of contents", path: /^v1\/index\.json$/, phase: 4 },
+];
+
+/** A shape of key under v1/ the public serving serves before the build writes it (SERVED_AHEAD). */
+export interface AheadKind {
+	kind: string;
+	path: RegExp;
+}
+
+/**
+ * The shapes of key under v1/ the public serving serves before the build
+ * writes any file of them. The edge answers 404 to every key of no served
+ * shape, and a production deploy, made by hand, is the only way it learns a
+ * new one, while the runs workflow publishes a new tree every six hours on
+ * its own. So a new kind of file, or a new schema, is served in a change of
+ * its own, merged and deployed before the change that makes the build write
+ * it, and no tree ever links an address the edge refuses (README, "Deploy",
+ * "A new kind of file in the data API"). Until the build writes it, the edge
+ * answers a request for one with S3's 403, as for any missing key of a
+ * served shape. When the build writes it, its shape moves to TREE_KINDS (a
+ * schema's name to API_SCHEMAS), and leaves this list.
+ *
+ * Now: each benchmark's list of Series, v1/benchmarks/<benchmark>.json, and
+ * its schema.
+ */
+export const SERVED_AHEAD: readonly AheadKind[] = [
+	{ kind: "a benchmark's list of Series", path: new RegExp(`^v1\\/benchmarks\\/${BENCHMARK_NAME}\\.json$`) },
+	{ kind: "the schema of a benchmark's list of Series", path: /^v1\/schemas\/benchmark\.schema\.json$/ },
 ];
 
 export interface TreeObject {

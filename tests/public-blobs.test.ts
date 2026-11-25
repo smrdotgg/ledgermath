@@ -4,7 +4,7 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node
 import { tmpdir } from "node:os";
 import { join, relative, sep } from "node:path";
 
-import { apiBucketArgs, calendarDate, TREE_CACHE_CONTROL, TREE_CONTENT_TYPE, TREE_KINDS, treeObject } from "../infra/runs/api-bucket";
+import { apiBucketArgs, BENCHMARK_NAME_CHARACTERS, calendarDate, SERVED_AHEAD, TREE_CACHE_CONTROL, TREE_CONTENT_TYPE, TREE_KINDS, treeObject } from "../infra/runs/api-bucket";
 import { API_SCHEMAS as API_SCHEMAS_OF_BUILD } from "../scripts/lib/api";
 import { API_SCHEMAS } from "../scripts/lib/api-schemas";
 import {
@@ -521,6 +521,15 @@ const INVENTORY: Record<Origin, string[]> = {
 		"v1/series/0cacb5fd6fae/2026-00.json",
 		// A leap year's 29th of February is a day.
 		"v1/prices/2028-02-29.json",
+		// Served ahead of the build: a benchmark's list of Series and its schema; and keys near them, of no served shape.
+		"v1/benchmarks/memory_read.json",
+		"v1/schemas/benchmark.schema.json",
+		"v1/benchmarks/Memory_read.json",
+		"v1/benchmarks/memory_read.json.bak",
+		`v1/benchmarks/${"a".repeat(65)}.json`,
+		"v1/benchmarks/memory_read/2026-11.json",
+		"v1/benchmarks.json",
+		"v1/schemas/benchmarks.schema.json",
 	],
 };
 
@@ -571,7 +580,7 @@ describe("what is served, and what is not", () => {
 				served++;
 			}
 		}
-		expect(served).toBe(11);
+		expect(served).toBe(13);
 	});
 
 	test("no key of no served shape is ever read, however it is spelt, served prefix or not; every read is of a served shape, from the bucket that serves it", () => {
@@ -666,7 +675,7 @@ describe("the edge in on, in front of a stand-in for S3 that holds every key of 
 				refused++;
 			}
 		}
-		expect(refused).toBe(35);
+		expect(refused).toBe(41);
 	});
 
 	test("refuses another host with the same 403 before the bucket is asked, whatever the address, from the served behaviours and the default alike", async () => {
@@ -972,9 +981,10 @@ function filesUnder(directory: string): string[] {
 }
 
 describe("the shapes of key served", () => {
-	test("are, for v1/, the tree's kinds (TREE_KINDS); for the evidence, a Run file, a boot summary and a blob; each within its own prefix", () => {
+	test("are, for v1/, the tree's kinds (TREE_KINDS) and those served ahead of the build (SERVED_AHEAD); for the evidence, a Run file, a boot summary and a blob; each within its own prefix", () => {
 		expect(SERVED.flatMap((served) => served.keys.map((shape) => [served.prefix, shape.kind]))).toEqual([
 			...TREE_KINDS.map((kind) => ["v1/", kind.kind]),
+			...SERVED_AHEAD.map((kind) => ["v1/", kind.kind]),
 			["runs/", "a Run file"],
 			["boots/", "a boot summary"],
 			["blobs/sha256/", "a blob"],
@@ -1051,6 +1061,44 @@ describe("the shapes of key served", () => {
 		for (const { name } of API_SCHEMAS) expect(isServedKey(`v1/schemas/${name}.schema.json`)).toBe(true);
 		for (const name of ["unpublished", "index2", "series-months", "Index", "run", ""]) expect(isServedKey(`v1/schemas/${name}.schema.json`)).toBe(false);
 		expect(schema.source).toContain(`(?:${API_SCHEMAS.map((entry) => entry.name).join("|")})`);
+	});
+
+	test("serve ahead of the build only shapes no file of the tree has yet, each exactly, and nothing near them, at the edge as in the list", () => {
+		// No file the build writes is of a shape served ahead: not the golden tree's, the schemas it copies or a price file; nor is any key the tree's kinds take.
+		const written = [...filesUnder(join(import.meta.dir, "api-golden")), ...API_SCHEMAS.map(({ name }) => `v1/schemas/${name}.schema.json`), "v1/prices/2026-11-19.json"];
+		expect(written.length).toBeGreaterThan(10);
+		for (const path of written) expect([path, SERVED_AHEAD.filter((kind) => kind.path.test(path)).map((kind) => kind.kind)]).toEqual([path, []]);
+		const longest = `a${"b_9".repeat((BENCHMARK_NAME_CHARACTERS - 1) / 3)}`;
+		expect(longest.length).toBe(BENCHMARK_NAME_CHARACTERS);
+		const served = ["v1/benchmarks/memory_read.json", "v1/benchmarks/a.json", "v1/benchmarks/compressed_memory_read.json", `v1/benchmarks/${longest}.json`, "v1/schemas/benchmark.schema.json"];
+		for (const key of served) expect([key, TREE_KINDS.filter((kind) => kind.path.test(key)).length, SERVED_AHEAD.filter((kind) => kind.path.test(key)).length]).toEqual([key, 0, 1]);
+		const refused = [
+			"v1/benchmarks/.json",
+			`v1/benchmarks/${longest}c.json`,
+			"v1/benchmarks/Memory_read.json",
+			"v1/benchmarks/1memory.json",
+			"v1/benchmarks/_memory.json",
+			"v1/benchmarks/memory-read.json",
+			"v1/benchmarks/memory.read.json",
+			"v1/benchmarks/memöry.json",
+			"v1/benchmarks/memory%5Fread.json",
+			"v1/benchmarks/memory_read.json.bak",
+			"v1/benchmarks/memory_read",
+			"v1/benchmarks/memory_read/2026-11.json",
+			"v1/benchmarks/a/b.json",
+			"v1/benchmarks.json",
+			"v1/benchmark/memory_read.json",
+			"v1/schemas/benchmarks.schema.json",
+			"v1/schemas/Benchmark.schema.json",
+			"v1/schemas/benchmark.schema.json.bak",
+		];
+		const handler = load(REQUEST_FUNCTION_CODE);
+		const answer = (key: string): number | "on" => {
+			const out = handler({ context: { eventType: "viewer-request" }, request: request(`/${key}`) });
+			return isResponse(out) ? out.statusCode : "on";
+		};
+		for (const key of served) expect([key, isServedKey(key), answer(key)]).toEqual([key, true, "on"]);
+		for (const key of refused) expect([key, isServedKey(key), answer(key)]).toEqual([key, false, 404]);
 	});
 
 	test("take a date as a day of the calendar and a month as a month, the leap years' 29th of February included, and nothing else", () => {

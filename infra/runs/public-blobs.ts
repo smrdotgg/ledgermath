@@ -72,7 +72,7 @@
  * tests/public-blobs.test.ts checks it.
  */
 
-import { calendarDate, TREE_CACHE_CONTROL, TREE_CONTENT_TYPE, TREE_KINDS, TREE_PREFIX } from "./api-bucket";
+import { calendarDate, SERVED_AHEAD, TREE_CACHE_CONTROL, TREE_CONTENT_TYPE, TREE_KINDS, TREE_PREFIX } from "./api-bucket";
 import type { PolicyStatement } from "./github-role";
 import { PRODUCTION_STAGE } from "./stages";
 
@@ -170,7 +170,8 @@ export const BLOB_KEY = /^blobs\/sha256\/[0-9a-f]{64}$/;
 
 /**
  * Everything the distribution can reach, in the order its behaviours are
- * listed, with the shapes of key served under each: the one list the
+ * listed, with the shapes of key served under each (under v1/, the tree's
+ * kinds and the shapes served ahead of the build): the one list the
  * request function, the grants, the tests and the README's table of
  * addresses are all made from or held to. Anything else of either bucket
  * (the Runs bucket's source/ and logs/, an object under a served prefix of
@@ -179,7 +180,7 @@ export const BLOB_KEY = /^blobs\/sha256\/[0-9a-f]{64}$/;
  * asked.
  */
 export const SERVED: readonly Served[] = [
-	{ prefix: TREE_PREFIX, origin: "api", what: "the data API's tree", keys: TREE_KINDS.map((kind) => ({ kind: kind.kind, key: kind.path })) },
+	{ prefix: TREE_PREFIX, origin: "api", what: "the data API's tree", keys: [...TREE_KINDS, ...SERVED_AHEAD].map((kind) => ({ kind: kind.kind, key: kind.path })) },
 	{ prefix: "runs/", origin: "runs", what: "Run files", keys: [{ kind: "a Run file", key: RUN_KEY }] },
 	{ prefix: "boots/", origin: "runs", what: "boot summaries", keys: [{ kind: "a boot summary", key: BOOT_KEY }] },
 	{ prefix: "blobs/sha256/", origin: "runs", what: "blobs", keys: [{ kind: "a blob", key: BLOB_KEY }] },
