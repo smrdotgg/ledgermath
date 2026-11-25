@@ -109,8 +109,12 @@ tbody:first-of-type .section th { padding-top: 0; }
    The napkin (napkin.tsx) is drawn like the headline's art, 43 dots across, and its dots are the
    headline's size, but never under 2px, so that the sum on it can be read on a phone. */
 .closing { display: none; }
-[data-napkin] .closing { display: flex; align-items: center; gap: 2rem; padding-top: 6rem; }
-.closing p { max-width: 22em; font-size: 1.5rem; line-height: 2rem; }
+[data-napkin] .closing { display: flex; justify-content: center; align-items: center; gap: 2rem; padding-top: 6rem; }
+/* The napkin and the sentence stand in the middle of the page, as the footer's links do. The
+   sentence is two lines that do not wrap (Page.tsx), so its box is exactly as wide as its text and
+   no empty space beside it pulls the pair to the left. On a phone it wraps as it must (below). */
+.closing p { font-size: 1.5rem; line-height: 2rem; }
+.closing span { display: block; white-space: nowrap; }
 .nap { width: calc(43 * max(2px, .038 * clamp(2rem, 10.2vw, 4.5rem))); height: auto; }
 
 /* ---------------------------------------------------------------- narrower screens */
@@ -130,6 +134,7 @@ tbody:first-of-type .section th { padding-top: 0; }
   .sub { margin-top: 1rem; font-size: 1.25rem; line-height: 1.75rem; }
   [data-napkin] .closing { gap: 1.25rem; padding-top: 4.5rem; }
   .closing p { font-size: 1.25rem; line-height: 1.75rem; }
+  .closing span { display: inline; white-space: normal; }
   th, td { padding-left: 1.25rem; }
   tbody th[scope="row"], thead td { position: sticky; left: 0; z-index: 1; background: var(--bg); }
   .head { grid-template-columns: 9rem; white-space: normal; }

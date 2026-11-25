@@ -269,8 +269,12 @@ export default function HomePage(props: { data: SiteData }) {
 				{/* Behind the flag `napkin` (../pages.text.ts): in the HTML, and shown when the address has ?napkin. */}
 				<div class="closing">
 					<Napkin />
+					{/* Two lines, each a span: the stylesheet keeps each whole, so the sentence is as wide as its text. */}
 					<p>
-						LedgerMath began as a port of Simon Eskildsen's <a href={NAPKIN_MATH}>Napkin Math</a>.
+						<span>LedgerMath began as a port of</span>{" "}
+						<span>
+							Simon Eskildsen's <a href={NAPKIN_MATH}>Napkin Math</a>.
+						</span>
 					</p>
 				</div>
 			</main>

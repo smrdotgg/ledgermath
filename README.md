@@ -3304,8 +3304,8 @@ one address; `bun run check` fails on any other, so no link goes to the source r
 **Feature flags.** A flag is a part of a page that is in its HTML but hidden. A page names
 its flags in `site/src/pages.text.ts` (`flags`); with `?NAME` in the page's address, the
 inline script sets `data-NAME` on `<html>` and the stylesheet shows the part. There is one:
-`napkin`, on the home page (<https://ledgermath.com/?napkin>). It shows a closing note
-between the table and the footer, "LedgerMath began as a port of Simon Eskildsen's Napkin
+`napkin`, on the home page (<https://ledgermath.com/?napkin>). It shows a closing note,
+centred between the table and the footer, "LedgerMath began as a port of Simon Eskildsen's Napkin
 Math", with a napkin drawn beside it on the font's grid (`site/src/home/napkin.tsx`); the
 sum on the napkin is four rounds a day for a year. Without the parameter, or with
 JavaScript off, the note is not shown. To show a flagged part to everyone, remove the rule
