@@ -6,8 +6,9 @@
  *  - no HTML, CSS or JavaScript file in DIR refers to a file DIR lacks, or loads anything from
  *    another origin;
  *  - every link a reader follows (href on <a> and <area>) goes inside the built site, to a file
- *    it has (and, with a fragment, to an id that file has), or under https://api.ledgermath.com/:
- *    nowhere else, so no link is dead and none leads to the source repository;
+ *    it has (and, with a fragment, to an id that file has), or under https://api.ledgermath.com/,
+ *    or is, character for character, one of the links out that src/pages.text.ts names
+ *    (OUTSIDE_LINKS): nowhere else, so no link is dead and none leaves the site unnamed;
  *  - each page, with everything it loads (stylesheets, fonts, images, scripts), weighs under
  *    BUDGET_BYTES, text files weighed gzipped at level 9 as a host sends them, others as they are.
  *
@@ -34,7 +35,7 @@
 
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, extname, join, relative, resolve, sep } from "node:path";
-import { PAGES } from "../src/pages.text";
+import { OUTSIDE_LINKS, PAGES } from "../src/pages.text";
 
 export type Result = { problems: string[]; checked: number; weights: { file: string; bytes: number }[] };
 
@@ -228,8 +229,12 @@ function weigh(dir: string, page: string): number {
 	return bytes;
 }
 
-/** Checks the built site in DIR against PAGES' words; see the comment at the top. */
-export function checkOutput(root: string, pages: readonly { file: string; text: readonly string[] }[] = PAGES): Result {
+/** Checks the built site in DIR against PAGES' words and the links out in OUTSIDE; see the comment at the top. */
+export function checkOutput(
+	root: string,
+	pages: readonly { file: string; text: readonly string[] }[] = PAGES,
+	outside: readonly string[] = OUTSIDE_LINKS,
+): Result {
 	const dir = resolve(root);
 	const problems: string[] = [];
 	const weights: Result["weights"] = [];
@@ -269,7 +274,7 @@ export function checkOutput(root: string, pages: readonly { file: string; text: 
 					continue;
 				}
 				if (SCHEME.test(reference) || reference.startsWith("//")) {
-					if (!reference.startsWith(API_ORIGIN)) problems.push(`${name} links outside the site and the data API: ${reference}`);
+					if (!reference.startsWith(API_ORIGIN) && !outside.includes(reference)) problems.push(`${name} links outside the site and the data API: ${reference}`);
 					continue;
 				}
 				const found = target(dir, path, reference);
@@ -309,6 +314,6 @@ if (import.meta.main) {
 	const words = PAGES.map((page) => `${page.file} holds its ${page.text.length} fixed words`).join(", ");
 	const weighed = weights.map((w) => `${w.file} ${w.bytes.toLocaleString("en")}`).join(", ");
 	console.log(
-		`${relative(process.cwd(), resolve(root)) || "."}: ${words}; ${checked} references and links, each to a file the site has or a link under ${API_ORIGIN}; weights with what each page loads, compressed: ${weighed} bytes (budget ${BUDGET_BYTES.toLocaleString("en")})`,
+		`${relative(process.cwd(), resolve(root)) || "."}: ${words}; ${checked} references and links, each to a file the site has, under ${API_ORIGIN}, or a link out that src/pages.text.ts names (${OUTSIDE_LINKS.join(", ")}); weights with what each page loads, compressed: ${weighed} bytes (budget ${BUDGET_BYTES.toLocaleString("en")})`,
 	);
 }

@@ -33,7 +33,7 @@ function page(head: string, body = BODY): string {
 	return `<!DOCTYPE html><html lang="en"><head><title>LedgerMath</title>${head}</head><body>${body}</body></html>`;
 }
 
-const check = (files: Record<string, string>, pages = PAGES) => checkOutput(site(files), pages).problems;
+const check = (files: Record<string, string>, pages = PAGES, outside: readonly string[] = []) => checkOutput(site(files), pages, outside).problems;
 
 describe("passes", () => {
 	test("a page with its text, its CSS and its script", () => {
@@ -93,6 +93,31 @@ describe("passes", () => {
 		).toEqual([]);
 	});
 
+});
+
+describe("links out of the site", () => {
+	const NAMED = "https://github.com/sirupsen/napkin-math";
+
+	test("a link that is exactly one the pages name passes", () => {
+		expect(check({ "index.html": page("", `${BODY}<a href="${NAMED}">Napkin Math</a>`) }, PAGES, [NAMED])).toEqual([]);
+	});
+
+	test("any other address fails, of the same site too: a page under it, its owner, the same with a slash, a query or another scheme", () => {
+		const others = [`${NAMED}/issues`, "https://github.com/sirupsen", `${NAMED}/`, `${NAMED}?tab=readme`, NAMED.replace("https:", "http:"), "https://github.com/smrdotgg/ledgermath"];
+		expect(check({ "index.html": page("", BODY + others.map((href) => `<a href="${href}">x</a>`).join("")) }, PAGES, [NAMED])).toEqual(
+			others.map((href) => `index.html links outside the site and the data API: ${href}`),
+		);
+	});
+
+	test("the site's own list names Napkin Math's repository and nothing else", async () => {
+		const { NAPKIN_MATH, OUTSIDE_LINKS } = await import("../src/pages.text");
+		expect(OUTSIDE_LINKS).toEqual([NAPKIN_MATH]);
+		expect(NAPKIN_MATH).toBe(NAMED);
+	});
+
+	test("a page may load nothing from an address it may link to", () => {
+		expect(check({ "index.html": page(`<script src="${NAMED}"></script>`) }, PAGES, [NAMED])).toEqual([`index.html loads from another origin: ${NAMED}`]);
+	});
 });
 
 describe("fails", () => {

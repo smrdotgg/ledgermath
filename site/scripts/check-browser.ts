@@ -6,7 +6,8 @@
  *
  * It serves DIR as a static host would and loads each page (src/pages.text.ts) in Playwright's
  * Chromium at desktop size (1440×900) and phone size (390×844, at a device scale of 2), each in
- * light and in dark, with reduced motion:
+ * light and in dark, with reduced motion. A page with feature flags is loaded again with each
+ * flag on (as /?napkin), which must set the flag on <html>, for checks 1 to 3:
  *
  *  1. No console error, no uncaught error, no request that fails or answers 400 or more, and
  *     no request to another origin (each is refused, and counted).
@@ -20,7 +21,8 @@
  *     shows with JavaScript on, it shows with JavaScript off.
  *
  * With --shots OUT it also writes, for each page, size and scheme, the first screen and the whole
- * page as PNG files in OUT: <page>-<size>-<scheme>-{first,full}.png.
+ * page as PNG files in OUT: <page>-<size>-<scheme>-{first,full}.png, and <page>-<flag>-… for a
+ * page with a flag on.
  *
  * Chromium is Playwright's, installed once with `bunx playwright install chromium` in site/.
  * Exit 0 when every check passes, 1 when one fails (each failure listed).
@@ -171,14 +173,22 @@ export async function checkBrowser(dir: string, shots?: string): Promise<Result[
 			const url = `${server.origin}${meta.path}`;
 			const name = meta.path === "/" ? "home" : meta.path.replace(/^\/|\/$/g, "").replaceAll("/", "-");
 			let withScripts = "";
-			for (const size of SIZES) {
+			// The page as everyone gets it, then once with each of its flags on.
+			const addresses: { path: string; name: string; flag?: string }[] = [
+				{ path: meta.path, name },
+				...(meta.flags ?? []).map((flag) => ({ path: `${meta.path}?${flag}`, name: `${name}-${flag}`, flag })),
+			];
+			for (const { address, size } of addresses.flatMap((address) => SIZES.map((size) => ({ address, size })))) {
 				for (const scheme of SCHEMES) {
-					const where = `${meta.path} ${size.name} ${scheme}`;
+					const where = `${address.path} ${size.name} ${scheme}`;
 					const ctx = await context(browser, size, scheme);
 					const page = await ctx.newPage();
-					const weigh = size.name === "desktop" && scheme === "light";
+					const weigh = !address.flag && size.name === "desktop" && scheme === "light";
 					const seen = watch(page, server.origin, weigh);
-					const response = await page.goto(url, { waitUntil: "load" });
+					const response = await page.goto(`${server.origin}${address.path}`, { waitUntil: "load" });
+					if (address.flag && !(await page.evaluate((flag) => flag in document.documentElement.dataset, address.flag))) {
+						load.push(`${where}: the flag ${address.flag} is not set on <html>`);
+					}
 					if (!response || response.status() !== 200) load.push(`${where}: the page answered ${response?.status() ?? "nothing"}`);
 					await settle(page);
 					load.push(...[...new Set(seen.problems)].map((p) => `${where}: ${p}`));
@@ -223,7 +233,7 @@ export async function checkBrowser(dir: string, shots?: string): Promise<Result[
 
 					if (shots) {
 						for (const full of [false, true]) {
-							await page.screenshot({ path: join(shots, `${name}-${size.name}-${scheme}-${full ? "full" : "first"}.png`), fullPage: full, animations: "disabled", caret: "hide" });
+							await page.screenshot({ path: join(shots, `${address.name}-${size.name}-${scheme}-${full ? "full" : "first"}.png`), fullPage: full, animations: "disabled", caret: "hide" });
 						}
 					}
 					await ctx.close();
