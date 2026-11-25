@@ -10,7 +10,7 @@
  * numbers nobody chose.
  *
  * The tree is read and checked first (src/data/tree.ts). Then Vite, with Solid's plugin, bundles
- * src/entry-server.tsx for the server, writing the stylesheet and the font beside it; the bundle
+ * src/entry-server.tsx for the server, writing the stylesheet and the fonts beside it; the bundle
  * renders each page (src/pages.text.ts) once with Solid's server renderer; and the pages, with a
  * <link> to the stylesheet in their <head>, are written with the assets and public/. Nothing
  * hydrates and no JavaScript file is written: the one script is inline in each page's <head>
@@ -19,7 +19,7 @@
  *
  * What OUT (default dist/client) holds:
  *   index.html, docs/index.html   the pages (src/pages.text.ts)
- *   assets/…                      the stylesheet and the font, their names hashed
+ *   assets/…                      the stylesheet and the two fonts, their names hashed
  *   third-party-notices.txt …     public/, copied as it is
  *   .ledgermath-site-build        BUILD_MARK: says a build of this script wrote the directory
  *

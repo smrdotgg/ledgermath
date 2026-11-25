@@ -1,7 +1,8 @@
 Third-party notices for this website
 
-The website serves one font, Geist Pixel Circle (GeistPixel-Circle.woff2), whole and
-unchanged, as the geist package (version 1.9.2) publishes it. Its pages carry no code
+The website serves two fonts of one family, Geist Pixel Circle (GeistPixel-Circle.woff2)
+and Geist Pixel Square (GeistPixel-Square.woff2), each whole and unchanged, as the geist
+package (version 1.9.2) publishes it. Its pages carry no code
 from other projects: they are rendered to HTML before they are served, and the one
 script in them is LedgerMath's own.
 

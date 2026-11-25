@@ -3299,7 +3299,9 @@ Two pages:
   merged): a headline with the latest rounds of boots beside it, three graphs, the table of
   all benchmarks (14 rows, one per benchmark, by the written rule in
   `site/src/data/headline.ts`, × the 5 machine types, with their hourly prices), in Geist
-  Pixel Circle, black and white. Every figure is read at build time from a tree of the
+  Pixel, black and white: the Circle face, white on black, in the dark colour scheme, and
+  the Square face, black on white, in the light one, with the art beside the headline and
+  the graphs' bars drawn in round dots or in squares to match. Every figure is read at build time from a tree of the
   data API and links to its Series file there. Each shows a median rounded to four
   significant digits, with every digit, its 5th and 95th percentiles and its count of Runs
   in its `title`.
@@ -3371,10 +3373,10 @@ removed by hand once.
 
 It is SolidJS 2, built with Vite and Solid's Vite plugin (`site/scripts/build.ts`): Vite
 bundles `site/src/entry-server.tsx` for the server, the bundle renders each page once
-with Solid's server renderer, and the HTML, the stylesheet, the self-hosted font and
+with Solid's server renderer, and the HTML, the stylesheet, the two self-hosted fonts and
 `public/` are written to `site/dist/client`. Nothing hydrates and no JavaScript file is
 served: the pages read the same with JavaScript off, and the one script, inline, only
-holds the page back until the font has loaded. `site/` has its own `package.json` and
+holds the page back until the font of the reader's colour scheme has loaded. `site/` has its own `package.json` and
 `bun.lock`, apart from the root's, and needs only Bun (Vite runs under Bun, not Node).
 
 ```bash
@@ -3411,8 +3413,9 @@ commands by hand before a merge. `bun test` at the repository root leaves `site/
   a file the output lacks or loads anything from another origin; every link a reader
   follows (`href` on `<a>` or `<area>`) goes to a file the site has (and, with a fragment,
   to an id that page has) or under `https://api.ledgermath.com/`; and each page, with what
-  it loads, weighs under 300,000 bytes, text gzipped at level 9 (about 37 KB for the home
-  page, 31 KB for `/docs/`, most of it the font). It reads `src`, `href`, `srcset`,
+  it loads, weighs under 300,000 bytes, text gzipped at level 9 (about 66 KB for the home
+  page, 59 KB for `/docs/`, most of it the two fonts: the check counts both, and a browser
+  fetches only the one its colour scheme uses, about 38 KB and 31 KB in all). It reads `src`, `href`, `srcset`,
   `imagesrcset`, `poster` and `xlink:href` on any HTML element, `url()` in `<style>` blocks
   and `style` attributes, imports in inline scripts, `url()` and `@import` in CSS files,
   and `import`, `export … from` and `import()` of a quoted path in JavaScript files. It
@@ -3447,8 +3450,8 @@ its structure rules, a page over the size budget as transferred, or a line with 
 that is missing with JavaScript off. `--shots OUT` also writes each page's first screen
 and whole page as PNG files.
 
-The built site serves one font, Geist Pixel Circle, and so carries
-`third-party-notices.txt`, its copyright and licence (`THIRD-PARTY-NOTICES.md`,
+The built site serves two fonts of one family, Geist Pixel Circle and Geist Pixel Square,
+and so carries `third-party-notices.txt`, their copyright and licence (`THIRD-PARTY-NOTICES.md`,
 section 3); the pages link it as "Licences".
 
 ### Where it is deployed

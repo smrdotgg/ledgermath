@@ -1764,4 +1764,19 @@ A migrated benchmark is done only when **all** of these hold:
   against the production API bucket, stopping before the deploy: 85 figures, 20 prices, no
   dash, three rounds (24 Nov 22:11, 16:11 and 10:11 UTC), newest Run 2026-11-24 23:07 UTC.
   Not deployed: the orchestrator starts the first run.
+- **2026-11-25** — **The site's light scheme is set in Geist Pixel Square.** The maintainer
+  asked for it. The dark scheme keeps Geist Pixel Circle. The two faces are drawn on one
+  grid with the same widths (the headline's lines measure 229 and 149 pixels in both), so
+  nothing moves between the schemes and the art beside the headline needed no new
+  measurements. What is drawn beside the letters follows them: in the light scheme the
+  art's pixels are squares that touch, as the Square face's are, and the bars' dots are
+  squares of the dots' size. All of it is the stylesheet's (`--pixel` and two rules under
+  `prefers-color-scheme: light` in `site/src/site.css`); the paths are the same. A browser
+  fetches one font, its scheme's: each `<link rel="preload">` carries the scheme as its
+  `media`, and the inline script waits for the same one. `bun run check` weighs both
+  fonts with each page (66 KB for the home page), since it counts every file the
+  stylesheet names. The notices name both files with their sha256. Checked with
+  `bun run check:browser`, in light and dark. Not deployed to production by hand: once
+  merged it reaches ledgermath.com with the next rebuild after a publish of the API (the
+  `runs` workflow's `site` job builds from main).
 - _(agents: append your entry here, one per merged benchmark)_
