@@ -683,6 +683,30 @@ time: a schedule the deploy creates, changes or removes could miss its slot, and
 old schedule and its replacement both exist, one slot could launch twice. Any other stage
 has no schedule, and can be deployed at any time.
 
+**A new kind of file in the data API.** The public serving answers 404 to every key of
+no served shape (`SERVED` in `infra/runs/public-blobs.ts`, "The public data API", below),
+and only a deploy of `production-runs`, made by hand, changes what it serves; but the
+`runs` workflow publishes a new tree every six hours on its own. A tree that linked a new
+kind of file, or a new schema, before that deploy would send readers to a 404. So the
+change comes in two pull requests, in this order:
+
+1. The served shape alone: it goes into `SERVED_AHEAD` in `infra/runs/api-bucket.ts`
+   (a schema's address too), with the README's list of addresses. The build writes nothing
+   new, so merging it changes no tree.
+2. Merge it, and deploy `production-runs` from `main` as above (not within ten minutes of a
+   boot time). Check that the edge serves the shape now: `curl -sI
+   https://api.ledgermath.com/v1/benchmarks/memory_read.json` answers 403 (S3: a served
+   shape, no object yet), where before the deploy it answered 404 (the request function: no
+   served shape).
+3. Only then merge the second pull request, which makes the build write the files: their
+   shape moves from `SERVED_AHEAD` to `TREE_KINDS` (a schema's name to `API_SCHEMAS`), which
+   leaves what is served unchanged, so it needs no deploy. The next run of `runs` publishes
+   them, each phase whole before the next ("The API bucket").
+4. Check that each new address the table of contents gives answers 200.
+
+Merged out of order, the second pull request publishes links to 404s until the deploy; the
+table of contents and the files it links stay right, and nothing else breaks.
+
 Every deploy of a new commit also does three things a reader of `sst diff` may not expect,
 in whichever stage. The source archive's key is git `HEAD`'s commit, so a deploy of the
 commit already deployed does none of them:
@@ -889,11 +913,18 @@ The addresses, as the request function matches them:
 - a Series file: `^\/v1\/series\/[0-9a-f]{12}\.json$`
 - the list of Series: `^\/v1\/series\.json$`
 - the table of contents: `^\/v1\/index\.json$`
+- a benchmark's list of Series: `^\/v1\/benchmarks\/[a-z][a-z0-9_]{0,63}\.json$`
+- the schema of a benchmark's list of Series: `^\/v1\/schemas\/benchmark\.schema\.json$`
 - a Run file: `^\/runs\/(?:[0-9]{4}\/(?:0[1-9]|1[0-2])\/(?:0[1-9]|1[0-9]|2[0-8])|[0-9]{4}\/(?:0[13-9]|1[0-2])\/(?:29|30)|[0-9]{4}\/(?:0[13578]|1[02])\/31|(?:[0-9]{2}(?:0[48]|[2468][048]|[13579][26])|(?:[02468][048]|[13579][26])00)\/02\/29)\/[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.json$`
 - a boot summary: `^\/boots\/(?:[0-9]{4}\/(?:0[1-9]|1[0-2])\/(?:0[1-9]|1[0-9]|2[0-8])|[0-9]{4}\/(?:0[13-9]|1[0-2])\/(?:29|30)|[0-9]{4}\/(?:0[13578]|1[02])\/31|(?:[0-9]{2}(?:0[48]|[2468][048]|[13579][26])|(?:[02468][048]|[13579][26])00)\/02\/29)\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.json$`
 - a blob: `^\/blobs\/sha256\/[0-9a-f]{64}$`
 
-A new kind of file, or a new shape of id, is served only once it is added there.
+A new kind of file, or a new shape of id, is served only once it is added there, and
+deployed. The last two are served ahead of the build (`SERVED_AHEAD` in
+`infra/runs/api-bucket.ts`): no file of either shape exists yet, so the edge answers a
+request for one with S3's 403, as for any missing key of a served shape, until the change
+that makes the build write them publishes its first tree ("A new kind of file in the data
+API", under "Deploy").
 
 **Notes for readers.**
 
