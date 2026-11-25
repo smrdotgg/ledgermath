@@ -1827,4 +1827,21 @@ A migrated benchmark is done only when **all** of these hold:
   dated addition, and its open item) and ADR-0008's note say the same. The data API's
   words are unchanged: it carries no description of a benchmark. No benchmark, build,
   Method or workflow changed.
+- **2026-11-25** — **The home page credits Napkin Math.** The maintainer asked for a credit
+  and chose where from four placements: a third line under the headline, "Inspired by Simon
+  Eskildsen's Napkin Math", grey, with the name a link to
+  `https://github.com/sirupsen/napkin-math`. It is the site's first link to another site.
+  The link check let no link leave the site and the data API; it now also passes a link
+  that is exactly one of `OUTSIDE_LINKS` in `site/src/pages.text.ts`, which holds that one
+  address, and still fails any other, a page under the same repository included. The link
+  is kept out of the data module, whose test that it names no other project stands.
+  **A second credit behind a flag.** The maintainer also wanted the loudest placement, kept
+  off for now: a closing note, centred between the table and the footer, "LedgerMath began as a port
+  of Simon Eskildsen's Napkin Math", beside a napkin drawn on the font's grid
+  (`site/src/home/napkin.tsx`: a square on its corner, 43 dots across, with the sum
+  4 × 365 ≈ 1.5k, the rounds of a year). This is the site's first feature flag, and it is
+  small: the note is in the HTML and hidden by the stylesheet; a page lists its flags in
+  `pages.text.ts`, and the inline script sets `data-napkin` on `<html>` when the address
+  has `?napkin`. `bun run check:browser` loads a page again with each flag on. Checked in
+  light and dark, at both sizes, with and without the flag.
 - _(agents: append your entry here, one per merged benchmark)_
