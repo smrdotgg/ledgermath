@@ -18,8 +18,9 @@
  * newest Run, each month file's sha256 and size, and the counts of the newest
  * rounds of boots, from the boot summaries and the points (recentRounds()).
  * Every address a reader needs is written in the files, under one base
- * address, but for two templates the table of contents gives (a blob's, and a
- * Series file's for a reader holding its id); the evidence (Run files, boot
+ * address, but for three templates the table of contents gives (a blob's, a
+ * Series file's for a reader holding its id, a benchmark's list's for one
+ * holding its name); the evidence (Run files, boot
  * summaries, blobs) is linked under the same base, never copied.
  *
  * What grows with a Series' Runs is in its month files, never in its Series
@@ -99,6 +100,18 @@ export const NEWEST_RUNS = 12;
 export const LAYOUT = 2;
 
 /**
+ * The earliest layout whose month files this build writes byte for byte as it
+ * does: layout 2 changed the Series files, the list and the table of contents,
+ * and no month file. So when a human declares a new baseline because the
+ * layout rose (the runs workflow's input new_baseline), a previous tree of a
+ * layout from this one on still has its month files compared, strictly, by
+ * the four causes: only the Series files, the list and the table of contents
+ * are let change (scripts/lib/api-check.ts, checkStability). Set it to LAYOUT
+ * when a new layout changes how month files are written.
+ */
+export const MONTH_FILES_WRITTEN_SO_SINCE_LAYOUT = 1;
+
+/**
  * How many of the newest rounds of boots v1/index.json gives (recent_rounds):
  * two days at four rounds a day, so the last whole day is there even while
  * the newest round is still arriving, and the home page's three.
@@ -166,6 +179,34 @@ export { BENCHMARK_NAME_CHARACTERS };
  * others up to 830.
  */
 export const ROW_BYTES = 16_384;
+/**
+ * The most bytes a benchmark's list of Series gives its rows, each counted as
+ * its bytes written as JSON with no white space and 6 more (the indentation
+ * before it, the comma and line break after it): of the benchmark's Series
+ * whose rows take at most ROW_BYTES, in the list's order, as many as fit; the
+ * first that does not fit and every one after it are left out of the list,
+ * counted in it (left_out) and in the table of contents, and stay in the list
+ * of every Series and in their own files. So no number of Series, and no
+ * string a Run holds, can put a benchmark's list over its ceiling (256,000
+ * bytes, scripts/lib/api-check.ts), which would stop every publish: its head
+ * takes a few hundred bytes more. The largest list on 2026-11-25 gave its
+ * rows 57,000 bytes (http_get's 25 Series).
+ */
+export const LIST_BYTES = 250_000;
+/**
+ * The most bytes the table of contents gives its list of benchmarks
+ * (benchmarks.list), each entry counted as its bytes written as JSON with no
+ * white space and 6 more: in name order, as many as fit; the rest are not
+ * listed there, counted (benchmarks.unlisted), and keep their lists, which a
+ * reader reaches by the benchmark's name (benchmarks.benchmark_file_url_template)
+ * or from any of the benchmark's Series files (benchmark_url). An entry takes
+ * at most about 310 bytes (a name of 64 characters), so the list is at most
+ * 16,000 bytes, whatever the Runs hold, and keeps the table of contents
+ * under its ceiling; on 2026-11-25 its 14 entries took 2,400.
+ */
+export const BENCHMARKS_LISTED_BYTES = 16_000;
+/** The bytes a row of a list, or an entry of the table of contents' list of benchmarks, is counted as against its budget: as JSON with no white space, and 6 more. */
+export const listedBytes = (value: unknown): number => new TextEncoder().encode(JSON.stringify(value)).length + 6;
 
 export const schemaPath = (name: SchemaName): string => `v1/schemas/${name}.schema.json`;
 export const benchmarkPath = (name: string): string => `v1/benchmarks/${name}.json`;
@@ -280,16 +321,19 @@ export const SERIES_FILES =
 	"A Series' file gives the address of each of its month files, so no other address need be built.";
 /** What a benchmark's list of Series holds, and what is left out of every one, in the API's own words: v1/index.json's benchmarks.about. */
 export const BENCHMARKS =
-	"Each benchmark's Series are listed in a file of their own, v1/benchmarks/<benchmark>.json, at the url its entry of list gives: " +
-	"the benchmark's rows of the list of every Series, v1/series.json, byte for byte and in the same order, under a head like the list's (count, newest_run_started_at) with the benchmark's name and left_out, " +
-	"so that from this file a reader reaches any Series' figures in two requests: the benchmark's list, whose row of the Series gives a summary of each Method's Derivation of it " +
-	"and the address of its file, then that file. Each entry of list gives the benchmark's name, its list's address, how many Series the list holds (series), " +
-	"how many Runs they hold (runs) and when the newest of them started (newest_run_started_at). " +
-	`A benchmark has a list when its name is 1 to ${BENCHMARK_NAME_CHARACTERS} characters, a lower-case letter, then lower-case letters, digits and underscores; ` +
-	"the Series of a benchmark named otherwise are in v1/series.json alone. " +
-	`A Series is in its benchmark's list when its row takes at most ${ROW_BYTES} bytes written as JSON with no white space, as its line in v1/series.json holds it; ` +
-	"a longer one is in v1/series.json alone, and its benchmark's list counts it (left_out). left_out here counts every Series in no benchmark's list, for either reason. " +
-	"So what one Series can add to a benchmark's list, and one benchmark to this file, is bounded. Every Series, listed or not, has its own file.";
+	"Each benchmark's Series are listed in a file of their own, v1/benchmarks/<benchmark>.json: rows of the list of every Series, v1/series.json, " +
+	"each the same row, byte for byte, in the same order, under a head like the list's (count, newest_run_started_at) with the benchmark's name and left_out. " +
+	`Every benchmark whose name is 1 to ${BENCHMARK_NAME_CHARACTERS} characters, a lower-case letter, then lower-case letters, digits and underscores, has its list, always; ` +
+	"its address is benchmark_file_url_template with {benchmark} replaced by the name, and each of its Series' files links it (benchmark_url). " +
+	"The Series of a benchmark named otherwise are in v1/series.json alone. " +
+	`A list holds, of its benchmark's Series whose rows take at most ${ROW_BYTES} bytes written as JSON with no white space, in its order, as many as fit in ${LIST_BYTES} bytes, ` +
+	"each row counted as those bytes and 6 more; the first that does not fit and every one after it are left out, and the list counts them (left_out). " +
+	"So a Series its benchmark's list holds is two requests from this file: the list, then the Series' file at its row's url; one in no list is found through v1/series.json. " +
+	"Every Series, listed or not, has its own file. " +
+	"Each entry of list gives a benchmark's name, its list's address, how many Series the list holds (series), how many Runs they hold (runs) and when the newest of them started " +
+	`(newest_run_started_at): in name order, as many as fit in ${BENCHMARKS_LISTED_BYTES} bytes, each counted the same way; count says how many benchmarks have a list, ` +
+	"unlisted how many of them list does not name, and left_out how many Series are in no benchmark's list, for any of these reasons. " +
+	"So what the Runs hold cannot make this file or a benchmark's list too large to publish.";
 export const EVIDENCE =
 	"The evidence is served under the same address as the API: each point links its Run file (evidence), at runs/<yyyy>/<mm>/<dd>/<id>.json, " +
 	"and its boot's summary (boot_summary), at boots/<yyyy>/<mm>/<dd>/<boot>.json. A Run file names its binary, streams and dumps by hash, sha256:<hex>; " +
@@ -1041,6 +1085,9 @@ export function buildApi(sources: ApiSources): Map<string, Uint8Array> {
 					schema_url: at(schemaPath("series")),
 					index: at(INDEX_PATH),
 					...head,
+					// Its benchmark's list, which every benchmark of a name an address takes has, so that every list is reached from the table
+					// of contents, listed there or not; null for a benchmark named otherwise.
+					benchmark_url: BENCHMARK_FILE_NAME.test(identity.benchmark) ? at(benchmarkPath(identity.benchmark)) : null,
 					newest_runs: NEWEST_RUNS,
 					months: entries,
 					derivations: { series_v1: seriesV1, ...(requestsV1 === undefined ? {} : { requests_v1: requestsV1 }) },
@@ -1104,7 +1151,20 @@ export function buildApi(sources: ApiSources): Map<string, Uint8Array> {
 	}
 	const benchmarkEntries: Array<{ name: string; url: string; series: number; runs: number; newest_run_started_at: string | null }> = [];
 	for (const [name, ofIt] of [...ofBenchmark].sort(([a], [b]) => compareText(a, b))) {
-		const listed = ofIt.filter((row) => encoder.encode(JSON.stringify(row)).length <= ROW_BYTES);
+		// Of the rows of at most ROW_BYTES, in the list's order, as many as fit in LIST_BYTES; the first that does not, and every one after it, left out.
+		const listed: Row[] = [];
+		let used = 0;
+		let full = false;
+		for (const row of ofIt) {
+			if (encoder.encode(JSON.stringify(row)).length > ROW_BYTES) continue;
+			const bytes = listedBytes(row);
+			if (full || used + bytes > LIST_BYTES) {
+				full = true;
+				continue;
+			}
+			used += bytes;
+			listed.push(row);
+		}
 		inNoBenchmarkList += ofIt.length - listed.length;
 		let newestListed: string | null = null;
 		for (const row of listed) if (newestListed === null || compareText(row.newest_run_started_at, newestListed) > 0) newestListed = row.newest_run_started_at;
@@ -1127,6 +1187,15 @@ export function buildApi(sources: ApiSources): Map<string, Uint8Array> {
 			),
 		);
 		benchmarkEntries.push({ name, url, series: listed.length, runs: listed.reduce((total, row) => total + row.runs, 0), newest_run_started_at: newestListed });
+	}
+	// The table of contents' list of benchmarks: in name order, as many as fit in BENCHMARKS_LISTED_BYTES; every benchmark keeps its list all the same.
+	const benchmarksListed: typeof benchmarkEntries = [];
+	let listedSoFar = 0;
+	for (const entry of benchmarkEntries) {
+		const bytes = listedBytes(entry);
+		if (listedSoFar + bytes > BENCHMARKS_LISTED_BYTES) break;
+		listedSoFar += bytes;
+		benchmarksListed.push(entry);
 	}
 
 	const prices = [...sources.prices].sort((a, b) => compareText(a.path, b.path));
@@ -1172,9 +1241,11 @@ export function buildApi(sources: ApiSources): Map<string, Uint8Array> {
 			benchmarks: {
 				about: BENCHMARKS,
 				schema_url: at(schemaPath("benchmark")),
+				benchmark_file_url_template: at(benchmarkPath("{benchmark}")),
 				count: benchmarkEntries.length,
+				unlisted: benchmarkEntries.length - benchmarksListed.length,
 				left_out: inNoBenchmarkList,
-				list: benchmarkEntries,
+				list: benchmarksListed,
 			},
 			prices: {
 				schema_url: at(schemaPath("prices")),

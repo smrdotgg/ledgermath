@@ -2,9 +2,9 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:ledgermath:api:v1:index",
   "title": "LedgerMath data API, version 1: the table of contents",
-  "description": "v1/index.json: where the list of Series, each benchmark's list of Series, the price files, the schemas, the evidence and the docs are. Start here. Every address a reader needs is written in the files, so a reader never builds one from an id; there are two exceptions, each given as a template: a blob named by hash inside a Run file, whose address is evidence.blob_url_template, and a Series' file, whose address is series.series_file_url_template, for a reader who holds the Series' id and nothing else. Version 1 only ever gains fields: a field, once in a v1 file, keeps its name, its type and its meaning, and a reader ignores any field it does not know. That is why no object in this schema, nor in series-list, benchmark, series and series-month, forbids members it does not list. A change that would break a reader is published as v2, beside v1. The price files are the exception: each is the day's price file as LedgerMath keeps it, byte for byte, and follows its own schema, ledgermath.prices/1, whose root and LedgerMath's own objects are closed.",
+  "description": "v1/index.json: where the list of Series, each benchmark's list of Series, the price files, the schemas, the evidence and the docs are. Start here. Every address a reader needs is written in the files, so a reader never builds one from an id; there are three exceptions, each given as a template: a blob named by hash inside a Run file, whose address is evidence.blob_url_template; a Series' file, whose address is series.series_file_url_template, for a reader who holds the Series' id and nothing else; and a benchmark's list, whose address is benchmarks.benchmark_file_url_template, for a reader who holds the benchmark's name and nothing else. Version 1 only ever gains fields: a field, once in a v1 file, keeps its name, its type and its meaning, and a reader ignores any field it does not know. That is why no object in this schema, nor in series-list, benchmark, series and series-month, forbids members it does not list. A change that would break a reader is published as v2, beside v1. The price files are the exception: each is the day's price file as LedgerMath keeps it, byte for byte, and follows its own schema, ledgermath.prices/1, whose root and LedgerMath's own objects are closed.",
   "type": "object",
-  "required": ["schema", "schema_url", "url", "about", "versioning", "figures", "months", "layout", "docs", "newest_run_started_at", "recent_rounds", "series", "benchmarks", "prices", "schemas", "evidence"],
+  "required": ["schema", "schema_url", "url", "about", "versioning", "figures", "months", "layout", "docs", "newest_run_started_at", "recent_rounds", "series", "prices", "schemas", "evidence"],
   "properties": {
     "schema": { "description": "What this file is, and which version of its shape.", "const": "ledgermath.api.index/1" },
     "schema_url": { "description": "The address of this schema.", "$ref": "#/$defs/url" },
@@ -57,7 +57,7 @@
     "series": {
       "description": "The list of Series.",
       "type": "object",
-      "required": ["url", "schema_url", "count", "series_file_schema_url", "month_file_schema_url", "series_file_url_template", "about"],
+      "required": ["url", "schema_url", "count", "series_file_schema_url", "month_file_schema_url"],
       "properties": {
         "url": { "description": "v1/series.json: one row per Series, each with the address of its own file.", "$ref": "#/$defs/url" },
         "schema_url": { "description": "The schema of v1/series.json.", "$ref": "#/$defs/url" },
@@ -65,23 +65,29 @@
         "series_file_schema_url": { "description": "The schema of one Series' file, v1/series/<id>.json: its summary, its newest Runs and its months.", "$ref": "#/$defs/url" },
         "month_file_schema_url": { "description": "The schema of one month of a Series, v1/series/<id>/<yyyy-mm>.json: every point of the Runs that started that month. A Series' file gives the address, sha256 and size of each of its months; months, above, says when a month file changes.", "$ref": "#/$defs/url" },
         "series_file_url_template": {
-          "description": "A Series' file's address: replace {id} with the Series' id, 12 lower-case hex digits, as a row (id) gives it, in the list of every Series or a benchmark's list, and as a Series' file and a citation of the Series name it. For a reader who holds an id and nothing else; every other address of a Series is written in the files. A Series' file gives the address of each of its month files.",
+          "description": "A Series' file's address: replace {id} with the Series' id, 12 lower-case hex digits, as a row (id) gives it, in the list of every Series or a benchmark's list, and as a Series' file and a citation of the Series name it. For a reader who holds an id and nothing else; every other address of a Series is written in the files. A Series' file gives the address of each of its month files. Written since layout 2; a table of contents written before it lacks it.",
           "type": "string",
           "pattern": "^https?://.*/v1/series/\\{id\\}\\.json$"
         },
-        "about": { "description": "Where the Series are listed, and what a Series' id is and where a reader finds one, in words.", "type": "string" }
+        "about": { "description": "Where the Series are listed, and what a Series' id is and where a reader finds one, in words. Written since layout 2.", "type": "string" }
       }
     },
     "benchmarks": {
-      "description": "Each benchmark's list of Series: a file per benchmark, v1/benchmarks/<benchmark>.json, holding that benchmark's rows of the list of every Series, so that a reader finds a Series without fetching the whole list. about says what each file holds and what is left out of every one.",
+      "description": "Each benchmark's list of Series: a file per benchmark, v1/benchmarks/<benchmark>.json, holding that benchmark's rows of the list of every Series, so that a reader finds a Series without fetching the whole list. about says what each file holds, which benchmarks list names, and what is left out of every one. Written since layout 2; a table of contents written before it lacks it.",
       "type": "object",
-      "required": ["about", "schema_url", "count", "left_out", "list"],
+      "required": ["about", "schema_url", "benchmark_file_url_template", "count", "unlisted", "left_out", "list"],
       "properties": {
-        "about": { "description": "What a benchmark's list holds, which benchmarks and Series have none, and what each entry of list gives, in words.", "type": "string" },
+        "about": { "description": "What a benchmark's list holds, which benchmarks and Series have none, which benchmarks list names, and what each entry of list gives, in words.", "type": "string" },
         "schema_url": { "description": "The schema of a benchmark's list, v1/benchmarks/<benchmark>.json.", "$ref": "#/$defs/url" },
-        "count": { "description": "How many benchmarks have a list: the entries of list.", "type": "integer", "minimum": 0 },
-        "left_out": { "description": "How many Series are in no benchmark's list, for either reason about gives; each is in the list of every Series, v1/series.json, and has its own file.", "type": "integer", "minimum": 0 },
-        "list": { "description": "One entry per benchmark that has a list, by name.", "type": "array", "items": { "$ref": "#/$defs/benchmark" } }
+        "benchmark_file_url_template": {
+          "description": "A benchmark's list's address: replace {benchmark} with the benchmark's name, as a row (benchmark) gives it. Every benchmark whose name is 1 to 64 characters, a lower-case letter, then lower-case letters, digits and underscores, has its list, whether list names it or not; each of its Series' files gives the same address (benchmark_url).",
+          "type": "string",
+          "pattern": "^https?://.*/v1/benchmarks/\\{benchmark\\}\\.json$"
+        },
+        "count": { "description": "How many benchmarks have a list.", "type": "integer", "minimum": 0 },
+        "unlisted": { "description": "How many of them list does not name, being past its budget: each still has its list, at benchmark_file_url_template.", "type": "integer", "minimum": 0 },
+        "left_out": { "description": "How many Series are in no benchmark's list, for any reason about gives; each is in the list of every Series, v1/series.json, and has its own file.", "type": "integer", "minimum": 0 },
+        "list": { "description": "One entry per benchmark that has a list, by name, as many as fit in the budget about gives.", "type": "array", "items": { "$ref": "#/$defs/benchmark" } }
       }
     },
     "prices": {

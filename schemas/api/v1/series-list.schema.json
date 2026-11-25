@@ -216,7 +216,7 @@
     "row": {
       "description": "One Series.",
       "type": "object",
-      "required": ["id", "url", "benchmark", "params", "build", "instance_type", "availability_zone_id", "runs", "boots", "oldest_run_started_at", "newest_run_started_at", "derivations"],
+      "required": ["id", "url", "benchmark", "params", "build", "instance_type", "availability_zone_id", "runs", "oldest_run_started_at", "newest_run_started_at", "derivations"],
       "properties": {
         "id": { "description": "The Series' id: the first 12 hex digits of the sha256 of its key (benchmark, params, build, instance type, zone ID) as canonical JSON.", "type": "string", "pattern": "^[0-9a-f]{12}$" },
         "url": { "description": "The address of the Series' own file, v1/series/<id>.json.", "$ref": "#/$defs/url" },
@@ -226,7 +226,7 @@
         "instance_type": { "description": "The EC2 instance type, as the provider names it.", "anyOf": [{ "type": "string" }, { "type": "null" }] },
         "availability_zone_id": { "description": "The Availability Zone ID, as the provider names it.", "anyOf": [{ "type": "string" }, { "type": "null" }] },
         "runs": { "description": "Runs in the Series, counted or not.", "type": "integer", "minimum": 1 },
-        "boots": { "description": "How many boots its Runs were made on: the distinct boots its points name, counted or not. A boot is one fresh machine; each point names its boot (boot) and links its summary (boot_summary).", "type": "integer", "minimum": 1 },
+        "boots": { "description": "How many boots its Runs were made on: the distinct boots its points name, counted or not. A boot is one fresh machine; each point names its boot (boot) and links its summary (boot_summary). Written since layout 2 (the layout of v1/index.json); a row written before it lacks it.", "type": "integer", "minimum": 1 },
         "oldest_run_started_at": { "description": "When its oldest Run started.", "$ref": "#/$defs/time" },
         "newest_run_started_at": { "description": "When its newest Run started: the moment a citation of the Series as it stands names.", "$ref": "#/$defs/time" },
         "derivations": {

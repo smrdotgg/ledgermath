@@ -376,19 +376,21 @@ describe("a Series", () => {
 });
 
 describe("a benchmark's list of Series", () => {
-	/** Each row of a list as it is written: its line, without the indentation before it or the comma after it. */
+	/** Each row of a list as it is written: its line without the indentation before it or the comma after it (the last row has none). */
 	const rowLines = (path: string): string[] =>
 		text(tree, path)
 			.split("\n")
 			.filter((line) => line.startsWith('    {"id":'))
 			.map((line) => line.trim().replace(/,$/, ""));
 
-	test("holds its benchmark's rows of the list, byte for byte and in the list's order, under the list's head; the table of contents gives each with its counts", () => {
+	test("holds its benchmark's rows of the list, each row byte for byte the list's and in its order, under the list's head; the table of contents gives each with its counts, and every Series file links its benchmark's list", () => {
 		const index = json(tree, "v1/index.json");
 		const list = json(tree, "v1/series.json");
 		expect(index.benchmarks.schema_url).toBe(`${DEFAULT_BASE}/v1/schemas/benchmark.schema.json`);
 		expect(index.benchmarks.about).toBe(BENCHMARKS);
-		expect([index.benchmarks.count, index.benchmarks.left_out]).toEqual([3, 0]);
+		expect(index.benchmarks.benchmark_file_url_template).toBe(`${DEFAULT_BASE}/v1/benchmarks/{benchmark}.json`);
+		expect([index.benchmarks.count, index.benchmarks.unlisted, index.benchmarks.left_out]).toEqual([3, 0, 0]);
+		for (const row of list.series) expect(json(tree, seriesPath(row.id)).benchmark_url).toBe(index.benchmarks.benchmark_file_url_template.replace("{benchmark}", row.benchmark));
 		expect(index.benchmarks.list.map((entry: Json) => entry.name)).toEqual(["http_get", "memory_read", "syscall"]);
 		const allLines = rowLines("v1/series.json");
 		let rows = 0;
@@ -410,7 +412,7 @@ describe("a benchmark's list of Series", () => {
 				newest_run_started_at: newest,
 			});
 			expect(file.series).toEqual(ofList);
-			// Byte for byte the list's lines: one definition of a row.
+			// Each row byte for byte the list's row: one definition of a row. (A file's last row has no comma after it, so its line may differ by one byte.)
 			expect(rowLines(path)).toEqual(allLines.filter((line) => JSON.parse(line).benchmark === entry.name));
 			expect(entry).toEqual({ name: entry.name, url: entry.url, series: ofList.length, runs: ofList.reduce((total: number, row: Json) => total + row.runs, 0), newest_run_started_at: newest });
 			rows += file.series.length;
@@ -822,6 +824,43 @@ describe("the check fails loudly", () => {
 		expect(words).toEqual([`v1/series.json: methods.series_v1: /runs_read is ${fixture.series.runs_read + 1}, not ${fixture.series.runs_read}, as series v1's file of Derivations holds it`]);
 		const order = check(edit("v1/series.json", (list) => list.series.reverse()));
 		expect(order).toEqual(["v1/series.json: the rows are not in the order of benchmark, instance type, zone ID, params, build"]);
+	});
+
+	test("when a template's address is not the base's, or the table of contents' totals of a benchmark are not its list's", () => {
+		const series = check(edit("v1/index.json", (index) => (index.series.series_file_url_template = "https://example.test/v1/series/{id}.json")));
+		expect(series).toEqual([`v1/index.json: /series/series_file_url_template is "https://example.test/v1/series/{id}.json", not "${DEFAULT_BASE}/v1/series/{id}.json", as the tree and the Derivations make it`]);
+		const benchmark = check(edit("v1/index.json", (index) => (index.benchmarks.benchmark_file_url_template = "https://example.test/v1/benchmarks/{benchmark}.json")));
+		expect(benchmark).toEqual([`v1/index.json: benchmarks: /benchmark_file_url_template is "https://example.test/v1/benchmarks/{benchmark}.json", not "${DEFAULT_BASE}/v1/benchmarks/{benchmark}.json", as the tree and the Derivations make it`]);
+		const runs = json(tree, "v1/index.json").benchmarks.list[1].runs as number;
+		const total = check(edit("v1/index.json", (index) => (index.benchmarks.list[1].runs += 1)));
+		expect(total).toEqual([`v1/index.json: benchmarks: /list/1/runs is ${runs + 1}, not ${runs}, as the tree and the Derivations make it`]);
+		const unlisted = check(edit("v1/index.json", (index) => (index.benchmarks.unlisted = 1)));
+		expect(unlisted).toEqual(["v1/index.json: benchmarks: /unlisted is 1, not 0, as the tree and the Derivations make it"]);
+		const words = check(edit("v1/index.json", (index) => delete index.series.about));
+		expect(words).toEqual([`v1/index.json: /series/about is absent, not "the words of where the Series are listed", as the tree and the Derivations make it`]);
+		const link = check(edit(seriesPath(fixture.memory), (file) => (file.benchmark_url = `${DEFAULT_BASE}/v1/benchmarks/syscall.json`)));
+		expect(link).toEqual([`${seriesPath(fixture.memory)}: /benchmark_url is "${DEFAULT_BASE}/v1/benchmarks/syscall.json", not "${DEFAULT_BASE}/v1/benchmarks/memory_read.json", as its Derivations and the base make it`]);
+	});
+
+	test("when a benchmark's list lacks a row it should hold, or holds its rows out of order", () => {
+		// Two Series of one benchmark: the syscall Series named memory_read.
+		const series = structuredClone(fixture.series);
+		(series.derivations.find((d) => d.series.id === fixture.syscall) as SeriesFile["derivations"][number]).series.benchmark = "memory_read";
+		const merged = writeTree(buildApi({ ...sourcesOf(fixture), series }));
+		const path = "v1/benchmarks/memory_read.json";
+		const checkMerged = (change: (copy: string) => void): string[] => {
+			const copy = mkdtempSync(join(tmpdir(), "api-broken-"));
+			cpSync(merged, copy, { recursive: true });
+			change(copy);
+			return checkApi({ tree: copy, runs: fixture.runs, base: DEFAULT_BASE, series, requests: fixture.requests }).problems;
+		};
+		expect(checkMerged(() => {})).toEqual([]);
+		const ids = JSON.parse(readFileSync(join(merged, path), "utf8")).series.map((row: Json) => row.id) as string[];
+		expect(ids.length).toBe(2);
+		const missing = checkMerged(edit(path, (list) => list.series.pop()));
+		expect(missing).toEqual([expect.stringContaining(`${path} lists the Series ${JSON.stringify([ids[0]])}, not ${JSON.stringify(ids)}: of the Series of benchmark memory_read whose rows take at most 16384 bytes`)]);
+		const reordered = checkMerged(edit(path, (list) => list.series.reverse()));
+		expect(reordered).toEqual([expect.stringContaining(`${path} lists the Series ${JSON.stringify([...ids].reverse())}, not ${JSON.stringify(ids)}`)]);
 	});
 
 	test("when the table of contents does not list exactly the price files and schemas in the tree, or counts the Series wrong", () => {

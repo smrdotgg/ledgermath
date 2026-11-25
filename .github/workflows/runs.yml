@@ -394,6 +394,17 @@ jobs:
           name: api
           path: api
 
+      # Before anything is uploaded: one file of each kind the tree holds,
+      # asked for at its public address (the tree's own). Only the edge's own
+      # 404, which it answers to an address of no served shape, stops the job:
+      # the deployed edge does not serve that kind yet, and production-runs is
+      # to be deployed first. Any other answer, the public address being down,
+      # slow or unreachable included, lets the upload go on, so the public
+      # address failing never stops a publish. Nothing is asked of a tree the
+      # public API does not serve (scripts/lib/api-edge.ts).
+      - name: Check that the public edge serves every kind of file in the tree
+        run: bun scripts/check-api-edge.ts --tree api
+
       - name: AWS credentials for the API bucket, through OIDC
         uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:

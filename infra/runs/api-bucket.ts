@@ -64,10 +64,14 @@ export const TREE_CACHE_CONTROL = "public, max-age=300";
  * schema; a Series file to its month files and its schema; the list, and
  * each benchmark's list, to the Series files; the table of contents to the
  * lists, the price files and the schemas. The links up (to the table of
- * contents, the list, a month file's own Series file) are to files a reader
- * has come through; on the first upload, or for a Series new this round,
+ * contents, the list, a month file's own Series file, a Series file's
+ * benchmark's list) are to files a reader has come through or that list the
+ * file; on the first upload, or for a Series or benchmark new this round,
  * they are written a phase or more later, and nothing links down to the
- * files that carry them until then.
+ * files that carry them until then (a Series file already published, written
+ * again with its first benchmark_url, links its benchmark's list a phase
+ * before that list is written: for that phase, on that one upload, the link
+ * answers S3's 403).
  */
 export const UPLOAD_PHASES = ["schemas", "month files and price files", "Series files", "the lists of Series", "the table of contents"] as const;
 

@@ -291,6 +291,26 @@ export async function makeApiFixture(
 	};
 }
 
+/**
+ * A Runs repository checkout of one valid Run for each entry, each its own
+ * Series (its benchmark and params), all started at one moment on one boot:
+ * what the API's totals must stay bounded under, however many Series there
+ * are and whatever strings their Runs hold (tests/api-bounds.test.ts).
+ */
+export async function makeManyFixture(entries: ReadonlyArray<{ benchmark: string; params: Record<string, string | number | boolean> }>): Promise<{ runs: string; series: SeriesFile; requests: RequestsFile }> {
+	const made = new HandMade();
+	for (const entry of entries) made.run({ startedAt: "2026-11-01T01:02:03Z", benchmark: entry.benchmark, binary: entry.benchmark, params: entry.params, samplesNs: [5] });
+	const files = [...made.files].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+	const seriesFile = series.derive(files, await series.gather(files, made.fetch));
+	const requestsFile = requests.derive(files, await requests.gather(files, made.fetch));
+	const runs = mkdtempSync(join(tmpdir(), "api-many-runs-"));
+	for (const file of made.files) {
+		mkdirSync(dirname(join(runs, file.path)), { recursive: true });
+		writeFileSync(join(runs, file.path), `${JSON.stringify(file.record, null, 2)}\n`);
+	}
+	return { runs, series: JSON.parse(series.serialize(seriesFile)) as SeriesFile, requests: JSON.parse(requests.serialize(requestsFile)) as RequestsFile };
+}
+
 export interface LongFixture {
 	runs: string;
 	series: SeriesFile;

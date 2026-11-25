@@ -125,7 +125,7 @@ describe("the tree's objects", () => {
 		expect(treeObject("v1/index.json").phase).toBe(4);
 	});
 
-	test("each file links down only to files of earlier phases; its other links go up, to the table of contents, the list, or a month file's own Series file", () => {
+	test("each file links down only to files of earlier phases; its other links go up, to the table of contents, the list, a month file's own Series file, or a Series file's benchmark's list", () => {
 		const phaseOf = new Map([...TREE.keys()].map((path) => [path, treeObject(path).phase]));
 		let down = 0;
 		for (const [path, bytes] of TREE) {
@@ -134,7 +134,11 @@ describe("the tree's objects", () => {
 			const links = [...text.matchAll(/"https:\/\/api\.ledgermath\.com\/(v1\/[^"{]+)"/g)].map((match) => match[1] as string).filter((link) => link !== path);
 			for (const link of links) {
 				expect(phaseOf.has(link)).toBe(true);
-				const up = link === "v1/index.json" || link === "v1/series.json" || (treeObject(path).kind === "a month file" && path.startsWith(link.replace(/\.json$/, "/")));
+				const up =
+					link === "v1/index.json" ||
+					link === "v1/series.json" ||
+					(treeObject(path).kind === "a month file" && path.startsWith(link.replace(/\.json$/, "/"))) ||
+					(treeObject(path).kind === "a Series file" && treeObject(link).kind === "a benchmark's list of Series");
 				if (up) continue;
 				down++;
 				expect(phaseOf.get(link) as number).toBeLessThan(phaseOf.get(path) as number);
@@ -876,9 +880,12 @@ describe("the requests a run of the publish job makes, as the README states them
 		return tree;
 	}
 
-	/** The publish job's own commands, from the workflow, each with this tree, bucket and run, and the stand-in's endpoint. */
+	/**
+	 * The publish job's own commands that ask the bucket, from the workflow, each with this tree, bucket and run, and the stand-in's endpoint.
+	 * Its question to the public edge, before them, asks no bucket (tests/api-edge.test.ts holds it).
+	 */
 	const workflow = Bun.YAML.parse(readFileSync(join(ROOT, ".github", "workflows", "runs.yml"), "utf8")) as { jobs: { publish: { steps: Array<{ run?: string }> } } };
-	const commands = workflow.jobs.publish.steps.flatMap((step) => (step.run?.trim().startsWith("bun scripts/") ? [step.run.trim()] : []));
+	const commands = workflow.jobs.publish.steps.flatMap((step) => (step.run?.trim().startsWith("bun scripts/") && step.run.includes("--bucket") ? [step.run.trim()] : []));
 	const argv = (command: string, tree: string, run: number): string[] => {
 		const words = command.split(/\s+/).map((word) => word.replace(/^"(.*)"$/, "$1"));
 		return [
@@ -907,8 +914,10 @@ describe("the requests a run of the publish job makes, as the README states them
 		return { heads, listings, puts, other: made.length - heads - listings - puts };
 	}
 
-	test("the job runs three passes over the bucket: the preflight, the upload and the check", () => {
+	test("the job runs three passes over the bucket: the preflight, the upload and the check; its one other command asks the edge, not the bucket", () => {
 		expect(commands.map((command) => command.split(" ")[1])).toEqual(["scripts/upload-api.ts", "scripts/upload-api.ts", "scripts/check-api-bucket.ts"]);
+		const all = workflow.jobs.publish.steps.flatMap((step) => (step.run?.trim().startsWith("bun scripts/") ? [step.run.trim()] : []));
+		expect(all.filter((command) => !commands.includes(command))).toEqual(["bun scripts/check-api-edge.ts --tree api"]);
 	});
 
 	test(`${HEADS_PER_FILE} HEADs per file of the tree and ${LISTINGS_PER_RUN} listings of the whole bucket a run, at any size: linear in the files, at most 8 requests at once`, async () => {

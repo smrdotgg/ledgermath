@@ -23,6 +23,7 @@
   "boots": 3,
   "oldest_run_started_at": "2026-11-12T22:20:00.000000000Z",
   "newest_run_started_at": "2026-12-01T22:20:00.000000000Z",
+  "benchmark_url": "https://api.ledgermath.com/v1/benchmarks/http_get.json",
   "newest_runs": 12,
   "months": [
     {"month":"2026-11","url":"https://api.ledgermath.com/v1/series/b9f4e4d9ea21/2026-11.json","runs":2,"oldest_run_started_at":"2026-11-12T22:20:00.000000000Z","newest_run_started_at":"2026-11-13T04:20:00.000000000Z","sha256":"297388507b339abf10307eacd1f1a42e23463196926f364378faee7f37f8d5dd","bytes":8912},

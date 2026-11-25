@@ -1849,20 +1849,31 @@ A migrated benchmark is done only when **all** of these hold:
   (ADR-0030, rule 13). An agent with a fetch tool alone had to fetch all of
   `v1/series.json` (197 KB) to find one Series. Now `v1/index.json` lists each benchmark
   (`benchmarks.list`: name, address, Series, Runs, newest Run) and
-  `v1/benchmarks/<benchmark>.json` holds its rows of the list, byte for byte, so any Series'
-  figures are two requests from the table of contents (at most 256 KB, then 1 MB; 57.3 KB
-  and about 300 KB at most on 2026-11-25), or one with its id and
-  `series.series_file_url_template`. A benchmark's name goes into an address only when it is
-  1 to 64 characters of what the Run schema admits, and a row only when it takes at most
-  16,384 bytes as JSON with no white space; any other Series is in `v1/series.json` alone,
-  counted, and keeps its file, so no Run can stop a publish or swell the new files. Each
-  group of a Series file gains its counted and failed Runs and its oldest and newest start,
-  and each Series its boots: counts and starts of what the Derivations hold (each group's
-  list of Runs, each point's start, `counted` and boot), not new statistics. That field in
-  every Series file and row raises `layout` to 2: no month file changes, but the first run
-  after the merge needs `new_baseline`, started by hand. The edge must serve the new shapes
-  before any tree links them, and only a deploy made by hand teaches it, so the shapes came
-  first in a pull request of their own (`SERVED_AHEAD`), to be merged and deployed before the
-  one that writes the files; the README's "Deploy" gives the steps. The lookup tool and the
+  `v1/benchmarks/<benchmark>.json` holds its rows of the list, each row byte for byte, so a
+  Series its list holds is two requests from the table of contents (at most 256 KB, then
+  1 MB; 57.3 KB and about 300 KB at most on 2026-11-25), or one with its id and
+  `series.series_file_url_template`. Every benchmark whose name is 1 to 64 characters of what
+  the Run schema admits has its list, always, reached by name
+  (`benchmarks.benchmark_file_url_template`) and from each of its Series' files
+  (`benchmark_url`). **No total of the Runs can stop a publish**, which the verification
+  showed the first build could not promise (18 Series with a param of 14,500 characters,
+  1,100 Series, or 501 benchmarks, each from valid Runs, put a file over its ceiling for
+  good): a row is listed only when it takes at most 16,384 bytes, a list holds as many rows
+  as fit in 250,000 bytes in its order, and the table of contents names as many benchmarks
+  as fit in 16,000; the rest are counted and found through `v1/series.json` or by name, and
+  every Series keeps its file. Each group of a Series file gains its counted and failed Runs
+  and its oldest and newest start, and each Series its boots: counts and starts of what the
+  Derivations hold (each group's list of Runs, each point's start, `counted` and boot), not
+  new statistics; the published schemas leave these optional, so files and schemas of
+  layouts 1 and 2 agree both ways, and the check requires them. That field in every Series
+  file and row raises `layout` to 2: no month file changes, the first run after the merge
+  needs `new_baseline`, started by hand, and its gate still compares every month file
+  (`MONTH_FILES_WRITTEN_SO_SINCE_LAYOUT`). The edge must serve the new shapes before any tree
+  links them, and only a deploy made by hand teaches it, so the shapes came first in a pull
+  request of their own (#99, `SERVED_AHEAD`); and the `publish` job now asks the public edge
+  for one file of each kind, and every schema, before it uploads, stopping only on the edge's
+  own 404 (`scripts/check-api-edge.ts`). The README's "Deploy" gives the steps, the checks
+  after each, and why the change only goes forward once published. On the publication of
+  2026-11-25 the table of contents, re-cut, comes to 30,120 bytes. The lookup tool and the
   skill are unchanged and pass.
 - _(agents: append your entry here, one per merged benchmark)_

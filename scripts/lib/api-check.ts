@@ -83,18 +83,24 @@
  *   row per Series, in the order of benchmark, instance type, zone ID,
  *   params, build; and each row's url is the address of the file of its id,
  *   and agrees with that file on every field they share.
- * - Each benchmark's list holds the rows of that benchmark's Series that take
+ * - Each benchmark's list holds, of that benchmark's Series whose rows take
  *   at most 16,384 bytes written as JSON with no white space, in the list's
- *   order, each the row its Series file makes (so the list's, byte for byte),
- *   and counts the rest as left out; its count and newest Run are right.
+ *   order, as many as fit in 250,000 bytes (each row counted as its bytes and
+ *   6 more), each the row its Series file makes (so the list's, byte for
+ *   byte), and counts the rest as left out; its count and newest Run are
+ *   right. Each Series file links its benchmark's list, or gives null for a
+ *   benchmark of a name the address does not take.
  * - The table of contents lists exactly the price files and the schemas the
  *   tree holds, with the newest price file marked, counts the Series right,
- *   gives every address as the base and the file's path, gives the template
- *   of a Series file's address as exactly the base and
- *   /v1/series/{id}.json, gives each benchmark's list with its count of
- *   Series and of their Runs and its newest Run, counts the Series in no
- *   benchmark's list (a benchmark named otherwise, a row too long), and gives
- *   the docs as an absolute https address with a host.
+ *   gives every address as the base and the file's path, gives the templates
+ *   of a Series file's address and a benchmark's list's as exactly the base
+ *   and /v1/series/{id}.json and /v1/benchmarks/{benchmark}.json, gives, in
+ *   name order and as many as fit in 16,000 bytes, each benchmark's list with
+ *   its count of Series and of their Runs and its newest Run, counts the
+ *   benchmarks with a list and those it does not name, counts the Series in
+ *   no benchmark's list (a benchmark named otherwise, a row too long, a row
+ *   past its list's budget), and gives the docs as an absolute https address
+ *   with a host.
  * - The table of contents' recent_rounds holds, value for value, the newest
  *   rounds of boots and the boot summaries left out of them, as the
  *   checkout's boot summaries and the Derivations make them by the design
@@ -138,7 +144,7 @@ import Ajv2020, { type ValidateFunction } from "ajv/dist/2020";
 import { isServedKey } from "../../infra/runs/public-blobs";
 import type { DerivationsFile as RequestsFile } from "../../methods/requests/v1/output";
 import type { DerivationsFile as SeriesFile } from "../../methods/v1/output";
-import { LAYOUT, writerForm, writtenSchemaOf } from "./api";
+import { LAYOUT, MONTH_FILES_WRITTEN_SO_SINCE_LAYOUT, writerForm, writtenSchemaOf } from "./api";
 import { PRICE_FILE_PATH } from "./prices";
 import { parseStrictJson } from "./strict-json";
 
@@ -194,8 +200,17 @@ const SERIES_PATH = /^v1\/series\/([^/]+)\.json$/;
 const BENCHMARK_PATH = /^v1\/benchmarks\/([^/]+)\.json$/;
 /** By the design: a benchmark has a list of its own when its name is 1 to 64 characters, a lower-case letter, then lower-case letters, digits and underscores. */
 const BENCHMARK_NAME = /^[a-z][a-z0-9_]{0,63}$/;
-/** By the design: a Series is in its benchmark's list when its row takes at most this many bytes written as JSON with no white space. */
+/** By the design: a Series can be in its benchmark's list only when its row takes at most this many bytes written as JSON with no white space. */
 const ROW_BYTES = 16_384;
+/**
+ * By the design: a benchmark's list holds, of those, in its order, as many as fit in this many bytes, each row counted as its bytes as JSON with
+ * no white space and 6 more; the first that does not fit and every one after it are left out.
+ */
+const LIST_BYTES = 250_000;
+/** By the design: the table of contents' list of benchmarks holds, in name order, as many entries as fit in this many bytes, each counted the same way. */
+const BENCHMARKS_LISTED_BYTES = 16_000;
+/** The bytes a row or an entry is counted as against its budget: as JSON with no white space, and 6 more. */
+const budgeted = (value: unknown): number => new TextEncoder().encode(JSON.stringify(value)).length + 6;
 const MONTH_PATH = /^v1\/series\/([^/]+)\/([^/]+)\.json$/;
 const TREE_PRICE = /^v1\/prices\/([0-9]{4})-([0-9]{2})-([0-9]{2})\.json$/;
 const SCHEMA_PATH = /^v1\/schemas\/[^/]+\.schema\.json$/;
@@ -252,7 +267,7 @@ export const CEILINGS: ReadonlyArray<{ kind: string; path: RegExp; bytes: number
 		path: /^v1\/index\.json$/,
 		bytes: 100_000,
 		whenHit:
-			"it was 6.3 KB with 9 price files on 2026-11-19, and 23.6 KB with 14 on 2026-11-24, once it gave the newest rounds of boots (13.3 KB for 8 rounds of five boots, about 300 bytes a boot: it grows with the boots a round holds, not with time; the summaries left out are at most 8 listed, each with one of a fixed few sentences); 29.3 KB with 15 on 2026-11-25, once it listed each benchmark's list (2.4 KB for 14 benchmarks, about 170 bytes a benchmark and at most about 310, and 2.3 KB of words); each day's price file adds 124 bytes to its list, which brings it here about 19 months on; listing the price files by month, as the Series are, changes v1's shape (v2), so decide that with the maintainer; if the rounds grew, ask why a round holds so many boots before giving fewer; if the benchmarks did, the list of them is what to move to a file of its own",
+			"it was 6.3 KB with 9 price files on 2026-11-19, and 23.6 KB with 14 on 2026-11-24, once it gave the newest rounds of boots (13.3 KB for 8 rounds of five boots, about 300 bytes a boot: it grows with the boots a round holds, not with time; the summaries left out are at most 8 listed, each with one of a fixed few sentences); 30.1 KB with 15 on 2026-11-25, once it listed each benchmark's list (2.5 KB for 14 benchmarks, held to at most 16,000 bytes whatever the Runs hold, and 3 KB of words); each day's price file adds 124 bytes to its list, which brings it here about 19 months on; listing the price files by month, as the Series are, changes v1's shape (v2), so decide that with the maintainer; if the rounds grew, ask why a round holds so many boots before giving fewer",
 	},
 	{
 		kind: "the list of Series",
@@ -266,7 +281,7 @@ export const CEILINGS: ReadonlyArray<{ kind: string; path: RegExp; bytes: number
 		path: BENCHMARK_PATH,
 		bytes: 256_000,
 		whenHit:
-			"a row it lists takes at most 16,384 bytes, and took up to 830 bytes, or 2,527 for http_get with requests v1's pooled phases, on 2026-11-25, so this is about 100 Series of requests or 300 of the others; the largest list was http_get's, 57 KB for 25 Series, that day: the benchmark runs on more machine types or parameter sets than then, or its rows grew; splitting a benchmark's list (by instance type, say) changes what its address holds, a v2 change, so decide it with the maintainer",
+			"the build gives a list's rows at most 250,000 bytes (LIST_BYTES in scripts/lib/api.ts), leaving out and counting what does not fit, and its head takes a few hundred, so no Runs bring it here: the build, its budget or its base address changed; a row took up to 830 bytes, or 2,527 for http_get with requests v1's pooled phases, and the largest list was http_get's, 57 KB for 25 Series, on 2026-11-25; when a list leaves many Series out, splitting it (by instance type, say) changes what its address holds, a v2 change, so decide it with the maintainer",
 	},
 	{
 		kind: "a Series file",
@@ -728,8 +743,8 @@ export function checkApi(sources: CheckSources): CheckResult {
 						month_file_schema_url: address(schemaFile("series-month")),
 						// Not a file: the address of a Series' file with its id left out, which the Series files' own addresses fill in.
 						series_file_url_template: `${base}/v1/series/{id}.json`,
-						// Words, whose type the schema checks.
-						about: ofIndex("series").about,
+						// Words, which must be there (the published schema leaves them optional, for files written before layout 2).
+						about: typeof ofIndex("series").about === "string" ? ofIndex("series").about : "the words of where the Series are listed",
 					},
 					schemas: SCHEMAS.filter(({ name }) => held.has(schemaFile(name))).map(({ name, describes }) => ({ name, describes, url: address(schemaFile(name)) })),
 				},
@@ -1029,12 +1044,15 @@ export function checkApi(sources: CheckSources): CheckResult {
 				runs: derivation.runs.length,
 				boots: new Set(derivation.points.map((point) => point.boot)).size,
 				...(times === undefined ? {} : { oldest_run_started_at: times.oldest, newest_run_started_at: times.newest }),
+				// Its benchmark's list, which every benchmark of a name the address takes has: what reaches a list the table of contents does not name.
+				benchmark_url: typeof identity.benchmark === "string" && BENCHMARK_NAME.test(identity.benchmark) ? address(benchmarkFile(identity.benchmark)) : null,
 				newest_runs: NEWEST_RUNS,
 				months: monthEntries,
 			},
 			"its Derivations and the base make it",
 		);
 		for (const url of [file.schema_url, file.index, file.url]) link(path, url);
+		if (typeof file.benchmark_url === "string") link(path, file.benchmark_url);
 		// Its months are exactly the month files the tree holds for it.
 		const listed = (Array.isArray(file.months) ? file.months : []).filter(isObject);
 		for (const entry of listed) link(path, entry.url);
@@ -1224,7 +1242,21 @@ export function checkApi(sources: CheckSources): CheckResult {
 	let inNoBenchmarkList = unnamed;
 	for (const name of benchmarkNames) {
 		const all = [...(byBenchmark.get(name) ?? [])].sort(byListOrder);
-		const listed = all.filter((id) => (rowBytes(id) ?? 0) <= ROW_BYTES);
+		// Of the rows of at most ROW_BYTES, in order, as many as fit in LIST_BYTES; the first that does not, and every one after it, left out.
+		const listed: string[] = [];
+		let used = 0;
+		let full = false;
+		for (const id of all) {
+			if ((rowBytes(id) ?? 0) > ROW_BYTES) continue;
+			const row = rowOfSeries(id);
+			const bytes = row === undefined ? 0 : budgeted(row);
+			if (full || used + bytes > LIST_BYTES) {
+				full = true;
+				continue;
+			}
+			used += bytes;
+			listed.push(id);
+		}
 		const leftOut = all.length - listed.length;
 		inNoBenchmarkList += leftOut;
 		const newestListed = listed.map((id) => span.get(id)?.newest).filter((time): time is string => time !== undefined).sort(byText).at(-1) ?? null;
@@ -1246,7 +1278,7 @@ export function checkApi(sources: CheckSources): CheckResult {
 		const ofRows = rows.map((row) => String(row.id));
 		if (ofRows.join("\n") !== listed.join("\n")) {
 			problems.push(
-				`${path} lists the Series ${show(ofRows)}, not ${show(listed)}: the Series of benchmark ${name} whose rows take at most ${ROW_BYTES} bytes written as JSON with no white space, in the order of instance type, zone ID, params, build`,
+				`${path} lists the Series ${show(ofRows)}, not ${show(listed)}: of the Series of benchmark ${name} whose rows take at most ${ROW_BYTES} bytes written as JSON with no white space, in the order of instance type, zone ID, params, build, as many as fit in ${LIST_BYTES} bytes`,
 			);
 		}
 		for (const row of rows) {
@@ -1257,8 +1289,29 @@ export function checkApi(sources: CheckSources): CheckResult {
 		}
 	}
 	if (indexValue !== undefined) {
+		// In name order, as many entries as fit in BENCHMARKS_LISTED_BYTES; every benchmark keeps its list all the same.
+		const listedEntries: Json[] = [];
+		let listedSoFar = 0;
+		for (const entry of benchmarkEntries) {
+			if (listedSoFar + budgeted(entry) > BENCHMARKS_LISTED_BYTES) break;
+			listedSoFar += budgeted(entry);
+			listedEntries.push(entry);
+		}
 		const ofBenchmarks = isObject(indexValue.benchmarks) ? indexValue.benchmarks : {};
-		compare(`${INDEX}: benchmarks`, ofBenchmarks, { schema_url: address(schemaFile("benchmark")), count: benchmarkEntries.length, left_out: inNoBenchmarkList, list: benchmarkEntries }, "the tree and the Derivations make it");
+		compare(
+			`${INDEX}: benchmarks`,
+			ofBenchmarks,
+			{
+				schema_url: address(schemaFile("benchmark")),
+				benchmark_file_url_template: `${base}/v1/benchmarks/{benchmark}.json`,
+				count: benchmarkEntries.length,
+				unlisted: benchmarkEntries.length - listedEntries.length,
+				left_out: inNoBenchmarkList,
+				list: listedEntries,
+			},
+			"the tree and the Derivations make it",
+		);
+		if (typeof ofBenchmarks.about !== "string") problems.push(`${INDEX}: benchmarks.about is ${show(ofBenchmarks.about)}, not the words of what a benchmark's list holds`);
 		link(INDEX, ofBenchmarks.schema_url);
 		for (const entry of Array.isArray(ofBenchmarks.list) ? ofBenchmarks.list : []) if (isObject(entry)) link(INDEX, entry.url);
 	}
@@ -1767,6 +1820,8 @@ export interface StabilityResult {
 	none?: string;
 	/** Whether a human declared a new baseline (--allow-no-previous). */
 	newBaseline: boolean;
+	/** Whether the month files were compared with a previous tree of an earlier layout that writes them alike (under a new baseline). */
+	acrossLayouts?: boolean;
 	/** The two trees' layouts, as their tables of contents give them, when they could be read. */
 	layouts: { previous?: number | null; current?: number | null };
 	problems: string[];
@@ -1940,7 +1995,17 @@ export function checkStability(previous: string, tree: string, options: { newBas
 			}
 			result.published = { series: was.series.size, runs, monthFiles: was.monthFiles, seriesFilesWithPoints: was.seriesFilesWithPoints, unread: was.unread.length };
 		}
-		return result;
+		// The layout rose, and the new one writes month files as the previous tree's did (MONTH_FILES_WRITTEN_SO_SINCE_LAYOUT): its month files
+		// are still compared, strictly, when it is whole and of this base. The new baseline lets the rest of the tree change, not a month file.
+		const monthsAsBefore =
+			typeof prior !== "string" &&
+			prior.base === current.base &&
+			prior.layout !== null &&
+			current.layout !== null &&
+			prior.layout < current.layout &&
+			prior.layout >= MONTH_FILES_WRITTEN_SO_SINCE_LAYOUT;
+		if (!monthsAsBefore || wholeness(previous).length > 0) return result;
+		result.acrossLayouts = true;
 	}
 	const broken = wholeness(previous);
 	if (broken.length > 0) {
@@ -2223,6 +2288,11 @@ export function describeStability(result: StabilityResult, previous: string): st
 	const lines = [
 		`past months: compared with ${previous} (${layouts}): ${result.inBoth} month files in both, ${result.unchanged} the same byte for byte, ${result.explained.length} changed for a cause, ${result.added} new`,
 	];
+	if (result.acrossLayouts === true) {
+		lines.push(
+			`  a new baseline was declared by hand (--allow-no-previous) for the change of layout, which writes month files as the layout there did: only the other files were let change, and every month file was held to the four causes`,
+		);
+	}
 	for (const cause of ["a", "b", "c", "d"] as const) {
 		const files = result.explained.filter((file) => file.causes.some((one) => one.cause === cause));
 		if (files.length === 0) continue;
