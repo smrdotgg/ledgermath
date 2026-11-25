@@ -1572,4 +1572,19 @@ A migrated benchmark is done only when **all** of these hold:
   reached from the test, by `node:http`, and from a child. The whole suite ran with the
   guard on and found no other test that reached the network, so nothing opts in. The
   README's "Tests" says so.
+- **2026-11-25** — **The guard, after an independent check of #92.** A guarded `fetch`
+  followed a local server's redirect to a public host: it now follows each redirect itself
+  (`redirect: "manual"` underneath, up to 20, 303 and a POST's 301 or 302 becoming a GET)
+  and checks every destination first; a caller asking for `manual` or `error` is handed
+  to `fetch` unchanged. `[::ffff:127.0.0.1]` was refused because the URL parser spells it
+  `[::ffff:7f00:1]`; that spelling counts as this machine now. Names `/etc/hosts` may give
+  loopback (`ip6-localhost`) stay refused, so a test behaves alike on every machine. A
+  `Worker` is given the guard as a preload. `check-answer`'s helper returns stderr, and each
+  case that expects exit 2 asserts what was said, so a refusal (also exit 2) cannot pass
+  for a usage error. The guard's own test no longer times the refusal. The README lists
+  what is guarded (`fetch` and its redirects, `node:http`, `node:https`, `node:net`,
+  `node:tls`, `node:http2` through them, `Worker`, Bun children with the test's
+  environment), what is not (children without `BUN_OPTIONS`, programs that are not Bun,
+  `node:worker_threads`, `Bun.connect`, `WebSocket`, `node:dgram`, DNS lookups), and which
+  addresses are this machine.
 - _(agents: append your entry here, one per merged benchmark)_

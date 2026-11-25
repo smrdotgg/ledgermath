@@ -77,11 +77,24 @@ python3 scripts/check-scratch.py    # needs Docker
 
 The suite makes no request to any other machine: what it checks never depends on a
 service. `bun test` preloads `tests/no-network.ts` (`bunfig.toml`, and `site/bunfig.toml`
-for the website's tests), which makes `fetch`, `node:http`, `node:https`, `node:net` and
-`node:tls` refuse at once any host that is not this machine (loopback, or a Unix socket),
-with an error that says the test reached for the network; it also names itself as a
-preload in `BUN_OPTIONS`, so every Bun script a test starts refuses the same. A test gives
-the code it runs a directory, a server on `127.0.0.1`, or a fetch of its own instead.
+for the website's tests), which refuses any host that is not this machine, with an error
+that says the test reached for the network. A test gives the code it runs a directory, a
+server on `127.0.0.1`, or a fetch of its own instead. The guard catches a test's ordinary
+mistake, not every way out:
+
+- **Guarded:** `fetch`, and every redirect it would follow (a caller asking for
+  `redirect: "manual"` gets the redirect itself, as before); `node:http` and `node:https`,
+  however imported, the AWS SDK among their callers; `node:net` and `node:tls`, and
+  `node:http2`, which connects through them; a `Worker`
+  (`new Worker`), which is given the guard as a preload; and every Bun process a test
+  starts with its environment, through `BUN_OPTIONS`, which names the guard as a preload.
+- **Not guarded:** a child started with an environment of its own, without `BUN_OPTIONS`;
+  a program that is not Bun (Python, C, `curl`), which its test points at a local stand-in;
+  `node:worker_threads`; `Bun.connect`; `WebSocket`; `node:dgram` (UDP); and DNS lookups.
+- **This machine:** `localhost` and names ending in `.localhost`; `127.0.0.0/8`, also
+  mapped into IPv6 (`::ffff:127.0.0.1`); `::1`; `0.0.0.0` and `::`; and a Unix socket. Other
+  names `/etc/hosts` may give loopback, such as `ip6-localhost`, count as other machines, so
+  a test passes or fails alike on every machine.
 
 `.github/workflows/check.yml` runs the tests, then `scripts/check-scratch.py`: it builds
 every benchmark that `schedule.json` builds static, and runs each binary as the only file

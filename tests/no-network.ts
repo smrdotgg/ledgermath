@@ -2,20 +2,24 @@
  * The suite makes no request to any other machine. bunfig.toml (and
  * site/bunfig.toml) preload this file for `bun test`; it refuses, at once, any
  * request to a host that is not this machine:
- * - globalThis.fetch;
+ * - globalThis.fetch, and every redirect it would follow;
  * - node:http and node:https (and so the AWS SDK), at ClientRequest's write,
  *   end and flushHeaders, which every request passes through before Bun sends
  *   it, however the module was imported and whether the host is a name or an
  *   address (169.254.169.254, the instance metadata service, among them);
- * - net.Socket's connect, which node:net and node:tls connect through,
- * in the test process, and in every Bun process a test starts: BUN_OPTIONS
+ * - net.Socket's connect, which node:net, node:tls and node:http2 connect through,
+ * in the test process, in every Worker it starts (the Worker is given this
+ * file as a preload), and in every Bun process a test starts: BUN_OPTIONS
  * names this file as a preload, and a child started with the test's
- * environment inherits it. A child started with an environment of its own
- * (no BUN_OPTIONS) is not covered, and nor is a program that is not Bun's
- * (Python, C): those are given local stand-ins by their tests.
+ * environment inherits it. Not covered (README, "Tests"): a child started with
+ * an environment of its own (no BUN_OPTIONS), a program that is not Bun's
+ * (Python, C, curl), node:worker_threads, Bun.connect, WebSocket, node:dgram
+ * and DNS lookups.
  *
- * This machine is loopback (localhost, 127.0.0.0/8, ::1), the any-address
- * (0.0.0.0, ::), which reaches only this machine, and a Unix socket. Outside
+ * This machine is localhost and *.localhost, 127.0.0.0/8 (also mapped into
+ * IPv6), ::1, the any-address (0.0.0.0, ::), which reaches only this machine,
+ * and a Unix socket. Other names /etc/hosts may give loopback (ip6-localhost)
+ * are refused, so a test passes or fails alike on every machine. Outside
  * `bun test` nothing loads this file, so the tools behave as they always do.
  *
  * No test needs the network, so there is no way to let one through. A test
@@ -29,6 +33,8 @@ export function isThisMachine(host: string): boolean {
 	const name = host.toLowerCase().replace(/^\[(.*)\]$/, "$1").replace(/\.$/, "");
 	if (name === "localhost" || name.endsWith(".localhost")) return true;
 	if (name === "::1" || name === "0:0:0:0:0:0:0:1" || name === "::" || name === "0.0.0.0") return true;
+	// 127.0.0.0/8, also mapped into IPv6, as written (::ffff:127.0.0.1) or as a URL spells it (::ffff:7f00:1).
+	if (/^::ffff:7f[0-9a-f]{2}:[0-9a-f]{1,4}$/.test(name)) return true;
 	const v4 = name.replace(/^::ffff:/, "");
 	return /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(v4);
 }
@@ -55,20 +61,64 @@ if (scope[GUARDED] !== true) {
 	if (!options.includes(preload)) process.env.BUN_OPTIONS = `${options} ${preload}`.trim();
 
 	const realFetch = globalThis.fetch;
-	const guardedFetch = (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
-		const address = input instanceof Request ? input.url : String(input);
+	/** The refusal for an address, or null when it may be asked. */
+	const refuses = (address: string): Error | null => {
 		let url: URL;
 		try {
 			url = new URL(address);
 		} catch {
-			return realFetch(input, init);
+			return null;
 		}
-		if ((url.protocol === "http:" || url.protocol === "https:" || url.protocol === "ws:" || url.protocol === "wss:") && !isThisMachine(url.hostname)) {
-			return Promise.reject(refusal("fetch", address, url.hostname));
+		const web = url.protocol === "http:" || url.protocol === "https:" || url.protocol === "ws:" || url.protocol === "wss:";
+		return web && !isThisMachine(url.hostname) ? refusal("fetch", address, url.hostname) : null;
+	};
+	const guardedFetch = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+		let address = input instanceof Request ? input.url : String(input);
+		const refused = refuses(address);
+		if (refused !== null) throw refused;
+		const mode = init?.redirect ?? (input instanceof Request ? input.redirect : "follow");
+		// "manual" and "error" follow nothing: the caller gets the redirect, or its error, unchanged.
+		if (mode !== "follow") return realFetch(input, init);
+		// Otherwise each redirect is followed here, as fetch would, once its destination is checked.
+		let method = (init?.method ?? (input instanceof Request ? input.method : "GET")).toUpperCase();
+		let next: RequestInit = { ...init, redirect: "manual" };
+		let response = await realFetch(input, next);
+		for (let hops = 0; response.status >= 300 && response.status < 400 && response.headers.has("location"); hops++) {
+			if (hops === 20) throw new TypeError(`${address} redirected more than 20 times`);
+			const to = new URL(response.headers.get("location") as string, address).href;
+			const refusedTo = refuses(to);
+			response.body?.cancel().catch(() => undefined);
+			if (refusedTo !== null) throw refusedTo;
+			const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
+			if (response.status === 303 || ((response.status === 301 || response.status === 302) && method === "POST")) {
+				if (method !== "HEAD") method = "GET";
+				headers.delete("content-type");
+				headers.delete("content-length");
+				next = { ...next, method, headers, body: undefined };
+			} else {
+				next = { ...next, method, headers };
+			}
+			address = to;
+			response = await realFetch(address, next);
 		}
-		return realFetch(input, init);
+		if (address !== (input instanceof Request ? input.url : String(input))) {
+			Object.defineProperties(response, { url: { value: address }, redirected: { value: true } });
+		}
+		return response;
 	};
 	globalThis.fetch = Object.assign(guardedFetch, realFetch);
+
+	// A Worker is a separate global scope: it loads this file first too.
+	const RealWorker = globalThis.Worker;
+	if (RealWorker !== undefined) {
+		globalThis.Worker = class extends RealWorker {
+			constructor(url: string | URL, options?: WorkerOptions) {
+				const given = (options as { preload?: string | string[] } | undefined)?.preload;
+				const preload = [...(given === undefined ? [] : Array.isArray(given) ? given : [given]), import.meta.path];
+				super(url, { ...options, preload } as WorkerOptions);
+			}
+		} as typeof Worker;
+	}
 
 	// Bun's node:http sends a request from native code, past fetch and net; each passes these first.
 	type Outgoing = http.ClientRequest & { host?: string; protocol?: string };
