@@ -13,6 +13,7 @@ import {
 	BENCHMARKS,
 	buildApi,
 	DEFAULT_BASE,
+	LIST_UPDATES,
 	monthPath,
 	readApiSchemas,
 	readBootFiles,
@@ -383,7 +384,29 @@ describe("a benchmark's list of Series", () => {
 			.filter((line) => line.startsWith('    {"id":'))
 			.map((line) => line.trim().replace(/,$/, ""));
 
-	test("holds its benchmark's rows of the list, each row byte for byte the list's and in its order, under the list's head; the table of contents gives each with its counts, and every Series file links its benchmark's list", () => {
+	test("tells a reader, word for word in the table of contents, the schema benchmark, ADR-0030 and the README, that files of different updates can differ, and what to do", () => {
+		const flat = (value: string): string => value.replace(/\s+/g, " ");
+		const rule = flat(LIST_UPDATES);
+		// Each file is whole; fetched together they can be of different updates, for the causes the month files' rule gives; and what a reader does.
+		expect(rule).toContain("The table of contents, a benchmark's list, the list of every Series and a Series' file are each whole, but fetched together they can be of different updates of the files:");
+		expect(rule).toContain("a cache may hold one of them from before another changed, and an update that stopped part way leaves them so until the next one.");
+		expect(rule).toContain("Their counts and rows can then differ");
+		expect(rule).toContain("where two of them differ, it fetches them again later");
+		// Where a reader of benchmarks meets it: right after the promise of the same rows, which says when it holds.
+		const index = json(tree, "v1/index.json");
+		expect(index.benchmarks.about).toContain(`in files of one update, each row is the same, byte for byte, in the same order. ${LIST_UPDATES} `);
+		expect(index.benchmarks.about.indexOf(LIST_UPDATES)).toBeLessThan(index.benchmarks.about.indexOf("Every benchmark whose name"));
+		const schema = (name: string): Json => JSON.parse(readFileSync(join(ROOT, "schemas", "api", "v1", `${name}.schema.json`), "utf8"));
+		expect(schema("benchmark").description).toContain(`and in files of one update the same, value for value and byte for byte, in the same order;`);
+		expect(schema("benchmark").description).toContain(LIST_UPDATES);
+		expect(schema("series-list").description).toContain("byte for byte as they are here when both files are of one update");
+		// No published words promise the same rows without saying when.
+		for (const name of ["index", "series-list", "benchmark"]) expect([name, JSON.stringify(schema(name))]).not.toEqual([name, expect.stringMatching(/value for value and byte for byte, in the same order, by the same definition|byte for byte as they are here, so/)]);
+		expect(flat(readFileSync(join(ROOT, "docs", "adr", "0030-the-data-api-is-static-files-cut-from-the-derivations.md"), "utf8"))).toContain(rule);
+		expect(flat(readFileSync(join(ROOT, "README.md"), "utf8"))).toContain(rule);
+	});
+
+	test("holds its benchmark's rows of the list, each row byte for byte the list's and in its order, under the list's head; the table of contents gives each with its counts, and a row's name reaches its list at the template's address", () => {
 		const index = json(tree, "v1/index.json");
 		const list = json(tree, "v1/series.json");
 		expect(index.benchmarks.schema_url).toBe(`${DEFAULT_BASE}/v1/schemas/benchmark.schema.json`);

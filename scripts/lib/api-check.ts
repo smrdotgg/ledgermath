@@ -268,7 +268,7 @@ const POINTS_SHOWN = 10;
  * and raised each of their ceilings by the most those fields can add, so that
  * no tree the layout-1 check accepted is refused for its size by the change
  * (tests/api-ceilings.test.ts derives each bound from the writer): the table
- * of contents gains at most 19,228 bytes (100,000 to 120,000); a row of the
+ * of contents gains at most 19,851 bytes (100,000 to 120,000); a row of the
  * list at most 25 bytes, against the 484 a layout-1 row takes at least as the
  * list writes it, so the list at most 4.9% (1,000,000 to 1,050,000); a group
  * of a Series file at most 177 bytes, against the 377 a layout-1 group takes
@@ -283,7 +283,7 @@ export const CEILINGS: ReadonlyArray<{ kind: string; path: RegExp; bytes: number
 		path: /^v1\/index\.json$/,
 		bytes: 120_000,
 		whenHit:
-			"it was 6.3 KB with 9 price files on 2026-11-19, and 23.6 KB with 14 on 2026-11-24, once it gave the newest rounds of boots (13.3 KB for 8 rounds of five boots, about 300 bytes a boot: it grows with the boots a round holds, not with time; the summaries left out are at most 8 listed, each with one of a fixed few sentences); 30.1 KB with 15 on 2026-11-25, once it listed each benchmark's list (2.5 KB for 14 benchmarks, held to at most 16,000 bytes whatever the Runs hold, and 3 KB of words), when this ceiling rose from 100,000 by the 19,228 bytes layout 2 can add at most; each day's price file adds 124 bytes to its list, which brings it here about two years on; listing the price files by month, as the Series are, changes v1's shape (v2), so decide that with the maintainer; if the rounds grew, ask why a round holds so many boots before giving fewer",
+			"it was 6.3 KB with 9 price files on 2026-11-19, and 23.6 KB with 14 on 2026-11-24, once it gave the newest rounds of boots (13.3 KB for 8 rounds of five boots, about 300 bytes a boot: it grows with the boots a round holds, not with time; the summaries left out are at most 8 listed, each with one of a fixed few sentences); 30.7 KB with 15 on 2026-11-25, once it listed each benchmark's list (2.5 KB for 14 benchmarks, held to at most 16,000 bytes whatever the Runs hold, and 3.6 KB of words), when this ceiling rose from 100,000 by the 19,851 bytes layout 2 can add at most; each day's price file adds 124 bytes to its list, which brings it here about two years on; listing the price files by month, as the Series are, changes v1's shape (v2), so decide that with the maintainer; if the rounds grew, ask why a round holds so many boots before giving fewer",
 	},
 	{
 		kind: "the list of Series",

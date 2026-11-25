@@ -97,7 +97,7 @@ describe("each ceiling layout 2 raised rose by the most layout 2 can add, derive
 		const schema = `    {"name":"benchmark","describes":"v1/benchmarks/<benchmark>.json","url":"${DEFAULT_BASE}/v1/schemas/benchmark.schema.json"},\n`.length;
 		const words = bytes(VERSIONING) + bytes(FIGURES) - LAYOUT_1_WORDS;
 		const added = apiJson(after, shapes.index).length - apiJson(before, shapes.index).length + schema + words;
-		expect(added).toBe(19_228);
+		expect(added).toBe(19_851);
 		const bound = LAYOUT_1.index + added;
 		expect([ceiling("the table of contents") >= bound, ceiling("the table of contents") - bound < 2_000]).toEqual([true, true]);
 	});

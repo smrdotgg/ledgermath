@@ -77,7 +77,7 @@
       "type": "object",
       "required": ["about", "schema_url", "benchmark_file_url_template", "count", "unlisted", "left_out", "list"],
       "properties": {
-        "about": { "description": "What a benchmark's list holds, which benchmarks and Series have none, which benchmarks list names, and what each entry of list gives, in words.", "type": "string" },
+        "about": { "description": "What a benchmark's list holds, which benchmarks and Series have none, which benchmarks list names, what each entry of list gives, and what a reader does when the files it fetched are of different updates, in words.", "type": "string" },
         "schema_url": { "description": "The schema of a benchmark's list, v1/benchmarks/<benchmark>.json.", "$ref": "#/$defs/url" },
         "benchmark_file_url_template": {
           "description": "A benchmark's list's address: replace {benchmark} with the benchmark's name, as a row (benchmark) gives it. Every benchmark whose name is 1 to 64 characters, a lower-case letter, then lower-case letters, digits and underscores, has its list, whether list names it or not; so a reader holding the name, which every row and every Series' file gives (benchmark), reaches the list.",

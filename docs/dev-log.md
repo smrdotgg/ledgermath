@@ -1877,12 +1877,15 @@ A migrated benchmark is done only when **all** of these hold:
   (`benchmarks.list`: name, address, Series, Runs, newest Run) and
   `v1/benchmarks/<benchmark>.json` holds its rows of the list, each row byte for byte, so a
   Series its list holds is two requests from the table of contents (at most 256 KB, then
-  1 MB; 57.3 KB and about 300 KB at most on 2026-11-25), or one with its id and
+  1.47 MB; 57.3 KB and about 300 KB at most on 2026-11-25), or one with its id and
   `series.series_file_url_template`. Every benchmark whose name is 1 to 64 characters of what
   the Run schema admits has its list, always, reached by the name every row gives, at
   `benchmarks.benchmark_file_url_template`; no file but the table of contents links a list,
   and the lists go up in a phase of their own before the list whose rows name them, so an
-  upload stopped anywhere leaves no reachable link hanging (a test stops it every way).
+  upload stopped anywhere leaves no reachable link hanging (a test stops it every way). It
+  can leave the files a reader reaches of different updates, their counts and rows
+  differing, so `benchmarks.about` gives the reader's rule for that, as `months` does for a
+  month file and its Series file: each file is true of its own update; fetch again later.
   **No total of the Runs can stop a publish**, which the verification
   showed the first build could not promise (18 Series with a param of 14,500 characters,
   1,100 Series, or 501 benchmarks, each from valid Runs, put a file over its ceiling for
@@ -1906,6 +1909,6 @@ A migrated benchmark is done only when **all** of these hold:
   for one file of each kind, and every schema, before it uploads, stopping only on the edge's
   own 404 (`scripts/check-api-edge.ts`). The README's "Deploy" gives the steps, the checks
   after each, and why the change only goes forward once published. On the publication of
-  2026-11-25 the table of contents, re-cut, comes to 30,120 bytes. The lookup tool and the
+  2026-11-25 the table of contents, re-cut, comes to 30,745 bytes. The lookup tool and the
   skill are unchanged and pass.
 - _(agents: append your entry here, one per merged benchmark)_

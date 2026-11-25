@@ -5,7 +5,7 @@
  *
  *     v1/index.json                    the table of contents, and the newest rounds of boots
  *     v1/series.json                   one row per Series, and each Method's own words
- *     v1/benchmarks/<benchmark>.json   one benchmark's rows of the list, byte for byte
+ *     v1/benchmarks/<benchmark>.json   one benchmark's rows of the list, byte for byte in files of one update
  *     v1/series/<id>.json              one Series: each Method's summary, the newest Runs' points, its months
  *     v1/series/<id>/<yyyy-mm>.json    one month of a Series: every point of its Runs that started that month
  *     v1/prices/<yyyy-mm-dd>.json      that day's price file, byte for byte
@@ -320,10 +320,24 @@ export const SERIES_FILES =
 	"the first of the sha256 of its key (benchmark, params, build, instance type, zone ID) as canonical JSON: a row gives it (id), as do the Series' file and a citation of the Series. " +
 	"A reader who holds an id and nothing else gets the Series' file at series_file_url_template, {id} replaced by the id. " +
 	"A Series' file gives the address of each of its month files, so no other address need be built.";
+/**
+ * When the table of contents, a benchmark's list, the list of every Series and
+ * a Series' file disagree, and what a reader does about it, in the API's own
+ * words: stated, word for word, in v1/index.json (benchmarks.about), the
+ * schema benchmark, ADR-0030 and the README. The upload writes them in
+ * phases, so a stopped upload leaves them of different updates until one
+ * succeeds (the README, "The API bucket"); each stays whole.
+ */
+export const LIST_UPDATES =
+	"The table of contents, a benchmark's list, the list of every Series and a Series' file are each whole, but fetched together they can be of different updates of the files: " +
+	"an update writes them one after another, a cache may hold one of them from before another changed, and an update that stopped part way leaves them so until the next one. " +
+	"Their counts and rows can then differ: one may hold a Series, or count a Run, that another does not. " +
+	"So a reader takes each file as true of its own update; where two of them differ, it fetches them again later, and they agree once both are of one update.";
 /** What a benchmark's list of Series holds, and what is left out of every one, in the API's own words: v1/index.json's benchmarks.about. */
 export const BENCHMARKS =
 	"Each benchmark's Series are listed in a file of their own, v1/benchmarks/<benchmark>.json: rows of the list of every Series, v1/series.json, " +
-	"each the same row, byte for byte, in the same order, under a head like the list's (count, newest_run_started_at) with the benchmark's name and left_out. " +
+	"under a head like the list's (count, newest_run_started_at) with the benchmark's name and left_out; in files of one update, each row is the same, byte for byte, in the same order. " +
+	`${LIST_UPDATES} ` +
 	`Every benchmark whose name is 1 to ${BENCHMARK_NAME_CHARACTERS} characters, a lower-case letter, then lower-case letters, digits and underscores, has its list, always; ` +
 	"its address is benchmark_file_url_template with {benchmark} replaced by the name, which every row and every Series' file gives (benchmark). " +
 	"The Series of a benchmark named otherwise are in v1/series.json alone. " +
