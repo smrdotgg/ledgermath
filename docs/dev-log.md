@@ -1779,6 +1779,35 @@ A migrated benchmark is done only when **all** of these hold:
   `bun run check:browser`, in light and dark. Not deployed to production by hand: once
   merged it reaches ledgermath.com with the next rebuild after a publish of the API (the
   `runs` workflow's `site` job builds from main).
+- **2026-11-25** — **The repository is public, and every job runs on GitHub's hosted
+  runner.** The maintainer gave the word on #47. The repository variable
+  `LEDGERMATH_RUNNER` was deleted, the self-hosted runner on the development machine
+  (there since 2026-11-24, when the account ran out of free Actions minutes) was stopped
+  and removed, `smrdotgg/ledgermath` was made public, and all four workflows (`check`,
+  `prices`, `runs`, `site`) were enabled; they run on hosted runners, free for a public
+  repository. `smrdotgg/ledgermath-runs` is made public once its README and licence are
+  copied there. **What this change does**: every job of every workflow says exactly
+  `runs-on: ubuntu-24.04`, and `tests/workflow-runners.test.ts` now holds every job to that
+  plain string, because a public repository must never route a job to a self-hosted runner,
+  where a stranger's pull request could run. It refuses, each shown on a made-up workflow, an
+  expression, a list, an object (`group:` or `labels:`), the word `self-hosted`, any other
+  label, and a job with no `runs-on` that is not a call to a reusable workflow in
+  `.github/workflows/` (one kept elsewhere is refused too, since the test cannot see where
+  its jobs run). No step changed: Bun's package cache stays in `RUNNER_TEMP`, which was
+  needed on the runner that kept its machine and is harmless on a fresh one; only the
+  comments that spoke of that runner changed. The README's "Where the workflows run" now
+  says where the jobs run and the rule, and drops the steps before going public; "The
+  website" and "Where it is deployed" no longer say `site.yml` is disabled, and say both
+  ways the page reaches production (the `site` job after every publish, `deploy-production`
+  after a push to main that touches `site/` or `site.yml`) and that the one group keeps them
+  apart. ADR-0029, ADR-0030 and ADR-0035 each gain a dated note that the condition they
+  waited on ended on 2026-11-25, and what holds now. The Runs repository's README
+  (`docs/runs-repository/`) gives the blobs' address
+  (`https://api.ledgermath.com/blobs/sha256/<hex>`) and the page's
+  (`https://ledgermath.com/`) in place of its two placeholders, says which workflow adds
+  which files, where the Runs are also served, and where the Methods and the data API are;
+  `tests/licences.test.ts` fails while either file there holds "Placeholder" or "not decided
+  yet".
 - **2026-11-25** — **The home page credits Napkin Math.** The maintainer asked for a credit
   and chose where from four placements: a third line under the headline, "Inspired by Simon
   Eskildsen's Napkin Math", grey, with the name a link to

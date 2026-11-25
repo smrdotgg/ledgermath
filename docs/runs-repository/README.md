@@ -13,14 +13,25 @@ and the schemas they follow, are in the source repository,
 
 | Path | What it is |
 |---|---|
-| `runs/<yyyy>/<mm>/<dd>/<id>.json` | A Run: one execution of one benchmark binary, under the UTC date it started; `<id>` is the Run's id. Schema: `schemas/run.schema.json` |
+| `runs/<yyyy>/<mm>/<dd>/<id>.json` | A Run: one execution of one benchmark binary, under the UTC date it started; `<id>` is the Run's id. Schema: the source repository's `schemas/run.schema.json` |
 | `boots/<yyyy>/<mm>/<dd>/<boot>.json` | A boot summary: every execution one boot of a box was scheduled to make, and what became of it, under the UTC date the boot's runner started; `<boot>` is the kernel's boot id |
-| `prices/<yyyy>/<mm>/<dd>/aws.json` | AWS's published price-list records for what is measured, as fetched that UTC day. Schema: `schemas/prices.schema.json` |
+| `prices/<yyyy>/<mm>/<dd>/aws.json` | AWS's published price-list records for what is measured, as fetched that UTC day. Schema: the source repository's `schemas/prices.schema.json` |
 
-Files are only added, never edited or removed. The source repository's workflows copy the
-Runs and boot summaries here byte for byte from the bucket the boxes upload to, and make the
-price files from AWS's price lists. A correction is a new version of a Method in the source
-repository, never a changed file.
+Besides those three directories, the repository holds this README and the licence,
+[`LICENSE`](LICENSE).
+
+Files are only added, never edited or removed. The source repository's workflows add them:
+`runs.yml`, four times a day, copies the Runs and boot summaries here byte for byte from the
+bucket the boxes upload to, and `prices.yml`, once a day, makes the price file from AWS's
+price lists. The same Run files and boot summaries are also served, at the same paths, under
+`https://api.ledgermath.com/` (for example
+`https://api.ledgermath.com/runs/<yyyy>/<mm>/<dd>/<id>.json`).
+
+Series and their figures are worked out from the Runs by Methods, each named and versioned,
+whose definitions and code are in the source repository (`methods/README.md`). A correction
+is a new version of a Method, never a changed file here. What
+the Methods derive is published as the data API, a tree of static JSON files that starts at
+<https://api.ledgermath.com/v1/index.json>, and charted at <https://ledgermath.com/>.
 
 ## Licence
 
@@ -53,10 +64,9 @@ Run files behind it; for a price, it names the file, SKU and rate code. Its READ
   fetched, from where, which rule selected each record) is under CC BY 4.0 like the Runs.
 - **Blobs.** A Run names other files by the SHA-256 of their bytes (`sha256:<hex>`): its
   environment dumps, its stdout and stderr, the binary that ran, and the source archive the
-  binary was built from. They are not in this repository but in a bucket, each at
-  `blobs/sha256/<hex>` under:
-
-  **[Placeholder: the bucket's public address, not decided yet.]**
+  binary was built from. They are not in this repository. Each is served at
+  `https://api.ledgermath.com/blobs/sha256/<hex>`, where `<hex>` is the SHA-256 of its
+  bytes in 64 lowercase hex digits; check the bytes against it.
 
   The dumps, stdout and stderr are published with the Runs, under CC BY 4.0, except what the
   dumps reproduce of AWS's records (what the instance metadata service and the EC2 API
@@ -73,8 +83,9 @@ Run files behind it; for a price, it names the file, SKU and rate code. Its READ
     start-up files of glibc and GCC and one object of GCC's runtime library.
   - AWS-LC's source archive is AWS-LC's own, under the several licences its `LICENSE` file
     states.
-  - The GNU C Library's source package, the one the binaries were built against, is in the
-    same bucket, at `blobs/sha256/5c14047c719844c616626f2c139ae5b4fb19023762407565e824186e5812f9cf`
+  - The GNU C Library's source package, the one the binaries were built against, is served
+    the same way, at
+    `https://api.ledgermath.com/blobs/sha256/5c14047c719844c616626f2c139ae5b4fb19023762407565e824186e5812f9cf`
     (`glibc-2.34-231.amzn2023.0.4.src.rpm`).
 
   `THIRD-PARTY-NOTICES.md` in the source repository lists all of these, with their licences,
@@ -87,6 +98,4 @@ The numbers are measurements, published as they were recorded, failed and interr
 executions included. They describe the machines and software as they were when measured,
 and may be wrong. They come with no warranty of any kind (section 5 of the licence).
 
-The page that charts them:
-
-**[Placeholder: the page's address, not decided yet.]**
+The page that charts them: <https://ledgermath.com/>.

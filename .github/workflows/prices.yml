@@ -34,7 +34,7 @@ concurrency:
 jobs:
   prices:
     name: fetch the day's prices and add them to the Runs repository
-    runs-on: ${{ vars.LEDGERMATH_RUNNER || 'ubuntu-24.04' }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -44,8 +44,7 @@ jobs:
           bun-version: 1.4.4
 
       # Bun's package cache in the job's temporary directory, which the runner
-      # empties for every job, so nothing piles up on a runner that persists
-      # (README, "Where the workflows run").
+      # empties for every job.
       - run: bun install --frozen-lockfile
         env:
           BUN_INSTALL_CACHE_DIR: ${{ runner.temp }}/bun-cache

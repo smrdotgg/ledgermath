@@ -40,6 +40,16 @@ describe("licences", () => {
 		expect(sha256("docs/runs-repository/LICENSE")).toBe(CC_BY_4_0_SHA256);
 	});
 
+	// Both files are copied into the public Runs repository as they are here, so
+	// neither may still wait on a decision.
+	test("the Runs repository's README and LICENSE hold no placeholder and nothing 'not decided yet'", () => {
+		for (const path of ["docs/runs-repository/README.md", "docs/runs-repository/LICENSE"]) {
+			const text = read(path).toString("utf8");
+			expect({ path, placeholder: /placeholder/i.test(text) }).toEqual({ path, placeholder: false });
+			expect({ path, undecided: /not\s+decided\s+yet/i.test(text) }).toEqual({ path, undecided: false });
+		}
+	});
+
 	test("glibc's COPYING.LIB and LICENSES are glibc 2.34's, byte for byte", () => {
 		expect(sha256("third-party/glibc-2.34/COPYING.LIB")).toBe(GLIBC_2_34_COPYING_LIB_SHA256);
 		expect(sha256("third-party/glibc-2.34/LICENSES")).toBe(GLIBC_2_34_LICENSES_SHA256);
