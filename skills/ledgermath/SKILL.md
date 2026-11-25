@@ -30,7 +30,7 @@ another path, use that.
 
 | Command | Answers |
 |---|---|
-| `about` | What the data hold: benchmarks, instance types, the price files and their dates. Run it first. |
+| `about` | What the data hold: benchmarks, instance types, the price files and their dates, and when the newest round of boots started and what it held (how fresh the data are). Run it first. |
 | `series [WORD...]` | The Series matching every word: `series memory_read c6i.8xlarge`, `series disk instance_store` |
 | `show <id> [--runs N\|all]` | One Series: p5, p50, p95 with citations, what it measures, how many Runs, its groups, its Runs; for a Series of requests, each phase's percentiles across requests too |
 | `prices WORD...` | Prices matching every word: `prices c6i.8xlarge`, `prices transfer`, `prices GET`, `prices gp3` |

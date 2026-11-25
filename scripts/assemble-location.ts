@@ -12,7 +12,8 @@
  *   --out DIR    a new or empty directory
  *
  * OUT gets v1/ byte for byte, and beside it every Run file and boot summary
- * the tree links, copied from the clone: the layout the tools read, as
+ * the tree links (from its points, and from its table of contents' newest
+ * rounds of boots), copied from the clone: the layout the tools read, as
  * https://api.ledgermath.com will serve it. It is read the way the tools read
  * it (scripts/lib/ledger-data.ts): every file the table of contents lists must
  * be there (each price file read as prices reads it, each schema JSON), every
@@ -82,6 +83,11 @@ async function main(): Promise<void> {
 	for (const method of [list.methods.series_v1, list.methods.requests_v1]) {
 		for (const run of method?.unreadable ?? []) if (!evidence.has(linked(run.evidence))) evidence.set(linked(run.evidence), run.sha256);
 	}
+	// The boot summaries the table of contents links: each boot of its newest rounds (a boot that left no Run included) and each summary it lists as
+	// in no round with an address. A table of contents written before the rounds were links none.
+	const rounds = data.index.recent_rounds;
+	for (const round of rounds?.rounds ?? []) for (const boot of round.by_boot) boots.add(linked(boot.boot_summary));
+	for (const left of rounds?.left_out?.summaries ?? []) if (left.boot_summary !== null) boots.add(linked(left.boot_summary));
 
 	const problems: string[] = [];
 	// Every other file the table of contents lists: each price file, read as prices reads it, and each schema.

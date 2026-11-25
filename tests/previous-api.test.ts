@@ -13,7 +13,7 @@ import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, wr
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
-import { apiJson, buildApi, DEFAULT_BASE, readApiSchemas, readBootSummaries, readPriceFiles } from "../scripts/lib/api";
+import { apiJson, buildApi, DEFAULT_BASE, readApiSchemas, readBootFiles, readBootSummaries, readPriceFiles } from "../scripts/lib/api";
 import { CouldNotFetch, fetchPrevious, type Gh, type GhResult, RUNS_SEARCHED } from "../scripts/previous-api";
 import { makeApiFixture } from "./api-fixtures";
 
@@ -48,6 +48,7 @@ beforeAll(async () => {
 		requests: fixture.requests,
 		prices: readPriceFiles(fixture.runs),
 		boots: readBootSummaries(fixture.runs),
+		bootFiles: readBootFiles(fixture.runs),
 		schemas: readApiSchemas(),
 	};
 	tree = writeTree(buildApi(sources));

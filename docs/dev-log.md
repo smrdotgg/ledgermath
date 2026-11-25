@@ -1544,6 +1544,29 @@ A migrated benchmark is done only when **all** of these hold:
   CORS, the API bucket none), so the readers' note no longer says the `ETag` can never be
   read across origins. "Data for a trial" and the layout table no longer say the API is not
   served. Documentation only: no code, test or infrastructure changed.
+- **2026-11-24** — **The data API says what was measured most recently.** `v1/index.json`
+  gains `recent_rounds`: the newest 8 rounds of boots, newest first, each with its first
+  boot's start, its boots and their instance types, the Runs they left, how many are failed
+  and in no Series, failed builds and executions not run, in all and by boot with each
+  summary's address (ADR-0030, rule 12; "Round" in `CONTEXT.md`). The home page's "Latest
+  runs" reads it. **A round comes from the boot summaries alone**: nothing a boot records
+  says the schedule started it (the scheduled time stays in the launch's payload and client
+  token), so a boot starts a new round when it started more than 40 minutes after the boot
+  before it. The first proposal, more than 60 minutes after the round's first boot, broke the
+  round of 2026-11-11 22:11 on the real data: the two boots started by hand at 21:23 took its
+  first two scheduled boots. With the 40-minute gap, the 274 boot summaries of 2026-11-10 to
+  24 give 59 rounds: every scheduled round its five boots (the four before the newest, 187
+  Runs and 0 failed each), the boots by hand rounds of their own, and the newest round, cut
+  at 22:43, two boots.
+  **Failed** is the deciding Method's: requests v1 for a Series of requests (so an exit 4 is
+  not failed), series v1 for any other. **`layout` stays 1 and no new baseline is needed**:
+  the trees before and after, built from the same inputs, differ in `v1/index.json` and its
+  schema alone, and `check-api.ts --previous` passed against the scheduled run's tree of
+  22:43 UTC (187 month files, all the same) and `main`'s golden tree, without
+  `--allow-no-previous`. The build reads every boot summary and refuses one it cannot tell a
+  round from; the check works the rounds out from the checkout itself. `lookup.ts about`
+  prints the newest round on one line, and nothing of it from an older tree. GitHub Actions
+  is off for the repository, so the checks of `check.yml` ran on the dev box.
 - **2026-11-25** — **Design v9 is the home page of `site/`, built from a published tree.**
   The placeholder is gone. v9's page, document, styles, art, dots and font come from
   `home-variations` (`44078e4`) unchanged, with the data module every design used; the
@@ -1655,6 +1678,50 @@ A migrated benchmark is done only when **all** of these hold:
   Blob's stream and refuses them for other streams ("cannot be replayed"), and from outside
   the two look alike. Bun follows a 303 for any stream, and so does the guard. The guard is
   a `Worker`'s first preload. The README's "Tests" says all of this.
+- **2026-11-25** — **No boot summary stops a publish** (the verification of #91). As first
+  built, the rounds refused a summary they could not be told from, so one summary holding
+  `{`, never to be edited, would have stopped every later publish. Now it is left out of
+  the rounds with one of a fixed few reasons, and `recent_rounds.left_out` counts those left
+  out, of every day, and lists the newest 8 by path (bounded, whatever a file holds). Left
+  out besides: a summary at an address the edge does not serve (by `isServedKey`, so
+  `unknown.json`, which the table of contents had linked), every summary of a boot two
+  name, one listing a Run of another boot, and those listing one Run, each over every day.
+  Two older ways a recorded file stopped publishing, on `main` too, are gone: the build
+  stopped on two files of one boot's name (two `unknown.json`), and the check failed on a
+  boot whose id could not be read and that left a Run (it expected the point to link
+  `unknown.json`) and on a point whose boot's summary cannot be read; both now link a point
+  to the first, in path order, of the files named by its boot whose own `boot` says so.
+  `assemble-location.ts` copies the summaries the table of contents links (a boot that left
+  no Run had been dropped). `about` says any round shown may change, and begins with the
+  rule and the count, which the check holds word for word. Real data: 187 month files the
+  same byte for byte, no new baseline.
+- **2026-11-25** — **Nothing added to the Runs data changes a published link** (a second
+  verification of #91). Linking a point to the first, in path order, of the files named by
+  its boot let a real summary copied to an earlier path take 37 month files' links. Now a
+  point links, of the files a round can read on their own (served, at the path their own
+  contents give, readable, an instance type of at most 64 characters), the one of its boot
+  that started first, and never an unserved address; a copy elsewhere is left out ("its
+  path is not the one its own contents give"), a later second summary too. The one file
+  that can still change a link is a second summary at its own path claiming an earlier
+  start; no rule without history tells it from the first, so it is listed and the gate
+  refuses the change. The build and the check read regular files only (a symbolic link
+  had been followed by the check). What summaries write into the table of contents is
+  bounded (instance type 64, listed path 120, 12 boots listed a round): about 48 KB at
+  most. `tests/api-additions.test.ts` adds 41 kinds of file alone and 66 pairs; 51 of its
+  108 tests fail on `3632aba`, the verifier's four cases among them. Real data: 187 month
+  files the same, and the 2026-11-11 copy at an earlier path changes none.
+- **2026-11-25** — **Boot summaries' names read as bytes, and their bounds in bytes** (a
+  third verification of #91). A file under `boots/` whose name is not UTF-8 stopped the
+  build: the name was decoded, then opened by the text. Both the build and the check now
+  list files by the bytes of their names, open only one at a served address, and write a
+  path with each byte outside printable ASCII, and `%`, `"`, `\`, as `%XX`. An instance
+  type of 64 characters JSON writes as six bytes each put the table of contents over its
+  ceiling: an instance type must now be 1 to 64 letters, digits, dots, hyphens or
+  underscores. A listed path over 120 characters keeps 16 hex digits of the SHA-256 of
+  the whole, so eight paths cut alike stay eight. At every bound at once the rounds and
+  the summaries left out take 48,297 bytes as written. ADR-0030 and the README say what
+  the linking rule implies (a summary under a day not its own is not linked; a rewritten
+  one loses its link; the open case needs only the runner run twice by hand).
 - **2026-11-25** — **The home page is rebuilt and redeployed after every publish
   (ADR-0035).** The `runs` workflow has a third job, `site`. After `publish` succeeds, and
   on main only, it checks out main, builds the site from the run's artifact `api` (the bytes

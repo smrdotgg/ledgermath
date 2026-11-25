@@ -13,13 +13,14 @@ import {
 	DEFAULT_BASE,
 	monthPath,
 	readApiSchemas,
+	readBootFiles,
 	readBootSummaries,
 	readPriceFiles,
 	seriesPath,
 	writerForm,
 } from "../scripts/lib/api";
 import { checkApi, closeSchema, difference } from "../scripts/lib/api-check";
-import { ADDRESS_PARAM, type ApiFixture, makeApiFixture, OVERFLOW_X } from "./api-fixtures";
+import { ADDRESS_PARAM, type ApiFixture, EMPTY_BOOT, FIRST_BOOT, makeApiFixture, OVERFLOW_X } from "./api-fixtures";
 
 // Deriving the hand-made Runs, and reading a whole tree back, can take longer than bun's five-second default on a loaded machine.
 setDefaultTimeout(60_000);
@@ -36,6 +37,7 @@ function sourcesOf(fixture: ApiFixture, base = DEFAULT_BASE): ApiSources {
 		requests: structuredClone(fixture.requests),
 		prices: readPriceFiles(fixture.runs),
 		boots: readBootSummaries(fixture.runs),
+		bootFiles: readBootFiles(fixture.runs),
 		schemas: readApiSchemas(),
 	};
 }
@@ -325,7 +327,7 @@ describe("a Series", () => {
 			expect(point.sha256).toBe(derivation.runs[i]?.sha256);
 			expect(point.evidence).toBe(`${DEFAULT_BASE}/${derivation.runs[i]?.path}`);
 		});
-		expect(file.derivations.series_v1.points.map((point: Json) => point.boot_summary)).toEqual([`${DEFAULT_BASE}/boots/2026/11/12/boot-2026-11-12.json`, null, null, null]);
+		expect(file.derivations.series_v1.points.map((point: Json) => point.boot_summary)).toEqual([`${DEFAULT_BASE}/boots/2026/11/12/${FIRST_BOOT}.json`, null, null, null]);
 	});
 
 	test("writes every number exactly as the Derivation holds it", () => {
@@ -517,20 +519,32 @@ describe("the check fails loudly", () => {
 		]);
 		const unreadable = check((_copy, checkout) => rmSync(join(checkout, fixture.unreadable)));
 		expect(unreadable).toContain(`v1/series.json: series_v1's unreadable Run not-a-run: evidence ${DEFAULT_BASE}/${fixture.unreadable} names a Run file that is not in the Runs repository checkout ${runs}`);
-		// Every point of the first day's boot links its summary; once it is gone, each point says so, and the link is reported once.
+		// Every point of the first day's boot links its summary, and the table of contents' two rounds of boots that one and the summary of a boot
+		// that left no Run; once all are gone, each point says so, the rounds and the summary left out are what the checkout no longer makes, and
+		// each link is reported once, from the table of contents, read first.
 		const boot = check((_copy, checkout) => rmSync(join(checkout, "boots"), { recursive: true }));
-		const summary = `${DEFAULT_BASE}/boots/2026/11/12/boot-2026-11-12.json`;
+		const summary = `${DEFAULT_BASE}/boots/2026/11/12/${FIRST_BOOT}.json`;
+		const empty = `${DEFAULT_BASE}/boots/2026/11/13/${EMPTY_BOOT}.json`;
 		const firstDay = (id: string, key: string) =>
 			(json(tree, november(id)).derivations[key].points as Json[])
 				.filter((point) => point.boot_summary === summary)
 				.flatMap((point) => [
-					`${november(id)}: ${key}'s point ${point.run}: boot_summary is ${summary}, but the checkout ${runs} holds no summary of boot boot-2026-11-12`,
-					`${seriesPath(id)}: ${key}: newest_points's point ${point.run}: boot_summary is ${summary}, but the checkout ${runs} holds no summary of boot boot-2026-11-12`,
+					`${november(id)}: ${key}'s point ${point.run}: boot_summary is ${summary}, but the checkout ${runs} holds no summary of boot ${FIRST_BOOT}`,
+					`${seriesPath(id)}: ${key}: newest_points's point ${point.run}: boot_summary is ${summary}, but the checkout ${runs} holds no summary of boot ${FIRST_BOOT}`,
 				]);
-		const firstSeries = [fixture.http, fixture.memory, fixture.syscall].sort()[0] as string;
-		expect(boot.filter((problem) => problem.includes(" links "))).toEqual([`${november(firstSeries)} links ${summary}, which is not a file of the Runs repository checkout ${runs}`]);
+		expect(boot.filter((problem) => problem.includes(" links "))).toEqual([
+			`v1/index.json links ${empty}, which is not a file of the Runs repository checkout ${runs}`,
+			`v1/index.json links ${summary}, which is not a file of the Runs repository checkout ${runs}`,
+		]);
 		expect(boot.filter((problem) => !problem.includes(" links ")).sort()).toEqual(
-			[...firstDay(fixture.memory, "series_v1"), ...firstDay(fixture.syscall, "series_v1"), ...firstDay(fixture.http, "series_v1"), ...firstDay(fixture.http, "requests_v1")].sort(),
+			[
+				"v1/index.json: /recent_rounds/rounds has 2 items, not 0, as the boot summaries of the checkout and the Derivations make it",
+				"v1/index.json: /recent_rounds/left_out/count is 1, not 0, as the boot summaries of the checkout and the Derivations make it",
+				...firstDay(fixture.memory, "series_v1"),
+				...firstDay(fixture.syscall, "series_v1"),
+				...firstDay(fixture.http, "series_v1"),
+				...firstDay(fixture.http, "requests_v1"),
+			].sort(),
 		);
 	});
 
@@ -576,8 +590,8 @@ describe("the check fails loudly", () => {
 		]);
 		// A summary is its boot's by what it says, not by its file's name.
 		const renamed = check((_copy, checkout) => {
-			const path = join(checkout, "boots/2026/11/12/boot-2026-11-12.json");
-			writeFileSync(path, readFileSync(path, "utf8").replace('"boot": "boot-2026-11-12"', '"boot": "another-boot"'));
+			const path = join(checkout, `boots/2026/11/12/${FIRST_BOOT}.json`);
+			writeFileSync(path, readFileSync(path, "utf8").replace(`"boot": "${FIRST_BOOT}"`, '"boot": "another-boot"'));
 		});
 		expect(renamed).toContain(`${november(fixture.memory)}: series_v1's point ${a.run}: boot_summary is ${a.boot_summary}, but the checkout ${runs} holds no summary of boot ${a.boot}`);
 	});

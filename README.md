@@ -2662,7 +2662,7 @@ the address it resolves to keeps the location's origin and path, a redirect is r
 and in a directory no symbolic link may lead out of it (`scripts/lib/ledger-data.ts`).
 
 ```bash
-bun scripts/lookup.ts about                             # what the data hold
+bun scripts/lookup.ts about                             # what the data hold, and the newest round of boots
 bun scripts/lookup.ts series memory_read                # the Series matching every word
 bun scripts/lookup.ts show cdd7309941eb                 # one Series: p5, p50, p95, groups, Runs; and for a
                                                         # Series of requests each phase's p50 to p99.9 across requests
@@ -2754,7 +2754,7 @@ Derivations before it read the tree.
 
 Issue #64, ADR-0030. LedgerMath's numbers, for agents first, as a tree of small static JSON
 files, each kind with a JSON schema. `scripts/build-api.ts` cuts it from the two files of
-Derivations and the Runs repository's price files, laid out exactly as it will be served
+Derivations and the Runs repository's price files and boot summaries, laid out exactly as it will be served
 from `https://api.ledgermath.com`. The `runs` workflow builds the
 tree, checks it, against the tree the latest earlier run that checked its own kept too,
 keeps it for a week as the artifact `api`, beside `page`, and, in a job of its own,
@@ -2765,7 +2765,7 @@ bucket's tree there.
 
 | Path | Holds |
 |------|-------|
-| `v1/index.json` | The table of contents: the list's address, every price file held with the newest marked, the schemas, the docs, the template of a blob's address, and `layout`, the number of the way the files are written |
+| `v1/index.json` | The table of contents: the list's address, every price file held with the newest marked, the schemas, the docs, the template of a blob's address, `layout`, the number of the way the files are written, and `recent_rounds`, the newest 8 rounds of boots with their figures (below) |
 | `v1/series.json` | One row per Series, each on a line of its own: what it is, how many Runs, its oldest and newest Run, a summary of each Method's Derivation under `derivations.<method>_v<version>`, and the `url` of its file. Above the rows, each Method's own words, with the Run files it could not read (`methods.<method>_v<version>.unreadable`) |
 | `v1/series/<id>.json` | One Series: each Method's summary at the Derivations' own paths (percentiles, groups and their facts and figures, section counts, `counted_runs`, `failed_runs`), with the Method's definitions; the points of its newest 12 Runs (`newest_points`; `newest_runs` says how many); and `months`, each month a Run of it started in, oldest first, with the month file's `url`, its Runs, its first and last start, and the month file's `sha256` and size in `bytes` |
 | `v1/series/<id>/<yyyy-mm>.json` | One month of a Series: every point of the Runs that started that month (UTC), each Method's under its key, and series v1's `differed` entry for each pair of consecutive Runs whose later Run started that month. Every point gives its Run file's `sha256`, `evidence` (the Run file's address) and `boot_summary` (its boot's, or null when the Runs repository has none) |
@@ -2779,7 +2779,66 @@ address is `--base`, so a private or test address can stand in.
 - **A re-cut, not a Method.** Every number is a Derivation's, written exactly as the
   Derivation holds it, never rounded. The only figures added are taken from a Series'
   points: its Runs (in all and in each month), how many each Method counts and does not,
-  its groups, and when its oldest and newest Run started (in all and in each month).
+  its groups, and when its oldest and newest Run started (in all and in each month); and
+  the counts of the newest rounds of boots, from the boot summaries and the points.
+- **The newest rounds of boots** (ADR-0030, rule 12): what was measured most recently, for
+  the home page's "Latest runs" and for an agent asking whether the data are fresh.
+  `recent_rounds.rounds` in `v1/index.json` holds the newest 8 rounds, newest first, each
+  with `started_at` (its first boot's start), `boots`, `instance_types`, `runs` (the Runs
+  its boots' summaries list), `failed_runs`, `runs_in_no_series`, `build_failures`,
+  `not_run`, and `by_boot`: the same for each boot, with its summary's address
+  (`boot_summary`). A round is worked out from the boot summaries alone (nothing a boot
+  records says the schedule started it, and `schedule.json` is configuration): in order of
+  `started_at`, a boot starts a new round when it started more than 40 minutes after the
+  boot before it, so a round stays whole with two machine types in a row refused a boot or
+  one boot as late as a scheduled launch may start, and a boot started by hand away from
+  the schedule's times is a round of its own. A Run is failed when Method requests v1 does
+  not count it, for a Run of a Series requests v1 derives, and when series v1 does not,
+  for any other: an `http_get` Run that exited 4 because a request failed is counted by
+  requests v1 and is not failed, as its Series file's `requests_v1.failed_runs` says. A Run
+  the summaries list that no Method has a point of (no Run file, or one no Method could
+  read) is in `runs_in_no_series`. A boot is there once its summary is, written when it
+  ends, so the newest round may still gain boots: on 2026-11-24 the run of 22:43 UTC saw
+  the 22:10 round with two of its five boots. Any round shown may change, not only the
+  newest: a summary that arrives late joins its round (which may start earlier, or become
+  one with its neighbour), one that arrives in conflict takes a boot out, and a Run file
+  that arrives late moves its Run out of `runs_in_no_series`. **Nothing added to the Runs
+  data stops a publish or changes a published link.** Every regular file under `boots/` is
+  listed by the bytes of its name (no symbolic link, no directory), and only one at an
+  address the API serves is opened; a path is written with each byte that is not printable
+  ASCII, and each `%`, `"` and `\`, as `%XX`. One the rounds cannot be told from is in no
+  round: an address the API does not serve, such as `unknown.json` (decided by its name
+  alone); not strict JSON; not `ledgermath.boot/1`; without a boot, a start to the
+  nanosecond, a provider with an instance type of 1 to 64 letters, digits, dots, hyphens or
+  underscores, a list of Runs with their ids, or the lists of failed builds and executions
+  not run; not at the path its own contents give (`boots/<UTC day of its started_at>/<its
+  boot>.json`); a summary of a boot another started earlier; listing a Run of another boot;
+  listing a Run twice or one another lists. `recent_rounds.left_out` counts them, of every
+  day, and lists the newest 8 by path, each with its path (over 120 characters, its first
+  101, `...` and 16 hex digits of the SHA-256 of the whole), its address when served, and
+  one of a fixed few sentences saying why. A round lists at most 12 boots, its figures
+  counting all. Bounded in bytes as written, at every bound at once, the rounds and the
+  summaries left out take 48,297 bytes, a table of contents of 60,373 bytes on the data of
+  2026-11-24 (its ceiling is 100,000), whatever the summaries hold. A point links its boot's summary only if that
+  summary is in a round's reach on its own (served, at its own path, readable), the
+  earliest-started of its boot, so a copy or a stray file can fill a missing link but never
+  change one. What that implies, none of it in the real data, each refused by the gate out
+  loud: a summary filed under a day that is not its own `started_at` day, as the only
+  copy, is not linked (`main` linked it; checked against the tree published on 2026-11-24,
+  where all 187 month files are the same, so the move changes nothing published); a
+  summary rewritten at its address so it can no longer be read loses its link (the rule
+  relies on the Runs repository only ever being added to); and a second summary of a boot
+  at its own path claiming an earlier start changes the link, which no rule without
+  history can tell from the first: it is listed as left out. That last needs no forged
+  file, only someone running the runner twice by hand on one booted box, before and after
+  midnight UTC (the runner takes `started_at` when it starts, and the box's script runs it
+  once and shuts the box down).
+  `tests/api-additions.test.ts` adds every other kind of file, alone and in pairs, and holds
+  the build, the check, the gate, every link and the ceiling. `recent_rounds.about` says
+  all this for a reader of the API alone, beginning with the rule and the count, which the
+  check holds word for word; the check works the rounds, the summaries left out and every
+  point's link from the checkout itself and compares. `bun scripts/lookup.ts about` prints
+  the newest round on one line, and how many summaries are in no round.
 - **No figure loses a digit.** The build reads every number of both files of Derivations as
   text too, and refuses the file, naming it, the number's place and the number, when the
   number's value is not exactly that of what it would write: an integer past 2^53, a value
@@ -2841,8 +2900,12 @@ address is `--base`, so a private or test address can stand in.
 - **The layout is a number.** `layout` in `v1/index.json` is `LAYOUT` in
   `scripts/lib/api.ts`: raise it whenever the build changes how it writes the files (the
   order of a file's fields, their white space, a field every file of a kind gains). Editing
-  a schema's words does not raise it. The golden test fails on any change to the bytes and
-  says so: if the change is on purpose, raise `layout`.
+  a schema's words does not raise it, and neither does a field the table of contents alone
+  gains (`recent_rounds`, 2026-11-24): the four causes are a month file's, the table of
+  contents changes with the data at every update and no promise covers its bytes, and no
+  other file's bytes change, so the next run is compared with the tree before as ever and
+  needs no new baseline. The golden test fails on any change to the bytes and says so: if
+  the change is on purpose, raise `layout`, unless only the table of contents changed.
 - **The gate against the tree before.** `check-api.ts --previous DIR` holds a tree to the
   contract against the tree before it. A previous tree of the same layout and base is
   compared strictly, always: it must be whole (every month file its Series files list
@@ -2955,7 +3018,10 @@ month files recover; that each point's Run file is in the Runs repository with t
 id, boot, start and sha256, at the point's evidence, and its boot_summary is that boot's summary or
 null when there is none; that each row agrees with its Series file and links it, the table of
 contents lists exactly the price files and schemas the tree holds and counts the Series right,
-and gives the docs as an absolute https address with a host; and that every link field, in its
+and gives the docs as an absolute https address with a host; that its newest rounds of boots,
+and the summaries it leaves out of them, are, value for value, what the checkout's boot
+summaries and the Derivations make, each address given a file of the checkout of a shape the
+API serves, and its words begin with the rule and the count; and that every link field, in its
 place, names a file of the tree or of the Runs repository (`scripts/lib/api-check.ts` lists it
 all).
 
@@ -2967,7 +3033,10 @@ On the data of 2026-11-19 (187 Series, 6,335 Runs, all of November, 9 price file
 The build takes about 1.0 s and the check about 1.8 s on the dev machine, and comparing the
 tree with the one before about 2 s more. Between the trees of two snapshots of that day in
 which every Series gained one Run, every one of the 187 month files changed, each for
-cause (a) only. The lookup tool and
+cause (a) only. On 2026-11-24 (187 Series, 10,147 Runs, 274 boot summaries, 14 price files)
+`v1/index.json` is 23.6 KB, 15.4 KB of it `recent_rounds` (13.3 KB the newest 8 rounds of boots); built from the same
+inputs, the tree before the rounds and the tree after them differ in `v1/index.json` and its
+schema alone. The lookup tool and
 the agent skill read this tree ("The agent skill").
 
 ### The API bucket

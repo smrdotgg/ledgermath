@@ -6,7 +6,8 @@
  *
  *     bun scripts/lookup.ts [--data LOCATION] [--prices-date YYYY-MM-DD] [--json] COMMAND [ARGS]
  *
- *   about                       what the data hold: Series, benchmarks, instance types, price files
+ *   about                       what the data hold: Series, benchmarks, instance types, price files,
+ *                               and the newest round of boots, when the table of contents gives it
  *   series [WORD...]            the Series, or those matching every word
  *   show ID|WORD... [--runs N|all]
  *                               one Series: percentiles with citations, groups, the Runs behind them
