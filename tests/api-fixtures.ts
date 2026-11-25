@@ -17,7 +17,12 @@
  * - runs/2026/11/14/not-a-run.json: a Run file each Method lists as unreadable.
  * - boots/2026/11/12/boot-2026-11-12.json: the summary of the first day's boot
  *   only, so some points link a boot summary and the others none; it lists
- *   that boot's Runs, and is the one round of boots of the table of contents.
+ *   that boot's Runs. Its name is no box's (a box names a summary by the
+ *   kernel's boot id, a UUID), so the API does not serve it and the table of
+ *   contents lists it as in no round.
+ * - boots/2026/11/13/<EMPTY_BOOT>.json: a boot that left no Run, its one build
+ *   having failed, named as a box names it: the one round of boots of the
+ *   table of contents.
  *
  * With `nextMonth`, a Run more of memory_read and of http_get, each on
  * 2026-12-01 and made after every other Run (so no other Run's id changes):
@@ -108,6 +113,9 @@ export interface ApiFixture {
 	addressParam?: string;
 	overflowTime?: string;
 }
+
+/** The boot id of the fixture's boot that left no Run (one build failed), named as a box names a boot: by the kernel's boot id, a UUID. */
+export const EMPTY_BOOT = "4f1c2a3b-5d6e-4f70-8a9b-0c1d2e3f4a5b";
 
 /** The parameter of the tcp_echo Series made with `edges`: an address under the API's own base, that names no file. */
 export const ADDRESS_PARAM = "https://api.ledgermath.com/connection-test";
@@ -241,6 +249,7 @@ export async function makeApiFixture(
 			runs: made.files.map((file) => file.record as Run).filter((record) => record.boot === "boot-2026-11-12"),
 		}),
 	);
+	put(`boots/2026/11/13/${EMPTY_BOOT}.json`, bootSummaryText({ boot: EMPTY_BOOT, startedAt: "2026-11-13T04:41:00.000000000Z", instanceType: "c8a.2xlarge", runs: [], buildFailures: [{ benchmark: "memory_read", build: "static" }] }));
 	for (const day of ["11", "12"]) {
 		mkdirSync(join(runs, "prices", "2026", "11", day), { recursive: true });
 		copyFileSync(SAMPLE_FILE, join(runs, "prices", "2026", "11", day, "aws.json"));

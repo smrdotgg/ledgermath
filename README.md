@@ -2741,10 +2741,21 @@ address is `--base`, so a private or test address can stand in.
   the summaries list that no Method has a point of (no Run file, or one no Method could
   read) is in `runs_in_no_series`. A boot is there once its summary is, written when it
   ends, so the newest round may still gain boots: on 2026-11-24 the run of 22:43 UTC saw
-  the 22:10 round with two of its five boots. `recent_rounds.about` says all this for a
-  reader of the API alone. The build refuses a boot summary it cannot tell a round from,
-  naming it; the check works the rounds out from the checkout itself and compares.
-  `bun scripts/lookup.ts about` prints the newest round on one line.
+  the 22:10 round with two of its five boots. Any round shown may change, not only the
+  newest: a summary that arrives late joins its round (which may start earlier, or become
+  one with its neighbour), one that arrives in conflict takes a boot out, and a Run file
+  that arrives late moves its Run out of `runs_in_no_series`. **No boot summary stops the
+  build or the check**: one the rounds cannot be told from (an address the API does not
+  serve, such as `unknown.json`; not strict JSON; not `ledgermath.boot/1`; without a boot,
+  a start to the nanosecond, a provider, a list of Runs with their ids, or the lists of
+  failed builds and executions not run; of a boot another summary names too; listing a Run
+  of another boot; listing a Run twice or one another lists) is in no round, and
+  `recent_rounds.left_out` counts them, of every day, and lists the newest 8 by path, each
+  with its path, its address when served, and one of a fixed few sentences saying why.
+  `recent_rounds.about` says all this for a reader of the API alone, beginning with the
+  rule and the count, which the check holds word for word; the check works the rounds and
+  the summaries left out from the checkout itself and compares. `bun scripts/lookup.ts
+  about` prints the newest round on one line, and how many summaries are in no round.
 - **No figure loses a digit.** The build reads every number of both files of Derivations as
   text too, and refuses the file, naming it, the number's place and the number, when the
   number's value is not exactly that of what it would write: an integer past 2^53, a value
@@ -2924,9 +2935,10 @@ month files recover; that each point's Run file is in the Runs repository with t
 id, boot, start and sha256, at the point's evidence, and its boot_summary is that boot's summary or
 null when there is none; that each row agrees with its Series file and links it, the table of
 contents lists exactly the price files and schemas the tree holds and counts the Series right,
-and gives the docs as an absolute https address with a host; that its newest rounds of boots
-are, value for value, what the checkout's boot summaries and the Derivations make, each boot's
-summary a file of the checkout, and its words state the rule and the count; and that every link field, in its
+and gives the docs as an absolute https address with a host; that its newest rounds of boots,
+and the summaries it leaves out of them, are, value for value, what the checkout's boot
+summaries and the Derivations make, each address given a file of the checkout of a shape the
+API serves, and its words begin with the rule and the count; and that every link field, in its
 place, names a file of the tree or of the Runs repository (`scripts/lib/api-check.ts` lists it
 all).
 
@@ -2939,7 +2951,7 @@ The build takes about 1.0 s and the check about 1.8 s on the dev machine, and co
 tree with the one before about 2 s more. Between the trees of two snapshots of that day in
 which every Series gained one Run, every one of the 187 month files changed, each for
 cause (a) only. On 2026-11-24 (187 Series, 10,147 Runs, 274 boot summaries, 14 price files)
-`v1/index.json` is 21.5 KB, 13.3 KB of it the newest 8 rounds of boots; built from the same
+`v1/index.json` is 22.8 KB, 14.6 KB of it `recent_rounds` (13.3 KB the newest 8 rounds of boots); built from the same
 inputs, the tree before the rounds and the tree after them differ in `v1/index.json` and its
 schema alone. The lookup tool and
 the agent skill read this tree ("The agent skill").

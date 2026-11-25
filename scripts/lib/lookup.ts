@@ -41,7 +41,7 @@ import {
 	requestTailCitation,
 	seriesCitation,
 } from "./citation";
-import { type LedgerData, LedgerError, type LoadedPrices, type MonthEntry, seriesPoints, type StatSummary, type TreeRound, type TreeRow, type TreeSeries, type TreeSeriesPoint } from "./ledger-data";
+import { type LedgerData, LedgerError, type LoadedPrices, type MonthEntry, seriesPoints, type StatSummary, type TreeLeftOut, type TreeRoundFigures, type TreeRow, type TreeSeries, type TreeSeriesPoint } from "./ledger-data";
 import type { PriceSource } from "./prices";
 import { agrees, type Dims, quantities } from "./quantity";
 
@@ -850,16 +850,25 @@ export interface About {
 	price_files: string[];
 	price_file: string | null;
 	price_file_date: string | null;
-	/** The newest round of boots, as the table of contents gives it; absent when it gives none (a tree built before 2026-11-24, or no boot summary). */
-	newest_round?: TreeRound;
+	/** The newest round of boots, as the table of contents gives it; absent when it gives none (a tree built before 2026-11-24, or no boot summary in a round). */
+	newest_round?: TreeRoundFigures;
+	/** How many boot summaries are in no round, and the newest of them; absent when the table of contents gives no rounds, or leaves none out. */
+	boot_summaries_left_out?: { count: number; newest: TreeLeftOut };
 }
 
 /** The newest round of boots the table of contents gives, its figures in all; undefined when it gives none. */
-function newestRound(data: LedgerData): TreeRound | undefined {
+function newestRound(data: LedgerData): TreeRoundFigures | undefined {
 	const round = data.index.recent_rounds?.rounds?.[0];
 	if (round === undefined) return undefined;
 	const { started_at, boots, runs, failed_runs, runs_in_no_series, build_failures, not_run, instance_types } = round;
 	return { started_at, boots, runs, failed_runs, runs_in_no_series, build_failures, not_run, instance_types };
+}
+
+/** How many boot summaries the table of contents leaves out of its rounds, and the newest; undefined when it leaves none out or gives no rounds. */
+function leftOut(data: LedgerData): About["boot_summaries_left_out"] {
+	const left = data.index.recent_rounds?.left_out;
+	const newest = left?.summaries?.[0];
+	return left === undefined || newest === undefined || left.count === 0 ? undefined : { count: left.count, newest };
 }
 
 export async function about(data: LedgerData): Promise<About> {
@@ -894,13 +903,14 @@ export async function about(data: LedgerData): Promise<About> {
 		price_file: inUse?.path ?? null,
 		price_file_date: inUse?.date ?? null,
 		newest_round: newestRound(data),
+		boot_summaries_left_out: leftOut(data),
 	};
 }
 
 // ---------------------------------------------------------------- text
 
 /** The newest round of boots on one line: when it started, its boots and their instance types, its Runs, and whatever did not run or count. */
-function roundText(round: TreeRound): string {
+function roundText(round: TreeRoundFigures): string {
 	const types = round.instance_types.map((type) => type ?? "(no instance type)").join(", ");
 	const others = [
 		round.runs_in_no_series > 0 ? `${round.runs_in_no_series} in no Series` : "",
@@ -916,6 +926,9 @@ export function aboutText(a: About): string {
 		`Series: ${a.derivations}, Method ${a.method}: ${a.runs_read} Run files read, ${a.series} Series, ${a.counted_runs} counted Runs, ${a.failed_runs} failed, ${a.unreadable_runs} unreadable.`,
 		`Runs started from ${a.first_run_at === null ? "-" : atSecond(a.first_run_at)} to ${a.newest_run_at === null ? "-" : atSecond(a.newest_run_at)}.`,
 		...(a.newest_round === undefined ? [] : [roundText(a.newest_round)]),
+		...(a.boot_summaries_left_out === undefined
+			? []
+			: [`Boot summaries in no round: ${a.boot_summaries_left_out.count}, the newest ${a.boot_summaries_left_out.newest.path}: ${a.boot_summaries_left_out.newest.why}.`]),
 		`Benchmarks with Series: ${listed(new Map(Object.entries(a.benchmarks)))}.`,
 		`Benchmarks with no Series in this data: ${a.benchmarks_without_series.length === 0 ? "none" : a.benchmarks_without_series.join(", ")}.`,
 		`Instance types with Series: ${listed(new Map(Object.entries(a.instance_types)))}.`,

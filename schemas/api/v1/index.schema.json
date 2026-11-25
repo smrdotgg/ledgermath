@@ -24,12 +24,33 @@
       "anyOf": [{ "$ref": "#/$defs/time" }, { "type": "null" }]
     },
     "recent_rounds": {
-      "description": "What was measured most recently: the newest rounds of boots, newest first, each with its counts in all and by boot, and the address of each boot's summary. about says what a round is, how it is worked out from the boot summaries alone, and what failed means.",
+      "description": "What was measured most recently: the newest rounds of boots, newest first, each with its counts in all and by boot, and the address of each boot's summary; and the boot summaries left out of every round, with why. about says what a round is, how it is worked out from the boot summaries alone, what failed means, and when a round shown changes: any of them may, at a later update, not only the newest.",
       "type": "object",
-      "required": ["about", "rounds"],
+      "required": ["about", "rounds", "left_out"],
       "properties": {
-        "about": { "description": "What a round is and what each of its figures counts, in words.", "type": "string" },
-        "rounds": { "description": "The newest rounds, newest first: as many as about says, or fewer when there are fewer. Empty when there is no boot summary.", "type": "array", "items": { "$ref": "#/$defs/round" } }
+        "about": { "description": "What a round is, what each of its figures counts and when a round shown changes, in words. Its first two sentences state the rule a round is worked out by and how many rounds are given.", "type": "string" },
+        "rounds": { "description": "The newest rounds, newest first: as many as about says, or fewer when there are fewer. Empty when no boot summary is read into a round.", "type": "array", "items": { "$ref": "#/$defs/round" } },
+        "left_out": {
+          "description": "The boot summaries of the evidence that are in no round: no boot summary stops the files being made, and one the rounds cannot be told from is left out and counted here, whatever it holds. A boot left out is in no round, so a round within the gap of its start may be missing it.",
+          "type": "object",
+          "required": ["count", "summaries"],
+          "properties": {
+            "count": { "description": "How many boot summaries are left out, of every day.", "type": "integer", "minimum": 0 },
+            "summaries": {
+              "description": "The newest of them by path (the day its boot started, then its name), newest first, as many as about says at most; each one sentence of a fixed few says why.",
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["path", "boot_summary", "why"],
+                "properties": {
+                  "path": { "description": "The summary's path in the evidence, boots/<yyyy>/<mm>/<dd>/<name>.json: the day its boot started, and its name.", "type": "string", "pattern": "^boots/" },
+                  "boot_summary": { "description": "The summary's address, or null when the API does not serve it.", "anyOf": [{ "$ref": "#/$defs/url" }, { "type": "null" }] },
+                  "why": { "description": "Why it is in no round: one of a fixed few sentences.", "type": "string" }
+                }
+              }
+            }
+          }
+        }
       }
     },
     "series": {

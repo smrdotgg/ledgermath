@@ -1567,4 +1567,21 @@ A migrated benchmark is done only when **all** of these hold:
   round from; the check works the rounds out from the checkout itself. `lookup.ts about`
   prints the newest round on one line, and nothing of it from an older tree. GitHub Actions
   is off for the repository, so the checks of `check.yml` ran on the dev box.
+- **2026-11-25** — **No boot summary stops a publish** (the verification of #91). As first
+  built, the rounds refused a summary they could not be told from, so one summary holding
+  `{`, never to be edited, would have stopped every later publish. Now it is left out of
+  the rounds with one of a fixed few reasons, and `recent_rounds.left_out` counts those left
+  out, of every day, and lists the newest 8 by path (bounded, whatever a file holds). Left
+  out besides: a summary at an address the edge does not serve (by `isServedKey`, so
+  `unknown.json`, which the table of contents had linked), every summary of a boot two
+  name, one listing a Run of another boot, and those listing one Run, each over every day.
+  Two older ways a recorded file stopped publishing, on `main` too, are gone: the build
+  stopped on two files of one boot's name (two `unknown.json`), and the check failed on a
+  boot whose id could not be read and that left a Run (it expected the point to link
+  `unknown.json`) and on a point whose boot's summary cannot be read; both now link a point
+  to the first, in path order, of the files named by its boot whose own `boot` says so.
+  `assemble-location.ts` copies the summaries the table of contents links (a boot that left
+  no Run had been dropped). `about` says any round shown may change, and begins with the
+  rule and the count, which the check holds word for word. Real data: 187 month files the
+  same byte for byte, no new baseline.
 - _(agents: append your entry here, one per merged benchmark)_

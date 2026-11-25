@@ -298,8 +298,8 @@ export interface PriceEntry {
 	url: string;
 }
 
-/** One of the newest rounds of boots, as v1/index.json gives it (its boots' own figures left out: this tool shows the round's). */
-export interface TreeRound {
+/** A round of boots' figures in all, as v1/index.json gives them. */
+export interface TreeRoundFigures {
 	started_at: string;
 	boots: number;
 	runs: number;
@@ -310,13 +310,25 @@ export interface TreeRound {
 	instance_types: Array<string | null>;
 }
 
+/** One of the newest rounds of boots, as v1/index.json gives it: of each boot, only its summary's address is read here. */
+export interface TreeRound extends TreeRoundFigures {
+	by_boot: Array<{ boot_summary: string }>;
+}
+
+/** A boot summary in no round, as v1/index.json lists it. */
+export interface TreeLeftOut {
+	path: string;
+	boot_summary: string | null;
+	why: string;
+}
+
 export interface TreeIndex {
 	schema: string;
 	url: string;
 	layout: number;
 	newest_run_started_at: string | null;
 	/** Absent from a tree built before 2026-11-24. */
-	recent_rounds?: { about: string; rounds: TreeRound[] };
+	recent_rounds?: { about: string; rounds: TreeRound[]; left_out: { count: number; summaries: TreeLeftOut[] } };
 	series: { url: string; count: number };
 	prices: { newest: PriceEntry | null; files: PriceEntry[] };
 	schemas: Array<{ name: string; describes: string; url: string }>;

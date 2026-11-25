@@ -35,7 +35,7 @@ import { beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
 
-import { API_SCHEMAS, buildApi, DEFAULT_BASE, DEFAULT_DOCS, readApiSchemas, readBootFiles, readBootSummaries, readPriceFiles, writtenSchemaOf, type WrittenSchema } from "../scripts/lib/api";
+import { API_SCHEMAS, buildApi, DEFAULT_BASE, DEFAULT_DOCS, LEFT_OUT_WHY, readApiSchemas, readBootFiles, readBootSummaries, readPriceFiles, writtenSchemaOf, type WrittenSchema } from "../scripts/lib/api";
 import { RULE_SETS } from "../scripts/lib/price-rules";
 import { makeApiFixture } from "./api-fixtures";
 
@@ -57,9 +57,10 @@ function kindOf(path: string): Kind | undefined {
  * under one of them is data.
  */
 const DATA: Readonly<Record<Kind, readonly string[]>> = {
-	// Each price file held: its date, its path in the Runs repository and its address; and each of the newest rounds of boots: what the boot
-	// summaries recorded (each boot's start and instance type, its summary's address) and counts of what they and the points hold. Its words are scanned.
-	index: ["/prices/newest", "/prices/files", "/recent_rounds/rounds"],
+	// Each price file held: its date, its path in the Runs repository and its address; each of the newest rounds of boots: what the boot
+	// summaries recorded (each boot's start and instance type, its summary's address) and counts of what they and the points hold; and each
+	// summary left out of them, by its path and address. The words (about, and why each summary is left out) are scanned.
+	index: ["/prices/newest", "/prices/files", "/recent_rounds/rounds", "/recent_rounds/left_out/summaries/*/path", "/recent_rounds/left_out/summaries/*/boot_summary"],
 	"series-list": [
 		// One row per Series: its identity and params; the rest of a row is counts, figures, links and the Methods' names.
 		"/series/*/id",
@@ -268,7 +269,11 @@ describe("the words the data API publishes", () => {
 	test("are scanned where they are: the table of contents, both Methods' words, the price rules' words and every schema's descriptions", () => {
 		const { scanned } = scanWords(tree);
 		const at = (file: string): Set<string> => scanned.get(file) ?? new Set();
-		for (const pointer of ["/about", "/versioning", "/figures", "/months", "/recent_rounds/about", "/evidence/about", "/schemas/0/describes"]) expect([pointer, at("v1/index.json").has(pointer)]).toEqual([pointer, true]);
+		for (const pointer of ["/about", "/versioning", "/figures", "/months", "/recent_rounds/about", "/recent_rounds/left_out/summaries/0/why", "/evidence/about", "/schemas/0/describes"]) {
+			expect([pointer, at("v1/index.json").has(pointer)]).toEqual([pointer, true]);
+		}
+		// Every sentence a summary can be left out for is held to the same scan, not only the one the fixture shows.
+		for (const [kind, why] of Object.entries(LEFT_OUT_WHY)) expect([kind, referencesIn(why)]).toEqual([kind, []]);
 		// A round's instance types and its boots' addresses are data, not scanned.
 		expect([...at("v1/index.json")].filter((pointer) => pointer.startsWith("/recent_rounds/rounds"))).toEqual([]);
 		for (const pointer of [

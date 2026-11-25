@@ -67,9 +67,10 @@
  * - Each point's evidence is that point's: the Run file at its path is in
  *   the checkout, has the point's Run id, boot and start (so the month a
  *   point is filed under is its Run's own), and hashes to its sha256;
- *   evidence is that path's address; boot_summary is the address of the one
- *   boot summary in the checkout that names that boot, or null when none
- *   does. Each Run file the list gives as unreadable is in the checkout with
+ *   evidence is that path's address; boot_summary is the address of that
+ *   boot's summary in the checkout (the first, in path order, of the files
+ *   named by the boot's id whose own boot, read as strict JSON, says so), or
+ *   null when there is none. Each Run file the list gives as unreadable is in the checkout with
  *   its sha256, named by its id, at the address its evidence gives.
  * - The list's words for each Method are its file of Derivations' (the
  *   unreadable Run files sorted by path, with their evidence; series v1's
@@ -82,17 +83,21 @@
  *   gives every address as the base and the file's path, and gives the docs
  *   as an absolute https address with a host.
  * - The table of contents' recent_rounds holds, value for value, the newest
- *   rounds of boots as the checkout's boot summaries and the Derivations make
- *   them by the design (expectedRounds()): every boot summary read strictly,
- *   in order of start, a new round after more than 40 minutes from the boot
- *   before, the newest 8, newest first; each boot's Runs, failed builds and
- *   executions not run as its summary lists them, each Run failed when the
- *   Method that decides for its Series (requests v1 where it derives it,
- *   else series v1) does not count it, in no Series when no Method has its
- *   point; each round its boots summed; each boot's summary a file of the
- *   checkout; and its words state that rule and that count. No Run is listed
- *   by two summaries, no summary lists a Run whose point is of another boot,
- *   and no two summaries name one boot.
+ *   rounds of boots and the boot summaries left out of them, as the
+ *   checkout's boot summaries and the Derivations make them by the design
+ *   (expectedRounds()): a summary the API does not serve, that cannot be
+ *   read strictly or lacks what a round needs, of a boot another names too,
+ *   listing a Run of another boot, or listing a Run twice or one another
+ *   lists, is left out, with why; the rest in order of start, a new round
+ *   after more than 40 minutes from the boot before, the newest 8, newest
+ *   first; each boot's Runs, failed builds and executions not run as its
+ *   summary lists them, each Run failed when the Method that decides for its
+ *   Series (requests v1 where it derives it, else series v1) does not count
+ *   it, in no Series when no Method has its point; each round its boots
+ *   summed; how many are left out, and the newest 8 of them by path; each
+ *   address it gives a file of the checkout, of a shape the API serves; and
+ *   its words begin with that rule and that count, word for word. No boot
+ *   summary is itself a problem.
  * - Every link field, in its place in the files, names a file under the
  *   base: under v1/ a file of the tree, under runs/ or boots/ a file of the
  *   checkout. Only the blob address template is not a file; it is checked to
@@ -111,6 +116,7 @@ import { join, relative, resolve, sep } from "node:path";
 
 import Ajv2020, { type ValidateFunction } from "ajv/dist/2020";
 
+import { isServedKey } from "../../infra/runs/public-blobs";
 import type { DerivationsFile as RequestsFile } from "../../methods/requests/v1/output";
 import type { DerivationsFile as SeriesFile } from "../../methods/v1/output";
 import { LAYOUT, writerForm, writtenSchemaOf } from "./api";
@@ -177,8 +183,27 @@ const NEWEST_RUNS = 12;
 const RECENT_ROUNDS = 8;
 /** By the design, a boot starts a new round when it started more than 40 minutes after the boot before it: in nanoseconds. */
 const ROUND_GAP_NS = 40n * 60n * 1_000_000_000n;
-/** What the table of contents' words for a round must state: the rule and the count the check holds the rounds to. */
-const ROUND_WORDS = ["a boot starting a new round when it started more than 40 minutes after the boot before it", `the newest ${RECENT_ROUNDS}, newest first`];
+/** How the table of contents' words for a round must begin, word for word: the rule and the count the check holds the rounds to. The rest explains. */
+const ROUND_OPENING =
+	"A round is the boots that belong together in time, worked out from the boot summaries alone, so the same boot summaries always give the same rounds: " +
+	"the boots in order of their start, a boot starting a new round when it started more than 40 minutes after the boot before it. " +
+	`rounds holds the newest ${RECENT_ROUNDS} rounds, newest first. `;
+/** How many boot summaries left out of the rounds the table of contents lists, by the design; the rest are counted. */
+const LEFT_OUT_LISTED = 8;
+/** Why a boot summary is left out of the rounds, by the design: the first that applies, in this order, word for word. */
+const LEFT_OUT_BECAUSE = {
+	address: "the API does not serve its address: a boot summary is served only under its boot's id, a UUID, and a boot whose id could not be read writes unknown.json",
+	json: "it is not strict JSON",
+	schema: "it is not a ledgermath.boot/1 summary",
+	boot: "it names no boot",
+	start: "it gives no start that is a real UTC time written to the nanosecond",
+	provider: "it gives no provider, or an instance type that is not a string",
+	runs: "it gives no list of Runs, each with its id",
+	lists: "it gives no list of failed builds or of executions not run",
+	sameBoot: "another boot summary names the same boot",
+	otherBoot: "it lists a Run whose point is of another boot",
+	sharedRun: "it lists a Run twice, or one that another boot summary lists too",
+} as const;
 /** A boot summary's path in the checkout. */
 const BOOT_FILE = /^boots\/[0-9]{4}\/[0-9]{2}\/[0-9]{2}\/[A-Za-z0-9._-]+\.json$/;
 
@@ -198,7 +223,7 @@ export const CEILINGS: ReadonlyArray<{ kind: string; path: RegExp; bytes: number
 		path: /^v1\/index\.json$/,
 		bytes: 100_000,
 		whenHit:
-			"it was 6.3 KB with 9 price files on 2026-11-19, and 21.5 KB with 14 on 2026-11-24, once it gave the newest rounds of boots (13.3 KB for 8 rounds of five boots, about 300 bytes a boot: it grows with the boots a round holds, not with time); each day's price file adds 124 bytes to its list, which brings it here about 21 months on; listing the price files by month, as the Series are, changes v1's shape (v2), so decide that with the maintainer, and if the rounds grew, ask why a round holds so many boots before giving fewer",
+			"it was 6.3 KB with 9 price files on 2026-11-19, and 22.8 KB with 14 on 2026-11-24, once it gave the newest rounds of boots (13.3 KB for 8 rounds of five boots, about 300 bytes a boot: it grows with the boots a round holds, not with time; the summaries left out are at most 8 listed, each with one of a fixed few sentences); each day's price file adds 124 bytes to its list, which brings it here about 20 months on; listing the price files by month, as the Series are, changes v1's shape (v2), so decide that with the maintainer, and if the rounds grew, ask why a round holds so many boots before giving fewer",
 	},
 	{
 		kind: "the list of Series",
@@ -555,29 +580,30 @@ export function checkApi(sources: CheckSources): CheckResult {
 		}
 		return found;
 	};
-	/** Each boot summary in the checkout, by the boot it names (its own `boot`, not its file name). */
-	const summaries = new Map<string, string[]>();
+	/**
+	 * Each boot's summary in the checkout, by the boot it names: a file under
+	 * boots/ whose own `boot`, read as strict JSON, is its boot, and whose file
+	 * is named by that boot (as the runner names it). Of two of one boot, the
+	 * first in path order. One that cannot be read, or names another boot than
+	 * its file's name (unknown.json names none), is no boot's. No summary is a
+	 * problem of the tree: the table of contents lists those no round holds.
+	 */
+	const summaries = new Map<string, string>();
 	for (const path of listFiles(join(sources.runs, "boots")).map((name) => `boots/${name}`)) {
-		if (!path.endsWith(".json")) continue;
+		if (!BOOT_FILE.test(path)) continue;
 		let summary: unknown;
 		try {
-			summary = JSON.parse(readFileSync(join(sources.runs, ...path.split("/")), "utf8"));
+			summary = parseStrictJson(readFileSync(join(sources.runs, ...path.split("/"))));
 		} catch {
 			continue;
 		}
-		if (!isObject(summary) || typeof summary.boot !== "string") continue;
-		summaries.set(summary.boot, [...(summaries.get(summary.boot) ?? []), path]);
+		if (!isObject(summary) || typeof summary.boot !== "string" || summary.boot !== fileName(path) || summaries.has(summary.boot)) continue;
+		summaries.set(summary.boot, path);
 	}
-	const twice = new Set<string>();
-	/** The address of a boot's summary: null when the checkout has none; undefined, and a problem once, when it has two. */
-	const summaryOf = (boot: string): string | null | undefined => {
-		const paths = summaries.get(boot) ?? [];
-		if (paths.length > 1) {
-			if (!twice.has(boot)) problems.push(`the Runs repository checkout ${sources.runs} holds two summaries of boot ${boot}: ${paths.join(" and ")}`);
-			twice.add(boot);
-			return undefined;
-		}
-		return paths.length === 0 ? null : address(paths[0] as string);
+	/** The address of a boot's summary: null when the checkout has none. */
+	const summaryOf = (boot: string): string | null => {
+		const path = summaries.get(boot);
+		return path === undefined ? null : address(path);
 	};
 
 	/** A point's evidence is its own: its Run file's id, boot, start and sha256, the address of its path, and its boot's summary. */
@@ -603,7 +629,7 @@ export function checkApi(sources: CheckSources): CheckResult {
 	const checkSummary = (where: string, boot: unknown, bootSummary: unknown): void => {
 		if (typeof boot !== "string") return; // the schema says so
 		const summary = summaryOf(boot);
-		if (summary === undefined || bootSummary === summary) return;
+		if (bootSummary === summary) return;
 		if (summary === null) problems.push(`${where}: boot_summary is ${named(bootSummary)}, but the checkout ${sources.runs} holds no summary of boot ${boot}`);
 		else problems.push(`${where}: boot_summary is ${named(bootSummary)}, not ${summary}, the address of the summary of boot ${boot}`);
 	};
@@ -653,17 +679,22 @@ export function checkApi(sources: CheckSources): CheckResult {
 			);
 			const ofPrices = ofIndex("prices");
 			compare(`${INDEX}: prices`, ofPrices, { schema_url: address(schemaFile("prices")), files: prices, newest: prices[prices.length - 1] ?? null }, "the price files in the tree make it");
-			// The newest rounds of boots: as the checkout's boot summaries and the Derivations make them, and each boot's summary a file of the checkout.
+			// The newest rounds of boots and the summaries left out of them: as the checkout's boot summaries and the Derivations make them, and each
+			// address given a file of the checkout, and one the API serves.
 			const ofRounds = ofIndex("recent_rounds");
-			const rounds = expectedRounds(sources.runs, seriesV1, requestsV1, address);
-			problems.push(...rounds.problems);
-			if (rounds.rounds !== undefined) {
-				const found = difference(ofRounds.rounds, rounds.rounds, "/recent_rounds/rounds");
+			const expectedOfRounds = expectedRounds(sources.runs, seriesV1, requestsV1, address);
+			for (const key of ["rounds", "left_out"] as const) {
+				const found = difference(ofRounds[key], expectedOfRounds[key], `/recent_rounds/${key}`);
 				if (found !== null) problems.push(`${INDEX}: ${found}, as the boot summaries of the checkout and the Derivations make it`);
 			}
-			for (const words of ROUND_WORDS) if (typeof ofRounds.about !== "string" || !ofRounds.about.includes(words)) problems.push(`${INDEX}: recent_rounds.about does not say "${words}", which the rounds are held to`);
-			for (const round of (Array.isArray(ofRounds.rounds) ? ofRounds.rounds : []).filter(isObject)) {
-				for (const boot of (Array.isArray(round.by_boot) ? round.by_boot : []).filter(isObject)) link(INDEX, boot.boot_summary);
+			if (typeof ofRounds.about !== "string" || !ofRounds.about.startsWith(ROUND_OPENING)) problems.push(`${INDEX}: recent_rounds.about does not begin, word for word, with the rule and the count the rounds are held to: ${JSON.stringify(ROUND_OPENING.trim())}`);
+			const leftOut = isObject(ofRounds.left_out) && Array.isArray(ofRounds.left_out.summaries) ? ofRounds.left_out.summaries.filter(isObject) : [];
+			const roundBoots = (Array.isArray(ofRounds.rounds) ? ofRounds.rounds : []).filter(isObject).flatMap((round) => (Array.isArray(round.by_boot) ? round.by_boot : []).filter(isObject));
+			for (const entry of [...roundBoots, ...leftOut]) {
+				if (typeof entry.boot_summary !== "string") continue;
+				link(INDEX, entry.boot_summary);
+				const path = entry.boot_summary.startsWith(`${base}/`) ? entry.boot_summary.slice(base.length + 1) : entry.boot_summary;
+				if (!isServedKey(path)) problems.push(`${INDEX}: recent_rounds links ${entry.boot_summary}, an address the API does not serve`);
 			}
 			const ofEvidence = ofIndex("evidence");
 			if (ofEvidence.blob_url_template !== `${base}/blobs/sha256/{hex}`) {
@@ -1148,21 +1179,28 @@ function nanosSince1970(time: unknown): bigint | null {
 }
 
 /**
- * The newest rounds of boots, by the design, from the checkout's boot
- * summaries and the Derivations, never from the build: every boot summary
- * read strictly, in order of its start then its path, a boot starting a new
- * round when it started more than 40 minutes after the boot before it; the
- * newest RECENT_ROUNDS, newest first. A boot's figures are its summary's (its
- * Runs, failed builds and executions not run) and, for each Run it lists, its
- * point's: failed when Method requests v1 does not count it, if requests v1
- * derives its Series, else when series v1 does not; in no Series when no
- * Method has a point of it. A round's figures are its boots' summed. The
- * rounds are undefined, with a problem for each reason, when a summary cannot
- * be read or does not give what a round needs, so that no comparison is made
- * with rounds that cannot be told.
+ * The newest rounds of boots and the boot summaries left out of them, by the
+ * design, from the checkout's boot summaries and the Derivations, never from
+ * the build. No summary is a problem of the tree: one the rounds cannot be
+ * told from is left out, with the first reason that applies
+ * (LEFT_OUT_BECAUSE): an address the API does not serve (the shared list of
+ * served shapes the edge is made from), bytes that are not strict JSON, not
+ * ledgermath.boot/1, no boot, no start that is a real time to the nanosecond,
+ * no provider with an instance type that is a string or none, no list of Runs
+ * each with its id, no lists of failed builds and executions not run; then,
+ * among the rest, every summary of a boot two or more name; every one listing
+ * a Run whose point is of another boot; and, of the rest, every one listing a
+ * Run twice, or one another lists. The rest, in order of start then path, a
+ * boot starting a new round when it started more than 40 minutes after the
+ * boot before it; the newest RECENT_ROUNDS, newest first. A boot's figures are
+ * its summary's (its Runs, failed builds and executions not run) and, for
+ * each Run it lists, its point's: failed when Method requests v1 does not
+ * count it, if requests v1 derives its Series, else when series v1 does not;
+ * in no Series when no Method has a point of it. A round's figures are its
+ * boots' summed. Those left out: how many, and the newest LEFT_OUT_LISTED by
+ * path, newest first, each with its path, its address when served, and why.
  */
-function expectedRounds(runs: string, seriesV1: ReadonlyMap<string, SeriesDerivation>, requestsV1: ReadonlyMap<string, RequestsDerivation>, address: (path: string) => string): { rounds: Json[] | undefined; problems: string[] } {
-	const problems: string[] = [];
+function expectedRounds(runs: string, seriesV1: ReadonlyMap<string, SeriesDerivation>, requestsV1: ReadonlyMap<string, RequestsDerivation>, address: (path: string) => string): { rounds: Json[]; left_out: Json } {
 	interface Boot {
 		path: string;
 		boot: string;
@@ -1173,33 +1211,28 @@ function expectedRounds(runs: string, seriesV1: ReadonlyMap<string, SeriesDeriva
 		buildFailures: number;
 		notRun: number;
 	}
-	const boots: Boot[] = [];
+	let boots: Boot[] = [];
+	const because = new Map<string, string>();
 	for (const path of listFiles(join(runs, "boots")).map((name) => `boots/${name}`).filter((path) => BOOT_FILE.test(path))) {
-		const refused = (why: string): void => {
-			problems.push(`the boot summary ${path} in the checkout ${runs} ${why}, so the rounds of boots cannot be told from the checkout`);
-		};
-		let summary: unknown;
-		try {
-			summary = parseStrictJson(readFileSync(join(runs, ...path.split("/"))));
-		} catch (error) {
-			refused(`is not strict JSON (${error instanceof Error ? error.message : String(error)})`);
-			continue;
-		}
-		if (!isObject(summary) || summary.schema !== "ledgermath.boot/1") {
-			refused("is not a ledgermath.boot/1 file");
-			continue;
-		}
-		const nanos = nanosSince1970(summary.started_at);
-		const provider = isObject(summary.provider) ? summary.provider : undefined;
-		const instanceType = provider?.instance_type ?? null;
-		const listed = Array.isArray(summary.runs) ? summary.runs : undefined;
-		if (typeof summary.boot !== "string") refused("names no boot");
-		else if (nanos === null) refused(`started at ${show(summary.started_at)}, not a real time written yyyy-mm-ddThh:mm:ss.nnnnnnnnnZ`);
-		else if (provider === undefined || (instanceType !== null && typeof instanceType !== "string")) refused("gives no provider with an instance type, a string or none");
-		else if (listed === undefined || !listed.every((run) => isObject(run) && typeof run.id === "string")) refused("gives no list of Runs, each with its id");
-		else if (!Array.isArray(summary.build_failures) || !Array.isArray(summary.not_run)) refused("gives no list of failed builds or of executions not run");
-		else {
-			boots.push({
+		const why = ((): string | Boot => {
+			if (!isServedKey(path)) return LEFT_OUT_BECAUSE.address;
+			let summary: unknown;
+			try {
+				summary = parseStrictJson(readFileSync(join(runs, ...path.split("/"))));
+			} catch {
+				return LEFT_OUT_BECAUSE.json;
+			}
+			if (!isObject(summary) || summary.schema !== "ledgermath.boot/1") return LEFT_OUT_BECAUSE.schema;
+			if (typeof summary.boot !== "string") return LEFT_OUT_BECAUSE.boot;
+			const nanos = nanosSince1970(summary.started_at);
+			if (nanos === null) return LEFT_OUT_BECAUSE.start;
+			const provider = isObject(summary.provider) ? summary.provider : undefined;
+			const instanceType = provider === undefined ? undefined : (provider.instance_type ?? null);
+			if (instanceType === undefined || (instanceType !== null && typeof instanceType !== "string")) return LEFT_OUT_BECAUSE.provider;
+			const listed = Array.isArray(summary.runs) ? summary.runs : undefined;
+			if (listed === undefined || !listed.every((run) => isObject(run) && typeof run.id === "string")) return LEFT_OUT_BECAUSE.runs;
+			if (!Array.isArray(summary.build_failures) || !Array.isArray(summary.not_run)) return LEFT_OUT_BECAUSE.lists;
+			return {
 				path,
 				boot: summary.boot,
 				startedAt: summary.started_at as string,
@@ -1208,17 +1241,29 @@ function expectedRounds(runs: string, seriesV1: ReadonlyMap<string, SeriesDeriva
 				runs: listed.map((run) => (run as Json).id as string),
 				buildFailures: summary.build_failures.length,
 				notRun: summary.not_run.length,
-			});
-		}
+			};
+		})();
+		if (typeof why === "string") because.set(path, why);
+		else boots.push(why);
 	}
-	if (problems.length > 0) return { rounds: undefined, problems };
+	// Each Run's point: series v1 derives every Series and gives its boot; requests v1, where it derives the Series, says whether the Run counts.
+	const pointOf = new Map<string, { boot: string; counted: boolean }>();
+	for (const derivation of seriesV1.values()) for (const point of derivation.points) pointOf.set(point.run, { boot: point.boot, counted: point.counted });
+	// Then what the summaries say together, each test over every summary still in: one boot named twice, a Run of another boot, a Run listed twice.
+	const drop = (why: string, out: (boot: Boot) => boolean): void => {
+		const dropped = boots.filter(out);
+		for (const boot of dropped) because.set(boot.path, why);
+		boots = boots.filter((boot) => !dropped.includes(boot));
+	};
+	const naming = new Map<string, number>();
+	for (const boot of boots) naming.set(boot.boot, (naming.get(boot.boot) ?? 0) + 1);
+	drop(LEFT_OUT_BECAUSE.sameBoot, (boot) => (naming.get(boot.boot) ?? 0) > 1);
+	drop(LEFT_OUT_BECAUSE.otherBoot, (boot) => boot.runs.some((run) => { const point = pointOf.get(run); return point !== undefined && point.boot !== boot.boot; }));
+	const listings = new Map<string, number>();
+	for (const boot of boots) for (const run of boot.runs) listings.set(run, (listings.get(run) ?? 0) + 1);
+	drop(LEFT_OUT_BECAUSE.sharedRun, (boot) => boot.runs.some((run) => (listings.get(run) ?? 0) > 1));
+
 	boots.sort((a, b) => (a.nanos < b.nanos ? -1 : a.nanos > b.nanos ? 1 : byText(a.path, b.path)));
-	const byName = new Map<string, string>();
-	for (const boot of boots) {
-		const other = byName.get(boot.boot);
-		if (other !== undefined) problems.push(`the checkout ${runs} holds two summaries of boot ${boot.boot}: ${other} and ${boot.path}`);
-		byName.set(boot.boot, boot.path);
-	}
 	const rounds: Boot[][] = [];
 	boots.forEach((boot, i) => {
 		const before = boots[i - 1];
@@ -1226,22 +1271,13 @@ function expectedRounds(runs: string, seriesV1: ReadonlyMap<string, SeriesDeriva
 		else (rounds[rounds.length - 1] as Boot[]).push(boot);
 	});
 
-	// Each Run's point: series v1 derives every Series and gives its boot; requests v1, where it derives the Series, says whether the Run counts.
-	const pointOf = new Map<string, { boot: string; counted: boolean }>();
-	for (const derivation of seriesV1.values()) for (const point of derivation.points) pointOf.set(point.run, { boot: point.boot, counted: point.counted });
 	const requestsCounted = new Map<string, boolean>();
 	for (const derivation of requestsV1.values()) for (const point of derivation.points) requestsCounted.set(point.run, point.counted);
-	const listedBy = new Map<string, string>();
 	const figures = (boot: Boot): Json => {
 		let failed = 0;
 		let inNoSeries = 0;
 		for (const run of boot.runs) {
-			const other = listedBy.get(run);
-			if (other !== undefined) problems.push(`Run ${run} is listed by two boot summaries of the checkout: ${other} and ${boot.path}`);
-			listedBy.set(run, boot.path);
-			const point = pointOf.get(run);
-			const counted = requestsCounted.has(run) ? requestsCounted.get(run) : point?.counted;
-			if (point !== undefined && point.boot !== boot.boot) problems.push(`the boot summary ${boot.path} lists Run ${run}, whose point is of boot ${point.boot}, not ${boot.boot}`);
+			const counted = requestsCounted.has(run) ? requestsCounted.get(run) : pointOf.get(run)?.counted;
 			if (counted === undefined) inNoSeries++;
 			else if (!counted) failed++;
 		}
@@ -1272,7 +1308,14 @@ function expectedRounds(runs: string, seriesV1: ReadonlyMap<string, SeriesDeriva
 			by_boot: byBoot,
 		};
 	});
-	return { rounds: out, problems };
+	const leftOut = [...because.keys()].sort((a, b) => byText(b, a));
+	return {
+		rounds: out,
+		left_out: {
+			count: leftOut.length,
+			summaries: leftOut.slice(0, LEFT_OUT_LISTED).map((path) => ({ path, boot_summary: isServedKey(path) ? address(path) : null, why: because.get(path) })),
+		},
+	};
 }
 
 /**
