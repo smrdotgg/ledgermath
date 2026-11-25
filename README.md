@@ -2995,7 +2995,7 @@ The build takes about 1.0 s and the check about 1.8 s on the dev machine, and co
 tree with the one before about 2 s more. Between the trees of two snapshots of that day in
 which every Series gained one Run, every one of the 187 month files changed, each for
 cause (a) only. On 2026-11-24 (187 Series, 10,147 Runs, 274 boot summaries, 14 price files)
-`v1/index.json` is 22.8 KB, 14.6 KB of it `recent_rounds` (13.3 KB the newest 8 rounds of boots); built from the same
+`v1/index.json` is 23.3 KB, 15.1 KB of it `recent_rounds` (13.3 KB the newest 8 rounds of boots); built from the same
 inputs, the tree before the rounds and the tree after them differ in `v1/index.json` and its
 schema alone. The lookup tool and
 the agent skill read this tree ("The agent skill").
