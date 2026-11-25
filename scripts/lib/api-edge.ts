@@ -20,6 +20,14 @@
  * GitHub's runner must never stop a publish: the bucket is what the job
  * writes, and the edge serves it whenever it is up.
  *
+ * What it shows is narrow, by design: the edge it reached did not refuse one
+ * address of each kind. It does not show that every address of a kind is
+ * served (it asks one), that a redirect or an error is right, nor that every
+ * edge location has the deploy: one question from one place reaches one
+ * location, and a deploy reaches the others over some minutes. It catches the
+ * one mistake that matters here, a tree uploaded before the deploy that
+ * serves its kinds of file at all.
+ *
  * The public address is the tree's own: its table of contents' url, less
  * v1/index.json. Nothing is asked of a tree that is not served publicly: one
  * built for another host than the public API's (API_DOMAIN), or while the

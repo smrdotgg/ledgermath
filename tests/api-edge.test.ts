@@ -162,6 +162,20 @@ describe("asking the edge before an upload", () => {
 		expect(timedOut.answers.every((answer) => answer.verdict === "unknown" && answer.detail === "no answer within 50 ms")).toBe(true);
 	});
 
+	test("shows only what it asks: redirects everywhere pass, as does an edge refusing one name it does not ask for; an edge refusing everything stops it, whatever the checkout's switch says", async () => {
+		const redirects = await probeEdge(directory, { fetch: async () => new Response(null, { status: 302, headers: { location: "https://example.invalid/" } }) });
+		expect([redirects.refused, [...new Set(redirects.answers.map((answer) => answer.detail))]]).toEqual([[], ["302"]]);
+		// It asks one list of the benchmarks, the first by path; a refusal of another is not seen, by design.
+		const first = [...tree.keys()].filter((path) => path.startsWith("v1/benchmarks/")).sort()[0] as string;
+		const other = [...tree.keys()].filter((path) => path.startsWith("v1/benchmarks/")).find((path) => path !== first) as string;
+		expect(other).toBeDefined();
+		const unasked = await probeEdge(directory, { fetch: edge(new Set(tree.keys()), (path) => path === other).get });
+		expect(unasked.refused).toEqual([]);
+		// An edge that refuses every address, a closed or undeployed one, stops it, though this checkout's switch is on.
+		const closed = await probeEdge(directory, { fetch: async () => refusal() });
+		expect(closed.refused.length).toBe(closed.answers.length);
+	});
+
 	test("asks nothing of a tree the public API does not serve: the switch not on, another host, no table of contents giving its address", async () => {
 		let asked = 0;
 		const counting = async (): Promise<Response> => {
@@ -210,7 +224,9 @@ describe("the command", () => {
 		const served = await run(serving.url, join(out, "served.md"));
 		serving.stop();
 		expect([served.exitCode, served.stderr]).toEqual([0, ""]);
-		expect(served.stdout).toContain("The public edge serves every kind of file in the tree");
+		expect(served.stdout).toContain(`Asked the public edge for ${TREE_KINDS.length - 1 + schemas().length} addresses (one file of each kind in the tree, and every schema): the edge itself refused none of them`);
+		expect(served.stdout).toContain("it does not show that every address is served, nor that every edge location has the deploy");
+		expect(served.stdout).not.toContain("serves every kind");
 
 		// Nothing listens there any more: no answer, and the upload goes on.
 		const gone = await run(serving.url, join(out, "gone.md"));

@@ -33,8 +33,9 @@
  *   Derivations, one month file per month in which a Run of that Series
  *   started (UTC, by the Run's start), and one per price file in the
  *   checkout; nothing else. Each is reached from the table of contents by
- *   following the links in the files, and none is over its kind's ceiling
- *   of bytes (CEILINGS).
+ *   following the links in the files, or is the list of a benchmark a row
+ *   names, at the address the table of contents' template gives; and none is
+ *   over its kind's ceiling of bytes (CEILINGS).
  * - Each schema in the tree is byte for byte this repository's and a valid
  *   JSON Schema, every kind of file in the tree is described by one schema
  *   the table of contents lists, and every file matches this repository's
@@ -88,8 +89,10 @@
  *   order, as many as fit in 250,000 bytes (each row counted as its bytes and
  *   6 more), each the row its Series file makes (so the list's, byte for
  *   byte), and counts the rest as left out; its count and newest Run are
- *   right. Each Series file links its benchmark's list, or gives null for a
- *   benchmark of a name the address does not take.
+ *   right. The lists are exactly those of the benchmarks whose names the
+ *   address takes, each reached from the table of contents, by its entry in
+ *   benchmarks.list or as the list of a benchmark a row of the list of every
+ *   Series names, at the address benchmarks.benchmark_file_url_template gives.
  * - The table of contents lists exactly the price files and the schemas the
  *   tree holds, with the newest price file marked, counts the Series right,
  *   gives every address as the base and the file's path, gives the templates
@@ -260,21 +263,34 @@ const POINTS_SHOWN = 10;
  * there to say a file has outgrown what a reader, an agent above all, should
  * fetch in one request: raise it only once that is decided, not to make the
  * check pass.
+ *
+ * Layout 2 (2026-11-25) added fields to three kinds that existed at layout 1,
+ * and raised each of their ceilings by the most those fields can add, so that
+ * no tree the layout-1 check accepted is refused for its size by the change
+ * (tests/api-ceilings.test.ts derives each bound from the writer): the table
+ * of contents gains at most 19,228 bytes (100,000 to 120,000); a row of the
+ * list at most 25 bytes, against the 484 a layout-1 row takes at least as the
+ * list writes it, so the list at most 4.9% (1,000,000 to 1,050,000); a group
+ * of a Series file at most 177 bytes, against the 377 a layout-1 group takes
+ * at least, and the file 29 for its boots, so a Series file at most 47%
+ * (1,000,000 to 1,470,000). What one Run can add to the list, a Series file
+ * or a month file is unbounded still: a string of any length in its params,
+ * build, instance type or zone ID, which #81 is to bound.
  */
 export const CEILINGS: ReadonlyArray<{ kind: string; path: RegExp; bytes: number; whenHit: string }> = [
 	{
 		kind: "the table of contents",
 		path: /^v1\/index\.json$/,
-		bytes: 100_000,
+		bytes: 120_000,
 		whenHit:
-			"it was 6.3 KB with 9 price files on 2026-11-19, and 23.6 KB with 14 on 2026-11-24, once it gave the newest rounds of boots (13.3 KB for 8 rounds of five boots, about 300 bytes a boot: it grows with the boots a round holds, not with time; the summaries left out are at most 8 listed, each with one of a fixed few sentences); 30.1 KB with 15 on 2026-11-25, once it listed each benchmark's list (2.5 KB for 14 benchmarks, held to at most 16,000 bytes whatever the Runs hold, and 3 KB of words); each day's price file adds 124 bytes to its list, which brings it here about 19 months on; listing the price files by month, as the Series are, changes v1's shape (v2), so decide that with the maintainer; if the rounds grew, ask why a round holds so many boots before giving fewer",
+			"it was 6.3 KB with 9 price files on 2026-11-19, and 23.6 KB with 14 on 2026-11-24, once it gave the newest rounds of boots (13.3 KB for 8 rounds of five boots, about 300 bytes a boot: it grows with the boots a round holds, not with time; the summaries left out are at most 8 listed, each with one of a fixed few sentences); 30.1 KB with 15 on 2026-11-25, once it listed each benchmark's list (2.5 KB for 14 benchmarks, held to at most 16,000 bytes whatever the Runs hold, and 3 KB of words), when this ceiling rose from 100,000 by the 19,228 bytes layout 2 can add at most; each day's price file adds 124 bytes to its list, which brings it here about two years on; listing the price files by month, as the Series are, changes v1's shape (v2), so decide that with the maintainer; if the rounds grew, ask why a round holds so many boots before giving fewer",
 	},
 	{
 		kind: "the list of Series",
 		path: /^v1\/series\.json$/,
-		bytes: 1_000_000,
+		bytes: 1_050_000,
 		whenHit:
-			"a row is about 1 KB, so this is about 950 Series; splitting the list (by benchmark, say) changes what v1/series.json holds, a v2 change, so decide it with the maintainer; each benchmark's list already holds its rows, so a reader seldom needs this one",
+			"a row is about 1 KB, so this is about 1,000 Series (1,000,000 at layout 1, raised by the 4.9% at most a row's boots add); one Run's long params can bring it here sooner, which #81 is to bound; splitting the list (by benchmark, say) changes what v1/series.json holds, a v2 change, so decide it with the maintainer; each benchmark's list already holds its rows, so a reader seldom needs this one",
 	},
 	{
 		kind: "a benchmark's list of Series",
@@ -286,9 +302,9 @@ export const CEILINGS: ReadonlyArray<{ kind: string; path: RegExp; bytes: number
 	{
 		kind: "a Series file",
 		path: SERIES_PATH,
-		bytes: 1_000_000,
+		bytes: 1_470_000,
 		whenHit:
-			"the number of points in it is bounded (newest_runs), and it was 302 KB at most, for http_get, on 2026-11-19, so its newest points or its summaries grew: more samples or requests per Run, more groups (one per change of the machine's split facts), more distinct values of a request fact, or many years of month entries; find which, and lower newest_runs or move the part that grew to the month files before raising this",
+			"1,000,000 at layout 1, raised by the 47% at most a group's counts and starts, and the Series' boots, add; the number of points in it is bounded (newest_runs), and it was 302 KB at most, for http_get, on 2026-11-19, so its newest points or its summaries grew (or one Run's long strings, which #81 is to bound): more samples or requests per Run, more groups (one per change of the machine's split facts), more distinct values of a request fact, or many years of month entries; find which, and lower newest_runs or move the part that grew to the month files before raising this",
 	},
 	{
 		kind: "a month file",
@@ -1044,15 +1060,12 @@ export function checkApi(sources: CheckSources): CheckResult {
 				runs: derivation.runs.length,
 				boots: new Set(derivation.points.map((point) => point.boot)).size,
 				...(times === undefined ? {} : { oldest_run_started_at: times.oldest, newest_run_started_at: times.newest }),
-				// Its benchmark's list, which every benchmark of a name the address takes has: what reaches a list the table of contents does not name.
-				benchmark_url: typeof identity.benchmark === "string" && BENCHMARK_NAME.test(identity.benchmark) ? address(benchmarkFile(identity.benchmark)) : null,
 				newest_runs: NEWEST_RUNS,
 				months: monthEntries,
 			},
 			"its Derivations and the base make it",
 		);
 		for (const url of [file.schema_url, file.index, file.url]) link(path, url);
-		if (typeof file.benchmark_url === "string") link(path, file.benchmark_url);
 		// Its months are exactly the month files the tree holds for it.
 		const listed = (Array.isArray(file.months) ? file.months : []).filter(isObject);
 		for (const entry of listed) link(path, entry.url);
@@ -1314,6 +1327,20 @@ export function checkApi(sources: CheckSources): CheckResult {
 		if (typeof ofBenchmarks.about !== "string") problems.push(`${INDEX}: benchmarks.about is ${show(ofBenchmarks.about)}, not the words of what a benchmark's list holds`);
 		link(INDEX, ofBenchmarks.schema_url);
 		for (const entry of Array.isArray(ofBenchmarks.list) ? ofBenchmarks.list : []) if (isObject(entry)) link(INDEX, entry.url);
+		// A list is reached, too, as the list of a benchmark a row names, at the address the template gives: so a list the table of contents does
+		// not name is reached, from the list of every Series, whose rows name every benchmark. No file links a list but the table of contents.
+		if (ofBenchmarks.benchmark_file_url_template === `${base}/v1/benchmarks/{benchmark}.json`) {
+			let next = steps.get(LIST);
+			if (next === undefined) {
+				next = new Set();
+				steps.set(LIST, next);
+			}
+			for (const row of rowsOfList.values()) {
+				if (typeof row.benchmark !== "string" || !BENCHMARK_NAME.test(row.benchmark)) continue;
+				const path = benchmarkFile(row.benchmark);
+				if (held.has(path)) next.add(path);
+			}
+		}
 	}
 
 	for (const path of checkoutPrices) {
@@ -1979,8 +2006,11 @@ export function checkStability(previous: string, tree: string, options: { newBas
 			return result;
 		}
 		// A new baseline: the month files are not compared, but nothing the previous tree published may be missing.
+		/** Files of the previous tree that could not be read or parsed: the Series and Runs it published are read from the rest. */
+		let unread: number | undefined;
 		if (existsSync(previous) && statSync(previous).isDirectory()) {
 			const was = publishedIn(previous);
+			unread = was.unread.length;
 			const is = publishedIn(tree);
 			let runs = 0;
 			for (const [id, published] of [...was.series].sort(([a], [b]) => byText(a, b))) {
@@ -1996,7 +2026,9 @@ export function checkStability(previous: string, tree: string, options: { newBas
 			result.published = { series: was.series.size, runs, monthFiles: was.monthFiles, seriesFilesWithPoints: was.seriesFilesWithPoints, unread: was.unread.length };
 		}
 		// The layout rose, and the new one writes month files as the previous tree's did (MONTH_FILES_WRITTEN_SO_SINCE_LAYOUT): its month files
-		// are still compared, strictly, when it is whole and of this base. The new baseline lets the rest of the tree change, not a month file.
+		// are still compared, strictly, when it is of this base, every file of it was read and parsed, and it is whole. The new baseline lets the
+		// rest of the tree change, not a month file. A previous tree broken in any way is a plain new baseline, as before: the new baseline is
+		// the way out of a broken previous tree, and only what could be read of it is held (the Series and Runs it published, above).
 		const monthsAsBefore =
 			typeof prior !== "string" &&
 			prior.base === current.base &&
@@ -2004,7 +2036,14 @@ export function checkStability(previous: string, tree: string, options: { newBas
 			current.layout !== null &&
 			prior.layout < current.layout &&
 			prior.layout >= MONTH_FILES_WRITTEN_SO_SINCE_LAYOUT;
-		if (!monthsAsBefore || wholeness(previous).length > 0) return result;
+		if (!monthsAsBefore || unread !== 0) return result;
+		let whole: boolean;
+		try {
+			whole = wholeness(previous).length === 0;
+		} catch {
+			whole = false;
+		}
+		if (!whole) return result;
 		result.acrossLayouts = true;
 	}
 	const broken = wholeness(previous);

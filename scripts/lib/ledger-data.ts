@@ -68,9 +68,9 @@ export const RETRY_PAUSE_MS = 2_000;
  * for a Run file, which the tree links and never copies, a limit of its own.
  */
 export const LIMITS = {
-	index: 100_000,
-	list: 1_000_000,
-	series: 1_000_000,
+	index: 120_000,
+	list: 1_050_000,
+	series: 1_470_000,
 	month: 5_000_000,
 	prices: 1_000_000,
 	schema: 256_000,

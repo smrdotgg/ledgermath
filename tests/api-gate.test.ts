@@ -9,7 +9,7 @@
 
 import { beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -358,5 +358,26 @@ describe("3. the previous tree is whole, and its history is honoured across a ch
 		writeFileSync(join(unlisted, nov), written(nov, value));
 		const notWhole = checkStability(asLayout(unlisted, LAYOUT - 1), directory, { newBaseline: true });
 		expect([notWhole.compared, notWhole.problems]).toEqual([false, []]);
+
+		// A month the tree before holds whose bytes are what its Series file lists, but are no JSON: a plain new baseline, not a refusal.
+		const unparsable = asLayout(directory, LAYOUT - 1);
+		writeFileSync(join(unparsable, nov), "not JSON\n");
+		keepEntry(unparsable, nov);
+		const ofUnparsable = checkStability(unparsable, directory, { newBaseline: true });
+		expect([ofUnparsable.compared, ofUnparsable.acrossLayouts, ofUnparsable.problems, ofUnparsable.published?.unread]).toEqual([false, undefined, [], 1]);
+		expect(checkStability(unparsable, directory).problems).toEqual([expect.stringContaining(`${unparsable} is a tree of layout ${LAYOUT - 1}, this tree of layout ${LAYOUT}`)]);
+
+		// A month the tree before holds that cannot be read at all: a plain new baseline, and the gate does not throw. (Root reads it anyway.)
+		if (process.getuid?.() !== 0) {
+			const unreadable = asLayout(directory, LAYOUT - 1);
+			chmodSync(join(unreadable, nov), 0);
+			try {
+				const ofUnreadable = checkStability(unreadable, directory, { newBaseline: true });
+				expect([ofUnreadable.compared, ofUnreadable.problems, ofUnreadable.published?.unread]).toEqual([false, [], 1]);
+				expect(checkStability(unreadable, directory).problems).toEqual([expect.stringContaining(`${unreadable} is a tree of layout ${LAYOUT - 1}, this tree of layout ${LAYOUT}`)]);
+			} finally {
+				chmodSync(join(unreadable, nov), 0o644);
+			}
+		}
 	});
 });

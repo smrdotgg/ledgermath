@@ -113,19 +113,19 @@ describe("the tree's objects", () => {
 		}
 	});
 
-	test("are uploaded leaves first and the table of contents last: schemas; month files and price files; Series files; the list and each benchmark's list; the table of contents", () => {
-		expect(UPLOAD_PHASES).toEqual(["schemas", "month files and price files", "Series files", "the lists of Series", "the table of contents"]);
+	test("are uploaded leaves first and the table of contents last: schemas; month files and price files; Series files; each benchmark's list; the list, whose rows name every benchmark; the table of contents", () => {
+		expect(UPLOAD_PHASES).toEqual(["schemas", "month files and price files", "Series files", "each benchmark's list of Series", "the list of Series", "the table of contents"]);
 		expect(treeObject("v1/schemas/series-month.schema.json").phase).toBe(0);
 		expect(treeObject("v1/schemas/benchmark.schema.json").phase).toBe(0);
 		expect(treeObject("v1/series/0cacb5fd6fae/2026-11.json").phase).toBe(1);
 		expect(treeObject("v1/prices/2026-11-19.json").phase).toBe(1);
 		expect(treeObject("v1/series/0cacb5fd6fae.json").phase).toBe(2);
-		expect(treeObject("v1/series.json").phase).toBe(3);
 		expect(treeObject("v1/benchmarks/memory_read.json").phase).toBe(3);
-		expect(treeObject("v1/index.json").phase).toBe(4);
+		expect(treeObject("v1/series.json").phase).toBe(4);
+		expect(treeObject("v1/index.json").phase).toBe(5);
 	});
 
-	test("each file links down only to files of earlier phases; its other links go up, to the table of contents, the list, a month file's own Series file, or a Series file's benchmark's list", () => {
+	test("each file links down only to files of earlier phases; its other links go up, to the table of contents, the list, or a month file's own Series file", () => {
 		const phaseOf = new Map([...TREE.keys()].map((path) => [path, treeObject(path).phase]));
 		let down = 0;
 		for (const [path, bytes] of TREE) {
@@ -134,11 +134,7 @@ describe("the tree's objects", () => {
 			const links = [...text.matchAll(/"https:\/\/api\.ledgermath\.com\/(v1\/[^"{]+)"/g)].map((match) => match[1] as string).filter((link) => link !== path);
 			for (const link of links) {
 				expect(phaseOf.has(link)).toBe(true);
-				const up =
-					link === "v1/index.json" ||
-					link === "v1/series.json" ||
-					(treeObject(path).kind === "a month file" && path.startsWith(link.replace(/\.json$/, "/"))) ||
-					(treeObject(path).kind === "a Series file" && treeObject(link).kind === "a benchmark's list of Series");
+				const up = link === "v1/index.json" || link === "v1/series.json" || (treeObject(path).kind === "a month file" && path.startsWith(link.replace(/\.json$/, "/")));
 				if (up) continue;
 				down++;
 				expect(phaseOf.get(link) as number).toBeLessThan(phaseOf.get(path) as number);
@@ -304,7 +300,7 @@ describe("the upload, against a stand-in for S3", () => {
 		const report = await uploadTree(store, files, RUN);
 		expect(puts().length).toBe(before);
 		expect(report.reasons.size).toBe(0);
-		expect(report.phases.map((phase) => phase.written.length)).toEqual([0, 0, 0, 0, 0]);
+		expect(report.phases.map((phase) => phase.written.length)).toEqual([0, 0, 0, 0, 0, 0]);
 		for (const object of objects().values()) expect(object.writes).toBe(1);
 	});
 
@@ -390,7 +386,7 @@ describe("the upload, against a stand-in for S3", () => {
 		expect(stopped).toBeInstanceOf(UploadStopped);
 		expect((stopped as UploadStopped).phase).toBe(0);
 		expect((stopped as UploadStopped).failed.map((failure) => failure.key)).toEqual([failing.key]);
-		expect(String(stopped)).toContain(`stopped in phase 1 of 5, schemas: 1 write failed, the first ${failing.key}: PUT s3://${BUCKET}/${failing.key} answered 500, InternalError`);
+		expect(String(stopped)).toContain(`stopped in phase 1 of 6, schemas: 1 write failed, the first ${failing.key}: PUT s3://${BUCKET}/${failing.key} answered 500, InternalError`);
 		expect(puts().map((key) => treeObject(key).phase).every((phase) => phase === 0)).toBe(true);
 		expect(objects().has("v1/index.json")).toBe(false);
 		expect(objects().has("v1/series.json")).toBe(false);
@@ -439,7 +435,7 @@ describe("the upload, against a stand-in for S3", () => {
 		expect(stopped).toBeInstanceOf(UploadStopped);
 		expect((stopped as UploadStopped).phase).toBe(2);
 		expect((stopped as UploadStopped).failed.map((failure) => failure.key)).toEqual([series]);
-		expect(String(stopped)).toContain("stopped in phase 3 of 5, Series files");
+		expect(String(stopped)).toContain("stopped in phase 3 of 6, Series files");
 		// The month is new, its Series file is old: the mismatch a reader detects by the rule, and no cache expiry repairs.
 		expect(createHash("sha256").update(objects().get(month)?.bytes ?? new Uint8Array()).digest("hex")).toBe(createHash("sha256").update(tree.get(month) as Uint8Array).digest("hex"));
 		expect(monthsAgainstSeries()).toEqual([expect.stringContaining(`${series} lists ${month} as `)]);
@@ -788,9 +784,9 @@ describe("the scripts", () => {
 		standin.fault = (request) => (request.method === "PUT" && request.key === list ? new Response("<Error><Code>InternalError</Code></Error>", { status: 500 }) : undefined);
 		const uploaded = await run("upload-api.ts", tree, summary);
 		expect(uploaded.exitCode).toBe(1);
-		expect(uploaded.stderr).toContain("stopped in phase 4 of 5, the lists of Series: 1 write failed, the first v1/series.json");
+		expect(uploaded.stderr).toContain("stopped in phase 5 of 6, the list of Series: 1 write failed, the first v1/series.json");
 		const text = readFileSync(summary, "utf8");
-		expect(text).toContain("**The upload stopped in phase 4 of 5, the lists of Series.** No later phase was started.");
+		expect(text).toContain("**The upload stopped in phase 5 of 6, the list of Series.** No later phase was started.");
 		expect(text).toContain("- `v1/series.json`: PUT");
 		expect(text).toContain("The next run's upload writes what is still missing and repairs it.");
 		expect(standin.requests.some((request) => request.method === "PUT" && request.key === "v1/index.json")).toBe(false);

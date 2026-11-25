@@ -35,7 +35,7 @@ async function main(): Promise<void> {
 	const outcome = !probe.asked
 		? `The edge was not asked: ${probe.why}.`
 		: probe.refused.length === 0
-			? `The public edge serves every kind of file in the tree (${probe.answers.length} asked, one file of each): the upload may go on.`
+			? `Asked the public edge for ${probe.answers.length} addresses (one file of each kind in the tree, and every schema): the edge itself refused none of them, so the upload goes on. This asks one address of each kind, from one place: it does not show that every address is served, nor that every edge location has the deploy.`
 			: `Not uploaded: the public edge refuses ${probe.refused.map((answer) => answer.kind).join(", ")} with its own 404, so a reader would find no such file where the tree links it. Deploy production-runs from main first, so that the edge serves every kind of file the build writes (README, "Deploy", "A new kind of file in the data API"); then run this job again.`;
 	if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, `### The public edge against the tree's kinds of file\n\n${outcome}\n${lines.length === 0 ? "" : `\n${lines.join("\n")}\n`}`);
 	if (probe.refused.length > 0) {

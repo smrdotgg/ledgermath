@@ -48,7 +48,6 @@ function asLayout1(kind: string, value: Json): Json {
 	if (kind === "series-list") for (const row of out.series) delete row.boots;
 	if (kind === "series") {
 		delete out.boots;
-		delete out.benchmark_url;
 		for (const block of Object.values(out.derivations) as Json[]) for (const group of block.groups) for (const key of ADDED_TO_GROUPS) delete group[key];
 	}
 	return out;
@@ -68,7 +67,6 @@ function layout1Schema(name: string): Json {
 	if (name === "series-list") delete schema.$defs.row.properties.boots;
 	if (name === "series") {
 		delete schema.properties.boots;
-		delete schema.properties.benchmark_url;
 		for (const key of ADDED_TO_GROUPS) {
 			delete schema.$defs.series_group.properties[key];
 			delete schema.$defs.requests_v1.properties.groups.items.properties[key];
@@ -101,7 +99,6 @@ describe("files and schemas of both layouts", () => {
 		expect(read("index").properties.series.required).toEqual(["url", "schema_url", "count", "series_file_schema_url", "month_file_schema_url"]);
 		expect(read("series-list").$defs.row.required).not.toContain("boots");
 		expect(read("series").required).not.toContain("boots");
-		expect(read("series").required).not.toContain("benchmark_url");
 		for (const key of ADDED_TO_GROUPS) {
 			expect(read("series").$defs.series_group.required).not.toContain(key);
 			expect(read("series").$defs.requests_v1.properties.groups.items.required).not.toContain(key);
@@ -152,7 +149,6 @@ describe("files and schemas of both layouts", () => {
 		const series = seriesPath([...tree.keys()].map((path) => /^v1\/series\/([0-9a-f]{12})\.json$/.exec(path)?.[1]).find((id) => id !== undefined) as string);
 		const ofSeries = check(series, "series");
 		expect(ofSeries).toContainEqual(expect.stringMatching(new RegExp(`^${series.replaceAll(".", "\\.")}: /boots is absent`)));
-		expect(ofSeries).toContainEqual(expect.stringMatching(new RegExp(`^${series.replaceAll(".", "\\.")}: /benchmark_url is absent`)));
 		expect(ofSeries).toContainEqual(expect.stringMatching(/: series_v1: \/groups\/0\/counted_runs is absent/));
 		const ofList = check("v1/series.json", "series-list");
 		expect(ofList).toContainEqual(expect.stringMatching(/^v1\/series\.json: the row of Series [0-9a-f]{12} differs from its file .*: \/boots is absent/));

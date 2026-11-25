@@ -390,7 +390,10 @@ describe("a benchmark's list of Series", () => {
 		expect(index.benchmarks.about).toBe(BENCHMARKS);
 		expect(index.benchmarks.benchmark_file_url_template).toBe(`${DEFAULT_BASE}/v1/benchmarks/{benchmark}.json`);
 		expect([index.benchmarks.count, index.benchmarks.unlisted, index.benchmarks.left_out]).toEqual([3, 0, 0]);
-		for (const row of list.series) expect(json(tree, seriesPath(row.id)).benchmark_url).toBe(index.benchmarks.benchmark_file_url_template.replace("{benchmark}", row.benchmark));
+		// Each row's benchmark, at the template's address, is a list of the tree: a reader holding a name reaches its list.
+		for (const row of list.series) expect(tree.has(index.benchmarks.benchmark_file_url_template.replace("{benchmark}", row.benchmark).slice(`${DEFAULT_BASE}/`.length))).toBe(true);
+		// No Series file links its benchmark's list: a link to a file of a later phase could be left hanging by an upload that stopped.
+		for (const row of list.series) expect(Object.keys(json(tree, seriesPath(row.id)))).not.toContain("benchmark_url");
 		expect(index.benchmarks.list.map((entry: Json) => entry.name)).toEqual(["http_get", "memory_read", "syscall"]);
 		const allLines = rowLines("v1/series.json");
 		let rows = 0;
@@ -838,8 +841,6 @@ describe("the check fails loudly", () => {
 		expect(unlisted).toEqual(["v1/index.json: benchmarks: /unlisted is 1, not 0, as the tree and the Derivations make it"]);
 		const words = check(edit("v1/index.json", (index) => delete index.series.about));
 		expect(words).toEqual([`v1/index.json: /series/about is absent, not "the words of where the Series are listed", as the tree and the Derivations make it`]);
-		const link = check(edit(seriesPath(fixture.memory), (file) => (file.benchmark_url = `${DEFAULT_BASE}/v1/benchmarks/syscall.json`)));
-		expect(link).toEqual([`${seriesPath(fixture.memory)}: /benchmark_url is "${DEFAULT_BASE}/v1/benchmarks/syscall.json", not "${DEFAULT_BASE}/v1/benchmarks/memory_read.json", as its Derivations and the base make it`]);
 	});
 
 	test("when a benchmark's list lacks a row it should hold, or holds its rows out of order", () => {

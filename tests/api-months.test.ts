@@ -755,10 +755,10 @@ describe("the check keeps up with the months", () => {
 
 	test("when a file is over its kind's ceiling, saying what to do", () => {
 		expect(CEILINGS.map((ceiling) => [ceiling.kind, ceiling.bytes])).toEqual([
-			["the table of contents", 100_000],
-			["the list of Series", 1_000_000],
+			["the table of contents", 120_000],
+			["the list of Series", 1_050_000],
 			["a benchmark's list of Series", 256_000],
-			["a Series file", 1_000_000],
+			["a Series file", 1_470_000],
 			["a month file", 5_000_000],
 			["a price file", 1_000_000],
 			["a schema", 256_000],
@@ -766,12 +766,12 @@ describe("the check keeps up with the months", () => {
 		// White space after the value: still the same JSON, and as many bytes as wanted; and no longer what the build writes for it.
 		const pad = (path: string, bytes: number) => (copy: string) => writeFileSync(join(copy, path), Buffer.concat([readFileSync(join(copy, path)), Buffer.alloc(bytes, 0x20)]));
 		const notWritten = (path: string) => expect.stringMatching(new RegExp(`^${path.replaceAll(".", "\\.")} is not what the build writes for its own values`));
-		const index = check(pad("v1/index.json", 100_000));
-		const size = (tree.get("v1/index.json") as Uint8Array).length + 100_000;
-		expect(index).toEqual([`v1/index.json is ${size} bytes, over the ceiling of 100000 for the table of contents: ${CEILINGS[0]?.whenHit}`, notWritten("v1/index.json")]);
-		const series = check(pad(seriesPath(fixture.memory), 1_000_000));
+		const index = check(pad("v1/index.json", 120_000));
+		const size = (tree.get("v1/index.json") as Uint8Array).length + 120_000;
+		expect(index).toEqual([`v1/index.json is ${size} bytes, over the ceiling of 120000 for the table of contents: ${CEILINGS[0]?.whenHit}`, notWritten("v1/index.json")]);
+		const series = check(pad(seriesPath(fixture.memory), 1_470_000));
 		expect(series).toEqual([
-			expect.stringMatching(new RegExp(`^${seriesPath(fixture.memory)} is [0-9]+ bytes, over the ceiling of 1000000 for a Series file: the number of points in it is bounded \\(newest_runs\\)`)),
+			expect.stringMatching(new RegExp(`^${seriesPath(fixture.memory)} is [0-9]+ bytes, over the ceiling of 1470000 for a Series file: 1,000,000 at layout 1, raised by the 47% at most`)),
 			notWritten(seriesPath(fixture.memory)),
 		]);
 		const month = check(pad(dec(fixture.http), 5_000_000));

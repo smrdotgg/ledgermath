@@ -69,10 +69,10 @@ describe("no total of the Runs can stop a publish", () => {
 		expect((tree.get(benchmarkPath("memory_read")) as Uint8Array).length).toBeLessThanOrEqual(256_000);
 		const index = json("v1/index.json");
 		expect([index.benchmarks.left_out, index.benchmarks.list]).toEqual([18 - fit, [{ name: "memory_read", url: `${DEFAULT_BASE}/${benchmarkPath("memory_read")}`, series: fit, runs: fit, newest_run_started_at: "2026-11-01T01:02:03.000000000Z" }]]);
-		// A Series left out of the list is in the list of every Series, has its own file, and its file still links its benchmark's list.
+		// A Series left out of the list is in the list of every Series and has its own file.
 		for (const row of rows.slice(fit)) {
+			expect(all.some((one) => one.id === row.id)).toBe(true);
 			expect(tree.has(seriesPath(row.id))).toBe(true);
-			expect(json(seriesPath(row.id)).benchmark_url).toBe(`${DEFAULT_BASE}/${benchmarkPath("memory_read")}`);
 		}
 	});
 
@@ -87,7 +87,7 @@ describe("no total of the Runs can stop a publish", () => {
 		expect(json("v1/index.json").benchmarks.left_out).toBe(list.left_out);
 	});
 
-	test("501 benchmarks of names of 64 characters: every one has its list, reached from its Series' files and by the template; the table of contents names as many as fit, and counts the rest", async () => {
+	test("501 benchmarks of names of 64 characters: every one has its list, reached by its name at the template's address; the table of contents names as many as fit, and counts the rest", async () => {
 		const names = Array.from({ length: 501 }, (_, i) => `n${String(i).padStart(63, "0")}`);
 		const { tree, problems, json } = await publish(names.map((name) => ({ benchmark: name, params: {} })));
 		// The check finds every list reached by following links from the table of contents, those it does not name included.
@@ -101,12 +101,12 @@ describe("no total of the Runs can stop a publish", () => {
 		expect(listed.map((entry) => entry.name)).toEqual(names.slice(0, listed.length));
 		expect(listed.reduce((total, entry) => total + listedBytes(entry), 0)).toBeLessThanOrEqual(BENCHMARKS_LISTED_BYTES);
 		expect(index.benchmarks.left_out).toBe(0);
+		// Each row of the list of every Series names its benchmark, whose list is at the template's address.
+		const rows = json("v1/series.json").series as Json[];
+		expect(new Set(rows.map((row) => row.benchmark))).toEqual(new Set(names));
 		for (const name of names) {
-			const url = `${DEFAULT_BASE}/${benchmarkPath(name)}`;
 			expect(tree.has(benchmarkPath(name))).toBe(true);
-			expect(index.benchmarks.benchmark_file_url_template.replace("{benchmark}", name)).toBe(url);
-			const row = (json(benchmarkPath(name)).series as Json[])[0] as Json;
-			expect(json(seriesPath(row.id)).benchmark_url).toBe(url);
+			expect(index.benchmarks.benchmark_file_url_template.replace("{benchmark}", name)).toBe(`${DEFAULT_BASE}/${benchmarkPath(name)}`);
 		}
 	});
 });

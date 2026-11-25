@@ -61,19 +61,20 @@ export const TREE_CACHE_CONTROL = "public, max-age=300";
  * of the next, so that a reader who starts at the table of contents and
  * follows links down never finds one to a file that is not there yet. Each
  * file links down only to files of earlier phases: a month file to its
- * schema; a Series file to its month files and its schema; the list, and
- * each benchmark's list, to the Series files; the table of contents to the
- * lists, the price files and the schemas. The links up (to the table of
- * contents, the list, a month file's own Series file, a Series file's
- * benchmark's list) are to files a reader has come through or that list the
- * file; on the first upload, or for a Series or benchmark new this round,
- * they are written a phase or more later, and nothing links down to the
- * files that carry them until then (a Series file already published, written
- * again with its first benchmark_url, links its benchmark's list a phase
- * before that list is written: for that phase, on that one upload, the link
- * answers S3's 403).
+ * schema; a Series file to its month files and its schema; each benchmark's
+ * list to its Series files; the list to the Series files; the table of
+ * contents to the lists, the price files and the schemas. A benchmark's list
+ * is reached also by a row's name for its benchmark, at the address the table
+ * of contents' template gives: every row of the list names its benchmark, so
+ * each benchmark's list is written a phase before the list, and no row
+ * reachable from the table of contents names a benchmark whose list is not
+ * there yet. The links up (to the table of contents, the list, a month file's
+ * own Series file) are to files a reader has come through; on the first
+ * upload, or for a Series new this round, they are written a phase or more
+ * later, and nothing reachable from the table of contents links down to the
+ * files that carry them until then.
  */
-export const UPLOAD_PHASES = ["schemas", "month files and price files", "Series files", "the lists of Series", "the table of contents"] as const;
+export const UPLOAD_PHASES = ["schemas", "month files and price files", "Series files", "each benchmark's list of Series", "the list of Series", "the table of contents"] as const;
 
 export interface TreeKind {
 	kind: string;
@@ -131,9 +132,9 @@ export const TREE_KINDS: readonly TreeKind[] = [
 	{ kind: "a month file", path: new RegExp(`^v1\\/series\\/[0-9a-f]{12}\\/${CALENDAR_MONTH}\\.json$`), phase: 1 },
 	{ kind: "a price file", path: new RegExp(`^v1\\/prices\\/${calendarDate("-")}\\.json$`), phase: 1 },
 	{ kind: "a Series file", path: /^v1\/series\/[0-9a-f]{12}\.json$/, phase: 2 },
-	{ kind: "the list of Series", path: /^v1\/series\.json$/, phase: 3 },
+	{ kind: "the list of Series", path: /^v1\/series\.json$/, phase: 4 },
 	{ kind: "a benchmark's list of Series", path: new RegExp(`^v1\\/benchmarks\\/${BENCHMARK_NAME}\\.json$`), phase: 3 },
-	{ kind: "the table of contents", path: /^v1\/index\.json$/, phase: 4 },
+	{ kind: "the table of contents", path: /^v1\/index\.json$/, phase: 5 },
 ];
 
 /** A shape of key under v1/ the public serving serves before the build writes it (SERVED_AHEAD). */

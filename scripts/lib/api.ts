@@ -198,8 +198,9 @@ export const LIST_BYTES = 250_000;
  * (benchmarks.list), each entry counted as its bytes written as JSON with no
  * white space and 6 more: in name order, as many as fit; the rest are not
  * listed there, counted (benchmarks.unlisted), and keep their lists, which a
- * reader reaches by the benchmark's name (benchmarks.benchmark_file_url_template)
- * or from any of the benchmark's Series files (benchmark_url). An entry takes
+ * reader reaches by the benchmark's name, which every row and every Series
+ * file holds, at the address benchmarks.benchmark_file_url_template gives. An
+ * entry takes
  * at most about 310 bytes (a name of 64 characters), so the list is at most
  * 16,000 bytes, whatever the Runs hold, and keeps the table of contents
  * under its ceiling; on 2026-11-25 its 14 entries took 2,400.
@@ -324,7 +325,7 @@ export const BENCHMARKS =
 	"Each benchmark's Series are listed in a file of their own, v1/benchmarks/<benchmark>.json: rows of the list of every Series, v1/series.json, " +
 	"each the same row, byte for byte, in the same order, under a head like the list's (count, newest_run_started_at) with the benchmark's name and left_out. " +
 	`Every benchmark whose name is 1 to ${BENCHMARK_NAME_CHARACTERS} characters, a lower-case letter, then lower-case letters, digits and underscores, has its list, always; ` +
-	"its address is benchmark_file_url_template with {benchmark} replaced by the name, and each of its Series' files links it (benchmark_url). " +
+	"its address is benchmark_file_url_template with {benchmark} replaced by the name, which every row and every Series' file gives (benchmark). " +
 	"The Series of a benchmark named otherwise are in v1/series.json alone. " +
 	`A list holds, of its benchmark's Series whose rows take at most ${ROW_BYTES} bytes written as JSON with no white space, in its order, as many as fit in ${LIST_BYTES} bytes, ` +
 	"each row counted as those bytes and 6 more; the first that does not fit and every one after it are left out, and the list counts them (left_out). " +
@@ -1085,9 +1086,6 @@ export function buildApi(sources: ApiSources): Map<string, Uint8Array> {
 					schema_url: at(schemaPath("series")),
 					index: at(INDEX_PATH),
 					...head,
-					// Its benchmark's list, which every benchmark of a name an address takes has, so that every list is reached from the table
-					// of contents, listed there or not; null for a benchmark named otherwise.
-					benchmark_url: BENCHMARK_FILE_NAME.test(identity.benchmark) ? at(benchmarkPath(identity.benchmark)) : null,
 					newest_runs: NEWEST_RUNS,
 					months: entries,
 					derivations: { series_v1: seriesV1, ...(requestsV1 === undefined ? {} : { requests_v1: requestsV1 }) },
