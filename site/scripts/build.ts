@@ -14,7 +14,7 @@
  * renders each page (src/pages.text.ts) once with Solid's server renderer; and the pages, with a
  * <link> to the stylesheet in their <head>, are written with the assets and public/. Nothing
  * hydrates and no JavaScript file is written: the one script is inline in each page's <head>
- * (it waits for the font). Every line the tree gives the build (what the page leaves out, and
+ * (it sets the page's feature flags and waits for the font). Every line the tree gives the build (what the page leaves out, and
  * why) is printed.
  *
  * What OUT (default dist/client) holds:

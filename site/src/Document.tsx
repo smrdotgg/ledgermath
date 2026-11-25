@@ -14,8 +14,14 @@ const LIGHT = "(prefers-color-scheme: light)";
 // frame. Without JavaScript the browser's own wait applies.
 const HOLD_UNTIL_FONT = `(()=>{const f='1em "Geist Pixel '+(matchMedia("${LIGHT}").matches?"Square":"Circle")+'"';if(document.fonts.check(f))return;const r=document.documentElement;r.classList.add("font-loading");document.fonts.load(f).finally(()=>r.classList.remove("font-loading"))})()`;
 
+// A page's feature flags (pages.text.ts): for each that the address names as a parameter, as in
+// /?napkin, set data-<flag> on <html>, before the body is read, so that site.css shows the part
+// the flag hides from the first frame on. Without JavaScript the part stays hidden.
+const setFlags = (flags: readonly string[]) =>
+	flags.length === 0 ? "" : `for(const f of ${JSON.stringify(flags)})if(new URLSearchParams(location.search).has(f))document.documentElement.dataset[f]="";`;
+
 // The whole <html> document around a page (design v9's). The build adds the site's stylesheet to <head>.
-export default function Document(props: { title: string; description: string; children?: JSX.Element }) {
+export default function Document(props: { title: string; description: string; flags?: readonly string[]; children?: JSX.Element }) {
 	return (
 		<html lang="en">
 			<head>
@@ -28,7 +34,7 @@ export default function Document(props: { title: string; description: string; ch
 				<meta name="description" content={props.description} />
 				<link rel="preload" href={circle} as="font" type="font/woff2" crossorigin="anonymous" media={`not all and ${LIGHT}`} />
 				<link rel="preload" href={square} as="font" type="font/woff2" crossorigin="anonymous" media={LIGHT} />
-				<script innerHTML={HOLD_UNTIL_FONT} />
+				<script innerHTML={setFlags(props.flags ?? []) + HOLD_UNTIL_FONT} />
 			</head>
 			<body>{props.children}</body>
 		</html>
