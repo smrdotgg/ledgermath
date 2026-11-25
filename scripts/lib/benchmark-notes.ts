@@ -1,7 +1,7 @@
 /**
  * What each benchmark measures, in one line, and what one of its repetitions
  * is, for the lookup tool (scripts/lookup.ts). Taken from each benchmark's
- * README.md (memory_read has none: from the comment at the top of its source).
+ * README.md.
  * A Derivation gives time per repetition, and bytes per second where the
  * benchmark observed bytes_per_repetition; these lines say what those mean.
  *
@@ -49,7 +49,9 @@ export const BENCHMARK_NOTES: Readonly<Record<string, BenchmarkNote>> = {
 		measures: `How fast a buffer of size_bytes is read front to back and summed word by word: on one unpinned thread or on one pinned thread per allowed CPU (the parameter threads: a single thread, or all), with an x86 scalar loop (path scalar) or AVX2 (path avx2). Whether the buffer comes from memory or cache depends on size_bytes and the machine; ${CACHES}.`,
 		repetition: "reads size_bytes once; with threads all, each thread reads its own slice of it",
 		bytes: "bytes read",
-		source: "benchmarks/memory_read/memory_read.c",
+		caveat:
+			"Build static and build dynamic run the same code. Where their Series differ (path scalar, on some Intel instance types), the cause is where the scalar loop landed in each binary: in the static one it crosses a cache line, in the dynamic one it does not. It does not show that dynamic linking is faster; another binary could move the loop and reverse the difference.",
+		source: "benchmarks/memory_read/README.md",
 	},
 	compressed_memory_read: {
 		measures: `How fast one thread unpacks integers stored at a width of bits into full-width integers, the decode step of a compressed column, cycling through a pool of blocks (the parameter blocks) meant to come from memory rather than cache. Whether the pool exceeds the cache depends on the machine; ${CACHES}.`,

@@ -1779,4 +1779,19 @@ A migrated benchmark is done only when **all** of these hold:
   `bun run check:browser`, in light and dark. Not deployed to production by hand: once
   merged it reaches ledgermath.com with the next rebuild after a publish of the API (the
   `runs` workflow's `site` job builds from main).
+- **2026-11-25** — **Why `memory_read`'s static build is slower, written down, and left as
+  it is** (#84). The investigation of 2026-11-23 and 2026-11-24 found the cause of the gap
+  recorded on 2026-11-18: where the 15-byte `scalar` loop lands in the binary. In the
+  static binary it crosses a 64-byte line, in the dynamic one it does not, and on the Intel
+  processors of `m5.large`, `i4i.2xlarge` and `c6i.8xlarge` a loop that crosses a line runs
+  slower. Moving the loop inside the binaries that ran switched the gap on and off; linking
+  only moved the code. The maintainer decided to document it and leave the benchmark and
+  its build as they are, for now. `benchmarks/memory_read/README.md` is new and gives the
+  figures, the pipeline's and the investigation's, each with its conditions;
+  `methods/README.md` says once that a figure can move with where its code lands, which
+  the Artifact's hash shows but nothing holds fixed (and that `mutex` moves too, cause
+  under investigation); the lookup tool's note for `memory_read`, the skill's "Check the
+  fit" step, the root README, ADR-0029 (decision 4, a dated addition, and its open item)
+  and ADR-0008's note say the same. The data API's words are unchanged: it carries no
+  description of a benchmark. No benchmark, build, Method or workflow changed.
 - _(agents: append your entry here, one per merged benchmark)_

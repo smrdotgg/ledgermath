@@ -350,7 +350,9 @@ box. Its user-data is `runner/box.sh`, which:
    `schedule.json` for it: every entry without `instance_types`, and every entry whose
    `instance_types` names it. It builds each of their benchmarks once, in each build the
    schedule names (`memory_read` static and dynamic, the others static), and writes one
-   Run per execution. At 35 minutes it is sent TERM: it kills the binary it is running, still
+   Run per execution. On some Intel types `memory_read`'s two builds give different
+   numbers on its `scalar` path because one loop lands in a different place in each
+   binary, not because of how they are linked (`benchmarks/memory_read/README.md`). At 35 minutes it is sent TERM: it kills the binary it is running, still
    writes that execution's Run, starts nothing more, writes the boot summary, which lists
    what was not run, and exits. If it has not exited three minutes later, it is killed
    outright.
