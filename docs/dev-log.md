@@ -1679,4 +1679,24 @@ A migrated benchmark is done only when **all** of these hold:
   of its three graphs, has one more, or has them out of order (`GRAPH_BENCHMARKS`). The
   job's commands, run by hand on run 45516617507's tree: 85 figures, 20 prices, no dash,
   newest Run 2026-11-24 23:07 UTC. Not deployed: the orchestrator starts the first run.
+- **2026-11-25** — **The site's rebuild, after an independent verification of #93.** (1) A
+  deploy carried only a run id, so after a run was run again in full the push's delayed
+  deploy passed the check and could put the first attempt's tree back; and the artifact
+  was downloaded by name, which a re-run holds more than once. A tree is now known by
+  `RUN/ARTIFACT`, the run and the id of the artifact `api` its `publish` job uploaded (of
+  the run's `api` artifacts made when that job started, the highest id, as the download
+  picks them; ids do not follow the order artifacts were made in). `check` deploys only the
+  exact newest identity, a later attempt counting as newer, and `download` takes the
+  artifact by id, holding it to its run, its name and its digest. The `site` job and
+  `site.yml` carry the identity from the moment a tree is taken to the deploy's check.
+  (2) A successful publish on a second page of jobs, or an empty page of runs claiming two,
+  read as nothing: every list is now read page by page while GitHub counts more, up to a
+  bound, or the check fails; the publish job is known by its names in `PUBLISH_JOB_NAMES`,
+  the first held to `runs.yml`'s by a test. (3) A failed deploy step said nothing was
+  deployed, though `deploy.sh` reads the receipt after Vercel was asked to move
+  production: it now says production is not confirmed and to check Vercel; and `deploy.sh`
+  records the commit of its checkout, not `GITHUB_SHA`. (4) The words say what the schedule
+  promises, and when a tree can still hold part of a round (a run started during one, a box
+  the reaper did not end). The job's commands, by hand on the newest published tree, took
+  `45516617507/14978675867`.
 - _(agents: append your entry here, one per merged benchmark)_

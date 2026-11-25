@@ -59,17 +59,22 @@ name: runs
 
 on:
   schedule:
-    # Once after each round of boots has ended, never in the middle of one, so
-    # each tree holds whole rounds. Rounds start at 04:10, 10:10, 16:10 and
-    # 22:10 UTC, a box every ten minutes to :50 (schedule.json). A launch more
-    # than ten minutes late is refused (infra/runs/launch-event.ts) and the
-    # reaper, every five minutes, ends any box older than 50 minutes
-    # (infra/runs/reap-boxes.ts), so the last box of a round has ended by
-    # HH+1:55 at the latest; the tree is cut ten minutes after. A test holds
-    # the times to schedule.json and those limits (tests/runs-workflow.test.ts).
-    # GitHub often starts a scheduled run late (7 to 15 minutes at the top of
-    # the hour on 2026-11-24): a late start cuts the same round, later; only a
-    # start more than four hours late would reach into the next round.
+    # Once after each round of boots, never during one. Rounds start at 04:10,
+    # 10:10, 16:10 and 22:10 UTC, a box every ten minutes to :50
+    # (schedule.json). A launch more than ten minutes late is refused
+    # (infra/runs/launch-event.ts), and the reaper, every five minutes, asks EC2
+    # to end any box older than 50 minutes (infra/runs/reap-boxes.ts), so by
+    # those limits the last box of a round has ended by HH+1:55; the run is
+    # scheduled ten minutes after. A test holds the times to schedule.json and
+    # those limits (tests/runs-workflow.test.ts). What that does not promise: a
+    # tree can still hold part of a round when a run starts during one (started
+    # by hand, or a scheduled run started, or left waiting for its runner, more
+    # than four hours late), or when a box outlives the limits (the reaper asks
+    # for a box to be ended and does not confirm it was). The API's own words
+    # allow for that: a month file changes when a Run or a missing boot summary
+    # arrives late. GitHub often starts a scheduled run
+    # late (7 to 15 minutes at the top of the hour on 2026-11-24): a late start
+    # of under four hours cuts the same round, later.
     - cron: "5 0,6,12,18 * * *"
   # new_baseline is a human's declaration, by hand, that this run's data API
   # tree is a new baseline: there is no earlier tree of its layout to compare
@@ -425,20 +430,25 @@ jobs:
   #    starts, never this run's commit, so it never puts an older site over a
   #    newer one; site.yml's job deploys its own commit only if main has not
   #    moved on in the site's files (site/deploy/fresh.ts);
-  #  - the tree: each deploys only if no later run of this workflow has
-  #    published (site/deploy/published.ts, from GitHub's record of the runs).
-  #    A later run's tree is newer, and that run's own site job, which starts
-  #    only after it has published, deploys main's site with it after this
-  #    one, or already has.
+  #  - the tree: each deploys only the newest published tree, known by its
+  #    identity, RUN/ARTIFACT: the run that published it and the artifact api
+  #    its publish job uploaded (site/deploy/published.ts, from GitHub's record
+  #    of the runs). A run run again in full keeps its id and publishes another
+  #    artifact, so the run alone would not say which tree. This job asks for
+  #    its own run's tree, is told its identity, and downloads that artifact by
+  #    its id. A newer tree's own site job, which starts only after it has been
+  #    published, deploys main's site with it after this one, or already has.
   # So after any production deploy, ledgermath.com holds main's site as it was
   # when that job's turn came, built from the newest tree published by then,
   # never older than the tree it held before (README, "Where it is deployed").
   #
-  # A failure (finding the newest run, the build, its checks, the deploy, the
+  # A failure (the check, the download, the build, its checks, the deploy, the
   # live check) is this job's own, red, with a notice naming the step and
-  # saying what ledgermath.com serves: until the deploy step succeeds, it keeps
-  # the build it had. Nothing else tells the maintainer yet (#87). The first
-  # job, its caches and the publish job are untouched by it.
+  # saying what ledgermath.com serves: before the deploy step, the build it
+  # had; after a failed deploy step, not confirmed (Vercel may have moved
+  # production before the receipt was read); after one that succeeded, the new
+  # build. Nothing else tells the maintainer yet (#87). The first job, its
+  # caches and the publish job are untouched by it.
   site:
     name: rebuild the site from the tree this run published, and deploy it to production
     needs: publish
@@ -447,7 +457,7 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: read # main's sources
-      actions: read # this run's artifact api, and which runs have published
+      actions: read # which runs have published which artifact api, and that artifact
     concurrency:
       group: site-deploy-production
       queue: max
@@ -463,15 +473,17 @@ jobs:
         with:
           bun-version: 1.4.4
 
-      # Exit 0: this run's tree is the newest published; 3: a later run has
-      # published, so skip; anything else: the check failed, and so does the job.
-      - name: Production goes ahead only if no later run of this workflow has published
+      # Exit 0: the newest published tree is this run's, and its identity,
+      # RUN/ARTIFACT (this run and the artifact api its publish job uploaded),
+      # becomes the step's output tree; 3: a newer tree has been published, so
+      # skip; anything else: the check failed, and so does the job.
+      - name: Production goes ahead only if the newest published tree is this run's
         id: newest
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set +e
-          verdict=$(bun site/deploy/published.ts check "$GITHUB_RUN_ID" --repository "$GITHUB_REPOSITORY")
+          verdict=$(bun site/deploy/published.ts check "$GITHUB_RUN_ID" --repository "$GITHUB_REPOSITORY" --github-output "$GITHUB_OUTPUT")
           status=$?
           set -e
           echo "$verdict"
@@ -494,13 +506,15 @@ jobs:
           BUN_INSTALL_CACHE_DIR: ${{ runner.temp }}/bun-cache
         run: bun install --frozen-lockfile
 
-      - name: The data API's files this run published
+      # Exactly the artifact the check named, by its id: never "the artifact
+      # named api" of this run, which a run run again in full holds more than once.
+      - name: The data API's files this run published, the artifact the check named
         id: tree
         if: steps.newest.outputs.deploy == 'true'
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: api
-          path: ${{ runner.temp }}/tree
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TREE: ${{ steps.newest.outputs.tree }}
+        run: bun site/deploy/published.ts download "$TREE" --repository "$GITHUB_REPOSITORY" --out "$RUNNER_TEMP/tree"
 
       - name: Build the site from this run's tree into site/dist/client
         id: build
@@ -544,6 +558,8 @@ jobs:
       - name: The deployment's URL, in the job summary
         id: summary
         if: steps.newest.outputs.deploy == 'true'
+        env:
+          TREE: ${{ steps.newest.outputs.tree }}
         run: |
           url=$(jq -er '.url' "$RUNNER_TEMP/deployment.json")
           newest=$(jq -r '.newest_run_started_at' "$RUNNER_TEMP/tree/v1/index.json")
@@ -552,7 +568,7 @@ jobs:
             echo
             echo "- Deployment: $url"
             echo "- Production: https://ledgermath.com/"
-            echo "- Tree: the artifact api of this run, $GITHUB_RUN_ID; newest Run $newest"
+            echo "- Tree: $TREE (this run, and the artifact api its publish job uploaded); newest Run $newest"
             echo "- Site: main at $(git rev-parse HEAD)"
           } >>"$GITHUB_STEP_SUMMARY"
           echo "$url"
@@ -564,7 +580,12 @@ jobs:
         run: bun scripts/check-live.ts https://ledgermath.com/
 
       # Which step failed, and what ledgermath.com serves now, as an error the
-      # run's page shows at the top, and in the job summary.
+      # run's page shows at the top, and in the job summary. Before the deploy
+      # step, nothing was deployed. If the deploy step itself failed, Vercel may
+      # have taken the deployment and moved production to it before deploy.sh
+      # read its receipt, so what production serves is not confirmed. After a
+      # deploy step that succeeded (its receipt read and checked), the new build
+      # is served.
       - name: Say which step failed, and what ledgermath.com serves
         if: failure()
         env:
@@ -583,9 +604,9 @@ jobs:
           for step in NEWEST PACKAGES TREE BUILD CHECK NOTICES CLI DEPLOY SUMMARY LIVE; do
             [ "${!step}" = failure ] || continue
             case $step in
-              NEWEST) failed="finding whether a later run has published" ;;
+              NEWEST) failed="finding whether the newest published tree is this run's" ;;
               PACKAGES) failed="installing the site's packages" ;;
-              TREE) failed="downloading this run's artifact api" ;;
+              TREE) failed="downloading the artifact the check named" ;;
               BUILD) failed="building the site from this run's tree" ;;
               CHECK) failed="bun run check, against this run's tree" ;;
               NOTICES) failed="comparing the notices" ;;
@@ -598,6 +619,8 @@ jobs:
           done
           if [ "$DEPLOY" = success ]; then
             serves="The deploy succeeded, so ledgermath.com serves the new build; a step after it failed."
+          elif [ "$DEPLOY" = failure ]; then
+            serves="What ledgermath.com serves is not confirmed: Vercel may have moved production to the new deployment before its receipt was read. Check the project's deployments in Vercel."
           else
             serves="Nothing was deployed: ledgermath.com serves the build it had."
           fi

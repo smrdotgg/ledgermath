@@ -1,8 +1,9 @@
 # Builds the website in site/ from a tree of the data API and checks what the
 # build wrote with `bun run check`. For production (a push to main, or a run by
-# hand on main) the tree is the one the runs workflow published last: the
-# artifact api of its newest run whose publish job succeeded, the bytes that
-# job uploaded (site/deploy/published.ts). For a preview it is the tree as
+# hand on main) the tree is the one the runs workflow published last, taken by
+# its identity, RUN/ARTIFACT: the run and the very artifact api its publish job
+# uploaded, downloaded by the artifact's id (site/deploy/published.ts). For a
+# preview it is the tree as
 # published now (site/scripts/fetch-tree.ts fetches the files the pages read
 # from https://api.ledgermath.com). `bun run check`: each page holds its fixed
 # words (site/src/pages.text.ts) in its body
@@ -20,9 +21,9 @@
 # live page (site/scripts/check-live.ts), unless what it would deploy is no
 # longer current when its turn comes: main has moved on, in the files this
 # workflow's push trigger lists, since the run's commit (site/deploy/fresh.ts),
-# or a later run of runs.yml has published since the build took its tree
-# (site/deploy/published.ts). Then this one skips the deploy and passes, and
-# the newer commit's own run, or the newer run's site job, waiting in the same
+# or the tree the build took is no longer the newest published, by its
+# identity (site/deploy/published.ts). Then this one skips the deploy and
+# passes, and the newer commit's own run, or the newer tree's site job, waiting in the same
 # queue, deploys after it or already has. The runs workflow's site job, which
 # rebuilds the site after every publish, deploys production in the same queue
 # and by the same rule (runs.yml; README, "Where it is deployed"; ADR-0035). A
@@ -57,10 +58,11 @@ jobs:
     permissions:
       contents: read
       actions: read # production: the runs workflow's record, and the artifact api of its newest publish
-    # The run of runs.yml whose tree a production build is built from, for the
-    # deploy job's check; empty for a preview.
+    # The identity of the tree a production build is built from, RUN/ARTIFACT
+    # (the run of runs.yml that published it and the artifact api its publish
+    # job uploaded), for the deploy job's check; empty for a preview.
     outputs:
-      tree-run: ${{ steps.published.outputs.run }}
+      tree: ${{ steps.published.outputs.tree }}
     defaults:
       run:
         working-directory: site
@@ -74,20 +76,22 @@ jobs:
         run: bun run typecheck
       - name: Test the data module, the build, the checks and the deploy scripts against their fixtures
         run: bun test
-      # Production is built from the tree the runs workflow published last, the
-      # artifact api of its newest run whose publish job succeeded: not from
-      # the live API, whose cache can serve the tree before for five minutes
-      # after an upload. The run is named, so the deploy job can tell whether a
-      # later one has published since. The artifact is kept for a week; when
-      # it has expired, the build fails (README, "Where it is deployed").
-      - name: The tree the runs workflow published last (production)
+      # Production is built from the tree the runs workflow published last, not
+      # from the live API, whose cache can serve the tree before for five
+      # minutes after an upload. The tree is taken by its identity, RUN/ARTIFACT,
+      # and downloaded by the artifact's id, never by its name; the identity is
+      # the job's output, so the deploy job can tell whether a newer tree has
+      # been published since. The artifact is kept for a week; when it has
+      # expired, the build fails (README, "Where it is deployed").
+      - name: The tree the runs workflow published last, by its identity (production)
         id: published
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          run=$(bun deploy/published.ts newest --repository "$GITHUB_REPOSITORY" --out "$RUNNER_TEMP/tree")
-          echo "run=$run" >>"$GITHUB_OUTPUT"
+          tree=$(bun deploy/published.ts newest --repository "$GITHUB_REPOSITORY")
+          bun deploy/published.ts download "$tree" --repository "$GITHUB_REPOSITORY" --out "$RUNNER_TEMP/tree"
+          echo "tree=$tree" >>"$GITHUB_OUTPUT"
       - name: The data API's tree as published now, the files the pages read (previews)
         if: github.ref != 'refs/heads/main' || github.event_name == 'pull_request'
         run: bun scripts/fetch-tree.ts "$RUNNER_TEMP/tree"
@@ -127,9 +131,9 @@ jobs:
     # same group, so its deploys after each publish take turns with these.
     # Jobs arrive in the order their builds finish, not their commits' (and a
     # re-run arrives whenever it is started), so each first checks that main
-    # has not moved on and that no later run of runs.yml has published (the
-    # two steps "Production goes ahead only if..."), and skips the deploy if
-    # either has.
+    # has not moved on and that the tree its build took is still the newest
+    # published (the two steps "Production goes ahead only if..."), and skips
+    # the deploy if either is not so.
     concurrency:
       group: site-deploy-production
       queue: max
@@ -174,22 +178,22 @@ jobs:
               ;;
             *) exit "$status" ;;
           esac
-      # The tree, as the step above checks the sources. If a later run of
-      # runs.yml than the one whose tree the build took has published since,
-      # that tree is no longer the newest, and that run's site job deploys
-      # main's site with the newer one after this job, or already has: it
-      # started after that run published, so after the build took its tree and
-      # after this run's commit was on main. Exit 0: deploy; 3: skip; anything
-      # else fails the job.
-      - name: Production goes ahead only if no later run of runs.yml has published since the build took its tree
+      # The tree, as the step above checks the sources. If the tree the build
+      # took, by its identity RUN/ARTIFACT, is no longer the newest published
+      # (a later run, or a later attempt of the same run, has published
+      # another), the newer tree's site job deploys main's site with it after
+      # this job, or already has: it started after that tree was published, so
+      # after the build took its own and after this run's commit was on main.
+      # Exit 0: deploy; 3: skip; anything else fails the job.
+      - name: Production goes ahead only if the tree the build took is still the newest published
         id: newest
         if: steps.fresh.outputs.deploy == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-          TREE_RUN: ${{ needs.build.outputs.tree-run }}
+          TREE: ${{ needs.build.outputs.tree }}
         run: |
           set +e
-          verdict=$(bun site/deploy/published.ts check "$TREE_RUN" --repository "$GITHUB_REPOSITORY")
+          verdict=$(bun site/deploy/published.ts check "$TREE" --repository "$GITHUB_REPOSITORY")
           status=$?
           set -e
           echo "$verdict"
@@ -223,7 +227,7 @@ jobs:
       - name: The deployment's URL, in the job summary
         if: steps.newest.outputs.deploy == 'true'
         env:
-          TREE_RUN: ${{ needs.build.outputs.tree-run }}
+          TREE: ${{ needs.build.outputs.tree }}
         run: |
           url=$(jq -er '.url' "$RUNNER_TEMP/deployment.json")
           {
@@ -232,7 +236,7 @@ jobs:
             echo "- Deployment: $url"
             echo "- Production: https://ledgermath.com/"
             echo "- Commit: $GITHUB_SHA"
-            echo "- Tree: the artifact api of run $TREE_RUN of runs.yml"
+            echo "- Tree: $TREE (a run of runs.yml, and the artifact api its publish job uploaded)"
           } >>"$GITHUB_STEP_SUMMARY"
           echo "$url"
       - name: https://ledgermath.com/ and /docs/ answer 200 with their fixed words (src/pages.text.ts) in their HTML
