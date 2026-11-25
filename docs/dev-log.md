@@ -1589,6 +1589,72 @@ A migrated benchmark is done only when **all** of these hold:
   only when it is absent, empty or marked by an earlier build (`.ledgermath-site-build`).
   (4) The figure check passed a blank cell: every cell of the headline selection, in the
   table and the graphs, must now hold exactly one figure or one dash.
+- **2026-11-25** — **The suite makes no request to any other machine.** `tests/check-answer.test.ts`
+  failed on `main`: one case ran `scripts/check-answer.ts` with no `--data` and no
+  `LEDGERMATH_DATA` and expected exit 2, which it got while `https://api.ledgermath.com`
+  did not answer; since the API went public (2026-11-24) the script read the live data and
+  exited 1. Nobody saw it because pushes start no CI. The case now gives the script the
+  Fixture's directory and checks the usage errors (no answer, two answers, an unknown flag)
+  that exit 2 before any data is read. **The guard**: `bunfig.toml` (and a new
+  `site/bunfig.toml`) preload `tests/no-network.ts` for `bun test`. It wraps
+  `globalThis.fetch`, `net.Socket.prototype.connect` (`node:net`, `node:tls`) and
+  `http.ClientRequest`'s `write`, `end` and `flushHeaders`, and refuses at once any host
+  that is not loopback, with an error that says a test reached for the network. The last
+  one is needed because Bun's `node:http` sends from native code, past `fetch` and `net`,
+  and a named import (`import { request } from "node:https"`, as the AWS SDK's ESM build
+  does) keeps the original function, so patching `https.request` would miss it; an IP
+  address such as 169.254.169.254 (the instance metadata service, which answers on the dev
+  box) skips `dns.lookup` too, so that cannot serve either. `net.connect` passes its
+  arguments to `connect` as one array, which the guard unpacks. The guard adds itself to
+  `BUN_OPTIONS` as `--preload=<path>`, so every Bun process a test starts with the test's
+  environment refuses the same (Bun splits `BUN_OPTIONS` at whitespace with no quoting, so
+  the guard stops the suite, saying why, when the checkout's path holds a space). Not
+  covered: a child given an environment of its own without `BUN_OPTIONS`, and programs that
+  are not Bun (Python, C), which their tests point at local stand-ins. `tests/no-network.test.ts`
+  proves it: `fetch`, `node:http`, `node:https` (to 169.254.169.254 by a named import),
+  `node:net` and `node:tls` to public hosts fail at once with the message; `scripts/lookup.ts`
+  in a child, at the default address, exits 2 with it; and a server on `127.0.0.1` is
+  reached from the test, by `node:http`, and from a child. The whole suite ran with the
+  guard on and found no other test that reached the network, so nothing opts in. The
+  README's "Tests" says so.
+- **2026-11-25** — **The guard, after an independent check of #92.** A guarded `fetch`
+  followed a local server's redirect to a public host: it now follows each redirect itself
+  (`redirect: "manual"` underneath, up to 20, 303 and a POST's 301 or 302 becoming a GET)
+  and checks every destination first; a caller asking for `manual` or `error` is handed
+  to `fetch` unchanged. `[::ffff:127.0.0.1]` was refused because the URL parser spells it
+  `[::ffff:7f00:1]`; that spelling counts as this machine now. Names `/etc/hosts` may give
+  loopback (`ip6-localhost`) stay refused, so a test behaves alike on every machine. A
+  `Worker` is given the guard as a preload. `check-answer`'s helper returns stderr, and each
+  case that expects exit 2 asserts what was said, so a refusal (also exit 2) cannot pass
+  for a usage error. The guard's own test no longer times the refusal. The README lists
+  what is guarded (`fetch` and its redirects, `node:http`, `node:https`, `node:net`,
+  `node:tls`, `node:http2` through them, `Worker`, Bun children with the test's
+  environment), what is not (children without `BUN_OPTIONS`, programs that are not Bun,
+  `node:worker_threads`, `Bun.connect`, `WebSocket`, `node:dgram`, DNS lookups), and which
+  addresses are this machine.
+- **2026-11-25** — **The guard's redirects behave like Bun's.** A second check of #92 found
+  the guard's own redirect-following differed from Bun's `fetch`: credentials crossed
+  hosts, a `Request`'s body was lost on a 307, a `Request`'s signal was dropped after the
+  first hop, 300, 304 and 305 were followed, a 303 answering `HEAD` lost `Content-Type`, a
+  rewritten method's headers came back on a later hop, clones said `redirected: false`, it
+  stopped at 20 hops, and a `Worker`'s own preload ran before the guard. Following now lives
+  in `tests/no-network-redirects.ts` and was written against what Bun 1.4.4 was measured to
+  do: only 301, 302, 303, 307 and 308 with a non-empty Location; the standard's method
+  rewrite, carried into later hops; `Authorization`, `Cookie` and `Proxy-Authorization`
+  dropped across origins (Bun drops all three); the body kept before the first send (a
+  `Request`'s from a clone, a FormData encoded once so every hop sends one boundary); the
+  signal on every hop; Bun's limit of 126 redirects and its `TooManyRedirects`,
+  `RedirectURLInvalid` and `UnsupportedRedirectProtocol` errors; and `redirected` and `url`
+  on the response and every clone. `tests/no-network-redirects.test.ts` runs 433 cases, each
+  a test, through Bun's own `fetch` (kept by the guard, under a symbol, for this test only)
+  and the guarded one against two local servers, and requires the same response and the
+  same requests received, in order. Against `0b120d9` 383 of them fail, among them one for
+  each difference above. **The stated exception**: a body that is a stream, answered with a
+  301, 302, 307 or 308 that would be followed, is refused by the guard with a message saying
+  to give `redirect: "manual"` or a body that can be sent again. Bun follows those for a
+  Blob's stream and refuses them for other streams ("cannot be replayed"), and from outside
+  the two look alike. Bun follows a 303 for any stream, and so does the guard. The guard is
+  a `Worker`'s first preload. The README's "Tests" says all of this.
 - **2026-11-25** — **The home page is rebuilt and redeployed after every publish
   (ADR-0035).** The `runs` workflow has a third job, `site`. After `publish` succeeds, and
   on main only, it checks out main, builds the site from the run's artifact `api` (the bytes
