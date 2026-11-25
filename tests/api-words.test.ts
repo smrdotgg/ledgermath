@@ -171,7 +171,7 @@ const ALLOWED: ReadonlyArray<{ file: string; pointer: string; text: string; why:
 		text: DEFAULT_DOCS,
 		why:
 			"The docs' address is the README's section on GitHub until the docs have pages of their own (ADR-0030, Costs); " +
-			"it is an address, not words, and it can be followed once the repository is public. Changing it is a decision of its own.",
+			"it is an address, not words, and it can be followed, the repository being public. Changing it is a decision of its own.",
 	},
 ];
 

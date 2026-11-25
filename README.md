@@ -190,43 +190,23 @@ checked. These scenarios show the path, not S3's numbers.
 
 ## Where the workflows run
 
-Every job of every workflow under `.github/workflows/` runs where the repository variable
-`LEDGERMATH_RUNNER` says: `runs-on: ${{ vars.LEDGERMATH_RUNNER || 'ubuntu-24.04' }}`
-(`tests/workflow-runners.test.ts` holds every job to it).
+The repository is public, and its four workflows (`check`, `prices`, `runs` and `site`) are
+enabled. Every job of every workflow under `.github/workflows/` runs on GitHub's hosted
+runner `ubuntu-24.04`, which is free for a public repository: each job says exactly
+`runs-on: ubuntu-24.04`. Each job gets a fresh machine, and nothing is kept between jobs
+but what the workflow keeps on purpose (GitHub's cache, artifacts).
 
-- **Unset or empty:** GitHub's hosted runner `ubuntu-24.04`, as before. A public repository
-  must have this.
-- **`ledgermath-dev-box`:** the self-hosted runner on the development machine (name
-  `tabot-dev-box`, user service `github-runner-ledgermath`, under
-  `/mnt/local/actions-runner/`, with a home directory of its own).
+**No job ever runs on a self-hosted runner.** In a public repository, a stranger's pull
+request could then run on that machine. `tests/workflow-runners.test.ts` holds every job of
+every workflow file to the plain string `ubuntu-24.04`, and refuses anything that could
+name another runner: an expression (`${{ … }}`, which a variable could point anywhere), a
+list of labels, an object (`group:` or `labels:`), the word `self-hosted`, any other label,
+and a job with no `runs-on` that is not a call to a reusable workflow in
+`.github/workflows/` of this repository (whose jobs it checks too).
 
-Why: the account ran out of free Actions minutes on 2026-11-24. Jobs on a self-hosted
-runner cost no minutes, and hosted runners are free for a public repository. So while the
-repository is private, the variable names the development machine.
-
-While it does, only `runs` and `prices` are enabled. They start by schedule or by hand, so
-they always use `main`'s workflow file. `runs` also rebuilds and deploys the website after
-each publish (its job `site`; "Where it is deployed"), so the machine's runner deploys
-ledgermath.com: it needs `jq`, which it has. `check` and `site` stay disabled: they start on
-pushes and use the pushed branch's own file, and older branches still name the hosted
-runner. `check`'s scratch job also needs Docker, which the machine's runner cannot use. Run
-their commands locally before a merge.
-
-The runner keeps its machine between jobs. `actions/checkout` cleans the workspace
-(`git clean -ffdx`), the runner empties `RUNNER_TEMP` for every job, and Bun's package
-cache is kept in `RUNNER_TEMP`. `setup-bun` keeps Bun 1.4.4 in the runner's home
-directory and reuses it.
-
-**The runner is for the private repository only.** A public repository must never have a
-self-hosted runner: a stranger's pull request could then run on the machine. **Before the
-repository is made public**, in this order:
-
-1. Delete the repository variable `LEDGERMATH_RUNNER` (Settings → Secrets and variables →
-   Actions → Variables).
-2. Stop and remove the runner: `systemctl --user disable --now github-runner-ledgermath`,
-   then in `/mnt/local/actions-runner/runner` run `./config.sh remove --token <a removal
-   token from Settings → Actions → Runners>`. Check that the runner is gone from that page.
-3. Enable all four workflows: `check`, `prices`, `runs` and `site`.
+When a pull request from a fork runs `check`, or `site` (it touches `site/`), its jobs get a
+read-only token and none of the repository's secrets, and `site` skips its deploy jobs
+("Where it is deployed"). `runs` and `prices` never run for a pull request.
 
 ## The daily box: a `-runs` stage
 
@@ -1611,7 +1591,7 @@ shapes, and refuses any other host.
 ## The Runs repository, the Method and the page
 
 Step 3 (#39). The Run files and boot summaries are copied, byte for byte and under the
-same paths, into the private repository `smrdotgg/ledgermath-runs`; blobs stay in the
+same paths, into the public repository `smrdotgg/ledgermath-runs`; blobs stay in the
 bucket and are fetched by hash when needed. Method series v1 (`methods/README.md`) turns
 the Runs into a file of Derivations, one per Series, and Method requests v1 another, one
 per Series whose samples are requests (`http_get`'s): each phase of a request (name
@@ -3400,9 +3380,8 @@ the workflow, and by hand. It installs with the lockfile frozen, then type-check
 fetches the tree as published (`bun scripts/fetch-tree.ts`), builds from it and runs
 `bun run check` with it, and keeps the built site as the artifact `site`, which a preview
 deploys. Production is built again, from the API bucket, inside the production deploys'
-group ("Where it is deployed"). The workflow is
-disabled while the repository is private ("Where the workflows run"), so run these
-commands by hand before a merge. `bun test` at the repository root leaves `site/` alone
+group ("Where it is deployed"). The same commands work locally, inside `site/`.
+`bun test` at the repository root leaves `site/` alone
 (root `bunfig.toml`); the site's tests run inside `site/`.
 
 `bun run check` runs two scripts on `site/dist/client`:
@@ -3459,8 +3438,8 @@ section 3); the pages link it as "Licences".
 The site is at https://ledgermath.com, hosted on Vercel (project `ledgermath`). Vercel only
 hosts files: the site is built in GitHub Actions, and Vercel is handed the finished files.
 Two jobs build and deploy production: the `runs` workflow's job `site`, after every publish
-of the data API, and `site.yml`'s `deploy-production`, after a push to main (that workflow is
-disabled while the repository is private). It can also be deployed by hand (below). The
+of the data API, and `site.yml`'s `deploy-production`, after a push to main that touches
+`site/` or `site.yml`. It can also be deployed by hand (below). The
 Vercel project has no Git repository connected, and Vercel's build system never runs.
 
 **Kept fresh: rebuilt after every publish** (ADR-0035). The home page's figures are read
@@ -3545,8 +3524,20 @@ ended, so a deploy that runs after it reads N's tree or a newer one. The last de
 is either C's own, which reads the bucket after any earlier `site` job, or a `site` job whose
 turn came after C's deploy, so after C was on main, which checks out C.
 
-While `site.yml` is disabled, only the `site` job deploys production: a push to main reaches
-ledgermath.com with the next publish's rebuild, within six hours, or sooner by hand (below).
+So the page reaches production in two ways, and both go through the group:
+
+- **After every publish**, the `runs` workflow's `site` job: four times a day, and when
+  `runs.yml` is run by hand on main. It takes main's site as it is when its turn comes.
+- **After a push to main that touches `site/` or `site.yml`**, `site.yml`'s
+  `deploy-production`, and when `site.yml` is run by hand on main. It deploys its own
+  commit's site, and only while that is still main's site (`site/deploy/fresh.ts`).
+
+They never deploy at once, and neither cancels the other: one waits in the group while the
+other runs. Each reads the bucket when its turn comes, so the last deploy to run has the
+newest tree, and neither deploys a site main has left. A push to main that touches neither
+`site/` nor `site.yml` (`scripts/read-api-tree.ts`, say) starts no deploy, and reaches
+ledgermath.com with the next publish's rebuild, within six hours, or sooner by hand
+(below).
 
 **Reading the bucket.** `bun scripts/read-api-tree.ts --bucket NAME --out DIR` starts at
 `v1/index.json` and reads only the keys the table of contents' links give for the files the
@@ -3647,9 +3638,9 @@ directory, and runs `vercel deploy --prebuilt` on it. The Vercel CLI is pinned i
   pull request gets AWS credentials either: only `deploy-production`, on main, asks for an
   OIDC token, and the role trusts main alone (`infra/runs/github-role.ts`).
 
-So, once `site.yml` is enabled again: a pull request from a fork gets no credential of any
-kind; a pull request from a branch of this repository gets the Vercel token in its preview's
-deploy step, as it did before this change, and never the AWS role.
+So a pull request from a fork gets no credential of any kind, and a pull request from a
+branch of this repository gets the Vercel token in its preview's deploy step, and never the
+AWS role.
 
 The job writes the deployment's URL to the run's summary. Preview URLs need a Vercel login
 (the project's Vercel Authentication covers every deployment URL; only the custom domain is
@@ -3670,11 +3661,11 @@ under `.github` and fails on a reference anywhere else, on secrets handed over w
 The production deploys also read the variables `RUNS_AWS_ROLE_ARN` and `API_BUCKET`, which
 `runs.yml` already uses ("The workflow").
 
-**What `site.yml` needs before it runs again.** Nothing in AWS: the role trusts any workflow
-of this repository on `refs/heads/main` (the OIDC token's `sub`, `infra/runs/github-role.ts`),
-which `deploy-production` is (a push to main, or a run by hand on main), and it may read the
-bucket's `v1/*`. In GitHub: enabling the workflow once the repository is public ("Where the
-workflows run"); the repository variables it reads are set already. If the role's trust is
+**What `site.yml`'s production deploy relies on.** In AWS, the role, which trusts any
+workflow of this repository on `refs/heads/main` (the OIDC token's `sub`,
+`infra/runs/github-role.ts`), which `deploy-production` is (a push to main, or a run by hand
+on main), and which may read the bucket's `v1/*`. In GitHub, the workflow enabled, and the
+repository variables it reads, which `runs.yml` reads too. If the role's trust is
 ever narrowed to `runs.yml` alone (by `job_workflow_ref`), `deploy-production` must be
 added to it, or production deployed by a re-run of the `site` job instead.
 
