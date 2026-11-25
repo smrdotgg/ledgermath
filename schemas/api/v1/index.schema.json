@@ -37,13 +37,14 @@
           "properties": {
             "count": { "description": "How many boot summaries are left out, of every day.", "type": "integer", "minimum": 0 },
             "summaries": {
-              "description": "The newest of them by path (the day its boot started, then its name), newest first, as many as about says at most; each one sentence of a fixed few says why.",
+              "description": "The newest of them by path (the day its boot started, then its name), newest first, 8 at most; each one sentence of a fixed few says why.",
               "type": "array",
+              "maxItems": 8,
               "items": {
                 "type": "object",
                 "required": ["path", "boot_summary", "why"],
                 "properties": {
-                  "path": { "description": "The summary's path in the evidence, boots/<yyyy>/<mm>/<dd>/<name>.json: the day its boot started, and its name.", "type": "string", "pattern": "^boots/" },
+                  "path": { "description": "The file's path in the evidence, under boots/: for a summary, boots/<yyyy>/<mm>/<dd>/<name>.json, the day its boot started and its name. One longer than 120 characters is cut to its first 117, then ....", "type": "string", "pattern": "^boots/", "maxLength": 120 },
                   "boot_summary": { "description": "The summary's address, or null when the API does not serve it.", "anyOf": [{ "$ref": "#/$defs/url" }, { "type": "null" }] },
                   "why": { "description": "Why it is in no round: one of a fixed few sentences.", "type": "string" }
                 }
@@ -115,7 +116,7 @@
       }
     },
     "round": {
-      "description": "One round of boots, with its figures in all (each the sum of by_boot's) and by boot.",
+      "description": "One round of boots, with its figures in all, over every boot of the round, and by boot, for the first 12 (each figure in all is the sum of by_boot's when the round has at most 12 boots).",
       "type": "object",
       "required": ["started_at", "boots", "runs", "failed_runs", "runs_in_no_series", "build_failures", "not_run", "instance_types", "by_boot"],
       "properties": {
@@ -126,8 +127,8 @@
         "runs_in_no_series": { "$ref": "#/$defs/runs_in_no_series" },
         "build_failures": { "$ref": "#/$defs/build_failures" },
         "not_run": { "$ref": "#/$defs/not_run" },
-        "instance_types": { "description": "Each boot's instance type, in the order the boots started, as its summary names it; null for a boot whose summary names none.", "type": "array", "items": { "anyOf": [{ "type": "string" }, { "type": "null" }] } },
-        "by_boot": { "description": "Each boot of the round, in the order they started.", "type": "array", "items": { "$ref": "#/$defs/round_boot" } }
+        "instance_types": { "description": "The instance type of each boot by_boot lists, in the order the boots started, as its summary names it (at most 64 characters); null for a boot whose summary names none.", "type": "array", "maxItems": 12, "items": { "anyOf": [{ "type": "string", "maxLength": 64 }, { "type": "null" }] } },
+        "by_boot": { "description": "The boots of the round in the order they started, the first 12 at most: the round's figures count every boot, boots how many.", "type": "array", "maxItems": 12, "items": { "$ref": "#/$defs/round_boot" } }
       }
     },
     "round_boot": {
@@ -136,7 +137,7 @@
       "required": ["boot_summary", "instance_type", "started_at", "runs", "failed_runs", "runs_in_no_series", "build_failures", "not_run"],
       "properties": {
         "boot_summary": { "description": "The boot's summary: every Run it left with how its binary exited, every build that failed and every execution that was not run, with why.", "$ref": "#/$defs/url" },
-        "instance_type": { "description": "The instance type the boot ran on, as its summary names it; null when it names none.", "anyOf": [{ "type": "string" }, { "type": "null" }] },
+        "instance_type": { "description": "The instance type the boot ran on, as its summary names it (at most 64 characters: a summary giving a longer one is in no round); null when it names none.", "anyOf": [{ "type": "string", "maxLength": 64 }, { "type": "null" }] },
         "started_at": { "description": "When the boot started (UTC, to the nanosecond), as its summary records it.", "$ref": "#/$defs/time" },
         "runs": { "$ref": "#/$defs/runs" },
         "failed_runs": { "$ref": "#/$defs/failed_runs" },

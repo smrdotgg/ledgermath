@@ -33,26 +33,26 @@
  */
 
 import { beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
 import { isServedKey } from "../infra/runs/public-blobs";
-import * as requestsMethod from "../methods/requests/v1";
 import type { DerivationsFile as RequestsFile } from "../methods/requests/v1/output";
 import type { Run } from "../methods/run";
-import * as seriesMethod from "../methods/v1";
 import type { DerivationsFile as SeriesFile } from "../methods/v1/output";
 import {
 	type ApiSources,
 	type BootFile,
+	BOOTS_LISTED,
 	buildApi,
 	DEFAULT_BASE,
 	INDEX_PATH,
+	INSTANCE_TYPE_CHARACTERS,
 	LAYOUT,
 	LEFT_OUT_LISTED,
 	LEFT_OUT_WHY,
+	PATH_CHARACTERS,
 	RECENT_ROUNDS,
 	ROUND_GAP_MINUTES,
 	ROUND_RULE,
@@ -63,127 +63,13 @@ import {
 	seriesPath,
 	writerForm,
 } from "../scripts/lib/api";
-import { checkApi } from "../scripts/lib/api-check";
-import { HandMade, rampRequests, requestRun } from "./hand-made-requests";
+import { CEILINGS, checkApi, checkStability } from "../scripts/lib/api-check";
 import { bootSummaryPath, bootSummaryText, type HandMadeBoot } from "./hand-made-runs";
+import { C6I, C8A, C8I, I4I, idOf, M5, makeRoundsFixture, type RoundsFixture, UNKNOWN } from "./rounds-fixture";
 
 setDefaultTimeout(120_000);
 
 type Json = Record<string, any>;
-
-const C6I = "c6i.8xlarge";
-const M5 = "m5.large";
-const C8I = "c8i.2xlarge";
-const C8A = "c8a.2xlarge";
-const I4I = "i4i.2xlarge";
-
-/** A boot's id as a box gives it, the kernel's boot id, a UUID in lowercase hex: here made from a name, so a test can name its boots. */
-function idOf(name: string): string {
-	const hex = createHash("sha256").update(`boot ${name}`).digest("hex");
-	return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
-}
-
-/** The summary of the fixture's boot whose id could not be read, where the runner writes it. */
-const UNKNOWN = "boots/2026/11/21/unknown.json";
-
-interface RoundsFixture {
-	/** The checkout: runs/ and boots/. */
-	runs: string;
-	series: SeriesFile;
-	requests: RequestsFile;
-	/** Each boot of a round, by the name the test gives it. */
-	boots: Record<string, HandMadeBoot>;
-	/** The Series of requests, and the ids of its Run that exited 4 and its Run that exited 1. */
-	http: string;
-	exitedFour: string;
-	exitedOne: string;
-	/** The Run the 23:55 round's c8i.2xlarge boot lists that has no Run file. */
-	missing: string;
-	/** The Run of the boot whose id could not be read. */
-	unknownRun: string;
-}
-
-/** The whole second of a boot's start, plus `minutes`, as a hand-made Run's start. */
-const after = (startedAt: string, minutes: number): string => new Date(Date.parse(`${startedAt.slice(0, 19)}Z`) + minutes * 60_000).toISOString().replace(".000Z", "Z");
-
-async function makeRoundsFixture(): Promise<RoundsFixture> {
-	const made = new HandMade();
-	const boots: Record<string, HandMadeBoot> = {};
-	const syscall = (boot: string, type: string, startedAt: string): Run =>
-		made.run({ startedAt: after(startedAt, 1), benchmark: "syscall", binary: "syscall", params: { call: "getpid" }, samplesNs: [94, 95, 96], bytesPerRepetition: null, instanceType: type, boot });
-	const add = (name: string, type: string, startedAt: string, more: Partial<HandMadeBoot> = {}, extra: Run[] = []): void => {
-		const boot = idOf(name);
-		boots[name] = { boot, startedAt, endedAt: after(startedAt, 13).replace("Z", ".000000000Z"), instanceType: type, ...more, runs: [syscall(boot, type, startedAt), ...extra] };
-	};
-
-	add("full-c6i", C6I, "2026-11-20T04:11:43.100000001Z");
-	add("full-m5", M5, "2026-11-20T04:21:53.200000002Z");
-	add("full-c8i", C8I, "2026-11-20T04:31:52.300000003Z");
-	add("full-c8a", C8A, "2026-11-20T04:41:51.400000004Z");
-	add("full-i4i", I4I, "2026-11-20T04:51:50.500000005Z");
-
-	add("gap-c6i", C6I, "2026-11-20T10:11:43.000000000Z");
-	add("gap-m5", M5, "2026-11-20T10:21:53.000000000Z");
-	add("gap-c8a", C8A, "2026-11-20T10:49:30.000000000Z");
-	add("gap-i4i", I4I, "2026-11-20T10:51:50.000000000Z");
-
-	add("hand-m5", M5, "2026-11-20T13:44:05.000000000Z");
-
-	const lateM5 = "2026-11-20T16:21:53.000000000Z";
-	add("late-c6i", C6I, "2026-11-20T16:11:43.000000000Z");
-	add(
-		"late-m5",
-		M5,
-		lateM5,
-		{ buildFailures: [{ benchmark: "memory_write", build: "static" }], notRun: [{ benchmark: "memory_copy", build: "static", params: { size_bytes: 4096 } }] },
-		[made.run({ startedAt: after(lateM5, 2), instanceType: M5, boot: idOf("late-m5"), samplesNs: [7e6, 7e6, 7e6], crashAfter: 1 })],
-	);
-	add("late-c8i", C8I, "2026-11-20T16:39:30.000000000Z");
-	add("late-c8a", C8A, "2026-11-20T16:41:51.000000000Z");
-	add("late-i4i", I4I, "2026-11-20T16:51:50.000000000Z");
-
-	const evening = "2026-11-20T22:11:44.000000000Z";
-	const failedRequest = { connection: "new" as const, requests: [...rampRequests(3, 21_000_000, 40_000), { fail: { phase: "first_byte" as const, error: "timeout" } }] };
-	const four = requestRun(made, { startedAt: after(evening, 2), boot: idOf("evening-c6i"), exit: { code: 4 }, stream: failedRequest });
-	const one = requestRun(made, { startedAt: after(evening, 3), boot: idOf("evening-c6i"), exit: { code: 1 }, stream: failedRequest });
-	add("evening-c6i", C6I, evening, {}, [four, one]);
-	add("evening-m5", M5, "2026-11-20T22:21:53.000000000Z");
-	add("evening-c8i", C8I, "2026-11-20T22:31:52.000000000Z");
-
-	const missing = "019aa3c0-0000-7000-8000-000000000001";
-	const noFile = { id: missing, benchmark: "syscall", params: { call: "getpid" }, binary: { build: "static" }, exit: { code: 0 } } as unknown as Run;
-	add("midnight-c6i", C6I, "2026-11-20T23:55:00.500000000Z");
-	add("midnight-m5", M5, "2026-11-21T00:05:10.000000000Z");
-	add("midnight-c8i", C8I, "2026-11-21T00:15:20.000000000Z", {}, [noFile]);
-
-	// A boot whose id could not be read: the runner writes its Runs with an empty boot and its summary as unknown.json.
-	const unknownAt = "2026-11-21T02:31:00.000000000Z";
-	const unknownRun = syscall("", M5, unknownAt);
-
-	const files = [...made.files].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
-	const series = seriesMethod.derive(files, await seriesMethod.gather(files, made.fetch));
-	const requests = requestsMethod.derive(files, await requestsMethod.gather(files, made.fetch));
-	const runs = mkdtempSync(join(tmpdir(), "api-rounds-runs-"));
-	const put = (path: string, text: string): void => {
-		mkdirSync(dirname(join(runs, path)), { recursive: true });
-		writeFileSync(join(runs, path), text);
-	};
-	for (const file of made.files) put(file.path, `${JSON.stringify(file.record, null, 2)}\n`);
-	for (const boot of Object.values(boots)) put(bootSummaryPath(boot), bootSummaryText(boot));
-	put(UNKNOWN, bootSummaryText({ boot: "", startedAt: unknownAt, instanceType: M5, runs: [unknownRun] }));
-	const http = (series.derivations.find((d) => d.series.benchmark === "http_get") as SeriesFile["derivations"][number]).series.id;
-	return {
-		runs,
-		series: JSON.parse(seriesMethod.serialize(series)) as SeriesFile,
-		requests: JSON.parse(requestsMethod.serialize(requests)) as RequestsFile,
-		boots,
-		http,
-		exitedFour: four.id,
-		exitedOne: one.id,
-		missing,
-		unknownRun: unknownRun.id,
-	};
-}
 
 function sourcesOf(fixture: { runs: string; series: SeriesFile; requests: RequestsFile }, bootFiles?: BootFile[]): ApiSources {
 	return {
@@ -391,6 +277,9 @@ describe("a boot summary the rounds cannot be told from", () => {
 		{ name: "a start to the millisecond", file: fileOf(oldPath("ms"), changed("ms", old, (s) => (s.started_at = "2025-01-01T04:11:00.000Z"))), why: LEFT_OUT_WHY.start },
 		{ name: "no provider", file: fileOf(oldPath("noprov"), changed("noprov", old, (s) => delete s.provider)), why: LEFT_OUT_WHY.provider },
 		{ name: "an instance type that is a number", file: fileOf(oldPath("numtype"), changed("numtype", old, (s) => (s.provider.instance_type = 5))), why: LEFT_OUT_WHY.provider },
+		{ name: "an instance type one character too long", file: fileOf(oldPath("longtype"), changed("longtype", old, (s) => (s.provider.instance_type = "m".repeat(INSTANCE_TYPE_CHARACTERS + 1)))), why: LEFT_OUT_WHY.provider },
+		{ name: "a start on another day than its path's", file: fileOf(oldPath("otherday"), changed("otherday", old, (s) => (s.started_at = "2025-01-02T04:11:00.000000000Z"))), why: LEFT_OUT_WHY.path },
+		{ name: "a boot that is not its file's name", file: fileOf(oldPath("othername"), changed("othername", old, (s) => (s.boot = idOf("someone-else")))), why: LEFT_OUT_WHY.path },
 		{ name: "Runs that are not a list", file: fileOf(oldPath("runsobj"), changed("runsobj", old, (s) => (s.runs = {}))), why: LEFT_OUT_WHY.runs },
 		{ name: "a Run without its id", file: fileOf(oldPath("noid"), changed("noid", old, (s) => (s.runs = [{ benchmark: "syscall" }]))), why: LEFT_OUT_WHY.runs },
 		{ name: "failed builds that are not a list", file: fileOf(oldPath("bf"), changed("bf", old, (s) => (s.build_failures = 1))), why: LEFT_OUT_WHY.lists },
@@ -444,16 +333,17 @@ describe("a boot summary the rounds cannot be told from", () => {
 			const built = buildApi(sourcesOf(fixture, [...files.map((file) => (replace[file.path] === undefined ? file : fileOf(file.path, replace[file.path] as string))), ...extra]));
 			return { left: recent(built).left_out as Json, boots: (recent(built).rounds as Json[]).flatMap((one) => one.by_boot.map((boot: Json) => boot.boot_summary)) };
 		};
-		// A second summary of the boot by hand, on another day: both are left out, and the boot is in no round.
+		// A second summary of the boot by hand, at its own path on a later day, started later: it is left out, and the first stays in its round.
 		const second = fileOf(`boots/2026/11/22/${hand.boot}.json`, bootSummaryText({ ...hand, startedAt: "2026-11-22T13:44:05.000000000Z" }));
 		const same = leftOf([second]);
-		expect(same.left.summaries).toEqual(
-			expect.arrayContaining([
-				{ path: second.path, boot_summary: address(second.path), why: LEFT_OUT_WHY.same_boot },
-				{ path: bootSummaryPath(hand), boot_summary: address(bootSummaryPath(hand)), why: LEFT_OUT_WHY.same_boot },
-			]),
-		);
-		expect(same.boots).not.toContain(address(bootSummaryPath(hand)));
+		expect(same.left.summaries).toContainEqual({ path: second.path, boot_summary: address(second.path), why: LEFT_OUT_WHY.same_boot });
+		expect(same.left.count).toBe(2);
+		expect(same.boots).toContain(address(bootSummaryPath(hand)));
+		// A copy of it anywhere but the path its own contents give is no summary of the boot: it is left out alone.
+		const copy = fileOf(`boots/2025/06/01/${hand.boot}.json`, bootSummaryText(hand));
+		const copied = leftOf([copy]);
+		expect(copied.left.summaries).toContainEqual({ path: copy.path, boot_summary: address(copy.path), why: LEFT_OUT_WHY.path });
+		expect(copied.boots).toContain(address(bootSummaryPath(hand)));
 		// The summary by hand also listing a Run of the evening's m5.large boot: it is left out, the evening's stays.
 		const other = leftOf([], { [bootSummaryPath(hand)]: bootSummaryText({ ...hand, runs: [...hand.runs, evening.runs[0] as Run] }) });
 		expect(other.left.summaries).toContainEqual({ path: bootSummaryPath(hand), boot_summary: address(bootSummaryPath(hand)), why: LEFT_OUT_WHY.other_boot });
@@ -473,12 +363,60 @@ describe("a boot summary the rounds cannot be told from", () => {
 		expect(eveningRun).toBe((evening.runs[0] as Run).id);
 	});
 
+	test("claiming an earlier start, at its own path, for a boot that has a summary, is the one case a later file changes a link: it is seen, the conflict listed, the change refused by the gate", () => {
+		// No rule without the files' history can tell which of two such files came first. The one that started first is the boot's, in the rounds
+		// and in its points' links; the other is listed as left out; and the gate against the tree before refuses the changed link, out loud.
+		const hand = fixture.boots["hand-m5"] as HandMadeBoot;
+		const earlier = fileOf(`boots/2026/11/19/${hand.boot}.json`, bootSummaryText({ ...hand, startedAt: "2026-11-19T13:44:05.000000000Z" }));
+		const runs = mkdtempSync(join(tmpdir(), "api-rounds-earlier-"));
+		for (const path of [...readBootFiles(fixture.runs).map((file) => file.path), ...fixture.series.derivations.flatMap((d) => d.runs.map((run) => run.path)), earlier.path]) {
+			mkdirSync(dirname(join(runs, path)), { recursive: true });
+			writeFileSync(join(runs, path), path === earlier.path ? earlier.bytes : readFileSync(join(fixture.runs, path)));
+		}
+		const built = buildApi(sourcesOf({ ...fixture, runs }));
+		expect(recent(built).left_out.summaries).toContainEqual({ path: bootSummaryPath(hand), boot_summary: address(bootSummaryPath(hand)), why: LEFT_OUT_WHY.same_boot });
+		const after = writeTree(built);
+		expect(checkApi({ tree: after, runs, base: DEFAULT_BASE, series: fixture.series, requests: fixture.requests }).problems).toEqual([]);
+		const gate = checkStability(directory, after);
+		expect(gate.problems.length).toBeGreaterThan(0);
+		expect(gate.problems.every((problem) => problem.includes("boot_summary"))).toBe(true);
+	});
+
 	test("listing an enormous number of Runs is counted, not copied: the table of contents grows by digits", () => {
 		const runs = Array.from({ length: 100_000 }, (_, i) => ({ id: `019aa3c1-0000-7000-8000-${String(i).padStart(12, "0")}`, benchmark: "syscall", params: {}, binary: { build: "static" }, exit: { code: 0 } })) as unknown as Run[];
 		const huge = fileOf(`boots/2026/11/27/${idOf("huge")}.json`, bootSummaryText({ boot: idOf("huge"), startedAt: "2026-11-27T04:11:00.000000000Z", runs }));
 		const built = buildApi(sourcesOf(fixture, [...readBootFiles(fixture.runs), huge]));
 		expect((recent(built).rounds as Json[])[0]).toMatchObject({ boots: 1, runs: 100_000, runs_in_no_series: 100_000, failed_runs: 0 });
 		expect((built.get(INDEX_PATH) as Uint8Array).length - (tree.get(INDEX_PATH) as Uint8Array).length).toBeLessThan(2_000);
+	});
+});
+
+describe("what boot summaries can write into the table of contents", () => {
+	test("is bounded: 8 rounds of 20 boots, 12 listed each with an instance type of 64 characters, and 11 files left out with names of 200 characters, stay under the ceiling", () => {
+		const encoder = new TextEncoder();
+		const files: BootFile[] = [...readBootFiles(fixture.runs)];
+		for (let round = 0; round < RECENT_ROUNDS; round++) {
+			for (let boot = 0; boot < 20; boot++) {
+				const startedAt = new Date(Date.UTC(2026, 11, 1 + round, 4, boot * 10)).toISOString().replace(".000Z", ".999999999Z");
+				const made: HandMadeBoot = { boot: idOf(`worst-${round}-${boot}`), startedAt, instanceType: "x".repeat(INSTANCE_TYPE_CHARACTERS), runs: [] };
+				files.push({ path: bootSummaryPath(made), bytes: encoder.encode(bootSummaryText(made)) });
+			}
+		}
+		for (let i = 0; i < 11; i++) files.push(fileOf(`boots/2026/12/${String(10 + i)}/${"n".repeat(200)}.json`, "{"));
+		const built = buildApi(sourcesOf(fixture, files));
+		const rounds = recent(built).rounds as Json[];
+		expect(rounds.map((one) => [one.boots, one.by_boot.length, one.instance_types.length])).toEqual(Array.from({ length: RECENT_ROUNDS }, () => [20, BOOTS_LISTED, BOOTS_LISTED]));
+		expect(rounds.flatMap((one) => one.instance_types).every((type: string) => type.length === INSTANCE_TYPE_CHARACTERS)).toBe(true);
+		const left = recent(built).left_out;
+		expect([left.count, left.summaries.length]).toEqual([12, LEFT_OUT_LISTED]);
+		expect(left.summaries.map((one: Json) => [...one.path].length)).toEqual(Array.from({ length: LEFT_OUT_LISTED }, () => PATH_CHARACTERS));
+		const size = (built.get(INDEX_PATH) as Uint8Array).length;
+		const ceiling = (CEILINGS.find((one) => one.path.test(INDEX_PATH)) as (typeof CEILINGS)[number]).bytes;
+		// recent_rounds alone, at these bounds: what a round of more boots, a longer instance type or name, or more files left out cannot exceed.
+		const recentBytes = encoder.encode(JSON.stringify(recent(built))).length;
+		expect(recentBytes).toBeLessThan(48_000);
+		expect(size).toBeLessThan(ceiling);
+		expect(checkApi({ tree: writeTree(built), runs: fixture.runs, base: DEFAULT_BASE, series: fixture.series, requests: fixture.requests }).problems.filter((problem) => problem.includes("ceiling"))).toEqual([]);
 	});
 });
 

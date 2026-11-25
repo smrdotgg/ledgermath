@@ -31,7 +31,7 @@ import {
 	RETRY_PAUSE_MS,
 } from "../scripts/lib/ledger-data";
 import { about, aboutText, findPrices, listSeries, pricesText, seriesListText, showSeries, showText, timeText } from "../scripts/lib/lookup";
-import { type ApiFixture, EMPTY_BOOT, type LongFixture, makeApiFixture, makeLongFixture } from "./api-fixtures";
+import { type ApiFixture, EMPTY_BOOT, FIRST_BOOT, type LongFixture, makeApiFixture, makeLongFixture } from "./api-fixtures";
 import { type Override, serve, stalled, writeTree } from "./tree-fixture";
 
 setDefaultTimeout(120_000);
@@ -401,14 +401,14 @@ describe("the contract the tree gives a reader", () => {
 	test("about says when the newest round of boots started and what it held, in one line, from the table of contents, and the summaries in no round; from a tree without the rounds, nothing of them", async () => {
 		const a = await about(directory);
 		const index = JSON.parse(new TextDecoder().decode(bytesOf(INDEX)));
-		// The fixture's one round: a boot that left no Run, its one build having failed. Its first day's summary is in no round: its name is no box's.
+		// The fixture's newest round: a boot that left no Run, its one build having failed. Its unknown.json is in no round: the API does not serve it.
 		expect(a.newest_round).toEqual({ started_at: "2026-11-13T04:41:00.000000000Z", boots: 1, runs: 0, failed_runs: 0, runs_in_no_series: 0, build_failures: 1, not_run: 0, instance_types: ["c8a.2xlarge"] });
 		expect(index.recent_rounds.rounds[0].started_at).toBe(a.newest_round?.started_at);
 		const left = index.recent_rounds.left_out.summaries[0];
 		expect(a.boot_summaries_left_out).toEqual({ count: 1, newest: left });
 		expect(aboutText(a).split("\n").filter((line) => /\bround\b/.test(line))).toEqual([
 			"Newest round of boots: started 2026-11-13T04:41:00Z, 1 boot (c8a.2xlarge), 0 Runs, 0 failed, 1 build failed.",
-			`Boot summaries in no round: 1, the newest boots/2026/11/12/boot-2026-11-12.json: ${left.why}.`,
+			`Boot summaries in no round: 1, the newest boots/2026/11/14/unknown.json: ${left.why}.`,
 		]);
 		// What did not run or count is named only when there is some; and with no summary left out, nothing of them.
 		Object.assign(index.recent_rounds.rounds[0], { boots: 2, instance_types: ["c6i.8xlarge", null], runs: 2, failed_runs: 1, runs_in_no_series: 3, build_failures: 0, not_run: 2 });
@@ -781,9 +781,13 @@ describe("scripts/assemble-location.ts, the trial's data", () => {
 		expect([result.code, result.stderr]).toEqual([0, ""]);
 		const runFiles = filesUnder(join(fixture.runs, "runs"));
 		expect(result.stdout).toContain(`v1/ (${tree.size} files, layout ${LAYOUT}, 2 Series`);
-		// Both boot summaries: the first day's, which points link, and that of the boot that left no Run, which only the table of contents' round links.
+		// Both boot summaries the tree links: the first day's, which points and a round link, and that of the boot that left no Run, which only a
+		// round links. Not unknown.json, which the tree lists as left out with no address.
 		expect(result.stdout).toContain(`${runFiles.length} Run files and 2 boot summaries`);
-		expect(filesUnder(out)).toEqual([...filesUnder(join(fixture.runs, "boots")).map((p) => `boots/${p}`), ...runFiles.map((p) => `runs/${p}`), ...[...tree.keys()]].sort());
+		const linkedBoots = filesUnder(join(fixture.runs, "boots"))
+			.map((p) => `boots/${p}`)
+			.filter((p) => !p.endsWith("unknown.json"));
+		expect(filesUnder(out)).toEqual([...linkedBoots, ...runFiles.map((p) => `runs/${p}`), ...[...tree.keys()]].sort());
 		expect(filesUnder(out)).toContain(`boots/2026/11/13/${EMPTY_BOOT}.json`);
 		const data = await loadLedger(openLocation(out));
 		expect(normalized(await showSeries(data, [fixture.http], "all")).replaceAll(out, "LOCATION")).toBe(normalized(await showSeries(directory, [fixture.http], "all")));
@@ -809,7 +813,7 @@ describe("scripts/assemble-location.ts, the trial's data", () => {
 		made.push(dirname(out));
 		const result = await assemble(older, clone, out);
 		expect([result.code, result.stderr]).toEqual([0, ""]);
-		expect(filesUnder(out).filter((p) => p.startsWith("boots/"))).toEqual(["boots/2026/11/12/boot-2026-11-12.json"]);
+		expect(filesUnder(out).filter((p) => p.startsWith("boots/"))).toEqual([`boots/2026/11/12/${FIRST_BOOT}.json`]);
 	});
 
 	test("writes nothing when a file the table of contents lists is missing or is not what it says, and names it", async () => {

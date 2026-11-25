@@ -2744,18 +2744,30 @@ address is `--base`, so a private or test address can stand in.
   the 22:10 round with two of its five boots. Any round shown may change, not only the
   newest: a summary that arrives late joins its round (which may start earlier, or become
   one with its neighbour), one that arrives in conflict takes a boot out, and a Run file
-  that arrives late moves its Run out of `runs_in_no_series`. **No boot summary stops the
-  build or the check**: one the rounds cannot be told from (an address the API does not
-  serve, such as `unknown.json`; not strict JSON; not `ledgermath.boot/1`; without a boot,
-  a start to the nanosecond, a provider, a list of Runs with their ids, or the lists of
-  failed builds and executions not run; of a boot another summary names too; listing a Run
-  of another boot; listing a Run twice or one another lists) is in no round, and
+  that arrives late moves its Run out of `runs_in_no_series`. **Nothing added to the Runs
+  data stops a publish or changes a published link.** Every regular file under `boots/` is
+  read (no symbolic link, no directory), and one the rounds cannot be told from is in no
+  round: an address the API does not serve, such as `unknown.json`; not strict JSON; not
+  `ledgermath.boot/1`; without a boot, a start to the nanosecond, a provider with an
+  instance type of at most 64 characters, a list of Runs with their ids, or the lists of
+  failed builds and executions not run; not at the path its own contents give
+  (`boots/<UTC day of its started_at>/<its boot>.json`); a summary of a boot another
+  started earlier; listing a Run of another boot; listing a Run twice or one another lists.
   `recent_rounds.left_out` counts them, of every day, and lists the newest 8 by path, each
-  with its path, its address when served, and one of a fixed few sentences saying why.
-  `recent_rounds.about` says all this for a reader of the API alone, beginning with the
-  rule and the count, which the check holds word for word; the check works the rounds and
-  the summaries left out from the checkout itself and compares. `bun scripts/lookup.ts
-  about` prints the newest round on one line, and how many summaries are in no round.
+  with its path (cut at 120 characters), its address when served, and one of a fixed few
+  sentences saying why. A round lists at most 12 boots, its figures counting all: at these
+  bounds `recent_rounds` is at most about 48 KB, whatever the summaries hold. A point links
+  its boot's summary only if that summary is in a round's reach on its own (served, at its
+  own path, readable), the earliest-started of its boot, so a copy or a stray file can fill
+  a missing link but never change one; the one file that can is a second summary of a
+  boot at its own path claiming an earlier start, which no rule without history can tell
+  from the first: it is listed as left out, and the gate refuses the change, out loud.
+  `tests/api-additions.test.ts` adds every other kind of file, alone and in pairs, and holds
+  the build, the check, the gate, every link and the ceiling. `recent_rounds.about` says
+  all this for a reader of the API alone, beginning with the rule and the count, which the
+  check holds word for word; the check works the rounds, the summaries left out and every
+  point's link from the checkout itself and compares. `bun scripts/lookup.ts about` prints
+  the newest round on one line, and how many summaries are in no round.
 - **No figure loses a digit.** The build reads every number of both files of Derivations as
   text too, and refuses the file, naming it, the number's place and the number, when the
   number's value is not exactly that of what it would write: an integer past 2^53, a value

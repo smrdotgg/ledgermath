@@ -1629,4 +1629,19 @@ A migrated benchmark is done only when **all** of these hold:
   no Run had been dropped). `about` says any round shown may change, and begins with the
   rule and the count, which the check holds word for word. Real data: 187 month files the
   same byte for byte, no new baseline.
+- **2026-11-25** — **Nothing added to the Runs data changes a published link** (a second
+  verification of #91). Linking a point to the first, in path order, of the files named by
+  its boot let a real summary copied to an earlier path take 37 month files' links. Now a
+  point links, of the files a round can read on their own (served, at the path their own
+  contents give, readable, an instance type of at most 64 characters), the one of its boot
+  that started first, and never an unserved address; a copy elsewhere is left out ("its
+  path is not the one its own contents give"), a later second summary too. The one file
+  that can still change a link is a second summary at its own path claiming an earlier
+  start; no rule without history tells it from the first, so it is listed and the gate
+  refuses the change. The build and the check read regular files only (a symbolic link
+  had been followed by the check). What summaries write into the table of contents is
+  bounded (instance type 64, listed path 120, 12 boots listed a round): about 48 KB at
+  most. `tests/api-additions.test.ts` adds 41 kinds of file alone and 66 pairs; 51 of its
+  108 tests fail on `3632aba`, the verifier's four cases among them. Real data: 187 month
+  files the same, and the 2026-11-11 copy at an earlier path changes none.
 - _(agents: append your entry here, one per merged benchmark)_

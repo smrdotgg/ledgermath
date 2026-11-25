@@ -15,14 +15,16 @@
  * - http_get on c6i.8xlarge: two Runs of requests, the second exited 4 with a
  *   failed request: a Series of both Methods.
  * - runs/2026/11/14/not-a-run.json: a Run file each Method lists as unreadable.
- * - boots/2026/11/12/boot-2026-11-12.json: the summary of the first day's boot
- *   only, so some points link a boot summary and the others none; it lists
- *   that boot's Runs. Its name is no box's (a box names a summary by the
- *   kernel's boot id, a UUID), so the API does not serve it and the table of
- *   contents lists it as in no round.
+ * - boots/2026/11/12/<FIRST_BOOT>.json: the summary of the first day's boot
+ *   only (its Runs' boot is FIRST_BOOT, a UUID as a box gives it; every other
+ *   day's Runs are of boot-<day>, with no summary), so some points link a
+ *   boot summary and the others none; it lists that boot's Runs.
  * - boots/2026/11/13/<EMPTY_BOOT>.json: a boot that left no Run, its one build
- *   having failed, named as a box names it: the one round of boots of the
- *   table of contents.
+ *   having failed. With the first, the two rounds of boots of the table of
+ *   contents.
+ * - boots/2026/11/14/unknown.json: a boot whose id could not be read, which
+ *   left no Run: the API does not serve that address, so the table of
+ *   contents lists it as in no round.
  *
  * With `nextMonth`, a Run more of memory_read and of http_get, each on
  * 2026-12-01 and made after every other Run (so no other Run's id changes):
@@ -114,7 +116,9 @@ export interface ApiFixture {
 	overflowTime?: string;
 }
 
-/** The boot id of the fixture's boot that left no Run (one build failed), named as a box names a boot: by the kernel's boot id, a UUID. */
+/** The boot id of the fixture's first day's boot, whose summary its points link, named as a box names a boot: by the kernel's boot id, a UUID. */
+export const FIRST_BOOT = "1b2c3d4e-5f60-4718-9a2b-3c4d5e6f7a8b";
+/** The boot id of the fixture's boot that left no Run (one build failed), named the same way. */
 export const EMPTY_BOOT = "4f1c2a3b-5d6e-4f70-8a9b-0c1d2e3f4a5b";
 
 /** The parameter of the tcp_echo Series made with `edges`: an address under the API's own base, that names no file. */
@@ -155,12 +159,12 @@ export async function makeApiFixture(
 	const samples = (ns: number): number[] => Array.from({ length: options.small ? 3 : 10 }, (_, i) => ns + i * 1000);
 	const requestsOf = (n: number): number => (options.small ? n - 36 : n);
 	const made = new HandMade();
-	made.run({ startedAt: "2026-11-12T04:12:00Z", samplesNs: samples(7e6) });
+	made.run({ startedAt: "2026-11-12T04:12:00Z", samplesNs: samples(7e6), boot: FIRST_BOOT });
 	made.run({ startedAt: "2026-11-13T04:12:00Z", samplesNs: samples(8e6) });
 	made.run({ startedAt: "2026-11-14T04:12:00Z", samplesNs: samples(9e6), processor: "Intel(R) Xeon(R) Platinum 8259CL" });
 	made.run({ startedAt: "2026-11-15T04:12:00Z", samplesNs: samples(8e6), crashAfter: 3 });
-	if (!options.small) made.run({ startedAt: "2026-11-12T04:13:00Z", benchmark: "syscall", binary: "syscall", params: { call: "getpid" }, samplesNs: samples(94.7), bytesPerRepetition: null });
-	requestRun(made, { startedAt: "2026-11-12T22:20:00Z", stream: { connection: "new", requests: rampRequests(requestsOf(40), 20_000_000, 50_000) } });
+	if (!options.small) made.run({ startedAt: "2026-11-12T04:13:00Z", benchmark: "syscall", binary: "syscall", params: { call: "getpid" }, samplesNs: samples(94.7), bytesPerRepetition: null, boot: FIRST_BOOT });
+	requestRun(made, { startedAt: "2026-11-12T22:20:00Z", boot: FIRST_BOOT, stream: { connection: "new", requests: rampRequests(requestsOf(40), 20_000_000, 50_000) } });
 	requestRun(made, {
 		startedAt: "2026-11-13T04:20:00Z",
 		exit: { code: 4 },
@@ -241,14 +245,16 @@ export async function makeApiFixture(
 	for (const file of made.files) put(file.path, `${JSON.stringify(file.record, null, 2)}\n`);
 	put(unreadablePath, unreadableBytes);
 	put(
-		"boots/2026/11/12/boot-2026-11-12.json",
+		`boots/2026/11/12/${FIRST_BOOT}.json`,
 		bootSummaryText({
-			boot: "boot-2026-11-12",
+			boot: FIRST_BOOT,
 			startedAt: "2026-11-12T04:11:00.000000000Z",
 			endedAt: "2026-11-12T22:21:00.000000000Z",
-			runs: made.files.map((file) => file.record as Run).filter((record) => record.boot === "boot-2026-11-12"),
+			runs: made.files.map((file) => file.record as Run).filter((record) => record.boot === FIRST_BOOT),
 		}),
 	);
+	// A boot whose id could not be read, which left no Run: the runner writes its summary as unknown.json, an address the API does not serve.
+	put("boots/2026/11/14/unknown.json", bootSummaryText({ boot: "", startedAt: "2026-11-14T04:11:00.000000000Z", runs: [] }));
 	put(`boots/2026/11/13/${EMPTY_BOOT}.json`, bootSummaryText({ boot: EMPTY_BOOT, startedAt: "2026-11-13T04:41:00.000000000Z", instanceType: "c8a.2xlarge", runs: [], buildFailures: [{ benchmark: "memory_read", build: "static" }] }));
 	for (const day of ["11", "12"]) {
 		mkdirSync(join(runs, "prices", "2026", "11", day), { recursive: true });
