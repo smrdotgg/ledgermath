@@ -1587,4 +1587,27 @@ A migrated benchmark is done only when **all** of these hold:
   environment), what is not (children without `BUN_OPTIONS`, programs that are not Bun,
   `node:worker_threads`, `Bun.connect`, `WebSocket`, `node:dgram`, DNS lookups), and which
   addresses are this machine.
+- **2026-11-25** — **The guard's redirects behave like Bun's.** A second check of #92 found
+  the guard's own redirect-following differed from Bun's `fetch`: credentials crossed
+  hosts, a `Request`'s body was lost on a 307, a `Request`'s signal was dropped after the
+  first hop, 300, 304 and 305 were followed, a 303 answering `HEAD` lost `Content-Type`, a
+  rewritten method's headers came back on a later hop, clones said `redirected: false`, it
+  stopped at 20 hops, and a `Worker`'s own preload ran before the guard. Following now lives
+  in `tests/no-network-redirects.ts` and was written against what Bun 1.4.4 was measured to
+  do: only 301, 302, 303, 307 and 308 with a non-empty Location; the standard's method
+  rewrite, carried into later hops; `Authorization`, `Cookie` and `Proxy-Authorization`
+  dropped across origins (Bun drops all three); the body kept before the first send (a
+  `Request`'s from a clone, a FormData encoded once so every hop sends one boundary); the
+  signal on every hop; Bun's limit of 126 redirects and its `TooManyRedirects`,
+  `RedirectURLInvalid` and `UnsupportedRedirectProtocol` errors; and `redirected` and `url`
+  on the response and every clone. `tests/no-network-redirects.test.ts` runs 433 cases, each
+  a test, through Bun's own `fetch` (kept by the guard, under a symbol, for this test only)
+  and the guarded one against two local servers, and requires the same response and the
+  same requests received, in order. Against `0b120d9` 383 of them fail, among them one for
+  each difference above. **The stated exception**: a body that is a stream, answered with a
+  301, 302, 307 or 308 that would be followed, is refused by the guard with a message saying
+  to give `redirect: "manual"` or a body that can be sent again. Bun follows those for a
+  Blob's stream and refuses them for other streams ("cannot be replayed"), and from outside
+  the two look alike. Bun follows a 303 for any stream, and so does the guard. The guard is
+  a `Worker`'s first preload. The README's "Tests" says all of this.
 - _(agents: append your entry here, one per merged benchmark)_

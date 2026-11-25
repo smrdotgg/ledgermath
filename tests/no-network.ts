@@ -2,7 +2,8 @@
  * The suite makes no request to any other machine. bunfig.toml (and
  * site/bunfig.toml) preload this file for `bun test`; it refuses, at once, any
  * request to a host that is not this machine:
- * - globalThis.fetch, and every redirect it would follow;
+ * - globalThis.fetch, and every redirect it would follow, which
+ *   tests/no-network-redirects.ts follows as Bun's fetch does;
  * - node:http and node:https (and so the AWS SDK), at ClientRequest's write,
  *   end and flushHeaders, which every request passes through before Bun sends
  *   it, however the module was imported and whether the host is a name or an
@@ -28,6 +29,11 @@
 
 import http from "node:http";
 import net from "node:net";
+
+import { followingFetch } from "./no-network-redirects";
+
+/** Where the guard keeps Bun's own fetch, for its test. */
+export const RUNTIME_FETCH = Symbol.for("ledgermath.no-network.runtime-fetch");
 
 export function isThisMachine(host: string): boolean {
 	const name = host.toLowerCase().replace(/^\[(.*)\]$/, "$1").replace(/\.$/, "");
@@ -72,49 +78,24 @@ if (scope[GUARDED] !== true) {
 		const web = url.protocol === "http:" || url.protocol === "https:" || url.protocol === "ws:" || url.protocol === "wss:";
 		return web && !isThisMachine(url.hostname) ? refusal("fetch", address, url.hostname) : null;
 	};
+	// Redirects are followed by tests/no-network-redirects.ts, as Bun's fetch would, each destination checked first.
+	const following = followingFetch(realFetch, refuses);
 	const guardedFetch = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
-		let address = input instanceof Request ? input.url : String(input);
-		const refused = refuses(address);
+		const refused = refuses(input instanceof Request ? input.url : String(input));
 		if (refused !== null) throw refused;
-		const mode = init?.redirect ?? (input instanceof Request ? input.redirect : "follow");
-		// "manual" and "error" follow nothing: the caller gets the redirect, or its error, unchanged.
-		if (mode !== "follow") return realFetch(input, init);
-		// Otherwise each redirect is followed here, as fetch would, once its destination is checked.
-		let method = (init?.method ?? (input instanceof Request ? input.method : "GET")).toUpperCase();
-		let next: RequestInit = { ...init, redirect: "manual" };
-		let response = await realFetch(input, next);
-		for (let hops = 0; response.status >= 300 && response.status < 400 && response.headers.has("location"); hops++) {
-			if (hops === 20) throw new TypeError(`${address} redirected more than 20 times`);
-			const to = new URL(response.headers.get("location") as string, address).href;
-			const refusedTo = refuses(to);
-			response.body?.cancel().catch(() => undefined);
-			if (refusedTo !== null) throw refusedTo;
-			const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
-			if (response.status === 303 || ((response.status === 301 || response.status === 302) && method === "POST")) {
-				if (method !== "HEAD") method = "GET";
-				headers.delete("content-type");
-				headers.delete("content-length");
-				next = { ...next, method, headers, body: undefined };
-			} else {
-				next = { ...next, method, headers };
-			}
-			address = to;
-			response = await realFetch(address, next);
-		}
-		if (address !== (input instanceof Request ? input.url : String(input))) {
-			Object.defineProperties(response, { url: { value: address }, redirected: { value: true } });
-		}
-		return response;
+		return following(input, init);
 	};
 	globalThis.fetch = Object.assign(guardedFetch, realFetch);
+	// Bun's own fetch, for tests/no-network.test.ts to hold the guarded one to; nothing else uses it.
+	(globalThis as Record<symbol, unknown>)[RUNTIME_FETCH] = realFetch;
 
-	// A Worker is a separate global scope: it loads this file first too.
+	// A Worker is a separate global scope: it loads this file first too, before any preload of its own.
 	const RealWorker = globalThis.Worker;
 	if (RealWorker !== undefined) {
 		globalThis.Worker = class extends RealWorker {
 			constructor(url: string | URL, options?: WorkerOptions) {
 				const given = (options as { preload?: string | string[] } | undefined)?.preload;
-				const preload = [...(given === undefined ? [] : Array.isArray(given) ? given : [given]), import.meta.path];
+				const preload = [import.meta.path, ...(given === undefined ? [] : Array.isArray(given) ? given : [given])];
 				super(url, { ...options, preload } as WorkerOptions);
 			}
 		} as typeof Worker;

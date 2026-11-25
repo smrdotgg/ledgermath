@@ -46,8 +46,8 @@ async function lookupAbout(location: string): Promise<{ code: number; stderr: st
 }
 
 /** What tests/no-network-worker.ts, in a Worker, got from fetching `address`: the body, or the error's message. */
-function fetchInWorker(address: string): Promise<string> {
-	const worker = new Worker(join(import.meta.dir, "no-network-worker.ts"));
+function fetchInWorker(address: string, options?: WorkerOptions): Promise<string> {
+	const worker = new Worker(join(import.meta.dir, "no-network-worker.ts"), options);
 	return new Promise<string>((done) => {
 		worker.onmessage = (event: MessageEvent<string>) => {
 			worker.terminate();
@@ -119,6 +119,12 @@ describe("the suite makes no request to another machine", () => {
 	test("a Worker a test starts refuses it too, and reaches this machine", async () => {
 		expect(await fetchInWorker("https://example.com/")).toContain(REFUSED);
 		expect(await fetchInWorker(`http://127.0.0.1:${other.port}/`)).toBe("landed");
+	});
+
+	test("a Worker given a preload of its own runs the guard first, and still refuses", async () => {
+		const options = { preload: [join(import.meta.dir, "no-network-order.ts")] } as WorkerOptions;
+		expect(await fetchInWorker("order", options)).toBe("true");
+		expect(await fetchInWorker("https://example.com/", options)).toContain(REFUSED);
 	});
 
 	test("a server on this machine is reached, from the test, by node:http, through an IPv4-mapped address, and from a child", async () => {

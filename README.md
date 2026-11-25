@@ -82,12 +82,23 @@ that says the test reached for the network. A test gives the code it runs a dire
 server on `127.0.0.1`, or a fetch of its own instead. The guard catches a test's ordinary
 mistake, not every way out:
 
-- **Guarded:** `fetch`, and every redirect it would follow (a caller asking for
-  `redirect: "manual"` gets the redirect itself, as before); `node:http` and `node:https`,
+- **Guarded:** `fetch`, and every redirect it would follow; `node:http` and `node:https`,
   however imported, the AWS SDK among their callers; `node:net` and `node:tls`, and
-  `node:http2`, which connects through them; a `Worker`
-  (`new Worker`), which is given the guard as a preload; and every Bun process a test
-  starts with its environment, through `BUN_OPTIONS`, which names the guard as a preload.
+  `node:http2`, which connects through them; a `Worker` (`new Worker`), which is given the
+  guard as its first preload; and every Bun process a test starts with its environment,
+  through `BUN_OPTIONS`, which names the guard as a preload.
+- **Redirects:** to check each destination before it is asked, the guarded `fetch` follows
+  redirects itself (`tests/no-network-redirects.ts`), as Bun's own `fetch` does: the same
+  statuses, methods, headers (`Authorization`, `Cookie` and `Proxy-Authorization` dropped
+  across origins), bodies sent again, signal, limit (126 redirects, Bun's, where the Fetch
+  standard says 20), errors, and `redirected` and `url` on the response and its clones. A
+  caller asking for `redirect: "manual"` or `"error"` gets Bun's `fetch` untouched.
+  `tests/no-network-redirects.test.ts` sends each of some 430 requests through both, to
+  local servers, and requires the same response and the same requests received. One
+  exception: a body that is a stream, answered with a 301, 302, 307 or 308 that would be
+  followed, is refused by the guard, with a message saying to give `redirect: "manual"` or
+  a body that can be sent again. Bun follows those for a Blob's stream and refuses them for
+  most others, and the two cannot be told apart from outside.
 - **Not guarded:** a child started with an environment of its own, without `BUN_OPTIONS`;
   a program that is not Bun (Python, C, `curl`), which its test points at a local stand-in;
   `node:worker_threads`; `Bun.connect`; `WebSocket`; `node:dgram` (UDP); and DNS lookups.
