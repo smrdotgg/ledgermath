@@ -238,8 +238,9 @@ one-thread sets (`threads` 1, `one_cpu`):
 
 - **With an idle thread, two levels by boot.** On `c6i.8xlarge` and `i4i.2xlarge` the
   figure sits, from boot to boot, at one of two usual levels, with one Run so far between
-  them. Within each boot tested, every process gave the same level. That the level is a
-  property of the physical host the boot lands on is inferred, not shown.
+  them. Within each boot tested, with the sibling hardware thread idle or offline, every
+  process gave the same level. That the level is a property of the physical host the boot
+  lands on is inferred, not shown.
 - **Without an idle thread, code placement.** The figure moves with where glibc's lock and
   unlock and the benchmark's loop land in the binary.
 
@@ -259,16 +260,15 @@ Both have the same Intel Ice Lake processor (Xeon Platinum 8375C). On `m5.large`
 `c8i.2xlarge` and `c8a.2xlarge` this set shows one level, with an occasional single
 outlier on `c8a.2xlarge`.
 
-**What the recorded Runs show.** With one binary, all but one Run sit at one of two levels,
-from their first warm-up repetition to their last:
+**What the recorded Runs show.** A Run's figure is the median of its counted samples. With
+one binary, the figures of all but one Run sit at one of two levels:
 
 | Level | ns per repetition | ns per critical section | Cycles per critical section, at 3.5 GHz |
 |---|---|---|---|
 | Fast | about 141,000 | about 14.1 | 49 |
 | Slow | about 184,000 | about 18.4 | 64 |
 
-The slow level is 30% slower. Counted on 2026-11-25 from the Runs published by then, each
-Run's figure being the median of its counted samples:
+The slow level is 30% slower. Counted on 2026-11-25 from the Runs published by then:
 
 | Instance type | Runs | Fast | Slow | Between |
 |---|---|---|---|---|
@@ -277,8 +277,10 @@ Run's figure being the median of its counted samples:
 
 The Run between ran on 2026-11-25 04:18 UTC on `c6i.8xlarge`. Its first six warm-up
 samples gave 160,500 to 162,300 ns per repetition, and the later ones 163,400 to 168,000.
-It is the only Run that is not steady. Whether it is a third kind of host, or a host that
-changed while it ran, is not known.
+It is the only Run whose median lies between the levels. Single samples stray in other
+Runs too (on `c6i.8xlarge`, counted samples up to 2.5% above their Run's median), but those
+Runs' medians stay at a level. Whether the Run between is a third kind of host, or a host
+that changed while it ran, is not known.
 
 **How the percentiles read.** Method `series` v1 gives the 5th, 50th and 95th percentiles
 across a Series' counted Runs, and across each group's. On `c6i.8xlarge`, in the 57 Runs
@@ -293,13 +295,14 @@ which level you use, or carry both.
 
 **Shown.**
 
-- Within each boot tested, every process gave the same level. On 13 Ice Lake boxes started
+- Within each boot tested, with the sibling hardware thread idle or offline, every process
+  gave the same level (with the sibling busy, see below). On 13 Ice Lake boxes started
   by hand (one of them a `c6i.8xlarge`), all of them at the slow level, 732 processes of the
   pipeline's binary were all at the slow level (183,700 to 186,900 ns per repetition): on
   every CPU, at every stack offset tried, with address randomisation off, with the sibling
   hardware thread offline, and at the start and the end of each boot. On the one fast box
   found by hand (an `i4i.2xlarge`, the 15th of 19 Ice Lake boxes started; the other 18 were
-  slow), all 68 processes run with the sibling idle or offline were fast, 140,990 to
+  slow), all 69 processes run with the sibling idle or offline were fast, 140,990 to
   141,254 ns: on each of its 8 CPUs, with the sibling offline, with address randomisation
   off, with speculative store bypass disable on, and at the start and the end of the boot.
 - No recorded fact tells the levels apart. For each published `c6i.8xlarge` Run, every key
@@ -308,10 +311,12 @@ which level you use, or carry both.
   between the fast Runs and the slow ones. A key whose value is new in nearly every Run,
   such as an address or a time, cannot tell levels apart and was set aside. Of the others,
   some values differ from Run to Run, but no key separates the fast Runs from the slow
-  ones: the closest, a memory counter, had one value in 27% of one level's Runs and in none
-  of the other's, which the investigation put down to chance. Microcode (`0xd000433`),
-  kernel, processor model, topology and the CPUs used are the same at both levels, and
-  CPU 0's clock read 3,500 MHz in the dumps taken before and after Runs at both levels.
+  ones. Microcode (`0xd000433`), kernel, processor model, topology and the CPUs used are
+  the same at both levels.
+- The dumps read CPU 0's clock just before and just after each Run, not during it. Before
+  the Run, the median reading was about 3,500 MHz at both levels; one fast Run read
+  2,899.9 MHz before and 3,499.9 after. These readings show no difference in the clock
+  around the Runs, but they cannot rule one out while the Run measured.
 - In the published Runs, other Series run in the same boots do not move with the level:
   on `c6i.8xlarge`, this set without an idle thread, `smt_siblings`, memory latency
   (`memory_read_random`), and the core-to-core cache-line round trip are the same on fast
@@ -374,9 +379,9 @@ of 10,000 critical sections, 0.29 ns per critical section.
   offsets, `pthread_mutex_lock` was fast only when it started 39 to 47 bytes into a 64-byte
   line. At most other offsets it cost one or two cycles more; at offsets 1 and 3 it cost
   about 4% (on one box 47,646 and 47,869 ns, against 45,917 for the build the sweep starts
-  from). The published binary measured 42,974 to 43,013 ns on these boxes, within 0.06% of
-  the fastest build on each box: as fast as the fastest layout, within the variation of the
-  measurement.
+  from). The published binary measured 42,974 to 43,013 ns on these boxes, within about
+  0.06% of the fastest build on each box: as fast as the fastest layout, within the
+  variation of the measurement.
 - **`m5.large`** (one box, two rounds that agree within 0.26%, median): across all 125
   builds the figure spans 67,900 to 100,300 ns per repetition, against 76,600 for the
   published binary. The best build is 11% faster than the published binary, the worst 31%
@@ -392,23 +397,26 @@ unchanged, switches the extra cycles on and off.
 
 **Inferred.** The cause is the processor's front end, which feeds decoded instructions to
 the core. A model of it fits most of the Ice Lake results. The model assumes that the
-front end delivers up to six instructions per cycle from one 64-byte window and stops at
-each taken branch. One critical section is 11 taken branches in about 15 cycles, so under
-the model it is limited by how fast instructions arrive, and a short stretch of code
+front end delivers up to six micro-operations per cycle from one 64-byte window and stops
+at each taken branch; it counts each instruction as one micro-operation, a compare, test
+or simple arithmetic instruction together with the conditional jump after it as one, and a
+call or an instruction that reads, changes and writes memory as two. One critical section is 11 taken branches in about 15 cycles, so
+under the model it is limited by how fast instructions arrive, and a short stretch of code
 between two taken branches that spans two windows costs a cycle. Laid out from each
 binary's function addresses, the model explains about 82% of the variation across the 126
-binaries (the 125 builds and the pipeline's) on each Ice Lake box (0.82, 0.82, 0.83 and
-0.82); the same model with 32-byte windows explains 37%. Some results do not fit it, such
-as the lock at offsets 1 and 3. On `m5.large`, counting the hot branches that cross or end
-on a 32-byte boundary, which a known erratum of that processor family slows, explains about
-half the variation, and the 64- and 32-byte models fit nearly as well (0.46 to 0.47); the
-rest is not explained. The machines expose no performance counters, so the front end itself
-was not watched.
+binaries (the 125 builds and the pipeline's) on each Ice Lake box (R² 0.820, 0.826, 0.818
+and 0.822); the same model with 32-byte windows explains about 37%. Some results do not
+fit it, such as the lock at offsets 1 and 3. On `m5.large` this model explains almost none
+of the variation (R² 0.020 with 64-byte windows, 0.010 with 32-byte ones). Counting the hot
+branches that cross or end on a 32-byte boundary, which a known erratum of that processor
+family slows, explains about half (R² 0.498); the rest is not explained. The machines
+expose no performance counters, so the front end itself was not watched.
 
 **With an idle thread, placement barely matters.** Compare the same 32 builds, the one the
 sweeps start from and the 31 that move all the code together, with and without the idle
-thread. With it (run once each, the lowest of three samples), they span 0.46 to 0.48% on three Ice Lake boxes, 3.33% on
-the fourth (183,242 to 189,349 ns per repetition), and 2.94% on `m5.large` (174,544 to
+thread. With it (run once each, the lowest of three samples), they span 0.46 to 0.48% on
+three Ice Lake boxes, 3.33% on the fourth (183,242 to 189,349 ns per repetition), and
+2.94% on `m5.large` (174,544 to
 179,682). Without it (the lowest of six samples), the same builds span 18.98 to 19.50% on
 the four Ice Lake boxes and 33.75% on `m5.large` (67,914 to 90,831). Inferred: the two
 atomic instructions take most of the time, so instruction delivery has time to spare.

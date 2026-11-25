@@ -1848,7 +1848,8 @@ A migrated benchmark is done only when **all** of these hold:
   investigation the same day, on machines started by hand, found two separate things. With
   an idle thread, on `c6i.8xlarge` and `i4i.2xlarge` (Ice Lake), one binary gives about
   141,000 or about 184,000 ns per repetition from boot to boot, with one Run of 57 on
-  `c6i.8xlarge` between: within each boot tested every process gave the same level; no
+  `c6i.8xlarge` between: within each boot tested, with the sibling hardware thread idle or
+  offline, every process gave the same level; no
   recorded fact tells the levels apart; on the one fast box found, the difference did not
   show with the sibling hardware thread busy; that the physical host sets the level is
   inferred, and the cause is unknown. Without an idle thread, the figure moves with where
@@ -1863,9 +1864,10 @@ A migrated benchmark is done only when **all** of these hold:
   "its cause is being investigated" with what was found, and gains "Boots that differ in a
   way no fact records": one Series can hold Runs from boots that no recorded fact tells
   apart, version 1 does not split on it, and the spread between its percentiles can be two
-  levels. After an independent verification, the README compares one set of builds on each
-  side of every comparison, gives the busy-sibling results process by process, and says
-  what the dump comparison and the front-end model can and cannot show. The lookup tool's note for `mutex` carries a caveat for both one-thread sets.
+  levels. After two independent verifications, the README compares one set of builds on
+  each side of every comparison, gives the busy-sibling results process by process, and
+  says what the dump comparison, the clock readings around each Run and the front-end
+  model can and cannot show. The lookup tool's note for `mutex` carries a caveat for both one-thread sets.
   What LedgerMath does about either finding is not decided. No benchmark, build, Method,
   schema or workflow changed.
 - _(agents: append your entry here, one per merged benchmark)_

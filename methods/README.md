@@ -220,8 +220,9 @@ What a reader can see of it:
   static and a dynamic build are never mixed in one Series.
 - **A new binary is a new group.** Every Run records the bytes that ran (`binary.blob`),
   and the binary is one of version 1's split facts: within one Series, a Run with another
-  binary goes into another group. The Method still gives percentiles for the whole Series
-  as well as for each group.
+  binary goes into another group. One binary can also be in several groups, when another
+  split fact changes. The Method still gives percentiles for the whole Series as well as
+  for each group.
 - **The hash says only that the bytes differ.** It does not say where a loop landed, or
   why a figure moved. Version 1 does not hold placement fixed. A change elsewhere in the
   binary (the harness, the compiler, the C library, the way it is linked) can land the
@@ -234,8 +235,8 @@ What a reader can see of it:
 The Runs of one Series can come from boots that differ in a way nothing recorded shows.
 `mutex` `one_cpu` with an idle thread shows it: on `c6i.8xlarge` and `i4i.2xlarge`, with
 one binary, the Runs sit at one of two usual levels about 30% apart, from boot to boot,
-with one Run so far between them. Within each boot tested, every process gave the same
-level. No fact in the Run or its dumps tells the levels apart. That the level comes from
+with one Run so far between them. Within each boot tested, with the sibling hardware
+thread idle or offline, every process gave the same level. No fact in the Run or its dumps tells the levels apart. That the level comes from
 the physical host a boot lands on is inferred, not shown, and the cause is not known
 (`benchmarks/mutex/README.md`, issue #84).
 
