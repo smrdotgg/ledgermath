@@ -568,10 +568,10 @@ describe("links, markers and what is not a number", () => {
 });
 
 describe("the script", () => {
-	async function check(...args: string[]): Promise<{ code: number; stdout: string }> {
+	async function check(...args: string[]): Promise<{ code: number; stdout: string; stderr: string }> {
 		const child = Bun.spawn(["bun", join(ROOT, "scripts", "check-answer.ts"), ...args], { stdout: "pipe", stderr: "pipe", env: { ...process.env, LEDGERMATH_DATA: "" } });
-		const [stdout, code] = await Promise.all([new Response(child.stdout).text(), child.exited]);
-		return { code, stdout };
+		const [stdout, stderr, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
+		return { code, stdout, stderr };
 	}
 
 	test("exits 0 on a pass, 1 on a problem, 2 on a usage error", async () => {
@@ -591,11 +591,17 @@ describe("the script", () => {
 		expect(failed.stdout).toContain("Every number:");
 		const json = await check("--data", fixture.directory, "--json", bad);
 		expect(JSON.parse(json.stdout).pass).toBe(false);
-		// Usage errors, given a location that needs no network, so the default address is never asked.
-		for (const usage of [[], [bad, good], ["--frobnicate", bad]]) {
+		// Usage errors, given a location that needs no network, so the default address is never asked. Exit 2
+		// also comes from a data error, or the test guard's refusal, so each case says which error it is.
+		const nowhere = join(fixture.directory, "nowhere.md");
+		for (const [usage, said] of [
+			[[], "usage: bun scripts/check-answer.ts"],
+			[[bad, good], "usage: bun scripts/check-answer.ts"],
+			[["--frobnicate", bad], "Unknown option '--frobnicate'"],
+			[[nowhere], `no file ${nowhere}`],
+		] as const) {
 			const wrong = await check("--data", fixture.directory, ...usage);
-			expect(wrong.code, usage.join(" ")).toBe(2);
+			expect([wrong.code, wrong.stderr.trim().split("\n")[0]?.startsWith(said)], usage.join(" ")).toEqual([2, true]);
 		}
-		expect((await check("--data", fixture.directory, join(fixture.directory, "nowhere.md"))).code).toBe(2);
 	});
 });
