@@ -12,9 +12,14 @@
  *    median, the 5th and 95th percentiles and the count of Runs in the row's unit: each is moved
  *    back into the tree's own unit (bytes per second, or nanoseconds of one repetition, times
  *    the repetition's count for a time per part), digit by digit, and must be the tree's number
- *    exactly. The figure shown must be that median rounded to four significant digits, the
- *    data module's rule, and the row's unit must be the unit in the titles.
- *  - A cell without a figure shows a dash, and only where the headline selection has none.
+ *    exactly; a percentile the tree gives as null must be said to be "infinite or undefined".
+ *    The figure shown must be that median rounded to four significant digits, the data
+ *    module's rule, and the row's unit must be the unit in the titles.
+ *  - A cell without a figure shows a dash, only where the headline selection has none, with
+ *    the data module's reason in its title.
+ *  - Every cell of the headline selection, in the table and in each graph, holds exactly one
+ *    figure or one dash: none is blank. The table has a row for every headline choice, and the
+ *    table's columns and each graph's lines are the machine types, in the data's order.
  *  - Each price is the newest price file's On-Demand price for its machine type, and each
  *    machine type's title gives the price file's facts and AWS's description of the price.
  *  - "Latest runs" is there only when the table of contents gives recent_rounds, and each round
@@ -35,6 +40,7 @@ import {
 	formatMoment,
 	HEADLINE_CHOICES,
 	type HeadlineChoice,
+	NO_PERCENTILE,
 	plain,
 	powerOfTen,
 	roundSignificant,
@@ -153,7 +159,7 @@ function backToTree(full: string, unit: string, choice: HeadlineChoice): string 
 	return choice.per ? shift(ns, powerOfTen(choice.per.count)) : ns;
 }
 
-const TITLE = /^Median (\S+) (\S+)\. 5th percentile (\S+), 95th (\S+)\. ([\d,]+) Runs\.$/;
+const TITLE = /^Median (\S+) (\S+)\. 5th percentile (.+?), 95th (.+?)\. ([\d,]+) Runs\.$/;
 
 // ---------------------------------------------------------------- the check
 
@@ -242,8 +248,8 @@ export function checkFigures(html: string, tree: Tree, page = "index.html", { ho
 			if (expected && expected.series?.id !== row.id) say(`the figure in ${place.where} is of Series ${row.id}, not ${expected.series?.id ?? "none"}, the one the headline selection names`);
 		}
 		const p = row.derivations.series_v1.percentiles[choice.lead === "rate" ? "bytes_per_second" : "time_per_repetition_ns"];
-		if (!p) {
-			say(`the figure ${JSON.stringify(shown)} is of Series ${row.id}, which has no ${choice.lead} figure`);
+		if (!p || p.p50 === null) {
+			say(`the figure ${JSON.stringify(shown)} is of Series ${row.id}, which has no ${choice.lead} median`);
 			continue;
 		}
 		const title = a.attributes.get("title") ?? "";
@@ -258,6 +264,12 @@ export function checkFigures(html: string, tree: Tree, page = "index.html", { ho
 			["5th percentile", p5, p.p5],
 			["95th percentile", p95, p.p95],
 		] as const) {
+			// A percentile the tree gives as null is said to be infinite or undefined, and nothing else is.
+			if (value === null || text === NO_PERCENTILE) {
+				if (value !== null) say(`the ${name} of Series ${row.id} is said to be ${NO_PERCENTILE}; the tree holds ${plain(value)}`);
+				else if (text !== NO_PERCENTILE) say(`the ${name} of Series ${row.id} is shown as ${text} ${unit}; the tree gives it as null`);
+				continue;
+			}
 			const back = backToTree(text, unit, choice);
 			const tree = shift(plain(value), 0);
 			if (back === null) say(`the ${name} of Series ${row.id} is shown as ${JSON.stringify(`${text} ${unit}`)}, which does not read as a ${choice.lead}`);
@@ -292,10 +304,59 @@ export function checkFigures(html: string, tree: Tree, page = "index.html", { ho
 		if (!place) continue;
 		dashes += 1;
 		const expected = expectedCell(place.choice, place.type);
+		const title = node.parent.attributes.get("title") ?? "";
 		if (!expected) say(`a dash in ${place.where}, which is not a cell of the headline selection`);
 		else if (expected.figure) say(`a dash in ${place.where}, where the tree has a figure (Series ${expected.series!.id})`);
+		else if (title !== `No figure: ${expected.absent}.`) say(`the dash in ${place.where} says ${JSON.stringify(title)}; why the tree gives no figure there is ${JSON.stringify(expected.absent)}`);
 		claim(node);
 		claimedTitles.add(node.parent);
+	}
+
+	// 2b. Every cell the headline selection has, in the table and in each graph, holds exactly one
+	// figure or one dash: none is blank, none holds two. And the columns and graph lines are the
+	// machine types, in the order of the data.
+	if (home) {
+		const types = data.machines.map((m) => m.instanceType);
+		const holds = (cell: Element, where: string) => {
+			const figuresIn = elements(cell, (e) => e.tag === "a" && rows.has(e.attributes.get("href") ?? "")).length;
+			const dashesIn = [...walk(cell)].filter((n) => !isElement(n) && n.text.trim() === "—").length;
+			if (figuresIn + dashesIn !== 1) say(`${where} holds ${figuresIn} figure${figuresIn === 1 ? "" : "s"} and ${dashesIn} dash${dashesIn === 1 ? "" : "es"}, not exactly one figure or one dash`);
+		};
+		const table = elements(body, (e) => e.tag === "table")[0];
+		if (!table) say("the page has no table of benchmarks");
+		else {
+			const head = elements(table, (e) => e.tag === "thead")[0];
+			const columns = head ? elements(head, (e) => e.tag === "th" && e.attributes.get("scope") === "col").map((th) => ownText(th).trim()) : [];
+			if (columns.join(" ") !== types.join(" ")) say(`the table's columns are ${JSON.stringify(columns)}; the machine types are ${JSON.stringify(types)}`);
+			const seen: HeadlineChoice[] = [];
+			for (const tr of elements(table, (e) => e.tag === "tr" && !!closest(e, (t) => t.tag === "tbody") && !hasClass(e, "section"))) {
+				const rowHead = children(tr, "th").find((e) => e.attributes.get("scope") === "row");
+				const label = rowHead ? textOf(elements(rowHead, (e) => e.tag === "a")[0] ?? rowHead).trim() : "";
+				const choice = byLabel.get(label);
+				if (!choice) {
+					say(`the table has a row ${JSON.stringify(label)}, which is no headline choice`);
+					continue;
+				}
+				if (seen.includes(choice)) say(`the table has the row ${JSON.stringify(label)} twice`);
+				seen.push(choice);
+				const cells = children(tr, "td");
+				if (cells.length !== types.length) say(`the table's row ${JSON.stringify(label)} has ${cells.length} cells for ${types.length} machine types`);
+				cells.forEach((td, i) => holds(td, `the table's row ${JSON.stringify(label)}, column ${JSON.stringify(columns[i] ?? "?")}`));
+			}
+			for (const choice of HEADLINE_CHOICES) if (!seen.includes(choice)) say(`the table has no row for ${JSON.stringify(choice.label)}`);
+		}
+		for (const graph of elements(body, (e) => hasClass(e, "graph"))) {
+			const heading = elements(graph, (e) => e.tag === "h2")[0];
+			const label = heading ? textOf(heading).trim() : "";
+			if (!byLabel.has(label)) say(`a graph is headed ${JSON.stringify(label)}, which is no headline choice`);
+			const lines = elements(graph, (e) => e.tag === "li");
+			const lineTypes = lines.map((li) => {
+				const machine = elements(li, (e) => hasClass(e, "machine"))[0];
+				return machine ? ownText(machine).trim() : "";
+			});
+			if (lineTypes.join(" ") !== types.join(" ")) say(`the graph ${JSON.stringify(label)} has lines for ${JSON.stringify(lineTypes)}; the machine types are ${JSON.stringify(types)}`);
+			lines.forEach((li, i) => holds(li, `the graph ${JSON.stringify(label)}, machine ${JSON.stringify(lineTypes[i] ?? "?")}`));
+		}
 	}
 
 	// 3. Prices and machine types.

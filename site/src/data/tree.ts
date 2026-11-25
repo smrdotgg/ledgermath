@@ -33,8 +33,12 @@ export const INDEX_PATH = "v1/index.json";
 
 // ---------------------------------------------------------------- the parts the site reads
 
-/** Percentiles of one number across a Series' counted Runs (Method `series` v1). */
-export type Percentiles = { count: number; p5: number; p50: number; p95: number };
+/**
+ * Percentiles of one number across a Series' counted Runs (Method `series` v1). The schema lets
+ * any of the three be null: "infinite or undefined", taken from or interpolated towards a Run's
+ * figure past a double's range (a counted Run that took no time has an infinite rate).
+ */
+export type Percentiles = { count: number; p5: number | null; p50: number | null; p95: number | null };
 
 /** Method `series` v1's summary of one Series, as the Series list gives it. */
 export type SeriesDerivation = {
@@ -57,13 +61,24 @@ export type SeriesRow = {
 	benchmark: string;
 	params: Record<string, string | number | boolean>;
 	build: string;
-	instance_type: string;
+	/** The EC2 instance type; the schema lets it be null, and such a Series stands under no machine type. */
+	instance_type: string | null;
 	runs: number;
 	derivations: { series_v1: SeriesDerivation; [more: string]: unknown };
 	[more: string]: unknown;
 };
 
-export type SeriesList = { schema: string; count: number; series: SeriesRow[]; [more: string]: unknown };
+export type SeriesList = {
+	schema: string;
+	/** The address of the table of contents it belongs with, and its own. */
+	index: string;
+	url: string;
+	count: number;
+	/** When the newest Run of any Series started; null when there is no Series. */
+	newest_run_started_at: string | null;
+	series: SeriesRow[];
+	[more: string]: unknown;
+};
 
 /** One round of boots, as the table of contents' recent_rounds lists it. */
 export type RecentRound = {
@@ -81,7 +96,8 @@ export type ApiIndex = {
 	schema: string;
 	/** The table of contents' own address: the tree's base followed by "v1/index.json". */
 	url: string;
-	newest_run_started_at: string;
+	/** When the newest Run of any Series started; null when there is no Series. */
+	newest_run_started_at: string | null;
 	series: { url: string; count: number; [more: string]: unknown };
 	prices: { newest: { date: string; url: string; [more: string]: unknown }; [more: string]: unknown };
 	/** The latest rounds of boots, newest first. A tree from before the API gave them has none. */
@@ -155,8 +171,15 @@ function count(value: unknown, where: Where): number {
 	return value;
 }
 
-function finite(value: unknown, where: Where): number {
-	if (typeof value !== "number" || !Number.isFinite(value)) fail(where, "is not a finite number");
+/** A finite number, or null where the schema allows it ("infinite or undefined"). */
+function finiteOrNull(value: unknown, where: Where): number | null {
+	if (value === null) return null;
+	if (typeof value !== "number" || !Number.isFinite(value)) fail(where, "is not a finite number or null");
+	return value;
+}
+
+function stringOrNull(value: unknown, where: Where): string | null {
+	if (value !== null && typeof value !== "string") fail(where, "is not a string or null");
 	return value;
 }
 
@@ -166,6 +189,11 @@ function moment(value: unknown, where: Where): string {
 	const text = string(value, where);
 	if (!MOMENT.test(text)) fail(where, `is not a UTC moment: ${JSON.stringify(text)}`);
 	return text;
+}
+
+/** A moment, or null where the schema allows it (no Series at all). */
+function momentOrNull(value: unknown, where: Where): string | null {
+	return value === null ? null : moment(value, where);
 }
 
 /** Compares two UTC moments as the API writes them, to the nanosecond: negative when a is earlier. */
@@ -216,11 +244,14 @@ export function parseIndex(json: unknown, file = INDEX_PATH): ApiIndex {
 	schema(index, INDEX_SCHEMA, where);
 	const url = string(index.url, at(where, "url"));
 	baseOf(url, file);
-	moment(index.newest_run_started_at, at(where, "newest_run_started_at"));
+	momentOrNull(index.newest_run_started_at, at(where, "newest_run_started_at"));
 	const series = object(index.series, at(where, "series"));
 	string(series.url, at(at(where, "series"), "url"));
 	count(series.count, at(at(where, "series"), "count"));
 	const prices = object(index.prices, at(where, "prices"));
+	// The schema lets newest be null only when the API holds no price file at all. The page's
+	// columns are the newest price file's machine types, with their prices, so it cannot be built.
+	if (prices.newest === null) fail(at(at(where, "prices"), "newest"), "is null: the API holds no price file, and the page's machine types and prices come from the newest one");
 	const newest = object(prices.newest, at(at(where, "prices"), "newest"));
 	const date = string(newest.date, at(at(at(where, "prices"), "newest"), "date"));
 	if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) fail(at(at(at(where, "prices"), "newest"), "date"), `is not a date: ${JSON.stringify(date)}`);
@@ -247,21 +278,29 @@ function percentiles(value: unknown, where: Where): Percentiles | null {
 	if (value === null) return null;
 	const p = object(value, where);
 	count(p.count, at(where, "count"));
-	for (const key of ["p5", "p50", "p95"]) finite(p[key], at(where, key));
+	for (const key of ["p5", "p50", "p95"]) finiteOrNull(p[key], at(where, key));
 	return p as Percentiles;
 }
 
-/** Checks the Series list; FILE names it in errors. */
+/**
+ * Checks the Series list; FILE names it in errors. It takes everything the list's schema
+ * (series-list.schema.json) allows, nulls included, so that no one Series can stop the build:
+ * what the page cannot show of a Series it leaves out, and says so (siteData).
+ */
 export function parseSeriesList(json: unknown, file: string): SeriesList {
 	const where: Where = { file, path: "" };
 	const list = object(json, where);
 	schema(list, SERIES_LIST_SCHEMA, where);
+	string(list.index, at(where, "index"));
+	string(list.url, at(where, "url"));
 	count(list.count, at(where, "count"));
+	momentOrNull(list.newest_run_started_at, at(where, "newest_run_started_at"));
 	const rows = array(list.series, at(where, "series"));
 	rows.forEach((value, i) => {
 		const r = at(at(where, "series"), i);
 		const row = object(value, r);
-		for (const key of ["id", "url", "benchmark", "build", "instance_type"]) string(row[key], at(r, key));
+		for (const key of ["id", "url", "benchmark", "build"]) string(row[key], at(r, key));
+		stringOrNull(row.instance_type, at(r, "instance_type"));
 		const params = object(row.params, at(r, "params"));
 		for (const [key, param] of Object.entries(params)) {
 			if (!["string", "number", "boolean"].includes(typeof param)) fail(at(at(r, "params"), key), "is not a string, a number or a boolean");
@@ -316,6 +355,44 @@ export function treeFiles(index: ApiIndex, file = INDEX_PATH): { kind: "seriesLi
 	];
 }
 
+/**
+ * Where the three files of a tree disagree about which publication of the API they are: empty
+ * when they are of one. A tree is published whole every six hours, but a reader can still get
+ * its files from two publications, when a fetch overlaps an upload or a cache holds one file
+ * from before the other changed; then the page would show one publication's figures under the
+ * other's date. What the files give that ties them together:
+ *
+ *  - the Series list names the table of contents' address (`index`), and its own address and
+ *    count as the table of contents gives them (`series.url`, `series.count`);
+ *  - both say when the newest Run of any Series started (`newest_run_started_at`);
+ *  - the newest price file was fetched on the date the table of contents gives it
+ *    (`prices.newest.date` is "the UTC date the prices were fetched", and the Runs repository's
+ *    own price check holds every price file to it).
+ */
+export function publicationMismatches(index: ApiIndex, seriesList: SeriesList, prices: PriceFile): string[] {
+	const found: string[] = [];
+	const differ = (what: string, a: unknown, b: unknown) => {
+		if (a !== b) found.push(`${what}: ${JSON.stringify(a)} and ${JSON.stringify(b)}`);
+	};
+	differ("the table of contents' address, as itself and as the Series list gives it", index.url, seriesList.index);
+	differ("the Series list's address, as the table of contents and the list itself give it", index.series.url, seriesList.url);
+	differ("the count of Series, in the table of contents and in the Series list", index.series.count, seriesList.count);
+	differ("the newest Run's start, in the table of contents and in the Series list", index.newest_run_started_at, seriesList.newest_run_started_at);
+	differ("the newest price file's date, in the table of contents and as the file's fetch time gives it", index.prices.newest.date, prices.fetched_at.slice(0, 10));
+	return found;
+}
+
+/** The files of a tree are of two publications of the API (publicationMismatches). */
+export class TwoPublications extends Error {
+	readonly mismatches: string[];
+	/** LEAD says what was of two publications; the mismatches follow it. */
+	constructor(lead: string, mismatches: string[]) {
+		super(`${lead}: ${mismatches.join("; ")}`);
+		this.name = "TwoPublications";
+		this.mismatches = mismatches;
+	}
+}
+
 function readJson(dir: string, path: string): unknown {
 	const file = join(dir, path);
 	if (!existsSync(file)) throw new Error(`${path} is missing from the tree at ${dir}`);
@@ -335,8 +412,9 @@ export function readTree(dir: string): Tree {
 	const [seriesFile, pricesFile] = treeFiles(index);
 	const seriesList = parseSeriesList(readJson(root, seriesFile!.path), seriesFile!.path);
 	const prices = parsePrices(readJson(root, pricesFile!.path), pricesFile!.path);
-	if (index.series.count !== seriesList.series.length) {
-		throw new Error(`${INDEX_PATH} counts ${index.series.count} Series, ${seriesFile!.path} lists ${seriesList.series.length}`);
+	const mismatches = publicationMismatches(index, seriesList, prices);
+	if (mismatches.length > 0) {
+		throw new TwoPublications(`the tree at ${dir} holds files of two publications of the API, and the site is never built from such a tree (fetch a new one)`, mismatches);
 	}
 	return { dir: root, base: baseOf(index.url), index, seriesList, prices, paths: { index: INDEX_PATH, seriesList: seriesFile!.path, prices: pricesFile!.path } };
 }

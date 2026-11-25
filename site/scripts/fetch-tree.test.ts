@@ -68,6 +68,48 @@ describe("fetchTree writes", () => {
 	});
 });
 
+describe("files of two publications", () => {
+	/** The verifier's case: a newer table of contents (2026-11-24) beside the 2026-11-19 Series list, both of 187 Series. */
+	const newerIndex = () => index((json) => (json.newest_run_started_at = "2026-11-24T22:36:16.314088296Z"));
+
+	test("fetches the whole set again, and writes the set once its files agree", async () => {
+		let round = 0;
+		const asked: string[] = [];
+		const mismatches: string[][] = [];
+		const get = async (url: string, init: RequestInit) => {
+			if (url === INDEX_URL) round += 1;
+			const files = served();
+			if (round === 1) files.set(INDEX_URL, newerIndex());
+			return api(files, asked)(url, init);
+		};
+		const dir = fresh();
+		await fetchTree(dir, { get, retryWaitMs: 0, onMismatch: (_, m) => mismatches.push(m) });
+		expect(asked).toHaveLength(6);
+		expect(mismatches).toEqual([[`the newest Run's start, in the table of contents and in the Series list: "2026-11-24T22:36:16.314088296Z" and "2026-11-19T17:07:23.182448102Z"`]]);
+		expect(readFileSync(join(dir, "v1", "index.json")).equals(readFileSync(join(FIXTURE, "v1", "index.json")))).toBe(true);
+	});
+
+	test("fails, writing nothing, when they still disagree after the last attempt", async () => {
+		const files = served();
+		files.set(INDEX_URL, newerIndex());
+		const asked: string[] = [];
+		const dir = fresh();
+		await expect(fetchTree(dir, { get: api(files, asked), attempts: 3, retryWaitMs: 0 })).rejects.toThrow(
+			`${INDEX_URL} and the files it links were of two publications of the API each of the 3 times they were fetched: the newest Run's start`,
+		);
+		expect(asked).toHaveLength(9);
+		expect(existsSync(dir)).toBe(false);
+	});
+
+	test("waits between attempts", async () => {
+		const files = served();
+		files.set(INDEX_URL, newerIndex());
+		const started = performance.now();
+		await expect(fetchTree(fresh(), { get: api(files), attempts: 2, retryWaitMs: 200 })).rejects.toThrow("two publications");
+		expect(performance.now() - started).toBeGreaterThanOrEqual(190);
+	});
+});
+
 describe("fetchTree refuses, and writes nothing", () => {
 	async function refused(options: Parameters<typeof fetchTree>[1], message: string | RegExp, dir = fresh()) {
 		await expect(fetchTree(dir, options)).rejects.toThrow(message);

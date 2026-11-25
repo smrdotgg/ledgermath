@@ -1573,4 +1573,20 @@ A migrated benchmark is done only when **all** of these hold:
   (Geist Pixel Circle, OFL 1.1, byte for byte `geist` 1.9.2's), since no Solid code is
   served; `tests/licences.test.ts` holds both notices to every font the site ships. Not
   deployed: the orchestrator deploys.
+- **2026-11-25** — **Four fixes to the home page's build, from an independent verification
+  of #90.** (1) A table of contents and a Series list of two publications were accepted
+  together, so old figures could stand under a new date: the files must now agree on the
+  table of contents' address, the list's address and count, the newest Run, and the price
+  file's date (`publicationMismatches`); `fetch-tree` fetches the set again, three times
+  in all, ten seconds apart, then fails writing nothing, and the build refuses such a
+  directory. (2) A null median or percentile, or a null instance type, all of which the
+  Series list's schema allows, stopped the build even in a Series the page does not use:
+  the reader now takes them, a null median is a dash with the reason, a null percentile is
+  said in the title, and a Series with no type is left out, each said in a note. (3) A
+  mistaken `--out` could have erased the checkout or the tree: the build refuses an empty
+  output, the repository or anything holding it, anything in the repository outside
+  `site/dist/`, and the tree; it builds in directories of its own and replaces the output
+  only when it is absent, empty or marked by an earlier build (`.ledgermath-site-build`).
+  (4) The figure check passed a blank cell: every cell of the headline selection, in the
+  table and the graphs, must now hold exactly one figure or one dash.
 - _(agents: append your entry here, one per merged benchmark)_

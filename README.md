@@ -3201,14 +3201,43 @@ each (`note: …`):
 
 - no `recent_rounds` in the table of contents (the API does not give them yet): no "Latest
   runs" list, and no gap where it was;
-- no Series for a headline cell, or one without a median: a dash, with why in its `title`;
-- a machine type with no Series, Series on a type the price file does not price, a
-  benchmark with no headline choice: left out of the table.
+- no Series for a headline cell, or one without a median (no Run counts yet, or the median
+  is null, which the schema allows for "infinite or undefined"): a dash, with why in its
+  `title`;
+- a 5th or 95th percentile given as null: the figure stands, and its `title` says the
+  percentile is infinite or undefined;
+- a machine type the price file names but no Series ran on: its column stays, with a dash
+  in every cell;
+- Series on a type the price file does not price, Series that name no instance type (the
+  schema allows null), a benchmark with no headline choice: left out of the table.
 
-A round with failed Runs says how many; it says "0 failed" only when the tree says 0. Two
-Series that both match a headline choice on one machine type fail the build, since the
-rule no longer says which to show. An old tree still builds: the page shows the dates it
-holds.
+The reader takes everything the Series list's schema allows, so no one Series can stop the
+build. A round with failed Runs says how many; it says "0 failed" only when the tree says
+0. Two Series that both match a headline choice on one machine type fail the build, since
+the rule no longer says which to show. An old tree still builds: the page shows the dates
+it holds. A table of contents that names no price file fails it: the columns and prices
+come from the newest one.
+
+**One publication.** The three files must be of the same publication of the API: the
+Series list must name the table of contents' address and give the address and count of
+Series the table of contents gives, both must give the same newest Run, and the newest
+price file must have been fetched on the date the table of contents gives it. A fetch that
+overlaps an upload, or meets a cache holding one file from before another changed, could
+otherwise pair one publication's table of contents with another's figures, and the page
+would show old figures under a new date. `fetch-tree` then fetches the whole set again, up
+to three times, ten seconds apart, and fails, writing nothing, if they still disagree; the
+build refuses a directory whose files disagree, saying it holds two publications.
+
+**Where it writes.** The build replaces its output whole, so it guards it: it refuses an
+empty `--out`, an output that is or holds the repository, one inside the repository
+anywhere but under `site/dist/`, and one that is, holds or is inside the tree it reads. It
+builds into new directories of its own with unique names (the server bundle under
+`site/dist/`, the site beside the output) and puts the site in the output's place only
+when the output is absent, empty or written by an earlier build, which it recognises by the
+file `.ledgermath-site-build` the build leaves in it (served with the site; it says only
+that the build wrote the directory). Anything else there is left as it is, and the build
+fails before writing anything. A `site/dist/client` from before this mark existed must be
+removed by hand once.
 
 It is SolidJS 2, built with Vite and Solid's Vite plugin (`site/scripts/build.ts`): Vite
 bundles `site/src/entry-server.tsx` for the server, the bundle renders each page once
@@ -3222,7 +3251,7 @@ holds the page back until the font has loaded. `site/` has its own `package.json
 cd site
 bun install --frozen-lockfile
 bun run typecheck                       # type-check
-bun test                                # the data module's, the build's, the checks' and the deploy scripts' tests, on fixtures/tree/
+bun test                                # the data module's, the build's, the fetcher's, the checks' and the deploy scripts' tests, on fixtures/tree/
 bun run fetch-tree /path/to/tree        # the three files from https://api.ledgermath.com, into a new directory
 LEDGERMATH_TREE=/path/to/tree bun run build   # site/dist/client (or: bun run build --tree /path/to/tree)
 LEDGERMATH_TREE=/path/to/tree bun run check   # checks site/dist/client against that tree, as the workflow does
@@ -3263,8 +3292,11 @@ commands by hand before a merge. `bun test` at the repository root leaves `site/
   Series of the tree, the one the headline selection names for its row and machine type,
   and the median, percentiles and count in its `title`, moved back into the tree's unit
   digit by digit, must be the tree's numbers; the figure shown must be that median to four
-  significant digits, and the row's unit the unit of its figures. Dashes stand only where
-  the tree has no figure; prices and machine facts are the price file's; "Latest runs" is
+  significant digits, and the row's unit the unit of its figures; a percentile the tree
+  gives as null must be said to be infinite or undefined. Dashes stand only where the tree
+  has no figure, with the data module's reason; every cell of the headline selection, in
+  the table and in each graph, holds exactly one figure or one dash, none blank, and the
+  columns are the machine types; prices and machine facts are the price file's; "Latest runs" is
   there only when the tree gives rounds, and says what they say; the region is the price
   file's. Anything else on a page that holds a digit and is not a fixed word fails, so a
   new figure needs a rule there.

@@ -200,7 +200,29 @@ describe("what a tree lacks, the page leaves out, and the build says so", () => 
 		);
 		expect(m5(d).series?.id).toBe(hashOnM5.id);
 		expect(m5(d).figure).toBeNull();
-		expect(d.notes).toEqual([`Series ${hashOnM5.id} (hash on m5.large) has no time figure: its cell shows none`]);
+		expect(m5(d).absent).toBe("no Run of this Series counts yet");
+		expect(d.notes).toEqual([`Series ${hashOnM5.id} (hash on m5.large) has no time median (no Run of this Series counts yet): its cell shows none`]);
+	});
+
+	test("a headline Series whose median the tree gives as null, as the schema allows: no figure, and why", () => {
+		const d = siteData(variant((t) => (t.seriesList.series.find((r) => r.id === hashOnM5.id)!.derivations.series_v1.percentiles.time_per_repetition_ns!.p50 = null)));
+		expect(m5(d)).toMatchObject({ figure: null, absent: "the data give this Series' median as null: infinite or undefined" });
+		expect(d.notes).toEqual([`Series ${hashOnM5.id} (hash on m5.large) has no time median (the data give this Series' median as null: infinite or undefined): its cell shows none`]);
+	});
+
+	test("a headline Series with a percentile given as null: the figure stands, the percentile is null, and the build says so", () => {
+		const d = siteData(variant((t) => (t.seriesList.series.find((r) => r.id === hashOnM5.id)!.derivations.series_v1.percentiles.time_per_repetition_ns!.p95 = null)));
+		expect(m5(d).figure).toMatchObject({ p95: null });
+		expect(m5(d).figure!.p50).toBe(hashOnM5.derivations.series_v1.percentiles.time_per_repetition_ns!.p50!);
+		expect(d.notes).toEqual([`Series ${hashOnM5.id} (hash on m5.large) has a percentile given as null: its title says so`]);
+	});
+
+	test("a Series that names no instance type, as the schema allows: it stands under no machine type, and the build says so", () => {
+		const d = siteData(
+			variant((t) => t.seriesList.series.push({ ...structuredClone(hashOnM5), id: "222222222222", url: "https://api.ledgermath.com/v1/series/222222222222.json", instance_type: null })),
+		);
+		expect(d.notes).toEqual(["1 Series name no instance type (222222222222): they stand under no machine type, and the table leaves them out"]);
+		expect(m5(d).series?.id).toBe(hashOnM5.id);
 	});
 
 	test("two Series a choice matches on one machine type: the build fails, since the rule no longer says which to show", () => {
@@ -215,7 +237,7 @@ describe("what a tree lacks, the page leaves out, and the build says so", () => 
 				t.seriesList.series.push({ ...structuredClone(hashOnM5), id: "111111111111", url: "https://api.ledgermath.com/v1/series/111111111111.json", instance_type: "x9.large" });
 			}),
 		);
-		expect(d.notes).toContain("no Series ran on c6i.8xlarge: its column shows no figures");
+		expect(d.notes).toContain("no Series ran on c6i.8xlarge: its column shows a dash in every cell");
 		expect(d.notes).toContain("Series ran on x9.large, which the newest price file does not price: the table leaves them out");
 		expect(d.notes).toContain("no headline choice in src/data/headline.ts for sort2: the table leaves them out");
 		expect(d.machines.map((m) => m.instanceType)).toContain("c6i.8xlarge");
@@ -251,6 +273,52 @@ describe("readTree", () => {
 		expect(() => readTree(rounds([r("2026-11-19T04:11:03Z", 188)]))).toThrow("recent_rounds.rounds[0].failed_runs is 188, more than the round's 187 Runs");
 		expect(() => readTree(rounds([{ ...r("2026-11-19T04:11:03Z"), boots: -1 }]))).toThrow("recent_rounds.rounds[0].boots is not a whole number from 0");
 		expect(readTree(rounds([r("2026-11-19T10:11:03.5Z", 2), r("2026-11-19T10:11:03.499999999Z")])).index.recent_rounds!.rounds[0]!.failed_runs).toBe(2);
+	});
+
+	test("takes every null the Series list's schema allows, in any Series, used by the page or not", () => {
+		const t = readTree(
+			onDisk((path, json) => {
+				if (path !== "v1/series.json") return json;
+				const rows = json.series as any[];
+				rows[0].derivations.series_v1.percentiles.bytes_per_second.p95 = null;
+				rows[1].derivations.series_v1.percentiles.bytes_per_second.p50 = null;
+				rows[2].derivations.series_v1.percentiles.time_per_repetition_ns = { ...rows[2].derivations.series_v1.percentiles.time_per_repetition_ns, p5: null, p50: null, p95: null };
+				rows[3].instance_type = null;
+				rows[4].availability_zone_id = null;
+				return json;
+			}),
+		);
+		expect(t.seriesList.series[1]!.derivations.series_v1.percentiles.bytes_per_second!.p50).toBeNull();
+		expect(t.seriesList.series[3]!.instance_type).toBeNull();
+		expect(() => siteData(t)).not.toThrow();
+	});
+
+	test("refuses a tree whose files are of two publications, saying so", () => {
+		// The verifier's case: one day's table of contents with an earlier day's Series list, both of 187 Series.
+		const newer = (json: Record<string, unknown>) => ({ ...json, newest_run_started_at: "2026-11-24T22:36:16.314088296Z" });
+		expect(() => readTree(onDisk((path, json) => (path === "v1/index.json" ? newer(json) : json)))).toThrow(
+			/holds files of two publications of the API, and the site is never built from such a tree \(fetch a new one\): the newest Run's start, in the table of contents and in the Series list: "2026-11-24T22:36:16\.314088296Z" and "2026-11-19T17:07:23\.182448102Z"$/,
+		);
+		expect(() => readTree(onDisk((path, json) => (path === "v1/series.json" ? { ...json, index: "https://mirror.example/v1/index.json" } : json)))).toThrow(
+			"the table of contents' address, as itself and as the Series list gives it",
+		);
+		expect(() => readTree(onDisk((path, json) => (path === "v1/prices/2026-11-19.json" ? { ...json, fetched_at: "2026-11-18T03:23:19.099Z" } : json)))).toThrow(
+			"the newest price file's date, in the table of contents and as the file's fetch time gives it",
+		);
+		expect(() =>
+			readTree(
+				onDisk((path, json) => {
+					if (path === "v1/series.json") return { ...json, count: 186, series: (json.series as unknown[]).slice(1) };
+					return json;
+				}),
+			),
+		).toThrow('the count of Series, in the table of contents and in the Series list: 187 and 186');
+	});
+
+	test("refuses a table of contents that names no price file, saying why", () => {
+		expect(() => readTree(onDisk((path, json) => (path === "v1/index.json" ? { ...json, prices: { ...(json.prices as object), newest: null } } : json)))).toThrow(
+			"v1/index.json: prices.newest is null: the API holds no price file, and the page's machine types and prices come from the newest one",
+		);
 	});
 
 	test("takes a member it does not know as version 1 allows, and reads a tree from before recent_rounds", () => {

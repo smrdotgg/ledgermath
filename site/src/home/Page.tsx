@@ -20,6 +20,7 @@ import {
 	type HeadlineCell,
 	type HeadlineRow,
 	type LeadFigure,
+	NO_PERCENTILE,
 	perUnit,
 	type Section,
 	type Shown,
@@ -62,19 +63,18 @@ function rowUnit(row: HeadlineRow, fig: Fig): string {
 	return row.choice.per ? `${unit} per ${row.choice.per.of}` : unit;
 }
 
-/** What a figure's `title` says: every digit of the median, the 5th and 95th percentiles, and how many Runs. */
+/**
+ * What a figure's `title` says: every digit of the median, the 5th and 95th percentiles, and how
+ * many Runs. A percentile the data give as null is said to be infinite or undefined.
+ */
 function exact(f: LeadFigure, fig: Fig): string {
 	const unit = fig(f.p50).unit;
-	return `Median ${fig(f.p50).full} ${unit}. 5th percentile ${fig(f.p5).full}, 95th ${fig(f.p95).full}. ${formatCount(f.count).full} Runs.`;
+	const percentile = (p: number | null) => (p === null ? NO_PERCENTILE : fig(p).full);
+	return `Median ${fig(f.p50).full} ${unit}. 5th percentile ${percentile(f.p5)}, 95th ${percentile(f.p95)}. ${formatCount(f.count).full} Runs.`;
 }
 
-/** What a cell without a figure says, beside its dash. */
-function absent(cell: HeadlineCell): string {
-	return cell.series ? "No figure: the data give this Series none yet." : `No figure: the data have no Series for this on ${cell.machine.instanceType}.`;
-}
-
-/** A cell without a figure: a dash, with why in its title. */
-const Dash = (props: { cell: HeadlineCell }) => <span title={absent(props.cell)}>—</span>;
+/** A cell without a figure: a dash, with why in its title (the data module's words). */
+const Dash = (props: { cell: HeadlineCell }) => <span title={`No figure: ${props.cell.absent ?? "the data give none"}.`}>—</span>;
 
 /** A machine's hourly price, every digit the price file gives. */
 const price = (usdPerHour: string) => `$${formatUsd(usdPerHour).full}/h`;

@@ -14,6 +14,13 @@
  * a price file, `ledgermath.prices/1`), or lacks a part the site reads, is refused. Whatever is
  * refused, nothing is written.
  *
+ * The three files must be of one publication of the API (publicationMismatches in
+ * src/data/tree.ts): a fetch that overlaps an upload, or meets a cache that holds one file from
+ * before another changed, can get a table of contents and a Series list of two publications,
+ * and the page would show one's figures under the other's date. Then it fetches the whole set
+ * again, up to ATTEMPTS times in all, RETRY_WAIT_MS apart, and fails, writing nothing, if the
+ * files still disagree.
+ *
  * DIR must not exist, or be empty: a tree is written whole or not at all, never mixed with an
  * older one. The files are written, byte for byte as served, once all three are fetched and
  * checked: into a directory beside DIR, which then takes DIR's name.
@@ -23,7 +30,7 @@
 
 import { existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { INDEX_PATH, parseIndex, parsePrices, parseSeriesList, treeFiles } from "../src/data/tree";
+import { INDEX_PATH, parseIndex, parsePrices, parseSeriesList, publicationMismatches, treeFiles, TwoPublications } from "../src/data/tree";
 
 export const INDEX_URL = "https://api.ledgermath.com/v1/index.json";
 /** How long one request may take, answer and body together. */
@@ -34,12 +41,24 @@ export const TIMEOUT_MS = 30_000;
  * what a growing file meets first.
  */
 export const LIMITS = { index: 1_000_000, seriesList: 10_000_000, prices: 10_000_000 } as const;
+/** How many times the whole set is fetched while its files are of two publications, and how long it waits between. */
+export const ATTEMPTS = 3;
+export const RETRY_WAIT_MS = 10_000;
 
 type Fetch = (url: string, init: RequestInit) => Promise<Response>;
 
-export type FetchOptions = { index?: string; get?: Fetch; timeoutMs?: number; limits?: { index: number; seriesList: number; prices: number } };
+export type FetchOptions = {
+	index?: string;
+	get?: Fetch;
+	timeoutMs?: number;
+	limits?: { index: number; seriesList: number; prices: number };
+	attempts?: number;
+	retryWaitMs?: number;
+	/** Told of each attempt whose files were of two publications, before the next. */
+	onMismatch?: (attempt: number, mismatches: string[]) => void;
+};
 
-export type FetchedTree = { dir: string; files: { path: string; url: string; bytes: number }[]; newestRunStartedAt: string; hasRecentRounds: boolean };
+export type FetchedTree = { dir: string; files: { path: string; url: string; bytes: number }[]; newestRunStartedAt: string | null; hasRecentRounds: boolean };
 
 /** The body at URL, at most LIMIT bytes, within TIMEOUT ms; throws, saying why, on anything else. */
 async function fetchBytes(url: string, limit: number, timeout: number, get: Fetch): Promise<Uint8Array> {
@@ -111,21 +130,37 @@ export async function fetchTree(dir: string, options: FetchOptions = {}): Promis
 	const limits = options.limits ?? LIMITS;
 	const indexUrl = options.index ?? INDEX_URL;
 
-	const indexBytes = await fetchBytes(indexUrl, limits.index, timeout, get);
-	const index = parseIndex(parseJson(indexBytes, indexUrl), indexUrl);
-	if (index.url !== indexUrl) throw new Error(`${indexUrl} gives its own address as ${index.url}: fetch the table of contents from where it says it is`);
-	const files = [{ path: INDEX_PATH, url: indexUrl, bytes: indexBytes }];
-	for (const file of treeFiles(index, indexUrl)) {
-		const bytes = await fetchBytes(file.url, limits[file.kind], timeout, get);
-		const json = parseJson(bytes, file.url);
-		if (file.kind === "seriesList") {
-			const list = parseSeriesList(json, file.url);
-			if (list.series.length !== index.series.count) throw new Error(`${indexUrl} counts ${index.series.count} Series, ${file.url} lists ${list.series.length}`);
-		} else {
-			parsePrices(json, file.url);
+	const attempts = Math.max(1, options.attempts ?? ATTEMPTS);
+	const wait = options.retryWaitMs ?? RETRY_WAIT_MS;
+
+	/** The table of contents and the files it links, fetched and checked once, with what they disagree on. */
+	const fetchSet = async () => {
+		const indexBytes = await fetchBytes(indexUrl, limits.index, timeout, get);
+		const index = parseIndex(parseJson(indexBytes, indexUrl), indexUrl);
+		if (index.url !== indexUrl) throw new Error(`${indexUrl} gives its own address as ${index.url}: fetch the table of contents from where it says it is`);
+		const files = [{ path: INDEX_PATH, url: indexUrl, bytes: indexBytes }];
+		let list: ReturnType<typeof parseSeriesList> | null = null;
+		let prices: ReturnType<typeof parsePrices> | null = null;
+		for (const file of treeFiles(index, indexUrl)) {
+			const bytes = await fetchBytes(file.url, limits[file.kind], timeout, get);
+			const json = parseJson(bytes, file.url);
+			if (file.kind === "seriesList") list = parseSeriesList(json, file.url);
+			else prices = parsePrices(json, file.url);
+			files.push({ path: file.path, url: file.url, bytes });
 		}
-		files.push({ path: file.path, url: file.url, bytes });
+		return { index, files, mismatches: publicationMismatches(index, list!, prices!) };
+	};
+
+	let set = await fetchSet();
+	for (let attempt = 1; set.mismatches.length > 0; attempt++) {
+		if (attempt >= attempts) {
+			throw new TwoPublications(`${indexUrl} and the files it links were of two publications of the API each of the ${attempts} times they were fetched`, set.mismatches);
+		}
+		options.onMismatch?.(attempt, set.mismatches);
+		await Bun.sleep(wait);
+		set = await fetchSet();
 	}
+	const { index, files } = set;
 
 	const work = `${out}.fetching-${process.pid}`;
 	rmSync(work, { recursive: true, force: true });
@@ -163,7 +198,10 @@ if (import.meta.main) {
 		process.exit(2);
 	}
 	try {
-		const tree = await fetchTree(words[0]!, { index });
+		const tree = await fetchTree(words[0]!, {
+			index,
+			onMismatch: (attempt, mismatches) => console.error(`attempt ${attempt}: the files are of two publications (${mismatches.join("; ")}); fetching them again`),
+		});
 		for (const file of tree.files) console.log(`${file.path}  ${file.bytes.toLocaleString("en")} bytes  from ${file.url}`);
 		console.log(
 			`wrote the tree to ${tree.dir}: newest Run ${tree.newestRunStartedAt}; ${tree.hasRecentRounds ? "the table of contents gives recent_rounds" : "the table of contents gives no recent_rounds, so the page will be built without \"Latest runs\""}`,

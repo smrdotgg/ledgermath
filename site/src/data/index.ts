@@ -61,15 +61,21 @@ export type Machine = {
 	series: SeriesRow[];
 };
 
-/** The figure that leads a headline cell (./headline's `lead`): the percentiles of the p50 rate, or of the time of one repetition. */
-export type LeadFigure = { kind: "rate" | "time"; p5: number; p50: number; p95: number; count: number };
+/**
+ * The figure that leads a headline cell (./headline's `lead`): the median rate, or the median
+ * time of one repetition, with its 5th and 95th percentiles and how many Runs they rest on. A
+ * percentile the tree gives as null (infinite or undefined) is null here too.
+ */
+export type LeadFigure = { kind: "rate" | "time"; p5: number | null; p50: number; p95: number | null; count: number };
 
 export type HeadlineCell = {
 	machine: Machine;
 	/** The one Series the choice selects on this machine type, or null when the tree has none. */
 	series: SeriesRow | null;
-	/** The Series' lead figure, or null when there is no Series or it has no such figure (no counted Run). */
+	/** The Series' lead figure, or null when the cell has none to show. */
 	figure: LeadFigure | null;
+	/** Why the cell has no figure, in words the page puts in the dash's title; null when it has one. */
+	absent: string | null;
 };
 
 export type HeadlineRow = {
@@ -120,8 +126,8 @@ export type SiteData = {
 	rounds: readonly Round[] | null;
 	/** The region the price file was cut for, and the Series ran in. */
 	region: string;
-	/** When the tree's newest Run started (UTC, to the nanosecond). */
-	newestRunStartedAt: string;
+	/** When the tree's newest Run started (UTC, to the nanosecond); null when the tree has no Series. */
+	newestRunStartedAt: string | null;
 	/** The newest price file's date. */
 	priceDate: string;
 	links: SiteLinks;
@@ -136,11 +142,28 @@ export function hasParams(row: SeriesRow, params: Record<string, unknown>): bool
 	return Object.entries(params).every(([key, value]) => row.params[key] === value);
 }
 
-/** The figure that leads a headline cell, as the rule in ./headline names it, or null when the Series has none (no counted Run). */
+/** How a page says a percentile the data give as null (the schema's words for what null means). */
+export const NO_PERCENTILE = "infinite or undefined";
+
+/** The figure that leads a headline cell, as the rule in ./headline names it, or null when the Series has no median to show. */
 export function leadFigure(choice: HeadlineChoice, row: SeriesRow): LeadFigure | null {
 	const p = row.derivations.series_v1.percentiles;
 	const figure = choice.lead === "rate" ? p.bytes_per_second : p.time_per_repetition_ns;
-	return figure ? { kind: choice.lead, ...figure } : null;
+	if (!figure || figure.p50 === null) return null;
+	return { kind: choice.lead, p5: figure.p5, p50: figure.p50, p95: figure.p95, count: figure.count };
+}
+
+/**
+ * Why a Series has no lead figure, in the schema's own terms (series-list.schema.json): the time
+ * is null when no Run counts; the rate when no counted Run observed bytes per repetition; a
+ * median when it is infinite or undefined. Null when it has one.
+ */
+export function whyNoFigure(choice: HeadlineChoice, row: SeriesRow): string | null {
+	const p = row.derivations.series_v1.percentiles;
+	const figure = choice.lead === "rate" ? p.bytes_per_second : p.time_per_repetition_ns;
+	if (!figure) return choice.lead === "rate" ? "no counted Run of this Series observed bytes per repetition" : "no Run of this Series counts yet";
+	if (figure.p50 === null) return "the data give this Series' median as null: infinite or undefined";
+	return null;
 }
 
 function machine(prices: PriceFile, instanceType: string, series: readonly SeriesRow[]): Machine {
@@ -192,9 +215,11 @@ export function siteData(tree: Tree): SiteData {
 	const machines = tree.prices.measured.instance_types
 		.map((type) => machine(tree.prices, type, series))
 		.sort((a, b) => Number(a.price.usdPerHour) - Number(b.price.usdPerHour) || a.instanceType.localeCompare(b.instanceType));
-	for (const m of machines) if (m.series.length === 0) notes.push(`no Series ran on ${m.instanceType}: its column shows no figures`);
-	const unpriced = [...new Set(series.map((row) => row.instance_type))].filter((type) => !machines.some((m) => m.instanceType === type)).sort();
+	for (const m of machines) if (m.series.length === 0) notes.push(`no Series ran on ${m.instanceType}: its column shows a dash in every cell`);
+	const unpriced = [...new Set(series.flatMap((row) => (row.instance_type === null ? [] : [row.instance_type])))].filter((type) => !machines.some((m) => m.instanceType === type)).sort();
 	if (unpriced.length > 0) notes.push(`Series ran on ${unpriced.join(", ")}, which the newest price file does not price: the table leaves them out`);
+	const untyped = series.filter((row) => row.instance_type === null);
+	if (untyped.length > 0) notes.push(`${untyped.length} Series name no instance type (${untyped.map((row) => row.id).join(", ")}): they stand under no machine type, and the table leaves them out`);
 
 	const unchosen = [...new Set(series.map((row) => row.benchmark))].filter((name) => !HEADLINE_CHOICES.some((c) => c.benchmark === name)).sort();
 	if (unchosen.length > 0) notes.push(`no headline choice in src/data/headline.ts for ${unchosen.join(", ")}: the table leaves them out`);
@@ -208,9 +233,11 @@ export function siteData(tree: Tree): SiteData {
 			}
 			const row = found[0] ?? null;
 			const figure = row ? leadFigure(choice, row) : null;
+			const absent = row ? whyNoFigure(choice, row) : `the data have no Series for this on ${m.instanceType}`;
 			if (!row) notes.push(`no Series for ${choice.benchmark} on ${m.instanceType}: its cell shows no figure`);
-			else if (!figure) notes.push(`Series ${row.id} (${choice.benchmark} on ${m.instanceType}) has no ${choice.lead} figure: its cell shows none`);
-			return { machine: m, series: row, figure };
+			else if (!figure) notes.push(`Series ${row.id} (${choice.benchmark} on ${m.instanceType}) has no ${choice.lead} median (${absent}): its cell shows none`);
+			else if (figure.p5 === null || figure.p95 === null) notes.push(`Series ${row.id} (${choice.benchmark} on ${m.instanceType}) has a percentile given as null: its title says so`);
+			return { machine: m, series: row, figure, absent: figure ? null : absent };
 		}),
 	}));
 

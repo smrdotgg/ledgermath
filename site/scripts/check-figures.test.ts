@@ -52,12 +52,32 @@ function build(tree: string, name: string, env: Record<string, string> = {}): Bu
 let fixture: Built;
 let lacking: Built;
 let failing: Built;
+let nulls: Built;
 let hashOnM5 = HASH_ON_M5;
+
+/** The headline Series of hash (SHA-256, 64 bytes) and of sort on a machine type. */
+const hashOn = (tree: Tree, type: string) => tree.seriesList.series.find((r) => r.benchmark === "hash" && r.instance_type === type && r.params.algorithm === "sha256" && r.params.size_bytes === 64 && r.build === "static")!;
+const sortOn = (tree: Tree, type: string) => tree.seriesList.series.find((r) => r.benchmark === "sort" && r.instance_type === type && r.build === "static")!;
 
 beforeAll(() => {
 	const tree = readTree(FIXTURE);
-	const row = tree.seriesList.series.find((r) => r.benchmark === "hash" && r.instance_type === "m5.large" && r.params.algorithm === "sha256" && r.params.size_bytes === 64 && r.build === "static")!;
+	const row = hashOn(tree, "m5.large");
 	hashOnM5 = row.url;
+	const p95Gone = hashOn(tree, "c8i.2xlarge");
+	const untyped = sortOn(tree, "i4i.2xlarge");
+	const unused = tree.seriesList.series.find((r) => r.benchmark === "memory_read" && r.build === "dynamic")!;
+	// Every null the Series list's schema allows, in Series the page uses and in one it does not.
+	nulls = build(
+		treeCopy("nulls", (path, json) => {
+			if (path !== "v1/series.json") return;
+			const find = (id: string) => json.series.find((r: { id: string }) => r.id === id);
+			find(row.id).derivations.series_v1.percentiles.time_per_repetition_ns.p50 = null;
+			find(p95Gone.id).derivations.series_v1.percentiles.time_per_repetition_ns.p95 = null;
+			find(untyped.id).instance_type = null;
+			find(unused.id).derivations.series_v1.percentiles.bytes_per_second.p50 = null;
+		}),
+		"nulls",
+	);
 	fixture = build(FIXTURE, "fixture");
 	lacking = build(
 		treeCopy("lacking", (path, json) => {
@@ -110,6 +130,18 @@ describe("the build", () => {
 		expect(lacking.html.match(/<span title="No figure: the data have no Series for this on m5\.large\.">&#8212;<\/span>/g)).toHaveLength(2);
 	});
 
+	test("from a tree with every null the Series list's schema allows: builds, says what it leaves out, and puts the reasons in the titles", () => {
+		expect(nulls.status).toBe(0);
+		const p95Gone = hashOn(nulls.tree, "c8i.2xlarge");
+		expect(nulls.stdout).toContain("has no time median (the data give this Series' median as null: infinite or undefined): its cell shows none");
+		expect(nulls.stdout).toContain(`note: Series ${p95Gone.id} (hash on c8i.2xlarge) has a percentile given as null: its title says so`);
+		expect(nulls.stdout).toContain("Series name no instance type");
+		expect(nulls.stdout).toContain("note: no Series for sort on i4i.2xlarge: its cell shows no figure");
+		// Solid's renderer writes the apostrophe as a character reference.
+		expect(nulls.html.match(/<span title="No figure: the data give this Series(&#39;|') median as null: infinite or undefined\.">&#8212;<\/span>/g)).toHaveLength(2);
+		expect(nulls.html).toMatch(new RegExp(`href="${p95Gone.url.replaceAll(".", "\\.")}" title="Median [^"]+\\. 5th percentile [\\d.]+, 95th infinite or undefined\\. \\d+ Runs\\."`));
+	});
+
 	test("a round with failed Runs says how many; the others say 0 because the tree does", () => {
 		expect(failing.status).toBe(0);
 		expect(failing.html).toContain("5 machines · 187 Runs · 3 failed");
@@ -130,8 +162,12 @@ describe("checkFigures passes", () => {
 		expect(checkFigures(failing.html, failing.tree).problems).toEqual([]);
 	});
 
+	test("the page built from a tree with nulls: two dashes for the null median, one for the Series with no machine type", () => {
+		expect(checkFigures(nulls.html, nulls.tree)).toEqual({ problems: [], figures: 82, prices: 20, rounds: 3, dashes: 3 });
+	});
+
 	test("and the output check passes each built site: words, links, budget", () => {
-		for (const built of [fixture, lacking, failing]) expect(checkOutput(built.out).problems).toEqual([]);
+		for (const built of [fixture, lacking, failing, nulls]) expect(checkOutput(built.out).problems).toEqual([]);
 	});
 });
 
@@ -190,6 +226,38 @@ describe("checkFigures refuses", () => {
 		expect(problems(fixture.html.replace(">19 Nov 2026, 16:11 UTC<", ">19 Nov 2026, 16:12 UTC<"))[0]).toContain('"Latest runs" item 1 says "19 Nov 2026, 16:12 UTC"');
 		expect(problems(fixture.html.replace(/<section class="latest"[\s\S]*?<\/section>/, ""))).toEqual(['index.html: the tree gives recent_rounds, but the page has no "Latest runs"']);
 		expect(problems(fixture.html, lacking.tree).some((p) => p.includes('"Latest runs" is on the page, but the tree gives no recent_rounds'))).toBe(true);
+	});
+
+	test("a blank cell, where the headline selection has a figure (the verifier's case)", () => {
+		const html = fixture.html.replace(/(<td>)<a href="https:[^"]+" title="Median [^"]+">[^<]+<\/a>(<\/td>)/, "$1$2");
+		expect(html).not.toBe(fixture.html);
+		expect(problems(html)).toEqual(['index.html: the table\'s row "Read memory sequentially", column "m5.large" holds 0 figures and 0 dashes, not exactly one figure or one dash']);
+	});
+
+	test("a blank line in a graph, a cell with two figures, a row missing, a column missing", () => {
+		const line = fixture.html.replace(/(<\/span><\/span>)<a class="figure" href="[^"]+" title="[^"]+">[^<]+<\/a><svg class="bar"[\s\S]*?<\/svg>/, "$1");
+		expect(line).not.toBe(fixture.html);
+		expect(problems(line)).toEqual(['index.html: the graph "Read memory sequentially", machine "m5.large" holds 0 figures and 0 dashes, not exactly one figure or one dash']);
+		const two = fixture.html.replace(/(<td>)(<a href="https:[^"]+" title="Median [^"]+">[^<]+<\/a>)(<\/td>)/, "$1$2$2$3");
+		expect(problems(two)).toEqual(['index.html: the table\'s row "Read memory sequentially", column "m5.large" holds 2 figures and 0 dashes, not exactly one figure or one dash']);
+		const row = fixture.html.replace(/<tr><th scope="row" title="[^"]*"><span class="head"><a href="\/docs\/">GET 4 KiB from S3<\/a>[\s\S]*?<\/tr>/, "");
+		expect(row).not.toBe(fixture.html);
+		expect(problems(row)).toEqual(['index.html: the table has no row for "GET 4 KiB from S3"']);
+		const column = fixture.html.replace(/<th scope="col" title="[^"]*">c6i\.8xlarge<span class="price">[^<]*<\/span><\/th>/, "");
+		expect(problems(column)).toContain('index.html: the table\'s columns are ["m5.large","c8i.2xlarge","c8a.2xlarge","i4i.2xlarge"]; the machine types are ["m5.large","c8i.2xlarge","c8a.2xlarge","i4i.2xlarge","c6i.8xlarge"]');
+	});
+
+	test("a dash whose title does not give the tree's reason", () => {
+		const html = lacking.html.replace("No figure: the data have no Series for this on m5.large.", "No figure: not measured.");
+		expect(checkFigures(html, lacking.tree).problems.some((p) => p.includes('says "No figure: not measured."; why the tree gives no figure there is "the data have no Series for this on m5.large"'))).toBe(true);
+	});
+
+	test("a null percentile shown as a number, or a number said to be null", () => {
+		const shown = nulls.html.replace("95th infinite or undefined.", "95th 76.7.");
+		expect(shown).not.toBe(nulls.html);
+		expect(checkFigures(shown, nulls.tree).problems).toEqual([expect.stringMatching(/the 95th percentile of Series \w+ is shown as 76\.7 ns; the tree gives it as null$/)]);
+		const hidden = fixture.html.replace(/(title="Median [^"]*?5th percentile )[\d.]+,/, "$1infinite or undefined,");
+		expect(problems(hidden)).toEqual([expect.stringMatching(/the 5th percentile of Series \w+ is said to be infinite or undefined; the tree holds [\d.]+$/)]);
 	});
 
 	test("a region the price file does not give", () => {
