@@ -3427,11 +3427,14 @@ says why in the run's summary:
 So after any production deploy, ledgermath.com holds main's site as it was when that job's
 turn came, built from the newest tree published by then. The tree is never older than the
 one it held before: the newest published tree only moves forward (the upload refuses an
-older run), and deploys come one at a time. A skip leaves the deploy to a newer job that is
-sure to come: a later run's `site` job starts only after that run has published, so after
-the skipped job's tree was chosen and its sources were on main, and it deploys main's site
-with the newer tree. A publish (run N) and a push to main (commit C) that overlap end with
-ledgermath.com on C's site and N's tree, in either order:
+older run), and deploys come one at a time. A skip leaves the deploy to the newer job: a
+later run's `site` job starts only after that run has published, and deploys main's site,
+as it then is, with the newer tree, before or after the skip. When `deploy-production`
+skips for the tree, that job started after its build chose the older tree, so after its
+commit was on main, and the commit's site goes out with it. If the newer job fails, is
+cancelled or never runs, ledgermath.com stays on the older build until someone re-runs it;
+the skip's message says so. A publish (run N) and a push to main (commit C) that overlap end
+with ledgermath.com on C's site and N's tree, in either order:
 
 - **the publish first.** N's `site` job deploys main as it is when its turn comes, with
   N's tree. C's run builds C from the newest tree published when its build runs, N's, and

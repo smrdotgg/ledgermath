@@ -39,7 +39,7 @@ interface Job {
 interface Workflow {
 	on: { schedule: Array<{ cron: string }>; workflow_dispatch: { inputs?: Record<string, { description?: string; type?: string; default?: unknown }> } | null };
 	permissions: Record<string, string>;
-	concurrency?: { group: string; "cancel-in-progress": boolean };
+	concurrency?: Job["concurrency"];
 	jobs: Record<string, Job>;
 }
 
@@ -121,7 +121,7 @@ function telegramSecretProblems(files: Array<{ name: string; text: string }>): s
 /** The jobs whose deploy step may hold the Vercel token and the project's IDs, by workflow, and nothing else may. */
 const VERCEL_JOBS: Record<string, string[]> = { [RUNS_WORKFLOW]: ["site"], [SITE_WORKFLOW]: ["deploy-production", "deploy-preview"] };
 /** That step's environment, as far as Vercel goes: the three, by these names, from these. */
-const VERCEL_ENV = [
+const VERCEL_ENV: Array<[string, string]> = [
 	["VERCEL_TOKEN", "${{ secrets.VERCEL_TOKEN }}"],
 	["VERCEL_ORG_ID", "${{ vars.VERCEL_ORG_ID }}"],
 	["VERCEL_PROJECT_ID", "${{ vars.VERCEL_PROJECT_ID }}"],
