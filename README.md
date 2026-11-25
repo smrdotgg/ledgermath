@@ -2778,22 +2778,35 @@ address is `--base`, so a private or test address can stand in.
   one with its neighbour), one that arrives in conflict takes a boot out, and a Run file
   that arrives late moves its Run out of `runs_in_no_series`. **Nothing added to the Runs
   data stops a publish or changes a published link.** Every regular file under `boots/` is
-  read (no symbolic link, no directory), and one the rounds cannot be told from is in no
-  round: an address the API does not serve, such as `unknown.json`; not strict JSON; not
-  `ledgermath.boot/1`; without a boot, a start to the nanosecond, a provider with an
-  instance type of at most 64 characters, a list of Runs with their ids, or the lists of
-  failed builds and executions not run; not at the path its own contents give
-  (`boots/<UTC day of its started_at>/<its boot>.json`); a summary of a boot another
-  started earlier; listing a Run of another boot; listing a Run twice or one another lists.
-  `recent_rounds.left_out` counts them, of every day, and lists the newest 8 by path, each
-  with its path (cut at 120 characters), its address when served, and one of a fixed few
-  sentences saying why. A round lists at most 12 boots, its figures counting all: at these
-  bounds `recent_rounds` is at most about 48 KB, whatever the summaries hold. A point links
-  its boot's summary only if that summary is in a round's reach on its own (served, at its
-  own path, readable), the earliest-started of its boot, so a copy or a stray file can fill
-  a missing link but never change one; the one file that can is a second summary of a
-  boot at its own path claiming an earlier start, which no rule without history can tell
-  from the first: it is listed as left out, and the gate refuses the change, out loud.
+  listed by the bytes of its name (no symbolic link, no directory), and only one at an
+  address the API serves is opened; a path is written with each byte that is not printable
+  ASCII, and each `%`, `"` and `\`, as `%XX`. One the rounds cannot be told from is in no
+  round: an address the API does not serve, such as `unknown.json` (decided by its name
+  alone); not strict JSON; not `ledgermath.boot/1`; without a boot, a start to the
+  nanosecond, a provider with an instance type of 1 to 64 letters, digits, dots, hyphens or
+  underscores, a list of Runs with their ids, or the lists of failed builds and executions
+  not run; not at the path its own contents give (`boots/<UTC day of its started_at>/<its
+  boot>.json`); a summary of a boot another started earlier; listing a Run of another boot;
+  listing a Run twice or one another lists. `recent_rounds.left_out` counts them, of every
+  day, and lists the newest 8 by path, each with its path (over 120 characters, its first
+  101, `...` and 16 hex digits of the SHA-256 of the whole), its address when served, and
+  one of a fixed few sentences saying why. A round lists at most 12 boots, its figures
+  counting all. Bounded in bytes as written, at every bound at once, the rounds and the
+  summaries left out take 48,297 bytes, a table of contents of 60,373 bytes on the data of
+  2026-11-24 (its ceiling is 100,000), whatever the summaries hold. A point links its boot's summary only if that
+  summary is in a round's reach on its own (served, at its own path, readable), the
+  earliest-started of its boot, so a copy or a stray file can fill a missing link but never
+  change one. What that implies, none of it in the real data, each refused by the gate out
+  loud: a summary filed under a day that is not its own `started_at` day, as the only
+  copy, is not linked (`main` linked it; checked against the tree published on 2026-11-24,
+  where all 187 month files are the same, so the move changes nothing published); a
+  summary rewritten at its address so it can no longer be read loses its link (the rule
+  relies on the Runs repository only ever being added to); and a second summary of a boot
+  at its own path claiming an earlier start changes the link, which no rule without
+  history can tell from the first: it is listed as left out. That last needs no forged
+  file, only someone running the runner twice by hand on one booted box, before and after
+  midnight UTC (the runner takes `started_at` when it starts, and the box's script runs it
+  once and shuts the box down).
   `tests/api-additions.test.ts` adds every other kind of file, alone and in pairs, and holds
   the build, the check, the gate, every link and the ceiling. `recent_rounds.about` says
   all this for a reader of the API alone, beginning with the rule and the count, which the
@@ -2995,7 +3008,7 @@ The build takes about 1.0 s and the check about 1.8 s on the dev machine, and co
 tree with the one before about 2 s more. Between the trees of two snapshots of that day in
 which every Series gained one Run, every one of the 187 month files changed, each for
 cause (a) only. On 2026-11-24 (187 Series, 10,147 Runs, 274 boot summaries, 14 price files)
-`v1/index.json` is 23.3 KB, 15.1 KB of it `recent_rounds` (13.3 KB the newest 8 rounds of boots); built from the same
+`v1/index.json` is 23.6 KB, 15.4 KB of it `recent_rounds` (13.3 KB the newest 8 rounds of boots); built from the same
 inputs, the tree before the rounds and the tree after them differ in `v1/index.json` and its
 schema alone. The lookup tool and
 the agent skill read this tree ("The agent skill").

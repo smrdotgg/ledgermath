@@ -278,6 +278,8 @@ describe("a boot summary the rounds cannot be told from", () => {
 		{ name: "no provider", file: fileOf(oldPath("noprov"), changed("noprov", old, (s) => delete s.provider)), why: LEFT_OUT_WHY.provider },
 		{ name: "an instance type that is a number", file: fileOf(oldPath("numtype"), changed("numtype", old, (s) => (s.provider.instance_type = 5))), why: LEFT_OUT_WHY.provider },
 		{ name: "an instance type one character too long", file: fileOf(oldPath("longtype"), changed("longtype", old, (s) => (s.provider.instance_type = "m".repeat(INSTANCE_TYPE_CHARACTERS + 1)))), why: LEFT_OUT_WHY.provider },
+		{ name: "an instance type of characters JSON writes as six bytes", file: fileOf(oldPath("nultype"), changed("nultype", old, (s) => (s.provider.instance_type = "\u0000".repeat(8)))), why: LEFT_OUT_WHY.provider },
+		{ name: "an empty instance type", file: fileOf(oldPath("emptytype"), changed("emptytype", old, (s) => (s.provider.instance_type = ""))), why: LEFT_OUT_WHY.provider },
 		{ name: "a start on another day than its path's", file: fileOf(oldPath("otherday"), changed("otherday", old, (s) => (s.started_at = "2025-01-02T04:11:00.000000000Z"))), why: LEFT_OUT_WHY.path },
 		{ name: "a boot that is not its file's name", file: fileOf(oldPath("othername"), changed("othername", old, (s) => (s.boot = idOf("someone-else")))), why: LEFT_OUT_WHY.path },
 		{ name: "Runs that are not a list", file: fileOf(oldPath("runsobj"), changed("runsobj", old, (s) => (s.runs = {}))), why: LEFT_OUT_WHY.runs },
@@ -392,7 +394,10 @@ describe("a boot summary the rounds cannot be told from", () => {
 });
 
 describe("what boot summaries can write into the table of contents", () => {
-	test("is bounded: 8 rounds of 20 boots, 12 listed each with an instance type of 64 characters, and 11 files left out with names of 200 characters, stay under the ceiling", () => {
+	test("is bounded in bytes as written: at every bound at once, the table of contents is under its ceiling", () => {
+		// At the bounds: 8 rounds of 20 boots, 12 listed, each instance type 64 characters; 11 files left out whose paths written are the longest a
+		// path can be (bytes JSON would write as six bytes each, and quotes and backslashes, all written %XX, cut to 120 with the digest);
+		// and every count at the largest whole number a double holds exactly.
 		const encoder = new TextEncoder();
 		const files: BootFile[] = [...readBootFiles(fixture.runs)];
 		for (let round = 0; round < RECENT_ROUNDS; round++) {
@@ -402,20 +407,32 @@ describe("what boot summaries can write into the table of contents", () => {
 				files.push({ path: bootSummaryPath(made), bytes: encoder.encode(bootSummaryText(made)) });
 			}
 		}
-		for (let i = 0; i < 11; i++) files.push(fileOf(`boots/2026/12/${String(10 + i)}/${"n".repeat(200)}.json`, "{"));
+		for (let i = 0; i < 11; i++) files.push(fileOf(`boots/2026/12/${String(10 + i)}/${"\u0000\"\\é".repeat(60)}${i}.json`, "{"));
+		// Instance types JSON writes as six bytes a character are left out, not published.
+		const nul: HandMadeBoot = { boot: idOf("nul-type"), startedAt: "2026-12-20T04:00:00.000000000Z", instanceType: "\u0000".repeat(INSTANCE_TYPE_CHARACTERS), runs: [] };
+		files.push({ path: bootSummaryPath(nul), bytes: encoder.encode(bootSummaryText(nul)) });
 		const built = buildApi(sourcesOf(fixture, files));
-		const rounds = recent(built).rounds as Json[];
+		const index = json(built, INDEX_PATH);
+		const rounds = index.recent_rounds.rounds as Json[];
 		expect(rounds.map((one) => [one.boots, one.by_boot.length, one.instance_types.length])).toEqual(Array.from({ length: RECENT_ROUNDS }, () => [20, BOOTS_LISTED, BOOTS_LISTED]));
-		expect(rounds.flatMap((one) => one.instance_types).every((type: string) => type.length === INSTANCE_TYPE_CHARACTERS)).toBe(true);
-		const left = recent(built).left_out;
-		expect([left.count, left.summaries.length]).toEqual([12, LEFT_OUT_LISTED]);
-		expect(left.summaries.map((one: Json) => [...one.path].length)).toEqual(Array.from({ length: LEFT_OUT_LISTED }, () => PATH_CHARACTERS));
-		const size = (built.get(INDEX_PATH) as Uint8Array).length;
+		const left = index.recent_rounds.left_out;
+		expect(left.summaries).toContainEqual({ path: bootSummaryPath(nul), boot_summary: address(bootSummaryPath(nul)), why: LEFT_OUT_WHY.provider });
+		expect([left.count, left.summaries.length]).toEqual([13, LEFT_OUT_LISTED]);
+		const cut = (left.summaries as Json[]).filter((one) => one.path.includes("%"));
+		expect(cut.map((one) => encoder.encode(JSON.stringify(one.path)).length - 2)).toEqual(cut.map(() => PATH_CHARACTERS));
+		expect(new Set(cut.map((one) => one.path)).size).toBe(cut.length);
+		const most = Number.MAX_SAFE_INTEGER;
+		for (const one of rounds) {
+			for (const key of ["boots", "runs", "failed_runs", "runs_in_no_series", "build_failures", "not_run"]) one[key] = most;
+			for (const boot of one.by_boot as Json[]) for (const key of ["runs", "failed_runs", "runs_in_no_series", "build_failures", "not_run"]) boot[key] = most;
+		}
+		left.count = most;
+		const written = encoder.encode(writerForm(INDEX_PATH, index)).length;
 		const ceiling = (CEILINGS.find((one) => one.path.test(INDEX_PATH)) as (typeof CEILINGS)[number]).bytes;
-		// recent_rounds alone, at these bounds: what a round of more boots, a longer instance type or name, or more files left out cannot exceed.
-		const recentBytes = encoder.encode(JSON.stringify(recent(built))).length;
-		expect(recentBytes).toBeLessThan(48_000);
-		expect(size).toBeLessThan(ceiling);
+		const rest = encoder.encode(writerForm(INDEX_PATH, { ...index, recent_rounds: { ...index.recent_rounds, rounds: [], left_out: { count: 0, summaries: [] } } })).length;
+		// recent_rounds at the bounds, as written: under 52,000 bytes, whatever the boot summaries hold.
+		expect(written - rest).toBeLessThan(52_000);
+		expect(written).toBeLessThan(ceiling);
 		expect(checkApi({ tree: writeTree(built), runs: fixture.runs, base: DEFAULT_BASE, series: fixture.series, requests: fixture.requests }).problems.filter((problem) => problem.includes("ceiling"))).toEqual([]);
 	});
 });

@@ -87,9 +87,10 @@
  *   rounds of boots and the boot summaries left out of them, as the
  *   checkout's boot summaries and the Derivations make them by the design
  *   (readCheckoutBoots(), expectedRounds()): of the regular files under
- *   boots/, one the API does not serve, that cannot be read strictly, lacks
- *   what a round needs (an instance type of at most 64 characters among it)
- *   or is not at the path its own contents give, a summary of a boot another
+ *   boots/, listed by the bytes of their names, one the API does not serve
+ *   (by its name, unopened), that cannot be read strictly, lacks what a round
+ *   needs (an instance type of 1 to 64 letters, digits, dots, hyphens or
+ *   underscores among it) or is not at the path its own contents give, a summary of a boot another
  *   started earlier, one listing a Run of another boot, or listing a Run
  *   twice or one another lists, is left out, with why; the rest in order of
  *   start, a new round after more than 40 minutes from the boot before, the
@@ -98,8 +99,9 @@
  *   summary lists them, each Run failed when the Method that decides for its
  *   Series (requests v1 where it derives it, else series v1) does not count
  *   it, in no Series when no Method has its point; each round its boots
- *   summed; how many are left out, and the newest 8 of them by path (a path
- *   over 120 characters cut to 117 and "..."); each
+ *   summed; how many are left out, and the newest 8 of them by path (written
+ *   one byte a character, %XX for any other byte; over 120, cut with a
+ *   digest of the whole: shownPath()); each
  *   address it gives a file of the checkout, of a shape the API serves; and
  *   its words begin with that rule and that count, word for word. No boot
  *   summary is itself a problem.
@@ -202,7 +204,7 @@ const LEFT_OUT_BECAUSE = {
 	schema: "it is not a ledgermath.boot/1 summary",
 	boot: "it names no boot",
 	start: "it gives no start that is a real UTC time written to the nanosecond",
-	provider: "it gives no provider, or an instance type that is not a string of at most 64 characters",
+	provider: "it gives no provider, or an instance type that is not 1 to 64 letters, digits, dots, hyphens or underscores",
 	runs: "it gives no list of Runs, each with its id",
 	lists: "it gives no list of failed builds or of executions not run",
 	path: "its path is not the one its own contents give: the UTC day its boot started, then its boot's id",
@@ -210,7 +212,7 @@ const LEFT_OUT_BECAUSE = {
 	otherBoot: "it lists a Run whose point is of another boot",
 	sharedRun: "it lists a Run twice, or one that another boot summary lists too",
 } as const;
-/** By the design: the most characters of an instance type a summary in a round gives; of a path a summary left out is listed by (longer, cut to 117 and "..."); the most boots a round lists. */
+/** By the design: the most characters of an instance type a summary in a round gives (each a letter, digit, dot, hyphen or underscore); of a path a summary left out is listed by (shownPath()); the most boots a round lists. */
 const INSTANCE_TYPE_CHARACTERS = 64;
 const PATH_CHARACTERS = 120;
 const BOOTS_LISTED = 12;
@@ -231,7 +233,7 @@ export const CEILINGS: ReadonlyArray<{ kind: string; path: RegExp; bytes: number
 		path: /^v1\/index\.json$/,
 		bytes: 100_000,
 		whenHit:
-			"it was 6.3 KB with 9 price files on 2026-11-19, and 23.3 KB with 14 on 2026-11-24, once it gave the newest rounds of boots (13.3 KB for 8 rounds of five boots, about 300 bytes a boot: it grows with the boots a round holds, not with time; the summaries left out are at most 8 listed, each with one of a fixed few sentences); each day's price file adds 124 bytes to its list, which brings it here about 20 months on; listing the price files by month, as the Series are, changes v1's shape (v2), so decide that with the maintainer, and if the rounds grew, ask why a round holds so many boots before giving fewer",
+			"it was 6.3 KB with 9 price files on 2026-11-19, and 23.6 KB with 14 on 2026-11-24, once it gave the newest rounds of boots (13.3 KB for 8 rounds of five boots, about 300 bytes a boot: it grows with the boots a round holds, not with time; the summaries left out are at most 8 listed, each with one of a fixed few sentences); each day's price file adds 124 bytes to its list, which brings it here about 20 months on; listing the price files by month, as the Series are, changes v1's shape (v2), so decide that with the maintainer, and if the rounds grew, ask why a round holds so many boots before giving fewer",
 	},
 	{
 		kind: "the list of Series",
@@ -1247,13 +1249,35 @@ interface CheckoutBoots {
 	because: Map<string, string>;
 }
 
-/** Every regular file under a directory, by its path from it: no symbolic link, of whatever it names, and no directory. */
-function regularFiles(directory: string): string[] {
+/**
+ * A path written from the bytes of its name, by the design: a byte of
+ * printable ASCII but %, " and \ as itself, any other as % and two upper-case
+ * hex digits. Applied to a text's UTF-8 bytes with keepPercent, a % stays.
+ */
+function writtenPath(bytes: Uint8Array, keepPercent = false): string {
+	return [...bytes].map((byte) => ((byte >= 0x20 && byte <= 0x7e && byte !== 0x22 && byte !== 0x5c && (byte !== 0x25 || keepPercent)) ? String.fromCharCode(byte) : `%${byte.toString(16).toUpperCase().padStart(2, "0")}`)).join("");
+}
+
+/**
+ * Every regular file under a directory, each by its path from the
+ * directory's parent as writtenPath() writes its bytes: no symbolic link, of
+ * whatever it names, and no directory. Names are read as bytes, never decoded,
+ * so a name that is not UTF-8 is a file like any other.
+ */
+function regularFiles(directory: string): Array<{ path: string; full: Buffer }> {
 	if (!existsSync(directory)) return [];
-	return readdirSync(directory, { recursive: true, withFileTypes: true })
-		.filter((entry) => entry.isFile())
-		.map((entry) => relative(directory, join(entry.parentPath, entry.name)).split(sep).join("/"))
-		.sort(byText);
+	const out: Array<{ path: string; full: Buffer }> = [];
+	const visit = (here: Buffer, path: Buffer): void => {
+		for (const name of readdirSync(here, { encoding: "buffer" }) as unknown as Buffer[]) {
+			const full = Buffer.concat([here, Buffer.from("/"), name]);
+			const named = Buffer.concat([path, Buffer.from("/"), name]);
+			const stat = lstatSync(full);
+			if (stat.isFile()) out.push({ path: writtenPath(named), full });
+			else if (stat.isDirectory()) visit(full, named);
+		}
+	};
+	visit(Buffer.from(directory), Buffer.from(directory.split(sep).pop() ?? ""));
+	return out.sort((a, b) => byText(a.path, b.path));
 }
 
 /**
@@ -1271,12 +1295,13 @@ function regularFiles(directory: string): string[] {
 function readCheckoutBoots(runs: string): CheckoutBoots {
 	const readable: CheckoutBoot[] = [];
 	const because = new Map<string, string>();
-	for (const path of regularFiles(join(runs, "boots")).map((name) => `boots/${name}`)) {
+	for (const { path, full } of regularFiles(join(runs, "boots"))) {
 		const why = ((): string | CheckoutBoot => {
+			// By its name alone: a file at an address the API does not serve is not opened.
 			if (!isServedKey(path)) return LEFT_OUT_BECAUSE.address;
 			let summary: unknown;
 			try {
-				summary = parseStrictJson(readFileSync(join(runs, ...path.split("/"))));
+				summary = parseStrictJson(readFileSync(full));
 			} catch {
 				return LEFT_OUT_BECAUSE.json;
 			}
@@ -1286,7 +1311,8 @@ function readCheckoutBoots(runs: string): CheckoutBoots {
 			if (nanos === null) return LEFT_OUT_BECAUSE.start;
 			const provider = isObject(summary.provider) ? summary.provider : undefined;
 			const instanceType = provider === undefined ? undefined : (provider.instance_type ?? null);
-			if (instanceType === undefined || (instanceType !== null && (typeof instanceType !== "string" || instanceType.length > INSTANCE_TYPE_CHARACTERS))) return LEFT_OUT_BECAUSE.provider;
+			const madeOf = typeof instanceType === "string" && instanceType.length >= 1 && instanceType.length <= INSTANCE_TYPE_CHARACTERS && [...instanceType].every((character) => /[A-Za-z0-9._-]/.test(character));
+			if (instanceType === undefined || (instanceType !== null && !madeOf)) return LEFT_OUT_BECAUSE.provider;
 			const listed = Array.isArray(summary.runs) ? summary.runs : undefined;
 			if (listed === undefined || !listed.every((run) => isObject(run) && typeof run.id === "string")) return LEFT_OUT_BECAUSE.runs;
 			if (!Array.isArray(summary.build_failures) || !Array.isArray(summary.not_run)) return LEFT_OUT_BECAUSE.lists;
@@ -1310,10 +1336,12 @@ function readCheckoutBoots(runs: string): CheckoutBoots {
 	return { readable, because };
 }
 
-/** A path as the table of contents lists a summary left out by, by the design: whole up to 120 characters (code points), else its first 117 and "...". */
+/** A path as the table of contents lists a summary left out by, by the design: written one byte a character (writtenPath(), a % kept), whole up to 120, else its first 101, "..." and the first 16 hex digits of the SHA-256 of the whole. */
 function shownPath(path: string): string {
-	const points = [...path];
-	return points.length > PATH_CHARACTERS ? `${points.slice(0, PATH_CHARACTERS - 3).join("")}...` : path;
+	const written = writtenPath(new TextEncoder().encode(path), true);
+	if (written.length <= PATH_CHARACTERS) return written;
+	const digest = createHash("sha256").update(written).digest("hex").slice(0, 16);
+	return `${written.slice(0, PATH_CHARACTERS - 3 - 16)}...${digest}`;
 }
 
 /**

@@ -100,6 +100,11 @@ const put = (runs: string, path: string, text: string): void => {
 	mkdirSync(dirname(join(runs, path)), { recursive: true });
 	writeFileSync(join(runs, path), text);
 };
+/** A file whose name is these bytes, whatever text they decode to, in a directory of the checkout. */
+const putRaw = (runs: string, directory: string, name: number[], text: string): void => {
+	mkdirSync(join(runs, directory), { recursive: true });
+	writeFileSync(Buffer.concat([Buffer.from(`${join(runs, directory)}/`), Buffer.from(name)]), text);
+};
 /** A boot that left no Run, as a box writes its summary, named after `name`, started at `startedAt`, with `change` made to it. */
 const newBoot = (name: string, startedAt: string, change: (summary: Json) => void = () => {}): { path: string; text: string } => {
 	const made: HandMadeBoot = { boot: idOf(name), startedAt, runs: [] };
@@ -176,6 +181,19 @@ const ADDITIONS: Record<string, (runs: string) => void> = {
 		put(runs, one.path, one.text);
 	},
 	"a name of 200 characters": (runs) => put(runs, `boots/2026/11/25/${"n".repeat(200)}.json`, "{}"),
+	"a name that is not UTF-8": (runs) => putRaw(runs, "boots", [0x72, 0xe9, 0x73, 0x75, 0x6d, 0xe9, 0x2e, 0x74, 0x78, 0x74], "notes"),
+	"two names of other bytes that decode to the same text": (runs) => {
+		putRaw(runs, "boots/2026/11/25", [0x72, 0xe9, 0x2e, 0x6a, 0x73, 0x6f, 0x6e], "{}");
+		putRaw(runs, "boots/2026/11/25", [0x72, 0xe8, 0x2e, 0x6a, 0x73, 0x6f, 0x6e], "{}");
+	},
+	"a name with a double quote, a backslash and a percent sign": (runs) => put(runs, 'boots/2026/11/25/a"b\\c%d.json', "{}"),
+	"eight names that differ only after their 117th character": (runs) => {
+		for (let i = 0; i < 8; i++) put(runs, `boots/${"z".repeat(150)}${i}.json`, "{}");
+	},
+	"an instance type of characters JSON writes as six bytes each": (runs) => {
+		const one = newBoot("nul-type", day, (summary) => (summary.provider.instance_type = "\u0000".repeat(64)));
+		put(runs, one.path, one.text);
+	},
 	"a name with a space": (runs) => put(runs, "boots/2026/11/25/odd name.json", newBoot("odd", day).text),
 	"a file directly under boots/": (runs) => put(runs, "boots/readme.json", "{}"),
 	"a summary named by a boot id that is not a UUID, of a boot that left a Run": (runs) =>
@@ -215,6 +233,8 @@ const PAIRED = [
 	"a summary listing another boot's Run",
 	"a summary listing a Run another summary lists, of no Run file",
 	"a name of 200 characters",
+	"a name that is not UTF-8",
+	"eight names that differ only after their 117th character",
 ];
 
 /** What a publish needs, after `names` are added to a copy of the fixture's checkout. */
@@ -235,6 +255,10 @@ function holds(names: readonly string[]): void {
 	expect(bootSummaryAddresses(tree).filter((url) => !isServedKey(url.slice(DEFAULT_BASE.length + 1)))).toEqual([]);
 	const ceiling = (CEILINGS.find((one) => one.path.test(INDEX_PATH)) as (typeof CEILINGS)[number]).bytes;
 	expect(readFileSync(join(tree, INDEX_PATH)).length).toBeLessThan(ceiling);
+	// Each file listed as left out can be told from the others, and its path is at most 120 bytes as written.
+	const listed = (JSON.parse(readFileSync(join(tree, INDEX_PATH), "utf8")).recent_rounds.left_out.summaries as Json[]).map((one) => one.path as string);
+	expect(new Set(listed).size).toBe(listed.length);
+	expect(listed.filter((path) => new TextEncoder().encode(JSON.stringify(path)).length - 2 > 120)).toEqual([]);
 }
 
 beforeAll(async () => {

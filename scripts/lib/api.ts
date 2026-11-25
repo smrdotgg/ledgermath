@@ -42,7 +42,7 @@
  */
 
 import { createHash } from "node:crypto";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync, readFileSync } from "node:fs";
 import { join, relative, resolve, sep } from "node:path";
 
 import type { DerivationsFile as RequestsFile, SeriesDerivation as RequestsDerivation, Point as RequestsPoint, Stats } from "../../methods/requests/v1/output";
@@ -121,7 +121,7 @@ export const LEFT_OUT_LISTED = 8;
 export const INSTANCE_TYPE_CHARACTERS = 64;
 /** The most boots of a round v1/index.json lists (by_boot and instance_types), the first by start; a round's figures count every boot. */
 export const BOOTS_LISTED = 12;
-/** The most characters of a path a summary left out is listed by; a longer one is cut to its first PATH_CHARACTERS - 3, then "...". */
+/** The most characters, each one byte as written, of a path a summary left out is listed by; a longer one is cut, keeping a digest of the whole (listedPath()). */
 export const PATH_CHARACTERS = 120;
 
 /** Each kind of file's schema: its name in the tree, and where it is kept in this repository (kept in scripts/lib/api-schemas.ts, which the stack imports too). */
@@ -223,8 +223,11 @@ export const ROUNDS =
 	"and the failed Runs are the points with counted false in their Series' month files, under that Method, as its failed_runs in each Series' file counts them. " +
 	"A Run in no Series has no Run file in the evidence, or one no Method could read. " +
 	`Each round lists its first ${BOOTS_LISTED} boots by start, with their instance types, and its figures count every boot. ` +
-	`left_out counts every file of the evidence's boot summaries that is in no round, and lists the newest ${LEFT_OUT_LISTED} by path, each with its path (cut to ${PATH_CHARACTERS} characters, ending ..., when longer), its address when the API serves it, and why: ` +
-	`one the API does not serve, one that cannot be read, lacks what a round needs (an instance type of at most ${INSTANCE_TYPE_CHARACTERS} characters among it) or is not at the path its own contents give, ` +
+	`left_out counts every file of the evidence's boot summaries that is in no round, and lists the newest ${LEFT_OUT_LISTED} by path, each with its path, its address when the API serves it, and why. ` +
+	"A path is written with each byte of its name that is not printable ASCII, and each %, double quote and backslash, as % and two hex digits; " +
+	`one longer than ${PATH_CHARACTERS} characters is cut to its first ${PATH_CHARACTERS - 19}, then ..., then the first 16 hex digits of the SHA-256 of the whole. ` +
+	"A file is in no round when the API does not serve its address (decided by its name alone, the file unread), when it cannot be read, " +
+	`lacks what a round needs (an instance type of 1 to ${INSTANCE_TYPE_CHARACTERS} letters, digits, dots, hyphens or underscores among it) or is not at the path its own contents give, ` +
 	"every summary of a boot but the one that started first, one listing a Run whose point is of another boot, and each of two listing one Run. " +
 	"A Run's point links its boot's summary: the one of its boot that started first, of those at the path their own contents give that a round can read. " +
 	`A boot left out is in no round, and its path gives the day it started: a round shown within ${ROUND_GAP_MINUTES} minutes of it may be missing that boot. ` +
@@ -246,8 +249,9 @@ export interface PriceSource {
 }
 
 export interface BootFile {
-	/** boots/<yyyy>/<mm>/<dd>/<boot>.json */
+	/** Its path under the checkout, as pathName() writes it: boots/<yyyy>/<mm>/<dd>/<boot>.json for a summary. */
 	path: string;
+	/** Its bytes; empty, unread, for a file whose path is of no shape the API serves (readBootFiles()). */
 	bytes: Uint8Array;
 }
 
@@ -325,20 +329,49 @@ export function bootLinks(files: readonly BootFile[]): Map<string, string> {
 	return new Map([...first].map(([boot, facts]) => [boot, facts.path] as const));
 }
 
+/** A byte a path is written with as itself: printable ASCII but %, " and \, so that JSON writes each as one byte. */
+const plainByte = (byte: number): boolean => byte >= 0x20 && byte <= 0x7e && byte !== 0x25 && byte !== 0x22 && byte !== 0x5c;
+/** A byte as a path writes it otherwise: %XX, in upper-case hex. */
+const escapedByte = (byte: number): string => `%${byte.toString(16).toUpperCase().padStart(2, "0")}`;
+
 /**
- * Every regular file under boots/ in a Runs repository checkout, as its bytes,
- * in path order, whatever its name: a symbolic link, a directory or anything
- * else that is not a regular file is not read. Those that are no boot summary
- * of a served shape are listed as left out of the rounds (recentRounds()).
+ * A file's path as the build names it, from the bytes of its name: each byte
+ * that is not printable ASCII, and each %, " and \, written %XX. One string
+ * for one path, printable and ASCII, whatever bytes the file system gave the
+ * name (two names that decode to the same text stay two); a path of a served
+ * shape is itself.
+ */
+export function pathName(raw: Uint8Array): string {
+	let out = "";
+	for (const byte of raw) out += plainByte(byte) ? String.fromCharCode(byte) : escapedByte(byte);
+	return out;
+}
+
+/**
+ * Every regular file under boots/ in a Runs repository checkout, in path
+ * order, whatever its name, each by its path as pathName() writes it: a
+ * symbolic link, a directory or anything else that is not a regular file is
+ * not one. The directory is read by the bytes of its names, never by a text
+ * they decode to, so a name that is not UTF-8 is listed, not lost. A file is
+ * read only when its path is of a shape the API serves; any other is left out
+ * of the rounds by its name alone (recentRounds()), its bytes empty, unread.
  */
 export function readBootFiles(runs: string): BootFile[] {
-	const directory = join(runs, "boots");
-	if (!existsSync(directory)) return [];
-	return readdirSync(directory, { recursive: true, withFileTypes: true })
-		.filter((entry) => entry.isFile())
-		.map((entry) => relative(runs, join(entry.parentPath, entry.name)).split(sep).join("/"))
-		.sort(compareText)
-		.map((path) => ({ path, bytes: new Uint8Array(readFileSync(join(runs, path))) }));
+	const root = join(runs, "boots");
+	if (!existsSync(root)) return [];
+	const slash = Buffer.from("/");
+	const found: Array<{ path: string; full: Buffer }> = [];
+	const walk = (directory: Buffer, under: Buffer): void => {
+		for (const name of readdirSync(directory, { encoding: "buffer" }) as unknown as Buffer[]) {
+			const full = Buffer.concat([directory, slash, name]);
+			const path = Buffer.concat([under, slash, name]);
+			const kind = lstatSync(full);
+			if (kind.isDirectory()) walk(full, path);
+			else if (kind.isFile()) found.push({ path: pathName(path), full });
+		}
+	};
+	walk(Buffer.from(root), Buffer.from("boots"));
+	return found.sort((a, b) => compareText(a.path, b.path)).map(({ path, full }) => ({ path, bytes: isServedKey(path) ? new Uint8Array(readFileSync(full)) : new Uint8Array() }));
 }
 
 /** The schemas, as this repository keeps them. */
@@ -549,7 +582,7 @@ export const LEFT_OUT_WHY = {
 	schema: "it is not a ledgermath.boot/1 summary",
 	boot: "it names no boot",
 	start: "it gives no start that is a real UTC time written to the nanosecond",
-	provider: "it gives no provider, or an instance type that is not a string of at most 64 characters",
+	provider: "it gives no provider, or an instance type that is not 1 to 64 letters, digits, dots, hyphens or underscores",
 	runs: "it gives no list of Runs, each with its id",
 	lists: "it gives no list of failed builds or of executions not run",
 	path: "its path is not the one its own contents give: the UTC day its boot started, then its boot's id",
@@ -558,10 +591,22 @@ export const LEFT_OUT_WHY = {
 	shared_run: "it lists a Run twice, or one that another boot summary lists too",
 } as const;
 
-/** A path as v1/index.json lists a summary left out by: whole, or cut to PATH_CHARACTERS (in code points) ending "...". */
+/** What an instance type is made of: letters, digits, dots, hyphens and underscores, one to INSTANCE_TYPE_CHARACTERS of them (AWS's are under 20), so it is written as many bytes as characters. */
+const INSTANCE_TYPE = new RegExp(`^[A-Za-z0-9._-]{1,${INSTANCE_TYPE_CHARACTERS}}$`);
+
+/**
+ * A path as v1/index.json lists a summary left out by: its bytes, each that
+ * is not printable ASCII and each " and \ written %XX (a path pathName()
+ * wrote is unchanged), so each character is one byte as written; and, when
+ * longer than PATH_CHARACTERS, cut to its first PATH_CHARACTERS - 19, then
+ * "...", then the first 16 hex digits of the SHA-256 of the whole, so that two
+ * paths cut alike are still told apart and each can be found.
+ */
 function listedPath(path: string): string {
-	const points = Array.from(path);
-	return points.length <= PATH_CHARACTERS ? path : `${points.slice(0, PATH_CHARACTERS - 3).join("")}...`;
+	let shown = "";
+	for (const byte of new TextEncoder().encode(path)) shown += plainByte(byte) || byte === 0x25 ? String.fromCharCode(byte) : escapedByte(byte);
+	if (shown.length <= PATH_CHARACTERS) return shown;
+	return `${shown.slice(0, PATH_CHARACTERS - 19)}...${createHash("sha256").update(shown).digest("hex").slice(0, 16)}`;
 }
 
 /** A boot summary's own path, from its contents: boots/<yyyy>/<mm>/<dd>/<boot>.json, the UTC day of its started_at and its boot, as the runner writes it. */
@@ -594,7 +639,7 @@ function readBoot(file: BootFile): BootFacts | keyof typeof LEFT_OUT_WHY {
 	const nanos = nanosOf(startedAt);
 	if (nanos === null) return "start";
 	const instanceType = isJson(provider) ? (provider.instance_type ?? null) : undefined;
-	if (instanceType === undefined || (instanceType !== null && (typeof instanceType !== "string" || instanceType.length > INSTANCE_TYPE_CHARACTERS))) return "provider";
+	if (instanceType === undefined || (instanceType !== null && (typeof instanceType !== "string" || !INSTANCE_TYPE.test(instanceType)))) return "provider";
 	if (!Array.isArray(runs) || !runs.every((run) => isJson(run) && typeof run.id === "string")) return "runs";
 	if (!Array.isArray(buildFailures) || !Array.isArray(notRun)) return "lists";
 	if (file.path !== ownPath(boot, startedAt as string)) return "path";
@@ -610,19 +655,20 @@ function readBoot(file: BootFile): BootFacts | keyof typeof LEFT_OUT_WHY {
  *
  * Left out, each regular file under boots/ on its own (readBoot()): one at an
  * address the API does not serve (the shared list of served shapes,
- * isServedKey(), which the edge is made from), one that is not strict JSON,
- * not ledgermath.boot/1, without what a round needs (an instance type of at
- * most INSTANCE_TYPE_CHARACTERS included), or not at the path its own
- * contents give. Then, among the rest, across every summary: of two or more
+ * isServedKey(), which the edge is made from; decided by the name alone, the
+ * file unread), one that is not strict JSON, not ledgermath.boot/1, without
+ * what a round needs (an instance type of INSTANCE_TYPE's characters
+ * included), or not at the path its own contents give. Then, among the rest, across every summary: of two or more
  * of one boot, each but the one that started first (the one its points link,
  * bootLinks()); each listing a Run whose point (series v1 derives every
  * Series and gives each point's boot) is of another boot; and, of the rest,
  * each of two or more listing one Run. A boot left out is in no round.
  *
- * What a file can write into the table of contents is bounded: an instance
- * type by INSTANCE_TYPE_CHARACTERS, a listed path by PATH_CHARACTERS, every
- * other string by its shape (a start, an address of a served shape) or by
- * being one of LEFT_OUT_WHY; a round lists BOOTS_LISTED boots at most, and
+ * What a file can write into the table of contents is bounded in bytes as
+ * written: an instance type by INSTANCE_TYPE (characters JSON writes as one
+ * byte each), a listed path by PATH_CHARACTERS (listedPath(): one byte each),
+ * every other string by its shape (a start, an address of a served shape) or
+ * by being one of LEFT_OUT_WHY; a round lists BOOTS_LISTED boots at most, and
  * the summaries left out LEFT_OUT_LISTED at most; counts are numbers.
  *
  * A round is worked out from the boot summaries alone, never from the

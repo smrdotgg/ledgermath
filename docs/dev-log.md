@@ -1710,4 +1710,16 @@ A migrated benchmark is done only when **all** of these hold:
   most. `tests/api-additions.test.ts` adds 41 kinds of file alone and 66 pairs; 51 of its
   108 tests fail on `3632aba`, the verifier's four cases among them. Real data: 187 month
   files the same, and the 2026-11-11 copy at an earlier path changes none.
+- **2026-11-25** — **Boot summaries' names read as bytes, and their bounds in bytes** (a
+  third verification of #91). A file under `boots/` whose name is not UTF-8 stopped the
+  build: the name was decoded, then opened by the text. Both the build and the check now
+  list files by the bytes of their names, open only one at a served address, and write a
+  path with each byte outside printable ASCII, and `%`, `"`, `\`, as `%XX`. An instance
+  type of 64 characters JSON writes as six bytes each put the table of contents over its
+  ceiling: an instance type must now be 1 to 64 letters, digits, dots, hyphens or
+  underscores. A listed path over 120 characters keeps 16 hex digits of the SHA-256 of
+  the whole, so eight paths cut alike stay eight. At every bound at once the rounds and
+  the summaries left out take 48,297 bytes as written. ADR-0030 and the README say what
+  the linking rule implies (a summary under a day not its own is not linked; a rewritten
+  one loses its link; the open case needs only the runner run twice by hand).
 - _(agents: append your entry here, one per merged benchmark)_

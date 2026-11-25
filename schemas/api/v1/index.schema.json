@@ -44,7 +44,7 @@
                 "type": "object",
                 "required": ["path", "boot_summary", "why"],
                 "properties": {
-                  "path": { "description": "The file's path in the evidence, under boots/: for a summary, boots/<yyyy>/<mm>/<dd>/<name>.json, the day its boot started and its name. One longer than 120 characters is cut to its first 117, then ....", "type": "string", "pattern": "^boots/", "maxLength": 120 },
+                  "path": { "description": "The file's path in the evidence, under boots/: for a summary, boots/<yyyy>/<mm>/<dd>/<name>.json, the day its boot started and its name. Each byte of it that is not printable ASCII, and each %, double quote and backslash, is written as % and two hex digits, so each character is one byte; one longer than 120 characters is cut to its first 101, then ..., then the first 16 hex digits of the SHA-256 of the whole.", "type": "string", "pattern": "^boots/[\\x20-\\x7e]*$", "maxLength": 120 },
                   "boot_summary": { "description": "The summary's address, or null when the API does not serve it.", "anyOf": [{ "$ref": "#/$defs/url" }, { "type": "null" }] },
                   "why": { "description": "Why it is in no round: one of a fixed few sentences.", "type": "string" }
                 }
@@ -127,7 +127,7 @@
         "runs_in_no_series": { "$ref": "#/$defs/runs_in_no_series" },
         "build_failures": { "$ref": "#/$defs/build_failures" },
         "not_run": { "$ref": "#/$defs/not_run" },
-        "instance_types": { "description": "The instance type of each boot by_boot lists, in the order the boots started, as its summary names it (at most 64 characters); null for a boot whose summary names none.", "type": "array", "maxItems": 12, "items": { "anyOf": [{ "type": "string", "maxLength": 64 }, { "type": "null" }] } },
+        "instance_types": { "description": "The instance type of each boot by_boot lists, in the order the boots started, as its summary names it (1 to 64 letters, digits, dots, hyphens or underscores); null for a boot whose summary names none.", "type": "array", "maxItems": 12, "items": { "anyOf": [{ "$ref": "#/$defs/instance_type" }, { "type": "null" }] } },
         "by_boot": { "description": "The boots of the round in the order they started, the first 12 at most: the round's figures count every boot, boots how many.", "type": "array", "maxItems": 12, "items": { "$ref": "#/$defs/round_boot" } }
       }
     },
@@ -137,7 +137,7 @@
       "required": ["boot_summary", "instance_type", "started_at", "runs", "failed_runs", "runs_in_no_series", "build_failures", "not_run"],
       "properties": {
         "boot_summary": { "description": "The boot's summary: every Run it left with how its binary exited, every build that failed and every execution that was not run, with why.", "$ref": "#/$defs/url" },
-        "instance_type": { "description": "The instance type the boot ran on, as its summary names it (at most 64 characters: a summary giving a longer one is in no round); null when it names none.", "anyOf": [{ "type": "string", "maxLength": 64 }, { "type": "null" }] },
+        "instance_type": { "description": "The instance type the boot ran on, as its summary names it: 1 to 64 letters, digits, dots, hyphens or underscores, a summary giving anything else being in no round; null when it names none.", "anyOf": [{ "$ref": "#/$defs/instance_type" }, { "type": "null" }] },
         "started_at": { "description": "When the boot started (UTC, to the nanosecond), as its summary records it.", "$ref": "#/$defs/time" },
         "runs": { "$ref": "#/$defs/runs" },
         "failed_runs": { "$ref": "#/$defs/failed_runs" },
@@ -146,6 +146,7 @@
         "not_run": { "$ref": "#/$defs/not_run" }
       }
     },
+    "instance_type": { "description": "An instance type as a summary in a round names it: 1 to 64 letters, digits, dots, hyphens or underscores, so it is written as many bytes as characters.", "type": "string", "pattern": "^[A-Za-z0-9._-]{1,64}$" },
     "runs": { "description": "How many Runs the boots left: the Runs their summaries list.", "type": "integer", "minimum": 0 },
     "failed_runs": {
       "description": "How many of those Runs are failed: not counted by Method requests v1, for a Run of a Series that Method derives (a Series of requests), and by Method series v1, for a Run of any other Series. So a Run of a Series of requests that exited 4, a request having failed, is failed only when requests v1 does not count it, as the Series' own figures say. Each failed Run is a point with counted false and its failure in its Series' month file, under that Method.",
