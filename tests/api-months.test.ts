@@ -29,6 +29,7 @@ import {
 	monthPath,
 	NEWEST_RUNS,
 	readApiSchemas,
+	readBootFiles,
 	readBootSummaries,
 	readDerivations,
 	readPriceFiles,
@@ -53,6 +54,7 @@ function sourcesOf(fixture: { series: SeriesFile; requests: RequestsFile; runs: 
 		requests: structuredClone(fixture.requests),
 		prices: readPriceFiles(fixture.runs),
 		boots: boots ?? readBootSummaries(fixture.runs),
+		bootFiles: readBootFiles(fixture.runs),
 		schemas: readApiSchemas(),
 	};
 }

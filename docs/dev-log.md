@@ -1544,4 +1544,27 @@ A migrated benchmark is done only when **all** of these hold:
   CORS, the API bucket none), so the readers' note no longer says the `ETag` can never be
   read across origins. "Data for a trial" and the layout table no longer say the API is not
   served. Documentation only: no code, test or infrastructure changed.
+- **2026-11-24** — **The data API says what was measured most recently.** `v1/index.json`
+  gains `recent_rounds`: the newest 8 rounds of boots, newest first, each with its first
+  boot's start, its boots and their instance types, the Runs they left, how many are failed
+  and in no Series, failed builds and executions not run, in all and by boot with each
+  summary's address (ADR-0030, rule 12; "Round" in `CONTEXT.md`). The home page's "Latest
+  runs" reads it. **A round comes from the boot summaries alone**: nothing a boot records
+  says the schedule started it (the scheduled time stays in the launch's payload and client
+  token), so a boot starts a new round when it started more than 40 minutes after the boot
+  before it. The first proposal, more than 60 minutes after the round's first boot, broke the
+  round of 2026-11-11 22:11 on the real data: the two boots started by hand at 21:23 took its
+  first two scheduled boots. With the 40-minute gap, the 274 boot summaries of 2026-11-10 to
+  24 give 59 rounds: every scheduled round its five boots (the four before the newest, 187
+  Runs and 0 failed each), the boots by hand rounds of their own, and the newest round, cut
+  at 22:43, two boots.
+  **Failed** is the deciding Method's: requests v1 for a Series of requests (so an exit 4 is
+  not failed), series v1 for any other. **`layout` stays 1 and no new baseline is needed**:
+  the trees before and after, built from the same inputs, differ in `v1/index.json` and its
+  schema alone, and `check-api.ts --previous` passed against the scheduled run's tree of
+  22:43 UTC (187 month files, all the same) and `main`'s golden tree, without
+  `--allow-no-previous`. The build reads every boot summary and refuses one it cannot tell a
+  round from; the check works the rounds out from the checkout itself. `lookup.ts about`
+  prints the newest round on one line, and nothing of it from an older tree. GitHub Actions
+  is off for the repository, so the checks of `check.yml` ran on the dev box.
 - _(agents: append your entry here, one per merged benchmark)_

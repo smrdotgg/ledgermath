@@ -13,6 +13,7 @@ import {
 	DEFAULT_BASE,
 	monthPath,
 	readApiSchemas,
+	readBootFiles,
 	readBootSummaries,
 	readPriceFiles,
 	seriesPath,
@@ -36,6 +37,7 @@ function sourcesOf(fixture: ApiFixture, base = DEFAULT_BASE): ApiSources {
 		requests: structuredClone(fixture.requests),
 		prices: readPriceFiles(fixture.runs),
 		boots: readBootSummaries(fixture.runs),
+		bootFiles: readBootFiles(fixture.runs),
 		schemas: readApiSchemas(),
 	};
 }
@@ -517,7 +519,8 @@ describe("the check fails loudly", () => {
 		]);
 		const unreadable = check((_copy, checkout) => rmSync(join(checkout, fixture.unreadable)));
 		expect(unreadable).toContain(`v1/series.json: series_v1's unreadable Run not-a-run: evidence ${DEFAULT_BASE}/${fixture.unreadable} names a Run file that is not in the Runs repository checkout ${runs}`);
-		// Every point of the first day's boot links its summary; once it is gone, each point says so, and the link is reported once.
+		// Every point of the first day's boot links its summary, and so does the table of contents' one round of boots; once it is gone, each point
+		// says so, the round is one the checkout no longer makes, and the link is reported once, from the table of contents, read first.
 		const boot = check((_copy, checkout) => rmSync(join(checkout, "boots"), { recursive: true }));
 		const summary = `${DEFAULT_BASE}/boots/2026/11/12/boot-2026-11-12.json`;
 		const firstDay = (id: string, key: string) =>
@@ -527,10 +530,15 @@ describe("the check fails loudly", () => {
 					`${november(id)}: ${key}'s point ${point.run}: boot_summary is ${summary}, but the checkout ${runs} holds no summary of boot boot-2026-11-12`,
 					`${seriesPath(id)}: ${key}: newest_points's point ${point.run}: boot_summary is ${summary}, but the checkout ${runs} holds no summary of boot boot-2026-11-12`,
 				]);
-		const firstSeries = [fixture.http, fixture.memory, fixture.syscall].sort()[0] as string;
-		expect(boot.filter((problem) => problem.includes(" links "))).toEqual([`${november(firstSeries)} links ${summary}, which is not a file of the Runs repository checkout ${runs}`]);
+		expect(boot.filter((problem) => problem.includes(" links "))).toEqual([`v1/index.json links ${summary}, which is not a file of the Runs repository checkout ${runs}`]);
 		expect(boot.filter((problem) => !problem.includes(" links ")).sort()).toEqual(
-			[...firstDay(fixture.memory, "series_v1"), ...firstDay(fixture.syscall, "series_v1"), ...firstDay(fixture.http, "series_v1"), ...firstDay(fixture.http, "requests_v1")].sort(),
+			[
+				"v1/index.json: /recent_rounds/rounds has 1 items, not 0, as the boot summaries of the checkout and the Derivations make it",
+				...firstDay(fixture.memory, "series_v1"),
+				...firstDay(fixture.syscall, "series_v1"),
+				...firstDay(fixture.http, "series_v1"),
+				...firstDay(fixture.http, "requests_v1"),
+			].sort(),
 		);
 	});
 

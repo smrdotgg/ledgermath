@@ -124,6 +124,51 @@ function nanoTime(iso: string): string {
 	return `${new Date(ms).toISOString().slice(0, 19)}.${String(ms % 1000).padStart(3, "0")}000000Z`;
 }
 
+/** A hand-made boot's summary, as runner/run.py writes one: started_at to the nanosecond, written in the boot's own words. */
+export interface HandMadeBoot {
+	boot: string;
+	/** Such as 2026-11-12T04:11:00.123456789Z. */
+	startedAt: string;
+	endedAt?: string;
+	instanceType?: string | null;
+	/** The Runs it lists, in order: each by its record. */
+	runs: Run[];
+	/** Each failed build's benchmark and build. */
+	buildFailures?: Array<{ benchmark: string; build: string }>;
+	/** Each execution not run: its benchmark, build and params. */
+	notRun?: Array<{ benchmark: string; build: string; params: Record<string, ParamValue> }>;
+}
+
+/** The text of a boot summary, shaped like runner/run.py's, for boots/<yyyy>/<mm>/<dd>/<boot>.json. */
+export function bootSummaryText(boot: HandMadeBoot): string {
+	const summary = {
+		schema: "ledgermath.boot/1",
+		boot: boot.boot,
+		provider: {
+			name: "aws",
+			instance_type: boot.instanceType === undefined ? "c6i.8xlarge" : boot.instanceType,
+			region: "us-east-2",
+			availability_zone: "us-east-2c",
+			availability_zone_id: "use2-az3",
+			image_id: "ami-0123456789abcdef0",
+			instance_id: `i-${boot.boot}`,
+		},
+		source_commit: "0123456789abcdef0123456789abcdef01234567",
+		source: `sha256:${sha256("a source archive")}`,
+		runner: `sha256:${sha256("a runner manifest")}`,
+		started_at: boot.startedAt,
+		runs: boot.runs.map((run) => ({ id: run.id, benchmark: run.benchmark, build: run.binary.build, params: run.params, exit: run.exit })),
+		build_failures: (boot.buildFailures ?? []).map((failure) => ({ ...failure, message: "make exited 2" })),
+		not_run: (boot.notRun ?? []).map((one) => ({ ...one, reason: "the runner was told to stop by SIGTERM" })),
+		left_out: [],
+		ended_at: boot.endedAt ?? boot.startedAt,
+	};
+	return `${JSON.stringify(summary, null, 2)}\n`;
+}
+
+/** A boot summary's path: under the day it started, named by its boot. */
+export const bootSummaryPath = (boot: HandMadeBoot): string => `boots/${boot.startedAt.slice(0, 4)}/${boot.startedAt.slice(5, 7)}/${boot.startedAt.slice(8, 10)}/${boot.boot}.json`;
+
 export class HandMade {
 	readonly files: RunFile[] = [];
 	readonly blobs = new Map<string, Uint8Array>();

@@ -398,6 +398,26 @@ describe("the contract the tree gives a reader", () => {
 		expect(asked).toEqual([INDEX, LIST, seriesPath(fixture.memory)]);
 	});
 
+	test("about says when the newest round of boots started and what it held, in one line, from the table of contents; from a tree without the rounds, nothing of them", async () => {
+		const a = await about(directory);
+		const round = JSON.parse(new TextDecoder().decode(bytesOf(INDEX))).recent_rounds.rounds[0];
+		expect(a.newest_round).toEqual({ started_at: "2026-11-12T04:11:00.000000000Z", boots: 1, runs: 2, failed_runs: 0, runs_in_no_series: 0, build_failures: 0, not_run: 0, instance_types: ["c6i.8xlarge"] });
+		expect(round.started_at).toBe(a.newest_round?.started_at);
+		expect(aboutText(a).split("\n").filter((line) => /\bround\b/.test(line))).toEqual(["Newest round of boots: started 2026-11-12T04:11:00Z, 1 boot (c6i.8xlarge), 2 Runs, 0 failed."]);
+		// What did not run or count is named only when there is some.
+		const index = JSON.parse(new TextDecoder().decode(bytesOf(INDEX)));
+		Object.assign(index.recent_rounds.rounds[0], { boots: 2, instance_types: ["c6i.8xlarge", null], failed_runs: 1, runs_in_no_series: 3, build_failures: 1, not_run: 2 });
+		const busier = await about(await web([], new Map([[INDEX, new Response(JSON.stringify(index))]])));
+		expect(aboutText(busier)).toContain("Newest round of boots: started 2026-11-12T04:11:00Z, 2 boots (c6i.8xlarge, (no instance type)), 2 Runs, 1 failed, 3 in no Series, 1 build failed, 2 not run.\n");
+		// A tree built before the rounds were: about says nothing of them.
+		delete index.recent_rounds;
+		const older = await about(await web([], new Map([[INDEX, new Response(JSON.stringify(index))]])));
+		expect(older.newest_round).toBeUndefined();
+		expect("newest_round" in JSON.parse(JSON.stringify(older))).toBe(false);
+		expect(aboutText(older)).not.toMatch(/\bround\b/);
+		expect(aboutText(older)).toBe(aboutText(await about(await web())).replace(/^Newest round of boots: .*\n/m, ""));
+	});
+
 	test("a file larger than its limit is not read: by its Content-Length, by its body, and in a directory", async () => {
 		const big = new Uint8Array(LIMITS.list + 1).fill(32);
 		await expectLedgerError(

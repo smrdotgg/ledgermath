@@ -4,7 +4,7 @@
   "title": "LedgerMath data API, version 1: the table of contents",
   "description": "v1/index.json: where the list of Series, the price files, the schemas, the evidence and the docs are. Start here. Every address a reader needs is written in the files, so a reader never builds one from an id; the one exception is a blob named by hash inside a Run file, whose address is evidence.blob_url_template. Version 1 only ever gains fields: a field, once in a v1 file, keeps its name, its type and its meaning, and a reader ignores any field it does not know. That is why no object in this schema, nor in series-list, series and series-month, forbids members it does not list. A change that would break a reader is published as v2, beside v1. The price files are the exception: each is the day's price file as LedgerMath keeps it, byte for byte, and follows its own schema, ledgermath.prices/1, whose root and LedgerMath's own objects are closed.",
   "type": "object",
-  "required": ["schema", "schema_url", "url", "about", "versioning", "figures", "months", "layout", "docs", "newest_run_started_at", "series", "prices", "schemas", "evidence"],
+  "required": ["schema", "schema_url", "url", "about", "versioning", "figures", "months", "layout", "docs", "newest_run_started_at", "recent_rounds", "series", "prices", "schemas", "evidence"],
   "properties": {
     "schema": { "description": "What this file is, and which version of its shape.", "const": "ledgermath.api.index/1" },
     "schema_url": { "description": "The address of this schema.", "$ref": "#/$defs/url" },
@@ -13,7 +13,7 @@
     "versioning": { "description": "The rule the API's own v1 files keep, in words: v1 only ever gains fields; and its exception, the price files, which follow their own schema, closed.", "type": "string" },
     "figures": { "description": "How the numbers are written, in words: exactly as the Derivations hold them, never rounded.", "type": "string" },
     "months": { "description": "How each Series is split by month, in words, and exactly when a month file's bytes change: for a given layout, for four causes only, a past month included, so a reader holding a copy compares the month file's sha256, which the Series' file gives, before trusting it; and what a reader does when a month file it fetched does not match its Series file.", "type": "string" },
-    "layout": { "description": "How the files are written, as a number. It increases when LedgerMath changes how the files are written (the order of a file's fields, the white space between them, a field every file of a kind gains), so that any file's bytes may change without one of the four causes months gives; for a given layout, those four are the only causes. Editing a schema's words does not change it, nor do the data. A reader holding copies of month files made under another layout fetches them again.", "type": "integer", "minimum": 1 },
+    "layout": { "description": "How the files are written, as a number. It increases when LedgerMath changes how the files are written (the order of a file's fields, the white space between them, a field every file of a kind gains), so that any file's bytes may change without one of the four causes months gives; for a given layout, those four are the only causes. Editing a schema's words does not change it, nor do the data, nor a field this file alone gains: this file changes with the data at every update, and no other file's bytes change with it. A reader holding copies of month files made under another layout fetches them again.", "type": "integer", "minimum": 1 },
     "docs": {
       "description": "Where the API is described in words: an absolute https address with a host, and a path, query or fragment if any, written with the characters RFC 3986 allows.",
       "type": "string",
@@ -22,6 +22,15 @@
     "newest_run_started_at": {
       "description": "When the newest Run of any Series started (UTC, to the nanosecond, as the Run records it): how far the data reach. Null when there is no Series. No file of the API carries the time it was made; the same data give the same bytes.",
       "anyOf": [{ "$ref": "#/$defs/time" }, { "type": "null" }]
+    },
+    "recent_rounds": {
+      "description": "What was measured most recently: the newest rounds of boots, newest first, each with its counts in all and by boot, and the address of each boot's summary. about says what a round is, how it is worked out from the boot summaries alone, and what failed means.",
+      "type": "object",
+      "required": ["about", "rounds"],
+      "properties": {
+        "about": { "description": "What a round is and what each of its figures counts, in words.", "type": "string" },
+        "rounds": { "description": "The newest rounds, newest first: as many as about says, or fewer when there are fewer. Empty when there is no boot summary.", "type": "array", "items": { "$ref": "#/$defs/round" } }
+      }
     },
     "series": {
       "description": "The list of Series.",
@@ -83,6 +92,46 @@
         "path": { "description": "The price file's own path, prices/<yyyy>/<mm>/<dd>/aws.json: the name a price citation gives it.", "type": "string", "pattern": "^prices/[0-9]{4}/[0-9]{2}/[0-9]{2}/aws\\.json$" },
         "url": { "description": "Its address: v1/prices/<yyyy-mm-dd>.json.", "$ref": "#/$defs/url" }
       }
-    }
+    },
+    "round": {
+      "description": "One round of boots, with its figures in all (each the sum of by_boot's) and by boot.",
+      "type": "object",
+      "required": ["started_at", "boots", "runs", "failed_runs", "runs_in_no_series", "build_failures", "not_run", "instance_types", "by_boot"],
+      "properties": {
+        "started_at": { "description": "When its first boot started (UTC, to the nanosecond), as that boot's summary records it.", "$ref": "#/$defs/time" },
+        "boots": { "description": "How many boots it holds.", "type": "integer", "minimum": 1 },
+        "runs": { "$ref": "#/$defs/runs" },
+        "failed_runs": { "$ref": "#/$defs/failed_runs" },
+        "runs_in_no_series": { "$ref": "#/$defs/runs_in_no_series" },
+        "build_failures": { "$ref": "#/$defs/build_failures" },
+        "not_run": { "$ref": "#/$defs/not_run" },
+        "instance_types": { "description": "Each boot's instance type, in the order the boots started, as its summary names it; null for a boot whose summary names none.", "type": "array", "items": { "anyOf": [{ "type": "string" }, { "type": "null" }] } },
+        "by_boot": { "description": "Each boot of the round, in the order they started.", "type": "array", "items": { "$ref": "#/$defs/round_boot" } }
+      }
+    },
+    "round_boot": {
+      "description": "One boot of a round: its summary's address, and its figures.",
+      "type": "object",
+      "required": ["boot_summary", "instance_type", "started_at", "runs", "failed_runs", "runs_in_no_series", "build_failures", "not_run"],
+      "properties": {
+        "boot_summary": { "description": "The boot's summary: every Run it left with how its binary exited, every build that failed and every execution that was not run, with why.", "$ref": "#/$defs/url" },
+        "instance_type": { "description": "The instance type the boot ran on, as its summary names it; null when it names none.", "anyOf": [{ "type": "string" }, { "type": "null" }] },
+        "started_at": { "description": "When the boot started (UTC, to the nanosecond), as its summary records it.", "$ref": "#/$defs/time" },
+        "runs": { "$ref": "#/$defs/runs" },
+        "failed_runs": { "$ref": "#/$defs/failed_runs" },
+        "runs_in_no_series": { "$ref": "#/$defs/runs_in_no_series" },
+        "build_failures": { "$ref": "#/$defs/build_failures" },
+        "not_run": { "$ref": "#/$defs/not_run" }
+      }
+    },
+    "runs": { "description": "How many Runs the boots left: the Runs their summaries list.", "type": "integer", "minimum": 0 },
+    "failed_runs": {
+      "description": "How many of those Runs are failed: not counted by Method requests v1, for a Run of a Series that Method derives (a Series of requests), and by Method series v1, for a Run of any other Series. So a Run of a Series of requests that exited 4, a request having failed, is failed only when requests v1 does not count it, as the Series' own figures say. Each failed Run is a point with counted false and its failure in its Series' month file, under that Method.",
+      "type": "integer",
+      "minimum": 0
+    },
+    "runs_in_no_series": { "description": "How many of those Runs are in no Series: their Run file is not in the evidence, or no Method could read it (the list of Series names each such file under each Method's unreadable). Neither counted nor failed.", "type": "integer", "minimum": 0 },
+    "build_failures": { "description": "How many builds failed, or binaries could not be started, as the boots' summaries list them: an execution that never started has no Run.", "type": "integer", "minimum": 0 },
+    "not_run": { "description": "How many executions the boots were to run and did not, as their summaries list them: each one benchmark, build and parameter set, with why.", "type": "integer", "minimum": 0 }
   }
 }

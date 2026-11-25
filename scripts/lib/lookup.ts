@@ -41,7 +41,7 @@ import {
 	requestTailCitation,
 	seriesCitation,
 } from "./citation";
-import { type LedgerData, LedgerError, type LoadedPrices, type MonthEntry, seriesPoints, type StatSummary, type TreeRow, type TreeSeries, type TreeSeriesPoint } from "./ledger-data";
+import { type LedgerData, LedgerError, type LoadedPrices, type MonthEntry, seriesPoints, type StatSummary, type TreeRound, type TreeRow, type TreeSeries, type TreeSeriesPoint } from "./ledger-data";
 import type { PriceSource } from "./prices";
 import { agrees, type Dims, quantities } from "./quantity";
 
@@ -850,6 +850,16 @@ export interface About {
 	price_files: string[];
 	price_file: string | null;
 	price_file_date: string | null;
+	/** The newest round of boots, as the table of contents gives it; absent when it gives none (a tree built before 2026-11-24, or no boot summary). */
+	newest_round?: TreeRound;
+}
+
+/** The newest round of boots the table of contents gives, its figures in all; undefined when it gives none. */
+function newestRound(data: LedgerData): TreeRound | undefined {
+	const round = data.index.recent_rounds?.rounds?.[0];
+	if (round === undefined) return undefined;
+	const { started_at, boots, runs, failed_runs, runs_in_no_series, build_failures, not_run, instance_types } = round;
+	return { started_at, boots, runs, failed_runs, runs_in_no_series, build_failures, not_run, instance_types };
 }
 
 export async function about(data: LedgerData): Promise<About> {
@@ -883,16 +893,29 @@ export async function about(data: LedgerData): Promise<About> {
 		price_files: data.priceFiles,
 		price_file: inUse?.path ?? null,
 		price_file_date: inUse?.date ?? null,
+		newest_round: newestRound(data),
 	};
 }
 
 // ---------------------------------------------------------------- text
+
+/** The newest round of boots on one line: when it started, its boots and their instance types, its Runs, and whatever did not run or count. */
+function roundText(round: TreeRound): string {
+	const types = round.instance_types.map((type) => type ?? "(no instance type)").join(", ");
+	const others = [
+		round.runs_in_no_series > 0 ? `${round.runs_in_no_series} in no Series` : "",
+		round.build_failures > 0 ? `${round.build_failures} build${round.build_failures === 1 ? "" : "s"} failed` : "",
+		round.not_run > 0 ? `${round.not_run} not run` : "",
+	].filter((part) => part !== "");
+	return `Newest round of boots: started ${atSecond(round.started_at)}, ${round.boots} boot${round.boots === 1 ? "" : "s"} (${types}), ${round.runs} Runs, ${round.failed_runs} failed${others.map((part) => `, ${part}`).join("")}.`;
+}
 
 export function aboutText(a: About): string {
 	const lines = [
 		`LedgerMath data at ${a.location} (the data API, version 1, layout ${a.layout})`,
 		`Series: ${a.derivations}, Method ${a.method}: ${a.runs_read} Run files read, ${a.series} Series, ${a.counted_runs} counted Runs, ${a.failed_runs} failed, ${a.unreadable_runs} unreadable.`,
 		`Runs started from ${a.first_run_at === null ? "-" : atSecond(a.first_run_at)} to ${a.newest_run_at === null ? "-" : atSecond(a.newest_run_at)}.`,
+		...(a.newest_round === undefined ? [] : [roundText(a.newest_round)]),
 		`Benchmarks with Series: ${listed(new Map(Object.entries(a.benchmarks)))}.`,
 		`Benchmarks with no Series in this data: ${a.benchmarks_without_series.length === 0 ? "none" : a.benchmarks_without_series.join(", ")}.`,
 		`Instance types with Series: ${listed(new Map(Object.entries(a.instance_types)))}.`,

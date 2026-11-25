@@ -16,7 +16,7 @@ import { dirname, join } from "node:path";
 
 import { apiBucketArgs, apiUploadPolicy, TREE_CACHE_CONTROL, TREE_CONTENT_TYPE, TREE_KINDS, TREE_PREFIX, treeObject, UPLOAD_PHASES } from "../infra/runs/api-bucket";
 import { readPolicy } from "../infra/runs/github-role";
-import { buildApi, DEFAULT_BASE, readApiSchemas, readBootSummaries, readPriceFiles } from "../scripts/lib/api";
+import { buildApi, DEFAULT_BASE, readApiSchemas, readBootFiles, readBootSummaries, readPriceFiles } from "../scripts/lib/api";
 import { CEILINGS } from "../scripts/lib/api-check";
 import { API_SCHEMAS } from "../scripts/lib/api-schemas";
 import {
@@ -80,6 +80,7 @@ beforeAll(async () => {
 		requests: fixture.requests,
 		prices: readPriceFiles(fixture.runs),
 		boots: readBootSummaries(fixture.runs),
+		bootFiles: readBootFiles(fixture.runs),
 		schemas: readApiSchemas(),
 	});
 });

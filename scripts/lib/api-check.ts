@@ -81,6 +81,18 @@
  *   tree holds, with the newest price file marked, counts the Series right,
  *   gives every address as the base and the file's path, and gives the docs
  *   as an absolute https address with a host.
+ * - The table of contents' recent_rounds holds, value for value, the newest
+ *   rounds of boots as the checkout's boot summaries and the Derivations make
+ *   them by the design (expectedRounds()): every boot summary read strictly,
+ *   in order of start, a new round after more than 40 minutes from the boot
+ *   before, the newest 8, newest first; each boot's Runs, failed builds and
+ *   executions not run as its summary lists them, each Run failed when the
+ *   Method that decides for its Series (requests v1 where it derives it,
+ *   else series v1) does not count it, in no Series when no Method has its
+ *   point; each round its boots summed; each boot's summary a file of the
+ *   checkout; and its words state that rule and that count. No Run is listed
+ *   by two summaries, no summary lists a Run whose point is of another boot,
+ *   and no two summaries name one boot.
  * - Every link field, in its place in the files, names a file under the
  *   base: under v1/ a file of the tree, under runs/ or boots/ a file of the
  *   checkout. Only the blob address template is not a file; it is checked to
@@ -161,6 +173,15 @@ const STARTED_AT = /^([0-9]{4}-(?:0[1-9]|1[0-2]))-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-
 /** How many of a Series' newest Runs its Series file repeats the points of, by the design. */
 const NEWEST_RUNS = 12;
 
+/** How many of the newest rounds of boots the table of contents gives, by the design. */
+const RECENT_ROUNDS = 8;
+/** By the design, a boot starts a new round when it started more than 40 minutes after the boot before it: in nanoseconds. */
+const ROUND_GAP_NS = 40n * 60n * 1_000_000_000n;
+/** What the table of contents' words for a round must state: the rule and the count the check holds the rounds to. */
+const ROUND_WORDS = ["a boot starting a new round when it started more than 40 minutes after the boot before it", `the newest ${RECENT_ROUNDS}, newest first`];
+/** A boot summary's path in the checkout. */
+const BOOT_FILE = /^boots\/[0-9]{4}\/[0-9]{2}\/[0-9]{2}\/[A-Za-z0-9._-]+\.json$/;
+
 /** At most this many points of one Method's part are reported as differing; then how many more. */
 const POINTS_SHOWN = 10;
 
@@ -177,7 +198,7 @@ export const CEILINGS: ReadonlyArray<{ kind: string; path: RegExp; bytes: number
 		path: /^v1\/index\.json$/,
 		bytes: 100_000,
 		whenHit:
-			"it was 6.3 KB with 9 price files on 2026-11-19, and each day's price file adds 124 bytes to its list, which brings it here about two years on; listing the price files by month, as the Series are, changes v1's shape (v2), so decide that with the maintainer",
+			"it was 6.3 KB with 9 price files on 2026-11-19, and 21.5 KB with 14 on 2026-11-24, once it gave the newest rounds of boots (13.3 KB for 8 rounds of five boots, about 300 bytes a boot: it grows with the boots a round holds, not with time); each day's price file adds 124 bytes to its list, which brings it here about 21 months on; listing the price files by month, as the Series are, changes v1's shape (v2), so decide that with the maintainer, and if the rounds grew, ask why a round holds so many boots before giving fewer",
 	},
 	{
 		kind: "the list of Series",
@@ -632,6 +653,18 @@ export function checkApi(sources: CheckSources): CheckResult {
 			);
 			const ofPrices = ofIndex("prices");
 			compare(`${INDEX}: prices`, ofPrices, { schema_url: address(schemaFile("prices")), files: prices, newest: prices[prices.length - 1] ?? null }, "the price files in the tree make it");
+			// The newest rounds of boots: as the checkout's boot summaries and the Derivations make them, and each boot's summary a file of the checkout.
+			const ofRounds = ofIndex("recent_rounds");
+			const rounds = expectedRounds(sources.runs, seriesV1, requestsV1, address);
+			problems.push(...rounds.problems);
+			if (rounds.rounds !== undefined) {
+				const found = difference(ofRounds.rounds, rounds.rounds, "/recent_rounds/rounds");
+				if (found !== null) problems.push(`${INDEX}: ${found}, as the boot summaries of the checkout and the Derivations make it`);
+			}
+			for (const words of ROUND_WORDS) if (typeof ofRounds.about !== "string" || !ofRounds.about.includes(words)) problems.push(`${INDEX}: recent_rounds.about does not say "${words}", which the rounds are held to`);
+			for (const round of (Array.isArray(ofRounds.rounds) ? ofRounds.rounds : []).filter(isObject)) {
+				for (const boot of (Array.isArray(round.by_boot) ? round.by_boot : []).filter(isObject)) link(INDEX, boot.boot_summary);
+			}
 			const ofEvidence = ofIndex("evidence");
 			if (ofEvidence.blob_url_template !== `${base}/blobs/sha256/{hex}`) {
 				problems.push(`${INDEX}: evidence.blob_url_template is ${show(ofEvidence.blob_url_template)}, not ${base}/blobs/sha256/{hex}`);
@@ -1101,6 +1134,145 @@ export function checkApi(sources: CheckSources): CheckResult {
 	}
 
 	return { problems, files: files.length, series: seriesFiles, months: monthFiles, runFiles: [...runFiles.values()].filter((file) => file !== null).length };
+}
+
+/** A start written yyyy-mm-ddThh:mm:ss.nnnnnnnnnZ, in nanoseconds since 1970 UTC; null when it is not so written or not a real time. */
+function nanosSince1970(time: unknown): bigint | null {
+	const match = typeof time === "string" ? /^([0-9]{4})-([0-9]{2})-([0-9]{2})T([0-9]{2}):([0-9]{2}):([0-9]{2})\.([0-9]{9})Z$/.exec(time) : null;
+	if (match === null) return null;
+	const [year, month, day, hour, minute, second] = match.slice(1, 7).map(Number) as [number, number, number, number, number, number];
+	const ms = Date.UTC(year, month - 1, day, hour, minute, second);
+	const back = new Date(ms);
+	const real = back.getUTCFullYear() === year && back.getUTCMonth() === month - 1 && back.getUTCDate() === day && back.getUTCHours() === hour && back.getUTCMinutes() === minute && back.getUTCSeconds() === second;
+	return real ? BigInt(ms) * 1_000_000n + BigInt(match[7] as string) : null;
+}
+
+/**
+ * The newest rounds of boots, by the design, from the checkout's boot
+ * summaries and the Derivations, never from the build: every boot summary
+ * read strictly, in order of its start then its path, a boot starting a new
+ * round when it started more than 40 minutes after the boot before it; the
+ * newest RECENT_ROUNDS, newest first. A boot's figures are its summary's (its
+ * Runs, failed builds and executions not run) and, for each Run it lists, its
+ * point's: failed when Method requests v1 does not count it, if requests v1
+ * derives its Series, else when series v1 does not; in no Series when no
+ * Method has a point of it. A round's figures are its boots' summed. The
+ * rounds are undefined, with a problem for each reason, when a summary cannot
+ * be read or does not give what a round needs, so that no comparison is made
+ * with rounds that cannot be told.
+ */
+function expectedRounds(runs: string, seriesV1: ReadonlyMap<string, SeriesDerivation>, requestsV1: ReadonlyMap<string, RequestsDerivation>, address: (path: string) => string): { rounds: Json[] | undefined; problems: string[] } {
+	const problems: string[] = [];
+	interface Boot {
+		path: string;
+		boot: string;
+		startedAt: string;
+		nanos: bigint;
+		instanceType: string | null;
+		runs: string[];
+		buildFailures: number;
+		notRun: number;
+	}
+	const boots: Boot[] = [];
+	for (const path of listFiles(join(runs, "boots")).map((name) => `boots/${name}`).filter((path) => BOOT_FILE.test(path))) {
+		const refused = (why: string): void => {
+			problems.push(`the boot summary ${path} in the checkout ${runs} ${why}, so the rounds of boots cannot be told from the checkout`);
+		};
+		let summary: unknown;
+		try {
+			summary = parseStrictJson(readFileSync(join(runs, ...path.split("/"))));
+		} catch (error) {
+			refused(`is not strict JSON (${error instanceof Error ? error.message : String(error)})`);
+			continue;
+		}
+		if (!isObject(summary) || summary.schema !== "ledgermath.boot/1") {
+			refused("is not a ledgermath.boot/1 file");
+			continue;
+		}
+		const nanos = nanosSince1970(summary.started_at);
+		const provider = isObject(summary.provider) ? summary.provider : undefined;
+		const instanceType = provider?.instance_type ?? null;
+		const listed = Array.isArray(summary.runs) ? summary.runs : undefined;
+		if (typeof summary.boot !== "string") refused("names no boot");
+		else if (nanos === null) refused(`started at ${show(summary.started_at)}, not a real time written yyyy-mm-ddThh:mm:ss.nnnnnnnnnZ`);
+		else if (provider === undefined || (instanceType !== null && typeof instanceType !== "string")) refused("gives no provider with an instance type, a string or none");
+		else if (listed === undefined || !listed.every((run) => isObject(run) && typeof run.id === "string")) refused("gives no list of Runs, each with its id");
+		else if (!Array.isArray(summary.build_failures) || !Array.isArray(summary.not_run)) refused("gives no list of failed builds or of executions not run");
+		else {
+			boots.push({
+				path,
+				boot: summary.boot,
+				startedAt: summary.started_at as string,
+				nanos,
+				instanceType: instanceType as string | null,
+				runs: listed.map((run) => (run as Json).id as string),
+				buildFailures: summary.build_failures.length,
+				notRun: summary.not_run.length,
+			});
+		}
+	}
+	if (problems.length > 0) return { rounds: undefined, problems };
+	boots.sort((a, b) => (a.nanos < b.nanos ? -1 : a.nanos > b.nanos ? 1 : byText(a.path, b.path)));
+	const byName = new Map<string, string>();
+	for (const boot of boots) {
+		const other = byName.get(boot.boot);
+		if (other !== undefined) problems.push(`the checkout ${runs} holds two summaries of boot ${boot.boot}: ${other} and ${boot.path}`);
+		byName.set(boot.boot, boot.path);
+	}
+	const rounds: Boot[][] = [];
+	boots.forEach((boot, i) => {
+		const before = boots[i - 1];
+		if (before === undefined || boot.nanos - before.nanos > ROUND_GAP_NS) rounds.push([boot]);
+		else (rounds[rounds.length - 1] as Boot[]).push(boot);
+	});
+
+	// Each Run's point: series v1 derives every Series and gives its boot; requests v1, where it derives the Series, says whether the Run counts.
+	const pointOf = new Map<string, { boot: string; counted: boolean }>();
+	for (const derivation of seriesV1.values()) for (const point of derivation.points) pointOf.set(point.run, { boot: point.boot, counted: point.counted });
+	const requestsCounted = new Map<string, boolean>();
+	for (const derivation of requestsV1.values()) for (const point of derivation.points) requestsCounted.set(point.run, point.counted);
+	const listedBy = new Map<string, string>();
+	const figures = (boot: Boot): Json => {
+		let failed = 0;
+		let inNoSeries = 0;
+		for (const run of boot.runs) {
+			const other = listedBy.get(run);
+			if (other !== undefined) problems.push(`Run ${run} is listed by two boot summaries of the checkout: ${other} and ${boot.path}`);
+			listedBy.set(run, boot.path);
+			const point = pointOf.get(run);
+			const counted = requestsCounted.has(run) ? requestsCounted.get(run) : point?.counted;
+			if (point !== undefined && point.boot !== boot.boot) problems.push(`the boot summary ${boot.path} lists Run ${run}, whose point is of boot ${point.boot}, not ${boot.boot}`);
+			if (counted === undefined) inNoSeries++;
+			else if (!counted) failed++;
+		}
+		return {
+			boot_summary: address(boot.path),
+			instance_type: boot.instanceType,
+			started_at: boot.startedAt,
+			runs: boot.runs.length,
+			failed_runs: failed,
+			runs_in_no_series: inNoSeries,
+			build_failures: boot.buildFailures,
+			not_run: boot.notRun,
+		};
+	};
+	const newest = rounds.slice(Math.max(rounds.length - RECENT_ROUNDS, 0)).reverse();
+	const out = newest.map((round) => {
+		const byBoot = round.map(figures);
+		const total = (key: string): number => byBoot.reduce((sum, boot) => sum + (boot[key] as number), 0);
+		return {
+			started_at: (round[0] as Boot).startedAt,
+			boots: round.length,
+			runs: total("runs"),
+			failed_runs: total("failed_runs"),
+			runs_in_no_series: total("runs_in_no_series"),
+			build_failures: total("build_failures"),
+			not_run: total("not_run"),
+			instance_types: round.map((boot) => boot.instanceType),
+			by_boot: byBoot,
+		};
+	});
+	return { rounds: out, problems };
 }
 
 /**

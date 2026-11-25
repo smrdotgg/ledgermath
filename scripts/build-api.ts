@@ -8,7 +8,8 @@
  *   --derivations FILE           Method series v1's Derivations (page/derivations.json)
  *   --requests-derivations FILE  Method requests v1's (page/requests-derivations.json)
  *   --runs DIR                   the Runs repository: its price files are copied into the
- *                                tree, and its boot summaries linked from each point
+ *                                tree, its boot summaries linked from each point, and the
+ *                                newest rounds of boots worked out from them
  *   --out DIR                    where the tree is written, laid out as it is served from
  *                                the host's root (DIR/v1/...); a new or empty directory
  *   --base URL                   the address the tree and the evidence are served from
@@ -28,7 +29,7 @@ import { parseArgs } from "node:util";
 
 import type { DerivationsFile as RequestsFile } from "../methods/requests/v1/output";
 import type { DerivationsFile as SeriesFile } from "../methods/v1/output";
-import { buildApi, DEFAULT_BASE, DEFAULT_DOCS, readApiSchemas, readBootSummaries, readDerivations, readPriceFiles } from "./lib/api";
+import { buildApi, DEFAULT_BASE, DEFAULT_DOCS, readApiSchemas, readBootFiles, readBootSummaries, readDerivations, readPriceFiles } from "./lib/api";
 
 const USAGE =
 	"usage: bun scripts/build-api.ts --derivations FILE --requests-derivations FILE --runs DIR --out DIR [--base URL] [--docs URL]";
@@ -60,6 +61,7 @@ function main(): void {
 		requests: readDerivations<RequestsFile>(values["requests-derivations"], "requests"),
 		prices: readPriceFiles(values.runs),
 		boots: readBootSummaries(values.runs),
+		bootFiles: readBootFiles(values.runs),
 		schemas: readApiSchemas(),
 	});
 	let bytes = 0;

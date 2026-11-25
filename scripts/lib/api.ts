@@ -1,9 +1,9 @@
 /**
  * The data API, version 1: a tree of small static JSON files cut from the
- * Derivations of Method series v1 and Method requests v1 and from the price
- * files, laid out as it is served from the API's host (ADR-0030):
+ * Derivations of Method series v1 and Method requests v1, the price files and
+ * the boot summaries, laid out as it is served from the API's host (ADR-0030):
  *
- *     v1/index.json                    the table of contents
+ *     v1/index.json                    the table of contents, and the newest rounds of boots
  *     v1/series.json                   one row per Series, and each Method's own words
  *     v1/series/<id>.json              one Series: each Method's summary, the newest Runs' points, its months
  *     v1/series/<id>/<yyyy-mm>.json    one month of a Series: every point of its Runs that started that month
@@ -12,10 +12,11 @@
  *
  * It is a re-cut, not a Method: every number is the Derivations' own, written
  * as they hold it, and nothing is computed but counts of points, the times of
- * a Series' (and a month's) oldest and newest Run, and each month file's
- * sha256 and size. Every address a reader needs is written in the files, under
- * one base address; the evidence (Run files, boot summaries, blobs) is linked
- * under the same base, never copied.
+ * a Series' (and a month's) oldest and newest Run, each month file's sha256
+ * and size, and the counts of the newest rounds of boots, from the boot
+ * summaries and the points (recentRounds()). Every address a reader needs is
+ * written in the files, under one base address; the evidence (Run files, boot
+ * summaries, blobs) is linked under the same base, never copied.
  *
  * What grows with a Series' Runs is in its month files, never in its Series
  * file: each Method's points and the entries of a pair of consecutive Runs
@@ -72,8 +73,12 @@ export const NEWEST_RUNS = 12;
  * every file of a kind gains, the spelling of a value. Such a change may
  * change the bytes of any file without one of the four causes MONTH_CONTRACT
  * gives, and for a given layout nothing else may. Editing a schema's words
- * does not change it; neither do the data. tests/api-golden.test.ts fails on
- * any change to the bytes the build writes, and says so.
+ * does not change it; neither do the data. Nor does a field v1/index.json
+ * alone gains (recent_rounds, 2026-11-24): the table of contents changes with
+ * the data at every update and no promise covers its bytes, the four causes
+ * being a month file's, and no other file's bytes change with it.
+ * tests/api-golden.test.ts fails on any change to the bytes the build writes,
+ * and says so.
  *
  * The runs workflow compares each tree with the one before only when both are
  * of one layout; a tree of a new layout is compared with nothing until a
@@ -82,6 +87,27 @@ export const NEWEST_RUNS = 12;
  * may be missing from it.
  */
 export const LAYOUT = 1;
+
+/**
+ * How many of the newest rounds of boots v1/index.json gives (recent_rounds):
+ * two days at four rounds a day, so the last whole day is there even while
+ * the newest round is still arriving, and the home page's three.
+ */
+export const RECENT_ROUNDS = 8;
+
+/**
+ * A boot starts a new round when it started more than this many minutes after
+ * the boot before it, in order of start (recentRounds()). The schedule starts
+ * a round's boots ten minutes apart and its rounds six hours apart, and starts
+ * no scheduled boot more than ten minutes late, so a round stays whole with
+ * two machine types in a row refused a boot, or one refused and the next as
+ * late as a boot may start (about 31 minutes between two boots); rounds never
+ * merge; and the boots started by hand 47 minutes before the round of
+ * 2026-11-11 22:11 UTC stay a round of their own. Measured from the boot
+ * before, not from the round's first boot: from the first boot, those boots
+ * by hand would have taken the round's first two boots.
+ */
+export const ROUND_GAP_MINUTES = 40;
 
 /** Each kind of file's schema: its name in the tree, and where it is kept in this repository (kept in scripts/lib/api-schemas.ts, which the stack imports too). */
 export { API_SCHEMAS };
@@ -125,7 +151,7 @@ export const VERSIONING =
 export const FIGURES =
 	"Every number is exactly as the Methods' Derivations hold it: nothing is rounded, and nothing is computed that the Derivations do not hold, " +
 	"apart from counts of a Series' Runs (in all, in a month, counted and not), the start times of its oldest and newest Run (in all, in a month), taken from its points, " +
-	"and each month file's sha256 and size in bytes. " +
+	"each month file's sha256 and size in bytes, and the counts of each of the newest rounds of boots (recent_rounds), taken from the boot summaries and the points. " +
 	"A duration is in nanoseconds of the Run's clock unless its field's name says otherwise; a moment is a UTC time, to the nanosecond, as the Run records it.";
 export const ABOUT =
 	"LedgerMath runs small benchmarks on real AWS machines several times a day and keeps every execution as a Run. A Series is the Runs of one benchmark, " +
@@ -160,6 +186,20 @@ export const MONTHS =
 	"(through's counts rise by exactly what the late Runs it pools add, and not at all when none of them is counted), " +
 	"and the pair entry of the Run right after it then comes from the late Run; " +
 	"(d) the Method's block appears, under its key, in every month file of the Series.";
+/** What a round of boots is, and what each of its figures counts, in the API's own words: v1/index.json's recent_rounds.about. */
+export const ROUNDS =
+	"A round is the boots that belong together in time, worked out from the boot summaries alone, so the same boot summaries always give the same rounds: " +
+	`the boots in order of their start, a boot starting a new round when it started more than ${ROUND_GAP_MINUTES} minutes after the boot before it. ` +
+	"LedgerMath boots each of its machine types a few minutes apart, several times a day, each boot a fresh machine that leaves a Run for each execution it runs: " +
+	"a round is normally one of those times, with a boot for each machine type booted then, and a boot started by hand away from them is a round of its own. " +
+	`rounds holds the newest ${RECENT_ROUNDS}, newest first. Each gives when its first boot started, how many boots it holds and their instance types, ` +
+	"how many Runs they left (the Runs their summaries list), how many of those are failed and how many are in no Series, how many builds failed and how many executions were not run, " +
+	"in all and by boot, with the address of each boot's summary, which lists each of them. " +
+	"A Run is failed when it is not counted by Method requests v1, for a Run of a Series that Method derives (a Series of requests), or by Method series v1, for a Run of any other Series: " +
+	"so a Run of requests that exited 4, a request having failed, is failed only when requests v1 does not count it, though series v1 does not count it either way, " +
+	"and the failed Runs are the points with counted false in their Series' month files, under that Method, as its failed_runs in each Series' file counts them. " +
+	"A Run in no Series has no Run file in the evidence, or one no Method could read. " +
+	"A boot is here once its summary is, which it writes when it ends: the newest round may gain boots at a later update.";
 export const EVIDENCE =
 	"The evidence is served under the same address as the API: each point links its Run file (evidence), at runs/<yyyy>/<mm>/<dd>/<id>.json, " +
 	"and its boot's summary (boot_summary), at boots/<yyyy>/<mm>/<dd>/<boot>.json. A Run file names its binary, streams and dumps by hash, sha256:<hex>; " +
@@ -172,6 +212,12 @@ export interface PriceSource {
 	bytes: Uint8Array;
 }
 
+export interface BootFile {
+	/** boots/<yyyy>/<mm>/<dd>/<boot>.json */
+	path: string;
+	bytes: Uint8Array;
+}
+
 export interface ApiSources {
 	/** The address the tree is served from, without a final slash. */
 	base: string;
@@ -179,8 +225,10 @@ export interface ApiSources {
 	series: SeriesFile;
 	requests: RequestsFile;
 	prices: readonly PriceSource[];
-	/** Each boot summary in the Runs repository, by boot id: its path. */
+	/** Each boot summary in the Runs repository, by boot id: its path, which each point links. */
 	boots: ReadonlyMap<string, string>;
+	/** Each boot summary in the Runs repository, as its bytes: what the rounds of boots are worked out from (recentRounds()). */
+	bootFiles: readonly BootFile[];
 	/** Each schema's bytes, by name. */
 	schemas: ReadonlyMap<SchemaName, Uint8Array>;
 }
@@ -231,6 +279,18 @@ export function readBootSummaries(runs: string): Map<string, string> {
 		boots.set(id, path);
 	}
 	return boots;
+}
+
+/** Every boot summary in a Runs repository checkout, as its bytes, in path order: each file under boots/ of a boot summary's path. */
+export function readBootFiles(runs: string): BootFile[] {
+	const directory = join(runs, "boots");
+	if (!existsSync(directory)) return [];
+	return readdirSync(directory, { recursive: true, withFileTypes: true })
+		.filter((entry) => entry.isFile())
+		.map((entry) => relative(runs, join(entry.parentPath, entry.name)).split(sep).join("/"))
+		.filter((path) => BOOT_PATH.test(path))
+		.sort(compareText)
+		.map((path) => ({ path, bytes: new Uint8Array(readFileSync(join(runs, path))) }));
 }
 
 /** The schemas, as this repository keeps them. */
@@ -380,14 +440,172 @@ interface MonthEntry {
 	bytes: number;
 }
 
+/** One boot of a round, as v1/index.json gives it. */
+interface RoundBoot {
+	boot_summary: string;
+	instance_type: string | null;
+	started_at: string;
+	runs: number;
+	failed_runs: number;
+	runs_in_no_series: number;
+	build_failures: number;
+	not_run: number;
+}
+
+/** One round of boots, as v1/index.json gives it: its figures in all, each the sum of its boots'. */
+interface Round {
+	started_at: string;
+	boots: number;
+	runs: number;
+	failed_runs: number;
+	runs_in_no_series: number;
+	build_failures: number;
+	not_run: number;
+	instance_types: Array<string | null>;
+	by_boot: RoundBoot[];
+}
+
+/** What a round needs of a boot summary. */
+interface BootFacts {
+	path: string;
+	boot: string;
+	started_at: string;
+	instance_type: string | null;
+	/** The ids of the Runs it lists. */
+	runs: string[];
+	build_failures: number;
+	not_run: number;
+}
+
+const BOOT_SCHEMA = "ledgermath.boot/1";
+
+/** A start as the runner writes it (STARTED_AT), in nanoseconds since 1970 UTC; throws on one that is not a real time. */
+function nanosOf(startedAt: string, what: string): bigint {
+	const seconds = startedAt.slice(0, 19);
+	const ms = Date.parse(`${seconds}Z`);
+	if (!Number.isFinite(ms) || new Date(ms).toISOString().slice(0, 19) !== seconds) throw new Error(`${what} started at ${startedAt}, which is not a real time`);
+	return BigInt(ms) * 1_000_000n + BigInt(startedAt.slice(20, 29));
+}
+
+/** What a round needs of a boot summary, read from its bytes as strictly as its strictest reader would; throws, naming it, on one the runner would not have written. */
+function readBoot(file: BootFile): BootFacts {
+	const refused = (why: string): Error => new Error(`the boot summary ${file.path} ${why}: it is not a summary as the runner writes one, so the rounds of boots cannot be told`);
+	if (!BOOT_PATH.test(file.path)) throw new Error(`${file.path} is not a boot summary's path, boots/<yyyy>/<mm>/<dd>/<boot>.json`);
+	let value: unknown;
+	try {
+		value = parseStrictJson(file.bytes);
+	} catch (error) {
+		throw refused(`cannot be read (${error instanceof Error ? error.message : String(error)})`);
+	}
+	if (!isJson(value) || value.schema !== BOOT_SCHEMA) throw refused(`is not a ${BOOT_SCHEMA} file`);
+	const { boot, started_at: startedAt, provider, runs, build_failures: buildFailures, not_run: notRun } = value;
+	if (typeof boot !== "string") throw refused("names no boot");
+	if (typeof startedAt !== "string" || !STARTED_AT.test(startedAt)) throw refused("gives no start written yyyy-mm-ddThh:mm:ss.nnnnnnnnnZ");
+	nanosOf(startedAt, `the boot of ${file.path}`);
+	if (!isJson(provider)) throw refused("gives no provider");
+	const instanceType = provider.instance_type ?? null;
+	if (instanceType !== null && typeof instanceType !== "string") throw refused("gives an instance type that is not a string");
+	if (!Array.isArray(runs) || !runs.every((run) => isJson(run) && typeof run.id === "string")) throw refused("gives no list of Runs, each with its id");
+	if (!Array.isArray(buildFailures) || !Array.isArray(notRun)) throw refused("gives no list of failed builds or of executions not run");
+	return { path: file.path, boot, started_at: startedAt, instance_type: instanceType, runs: runs.map((run) => (run as Json).id as string), build_failures: buildFailures.length, not_run: notRun.length };
+}
+
+/**
+ * The newest RECENT_ROUNDS rounds of boots, newest first (v1/index.json's
+ * recent_rounds, whose words are ROUNDS). A round is worked out from the boot
+ * summaries alone, never from the schedule nor a clock: the boots in order of
+ * start (then path), a boot starting a new round when it started more than
+ * ROUND_GAP_MINUTES after the boot before it, to the nanosecond. Each boot's
+ * figures are its summary's (the Runs, failed builds and executions not run
+ * it lists) and, for each Run it lists, its point's: failed when requests v1
+ * does not count it, for a Run of a Series requests v1 derives, or series v1,
+ * for any other; in no Series when series v1, which derives every Series, has
+ * no point of it. A round's figures are its boots' summed. Every boot summary
+ * must be readable (readBoot()); throws, besides, on two summaries of one
+ * path or one boot, on a Run listed twice, and on a Run whose point is of
+ * another boot than the summary listing it.
+ */
+function recentRounds(files: readonly BootFile[], series: ReadonlyMap<string, SeriesDerivation>, requests: ReadonlyMap<string, RequestsDerivation>, at: (path: string) => string): Round[] {
+	const boots = files.map(readBoot).sort((a, b) => compareText(a.started_at, b.started_at) || compareText(a.path, b.path));
+	const paths = new Set<string>();
+	const named = new Map<string, string>();
+	for (const boot of boots) {
+		if (paths.has(boot.path)) throw new Error(`the boot summary ${boot.path} is given twice`);
+		paths.add(boot.path);
+		const other = named.get(boot.boot);
+		if (other !== undefined) throw new Error(`two boot summaries name boot ${boot.boot}: ${other} and ${boot.path}`);
+		named.set(boot.boot, boot.path);
+	}
+	const gap = BigInt(ROUND_GAP_MINUTES) * 60_000_000_000n;
+	const rounds: BootFacts[][] = [];
+	let previous: bigint | undefined;
+	for (const boot of boots) {
+		const start = nanosOf(boot.started_at, `the boot of ${boot.path}`);
+		if (previous === undefined || start - previous > gap) rounds.push([]);
+		(rounds[rounds.length - 1] as BootFacts[]).push(boot);
+		previous = start;
+	}
+
+	const points = new Map<string, { boot: string; counted: boolean }>();
+	for (const derivation of series.values()) for (const point of derivation.points) points.set(point.run, { boot: point.boot, counted: point.counted });
+	const countedByRequests = new Map<string, boolean>();
+	for (const derivation of requests.values()) for (const point of derivation.points) countedByRequests.set(point.run, point.counted);
+	const listedBy = new Map<string, string>();
+	const ofBoot = (boot: BootFacts): RoundBoot => {
+		let failed = 0;
+		let none = 0;
+		for (const run of boot.runs) {
+			const other = listedBy.get(run);
+			if (other !== undefined) throw new Error(`Run ${run} is listed by two boot summaries: ${other} and ${boot.path}`);
+			listedBy.set(run, boot.path);
+			const point = points.get(run);
+			if (point === undefined) {
+				none++;
+				continue;
+			}
+			if (point.boot !== boot.boot) throw new Error(`the boot summary ${boot.path} lists Run ${run}, whose point in series v1's Derivations is of boot ${point.boot}, not ${boot.boot}`);
+			if (!(countedByRequests.get(run) ?? point.counted)) failed++;
+		}
+		return {
+			boot_summary: at(boot.path),
+			instance_type: boot.instance_type,
+			started_at: boot.started_at,
+			runs: boot.runs.length,
+			failed_runs: failed,
+			runs_in_no_series: none,
+			build_failures: boot.build_failures,
+			not_run: boot.not_run,
+		};
+	};
+	return rounds
+		.slice(-RECENT_ROUNDS)
+		.reverse()
+		.map((round) => {
+			const byBoot = round.map(ofBoot);
+			const sum = (key: "runs" | "failed_runs" | "runs_in_no_series" | "build_failures" | "not_run"): number => byBoot.reduce((total, boot) => total + boot[key], 0);
+			return {
+				started_at: (round[0] as BootFacts).started_at,
+				boots: round.length,
+				runs: sum("runs"),
+				failed_runs: sum("failed_runs"),
+				runs_in_no_series: sum("runs_in_no_series"),
+				build_failures: sum("build_failures"),
+				not_run: sum("not_run"),
+				instance_types: byBoot.map((boot) => boot.instance_type),
+				by_boot: byBoot,
+			};
+		});
+}
+
 /**
  * Builds the tree: every file's bytes by its path from the root of the host,
  * in path order. Throws on Derivations that do not hold together: a Series id
  * that is not one, a Series twice, a Series of requests that series v1 does
  * not have, the two Methods citing different Runs for one Series, a point
  * that is not its Run, Runs out of time order, a price file's path or date
- * twice; and on Derivations whose lists of Runs the tree leaves out could not
- * be recovered from it (recoverable(), asOfRun()).
+ * twice; on Derivations whose lists of Runs the tree leaves out could not
+ * be recovered from it (recoverable(), asOfRun()); and on boot summaries the
+ * rounds of boots cannot be told from (recentRounds()).
  */
 export function buildApi(sources: ApiSources): Map<string, Uint8Array> {
 	const base = normalizeBase(sources.base);
@@ -630,6 +848,8 @@ export function buildApi(sources: ApiSources): Map<string, Uint8Array> {
 		files.set(schemaPath(name), bytes);
 	}
 
+	const rounds = recentRounds(sources.bootFiles, series, requests, at);
+
 	files.set(
 		INDEX_PATH,
 		apiJson({
@@ -643,6 +863,7 @@ export function buildApi(sources: ApiSources): Map<string, Uint8Array> {
 			layout: LAYOUT,
 			docs: sources.docs,
 			newest_run_started_at: newest,
+			recent_rounds: { about: ROUNDS, rounds },
 			series: {
 				url: at(LIST_PATH),
 				schema_url: at(schemaPath("series-list")),

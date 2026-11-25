@@ -16,7 +16,8 @@
  *   failed request: a Series of both Methods.
  * - runs/2026/11/14/not-a-run.json: a Run file each Method lists as unreadable.
  * - boots/2026/11/12/boot-2026-11-12.json: the summary of the first day's boot
- *   only, so some points link a boot summary and the others none.
+ *   only, so some points link a boot summary and the others none; it lists
+ *   that boot's Runs, and is the one round of boots of the table of contents.
  *
  * With `nextMonth`, a Run more of memory_read and of http_get, each on
  * 2026-12-01 and made after every other Run (so no other Run's id changes):
@@ -78,10 +79,11 @@ import { dirname, join } from "node:path";
 
 import * as requests from "../methods/requests/v1";
 import type { DerivationsFile as RequestsFile } from "../methods/requests/v1/output";
-import type { RunFile } from "../methods/run";
+import type { Run, RunFile } from "../methods/run";
 import * as series from "../methods/v1";
 import type { DerivationsFile as SeriesFile } from "../methods/v1/output";
 import { HandMade, paramsOf, rampRequests, requestRun, S3_FIXTURES } from "./hand-made-requests";
+import { bootSummaryText } from "./hand-made-runs";
 import { SAMPLE_FILE } from "./prices-fixtures";
 
 export interface ApiFixture {
@@ -230,7 +232,15 @@ export async function makeApiFixture(
 	};
 	for (const file of made.files) put(file.path, `${JSON.stringify(file.record, null, 2)}\n`);
 	put(unreadablePath, unreadableBytes);
-	put("boots/2026/11/12/boot-2026-11-12.json", `${JSON.stringify({ schema: "ledgermath.boot/1", boot: "boot-2026-11-12" }, null, 2)}\n`);
+	put(
+		"boots/2026/11/12/boot-2026-11-12.json",
+		bootSummaryText({
+			boot: "boot-2026-11-12",
+			startedAt: "2026-11-12T04:11:00.000000000Z",
+			endedAt: "2026-11-12T22:21:00.000000000Z",
+			runs: made.files.map((file) => file.record as Run).filter((record) => record.boot === "boot-2026-11-12"),
+		}),
+	);
 	for (const day of ["11", "12"]) {
 		mkdirSync(join(runs, "prices", "2026", "11", day), { recursive: true });
 		copyFileSync(SAMPLE_FILE, join(runs, "prices", "2026", "11", day, "aws.json"));
