@@ -17,7 +17,7 @@ import { dirname, join } from "node:path";
 
 import type { DerivationsFile as RequestsFile } from "../methods/requests/v1/output";
 import type { DerivationsFile as SeriesFile } from "../methods/v1/output";
-import { buildApi, DEFAULT_BASE, readApiSchemas, readBootSummaries, readPriceFiles } from "../scripts/lib/api";
+import { buildApi, DEFAULT_BASE, readApiSchemas, readBootFiles, readBootSummaries, readPriceFiles } from "../scripts/lib/api";
 import type { Fetch } from "../scripts/lib/ledger-data";
 
 /** The docs' address the fixtures' trees give. */
@@ -32,6 +32,7 @@ export function writeTree(directory: string, series: SeriesFile, requests: Reque
 		requests,
 		prices: readPriceFiles(directory),
 		boots: readBootSummaries(directory),
+		bootFiles: readBootFiles(directory),
 		schemas: readApiSchemas(),
 	});
 	for (const [path, bytes] of tree) {

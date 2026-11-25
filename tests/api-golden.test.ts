@@ -10,7 +10,9 @@
  *
  * To change the bytes on purpose, raise LAYOUT in scripts/lib/api.ts when
  * the build now writes the files otherwise (not when only the fixture's data
- * changed), write the copies anew and review their diff:
+ * changed, nor when only v1/index.json gains a field or words: it changes
+ * with the data at every update, and no promise covers its bytes), write the
+ * copies anew and review their diff:
  *     LEDGERMATH_WRITE_GOLDEN=1 bun test tests/api-golden.test.ts
  * The test's failure says the same.
  */
@@ -19,7 +21,7 @@ import { expect, setDefaultTimeout, test } from "bun:test";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
 
-import { API_SCHEMAS, buildApi, DEFAULT_BASE, LAYOUT, priceDate, readApiSchemas, readBootSummaries, readPriceFiles } from "../scripts/lib/api";
+import { API_SCHEMAS, buildApi, DEFAULT_BASE, LAYOUT, priceDate, readApiSchemas, readBootFiles, readBootSummaries, readPriceFiles } from "../scripts/lib/api";
 import { makeApiFixture } from "./api-fixtures";
 
 setDefaultTimeout(60_000);
@@ -46,6 +48,7 @@ test("every file the build writes from the small fixture is, byte for byte, its 
 		requests: fixture.requests,
 		prices,
 		boots: readBootSummaries(fixture.runs),
+		bootFiles: readBootFiles(fixture.runs),
 		schemas: readApiSchemas(),
 	});
 
@@ -95,6 +98,7 @@ const CHOICE = [
 	"Choose one:",
 	`- The build now writes the files otherwise on purpose (a schema's properties reordered, a field every file of a kind gains, other white space or spelling): raise LAYOUT in scripts/lib/api.ts by one (it is ${LAYOUT}), so that no reader or check takes the new bytes for one of the four causes a month file changes for; then write the copies anew and review their diff. The runs workflow then compares the next tree with nothing until the maintainer starts it by hand with the input new_baseline.`,
 	"- Only the fixture's data changed (tests/api-fixtures.ts, or what a Method derives from it), not how the build writes them: write the copies anew without raising LAYOUT, and review their diff.",
+	"- Only v1/index.json changed, by a field it alone gains or by its words: write the copies anew without raising LAYOUT, and review their diff. The table of contents changes with the data at every update, no promise covers its bytes (the four causes are a month file's), and no other file's bytes changed.",
 	"- Neither: the change to the bytes is a mistake.",
 	"Write the copies anew with: LEDGERMATH_WRITE_GOLDEN=1 bun test tests/api-golden.test.ts",
 ].join("\n");

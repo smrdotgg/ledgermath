@@ -15,7 +15,7 @@ import { dirname, join } from "node:path";
 
 import type { DerivationsFile as RequestsFile } from "../methods/requests/v1/output";
 import type { DerivationsFile as SeriesFile } from "../methods/v1/output";
-import { type ApiSources, apiJson, buildApi, DEFAULT_BASE, monthPath, readApiSchemas, readBootSummaries, readPriceFiles, seriesPath } from "../scripts/lib/api";
+import { type ApiSources, apiJson, buildApi, DEFAULT_BASE, monthPath, readApiSchemas, readBootFiles, readBootSummaries, readPriceFiles, seriesPath } from "../scripts/lib/api";
 import { checkApi, checkStability } from "../scripts/lib/api-check";
 import { type ApiFixture, makeApiFixture } from "./api-fixtures";
 
@@ -33,6 +33,7 @@ function sourcesOf(fixture: { series: SeriesFile; requests: RequestsFile; runs: 
 		requests: structuredClone(fixture.requests),
 		prices: readPriceFiles(fixture.runs),
 		boots: readBootSummaries(fixture.runs),
+		bootFiles: readBootFiles(fixture.runs),
 		schemas: readApiSchemas(),
 	};
 }

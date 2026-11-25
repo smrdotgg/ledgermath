@@ -29,6 +29,7 @@ import {
 	monthPath,
 	NEWEST_RUNS,
 	readApiSchemas,
+	readBootFiles,
 	readBootSummaries,
 	readDerivations,
 	readPriceFiles,
@@ -45,6 +46,9 @@ const ROOT = join(import.meta.dir, "..");
 
 type Json = Record<string, any>;
 
+/** The address of a summary of the fixture's second day's boot that arrives (cause (b)): of a shape the API serves, as a point's link must be. */
+const ARRIVING = "boots/2026/11/13/2e3f4a5b-6c7d-4e8f-9a0b-1c2d3e4f5a6b.json";
+
 function sourcesOf(fixture: { series: SeriesFile; requests: RequestsFile; runs: string }, boots?: Map<string, string>): ApiSources {
 	return {
 		base: DEFAULT_BASE,
@@ -53,6 +57,7 @@ function sourcesOf(fixture: { series: SeriesFile; requests: RequestsFile; runs: 
 		requests: structuredClone(fixture.requests),
 		prices: readPriceFiles(fixture.runs),
 		boots: boots ?? readBootSummaries(fixture.runs),
+		bootFiles: readBootFiles(fixture.runs),
 		schemas: readApiSchemas(),
 	};
 }
@@ -259,8 +264,9 @@ describe("a month file's bytes change only for the four causes", () => {
 	});
 
 	test("(b) a boot summary that was missing arriving turns its points' boot_summary from null into its address, and changes nothing else", () => {
+		// A summary of the second day's boot, at an address of a served shape (a point links no other).
 		const boots = new Map(readBootSummaries(fixture.runs));
-		boots.set("boot-2026-11-13", "boots/2026/11/13/boot-2026-11-13.json");
+		boots.set("boot-2026-11-13", ARRIVING);
 		const later = buildApi(sourcesOf(fixture, boots));
 		const runsOfBoot = (id: string, key = "series_v1"): string[] => (json(tree, monthPath(id, "2026-11")).derivations[key].points as Json[]).filter((point) => point.boot === "boot-2026-11-13").map((point) => point.run);
 		expect(changed(tree, later)).toEqual([monthPath(fixture.memory, "2026-11"), monthPath(fixture.http, "2026-11")].sort());
@@ -455,7 +461,7 @@ describe("the check against the tree before (--previous)", () => {
 			),
 		]);
 		const boots = new Map(readBootSummaries(fixture.runs));
-		boots.set("boot-2026-11-13", "boots/2026/11/13/boot-2026-11-13.json");
+		boots.set("boot-2026-11-13", ARRIVING);
 		const arrived = writeTree(buildApi(sourcesOf(fixture, boots)));
 		const memory = monthPath(fixture.memory, "2026-11");
 		expect(checkStability(directory, arrived).problems).toEqual([]);

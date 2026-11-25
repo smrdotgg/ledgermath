@@ -77,6 +77,10 @@ _Avoid_: job, deployment, config
 One boot of the Machine Target Instance bound to the role that runs the binary, launched fresh or rebooted if kept and preceded by any launch attempts it took, during which every Station due there gets one Run.
 _Avoid_: session, batch
 
+**Round**:
+The Visits (boots) that belong together in time, worked out from their boot summaries alone: in order of start, a boot starts a new round when it started more than 40 minutes after the boot before it. Normally one of the schedule's boot times, with a boot for each Machine booted then; a boot started by hand away from them is a round of its own. What "the latest runs" means.
+_Avoid_: batch, wave, cycle, sweep, run (for the group)
+
 **Artifact**:
 The exact binary that ran, identified forever by the hash of its bytes, with build records attached. Two builds that yield identical bytes are the same Artifact.
 _Avoid_: script, build (as a noun for the binary)

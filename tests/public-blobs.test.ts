@@ -1019,11 +1019,11 @@ describe("the shapes of key served", () => {
 		expect(runs).toBeGreaterThan(10);
 		expect(boots).toBeGreaterThan(3);
 		expect(blobs).toBeGreaterThan(10);
-		// Every address the golden tree links, its own files and the evidence, is of a served shape, but two the test
+		// Every address the golden tree links, its own files and the evidence, is of a served shape, but one the test
 		// fixture makes up and no box writes: not-a-run.json, a file in runs/ whose name is no Run id, which the tree lists
-		// as unreadable with its evidence link, and a boot summary named boot-2026-11-12, where a box names it by the
-		// kernel's boot id, a UUID (as all 197 of the Runs repository's were on 2026-11-21). Neither is served: only what
-		// the boxes write is.
+		// as unreadable with its evidence link. It is not served: only what the boxes write is. No boot summary address the
+		// tree gives is unserved: a point links, and a round lists, only a summary of a served shape (the fixture's
+		// unknown.json is listed as left out, by its path, with no address).
 		const golden = join(import.meta.dir, "api-golden");
 		const unserved = new Set<string>();
 		let links = 0;
@@ -1034,7 +1034,7 @@ describe("the shapes of key served", () => {
 				links++;
 			}
 		}
-		expect([...unserved].sort()).toEqual(["boots/2026/11/12/boot-2026-11-12.json", "runs/2026/11/14/not-a-run.json"]);
+		expect([...unserved].sort()).toEqual(["runs/2026/11/14/not-a-run.json"]);
 		expect(readFileSync(join(golden, "v1", "series.json"), "utf8")).toContain('"evidence":"https://api.ledgermath.com/runs/2026/11/14/not-a-run.json"');
 		expect(links).toBeGreaterThan(20);
 	});
