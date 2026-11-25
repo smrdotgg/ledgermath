@@ -204,8 +204,9 @@ list of labels, an object (`group:` or `labels:`), the word `self-hosted`, any o
 and a job with no `runs-on` that is not a call to a reusable workflow in
 `.github/workflows/` of this repository (whose jobs it checks too).
 
-When a pull request from a fork runs `check`, or `site` (it touches `site/`), its jobs get a
-read-only token and none of the repository's secrets, and `site` skips its deploy jobs
+When a pull request from a fork runs `check`, or `site` (it changes `site/` or
+`.github/workflows/site.yml`), its jobs get a read-only GitHub token and none of the
+repository's secrets, and `site` runs only its `build` job, skipping both deploy jobs
 ("Where it is deployed"). `runs` and `prices` never run for a pull request.
 
 ## The daily box: a `-runs` stage
@@ -3490,8 +3491,11 @@ Why that is enough:
   whose turn comes late reads the same bucket and deploys the same page again, which is
   harmless. No job asks whether its tree is the newest: there are no run ids, no artifact
   ids and no reading of GitHub's record of runs (a test holds that none creeps back).
-- **The sources never go back.** The `site` job checks out main inside the group, and
-  `deploy-production` deploys its commit only while it is main's site.
+- **The sources catch up.** The `site` job checks out main when its turn starts, and
+  `deploy-production` checks then that its commit is still main's site. Neither checks
+  again before it uploads, so a job can deploy the site of the commit before main moved;
+  the job the newer commit starts, or the next `site` job, waits its turn and deploys after
+  it (below).
 
 What it does not cover:
 
@@ -3526,18 +3530,25 @@ turn came after C's deploy, so after C was on main, which checks out C.
 
 So the page reaches production in two ways, and both go through the group:
 
-- **After every publish**, the `runs` workflow's `site` job: four times a day, and when
-  `runs.yml` is run by hand on main. It takes main's site as it is when its turn comes.
+- **After every publish that succeeds**, the `runs` workflow's `site` job (publishes are
+  scheduled four times a day), and when `runs.yml` is run by hand on main. When its turn
+  comes, it checks out main as it is then.
 - **After a push to main that touches `site/` or `site.yml`**, `site.yml`'s
-  `deploy-production`, and when `site.yml` is run by hand on main. It deploys its own
-  commit's site, and only while that is still main's site (`site/deploy/fresh.ts`).
+  `deploy-production`, and when `site.yml` is run by hand on main. When its turn comes, it
+  checks with `site/deploy/fresh.ts` that main has not moved on in the site's files since
+  its commit, and skips the deploy if it has.
 
-They never deploy at once, and neither cancels the other: one waits in the group while the
-other runs. Each reads the bucket when its turn comes, so the last deploy to run has the
-newest tree, and neither deploys a site main has left. A push to main that touches neither
-`site/` nor `site.yml` (`scripts/read-api-tree.ts`, say) starts no deploy, and reaches
-ledgermath.com with the next publish's rebuild, within six hours, or sooner by hand
-(below).
+The group gives one thing: the jobs run one at a time, so their uploads never overlap, and
+none is cancelled. Each job checks main once, when its turn starts, and not again before it
+uploads. If main moves on in between, the job deploys the site of the commit before. The
+push that moved main, if it touched `site/` or `site.yml`, started its own
+`deploy-production`, which waits its turn and then puts the newer site up; otherwise the
+next `site` job does. Each job reads the bucket
+when its turn comes, so the last deploy to run has the newest tree the bucket held when it
+read it. A change to main outside `site/` and `site.yml` (`scripts/read-api-tree.ts`, say)
+starts no deploy. It reaches ledgermath.com with the next rebuild that succeeds: rebuilds
+follow the publishes, which are scheduled every six hours, and GitHub may start a scheduled
+run late. To deploy it sooner, deploy by hand (below).
 
 **Reading the bucket.** `bun scripts/read-api-tree.ts --bucket NAME --out DIR` starts at
 `v1/index.json` and reads only the keys the table of contents' links give for the files the
@@ -3638,9 +3649,11 @@ directory, and runs `vercel deploy --prebuilt` on it. The Vercel CLI is pinned i
   pull request gets AWS credentials either: only `deploy-production`, on main, asks for an
   OIDC token, and the role trusts main alone (`infra/runs/github-role.ts`).
 
-So a pull request from a fork gets no credential of any kind, and a pull request from a
-branch of this repository gets the Vercel token in its preview's deploy step, and never the
-AWS role.
+So a pull request from a fork runs only the `build` job, with a read-only GitHub token and
+no repository secret: no AWS credential and no Vercel token. `deploy-production` never runs
+for a pull request, and `deploy-preview` runs only when the pull request's head is a branch
+of this repository. Such a pull request gets the Vercel token in its preview's deploy step,
+and never the AWS role.
 
 The job writes the deployment's URL to the run's summary. Preview URLs need a Vercel login
 (the project's Vercel Authentication covers every deployment URL; only the custom domain is
