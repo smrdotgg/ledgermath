@@ -157,11 +157,11 @@
         "count": { "description": "How many requests the figures are of: those of the set that succeeded and had this phase.", "type": "integer", "minimum": 0 },
         "min": { "description": "The least of their times, in nanoseconds, exactly.", "type": "number" },
         "max": { "description": "The greatest of their times, in nanoseconds, exactly.", "type": "number" },
-        "p50": { "description": "The 50th percentile of their times, in nanoseconds; null when count is under 2, too few to support it.", "$ref": "#/$defs/number_or_null" },
-        "p90": { "description": "The 90th percentile of their times, in nanoseconds; null when count is under 10, too few to support it.", "$ref": "#/$defs/number_or_null" },
-        "p95": { "description": "The 95th percentile of their times, in nanoseconds; null when count is under 20, too few to support it.", "$ref": "#/$defs/number_or_null" },
-        "p99": { "description": "The 99th percentile of their times, in nanoseconds; null when count is under 100, too few to support it.", "$ref": "#/$defs/number_or_null" },
-        "p99.9": { "description": "The 99.9th percentile of their times, in nanoseconds; null when count is under 1000, too few to support it.", "$ref": "#/$defs/number_or_null" },
+        "p50": { "description": "The 50th percentile of their times, in nanoseconds; null when count is under 2, too few to support it. In one Run's own statistics, interpolated between its sorted times; in pooled statistics, read from the summed histogram, within 1/128 of the exact percentile.", "$ref": "#/$defs/number_or_null" },
+        "p90": { "description": "The 90th percentile of their times, in nanoseconds; null when count is under 10, too few to support it. In one Run's own statistics, interpolated between its sorted times; in pooled statistics, read from the summed histogram, within 1/128 of the exact percentile.", "$ref": "#/$defs/number_or_null" },
+        "p95": { "description": "The 95th percentile of their times, in nanoseconds; null when count is under 20, too few to support it. In one Run's own statistics, interpolated between its sorted times; in pooled statistics, read from the summed histogram, within 1/128 of the exact percentile.", "$ref": "#/$defs/number_or_null" },
+        "p99": { "description": "The 99th percentile of their times, in nanoseconds; null when count is under 100, too few to support it. In one Run's own statistics, interpolated between its sorted times; in pooled statistics, read from the summed histogram, within 1/128 of the exact percentile.", "$ref": "#/$defs/number_or_null" },
+        "p99.9": { "description": "The 99.9th percentile of their times, in nanoseconds; null when count is under 1000, too few to support it. In one Run's own statistics, interpolated between its sorted times; in pooled statistics, read from the summed histogram, within 1/128 of the exact percentile.", "$ref": "#/$defs/number_or_null" },
         "at_or_above": { "$ref": "#/$defs/at_or_above" }
       }
     },
@@ -191,7 +191,7 @@
       }
     },
     "failure_count": {
-      "description": "Failed requests of one kind: where (phase) and what kind of failure, and how many.",
+      "description": "Failures of one kind: where (phase), what kind, and how many. Under failures they are requests that failed; under setups_failed they are setups of a kept connection that failed outside any sample, whose phase and kind are their connection_failed event's phase and error.",
       "type": "object",
       "required": ["phase", "kind", "count"],
       "properties": {
@@ -245,8 +245,8 @@
               "type": "object",
               "required": ["phase", "kind"],
               "properties": {
-                "phase": { "description": "Where the warmup request failed: request_failed.phase; response for a complete response whose status is not 2xx; record for a request one of whose lines the binary withheld.", "type": "string" },
-                "kind": { "description": "What kind of failure: request_failed.error; status_<code>; line_withheld_<event> or line_withheld for a request one of whose lines the binary withheld.", "type": "string" }
+                "phase": { "description": "Where the warmup request failed, read as a counted request's failure is: its certificate events, and a withheld certificate line (its withheld_event the string certificate), are set aside first; then it is record when the binary withheld any other of its lines; otherwise request_failed.phase, or response for a complete response whose status is not 2xx.", "type": "string" },
+                "kind": { "description": "What kind of failure, read in the same order: for record, line_withheld_<event> from the first withheld line in stream order that is not a certificate's, when it names the event it replaced as a word of a-z, 0-9 and _ starting with a letter, and line_withheld when it does not; otherwise request_failed.error, or status_<code>.", "type": "string" }
               }
             },
             { "type": "null" }

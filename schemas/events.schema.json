@@ -35,7 +35,7 @@
             "minimum": 0
           },
           "quick": {
-            "description": "True for a developer's trial stream, from the binary's quick mode, which is never recorded.",
+            "description": "True for a developer's trial stream, from the binary's quick mode. The scheduled box never asks for quick mode; a runner told to run quick passes it on and still writes the Run, but no Method counts a Run whose stream says quick: true.",
             "type": "boolean"
           }
         },
@@ -50,7 +50,7 @@
         "properties": {
           "event": true,
           "t": true,
-          "values": { "description": "What the benchmark observed of its own work, by key: the counterparts of its parameters, as it documents them, never a value it was told. bytes_per_repetition, when it is among them, is what bytes per second are derived from.", "type": "object" }
+          "values": { "description": "What the benchmark observed of its own run, by key, as the benchmark documents them: the counterparts of its parameters, and whatever else it records of the run (http_get's include the cost of a clock read, how many responses had each status, how many lines it withheld, and why it ended early). Never a value merely read back from its environment. bytes_per_repetition, when present, is what bytes per second are derived from.", "type": "object" }
         },
         "additionalProperties": false
       }
@@ -64,7 +64,7 @@
           "event": true,
           "t": true,
           "sample": { "description": "The sample's number: from 0, in stream order.", "type": "integer", "minimum": 0 },
-          "warmup": { "description": "True for a warmup sample: printed and tagged, never dropped, and never counted.", "type": "boolean" },
+          "warmup": { "description": "True for a warmup sample: printed and tagged, never dropped, and not a counted sample, so neither one of the LM_SAMPLES samples the stream must hold nor among the samples a Method takes times from. A benchmark's own counts in its observed values may include it: http_get's requests_made does.", "type": "boolean" },
           "repetitions": { "description": "How many repetitions of the measured work lie between the sample's two edges, 1 or more.", "type": "integer", "minimum": 1 }
         },
         "additionalProperties": false

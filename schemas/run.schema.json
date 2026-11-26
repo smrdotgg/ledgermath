@@ -90,8 +90,8 @@
       "description": "The provider's own words for where this ran, verbatim. `name` says whose words they are; the other keys are that provider's.",
       "type": "object",
       "required": ["name"],
-      "properties": { "name": { "description": "Whose words the other keys are: aws; or unknown, with no other key, when the box could not read its instance metadata.", "type": "string" } },
-      "additionalProperties": { "description": "One of the provider's own keys, verbatim; null when the provider gave no value for it. For aws: instance_type, region, availability_zone, availability_zone_id, image_id and instance_id, as the instance metadata service gives them.", "anyOf": [{ "type": "string" }, { "type": "null" }] }
+      "properties": { "name": { "description": "Whose words the other keys' values are: aws; or unknown, with no other key, when the box could not read its instance ID from the instance metadata service.", "type": "string" } },
+      "additionalProperties": { "description": "One fact of where the binary ran: the key is LedgerMath's name for it, the value the provider's words, verbatim; null when the box could not read that value. For aws, read from the instance metadata service: instance_type, region, availability_zone, availability_zone_id, image_id (the service's ami-id) and instance_id.", "anyOf": [{ "type": "string" }, { "type": "null" }] }
     },
     "environment": {
       "description": "The box's environment dump taken just before the launch and just after the exit. Each names an index blob that lists the dump's sections by hash.",
@@ -115,7 +115,7 @@
           "additionalProperties": false,
           "required": ["code"],
           "properties": {
-            "code": { "description": "The binary's exit code, when it exited by itself: 0 when it completed.", "type": "integer", "minimum": 0 },
+            "code": { "description": "The binary's exit status, when it exited by itself rather than being killed by a signal. 0 means it completed. Any other code means what the benchmark says it means, and does not by itself mean the binary stopped short: http_get exits 4 after finishing its stream when a request failed (a status that is not 2xx among them), a kept connection could not be set up, or the Run ended early; and a binary exits 2 after printing started alone when it cannot run its parameter set. Method series v1 counts a Run only when its code is 0; Method requests v1 accepts 4 as well.", "type": "integer", "minimum": 0 },
             "runner_signal": { "$ref": "#/$defs/runner_signal" }
           }
         },
@@ -132,7 +132,7 @@
       ]
     },
     "events": {
-      "description": "Carried only by Runs written before the runner stopped copying stdout into the Run (they have no `stdout_bytes`): every line the binary printed to stdout, parsed, in order, stopping at the first line that is not a JSON object. Later Runs do not carry it. For every Run the `stdout` blob is the source of its events (schemas/events.schema.json, one per line), and every reader reads them there; for a Run that carries `events`, they must equal the blob's lines.",
+      "description": "Carried only by Runs written before the runner stopped copying stdout into the Run (they have no `stdout_bytes`): every line the binary printed to stdout, parsed, in order, stopping at the first line that is not a JSON object. Later Runs do not carry it. For every Run the `stdout` blob is the source of its events (one per line, each of the shape the events schema gives, which the data API serves at v1/schemas/events.schema.json), and every reader reads them there; for a Run that carries `events`, they must equal the blob's lines.",
       "type": "array",
       "items": {
         "type": "object",
@@ -153,7 +153,7 @@
         "message": { "description": "Why it could not be parsed: not JSON, with the parser's error, or not a JSON object.", "type": "string" }
       }
     },
-    "stdout": { "description": "The binary's stdout, verbatim: one event per line (schemas/events.schema.json). The source of the Run's events for every Run.", "$ref": "#/$defs/hash" },
+    "stdout": { "description": "The binary's stdout, verbatim: one event per line, each of the shape the events schema gives, which the data API serves at v1/schemas/events.schema.json. The source of the Run's events for every Run.", "$ref": "#/$defs/hash" },
     "stdout_bytes": { "description": "The length of the stdout blob, in bytes. Written, with `stdout_lines`, by every Run since the runner stopped copying stdout into the Run; such a Run carries no `events`.", "type": "integer", "minimum": 0 },
     "stdout_lines": {
       "description": "The number of lines in the stdout blob: the pieces between newlines, a last line without one counted too. Written with `stdout_bytes`.",
