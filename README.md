@@ -21,7 +21,7 @@ as the base the build started from (last section).
 | `benchmarks/<name>/` | One benchmark on the stream: its source, a `README.md` (what it measures, its parameters and observed values, how it differs from July's), and a `Makefile` (`make BUILD=static`, `BUILD=dynamic`, `make -s compiler`, `make -s resolved`). All thirteen: `memory_read`, `compressed_memory_read`, `memory_read_random`, `memory_write`, `syscall`, `hash`, `sort`, `tcp_echo`, `mutex`, `disk_read_random`, `disk_read_io_uring`, `disk_read_sequential`, `disk_write` |
 | `schedule.json` | The targets (instance types, their zone, the times of day each boots) and what a box runs: benchmarks, builds, samples, timeout, parameter sets, and the instance types an entry is for. Checked by `infra/runs/schedule.ts` |
 | `runner/` | The box side: `box.sh` (user-data), `provision.py` (prepares the disks at boot and records it), `fixture.c` (writes a disk Fixture), `aws-lc-archive.sh` (fetches and checks the TLS library's source for `http_get`'s build), `run.py` (builds, runs, dumps, gives a Service's inputs to the entries that name it, writes Runs), `cpuid.c` |
-| `schemas/` | `run.schema.json` (the Run), `events.schema.json` (one line of the stream) and `prices.schema.json` (a price file); `api/v1/`, the data API's files (section "The data API") |
+| `schemas/` | `run.schema.json` (the Run), `events.schema.json` (one line of the stream) and `prices.schema.json` (a price file); `api/v1/`, the data API's files (section "The data API"). Every field of every one has a description |
 | `scripts/check-events.py` | Checks a stream's order; needs only Python 3 |
 | `scripts/check-runs.ts` | Checks a directory laid out like the bucket: schemas, every hash, every stream read from its stdout blob, runner manifests |
 | `scripts/check-disk-runs.ts` | Checks that every disk Run in such a directory found the disk it declares, that its evidence adds up, and that its dump bears it out |
@@ -50,7 +50,7 @@ as the base the build started from (last section).
 | `third-party/` | glibc 2.34's `COPYING.LIB` and `LICENSES`, and `sources.lock.json`, the third-party source packages kept in the bucket beside the binaries |
 | `scripts/publish-third-party-source.ts` | Puts the source packages `third-party/sources.lock.json` names into the bucket, create-only, and reads every one back to check its bytes (`scripts/lib/s3-create.ts` sends its conditional PUT, which `scripts/lib/sigv4.ts` signs) |
 | `docs/runs-repository/` | The Runs repository's `README.md` and `LICENSE` (CC BY 4.0), kept here and copied there |
-| `tests/` | `bun test`: the schemas against sample Runs, the Run checker, the schedule's check, the runner's timeout and stop races and its instance-type filtering, the dump's sections, the disk provisioning's decisions, the disk Fixture and the binaries' checks of it, the launch schedules, which account each stage deploys to and which one is scheduled, that SST stops before acting on another account, launch and reap logic, the box's and the workflow's roles, the Method (and that the move to the production account starts no group), the copy job, the bucket copy against a stand-in for S3, the page, the data API's files and their check, the alarm and the workflows, and the price fetch, cut, schema and recompute check on excerpts of AWS's files (`tests/samples/prices/`) |
+| `tests/` | `bun test`: the schemas against sample Runs, the Run checker, the schedule's check, the runner's timeout and stop races and its instance-type filtering, the dump's sections, the disk provisioning's decisions, the disk Fixture and the binaries' checks of it, the launch schedules, which account each stage deploys to and which one is scheduled, that SST stops before acting on another account, launch and reap logic, the box's and the workflow's roles, the Method (and that the move to the production account starts no group), the copy job, the bucket copy against a stand-in for S3, the page, the data API's files and their check, the alarm and the workflows, the price fetch, cut, schema and recompute check on excerpts of AWS's files (`tests/samples/prices/`), and that every field of every schema has a description (`tests/schema-descriptions.test.ts`) |
 
 ## A benchmark, locally
 
@@ -3097,6 +3097,15 @@ address is `--base`, so a private or test address can stand in.
   file, AWS's own words and identifiers), and fails on any such reference. One remains,
   known: `docs`, the README's section on GitHub, which can be followed once the repository
   is public.
+- **Every field has words.** Every schema under `schemas/` has a title and a description,
+  and so does every field it declares, wherever it sits (under an array's elements, a branch
+  of `anyOf`, `oneOf` or `allOf`, `then` or `else`, or a definition in `$defs`): each member
+  of `properties` and `patternProperties`, and `additionalProperties` when it is a schema.
+  A field's words are its own, or, when it has none, those of the definition its `$ref`
+  names. `tests/schema-descriptions.test.ts` finds the schemas by directory and fails naming
+  every field without words, so a reference made from the schemas has no empty cell. A
+  change to a schema's words alone needs no new baseline: the gate compares month files,
+  not schemas (`tests/api-gate.test.ts`), and the next publish serves the new words.
 - **`v1` only ever gains fields.** The API's own schemas forbid no member they do not list, so
   a field added later fails no older reader; a change that would break one is a `v2` beside
   `v1`. The price files are the exception: each is the Runs repository's, byte for byte, and
