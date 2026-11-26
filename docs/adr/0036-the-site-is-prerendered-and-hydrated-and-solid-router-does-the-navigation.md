@@ -33,10 +33,21 @@ Until this change, https://ledgermath.com was static HTML and nothing else: each
 
 ## Measured
 
-On 2026-11-26, on a 2-vCPU cloud machine (an Intel Xeon at 2.9 GHz, headless, no GPU), with `site/scripts/measure-navigation.ts`, 30 clicks per browser, alternating between `/` and `/docs/`, on the built site served locally: no click made a request or loaded a document. From the click to the next frame, to `/docs/` the medians were 14 ms in Chromium, 6 in Firefox and 14 in WebKit (at most 18, 11 and 15); to `/`, whose table is most of the site's markup, 17, 22 and 19 ms (at most 31, 33 and 28). Most of that is building the home page's two thousand elements and their layout on that machine. The same clicks as ordinary navigations to `https://ledgermath.com`, the site before this change, took 55 to 97 ms (medians) to the new page's first paint, up to 198 ms, with three requests each. The first load is as before in what it shows and when: the script adds about 45 KB compressed, fetched in parallel with the stylesheet and the font, and has run, with the page hydrated, by DOMContentLoaded.
+On 2026-11-26, on a 2-vCPU cloud machine (an Intel Xeon at 2.9 GHz, headless, no GPU), with `site/scripts/measure-navigation.ts`, 30 clicks per browser, alternating between `/` and `/docs/`, on the built site served locally and on this change's Vercel preview: no click made a request or loaded a document. From the click to the next frame (medians, then the slowest):
+
+| | Chromium | Firefox | WebKit |
+|---|---|---|---|
+| to `/docs/`, local | 14 ms, 15 | 6 ms, 13 | 14 ms, 18 |
+| to `/docs/`, preview | 15 ms, 136 (one click; the next slowest 18) | 7 ms, 10 | 13 ms, 24 |
+| to `/`, local | 17 ms, 27 | 26 ms, 45 | 21 ms, 35 |
+| to `/`, preview | 17 ms, 24 | 28 ms, 44 | 28 ms, 43 |
+
+The site workflow's runner, in Chromium: 13 ms to `/docs/`, 15 to `/`. A click to `/`, whose table is most of the site's markup, costs more than a frame on that machine in Firefox and WebKit: it is the home page's two thousand elements being built and laid out. With Chromium's CPU slowed four times, as a slower phone would be: 24 ms to `/docs/` (at most 79) and 90 ms to `/` (at most 133). The same clicks as ordinary navigations to `https://ledgermath.com`, the site before this change, took 55 to 97 ms (medians, by browser and direction) to the new page's first paint, up to 198 ms, with three requests each; with the CPU slowed four times, 111 and 120 ms, up to 205.
+
+The first load is as before in what it shows and when. On the preview, in Chromium, it transferred 9.6 KB of HTML, 2.2 KB of CSS, the 28.7 KB font and the 45.3 KB script; the page first painted at 276 ms, held back by the font as before, and the application had taken over by DOMContentLoaded, 22 ms later (in Firefox, 50 ms later; in WebKit before the first paint).
 
 ## What is not instant, or not as a page load would be
 
-- **A click before the script has run** is an ordinary navigation: on a slow connection, the first second or so after the page appears.
-- **A click to the home page** takes a frame or two on a slow machine, as above: the page is built in the browser.
+- **A click before the script has run** is an ordinary navigation: tens of milliseconds after the first paint on a good connection, longer on a slow one, which fetches the 45 KB script.
+- **A click to the home page** takes one or two frames on a slow machine, and about 90 ms on a phone-class CPU (above): the page is built in the browser, with no request, from its two thousand elements. Making it cheaper means a lighter home page or keeping a page's elements alive between visits, which the router does not do; neither is attempted here. A click to `/docs/` stays within a frame or two even then.
 - **A click to a place on another page** (`/#numbers` from `/docs/`, or from `/?napkin`, which is another address) scrolls there, but the keyboard focus starts at the top of the page (from `/?napkin`, it stays on the link), not at the place, where a page load would start it.

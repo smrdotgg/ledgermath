@@ -3537,12 +3537,13 @@ leave an open tab asking for a file that is gone.
 Chromium, Firefox and WebKit, against a built directory or an address: from the click to
 the changed page and to the next frame, the requests it made, and the first load's bytes and
 paint. Measured on 2026-11-26 on a 2-vCPU cloud machine (an Intel Xeon at 2.9 GHz, headless,
-no GPU), 15 clicks each way per browser, served locally: a click from `/` to `/docs/` reached
-the next frame in a median of 14 ms in Chromium, 6 in Firefox and 14 in WebKit (at most 18,
-11 and 15), and a click to `/`, whose table is most of the site's markup, in 17, 22 and 19 ms
-(at most 31, 33 and 28); no click made a request. The same clicks on the site as it was
-before, as ordinary navigations to `https://ledgermath.com`, took 55 to 97 ms (medians) to
-the new page's first paint, up to 198 ms, with three requests each.
+no GPU), 15 clicks each way per browser, locally and on a Vercel preview: a click from `/` to
+`/docs/` reached the next frame in a median of 6 to 15 ms, and a click to `/`, whose table is
+most of the site's markup, in 17 to 28 ms (at most 45), and no click made a request; with
+Chromium's CPU slowed four times, as a slower phone would be, 24 and 90 ms. The same clicks on
+the site as it was before, as ordinary navigations to `https://ledgermath.com`, took 55 to 97
+ms (medians) to the new page's first paint, up to 198 ms, with three requests each (ADR-0036
+has the figures by browser).
 
 **Feature flags.** A flag is a part of a page that is in its HTML but hidden. A page names
 its flags in `site/src/pages.text.ts` (`flags`); with `?NAME` in the page's address, the

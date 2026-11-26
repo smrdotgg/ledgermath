@@ -53,8 +53,7 @@ jobs:
   build:
     name: type-check, build and check the site
     runs-on: ubuntu-24.04
-    # The browser checks take a few minutes on a runner, Chromium's install included.
-    timeout-minutes: 20
+    timeout-minutes: 10
     defaults:
       run:
         working-directory: site
