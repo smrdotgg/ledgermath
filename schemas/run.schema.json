@@ -115,7 +115,7 @@
           "additionalProperties": false,
           "required": ["code"],
           "properties": {
-            "code": { "description": "The binary's exit status, when it exited by itself rather than being killed by a signal. 0 means it completed. Each benchmark defines what its other codes mean, and its documentation lists them; a non-zero code does not by itself mean the binary stopped short (http_get exits 4 only after printing its whole stream, finished included). Method series v1 counts a Run only when its code is 0; Method requests v1 accepts 4 as well, subject to its other checks.", "type": "integer", "minimum": 0 },
+            "code": { "description": "The binary's exit status, when it exited by itself rather than being killed by a signal. 0 means it completed. Each benchmark defines what its other codes mean; a non-zero code does not by itself mean the binary stopped short (http_get exits 4 only after printing its whole stream, finished included). Method series v1 counts a Run only when its code is 0; Method requests v1 accepts 4 as well, subject to its other checks.", "type": "integer", "minimum": 0 },
             "runner_signal": { "$ref": "#/$defs/runner_signal" }
           }
         },
@@ -132,7 +132,7 @@
       ]
     },
     "events": {
-      "description": "Carried only by Runs written before the runner stopped copying stdout into the Run (they have no `stdout_bytes`): the JSON objects parsed from the binary's stdout lines, in order, up to and not including the first line that is not JSON or not a JSON object, which `events_error` then names. Later Runs do not carry it. For every Run the `stdout` blob is the source of its events, and every reader reads them there, parsed the same way; for a Run that carries `events`, they must equal the events read from the blob, line for line.",
+      "description": "Carried only by Runs written before the runner stopped copying stdout into the Run (they have no `stdout_bytes`): the JSON objects parsed from the binary's stdout lines, in order, up to and not including the first line the runner that wrote the Run could not parse as a JSON object, which `events_error` then names. Later Runs do not carry it. For every Run the `stdout` blob is the source of its events, and every reader reads them there, parsed the same way; for a Run that carries `events`, they must equal the events read from the blob, line for line.",
       "type": "array",
       "items": {
         "type": "object",
@@ -153,7 +153,7 @@
         "message": { "description": "Why it could not be parsed: not JSON, with the parser's error, or not a JSON object.", "type": "string" }
       }
     },
-    "stdout": { "description": "The binary's stdout, exactly as it printed it, stored before anything checks it. Each line is meant to be one event, of the shape the events schema gives (the data API serves it at v1/schemas/events.schema.json), and a Method counts a Run only when every line is; a line may fail that, or not be JSON at all. The source of the Run's events for every Run.", "$ref": "#/$defs/hash" },
+    "stdout": { "description": "The binary's stdout, exactly as it printed it. Each line is meant to be one event, of the shape the events schema gives (the data API serves it at v1/schemas/events.schema.json), and a Method counts a Run only when every line is; a line may fail that, or not be JSON at all. The source of the Run's events for every Run.", "$ref": "#/$defs/hash" },
     "stdout_bytes": { "description": "The length of the stdout blob, in bytes. Written, with `stdout_lines`, by every Run since the runner stopped copying stdout into the Run; such a Run carries no `events`.", "type": "integer", "minimum": 0 },
     "stdout_lines": {
       "description": "The number of lines in the stdout blob: the pieces between newlines, a last line without one counted too. Written with `stdout_bytes`.",
