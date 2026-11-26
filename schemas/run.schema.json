@@ -35,7 +35,7 @@
     },
     "started_at": { "description": "Read just before the binary was launched.", "$ref": "#/$defs/time" },
     "ended_at": { "description": "Read just after the binary exited.", "$ref": "#/$defs/time" },
-    "benchmark": { "description": "The benchmark's directory name under benchmarks/.", "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
+    "benchmark": { "description": "The benchmark's name, as the schedule entry gives it. The binary was built from the directory of that name under benchmarks in the source archive (source), a git archive of source_commit.", "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
     "params": {
       "description": "Exactly the parameters delivered to the binary, as LM_PARAM_<KEY>.",
       "type": "object",
@@ -87,7 +87,7 @@
       }
     },
     "provider": {
-      "description": "The provider's own words for where this ran, verbatim. `name` says whose words they are; the other keys are that provider's.",
+      "description": "Where this ran, in the provider's own words: under LedgerMath's names for them, each value is the provider's, verbatim, or null when the box could not read it. `name` says whose words the values are.",
       "type": "object",
       "required": ["name"],
       "properties": { "name": { "description": "Whose words the other keys' values are: aws; or unknown, with no other key, when the box could not read its instance ID from the instance metadata service.", "type": "string" } },
@@ -104,7 +104,7 @@
       }
     },
     "runner": {
-      "description": "The runner that launched the binary: a blob listing every file of runner/ with its hash.",
+      "description": "The runner that launched the binary: a blob listing every file of the directory named runner in the source archive (source), one line each, its sha256 in hex, two spaces and its path within that directory, sorted by path, leaving out any directory named build or __pycache__.",
       "$ref": "#/$defs/hash"
     },
     "exit": {

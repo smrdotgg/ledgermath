@@ -409,8 +409,8 @@
       "type": "object",
       "required": ["phase", "kind", "count"],
       "properties": {
-        "phase": { "description": "request_failed.phase; response for a complete response whose status is not 2xx; record for a request one of whose lines the binary withheld (a withheld certificate line, its withheld_event the string certificate, is aside, like a certificate event, and no failure).", "type": "string" },
-        "kind": { "description": "request_failed.error; status_<code>; for a request with withheld lines, from the first of them in stream order that is not a certificate's: line_withheld_<event> when it names the event it replaced as a word of a-z, 0-9 and _ starting with a letter, and line_withheld when it does not.", "type": "string" },
+        "phase": { "description": "For a request that failed: record when the binary withheld one of its lines (a withheld certificate line, its withheld_event the string certificate, is set aside first, like a certificate event, and is no failure); otherwise request_failed.phase, or response for a complete response whose status is not 2xx. For a setup of a kept connection that failed (setups_failed): the phase its connection_failed event gives.", "type": "string" },
+        "kind": { "description": "For a request that failed: for record, from the first withheld line in stream order that is not a certificate's, line_withheld_<event> when it names the event it replaced as a word of a-z, 0-9 and _ starting with a letter, and line_withheld when it does not; otherwise request_failed.error, or status_<code>. For a setup of a kept connection that failed (setups_failed): the error its connection_failed event gives.", "type": "string" },
         "count": { "description": "How many failed in that phase with that kind of failure, 1 or more.", "type": "integer", "minimum": 1 }
       }
     },

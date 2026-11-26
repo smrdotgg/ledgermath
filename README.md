@@ -64,7 +64,9 @@ LM_PARAM_SIZE_BYTES=1073741824 LM_PARAM_THREADS=all LM_PARAM_PATH=avx2 LM_SAMPLE
   ./benchmarks/memory_read/build/static/memory_read
 ```
 
-`--quick` is a developer mode (small buffer, three samples); its stream is never recorded.
+`--quick` is a developer mode (small buffer, three samples). The scheduled box never passes
+it; `runner/run.py --quick` passes it to every binary and still writes their Runs, but no
+Method counts a Run whose stream says `quick: true`.
 Every benchmark directory works the same way; its `README.md` lists its `LM_PARAM_*`
 variables, and `schedule.json` the values a box gives them.
 
