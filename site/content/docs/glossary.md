@@ -2,11 +2,11 @@
 
 The words a reader of LedgerMath's data API meets, each defined in a sentence or two as the built system uses it, with where the reader meets it.
 
-Where the API's own published text defines a word, the entry gives the same definition and says where that text is; the published text is the authority. Field names are in `code`. A file's address written in `code`, such as `v1/series.json` or `runs/<yyyy>/<mm>/<dd>/<id>.json`, is relative to `https://api.ledgermath.com/`.
+Where the API's own published text defines a word, the entry gives the same definition and says where that text is; the published text is the authority, and an entry that summarises a rule says so. Field names are in `code`. A file's address written in `code`, such as `v1/series.json` or `runs/<yyyy>/<mm>/<dd>/<id>.json`, is relative to `https://api.ledgermath.com/`.
 
 ## at_or_above
 
-Beside each percentile Method `requests` v1 reports, how many requests are ranked at or above it: for n requests, n − ⌈h⌉, ties counted by rank (`definitions.support`). It is absent for a percentile that is not reported. Met in: every phase's statistics in [Series files](/docs/api/series) and [month files](/docs/api/series-month).
+Beside each percentile Method `requests` v1 reports, how many of the n requests it is taken over are ranked at or above it. With the n times sorted and ranked from 0, the q-th per-mille percentile (q = 990 for the 99th) lies at rank h = (n − 1) × q / 1000, and n − ⌈h⌉ requests are ranked at or above it, ties counted by rank (`definitions.support`). It is absent for a percentile that is not reported. Met in: every phase's statistics in [Series files](/docs/api/series) and [month files](/docs/api/series-month).
 
 ## Availability Zone ID
 
@@ -14,11 +14,11 @@ AWS's identifier of an Availability Zone, such as `use2-az3`, as the box reads i
 
 ## benchmark
 
-A program LedgerMath builds and runs on a box, named by a lower-case word such as `memory_read` or `http_get`. A Run names its benchmark (`benchmark`). Each benchmark is described on a page of its own, such as [memory_read](/docs/benchmarks/memory_read), and its Series are listed at `v1/benchmarks/<benchmark>.json`. Met in: every Series' identity; [benchmark lists](/docs/api/benchmark-list).
+A program LedgerMath builds and runs on a box, named in lower case, such as `memory_read` or `http_get`. A Run names its benchmark (`benchmark`). Each benchmark is described on a page of its own, such as [memory_read](/docs/benchmarks/memory_read). Every Series of every benchmark is listed in `v1/series.json`; a benchmark's list, `v1/benchmarks/<benchmark>.json`, holds as many of them as fit its budget. Met in: every Series' identity; [benchmark lists](/docs/api/benchmark-list).
 
 ## benchmark's list
 
-`v1/benchmarks/<benchmark>.json`: one benchmark's rows of the list of every Series, the same byte for byte when both files are of one update. Its address is the table of contents' `benchmarks.benchmark_file_url_template` with the benchmark's name in place of `{benchmark}`. Met in: [benchmark list](/docs/api/benchmark-list).
+`v1/benchmarks/<benchmark>.json`: one benchmark's rows of the list of every Series, the same byte for byte when both files are of one update. It holds as many rows as fit its budget and counts the rest (`left_out`); a benchmark whose name is not 1 to 64 characters, a lower-case letter, then lower-case letters, digits and underscores, has no list. `v1/series.json` holds every Series. Its address is the table of contents' `benchmarks.benchmark_file_url_template` with the benchmark's name in place of `{benchmark}`. Met in: [benchmark list](/docs/api/benchmark-list); `benchmarks.about` in the table of contents.
 
 ## blob
 
@@ -26,7 +26,7 @@ Bytes stored once and named by their SHA-256, written `sha256:<hex>`. A Run name
 
 ## boot
 
-One fresh launch of an EC2 instance of one instance type. The box builds the benchmarks it is to run, runs each execution LedgerMath's schedule names for its instance type, leaving one Run each, writes its boot summary, and shuts down, which terminates the instance. A boot's id (`boot`) is the kernel's boot id, the same in every Run of the boot. Met in: `boot` and `boot_summary` on every point; `boots` in each Series file and row.
+One fresh launch of an EC2 instance of one instance type. The box builds the benchmarks it is to run and runs each execution LedgerMath's schedule names for its instance type, writing a Run for each execution that started; it then writes its boot summary and shuts down, which terminates the instance. An execution that never started has no Run: its build failed, its binary could not be started, its Service's inputs could not be had, or the boot was told to stop first. The boot summary accounts for each. A boot's id (`boot`) is the kernel's boot id, the same in every Run of the boot. Met in: `boot` and `boot_summary` on every point; `boots` in each Series file and row.
 
 ## boot summary
 
@@ -34,23 +34,23 @@ The file a boot writes as it ends, at `boots/<yyyy>/<mm>/<dd>/<boot>.json`, date
 
 ## breakdown
 
-In Method `requests` v1, the pooled figures again for the requests that had each value of a request fact, for every fact that took more than one value in the pool (`by`). Met in: each pool in [Series files](/docs/api/series).
+In Method `requests` v1, the pooled figures again for the requests that had each value of a request fact, for every fact that took more than one value among the pool's succeeded requests (`by`). Built from succeeded requests only. Met in: each pool in [Series files](/docs/api/series).
 
 ## build
 
-A named way of building a benchmark, such as `static` or `dynamic` (`build`, the Run's `binary.build`). The box builds each benchmark from source at every boot, once for each of its builds, and the bytes that ran are kept as a blob (`binary.blob`). The build is part of a Series' key, so two builds of one benchmark are two Series. Met in: every Series' identity.
+A named way of building a benchmark, such as `static` or `dynamic` (`build`, the Run's `binary.build`). The box builds a benchmark from source at each boot that runs it, once for each of its builds, and the bytes that ran are kept as a blob (`binary.blob`). The build is part of a Series' key, so two builds of one benchmark are two Series. Met in: every Series' identity.
 
 ## bytes per second
 
-Method `series` v1's second number per Run: "Per Run, where the benchmark observed bytes_per_repetition: bytes_per_repetition × 10^9 / the Run's time per repetition in nanoseconds." (`definitions.bytes_per_second`). Null when the Run is not counted or the benchmark observed no bytes per repetition. Met in: `bytes_per_second` on points and in percentiles; [Methods](/docs/methods).
+Method `series` v1's second number per Run: "Per Run, where the benchmark observed bytes_per_repetition: bytes_per_repetition × 10^9 / the Run's time per repetition in nanoseconds." (`definitions.bytes_per_second`). A point's `bytes_per_second` is null when the Run is not counted, when the benchmark observed no bytes per repetition, or when the quotient is infinite. Met in: `bytes_per_second` on points and in percentiles; [Methods](/docs/methods).
 
 ## counted Run
 
-A Run a Method uses in its figures. Each Method decides by its own rule, published as its `definitions.counted`. Method `series` v1 counts a Run whose binary exited 0 and whose stream passes the events schema and the order rules with exactly the samples the Run asked for; Method `requests` v1 also accepts exit code 4 and checks each request. One Run can be counted by one Method and failed by the other. Met in: `counted` on every point; `counted_runs`; [Methods](/docs/methods).
+A Run a Method uses in its figures. Each Method decides by its own rule, published in full as its `definitions.counted`. In outline: Method `series` v1 requires exit code 0 and a stream that passes the events schema and the order rules with exactly the samples the Run asked for; Method `requests` v1 also accepts exit code 4, and requires every sample to read as one request. One Run can be counted by one Method and failed by the other. Met in: `counted` on every point; `counted_runs`; [Methods](/docs/methods).
 
 ## Derivation
 
-What a Method derives from one Series' Runs: every number it gives for that Series, naming the Method and its version and resting on Runs each cited by id, path and sha256. Each Method's Derivation of a Series is under `derivations.<method name>_v<version>`: summarised in the Series' row, given in full in the Series file, with its points in the month files. Met in: [Series files](/docs/api/series).
+What a Method derives from one Series' Runs: every number it gives for that Series, naming the Method and its version and resting on Runs each cited by id, path and sha256. Each Method's Derivation of a Series is under `derivations.<method name>_v<version>`: summarised in the Series' row, given in the Series file but for its points and the lists of Runs behind each figure, and its points in the month files. Met in: [Series files](/docs/api/series).
 
 ## differed
 
@@ -74,11 +74,11 @@ The records behind the numbers, served under the API's address and linked, never
 
 ## exit code
 
-How a Run's binary ended, in the Run's `exit`: its exit `code`, or the `signal` that ended it, with `timeout_seconds` when the runner killed it for running that long. 0 means the binary completed; any other code means what the benchmark says it means. Method `series` v1 counts a Run only with code 0; Method `requests` v1 accepts 4 as well. Met in: [Run files](/docs/api/run); `exit_code` on `requests` v1 points.
+How a Run's binary ended, in the Run's `exit`: its exit `code`, or the `signal` that ended it, with `timeout_seconds` when the runner killed it for running that long. 0 means the binary completed; any other code means what the benchmark says it means, and does not by itself mean the binary stopped short. Method `series` v1 counts a Run only with code 0; Method `requests` v1 accepts 4 as well. Met in: [Run files](/docs/api/run); `exit_code` on `requests` v1 points.
 
 ## failed request
 
-In Method `requests` v1, a counted request that holds a `request_failed`, whose status is not 2xx, or one of whose lines the binary withheld. It is counted by phase and kind (`failures`) and never timed. Met in: [Methods](/docs/methods).
+In Method `requests` v1, a counted request that failed. Its certificate events and any withheld certificate line are set aside first; it then failed when the binary withheld any other of its lines (phase `record`), when it holds a `request_failed`, or when its complete response's status is not 2xx (phase `response`). `definitions.failed` gives the rule in full. A failed request is counted by phase and kind (`failures`) and never timed. Met in: [Methods](/docs/methods).
 
 ## failed Run
 
@@ -86,7 +86,7 @@ A Run a Method does not count. It is still shown: its point has `counted: false`
 
 ## Fixture
 
-Data a benchmark reads that is written in a known pattern, so that the benchmark can check what it read: the files the disk benchmarks read, made on the box at every boot, and the S3 objects `http_get` fetches. Met in: Method `requests` v1's `definitions.succeeded` ("its body matched the Fixture").
+Data a benchmark reads that is written in a known pattern, so that the benchmark can check what it read: the files the disk benchmarks read, which the box makes at boot, and the S3 objects `http_get` fetches. Met in: Method `requests` v1's `definitions.succeeded` ("its body matched the Fixture").
 
 ## group
 
@@ -122,7 +122,7 @@ In Method `series` v1, a value measured or assigned anew at every boot, removed 
 
 ## Method
 
-A versioned procedure that turns Runs into published numbers. Two exist: `series` version 1, for every Series, and `requests` version 1, for the Series whose samples are requests. Each publishes its own definitions in the API. Met in: [Methods](/docs/methods); `methods` in `v1/series.json`.
+A versioned procedure that turns Runs into published numbers. Two exist: `series` version 1, for every Series, and `requests` version 1, for the Series any of whose Runs' streams holds a request. Each publishes its own definitions in the API. Met in: [Methods](/docs/methods); `methods` in `v1/series.json`.
 
 ## month file
 
@@ -134,7 +134,7 @@ An event in which a benchmark reports what it observed of its own work, under `v
 
 ## parameter set
 
-The parameters one execution of a benchmark is given: one entry of the benchmark's parameter sets in LedgerMath's schedule. The binary receives each as an environment variable `LM_PARAM_<KEY>`, and the Run records them as `params`. The parameter set is part of a Series' key, so each parameter set of a benchmark is a Series of its own. Met in: `params` in every Series' identity.
+The parameters one execution of a benchmark is given: one entry of the benchmark's parameter sets in LedgerMath's schedule. The binary receives each as an environment variable `LM_PARAM_<KEY>`, and the Run records them as `params`. The parameter set is part of a Series' key: a Series is one parameter set with one build, one instance type and one zone ID, so one parameter set gives a Series for each build, instance type and zone it runs with. Met in: `params` in every Series' identity.
 
 ## params
 
@@ -142,7 +142,7 @@ A Run's or a Series' parameter set, as a JSON object of names and values. See pa
 
 ## percentile
 
-In Method `series` v1, the 5th, 50th and 95th percentiles (`p5`, `p50`, `p95`) of one number across the counted Runs of a Series or of a group, by linear interpolation between closest ranks (R type 7). Each Run gives one value, so these are percentiles across Runs, not across samples. In Method `requests` v1, the 50th, 90th, 95th, 99th and 99.9th percentiles (`p50` to `p99.9`) of a phase's times across requests, within one Run or pooled. Met in: [Methods](/docs/methods).
+In Method `series` v1, the 5th, 50th and 95th percentiles (`p5`, `p50`, `p95`) of one number across counted Runs of a Series or of a group, by linear interpolation between closest ranks (R type 7). Each Run gives at most one value, so these are percentiles across Runs, not across samples. Time per repetition is taken over every counted Run; bytes per second over the counted Runs that observed bytes per repetition. In Method `requests` v1, the 50th, 90th, 95th, 99th and 99.9th percentiles (`p50` to `p99.9`) of a phase's times across requests, within one Run or pooled. Met in: [Methods](/docs/methods).
 
 ## phase
 
@@ -150,19 +150,19 @@ In Method `requests` v1, one interval of a request between two of its events, in
 
 ## point
 
-A Method's record of one Run of a Series: the Run's id, start and boot, its group, whether it counts and why not, its figures, its Run file's sha256 and the addresses of its evidence. Every point is in the month file of its Run's start; a Series file repeats the newest 12 (`newest_points`). Met in: [month files](/docs/api/series-month).
+A Method's record of one Run of a Series: the Run's id, start and boot, its group, whether it counts and why not, its figures, its Run file's sha256 and the addresses of its evidence. Every point is in the month file of its Run's start; a Series file repeats the points of its newest 12 Runs, or of every Run when it has fewer (`newest_points`). Met in: [month files](/docs/api/series-month).
 
 ## pool
 
-In Method `requests` v1, every succeeded request of a set of counted Runs taken together: the Runs' histograms summed, each phase's count, least and greatest time exact, and each percentile read from the sum (`definitions.pooled`). Met in: `pool` in [Series files](/docs/api/series) and in rows of the [series list](/docs/api/series-list).
+In Method `requests` v1, every succeeded request of a set of counted Runs taken together: the Runs' histograms summed, each phase's count, least and greatest time exact, and each percentile read from the sum (`definitions.pooled`). Met in: `pool` of the Series and of each group in [Series files](/docs/api/series); in rows of the [series list](/docs/api/series-list), without histograms, failures or breakdowns.
 
 ## price file
 
-A day's copy of AWS's public On-Demand prices for what LedgerMath measures, holding AWS's own records verbatim. One for each UTC day a fetch succeeded, added once and never edited, served at `v1/prices/<yyyy-mm-dd>.json`. Met in: [Prices](/docs/prices); `prices` in the [table of contents](/docs/api/table-of-contents).
+A day's copy of AWS's public On-Demand prices for what LedgerMath measures, holding AWS's own records verbatim. At most one for each UTC day, named by the day its fetch started, added once and never edited, and served at `v1/prices/<yyyy-mm-dd>.json`. Met in: [Prices](/docs/prices); `prices` in the [table of contents](/docs/api/table-of-contents).
 
 ## provider
 
-A Run's record of where it ran, in the provider's own words (`provider`). For AWS: the instance type, Region, zone name, zone ID, image ID and instance ID, as the instance metadata service gives them. Met in: [Run files](/docs/api/run).
+A Run's record of where it ran, in the provider's own words (`provider`). For AWS: the instance type, Region, zone name, zone ID, image ID and instance ID, as the instance metadata service gives them, each null when the box could not read it. Met in: [Run files](/docs/api/run).
 
 ## Region
 
@@ -178,7 +178,7 @@ In Method `requests` v1, one counted sample of a stream (`warmup` false): the ev
 
 ## request fact
 
-A fact each request records of its connection or of itself: `address_block`, `cipher`, `tls_version`, `tls_group`, `method`, `target` and `signing`. Published, with what each is, at `methods.requests_v1.request_facts`. Met in: `facts` and `by` of each pool.
+A fact each request records of its connection or of itself: `address_block`, `cipher`, `tls_version`, `tls_group`, `method`, `target` and `signing`. Published, with what each is, at `methods.requests_v1.request_facts`. Met in: `facts` and `by` of each pool in a Series file, which are built from succeeded requests only: a value seen only on failed requests is in neither.
 
 ## reused connection
 
@@ -206,19 +206,19 @@ One timed interval of a Run, between a `sample_started` and a `sample_ended` eve
 
 ## Series
 
-"The Runs that share a benchmark, params, build, instance type and zone ID." (`definitions.series` of Method `series` v1.) Its id is 12 lower-case hex digits, the first of the sha256 of that key as canonical JSON. Met in: [Series file](/docs/api/series); [series list](/docs/api/series-list).
+"The Runs that share a benchmark, params, build, instance type and zone ID." (`definitions.series` of Method `series` v1.) Its id is 12 lower-case hex digits, the first of the sha256 of its key written as JSON with object keys sorted at every depth and no whitespace. For example, Series `b433e2d4c4b0` has the key `{"availability_zone_id":"use2-az3","benchmark":"compressed_memory_read","build":"static","instance_type":"c6i.8xlarge","params":{"bits":8,"blocks":1000000}}`. Met in: [Series file](/docs/api/series); [series list](/docs/api/series-list).
 
 ## Series file
 
-`v1/series/<id>.json`: one Series' identity, each Method's summary with its definitions, the points of its newest Runs, and its months. Its address is the table of contents' `series.series_file_url_template` with the id in place of `{id}`. Met in: [Series file](/docs/api/series).
+`v1/series/<id>.json`: one Series' identity, the summary of each Method that derives it with that Method's definitions, the points of its newest Runs, and its months. Its address is the table of contents' `series.series_file_url_template` with the id in place of `{id}`. Met in: [Series file](/docs/api/series).
 
 ## Service
 
-A managed service a benchmark measures from the outside, named in the benchmark's schedule entry and recorded in the Run (`service`) with the inputs that are not secret; secret inputs are named, and their values are written nowhere. `s3_fixtures`, a private S3 bucket of Fixtures, is the only one. Met in: `recorded.services` of Method `requests` v1.
+A managed service a benchmark measures from the outside, named in the benchmark's schedule entry and recorded in the Run (`service`) with the inputs that are not secret; secret inputs are named, and their values are written nowhere. On 2026-11-26 the schedule named one: `s3_fixtures`, a private S3 bucket of Fixtures. Met in: `recorded.services` of Method `requests` v1.
 
 ## split fact
 
-A recorded fact Method `series` v1 compares between Runs to put them in groups: the binary, the runner, the sample count, the image, and the dump sections `cpuid`, `lscpu`, `sys_cpu`, `kernel`, `process` and `packages`. A fact read from a section with values left out (`cpuid`, `lscpu`, `kernel`) is written `canonical-json-sha256:<hex>`; the binary, the runner and the other sections are given by their blob's `sha256:<hex>`. Published, with what each is, at `methods.series_v1.split_on`. Met in: group `facts`.
+A recorded fact Method `series` v1 compares between Runs to put them in groups: the binary, the runner, the sample count, the image, and the dump sections `cpuid`, `lscpu`, `sys_cpu`, `kernel`, `process` and `packages`. A fact read from a section with values left out (`cpuid`, `lscpu`, `kernel`) is written `canonical-json-sha256:<hex>`; the binary, the runner and the other sections are given by their blob's `sha256:<hex>`. A fact is null when the Run does not record it: a section its before-dump lacks, or no image ID. Published, with what each is, at `methods.series_v1.split_on`. Met in: group `facts`.
 
 ## stream
 
@@ -230,7 +230,7 @@ In Method `requests` v1, "A request whose response status (response_headers.stat
 
 ## support rule
 
-Method `requests` v1 reports the q-th per-mille percentile of n requests only when n × (1000 − q) ≥ 1000: 2 requests for a 50th, 10 for a 90th, 20 for a 95th, 100 for a 99th and 1000 for a 99.9th (`definitions.support`). A percentile not supported is null. Met in: `methods.requests_v1.percentiles` in `v1/series.json`.
+Method `requests` v1 reports the q-th per-mille percentile of a phase only when n × (1000 − q) ≥ 1000, where n is that phase's own `count`, the succeeded requests that had the phase: 2 requests for a 50th, 10 for a 90th, 20 for a 95th, 100 for a 99th and 1000 for a 99.9th (`definitions.support`). A percentile not supported is null. Met in: `methods.requests_v1.percentiles` in `v1/series.json`.
 
 ## table of contents
 
@@ -238,11 +238,11 @@ Method `requests` v1 reports the q-th per-mille percentile of n requests only wh
 
 ## through
 
-On each point of Method `requests` v1, the Series' pooled figures, without histograms, over the counted Runs that started at or before that Run (`definitions.through`); `group_through_as_of_run` gives the same for the Run's group. Met in: [month files](/docs/api/series-month).
+On each point of Method `requests` v1, the Series' pooled figures, without histograms, over the counted Runs that started at or before that Run (`definitions.through`); null before the Series' first counted Run. Beside it, `group_through_as_of_run` gives the pooled figures of the Run's own group as they stood through that Run. That is null while the Series has had Runs of one group only, and while the Run's group has had no counted Run, even when `through` has figures; a null there is not to be filled with `through`, which pools every group. Met in: [month files](/docs/api/series-month).
 
 ## time per repetition
 
-Method `series` v1's one number per Run, in nanoseconds (`time_per_repetition_ns`): "for each counted sample (warmup samples left out), sample_ended.t minus sample_started.t, divided by the sample's repetitions; the Run's number is the median of those (the mean of the two middle values when there is an even number of samples)" (`definitions.time_per_repetition`). Met in: [Methods](/docs/methods).
+Method `series` v1's one number per Run, in nanoseconds (`time_per_repetition_ns`): "for each counted sample (warmup samples left out), sample_ended.t minus sample_started.t, divided by the sample's repetitions; the Run's number is the median of those (the mean of the two middle values when there is an even number of samples)" (`definitions.time_per_repetition`). Null on a point whose Run is not counted, and on one whose number overflows a double, which no real clock comes near. Met in: [Methods](/docs/methods).
 
 ## unreadable
 
