@@ -1,19 +1,51 @@
 # memory_read
 
+How fast a buffer of 64-bit words is read front to back and summed, on one unpinned thread
+or on one pinned thread per allowed CPU, with a hand-written x86 scalar loop or with AVX2
+loads. Whether the buffer comes from memory or from cache depends on its size and the
+machine.
+
+## What a figure means
+
 How fast a buffer is read front to back. The buffer, 1 GiB in the schedule, holds 64-bit
 words; one repetition reads every word once and adds it to a sum. It reads on one
 unpinned thread, or on one pinned thread per allowed CPU, each reading its own slice. The
 read loop is either a hand-written x86 assembly loop (`scalar`) or AVX2 loads (`avx2`).
 The source is `memory_read.c`; the comment at its top lists the same parameters.
 
-```bash
-make -C benchmarks/memory_read                      # build/static/memory_read
-make -C benchmarks/memory_read BUILD=dynamic        # build/dynamic/memory_read
-LM_PARAM_SIZE_BYTES=1073741824 LM_PARAM_THREADS=1 LM_PARAM_PATH=scalar LM_SAMPLES=10 \
-  ./benchmarks/memory_read/build/static/memory_read
-```
+With `threads` `all`, a repetition ends when the last thread has read its slice: the main
+thread starts the threads at one barrier and waits at another until all of them are done.
+
+A Run's figure is the time of one repetition, in nanoseconds (`time_per_repetition_ns`):
+the median, over the Run's counted samples, of a sample's time divided by its repetitions.
+The binary reads the clock only at the two edges of a sample. Before the counted samples
+it runs warmup samples, doubling the repetitions until a sample lasts at least a second;
+each of the 10 counted samples the schedule asks for then runs that many repetitions.
+Bytes per second (`bytes_per_second`) is `bytes_per_repetition` × 10^9 divided by the time
+per repetition, where `bytes_per_repetition` is the bytes read in one repetition, by all
+threads together. A Series gives the 5th, 50th and 95th percentiles of its counted Runs'
+figures ([Methods](https://ledgermath.com/docs/methods)).
+
+So a figure is the time one build of this binary takes to read `size_bytes` once, with one
+read loop, on one thread or on all allowed CPUs, on one instance type.
+
+## What a figure does not show
+
+- Whether the buffer is read from memory or from cache depends on `size_bytes` and on the
+  machine's caches. A size that fits in a cache gives a cache figure, not a memory figure.
+  The Run's dump sections `lscpu` and `sys_cpu` record the cache sizes.
+- `threads` `1` is one unpinned thread: it is not what the whole box can read.
+- The figure is of these two loops. A program that reads memory with other code is not
+  measured here.
+- The two builds can give different figures on the `scalar` path because of where the
+  loop lands in each binary, not because of how they are linked. A difference between
+  them does not show that dynamic linking is faster; see "The two builds, and why their
+  numbers differ" below.
 
 ## Parameters
+
+Each parameter set runs on every instance type in the schedule, in both builds, `static`
+and `dynamic`. Each parameter set, build and instance type is a Series of its own.
 
 | Variable | Scheduled | Meaning |
 |---|---|---|
@@ -26,7 +58,7 @@ a size, with at least one 8-byte word per allowed CPU when `threads` is `all`; `
 takes only `1` or `all`, and `path` only `scalar` or `avx2`. Anything else exits 2. `avx2`
 on a processor without AVX2 exits 1 and says so.
 
-## Observed
+## Observed values
 
 | Key | What it is |
 |---|---|
@@ -34,13 +66,9 @@ on a processor without AVX2 exits 1 and says so.
 | `threads_used` | Threads that read |
 | `path_taken` | The read loop that was dispatched: `scalar` or `avx2` |
 
-## Sum check
+## Findings
 
-The buffer holds 0, 1, 2 and so on, and one repetition returns the sum of what it read:
-0 + 1 + … + (*n* − 1). The program checks that sum before measuring and exits 1 if it is
-wrong.
-
-## The two builds, and why their numbers differ
+### The two builds, and why their numbers differ
 
 `memory_read` is the one benchmark built two ways in every boot: `static` (the default,
 as every benchmark is) and `dynamic`, which loads the C library at run time. Each build has
@@ -135,9 +163,19 @@ the benchmark and its build as they are, for now: no alignment of the loop, no n
 recorded about the build, no scheduled check of where code lands. The two Series stay as
 they are, and so does the difference between them.
 
-## Differences from July's version
+## How it works
 
-The hot loops are the ones the July 2026 proof of concept ran, unchanged. July's binary
-was linked dynamically; the `static` build is not, and the `dynamic` build is, as July's
-was. What is common to every port (the event stream, the harness's samples) is in
-`benchmarks/memory_write/README.md`, under the same heading.
+### Sum check
+
+The buffer holds 0, 1, 2 and so on, and one repetition returns the sum of what it read:
+0 + 1 + … + (*n* − 1). The program checks that sum before measuring and exits 1 if it is
+wrong.
+
+## Building and testing
+
+```bash
+make -C benchmarks/memory_read                      # build/static/memory_read
+make -C benchmarks/memory_read BUILD=dynamic        # build/dynamic/memory_read
+LM_PARAM_SIZE_BYTES=1073741824 LM_PARAM_THREADS=1 LM_PARAM_PATH=scalar LM_SAMPLES=10 \
+  ./benchmarks/memory_read/build/static/memory_read
+```

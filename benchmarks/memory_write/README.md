@@ -1,18 +1,41 @@
 # memory_write
 
+How fast one thread writes a buffer, front to back or in random order, one 64-byte element
+at a time: two 32-byte AVX2 stores, then a read of the element's last word.
+
+## What a figure means
+
 How fast one core writes a large buffer, front to back or in random order. The buffer,
 1 GiB by default, is divided into 64-byte elements, one cache line each. One repetition
 writes every element once: two 32-byte AVX2 stores of the element's index, then a
 volatile read of its last word. `sequential` writes the elements in order; `random`
 writes them in an order shuffled once at startup from a fixed seed.
 
-```bash
-make -C benchmarks/memory_write                    # build/static/memory_write
-LM_PARAM_SIZE_BYTES=1073741824 LM_PARAM_THREADS=1 LM_PARAM_ORDER=random LM_SAMPLES=10 \
-  ./benchmarks/memory_write/build/static/memory_write
-```
+A Run's figure is the time of one repetition, in nanoseconds (`time_per_repetition_ns`):
+the median, over the Run's counted samples, of a sample's time divided by its repetitions.
+The binary reads the clock only at the two edges of a sample. Before the counted samples
+it runs warmup samples, doubling the repetitions until a sample lasts at least a second;
+each of the 10 counted samples the schedule asks for then runs that many repetitions.
+Bytes per second (`bytes_per_second`) is `bytes_per_repetition` × 10^9 divided by the time
+per repetition, where `bytes_per_repetition` is the bytes written in one repetition. A
+Series gives the 5th, 50th and 95th percentiles of its counted Runs' figures
+([Methods](https://ledgermath.com/docs/methods)).
+
+So a figure is the time one thread takes to write every element of `size_bytes` once, in
+one order, on one instance type.
+
+## What a figure does not show
+
+- Each element is read back right after it is written, so a repetition is not stores
+  alone.
+- The stores are ordinary AVX2 stores, not non-temporal ones.
+- `random` also reads the shuffled order front to back, 8 bytes per element, during each
+  repetition.
 
 ## Parameters
+
+Each parameter set runs on every instance type in the schedule. Each parameter set and
+instance type is a Series of its own.
 
 | Variable | Scheduled | Meaning |
 |---|---|---|
@@ -23,7 +46,7 @@ LM_PARAM_SIZE_BYTES=1073741824 LM_PARAM_THREADS=1 LM_PARAM_ORDER=random LM_SAMPL
 `--quick` uses 64 MiB, `sequential`, when the variables are unset. The write loops use
 AVX2; on a processor without it the program exits 1 and says so.
 
-## Observed
+## Observed values
 
 | Key | What it is |
 |---|---|
@@ -35,38 +58,23 @@ AVX2; on a processor without it the program exits 1 and says so.
 front to back during each repetition. Peak memory is about 1.0 GiB for `sequential` and
 1.13 GiB for `random`.
 
-## Elision guard
+## Findings
+
+No finding of its own so far.
+
+## How it works
+
+### Elision guard
 
 Each element's last word is read back through a volatile load right after it is
 written, and one repetition returns the sum of those words: 0 + 1 + … + (*n* − 1). The
 program checks that sum before measuring and exits 1 if it is wrong; `random` also exits
 1 if the shuffled order came out unshuffled.
 
-## Differences from July's version
+## Building and testing
 
-July's is `benchmarks/c/bench_memory_write.c`, variants `1 thread, Sequential` and
-`1 thread, Random`.
-
-- **The same measured work.** The two write loops, the element layout, the AVX2 stores,
-  the volatile read-back, the shuffle, its seed and the `MADV_RANDOM` hint are unchanged.
-  Built by the same compiler with the same flags (checked with gcc 11.5, `-march=native`, on an Ice Lake Xeon), both loops' machine code is identical
-  to July's.
-- **One order per process.** July measured `Sequential` then `Random` in one process, on
-  one buffer. Each is now its own execution, chosen by `order`, on a buffer of its own.
-- **The buffer size and the thread count are parameters** (`size_bytes`, `threads`). They
-  were constants, 1 GiB and one thread. July's `--quick` size was 512 MiB; it is now
-  64 MiB.
-- **Only the loop that is measured is checked, and only `random` builds the order.** July
-  built and shuffled the order array, and checked both loops, before measuring either.
-  `sequential` now allocates no order array, so its process holds 128 MiB less.
-- **AVX2 is checked at run time.** The write functions are marked `target("avx2")` and the
-  program exits 1 on a processor without AVX2. July relied on its harness refusing to
-  compile without AVX2. On an AVX2 machine the attribute changes no instruction.
-- **What is common to every port:** the output is the event stream
-  (`docs/dev-log.md` section 2) instead of July's JSON record, whose `median_ns` is now
-  the Method's median of each sample's time over its repetitions, and whose
-  `bytes_per_op` is now `bytes_per_repetition`. The binary is linked statically; July's
-  was dynamic. The harness takes samples the way July's did (one repetition, then
-  doubling until a sample lasts a second, then the counted samples at that count), but
-  emits the warmup samples July discarded, and takes the count of counted samples from
-  `LM_SAMPLES`.
+```bash
+make -C benchmarks/memory_write                    # build/static/memory_write
+LM_PARAM_SIZE_BYTES=1073741824 LM_PARAM_THREADS=1 LM_PARAM_ORDER=random LM_SAMPLES=10 \
+  ./benchmarks/memory_write/build/static/memory_write
+```

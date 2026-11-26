@@ -1,39 +1,18 @@
 # disk_read_sequential
 
+Reading a file front to back the way a program does, on one thread: buffered `pread`s of
+`request_bytes` with the kernel's stock readahead, each sample's region dropped from the
+page cache first. It is a cold read when the eviction worked, which each Run records as
+each sample's resident pages.
+
+## What a figure means
+
 Reading a file front to back from a cold page cache, the way a program does: buffered
 `pread`s of 8 KiB, with the kernel's stock readahead deciding what the device is asked
 for. napkin-math's "sequential read". Each sample reads one region of the Fixture the box
 made at boot, made cold beforehand, and says how cold it was.
 
-The design is section 2 of the step-4 brief's study (#42) and the decisions on it.
-
-| Parameter set | What the reader gets | `i4i.2xlarge`, 2026-11-11 | `m5.large`, 2026-11-11 |
-|---|---|---|---|
-| `disk` `root_volume`, `dir` `/var/tmp/ledgermath/disk`, `request_bytes` 8192, `bytes_per_sample` 128 MiB, `span_bytes` 1 GiB | Cold sequential read from the root gp3 volume, which its 125 MiB/s limit caps | 125.0 MiB/s (62.5 µs an 8 KiB read); 127.6 KiB a device request; `ebs_volume_performance_exceeded_tp` +7.4 s | 125.2 MiB/s (62.4 µs); the same |
-| `disk` `instance_store`, `dir` `/mnt/lm/instance-store`, `request_bytes` 8192, `bytes_per_sample` 2 GiB, `span_bytes` 32 GiB; `i4i.2xlarge` only | Cold sequential read from the instance's own NVMe disk with stock readahead | 1054 to 1094 MiB/s (7.14 to 7.41 µs a read, in two Runs); 128 KiB device requests; no limit exceeded | |
-
-```bash
-make -C benchmarks/disk_read_sequential            # build/static/disk_read_sequential
-LM_PARAM_DIR=/mnt/local/ledgermath-scratch/disk ./benchmarks/disk_read_sequential/build/static/disk_read_sequential --quick
-```
-
-(After making a Fixture there; see `disk_read_random`'s README.) An execution takes 12 to
-25 seconds.
-
-## Parameters
-
-| Variable | Scheduled | Meaning |
-|---|---|---|
-| `LM_PARAM_DISK` | `root_volume`, `instance_store` | The Series' name for the disk; never read here |
-| `LM_PARAM_DIR` | `/var/tmp/ledgermath/disk`, `/mnt/lm/instance-store` | The directory holding the Fixture |
-| `LM_PARAM_REQUEST_BYTES` | `8192` | Bytes per `pread`; a multiple of 8 |
-| `LM_PARAM_BYTES_PER_SAMPLE` | 128 MiB, 2 GiB | Bytes one sample reads: one region of the span; a whole number of requests and of pages |
-| `LM_PARAM_SPAN_BYTES` | 1 GiB, 32 GiB | Bytes of the Fixture the regions cover; a whole number of regions |
-
-`--quick` uses `/var/tmp/ledgermath/disk`, 8 KiB and 128 MiB when the variables are unset,
-and reads at most 8 MiB a sample of at most 64 MiB of the span.
-
-## Samples of fixed work
+### Samples of fixed work
 
 A cold read is cold only once, so this benchmark does not calibrate as the harness's
 `lm_measure` does (doubling until a sample lasts a second, repeating the same work). It
@@ -54,14 +33,79 @@ first word is added to a running sum. A sample's time over its repetitions is th
 read call; `bytes_per_sample` over the sample's time is the throughput, which Method
 version 1 gives from `bytes_per_repetition`.
 
-## Observed
+### The figure
 
-Everything `disk_read_random`'s README lists under "Observed" about the file and its
+A Run's figure is the time of one repetition, in nanoseconds (`time_per_repetition_ns`):
+the median, over the Run's 10 counted samples, of a sample's time divided by its
+repetitions, so the time per read call. Bytes per second (`bytes_per_second`) is
+`bytes_per_repetition` × 10^9 divided by the time per repetition, where
+`bytes_per_repetition` is `request_bytes`. A Series gives the 5th, 50th and 95th
+percentiles of its counted Runs' figures ([Methods](https://ledgermath.com/docs/methods)).
+
+So a figure is the mean time of one 8 KiB read call while a program reads a cold region
+of a file front to back, from one disk, on one instance type.
+
+## What a figure does not show
+
+- Each sample's region is dropped from the page cache first, so it is not a warm read;
+  `work` records the pages that were still resident as each sample began.
+- Readahead asks the device for larger requests than the 8 KiB calls (128 KiB on both
+  disks seen), and the figure is a mean over the calls, not the latency of one device
+  request.
+- Readahead keeps one or two requests in flight (see "Findings"), so it is not the disk's
+  throughput at a deep queue; reads kept in flight at depth are
+  [`disk_read_io_uring`](https://ledgermath.com/docs/benchmarks/disk_read_io_uring)'s.
+- With `disk` `root_volume` the set reads the root EBS volume, not the instance's own
+  disk: an EBS figure, whose volume type, size and provisioned IOPS and throughput are
+  AWS's record in each boot's dump section `ec2_volumes`.
+
+## Parameters
+
+Each parameter set is a Series of its own on each instance type it runs on: the root
+volume's set on every instance type in the schedule, the instance store's on
+`i4i.2xlarge` only.
+
+| Parameter set | What the reader gets | `i4i.2xlarge`, 2026-11-11 | `m5.large`, 2026-11-11 |
+|---|---|---|---|
+| `disk` `root_volume`, `dir` `/var/tmp/ledgermath/disk`, `request_bytes` 8192, `bytes_per_sample` 128 MiB, `span_bytes` 1 GiB | Cold sequential read from the root gp3 volume, which its 125 MiB/s limit caps | 125.0 MiB/s (62.5 µs an 8 KiB read); 127.6 KiB a device request; `ebs_volume_performance_exceeded_tp` +7.4 s | 125.2 MiB/s (62.4 µs); the same |
+| `disk` `instance_store`, `dir` `/mnt/lm/instance-store`, `request_bytes` 8192, `bytes_per_sample` 2 GiB, `span_bytes` 32 GiB; `i4i.2xlarge` only | Cold sequential read from the instance's own NVMe disk with stock readahead | 1054 to 1094 MiB/s (7.14 to 7.41 µs a read, in two Runs); 128 KiB device requests; no limit exceeded | |
+
+| Variable | Scheduled | Meaning |
+|---|---|---|
+| `LM_PARAM_DISK` | `root_volume`, `instance_store` | The Series' name for the disk; never read here |
+| `LM_PARAM_DIR` | `/var/tmp/ledgermath/disk`, `/mnt/lm/instance-store` | The directory holding the Fixture |
+| `LM_PARAM_REQUEST_BYTES` | `8192` | Bytes per `pread`; a multiple of 8 |
+| `LM_PARAM_BYTES_PER_SAMPLE` | 128 MiB, 2 GiB | Bytes one sample reads: one region of the span; a whole number of requests and of pages |
+| `LM_PARAM_SPAN_BYTES` | 1 GiB, 32 GiB | Bytes of the Fixture the regions cover; a whole number of regions |
+
+`--quick` uses `/var/tmp/ledgermath/disk`, 8 KiB and 128 MiB when the variables are unset,
+and reads at most 8 MiB a sample of at most 64 MiB of the span.
+
+## Observed values
+
+Everything [`disk_read_random`'s README](https://ledgermath.com/docs/benchmarks/disk_read_random) lists under "Observed values" about the file and its
 device (`o_direct` is false here), and: `request_bytes`, `bytes_per_sample` and
 `span_bytes` (as used, after `--quick`'s caps), `regions`, `bytes_per_repetition`
 (`request_bytes`).
 
-## Events of its own
+## Findings
+
+### What will stay unstable, and what to read with care
+
+- **Readahead keeps one or two requests in flight**, so the instance store's number is
+  what stock readahead gets from this disk (about 210 µs a 128 KiB request), well below its
+  1.42 GB/s limit at queue depth 64. On the root volume the gp3 limit binds instead.
+- **Regions differ.** On the instance store the first samples ran at 7.15 µs a read and
+  the later ones at 7.42, a 4% spread within one Run that the same regions repeated.
+- **On a file system whose pages cannot be dropped** (a tmpfs, as in the container test),
+  `resident_pages_before` says so and the Run is not cold. Nothing stops it: the record
+  says what happened.
+
+## How it works
+
+The design is section 2 of the step-4 brief's study (#42) and the decisions on it.
+
+### Events of its own
 
 **`device_counters`**, as in `disk_read_random`, over all of `lm_measure_fixed`: the
 warmup samples, the steps between samples that make each region cold, and any other I/O
@@ -80,7 +124,7 @@ with 0.
 {"event":"work","t":1304628415593,"reads":196608,"bytes_read":1610612736,"samples":[{"sample":0,"offset":0,"fadvise_result":0,"resident_pages_before":0},{"sample":1,"offset":134217728,"fadvise_result":0,"resident_pages_before":0}, …]}
 ```
 
-## Elision guard
+### Elision guard
 
 The Fixture's checks before measuring are `disk_read_random`'s, and exit 1 the same way;
 they read through the page cache here, so the whole span is dropped from it before the
@@ -91,31 +135,12 @@ reach is `disk_read_random`'s: it shows that each 8 KiB block read began with th
 Fixture's word, not that the rest of the block is, nor anything of the span not read. At the end
 the whole span is dropped from the page cache, so the next Run finds it as this one did.
 
-## What will stay unstable, and what to read with care
+## Building and testing
 
-- **Readahead keeps one or two requests in flight**, so the instance store's number is
-  what stock readahead gets from this disk (about 210 µs a 128 KiB request), well below its
-  1.42 GB/s limit at queue depth 64. On the root volume the gp3 limit binds instead.
-- **Regions differ.** On the instance store the first samples ran at 7.15 µs a read and
-  the later ones at 7.42, a 4% spread within one Run that the same regions repeated.
-- **On a file system whose pages cannot be dropped** (a tmpfs, as in the container test),
-  `resident_pages_before` says so and the Run is not cold. Nothing stops it: the record
-  says what happened.
+```bash
+make -C benchmarks/disk_read_sequential            # build/static/disk_read_sequential
+LM_PARAM_DIR=/mnt/local/ledgermath-scratch/disk ./benchmarks/disk_read_sequential/build/static/disk_read_sequential --quick
+```
 
-## Differences from July's version
-
-July's is `benchmarks/c/bench_disk_read_sequential.c`, variant `8 KiB`.
-
-- **Buffered and cold, not `O_DIRECT`.** July's read 8 KiB with `O_DIRECT` at consecutive
-  offsets, one at a time: with no readahead, that is the device's latency at queue depth
-  1, the same as `disk_read_random` (fio on the instance store: 120.7 µs sequential, 122.7
-  µs random). Its July value, 587 µs, was the root gp3 volume's read latency. This reads
-  through the page cache and lets readahead do what it does for any program.
-- **Samples of fixed work** with a cold region each, through the new harness file
-  `lm_fixed.c`, where July calibrated over a 1 GiB scratch file it wrote itself.
-- **Both disks, named; the Fixture is the box's.**
-- **The guard** recomputes the sum of every block read; July's checked block 0.
-- **New:** `observed` with the device, `device_counters`, `work` with each sample's
-  coldness, and the parameters.
-- **What is common to every port:** the event stream and a static binary. The warmup
-  samples are emitted, two of them.
+(After making a Fixture there; see [`disk_read_random`'s README](https://ledgermath.com/docs/benchmarks/disk_read_random).) An execution takes 12 to
+25 seconds.

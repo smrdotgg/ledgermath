@@ -1,29 +1,63 @@
 # disk_read_random
 
+The latency of one `O_DIRECT` read of `request_bytes` from a disk, on one thread, with
+nothing else outstanding: from the root EBS volume, or from the instance's own NVMe disk
+on the instance types that have one.
+
+## What a figure means
+
 The latency of one read from a disk, with nothing else outstanding: one `pread` of 8 KiB
 with `O_DIRECT`, at the next offset of a seeded permutation of the span's blocks, from the
 Fixture the box made at boot. A sample's time over its repetitions is the mean time of one
 read; the device's own latency histogram, which the dump records before and after every
 Run, gives its distribution.
 
-The design is section 2 of the step-4 brief's study (#42) and the decisions on it.
+### One repetition
+
+One `pread` of `request_bytes` at the next offset of the permutation, with `O_DIRECT`, then
+the first word of the block is added to a running sum. The permutation is a Fisher-Yates
+shuffle of the span's block numbers with a fixed seed (July's), so every Run reads the same
+blocks in the same order, each block at most once until the permutation is used up: about
+200,000 reads per Run on the instance store and 25,000 on the root volume, of 4,194,304 and
+131,072 blocks. `work` says how many reads were made and whether the permutation wrapped.
+
+### The figure
+
+A Run's figure is the time of one repetition, in nanoseconds (`time_per_repetition_ns`):
+the median, over the Run's counted samples, of a sample's time divided by its repetitions,
+so the median of each sample's mean read time. The binary reads the clock only at the two
+edges of a sample. Before the counted samples it runs warmup samples, doubling the
+repetitions until a sample lasts at least a second; each of the 10 counted samples the
+schedule asks for then runs that many repetitions. Bytes per second (`bytes_per_second`)
+is `bytes_per_repetition` × 10^9 divided by the time per repetition, where
+`bytes_per_repetition` is `request_bytes`, the bytes one read asks for. A Series gives the
+5th, 50th and 95th percentiles of its counted Runs' figures
+([Methods](https://ledgermath.com/docs/methods)).
+
+So a figure is the mean time of one read at queue depth 1 from one disk, on one instance
+type.
+
+## What a figure does not show
+
+- A sample's time over its repetitions is a mean, not a tail. The device's histogram in
+  the dump gives the distribution, in power-of-two bins.
+- One read is outstanding at a time, so it is not a disk under load. Reads kept in flight
+  are [`disk_read_io_uring`](https://ledgermath.com/docs/benchmarks/disk_read_io_uring)'s.
+- With `disk` `root_volume` the set reads the root EBS volume, not the instance's own
+  disk: an EBS figure, whose volume type, size and provisioned IOPS and throughput are
+  AWS's record in each boot's dump section `ec2_volumes`.
+- Every Run reads the same blocks in the same order.
+
+## Parameters
+
+Each parameter set is a Series of its own on each instance type it runs on: the root
+volume's set on every instance type in the schedule, the instance store's on
+`i4i.2xlarge` only.
 
 | Parameter set | What the reader gets | `i4i.2xlarge`, 2026-11-11 | `m5.large`, 2026-11-11 |
 |---|---|---|---|
 | `disk` `root_volume`, `dir` `/var/tmp/ledgermath/disk`, `request_bytes` 8192, `span_bytes` 1 GiB | The root EBS volume's read latency at queue depth 1 (the AMI's 8 GiB gp3: 3000 IOPS, 125 MiB/s) | 582.6 µs a read, 0.16% between samples | 582.6 and 582.9 µs (two Runs), 0.15% |
 | `disk` `instance_store`, `dir` `/mnt/lm/instance-store`, `request_bytes` 8192, `span_bytes` 32 GiB; `i4i.2xlarge` only | The instance's own NVMe disk's read latency at queue depth 1 | 120.4 µs, 1.0% (120.3 µs at 0, 2 and 5 minutes after the Fixture was written) | |
-
-```bash
-make -C benchmarks/disk_read_random                # build/static/disk_read_random
-cc -O2 -I benchmarks/harness/c -o /tmp/fixture runner/fixture.c
-mkdir -p /mnt/local/ledgermath-scratch/disk && /tmp/fixture /mnt/local/ledgermath-scratch/disk/ledgermath-fixture-v1 67108864
-LM_PARAM_DIR=/mnt/local/ledgermath-scratch/disk ./benchmarks/disk_read_random/build/static/disk_read_random --quick
-```
-
-On the box the Fixture is made by `runner/provision.py` at boot; the binary never makes or
-repairs one. An execution takes 15 to 25 seconds.
-
-## Parameters
 
 | Variable | Scheduled | Meaning |
 |---|---|---|
@@ -35,16 +69,7 @@ repairs one. An execution takes 15 to 25 seconds.
 `--quick` uses `/var/tmp/ledgermath/disk` and 8 KiB when the variables are unset, and
 reads at most 64 MiB of the span, so a 64 MiB Fixture serves any set.
 
-## One repetition
-
-One `pread` of `request_bytes` at the next offset of the permutation, with `O_DIRECT`, then
-the first word of the block is added to a running sum. The permutation is a Fisher-Yates
-shuffle of the span's block numbers with a fixed seed (July's), so every Run reads the same
-blocks in the same order, each block at most once until the permutation is used up: about
-200,000 reads per Run on the instance store and 25,000 on the root volume, of 4,194,304 and
-131,072 blocks. `work` says how many reads were made and whether the permutation wrapped.
-
-## Observed
+## Observed values
 
 Emitted once, before measuring, after the Fixture has been checked. What every disk
 benchmark observes about the file it opened and the device behind it comes from
@@ -81,7 +106,29 @@ second).
 
 (The instance-store set on a real `i4i.2xlarge`, in a whole boot of the box script.)
 
-## Events of its own
+## Findings
+
+### What will stay unstable, and what to read with care
+
+- **The same blocks every Run.** The device's histogram put 33.3% of the instance store's
+  reads in [64, 128) µs and 66.7% in [128, 256) µs, with the same counts to the read in
+  three Runs: the latency is a property of the blocks, and the Series is of these blocks.
+- **gp3's first seconds.** On the root volume the first ~4,000 reads of a Run took about
+  310 µs each, then 582 µs. The warmup samples took them; they show in its stream.
+- **The device histogram's bins** are powers of two: they say where the tail is, not a
+  percentile to the microsecond. Per-operation timing inside the binary is not done (the
+  contract reads the clock only at a sample's edges); whether a disk benchmark may time
+  each operation as its own sample is an open question for the maintainer.
+- **Sequential equals random here.** fio measured 120.7 µs for sequential 8 KiB `O_DIRECT`
+  reads at queue depth 1 on the instance store and 122.7 µs for random: an `O_DIRECT`
+  sequential read would only duplicate this benchmark, which is why
+  `disk_read_sequential` reads through the page cache instead.
+
+## How it works
+
+The design is section 2 of the step-4 brief's study (#42) and the decisions on it.
+
+### Events of its own
 
 Both come after `verified` and pass `schemas/events.schema.json` and
 `scripts/check-events.py`.
@@ -114,7 +161,7 @@ anything else on the device.
 
 **`work`**: `reads`, `bytes_read`, `distinct_blocks`, `permutation_passes`.
 
-## Elision guard, and the Fixture's checks
+### Elision guard, and the Fixture's checks
 
 Before measuring, outside every interval, the binary exits 1 when the Fixture is missing
 (saying it is made at boot), shorter than the span, has an unwritten or unallocated extent
@@ -133,7 +180,7 @@ settles on, and so on the disk's speed: the first reads of the permutation alway
 whole span only when the Run makes at least as many reads as it has blocks. The whole of a
 block is checked only for the first, middle and last blocks, before measuring.
 
-## Tying a Run to its dump
+### Tying a Run to its dump
 
 `scripts/check-disk-runs.ts` does all of this for every disk Run in a directory laid out
 like the bucket.
@@ -159,38 +206,14 @@ like the bucket.
   and `ec2_instance_type` lists the instance's storage.
 - Every number compared must be present and finite; one that is not fails the check.
 
-## What will stay unstable, and what to read with care
+## Building and testing
 
-- **The same blocks every Run.** The device's histogram put 33.3% of the instance store's
-  reads in [64, 128) µs and 66.7% in [128, 256) µs, with the same counts to the read in
-  three Runs: the latency is a property of the blocks, and the Series is of these blocks.
-- **gp3's first seconds.** On the root volume the first ~4,000 reads of a Run took about
-  310 µs each, then 582 µs. The warmup samples took them; they show in its stream.
-- **The device histogram's bins** are powers of two: they say where the tail is, not a
-  percentile to the microsecond. Per-operation timing inside the binary is not done (the
-  contract reads the clock only at a sample's edges); whether a disk benchmark may time
-  each operation as its own sample is an open question for the maintainer.
-- **Sequential equals random here.** fio measured 120.7 µs for sequential 8 KiB `O_DIRECT`
-  reads at queue depth 1 on the instance store and 122.7 µs for random: an `O_DIRECT`
-  sequential read would only duplicate this benchmark, which is why
-  `disk_read_sequential` reads through the page cache instead.
+```bash
+make -C benchmarks/disk_read_random                # build/static/disk_read_random
+cc -O2 -I benchmarks/harness/c -o /tmp/fixture runner/fixture.c
+mkdir -p /mnt/local/ledgermath-scratch/disk && /tmp/fixture /mnt/local/ledgermath-scratch/disk/ledgermath-fixture-v1 67108864
+LM_PARAM_DIR=/mnt/local/ledgermath-scratch/disk ./benchmarks/disk_read_random/build/static/disk_read_random --quick
+```
 
-## Differences from July's version
-
-July's is `benchmarks/c/bench_disk_read_random.c`, variant `8 KiB`.
-
-- **July measured the root EBS volume and reported it as the instance's disk.** A
-  `c6i.8xlarge` has no disk of its own. Now each set names its disk, the binary reports
-  the device it opened, and the dump proves it.
-- **The Fixture is the box's, made at boot** by `runner/fixture.c` with `O_DIRECT` and
-  `fdatasync`, and checked here; July's binary wrote a 4 GiB scratch file of its own with
-  buffered writes before measuring, and deleted it after. The pattern is July's io_uring
-  pattern; July's random-read pattern differed.
-- **The span** is 1 GiB on the root volume and 32 GiB on the instance store, where July's
-  was 4 GiB. The permutation's seed and the read are July's.
-- **The guard** recomputes the sum of every block read from the pattern; July's checked
-  block 0 before measuring and emitted an unchecked sum.
-- **New:** `observed` with the device, `device_counters` and `work`; the parameters.
-- **What is common to every port:** the event stream (`docs/dev-log.md` section 2), a
-  static binary, and July's sampling (one repetition, then doubling until a sample lasts a
-  second, then `LM_SAMPLES` counted samples), with the warmup samples emitted.
+On the box the Fixture is made by `runner/provision.py` at boot; the binary never makes or
+repairs one. An execution takes 15 to 25 seconds.
