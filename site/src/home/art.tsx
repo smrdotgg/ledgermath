@@ -1,7 +1,8 @@
 // The art beside the headline's second line, which fills the line to the end of the first, as the
 // daisies and the church fill the last line on smr.gg: a strip chart feeding past over a ruler,
-// drawn on the font's grid (see ./dots.ts). It is a drawing, not data: no figure of the tree is
-// in it, and the page hides it from readers.
+// drawn on the font's grid (see ./dots.ts). The chart is in round dots in both schemes; the ruler
+// is in squares in the light one, as the font is (.art and .strip in site.css). It is a drawing,
+// not data: no figure of the tree is in it, and the page hides it from readers.
 import { Dots } from "./dots";
 
 /**

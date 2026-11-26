@@ -48,10 +48,12 @@ h1 .line { display: flex; align-items: baseline; white-space: nowrap; }
 /* The art (art.tsx), drawn on the font's own grid: 1 SVG unit is 1 dot of the font, y = 0 is the
    baseline, and the SVG's box is the height of a capital letter (19 dots). Every path is dashed so
    that each unit of its length is one dot, as wide as the font's.
-   In the light scheme the font's pixels are squares that touch, so the art's are too: no dashes,
-   and each run of pixels is one bar a pixel high. */
+   In the light scheme the font's pixels are squares that touch, so the ruler's and the napkin's
+   are too: no dashes, and each run of pixels is one bar a pixel high. The chart (.strip) is in
+   round dots in both schemes. */
 .art, .nap { display: block; flex: none; overflow: visible; fill: none; stroke: currentColor; stroke-width: 1; stroke-linecap: round; stroke-dasharray: 0 1; stroke-dashoffset: .5; }
 @media (prefers-color-scheme: light) { .art, .nap { stroke-linecap: butt; stroke-dasharray: none; } }
+.strip { stroke-linecap: round; stroke-dasharray: 0 1; }
 .art { height: calc(var(--dot) * 19); margin: 0 calc(var(--dot) * 2) 0 calc(var(--dot) * 7); }
 .far { stroke: var(--far); }
 /* The motion, for those who have not asked for less of it; without it the picture stands as drawn.
