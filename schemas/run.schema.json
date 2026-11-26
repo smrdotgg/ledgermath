@@ -23,7 +23,7 @@
     }
   ],
   "properties": {
-    "schema": { "const": "ledgermath.run/1" },
+    "schema": { "description": "What this file is, and which version of its shape.", "const": "ledgermath.run/1" },
     "id": {
       "description": "A version 7 UUID, minted on the box when the binary is launched.",
       "type": "string",
@@ -40,7 +40,7 @@
       "description": "Exactly the parameters delivered to the binary, as LM_PARAM_<KEY>.",
       "type": "object",
       "propertyNames": { "pattern": "^[a-z][a-z0-9_]*$" },
-      "additionalProperties": { "anyOf": [{ "type": "string" }, { "type": "number" }, { "type": "boolean" }] }
+      "additionalProperties": { "description": "One parameter's value, under its key: delivered to the binary as LM_PARAM_<KEY>, the key upper-cased, a boolean as true or false.", "anyOf": [{ "type": "string" }, { "type": "number" }, { "type": "boolean" }] }
     },
     "samples": { "description": "Delivered to the binary as LM_SAMPLES.", "type": "integer", "minimum": 1 },
     "service": {
@@ -51,11 +51,13 @@
       "properties": {
         "name": { "description": "The Service, as the schedule entry names it.", "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
         "inputs": {
+          "description": "Every input of the Service that is not secret, by name, exactly as delivered to the binary as LM_SERVICE_<KEY>: for s3_fixtures, endpoint and region.",
           "type": "object",
           "propertyNames": { "pattern": "^[a-z][a-z0-9_]*$" },
-          "additionalProperties": { "type": "string" }
+          "additionalProperties": { "description": "One input's value, exactly as delivered.", "type": "string" }
         },
         "secret_inputs": {
+          "description": "The names of the Service's secret inputs, delivered to the binary as LM_SERVICE_<KEY>, whose values are written nowhere: for s3_fixtures, aws_access_key_id, aws_secret_access_key and aws_session_token.",
           "type": "array",
           "uniqueItems": true,
           "items": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" }
@@ -69,6 +71,7 @@
     },
     "source": { "description": "The source archive the box unpacked and built from.", "$ref": "#/$defs/hash" },
     "binary": {
+      "description": "The binary that ran, as the box built it: its bytes, the build, the compiler, what the build printed, and what the compiler resolved its flags to.",
       "type": "object",
       "additionalProperties": false,
       "required": ["blob", "build", "compiler", "command", "resolved_flags"],
@@ -87,8 +90,8 @@
       "description": "The provider's own words for where this ran, verbatim. `name` says whose words they are; the other keys are that provider's.",
       "type": "object",
       "required": ["name"],
-      "properties": { "name": { "type": "string" } },
-      "additionalProperties": { "anyOf": [{ "type": "string" }, { "type": "null" }] }
+      "properties": { "name": { "description": "Whose words the other keys are: aws; or unknown, with no other key, when the box could not read its instance metadata.", "type": "string" } },
+      "additionalProperties": { "description": "One of the provider's own keys, verbatim; null when the provider gave no value for it. For aws: instance_type, region, availability_zone, availability_zone_id, image_id and instance_id, as the instance metadata service gives them.", "anyOf": [{ "type": "string" }, { "type": "null" }] }
     },
     "environment": {
       "description": "The box's environment dump taken just before the launch and just after the exit. Each names an index blob that lists the dump's sections by hash.",
@@ -96,8 +99,8 @@
       "additionalProperties": false,
       "required": ["before", "after"],
       "properties": {
-        "before": { "$ref": "#/$defs/hash" },
-        "after": { "$ref": "#/$defs/hash" }
+        "before": { "description": "The index blob of the dump taken just before the binary was launched.", "$ref": "#/$defs/hash" },
+        "after": { "description": "The index blob of the dump taken just after the binary exited.", "$ref": "#/$defs/hash" }
       }
     },
     "runner": {
@@ -112,7 +115,7 @@
           "additionalProperties": false,
           "required": ["code"],
           "properties": {
-            "code": { "type": "integer", "minimum": 0 },
+            "code": { "description": "The binary's exit code, when it exited by itself: 0 when it completed.", "type": "integer", "minimum": 0 },
             "runner_signal": { "$ref": "#/$defs/runner_signal" }
           }
         },
@@ -121,8 +124,8 @@
           "additionalProperties": false,
           "required": ["signal"],
           "properties": {
-            "signal": { "type": "integer", "minimum": 1 },
-            "timeout_seconds": { "type": "integer", "minimum": 1 },
+            "signal": { "description": "The number of the signal that ended the binary.", "type": "integer", "minimum": 1 },
+            "timeout_seconds": { "description": "The runner's timeout for the execution, in seconds: present only when the runner killed the binary (signal 9) for running that long.", "type": "integer", "minimum": 1 },
             "runner_signal": { "$ref": "#/$defs/runner_signal" }
           }
         }
@@ -135,8 +138,8 @@
         "type": "object",
         "required": ["event", "t"],
         "properties": {
-          "event": { "type": "string" },
-          "t": { "type": "integer", "minimum": 0 }
+          "event": { "description": "The event's name.", "type": "string" },
+          "t": { "description": "Whole nanoseconds on the clock that the stream's started event names.", "type": "integer", "minimum": 0 }
         }
       }
     },
@@ -146,8 +149,8 @@
       "additionalProperties": false,
       "required": ["line", "message"],
       "properties": {
-        "line": { "type": "integer", "minimum": 1 },
-        "message": { "type": "string" }
+        "line": { "description": "The number of the stdout line that could not be parsed, counting from 1.", "type": "integer", "minimum": 1 },
+        "message": { "description": "Why it could not be parsed: not JSON, with the parser's error, or not a JSON object.", "type": "string" }
       }
     },
     "stdout": { "description": "The binary's stdout, verbatim: one event per line (schemas/events.schema.json). The source of the Run's events for every Run.", "$ref": "#/$defs/hash" },

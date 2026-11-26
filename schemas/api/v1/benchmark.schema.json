@@ -27,19 +27,21 @@
     "url": { "type": "string", "pattern": "^https?://" },
     "time": { "description": "UTC, to the nanosecond, as the Run records it.", "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$" },
     "method_series": {
+      "description": "The Method, by name and version: series, version 1.",
       "type": "object",
       "required": ["name", "version"],
-      "properties": { "name": { "const": "series" }, "version": { "const": 1 } }
+      "properties": { "name": { "description": "The Method's name: series.", "const": "series" }, "version": { "description": "The Method's version: 1.", "const": 1 } }
     },
     "method_requests": {
+      "description": "The Method, by name and version: requests, version 1.",
       "type": "object",
       "required": ["name", "version"],
-      "properties": { "name": { "const": "requests" }, "version": { "const": 1 } }
+      "properties": { "name": { "description": "The Method's name: requests.", "const": "requests" }, "version": { "description": "The Method's version: 1.", "const": 1 } }
     },
     "params": {
       "description": "The parameter set, as each Run was given it (LM_PARAM_*).",
       "type": "object",
-      "additionalProperties": { "anyOf": [{ "type": "string" }, { "type": "number" }, { "type": "boolean" }] }
+      "additionalProperties": { "description": "One parameter's value, under the parameter's name, as each Run was given it.", "anyOf": [{ "type": "string" }, { "type": "number" }, { "type": "boolean" }] }
     },
     "stat_summary": {
       "description": "Percentiles of time per repetition across the Series' counted Runs. Every counted Run has a time per repetition. A counted Run's time per repetition is infinite, past a double's range, when it is the mean of its two middle samples' ns_per_repetition and their sum overflows (both near the top of a double's range; no real clock comes near): JSON cannot hold it, so its point shows null, and it is counted here all the same; a percentile taken from it, or interpolated towards it, is null. The Runs behind them are the Series' counted points, as its month files hold them.",
@@ -68,22 +70,23 @@
       "type": "object",
       "required": ["count", "min", "max", "p50", "p90", "p95", "p99", "p99.9", "at_or_above"],
       "properties": {
-        "count": { "type": "integer", "minimum": 0 },
-        "min": { "type": "number" },
-        "max": { "type": "number" },
-        "p50": { "$ref": "#/$defs/number_or_null" },
-        "p90": { "$ref": "#/$defs/number_or_null" },
-        "p95": { "$ref": "#/$defs/number_or_null" },
-        "p99": { "$ref": "#/$defs/number_or_null" },
-        "p99.9": { "$ref": "#/$defs/number_or_null" },
+        "count": { "description": "How many requests the figures are of: those of the set that succeeded and had this phase.", "type": "integer", "minimum": 0 },
+        "min": { "description": "The least of their times, in nanoseconds, exactly.", "type": "number" },
+        "max": { "description": "The greatest of their times, in nanoseconds, exactly.", "type": "number" },
+        "p50": { "description": "The 50th percentile of their times, in nanoseconds; null when count is under 2, too few to support it.", "$ref": "#/$defs/number_or_null" },
+        "p90": { "description": "The 90th percentile of their times, in nanoseconds; null when count is under 10, too few to support it.", "$ref": "#/$defs/number_or_null" },
+        "p95": { "description": "The 95th percentile of their times, in nanoseconds; null when count is under 20, too few to support it.", "$ref": "#/$defs/number_or_null" },
+        "p99": { "description": "The 99th percentile of their times, in nanoseconds; null when count is under 100, too few to support it.", "$ref": "#/$defs/number_or_null" },
+        "p99.9": { "description": "The 99.9th percentile of their times, in nanoseconds; null when count is under 1000, too few to support it.", "$ref": "#/$defs/number_or_null" },
         "at_or_above": {
+          "description": "For each percentile reported, how many requests are ranked at or above it (ties counted by rank).",
           "type": "object",
           "properties": {
-            "p50": { "type": "integer" },
-            "p90": { "type": "integer" },
-            "p95": { "type": "integer" },
-            "p99": { "type": "integer" },
-            "p99.9": { "type": "integer" }
+            "p50": { "description": "How many requests are ranked at or above the 50th percentile; absent when it is not reported.", "type": "integer" },
+            "p90": { "description": "How many requests are ranked at or above the 90th percentile; absent when it is not reported.", "type": "integer" },
+            "p95": { "description": "How many requests are ranked at or above the 95th percentile; absent when it is not reported.", "type": "integer" },
+            "p99": { "description": "How many requests are ranked at or above the 99th percentile; absent when it is not reported.", "type": "integer" },
+            "p99.9": { "description": "How many requests are ranked at or above the 99.9th percentile; absent when it is not reported.", "type": "integer" }
           }
         }
       }
@@ -110,7 +113,7 @@
       "properties": {
         "id": { "description": "The Series' id: the first 12 hex digits of the sha256 of its key (benchmark, params, build, instance type, zone ID) as canonical JSON.", "type": "string", "pattern": "^[0-9a-f]{12}$" },
         "url": { "description": "The address of the Series' own file, v1/series/<id>.json.", "$ref": "#/$defs/url" },
-        "benchmark": { "type": "string" },
+        "benchmark": { "description": "The benchmark's name, as its Runs give it.", "type": "string" },
         "params": { "$ref": "#/$defs/params" },
         "build": { "description": "The named build of the benchmark (static, dynamic).", "type": "string" },
         "instance_type": { "description": "The EC2 instance type, as the provider names it.", "anyOf": [{ "type": "string" }, { "type": "null" }] },
@@ -125,6 +128,7 @@
           "required": ["series_v1"],
           "properties": {
             "series_v1": {
+              "description": "A summary of Method series v1's Derivation of the Series.",
               "type": "object",
               "required": ["method", "counted_runs", "failed_runs", "groups", "percentiles"],
               "properties": {
@@ -144,13 +148,14 @@
               }
             },
             "requests_v1": {
+              "description": "A summary of Method requests v1's Derivation of the Series; absent when that Method does not derive it.",
               "type": "object",
               "required": ["method", "counted_runs", "failed_runs", "groups", "pool"],
               "properties": {
                 "method": { "$ref": "#/$defs/method_requests" },
                 "counted_runs": { "description": "Runs this Method counts (exit 0, or 4 with failed requests).", "type": "integer", "minimum": 0 },
                 "failed_runs": { "description": "Runs it does not count.", "type": "integer", "minimum": 0 },
-                "groups": { "type": "integer", "minimum": 1 },
+                "groups": { "description": "How many groups its split facts, Method series v1's, make of the Series' Runs.", "type": "integer", "minimum": 1 },
                 "pool": {
                   "description": "Every succeeded request of the Series' counted Runs, pooled: each phase's statistics, read from the summed histogram (the Series' file holds the histograms, and the breakdowns by request fact).",
                   "type": "object",
