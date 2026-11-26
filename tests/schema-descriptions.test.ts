@@ -38,6 +38,10 @@
  *   count: it is the schema of the names an object does not declare, so a
  *   required name only it covers is a name the schema never declares, whose
  *   row in a reference would have the words for every other name, not its own.
+ * - So is every name an if's own required list holds, by the same rule, in the
+ *   schema around the if: the predicate needs no words, but with else false
+ *   every valid value must hold such a name, and a reference must say what it
+ *   is.
  *
  * When it fails it names every gap at once, by file and field path.
  */
@@ -165,16 +169,21 @@ function undescribedFields(schema: unknown): string[] {
 	/** `above`: the schemas this one is a branch of, which apply to the same value; empty for a field, an element or a definition. */
 	const walk = (node: unknown, path: Step[], above: readonly Json[]): void => {
 		if (!isObject(node)) return;
-		if (Array.isArray(node.required)) {
-			const level = applying([node, ...above], schema);
-			for (const name of node.required) {
-				if (typeof name !== "string") continue;
-				const why = whyUndeclared(name, level);
-				if (why !== undefined) gaps.push(`${path.length === 0 ? "(root)" : render(path)}: ${why}`);
-			}
-		}
 		/** A step named by a keyword: after a dot, unless it starts the path. */
 		const keywordStep = (word: string): Step => ({ step: `${path.length === 0 ? "" : "."}${word}` });
+		/** Each name of a required list declared at this schema's level, or a gap at `where`. */
+		const declared = (required: unknown, where: string): void => {
+			if (!Array.isArray(required)) return;
+			const level = applying([node, ...above], schema);
+			for (const name of required) {
+				if (typeof name !== "string") continue;
+				const why = whyUndeclared(name, level);
+				if (why !== undefined) gaps.push(`${where}: ${why}`);
+			}
+		};
+		declared(node.required, path.length === 0 ? "(root)" : render(path));
+		// An if's own required: the predicate needs no words, but a name it requires may be one every valid value must hold (else false), so it is declared around it.
+		if (isObject(node.if)) declared(node.if.required, render([...path, keywordStep("if")]));
 		const branchAbove = [...above, node];
 		for (const [keyword, nameOf] of Object.entries(FIELD_MAPS)) {
 			const members = node[keyword];
@@ -274,6 +283,16 @@ describe("the check", () => {
 		// Nested, and in a branch whose parent does not declare it either; a sibling branch's declaration does not apply.
 		expect(undescribedFields(schema({ $defs: { x: { description: "An x.", type: "array", items: { type: "object", required: ["b"] } } } }))).toEqual([`$defs.x[]: ${nowhere("b")}`]);
 		expect(undescribedFields(schema({ anyOf: [{ required: ["z"] }, { properties: { z: { description: "A z.", type: "string" } } }] }))).toEqual([`anyOf[0]: ${nowhere("z")}`]);
+	});
+
+	test("refuses a name an if requires that the schema around it does not declare, and passes one it declares", () => {
+		const then = { required: ["a"], properties: { a: { description: "An a.", type: "string" } } };
+		// With else false, every valid object holds status; the predicate's own words would not be shown.
+		expect(undescribedFields(schema({ if: { required: ["status"] }, then, else: false }))).toEqual(["if: requires status, but no properties or patternProperties of that object declare it"]);
+		expect(undescribedFields(schema({ properties: { x: { description: "An x.", type: "object", if: { required: ["status"], properties: { status: { type: "string" } } }, then } } }))).toEqual([
+			"x.if: requires status, but no properties or patternProperties of that object declare it",
+		]);
+		expect(undescribedFields(schema({ properties: { status: { description: "Its status.", type: "string" } }, if: { required: ["status"] }, then, else: false }))).toEqual([]);
 	});
 
 	test("passes a name in required declared at its level: in properties, by a pattern, by the parent of a branch, by an allOf branch or by the schema a $ref names", () => {
