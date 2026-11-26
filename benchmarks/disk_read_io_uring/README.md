@@ -1,9 +1,10 @@
 # disk_read_io_uring
 
 How many reads a disk completes when one thread keeps `queue_depth` of them submitted,
-`O_DIRECT` through `io_uring`. On EC2 the counted samples sit on the provider's throughput
-or IOPS limit for the disk, not on the device's own, and the device's counters in each Run
-say which limit bound.
+`O_DIRECT` through `io_uring`. In the Runs examined on EC2 the counted samples sat on the
+provider's throughput or IOPS limit for the disk, not on the device's own; the binary does
+not require a limit to bind, and the device's counters in each Run's dumps show the time
+spent over each limit.
 
 ## What a figure means
 
@@ -20,27 +21,32 @@ fewer than 64, and a probe found moments with 64 completions waiting and none in
 device. `device_counters` gives the device's own count of requests in flight, at the two
 edges of the measuring only (`in_flight_before`, `in_flight_after`).
 
-One repetition takes one completed read and prepares a read in its place. A Run's figure is
-the time of one repetition, in nanoseconds (`time_per_repetition_ns`): the median, over the
-Run's counted samples, of a sample's time divided by its repetitions, so the time per
-completed read. 10^9 divided by it is reads per second. The binary reads the clock only at
-the two edges of a sample. Before the counted samples it runs warmup samples, doubling the
-repetitions until a sample lasts at least a second; each of the 10 counted samples the
-schedule asks for then runs that many repetitions. Bytes per second (`bytes_per_second`)
-is `bytes_per_repetition` × 10^9 divided by the time per repetition, where
-`bytes_per_repetition` is `request_bytes`, the bytes one read asks for. A Series gives the
-5th, 50th and 95th percentiles of its counted Runs' figures
-([Methods](https://ledgermath.com/docs/methods)).
+One repetition takes one completed read, waiting only when none has arrived, and prepares
+a read in its place. Each Run that Method `series` v1 counts gives one figure, the time of
+one repetition in nanoseconds (`time_per_repetition_ns`): the median, over the Run's
+counted samples, of a sample's time divided by its repetitions, so of the samples' mean
+time per completed read. 10^9 divided by it is the completion rate, reads per second. A Run
+it does not count gives none. The harness reads the clock once at each edge of a sample,
+around the whole loop of its repetitions, and never inside that loop. Before the counted
+samples it runs warmup samples, doubling the repetitions until a sample lasts at least a
+second; each of the 10 counted samples the schedule asks for then runs that many
+repetitions. Bytes per second (`bytes_per_second`) is `bytes_per_repetition` × 10^9
+divided by the time per repetition, where `bytes_per_repetition` is `request_bytes`, the
+bytes one read asks for. A Series gives the 5th, 50th and 95th percentiles of its counted
+Runs' figures ([Methods](https://ledgermath.com/docs/methods)).
 
 So a figure is the time per completed read with `queue_depth` reads kept submitted, from
-one disk, on one instance type.
+one disk, on one instance type: the inverse of the completion rate.
 
 ## What a figure does not show
 
-- The counted samples sit on the provider's limit for the disk, not the device's own; the
-  device's counters in the Run say which limit bound (see "Findings").
-- With `queue_depth` reads submitted, the figure is the time between completions, not the
-  latency of one read.
+- In the Runs examined, the counted samples sat on the provider's limit for the disk, not
+  the device's own (see "Findings"). The binary does not require a limit to bind, nor
+  check that the burst at the start of a Run has ended before the counted samples; the
+  device's counters in the Run's dumps show the time spent over each limit.
+- The figure is a sample's time divided by the completions it reaped. It is not the time
+  between two completions, which nothing times (a completion may already be waiting when
+  a repetition starts), nor the latency of one read.
 - `queue_depth` counts reads submitted and not yet reaped, not reads the device held at
   any instant.
 - With `disk` `root_volume` the sets read the root EBS volume, not the instance's own

@@ -1,8 +1,8 @@
 # mutex
 
 What a critical section under a pthread mutex costs: uncontended on one thread, and with
-two threads handing the lock between two physical cores or between the two hardware
-threads of one core.
+two threads contending for it on two physical cores or on the two hardware threads of one
+core.
 
 ## What a figure means
 
@@ -14,15 +14,17 @@ the repetition's target, unlock and stop; otherwise increment the counter and th
 protected lines, then unlock. A sample's time divided by (repetitions × 10,000) is the
 time per critical section across all threads: a Method's division, not the binary's.
 
-A Run's figure is the time of one repetition, in nanoseconds (`time_per_repetition_ns`):
-the median, over the Run's counted samples, of a sample's time divided by its repetitions.
-It is the time of 10,000 critical sections, not of one: divide it by
-`critical_sections_per_repetition`, which each Run observes, for one. The binary reads the
-clock only at the two edges of a sample. Before the counted samples it runs warmup
-samples, doubling the repetitions until a sample lasts at least a second; each of the 10
-counted samples the schedule asks for then runs that many repetitions. The binary
-observes no `bytes_per_repetition`, so no bytes per second is derived. A Series gives the
-5th, 50th and 95th percentiles of its counted Runs' figures
+Each Run that Method `series` v1 counts gives one figure, the time of one repetition in
+nanoseconds (`time_per_repetition_ns`): the median, over the Run's counted samples, of a
+sample's time divided by its repetitions. A Run it does not count gives none. It is the
+time of 10,000 critical sections, not of one: divide it by
+`critical_sections_per_repetition`, which each Run observes, for one. The harness reads
+the clock once at each edge of a sample, around the whole loop of its repetitions, and
+never inside that loop. Before the counted samples it runs warmup samples, doubling the
+repetitions until a sample lasts at least a second; each of the 10 counted samples the
+schedule asks for then runs that many repetitions. The binary observes no
+`bytes_per_repetition`, so no bytes per second is derived. A Series gives the 5th, 50th
+and 95th percentiles of its counted Runs' figures
 ([Methods](https://ledgermath.com/docs/methods)).
 
 So a figure is the time of 10,000 critical sections under one mutex, by one thread or
@@ -30,16 +32,24 @@ shared between two, on one instance type.
 
 ## What a figure does not show
 
-- The set with `idle_threads` 0 is true only of a process that has only ever had one
-  thread. A program that has started a thread pays for the atomic instructions, as the set
-  with `idle_threads` 1 does.
-- With an idle thread, on `c6i.8xlarge` and `i4i.2xlarge`, the figure sits at one of two
-  usual levels from boot to boot, about 30% apart, and no recorded fact tells them apart.
-  The spread between such a Series' percentiles can be two levels, not noise: say which
-  level an estimate uses, or carry both.
-- Without an idle thread, the figure moves with where glibc's lock and unlock and the
-  benchmark's loop land in the binary: another binary of the same code can be faster or
-  slower, and nothing in a Series says where its code landed.
+- With two threads, the figure is not the time for the lock to pass from one core to the
+  other. A thread that has just unlocked may lock again at once (glibc's mutex is unfair,
+  so the thread that unlocks often locks again), and the figure divided by 10,000 is the
+  mean time per critical section across both threads.
+- With `threads` 1, `one_cpu` and `idle_threads` 0, the figure is true only of a process
+  that has only ever had one thread, where glibc skips the atomic instructions. A program
+  that has started a thread pays for them, as the same set with `idle_threads` 1 does.
+- With `threads` 1, `one_cpu` and `idle_threads` 1, on `c6i.8xlarge` and `i4i.2xlarge`,
+  the Runs counted on 2026-11-25 usually sat at one of two levels from boot to boot, about
+  30% apart, with one Run between them, and in the Runs examined no recorded fact told the
+  levels apart. The spread between such a Series' percentiles can be two levels, not
+  noise: say which level an estimate uses, or carry both.
+- With `threads` 1, `one_cpu` and `idle_threads` 0, the figure moves with where glibc's
+  lock and unlock and the benchmark's loop land in the binary, as an investigation on Ice
+  Lake and on `m5.large` showed: another binary of the same code can be faster or slower,
+  and nothing in a Series says where its code landed. The two-thread sets were not part
+  of that investigation's sweeps; an earlier, smaller one saw `smt_siblings` on
+  `m5.large` spread by 11% as the code moved.
 
 Both one-thread findings are in "What the one-thread figures mean" below.
 

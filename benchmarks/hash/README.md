@@ -15,12 +15,13 @@ a cryptographic hash. One repetition hashes the same 64 bytes once:
 | `siphash` | SipHash-1-3 with a fixed key, the shape Rust's `DefaultHasher` uses |
 | `sha256` | SHA-256, one 64-byte block and its padding block, with the SHA extensions (`sha256rnds2` and friends) when the processor has them, otherwise in scalar code |
 
-A Run's figure is the time of one repetition, in nanoseconds (`time_per_repetition_ns`):
-the median, over the Run's counted samples, of a sample's time divided by its repetitions.
-The binary reads the clock only at the two edges of a sample. Before the counted samples
-it runs warmup samples, doubling the repetitions until a sample lasts at least a second;
-each of the 10 counted samples the schedule asks for then runs that many repetitions.
-Bytes per second (`bytes_per_second`) is `bytes_per_repetition` × 10^9 divided by the time
+Each Run that Method `series` v1 counts gives one figure, the time of one repetition in
+nanoseconds (`time_per_repetition_ns`): the median, over the Run's counted samples, of a
+sample's time divided by its repetitions. A Run it does not count gives none. The harness
+reads the clock once at each edge of a sample, around the whole loop of its repetitions,
+and never inside that loop. Before the counted samples it runs warmup samples, doubling the
+repetitions until a sample lasts at least a second; each of the 10 counted samples the
+schedule asks for then runs that many repetitions. Bytes per second (`bytes_per_second`) is `bytes_per_repetition` × 10^9 divided by the time
 per repetition, where `bytes_per_repetition` is the 64 bytes hashed. A Series gives the
 5th, 50th and 95th percentiles of its counted Runs' figures
 ([Methods](https://ledgermath.com/docs/methods)).
@@ -32,10 +33,10 @@ on one instance type.
 
 - Only a 64-byte input is implemented. The figure is not the time to hash a longer one.
 - Every repetition hashes the same 64 bytes, and no repetition uses the result of the one
-  before. The figure is of hashes computed back to back, not the latency of one hash on
-  its own.
+  before. The figure is the time per hash of hashes computed back to back, which the
+  processor may overlap, not a measurement of one hash on its own.
 - `sha256` takes the SHA extensions where the processor has them and scalar code where it
-  does not, so its code differs between instance types; `path_taken` says which (see
+  does not, so its code can differ between instance types; `path_taken` says which (see
   "Findings").
 
 ## Parameters

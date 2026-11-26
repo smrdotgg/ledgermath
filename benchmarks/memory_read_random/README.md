@@ -1,8 +1,9 @@
 # memory_read_random
 
 How fast one thread reads a buffer in random order: the first word of every 64-byte
-element, in a shuffled order, with many cache misses in flight at once. It is the
-throughput of random reads, not the latency of one.
+element, in a shuffled order, with reads that do not depend on one another, so that many
+cache misses can be in flight at once. It is the throughput of random reads, not the
+latency of one.
 
 ## What a figure means
 
@@ -15,16 +16,17 @@ The reads do not depend on one another, so the core may have many cache misses i
 at once. This is the throughput of random reads, not the latency of one: divide a
 repetition's time by `reads_per_repetition` for the time per read at that throughput.
 
-A Run's figure is the time of one repetition, in nanoseconds (`time_per_repetition_ns`):
-the median, over the Run's counted samples, of a sample's time divided by its repetitions.
-The binary reads the clock only at the two edges of a sample. Before the counted samples
-it runs warmup samples, doubling the repetitions until a sample lasts at least a second;
-each of the 10 counted samples the schedule asks for then runs that many repetitions.
-Bytes per second (`bytes_per_second`) is `bytes_per_repetition` × 10^9 divided by the time
-per repetition, where `bytes_per_repetition` is 64 bytes for every element read: the whole
-cache line each read lands on, not the 8 bytes the thread uses. A Series gives the 5th,
-50th and 95th percentiles of its counted Runs' figures
-([Methods](https://ledgermath.com/docs/methods)).
+Each Run that Method `series` v1 counts gives one figure, the time of one repetition in
+nanoseconds (`time_per_repetition_ns`): the median, over the Run's counted samples, of a
+sample's time divided by its repetitions. A Run it does not count gives none. The harness
+reads the clock once at each edge of a sample, around the whole loop of its repetitions,
+and never inside that loop. Before the counted samples it runs warmup samples, doubling the
+repetitions until a sample lasts at least a second; each of the 10 counted samples the
+schedule asks for then runs that many repetitions. Bytes per second (`bytes_per_second`)
+is `bytes_per_repetition` × 10^9 divided by the time per repetition, where
+`bytes_per_repetition` is 64 bytes for every element read, the element each read lands
+in, not the 8 bytes the thread uses. A Series gives the 5th, 50th and 95th percentiles of
+its counted Runs' figures ([Methods](https://ledgermath.com/docs/methods)).
 
 So a figure is the time one thread takes to read every element of `size_bytes` once, in
 random order, on one instance type.
@@ -32,9 +34,12 @@ random order, on one instance type.
 ## What a figure does not show
 
 - It is not the latency of one read. Each read's address comes from the shuffled order,
-  not from the read before it, so the reads can overlap.
+  not from the read before it, so the reads can overlap; nothing records whether they did.
 - Each repetition also reads the shuffled order front to back, 8 bytes per element.
-- Bytes per second counts whole cache lines. The thread uses 8 bytes of each.
+- Bytes per second counts the 64 bytes of every element the loop reads from, of which the
+  thread uses 8. Nothing measures the traffic to memory, and nothing requires a read to
+  miss the cache: a buffer and order array small enough for a cache can be served from it.
+  The Run's dump sections `lscpu` and `sys_cpu` record the cache sizes.
 
 ## Parameters
 

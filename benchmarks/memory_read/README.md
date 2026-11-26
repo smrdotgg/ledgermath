@@ -14,14 +14,16 @@ read loop is either a hand-written x86 assembly loop (`scalar`) or AVX2 loads (`
 The source is `memory_read.c`; the comment at its top lists the same parameters.
 
 With `threads` `all`, a repetition ends when the last thread has read its slice: the main
-thread starts the threads at one barrier and waits at another until all of them are done.
+thread releases the threads at one barrier, waits at another until all of them are done,
+and adds up their sums. The measured time includes that synchronisation and that sum.
 
-A Run's figure is the time of one repetition, in nanoseconds (`time_per_repetition_ns`):
-the median, over the Run's counted samples, of a sample's time divided by its repetitions.
-The binary reads the clock only at the two edges of a sample. Before the counted samples
-it runs warmup samples, doubling the repetitions until a sample lasts at least a second;
-each of the 10 counted samples the schedule asks for then runs that many repetitions.
-Bytes per second (`bytes_per_second`) is `bytes_per_repetition` × 10^9 divided by the time
+Each Run that Method `series` v1 counts gives one figure, the time of one repetition in
+nanoseconds (`time_per_repetition_ns`): the median, over the Run's counted samples, of a
+sample's time divided by its repetitions. A Run it does not count gives none. The harness
+reads the clock once at each edge of a sample, around the whole loop of its repetitions,
+and never inside that loop. Before the counted samples it runs warmup samples, doubling the
+repetitions until a sample lasts at least a second; each of the 10 counted samples the
+schedule asks for then runs that many repetitions. Bytes per second (`bytes_per_second`) is `bytes_per_repetition` × 10^9 divided by the time
 per repetition, where `bytes_per_repetition` is the bytes read in one repetition, by all
 threads together. A Series gives the 5th, 50th and 95th percentiles of its counted Runs'
 figures ([Methods](https://ledgermath.com/docs/methods)).
@@ -37,10 +39,10 @@ read loop, on one thread or on all allowed CPUs, on one instance type.
 - `threads` `1` is one unpinned thread: it is not what the whole box can read.
 - The figure is of these two loops. A program that reads memory with other code is not
   measured here.
-- The two builds can give different figures on the `scalar` path because of where the
-  loop lands in each binary, not because of how they are linked. A difference between
-  them does not show that dynamic linking is faster; see "The two builds, and why their
-  numbers differ" below.
+- The two builds have given different figures on the `scalar` path on some Intel instance
+  types. The investigation of the difference found its cause in where the loop lands in
+  each binary, not in how they are linked. A difference between them does not show that
+  dynamic linking is faster; see "The two builds, and why their numbers differ" below.
 
 ## Parameters
 

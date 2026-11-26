@@ -16,12 +16,13 @@ The Run's dump records the machine's cache sizes (`lscpu` and `cache/index*/size
 `/sys`). It stands for the decode step of a compressed column or posting list, as
 napkin-math's `compressed_memory_read / bitpacker` (BitPacker8x at 8 bits) did.
 
-A Run's figure is the time of one repetition, in nanoseconds (`time_per_repetition_ns`):
-the median, over the Run's counted samples, of a sample's time divided by its repetitions.
-The binary reads the clock only at the two edges of a sample. Before the counted samples
-it runs warmup samples, doubling the repetitions until a sample lasts at least a second;
-each of the 10 counted samples the schedule asks for then runs that many repetitions.
-Bytes per second (`bytes_per_second`) is `bytes_per_repetition` × 10^9 divided by the time
+Each Run that Method `series` v1 counts gives one figure, the time of one repetition in
+nanoseconds (`time_per_repetition_ns`): the median, over the Run's counted samples, of a
+sample's time divided by its repetitions. A Run it does not count gives none. The harness
+reads the clock once at each edge of a sample, around the whole loop of its repetitions,
+and never inside that loop. Before the counted samples it runs warmup samples, doubling the
+repetitions until a sample lasts at least a second; each of the 10 counted samples the
+schedule asks for then runs that many repetitions. Bytes per second (`bytes_per_second`) is `bytes_per_repetition` × 10^9 divided by the time
 per repetition, where `bytes_per_repetition` is the 1024 bytes one repetition writes out.
 Those are four times the 256 bytes it reads (`compressed_bytes_per_repetition`), so bytes
 per second counts the unpacked output, not the packed input. A Series gives the 5th, 50th

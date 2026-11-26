@@ -11,12 +11,13 @@ with no network card. A server thread in the same process accepts one connection
 `127.0.0.1` and echoes back whatever it receives. One repetition sends the whole buffer,
 32 KiB by default, from the main thread and reads all of it back.
 
-A Run's figure is the time of one repetition, in nanoseconds (`time_per_repetition_ns`):
-the median, over the Run's counted samples, of a sample's time divided by its repetitions.
-The binary reads the clock only at the two edges of a sample. Before the counted samples
-it runs warmup samples, doubling the repetitions until a sample lasts at least a second;
-each of the 10 counted samples the schedule asks for then runs that many repetitions.
-Bytes per second (`bytes_per_second`) is `bytes_per_repetition` × 10^9 divided by the time
+Each Run that Method `series` v1 counts gives one figure, the time of one repetition in
+nanoseconds (`time_per_repetition_ns`): the median, over the Run's counted samples, of a
+sample's time divided by its repetitions. A Run it does not count gives none. The harness
+reads the clock once at each edge of a sample, around the whole loop of its repetitions,
+and never inside that loop. Before the counted samples it runs warmup samples, doubling the
+repetitions until a sample lasts at least a second; each of the 10 counted samples the
+schedule asks for then runs that many repetitions. Bytes per second (`bytes_per_second`) is `bytes_per_repetition` × 10^9 divided by the time
 per repetition, where `bytes_per_repetition` is the bytes sent in one repetition, counted
 once, not once each way. A Series gives the 5th, 50th and 95th percentiles of its counted
 Runs' figures ([Methods](https://ledgermath.com/docs/methods)).
@@ -30,6 +31,8 @@ on one instance type.
   between two machines.
 - One connection, opened before measuring, carries every repetition, so opening a
   connection is not in the figure.
+- A repetition also hashes every 997th byte it read back, and the last, so the figure is
+  not the kernel's work alone.
 - The two threads are not pinned, so on a 2-vCPU box they share
   both vCPUs with everything else.
 

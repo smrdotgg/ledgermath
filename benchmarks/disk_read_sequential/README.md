@@ -1,9 +1,9 @@
 # disk_read_sequential
 
 Reading a file front to back the way a program does, on one thread: buffered `pread`s of
-`request_bytes` with the kernel's stock readahead, each sample's region dropped from the
-page cache first. It is a cold read when the eviction worked, which each Run records as
-each sample's resident pages.
+`request_bytes` with the kernel's stock readahead, the kernel asked first to drop each
+sample's region from the page cache. It is a cold read when the eviction worked, which
+each Run records as each sample's resident pages.
 
 ## What a figure means
 
@@ -35,25 +35,33 @@ version 1 gives from `bytes_per_repetition`.
 
 ### The figure
 
-A Run's figure is the time of one repetition, in nanoseconds (`time_per_repetition_ns`):
-the median, over the Run's 10 counted samples, of a sample's time divided by its
-repetitions, so the time per read call. Bytes per second (`bytes_per_second`) is
-`bytes_per_repetition` × 10^9 divided by the time per repetition, where
-`bytes_per_repetition` is `request_bytes`. A Series gives the 5th, 50th and 95th
+Each Run that Method `series` v1 counts gives one figure, the time of one repetition in
+nanoseconds (`time_per_repetition_ns`): the median, over the Run's counted samples (10 in
+the schedule), of a sample's time divided by its repetitions, so of the samples' mean time
+per read call. A Run it does not count gives none. The harness reads the clock once at
+each edge of a sample, around the whole loop of its repetitions, and never inside that
+loop; the request to drop the region comes before the first read. Bytes per second
+(`bytes_per_second`) is `bytes_per_repetition` × 10^9 divided by the time per repetition,
+where `bytes_per_repetition` is `request_bytes`. A Series gives the 5th, 50th and 95th
 percentiles of its counted Runs' figures ([Methods](https://ledgermath.com/docs/methods)).
 
-So a figure is the mean time of one 8 KiB read call while a program reads a cold region
-of a file front to back, from one disk, on one instance type.
+So a figure is the median of the samples' mean times of one 8 KiB read call, each sample
+reading one region of a file front to back after the kernel was asked to drop it from the
+page cache, from one disk, on one instance type.
 
 ## What a figure does not show
 
-- Each sample's region is dropped from the page cache first, so it is not a warm read;
-  `work` records the pages that were still resident as each sample began.
+- A sample is not known to be cold. Before each sample the binary asks the kernel to
+  drop the region from the page cache (`posix_fadvise`), records the call's result
+  (`fadvise_result`) and the region's pages still resident (`resident_pages_before`, -1
+  when it cannot count them), and reads on whatever they say. Neither the binary nor the
+  Method requires the region to be cold: a sample is a cold read as far as that count
+  shows.
 - Readahead asks the device for larger requests than the 8 KiB calls (128 KiB on both
-  disks seen), and the figure is a mean over the calls, not the latency of one device
-  request.
-- Readahead keeps one or two requests in flight (see "Findings"), so it is not the disk's
-  throughput at a deep queue; reads kept in flight at depth are
+  disks seen), and the figure is built from means over the calls, not from the latency of
+  one device request.
+- In the Runs examined readahead kept one or two requests in flight (see "Findings"), so
+  it is not the disk's throughput at a deep queue; reads kept in flight at depth are
   [`disk_read_io_uring`](https://ledgermath.com/docs/benchmarks/disk_read_io_uring)'s.
 - With `disk` `root_volume` the set reads the root EBS volume, not the instance's own
   disk: an EBS figure, whose volume type, size and provisioned IOPS and throughput are

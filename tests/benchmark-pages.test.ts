@@ -38,6 +38,66 @@ function prose(text: string): string[] {
 	});
 }
 
+/*
+ * What Markdown (CommonMark, as GitHub renders it) means by one paragraph: a
+ * run of lines that are not blank, where a line holding only spaces or tabs is
+ * blank, and where no line starts another block. A list item, a quote, a fence,
+ * an HTML block, a heading or a thematic break starts a block of its own (only
+ * an ordered item numbered 1 interrupts a paragraph, but an opening that starts
+ * with any list item is a list); a line of = or - under the text makes it a
+ * heading instead.
+ */
+const BLANK = /^[ \t]*$/;
+const STARTS_BLOCK = /^ {0,3}([-+*][ \t]|[-+*]$|\d{1,9}[.)]([ \t]|$)|>|```|~~~|<|#{1,6}([ \t]|$)|(([-*_])[ \t]*){3,}$)/;
+const INTERRUPTS_PARAGRAPH = /^ {0,3}([-+*][ \t]+\S|1[.)][ \t]+\S|>|```|~~~|<|#{1,6}([ \t]|$)|(=+|-+)[ \t]*$|(([-*_])[ \t]*){3,}$)/;
+const INDENTED_CODE = /^( {4}|\t)/;
+
+/** Why the page does not open with its title, one paragraph, then the first heading; empty when it does. */
+function openingProblems(text: string, name: string): string[] {
+	const lines = text.split("\n");
+	const problems: string[] = [];
+	if (lines[0] !== `# ${name}`) problems.push(`the first line is not "# ${name}"`);
+	let i = 1;
+	while (i < lines.length && BLANK.test(lines[i] as string)) i++;
+	const start = i;
+	while (i < lines.length && !BLANK.test(lines[i] as string)) {
+		const line = lines[i] as string;
+		if (i === start ? STARTS_BLOCK.test(line) || INDENTED_CODE.test(line) : INTERRUPTS_PARAGRAPH.test(line)) {
+			problems.push(`line ${i + 1} starts a block of its own, not the opening paragraph: ${JSON.stringify(line)}`);
+		}
+		i++;
+	}
+	if (i === start) problems.push("there is no opening paragraph");
+	while (i < lines.length && BLANK.test(lines[i] as string)) i++;
+	if (lines[i] !== `## ${PAGE_HEADINGS[0]}`) {
+		problems.push(`after the opening paragraph comes ${JSON.stringify(lines[i] ?? "the end")}, not "## ${PAGE_HEADINGS[0]}"`);
+	}
+	return problems;
+}
+
+describe("one opening paragraph, as Markdown means it", () => {
+	const heading = `## ${PAGE_HEADINGS[0]}`;
+	test("a paragraph of several lines is one paragraph", () => {
+		expect(openingProblems(`# x\n\nIt measures this.\nAnd that.\n\n${heading}\n`, "x")).toEqual([]);
+	});
+	test("a line of spaces between two paragraphs makes two", () => {
+		expect(openingProblems(`# x\n\nThe first.\n   \nThe second.\n\n${heading}\n`, "x")).not.toEqual([]);
+		expect(openingProblems(`# x\n\nThe first.\n\t\nThe second.\n\n${heading}\n`, "x")).not.toEqual([]);
+	});
+	test("two list items are a list, not a paragraph", () => {
+		expect(openingProblems(`# x\n\n- one\n- two\n\n${heading}\n`, "x")).not.toEqual([]);
+		expect(openingProblems(`# x\n\n1. one\n2. two\n\n${heading}\n`, "x")).not.toEqual([]);
+		expect(openingProblems(`# x\n\nIt measures this:\n- one\n- two\n\n${heading}\n`, "x")).not.toEqual([]);
+	});
+	test("a line of dashes under the text makes it a heading", () => {
+		expect(openingProblems(`# x\n\nIt measures this.\n---\n\n${heading}\n`, "x")).not.toEqual([]);
+	});
+	test("the first heading must follow it", () => {
+		expect(openingProblems(`# x\n\nIt measures this.\n\n## Something else\n`, "x")).not.toEqual([]);
+		expect(openingProblems(`# x\n\n${heading}\n`, "x")).not.toEqual([]);
+	});
+});
+
 describe("each benchmark's README, as its page", () => {
 	test("there is one for every benchmark schedule.json runs", () => {
 		expect(NAMES.length).toBeGreaterThan(0);
@@ -45,17 +105,9 @@ describe("each benchmark's README, as its page", () => {
 
 	for (const name of NAMES) {
 		const text = readFileSync(join(ROOT, "benchmarks", name, "README.md"), "utf8");
-		const lines = text.split("\n");
 
 		test(`${name}: opens with its name as the title, then one paragraph before the first heading`, () => {
-			expect(lines[0]).toBe(`# ${name}`);
-			expect(lines[1]).toBe("");
-			const firstHeading = lines.findIndex((line, index) => index > 0 && line.startsWith("#"));
-			const opening = lines.slice(2, firstHeading);
-			while (opening.at(-1) === "") opening.pop();
-			expect(opening.length, "an opening paragraph").toBeGreaterThan(0);
-			expect(opening.includes(""), "one paragraph, no blank line inside it").toBe(false);
-			expect(lines[firstHeading]).toBe(`## ${PAGE_HEADINGS[0]}`);
+			expect(openingProblems(text, name)).toEqual([]);
 		});
 
 		test(`${name}: has the page's headings, in order, and no other at that level`, () => {

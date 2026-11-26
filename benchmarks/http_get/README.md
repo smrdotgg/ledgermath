@@ -1,10 +1,12 @@
 # http_get
 
 How long an HTTPS GET of an object takes, from the box to the S3 endpoint its Service
-names, on one thread and one request at a time, each request after the first preceded by a
-pause whose mean is `gap_mean_ms`: a lightly loaded client. Every phase of every request
-(name resolved, connected, secured, request sent, first byte, headers, body) is an event,
-and every 2xx body is checked against the Fixture.
+names, over a new connection per request or over one kept connection, one request at a
+time on one thread, each request after the first preceded by a pause whose mean is
+`gap_mean_ms`: a lightly loaded client. With `auth` `sigv4`, as scheduled, each request is
+signed before its clock starts; each phase it reaches (name resolved, connected, secured,
+request sent, first byte, headers, body) is an event, and each complete 2xx body is
+checked against the Fixture.
 
 ## What a figure means
 
@@ -20,20 +22,26 @@ is an event holding what was received. The Run goes on to the next request, and 
 code says a completed Run contained an error.
 
 One repetition is one request, and each sample holds one: over a new connection
-(`connection` `new`) from just before its DNS query to its whole body, over a kept
-connection (`reused`) from just before its request is written to its whole body. Request 0
-is a warmup sample; the counted requests follow it, 200 a Run in the schedule (40 for the
-16 MiB object).
+(`connection` `new`) from just before its DNS query, over a kept connection (`reused`) from
+just before its request is written, to its whole body or to the failure that ends it; a
+kept connection is opened outside any sample. Request 0 is a warmup sample; the counted
+requests follow it, as many as the Run asks for, 200 in the schedule (40 for the 16 MiB
+object), unless the Run ends early (see "What ends a Run early").
 
 Two Methods read these Runs ([Methods](https://ledgermath.com/docs/methods)). Method
-`series` v1 gives each Run one figure, the median of its counted requests' total times, in
-nanoseconds (`time_per_repetition_ns`), and a Series the 5th, 50th and 95th percentiles of
-those figures across its counted Runs; it counts only a Run whose binary exited 0. Method
-`requests` v1 gives each phase of a request, and the total, its percentiles across the
+`series` v1 counts only a Run whose binary exited 0 and whose stream passes its checks,
+with as many counted samples as the Run asked for. Each Run it counts gives one figure,
+the median of its counted requests' total times, in nanoseconds
+(`time_per_repetition_ns`); a Run it does not count gives none. A Series gives the 5th,
+50th and 95th percentiles of those figures across its counted Runs. Method `requests` v1
+gives each phase of a request, and the total, its percentiles across the succeeded
 requests: the 50th, 90th, 95th, 99th and 99.9th, each only where there are enough requests
-for it, within each Run and pooled across a Series' Runs. It counts a Run that exited 4
-too, and counts its failed requests without timing them. The phases are differences of the
-events' times, as "The phases" below defines them. The binary observes no
+for it, within each Run it counts and pooled across them. A Run that exited 4 can count
+there too, when its stream passes the Method's checks and holds as many counted requests
+as the Run asked for; a Run cut short at its budget, or after ten requests in a row that
+reached no server, holds fewer and is in no figure, its succeeded requests included. In a
+Run it counts, failed requests are counted and never timed. The phases are differences of
+the events' times, as "The phases" below defines them. The binary observes no
 `bytes_per_repetition`, so no bytes per second is derived.
 
 So a figure is the time of an HTTPS GET of a Fixture object of `object_bytes`, or of one of
@@ -46,13 +54,19 @@ sends one request at a time.
   first whose mean is `gap_mean_ms`. It is not S3 under load.
 - With `connection` `reused` the requests have no DNS, TCP or TLS phase, so they do not
   show the cost of a new connection.
-- The box and the endpoint are in one Region. The path between them is in each Run's dump
-  sections `network`, `ec2_route_tables` and `ec2_vpc_endpoints`; another path is not
-  measured.
-- Method `series` v1's one figure per Run is a median, not a tail. The tail of the
-  requests is Method `requests` v1's.
-- The Body phase of a small object is almost entirely the program's own work on bytes
-  already received, not a network figure (see "What our CPU contributes").
+- The box and the endpoint are in one Region, so a figure is not that of a client
+  elsewhere. Each Run's dumps record the box's network settings (`network`) and the
+  subnet's route tables and the VPC's endpoints as the EC2 API describes them
+  (`ec2_route_tables`, `ec2_vpc_endpoints`): configuration, not the route the requests
+  took.
+- Method `series` v1's one figure per counted Run is a median, not a tail. The tail of
+  the requests is Method `requests` v1's.
+- The Body phase is not a network figure on its own. It starts once the header block is
+  parsed and takes in every later read, any wait for the network included; for a small
+  object most of it can be the program's own work on bytes already received. In ten
+  requests for one 5,545-byte object from a development machine, five over new
+  connections and five over a kept one, the median Body phase was almost all CPU (see
+  "What our CPU contributes").
 
 ## Parameters
 

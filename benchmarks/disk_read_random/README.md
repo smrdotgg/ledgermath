@@ -1,8 +1,8 @@
 # disk_read_random
 
-The latency of one `O_DIRECT` read of `request_bytes` from a disk, on one thread, with
-nothing else outstanding: from the root EBS volume, or from the instance's own NVMe disk
-on the instance types that have one.
+The latency of one `O_DIRECT` read of `request_bytes` from a disk, on one thread, with no
+other read of the binary's outstanding: from the root EBS volume, or from the instance's
+own NVMe disk on the instance types that have one.
 
 ## What a figure means
 
@@ -23,30 +23,38 @@ blocks in the same order, each block at most once until the permutation is used 
 
 ### The figure
 
-A Run's figure is the time of one repetition, in nanoseconds (`time_per_repetition_ns`):
-the median, over the Run's counted samples, of a sample's time divided by its repetitions,
-so the median of each sample's mean read time. The binary reads the clock only at the two
-edges of a sample. Before the counted samples it runs warmup samples, doubling the
-repetitions until a sample lasts at least a second; each of the 10 counted samples the
-schedule asks for then runs that many repetitions. Bytes per second (`bytes_per_second`)
-is `bytes_per_repetition` × 10^9 divided by the time per repetition, where
-`bytes_per_repetition` is `request_bytes`, the bytes one read asks for. A Series gives the
-5th, 50th and 95th percentiles of its counted Runs' figures
-([Methods](https://ledgermath.com/docs/methods)).
+Each Run that Method `series` v1 counts gives one figure, the time of one repetition in
+nanoseconds (`time_per_repetition_ns`): the median, over the Run's counted samples, of a
+sample's time divided by its repetitions, so the median of the samples' mean read times. A
+Run it does not count gives none. The harness reads the clock once at each edge of a
+sample, around the whole loop of its repetitions, and never inside that loop. Before the
+counted samples it runs warmup samples, doubling the repetitions until a sample lasts at
+least a second; each of the 10 counted samples the schedule asks for then runs that many
+repetitions. Bytes per second (`bytes_per_second`) is `bytes_per_repetition` × 10^9
+divided by the time per repetition, where `bytes_per_repetition` is `request_bytes`, the
+bytes one read asks for. A Series gives the 5th, 50th and 95th percentiles of its counted
+Runs' figures ([Methods](https://ledgermath.com/docs/methods)).
 
-So a figure is the mean time of one read at queue depth 1 from one disk, on one instance
-type.
+So a figure is the median of the samples' mean times of one read at queue depth 1 from one
+disk, on one instance type.
 
 ## What a figure does not show
 
-- A sample's time over its repetitions is a mean, not a tail. The device's histogram in
-  the dump gives the distribution, in power-of-two bins.
+- A Run's figure is a median of means, not a tail. The device's own latency histogram
+  (`nvme amzn stats`, in the dumps taken before and after the Run) is another thing: it
+  counts, in power-of-two bins, every request the device served between those two dumps,
+  the warmup and any other I/O included, and it is the device's latency, not the time the
+  binary measured around its calls.
 - One read is outstanding at a time, so it is not a disk under load. Reads kept in flight
   are [`disk_read_io_uring`](https://ledgermath.com/docs/benchmarks/disk_read_io_uring)'s.
 - With `disk` `root_volume` the set reads the root EBS volume, not the instance's own
   disk: an EBS figure, whose volume type, size and provisioned IOPS and throughput are
   AWS's record in each boot's dump section `ec2_volumes`.
-- Every Run reads the same blocks in the same order.
+- The reads follow one permutation, fixed by its seed and by the number of blocks
+  (`span_bytes` / `request_bytes`), so every Run of a parameter set reads its blocks in
+  the same order from the same start; how far into the permutation a Run reads depends on
+  the repetitions the warmup samples settle on. The two scheduled sets have different
+  spans, and so different permutations.
 
 ## Parameters
 

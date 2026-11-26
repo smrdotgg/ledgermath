@@ -1,7 +1,9 @@
 # syscall
 
-The cost of one call into the kernel on one thread (`getpid`, `getrusage`, `stat`), beside
-`gettimeofday`, which the vDSO normally answers without entering the kernel.
+The cost of one call into the kernel on one thread (`getpid`, `getrusage`, and `stat`,
+whose cost depends on the file system that answers it, which each Run observes), beside
+`gettimeofday`, which the vDSO normally answers without entering the kernel; whether it did
+is not observed, and the clock source in the Run's dump section `kernel` decides it.
 
 ## What a figure means
 
@@ -15,14 +17,16 @@ it. One repetition makes one call:
 | `getrusage` | `getrusage(RUSAGE_SELF)` |
 | `stat` | `stat()` of `LM_PARAM_PATH` |
 
-A Run's figure is the time of one repetition, in nanoseconds (`time_per_repetition_ns`):
-the median, over the Run's counted samples, of a sample's time divided by its repetitions.
-The binary reads the clock only at the two edges of a sample. Before the counted samples
-it runs warmup samples, doubling the repetitions until a sample lasts at least a second;
-each of the 10 counted samples the schedule asks for then runs that many repetitions. The
-binary observes no `bytes_per_repetition`, so no bytes per second is derived. A Series
-gives the 5th, 50th and 95th percentiles of its counted Runs' figures
-([Methods](https://ledgermath.com/docs/methods)).
+Each Run that Method `series` v1 counts gives one figure, the time of one repetition in
+nanoseconds (`time_per_repetition_ns`): the median, over the Run's counted samples, of a
+sample's time divided by its repetitions. A Run it does not count gives none. The harness
+reads the clock once at each edge of a sample, around the whole loop of its repetitions,
+and never inside that loop; with `call` `gettimeofday`, reading the time is the measured
+work itself. Before the counted samples it runs warmup samples, doubling the repetitions
+until a sample lasts at least a second; each of the 10 counted samples the schedule asks
+for then runs that many repetitions. The binary observes no `bytes_per_repetition`, so no
+bytes per second is derived. A Series gives the 5th, 50th and 95th percentiles of its
+counted Runs' figures ([Methods](https://ledgermath.com/docs/methods)).
 
 So a figure is the time of one call, made again and again by one thread, on one instance
 type.
@@ -31,10 +35,11 @@ type.
 
 - `gettimeofday` normally does not enter the kernel, and whether it did is not observed:
   the clock source in the Run's dump section `kernel` decides it.
-- Every repetition stats the same path. The cost of `stat` depends on the file system
-  that answers it, which `path_fs_type` records.
-- The binary is linked statically, which changes how `gettimeofday` is reached; it can
-  cost a dynamically linked program less (see "Findings").
+- With `call` `stat`, every repetition stats the same path. The cost of `stat` depends on
+  the file system that answers it, which `path_fs_type` records.
+- The binary is linked statically, which changes how `gettimeofday` is reached. In two
+  measurements on a development machine it cost more than in a dynamically linked binary
+  (see "Findings").
 
 ## Parameters
 
@@ -62,9 +67,10 @@ clock source (`current_clocksource`) is what decides it.
 
 The binary is linked statically. Static glibc 2.34 still answers `gettimeofday` through
 the vDSO, but through a wrapper that loads the vDSO function's address and calls it, where
-a dynamic binary's `gettimeofday` resolves to the vDSO function itself. Against a
-dynamically linked binary making the same calls, `gettimeofday` measured 2.4% slower on an
-idle machine and 10% slower on a busy one; the measurements are in
+a dynamic binary's `gettimeofday` resolves to the vDSO function itself. In two
+measurements on a development machine, against an earlier, dynamically linked binary
+making the same calls, `gettimeofday` was 2.4% slower with the machine otherwise idle and
+10% slower with other work on the processor's sibling threads; the measurements are in
 [`docs/dev-log.md`](../../docs/dev-log.md), section 8, under `syscall`.
 
 ## How it works

@@ -11,13 +11,15 @@ writes every element once: two 32-byte AVX2 stores of the element's index, then 
 volatile read of its last word. `sequential` writes the elements in order; `random`
 writes them in an order shuffled once at startup from a fixed seed.
 
-A Run's figure is the time of one repetition, in nanoseconds (`time_per_repetition_ns`):
-the median, over the Run's counted samples, of a sample's time divided by its repetitions.
-The binary reads the clock only at the two edges of a sample. Before the counted samples
-it runs warmup samples, doubling the repetitions until a sample lasts at least a second;
-each of the 10 counted samples the schedule asks for then runs that many repetitions.
-Bytes per second (`bytes_per_second`) is `bytes_per_repetition` × 10^9 divided by the time
-per repetition, where `bytes_per_repetition` is the bytes written in one repetition. A
+Each Run that Method `series` v1 counts gives one figure, the time of one repetition in
+nanoseconds (`time_per_repetition_ns`): the median, over the Run's counted samples, of a
+sample's time divided by its repetitions. A Run it does not count gives none. The harness
+reads the clock once at each edge of a sample, around the whole loop of its repetitions,
+and never inside that loop. Before the counted samples it runs warmup samples, doubling the
+repetitions until a sample lasts at least a second; each of the 10 counted samples the
+schedule asks for then runs that many repetitions. Bytes per second (`bytes_per_second`)
+is `bytes_per_repetition` × 10^9 divided by the time per repetition, where
+`bytes_per_repetition` is the bytes of the elements the loop writes in one repetition. A
 Series gives the 5th, 50th and 95th percentiles of its counted Runs' figures
 ([Methods](https://ledgermath.com/docs/methods)).
 
@@ -26,11 +28,15 @@ one order, on one instance type.
 
 ## What a figure does not show
 
-- Each element is read back right after it is written, so a repetition is not stores
-  alone.
+- Each element's last 8-byte word is read back right after the element is written, so a
+  repetition is not stores alone.
 - The stores are ordinary AVX2 stores, not non-temporal ones.
 - `random` also reads the shuffled order front to back, 8 bytes per element, during each
   repetition.
+- Bytes per second counts the bytes of the elements the loop writes. Nothing measures the
+  traffic to memory, and nothing requires a write to miss the cache: a buffer, and with
+  `random` its order array, small enough for a cache can be served from it. The Run's dump
+  sections `lscpu` and `sys_cpu` record the cache sizes.
 
 ## Parameters
 

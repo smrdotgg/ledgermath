@@ -2,8 +2,8 @@
 
 What a buffered `pwrite` of `request_bytes` costs, on one thread, one write at a time:
 followed by `fdatasync` (the time until the device has the data) or by nothing (the time
-until the page cache has it). `fdatasync`'s cost depends on the disk's write cache, which
-each Run observes.
+until the page cache has it). How the kernel and the device make the data durable is
+theirs, not the binary's; each Run observes the disk's write cache and FUA support.
 
 ## What a figure means
 
@@ -12,13 +12,15 @@ the binary's own, followed by `fdatasync` (the time until the device has the dat
 nothing (the time until the page cache has it). The set with no sync is the page cache's
 number, not the disk's, and is named and scheduled as such: on the root volume only.
 
-One repetition is one write, with its `fdatasync` when `sync` is `fdatasync`. A Run's
-figure is the time of one repetition, in nanoseconds (`time_per_repetition_ns`): the
-median, over the Run's counted samples, of a sample's time divided by its repetitions, so
-the mean time of one write in each sample. The binary reads the clock only at the two
-edges of a sample. Before the counted samples it runs warmup samples, doubling the
-repetitions until a sample lasts at least a second; each of the 10 counted samples the
-schedule asks for then runs that many repetitions. Bytes per second (`bytes_per_second`)
+One repetition is one write, with its `fdatasync` when `sync` is `fdatasync`. Each Run that
+Method `series` v1 counts gives one figure, the time of one repetition in nanoseconds
+(`time_per_repetition_ns`): the median, over the Run's counted samples, of a sample's time
+divided by its repetitions, so of the samples' mean time of one write. A Run it does not
+count gives none. The harness reads the clock once at each edge of a sample, around the
+whole loop of its repetitions, and never inside that loop. Before the counted samples it
+runs warmup samples, doubling the repetitions until a sample lasts at least a second; each
+of the 10 counted samples the schedule asks for then runs that many repetitions. Bytes per
+second (`bytes_per_second`)
 is `bytes_per_repetition` × 10^9 divided by the time per repetition, where
 `bytes_per_repetition` is `request_bytes`, the bytes one write writes. A Series gives the
 5th, 50th and 95th percentiles of its counted Runs' figures
@@ -29,10 +31,14 @@ disk, on one instance type.
 
 ## What a figure does not show
 
-- With `sync` `none` the figure is the page cache's, not the disk's: the write is copied
-  into memory and marked dirty.
-- Both disks seen report "write through", so `fdatasync` sends no flush command; a disk
-  reporting "write back" would add one. Each Run observes `write_cache` (see "Findings").
+- With `sync` `none` the figure is the page cache's, not the disk's: the binary calls
+  `pwrite` alone and asks for nothing to be made durable. The device counters show what
+  reached the device while measuring.
+- The binary only calls `fdatasync`; how the kernel and the device make the write durable
+  is theirs. On the two disks seen, the root gp3 volume and the instance store of an
+  `i4i.2xlarge`, both reporting `write_cache` "write through", the device counted no flush
+  while measuring. Each Run records `write_cache` and `fua` beside the device's counters
+  (see "Findings").
 - The scratch file is written in full before measuring, so the measured writes overwrite
   blocks that are already allocated. Writes that allocate blocks are not measured.
 - With `disk` `root_volume` the sets write to the root EBS volume, not the instance's own

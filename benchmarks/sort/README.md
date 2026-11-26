@@ -10,12 +10,13 @@ keys (131,072 of them) into a scratch buffer and sorts the copy with an LSD radi
 eight passes of one byte each, with no comparison function. The copy is part of the
 measured work, as it was in napkin-math's model and in July's.
 
-A Run's figure is the time of one repetition, in nanoseconds (`time_per_repetition_ns`):
-the median, over the Run's counted samples, of a sample's time divided by its repetitions.
-The binary reads the clock only at the two edges of a sample. Before the counted samples
-it runs warmup samples, doubling the repetitions until a sample lasts at least a second;
-each of the 10 counted samples the schedule asks for then runs that many repetitions.
-Bytes per second (`bytes_per_second`) is `bytes_per_repetition` × 10^9 divided by the time
+Each Run that Method `series` v1 counts gives one figure, the time of one repetition in
+nanoseconds (`time_per_repetition_ns`): the median, over the Run's counted samples, of a
+sample's time divided by its repetitions. A Run it does not count gives none. The harness
+reads the clock once at each edge of a sample, around the whole loop of its repetitions,
+and never inside that loop. Before the counted samples it runs warmup samples, doubling the
+repetitions until a sample lasts at least a second; each of the 10 counted samples the
+schedule asks for then runs that many repetitions. Bytes per second (`bytes_per_second`) is `bytes_per_repetition` × 10^9 divided by the time
 per repetition, where `bytes_per_repetition` is the bytes of keys copied and sorted in one
 repetition. A Series gives the 5th, 50th and 95th percentiles of its counted Runs' figures
 ([Methods](https://ledgermath.com/docs/methods)).
@@ -30,6 +31,10 @@ instance type.
 - The keys are bare 64-bit integers, with no records attached.
 - Each repetition also copies the input, and reads a sample of the sorted keys for its
   checksum, so the figure is not the sort alone.
+- Every repetition sorts the same keys, the first outputs of one pseudo-random sequence
+  from a fixed seed. The input, its copy and the sort's second buffer take three times
+  `size_bytes`; whether they fit in a cache depends on the machine, whose cache sizes the
+  Run's dump sections `lscpu` and `sys_cpu` record.
 
 ## Parameters
 
