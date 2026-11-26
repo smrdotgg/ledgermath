@@ -48,8 +48,8 @@ export const HOME: SitePage = {
 	description: "Open-source benchmarks, run on real cloud machines every day. Every number links to the Runs behind it.",
 	text: [
 		...HEADER_AND_FOOTER,
-		"Independent Cloud",
-		"Benchmarks",
+		"Continuous Napkin",
+		"Math",
 		"Open-source benchmarks, run on real cloud machines every day.",
 		"Inspired by Simon Eskildsen's Napkin Math",
 		"All benchmarks",
