@@ -6,9 +6,9 @@ own NVMe disk on the instance types that have one.
 
 ## What a figure means
 
-The latency of one read from a disk, with nothing else outstanding: one `pread` of 8 KiB
-with `O_DIRECT`, at the next offset of a seeded permutation of the span's blocks, from the
-Fixture the box made at boot. A sample's time over its repetitions is the mean time of one
+The latency of one read from a disk, with no other read of the binary's outstanding: one
+`pread` of 8 KiB with `O_DIRECT`, at the next offset of a seeded permutation of the span's
+blocks, from the Fixture the box made at boot. A sample's time over its repetitions is the mean time of one
 read; the device's own latency histogram, which the dump records before and after every
 Run, gives the distribution of every request the device served in between.
 

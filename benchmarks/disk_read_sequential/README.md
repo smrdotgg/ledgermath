@@ -26,8 +26,8 @@ with `posix_fadvise(POSIX_FADV_DONTNEED)` and its resident pages are counted wit
 The descriptor carries no advice of its own (no `POSIX_FADV_SEQUENTIAL`), so readahead is
 the kernel's default for the device (`read_ahead_kb` 128 on both disks). The two warmup
 samples also drain the root volume's short burst (256 MiB against its ~128 MiB). On the
-root volume the twelve samples wrap round the span's eight regions: each is made cold
-again first.
+root volume the twelve samples wrap round the span's eight regions: the kernel is asked to
+drop each again first.
 
 One repetition is one `pread` of `request_bytes` at the next offset, then the block's
 first word is added to a running sum. A sample's time over its repetitions is the time per
