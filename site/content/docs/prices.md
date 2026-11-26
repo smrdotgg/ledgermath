@@ -1,13 +1,13 @@
 # Prices
 
-A price file is a day's copy of AWS's public On-Demand prices for what LedgerMath measures, holding AWS's own records verbatim. This page says which prices are kept, in which Region, currency and units, how tiers appear, how to cite a price, and what is not held.
+A price file is a day's copy of AWS's public On-Demand prices selected by LedgerMath's rules, holding AWS's own records verbatim. This page says which prices are kept, in which Region, currency and units, how tiers appear, how to cite a price, and what is not held.
 
 ## What a price file is
 
 - At most one file for each UTC day, named by the day its fetch started (`fetched_at`). The fetch is scheduled at 03:17 and 15:17 UTC; when the day's file already exists, the later one adds nothing. Some days may have no price file, and the files do not say why.
 - A file is added once and never edited.
 - It holds AWS's own product and On-Demand term objects, parsed from AWS's Price List files and written back with nothing changed but the whitespace between tokens. LedgerMath converts and rounds nothing in them.
-- Each file names, for each AWS file it read, the versioned URL, the file's own version and publication date, its size in bytes and its SHA-256, so that each source can be downloaded again, while AWS serves it, and the price file cut again from it.
+- Each file names, for each AWS file it read, the versioned URL, the file's own version and publication date, its size in bytes and its SHA-256, so that each source can be downloaded again while AWS serves it. Cutting the price file again takes all its sources, with the rule set, the measured inputs and the fetch time the file records.
 
 ## Where the files are
 
@@ -28,7 +28,7 @@ A price file is a day's copy of AWS's public On-Demand prices for what LedgerMat
 
 ## Which prices are kept
 
-Rule set version 1 selects these, from three of AWS's offers. Each file describes each rule in words, under `selections[].selects`; the rule tests more than those words say (for example that a record's location is an AWS Region). The prices a rule kept are found through its `skus`.
+Rule set version 1 selects these, from three of AWS's offers. Each file describes each rule in words, under `selections[].selects`; some rules test more than their words say (for example that a record's location is an AWS Region). The prices a rule kept are found through its `skus`.
 
 | Rule | Offer | What it selects | How many |
 |---|---|---|---|
@@ -71,7 +71,7 @@ Rule set version 1 selects these, from three of AWS's offers. Each file describe
 
 ## Tiers
 
-In the file of 2026-11-26, each price with tiers is one product whose single On-Demand term holds one price dimension per tier. Each tier has its own rate code, its `beginRange` and `endRange` as AWS writes them, and its price; the last tier's `endRange` is `Inf`:
+In the file of 2026-11-26, each price with tiers is one product whose single On-Demand term holds one price dimension per tier. Each tier has its own rate code, its `beginRange` and `endRange` as AWS writes them, and its price. For S3 Standard storage and data transfer out, the last tier's `endRange` is `Inf`; the global free tier has one range, ending at `100`:
 
 | Product | `unit` | Tiers, `beginRange` to `endRange` |
 |---|---|---|

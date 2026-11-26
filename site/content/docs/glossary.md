@@ -2,7 +2,7 @@
 
 The words a reader of LedgerMath's data API meets, each defined in a sentence or two as the built system uses it, with where the reader meets it.
 
-Where the API's own published text defines a word, the entry gives the same definition and says where that text is; the published text is the authority, and an entry that summarises a rule says so. Field names are in `code`. A file's address written in `code`, such as `v1/series.json` or `runs/<yyyy>/<mm>/<dd>/<id>.json`, is relative to `https://api.ledgermath.com/`.
+Where the API's own published text defines a word, the entry gives the same definition and says where that text is; the published text is the authority. Field names are in `code`. A file's address written in `code`, such as `v1/series.json` or `runs/<yyyy>/<mm>/<dd>/<id>.json`, is relative to `https://api.ledgermath.com/`.
 
 ## at_or_above
 
@@ -14,11 +14,11 @@ AWS's identifier of an Availability Zone, such as `use2-az3`, as the box reads i
 
 ## benchmark
 
-A program LedgerMath builds and runs on a box, named in lower case, such as `memory_read` or `http_get`. A Run names its benchmark (`benchmark`). Each benchmark is described on a page of its own, such as [memory_read](/docs/benchmarks/memory_read). Every Series of every benchmark is listed in `v1/series.json`; a benchmark's list, `v1/benchmarks/<benchmark>.json`, holds as many of them as fit its budget. Met in: every Series' identity; [benchmark lists](/docs/api/benchmark-list).
+A program LedgerMath builds and runs on a box, named in lower case, such as `memory_read` or `http_get`. A Run names its benchmark (`benchmark`). Each benchmark is described on a page of its own, such as [memory_read](/docs/benchmarks/memory_read). Every Series of every benchmark is listed in `v1/series.json`; a benchmark's list, `v1/benchmarks/<benchmark>.json`, may leave some out, and says how many. Met in: every Series' identity; [benchmark lists](/docs/api/benchmark-list).
 
 ## benchmark's list
 
-`v1/benchmarks/<benchmark>.json`: one benchmark's rows of the list of every Series, the same byte for byte when both files are of one update. It holds as many rows as fit its budget and counts the rest (`left_out`); a benchmark whose name is not 1 to 64 characters, a lower-case letter, then lower-case letters, digits and underscores, has no list. `v1/series.json` holds every Series. Its address is the table of contents' `benchmarks.benchmark_file_url_template` with the benchmark's name in place of `{benchmark}`. Met in: [benchmark list](/docs/api/benchmark-list); `benchmarks.about` in the table of contents.
+`v1/benchmarks/<benchmark>.json`: one benchmark's rows of the list of every Series, the same byte for byte when both files are of one update. Its address is the table of contents' `benchmarks.benchmark_file_url_template` with the benchmark's name in place of `{benchmark}`. A list may leave rows out, and says how many (`left_out`); a benchmark whose name is not 1 to 64 characters, a lower-case letter, then lower-case letters, digits and underscores, has no list. `v1/series.json` is the complete list. Met in: [benchmark list](/docs/api/benchmark-list); `benchmarks.about` in the table of contents.
 
 ## blob
 
@@ -26,7 +26,7 @@ Bytes stored once and named by their SHA-256, written `sha256:<hex>`. A Run name
 
 ## boot
 
-One fresh launch of an EC2 instance of one instance type. The box builds the benchmarks it is to run and runs each execution LedgerMath's schedule names for its instance type, writing a Run for each execution that started; it then writes its boot summary and shuts down, which terminates the instance. An execution that never started has no Run: its build failed, its binary could not be started, its Service's inputs could not be had, or the boot was told to stop first. The boot summary accounts for each. A boot's id (`boot`) is the kernel's boot id, the same in every Run of the boot. Met in: `boot` and `boot_summary` on every point; `boots` in each Series file and row.
+One fresh launch of an EC2 instance of one instance type. The box builds the benchmarks it is to run and runs each execution LedgerMath's schedule names for its instance type, then shuts down, which terminates the instance. An execution that ran to its end leaves a Run. An execution that never started has no Run: its build failed, its binary could not be started, its Service's inputs could not be had, or the boot was told to stop first. The boot summary, when the boot wrote one, accounts for every execution the schedule named; a boot cut off may leave neither. A boot's id (`boot`) is the kernel's boot id, the same in every Run of the boot. Met in: `boot` and `boot_summary` on every point; `boots` in each Series file and row.
 
 ## boot summary
 
@@ -42,7 +42,7 @@ A named way of building a benchmark, such as `static` or `dynamic` (`build`, the
 
 ## bytes per second
 
-Method `series` v1's second number per Run: "Per Run, where the benchmark observed bytes_per_repetition: bytes_per_repetition × 10^9 / the Run's time per repetition in nanoseconds." (`definitions.bytes_per_second`). A point's `bytes_per_second` is null when the Run is not counted, when the benchmark observed no bytes per repetition, or when the quotient is infinite. Met in: `bytes_per_second` on points and in percentiles; [Methods](/docs/methods).
+Method `series` v1's second number per Run: "Per Run, where the benchmark observed bytes_per_repetition: bytes_per_repetition × 10^9 / the Run's time per repetition in nanoseconds." (`definitions.bytes_per_second`). A point's `bytes_per_second` is null when the Run is not counted, when the benchmark observed no bytes per repetition, or when the quotient is not a finite number. Met in: `bytes_per_second` on points and in percentiles; [Methods](/docs/methods).
 
 ## counted Run
 
@@ -50,7 +50,7 @@ A Run a Method uses in its figures. Each Method decides by its own rule, publish
 
 ## Derivation
 
-What a Method derives from one Series' Runs: every number it gives for that Series, naming the Method and its version and resting on Runs each cited by id, path and sha256. Each Method's Derivation of a Series is under `derivations.<method name>_v<version>`: summarised in the Series' row, given in the Series file but for its points and the lists of Runs behind each figure, and its points in the month files. Met in: [Series files](/docs/api/series).
+What a Method derives from one Series' Runs: every number it gives for that Series, naming the Method and its version and resting on Runs each cited by id, path and sha256. Each Method's Derivation of a Series is under `derivations.<method name>_v<version>`: summarised in the Series' row; the Series file holds each Method's summary, and the month files its points and `differed` entries. Met in: [Series files](/docs/api/series).
 
 ## differed
 
@@ -78,7 +78,7 @@ How a Run's binary ended, in the Run's `exit`: its exit `code`, or the `signal` 
 
 ## failed request
 
-In Method `requests` v1, a counted request that failed. Its certificate events and any withheld certificate line are set aside first; it then failed when the binary withheld any other of its lines (phase `record`), when it holds a `request_failed`, or when its complete response's status is not 2xx (phase `response`). `definitions.failed` gives the rule in full. A failed request is counted by phase and kind (`failures`) and never timed. Met in: [Methods](/docs/methods).
+In Method `requests` v1, a counted request that failed. When deciding the request's outcome, its certificate events and any withheld certificate line are set aside first; it then failed when the binary withheld any other of its lines (phase `record`), when it holds a `request_failed`, or when its complete response's status is not 2xx (phase `response`). `definitions.failed` gives the rule in full. A failed request is counted by phase and kind (`failures`) and never timed. Met in: [Methods](/docs/methods).
 
 ## failed Run
 
@@ -158,11 +158,11 @@ In Method `requests` v1, every succeeded request of a set of counted Runs taken 
 
 ## price file
 
-A day's copy of AWS's public On-Demand prices for what LedgerMath measures, holding AWS's own records verbatim. At most one for each UTC day, named by the day its fetch started, added once and never edited, and served at `v1/prices/<yyyy-mm-dd>.json`. Met in: [Prices](/docs/prices); `prices` in the [table of contents](/docs/api/table-of-contents).
+A day's copy of AWS's public On-Demand prices selected by LedgerMath's rules, holding AWS's own records verbatim. At most one for each UTC day, named by the day its fetch started, added once and never edited, and served at `v1/prices/<yyyy-mm-dd>.json`. Met in: [Prices](/docs/prices); `prices` in the [table of contents](/docs/api/table-of-contents).
 
 ## provider
 
-A Run's record of where it ran, in the provider's own words (`provider`). For AWS: the instance type, Region, zone name, zone ID, image ID and instance ID, as the instance metadata service gives them, each null when the box could not read it. Met in: [Run files](/docs/api/run).
+A Run's record of where it ran, in the provider's own words (`provider`). When the box could not read its instance ID from the instance metadata service, `provider` is `{"name": "unknown"}`, with no other key. Otherwise `name` is `aws`, and the others are the instance type, Region, zone name, zone ID, image ID and instance ID, as that service gives them, each null when the box could not read it. Met in: [Run files](/docs/api/run).
 
 ## Region
 
@@ -206,7 +206,7 @@ One timed interval of a Run, between a `sample_started` and a `sample_ended` eve
 
 ## Series
 
-"The Runs that share a benchmark, params, build, instance type and zone ID." (`definitions.series` of Method `series` v1.) Its id is 12 lower-case hex digits, the first of the sha256 of its key written as JSON with object keys sorted at every depth and no whitespace. For example, Series `b433e2d4c4b0` has the key `{"availability_zone_id":"use2-az3","benchmark":"compressed_memory_read","build":"static","instance_type":"c6i.8xlarge","params":{"bits":8,"blocks":1000000}}`. Met in: [Series file](/docs/api/series); [series list](/docs/api/series-list).
+"The Runs that share a benchmark, params, build, instance type and zone ID." (`definitions.series` of Method `series` v1.) Its id is 12 lower-case hex digits, the first of the sha256 of its key written as JSON with object keys sorted at every depth and no whitespace, each key and value written as JavaScript's `JSON.stringify` writes it; the UTF-8 bytes of that text are hashed. For example, Series `b433e2d4c4b0` has the key `{"availability_zone_id":"use2-az3","benchmark":"compressed_memory_read","build":"static","instance_type":"c6i.8xlarge","params":{"bits":8,"blocks":1000000}}`. Met in: [Series file](/docs/api/series); [series list](/docs/api/series-list).
 
 ## Series file
 
@@ -238,7 +238,7 @@ Method `requests` v1 reports the q-th per-mille percentile of a phase only when 
 
 ## through
 
-On each point of Method `requests` v1, the Series' pooled figures, without histograms, over the counted Runs that started at or before that Run (`definitions.through`); null before the Series' first counted Run. Beside it, `group_through_as_of_run` gives the pooled figures of the Run's own group as they stood through that Run. That is null while the Series has had Runs of one group only, and while the Run's group has had no counted Run, even when `through` has figures; a null there is not to be filled with `through`, which pools every group. Met in: [month files](/docs/api/series-month).
+On each point of Method `requests` v1, the Series' pooled figures, without histograms, over the counted Runs up to and including that Run, in the Method's order (by start, then Run id) (`definitions.through`); null before the Series' first counted Run. Beside it, `group_through_as_of_run` gives the same for the Run's own group. That is null while the Series has had Runs of one group only, and while the Run's group has had no counted Run, even when `through` has figures; a null there is not to be filled with `through`, which pools every group. Met in: [month files](/docs/api/series-month).
 
 ## time per repetition
 

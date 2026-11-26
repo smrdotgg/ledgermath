@@ -22,7 +22,7 @@ This page quotes those definitions, and says where it only summarises one. Where
 
 ### Which Series
 
-"The Runs that share a benchmark, params, build, instance type and zone ID." (`definitions.series`.) A Series' id is the first 12 hex digits of the sha256 of that key written as JSON with object keys sorted at every depth and no whitespace, as the [glossary](/docs/glossary) shows.
+"The Runs that share a benchmark, params, build, instance type and zone ID." (`definitions.series`.) A Series' id is the first 12 hex digits of the sha256 of that key, computed as the [glossary](/docs/glossary) gives it.
 
 ### Which Runs count
 
@@ -49,7 +49,7 @@ Any other Run is failed. A failed Run is shown, as a point with `counted: false`
 "Per Run, where the benchmark observed bytes_per_repetition: bytes_per_repetition × 10^9 / the Run's time per repetition in nanoseconds." (`definitions.bytes_per_second`.)
 
 - `bytes_per_repetition` is the first finite positive `bytes_per_repetition` the benchmark reported in an `observed` event's `values`. A stream with none has none.
-- A point's `bytes_per_second` is null when the Run is not counted, when the benchmark observed no bytes per repetition, or when the quotient is infinite, chiefly when the time per repetition is 0. A counted Run whose quotient is infinite is still among the Runs of the bytes-per-second percentiles, though its point shows null.
+- A point's `bytes_per_second` is null when the Run is not counted, when the benchmark observed no bytes per repetition, or when the quotient is not a finite number, chiefly when the time per repetition is 0. A counted Run whose quotient is not a finite number is still among the Runs of the bytes-per-second percentiles, though its point shows null.
 - A Series' or group's `bytes_per_second` percentiles are null when no counted Run observed bytes per repetition. On 2026-11-26 that was every Series of `http_get`, `mutex` and `syscall` (`https://api.ledgermath.com/v1/series.json`, read that day).
 - Its percentiles are taken over the bytes-per-second values themselves, so they are not the time percentiles inverted.
 
@@ -106,7 +106,7 @@ Example, from `https://api.ledgermath.com/v1/series/7174549b8626.json`, read 202
 
 Any other Run is failed: shown with its reasons, in no figure.
 
-Exit code 4 is accepted because `http_get` exits 4, only after printing its whole stream, when a request failed (an error status included), a setup of a kept connection failed, or it made fewer requests than it was asked for. The Method counts the failed requests instead of discarding the Run; a Run that made fewer requests than it asked for still fails, on the count of samples. In the definition's words, "the Method reads nothing into a 4 that it does not read into a 0, but for the last rule here, which holds an exit 0 alone".
+`http_get` exits 4 only after printing its whole stream, and Method `requests` v1 accepts 0 and 4, subject to its other conditions. In the definition's words, "the Method reads nothing into a 4 that it does not read into a 0, but for the last rule here, which holds an exit 0 alone".
 
 ### A request and its phases
 
@@ -152,8 +152,8 @@ Beside each percentile reported, `at_or_above` gives how many requests are ranke
 
 ### Failures
 
-- A counted request's certificate events, and any withheld certificate line, are set aside first. It then failed when the binary withheld any other of its lines (phase `record`), when it holds a `request_failed` (its `phase`, kind its `error`), or when its complete response's status is not 2xx (phase `response`, kind `status_<code>`). A request with only a withheld certificate line can succeed and be timed. `definitions.failed` gives the rule in full.
-- Failed requests are counted by phase and kind, and never timed. `failed` gives their number. The kinds are in `failures`: on each point, in each point's `through`, and in the Series' and each group's `pool` in the Series file. A row of a list gives `failed` only.
+- When deciding a counted request's outcome, its certificate events, and any withheld certificate line, are set aside first. It then failed when the binary withheld any other of its lines (phase `record`), when it holds a `request_failed` (its `phase`, kind its `error`), or when its complete response's status is not 2xx (phase `response`, kind `status_<code>`). A request with only a withheld certificate line can succeed and be timed. `definitions.failed` gives the rule in full.
+- Failed requests are counted by phase and kind, and never timed. `failed` gives their number. The kinds are in `failures`: on each point, in each point's `through` and, when it is not null, its `group_through_as_of_run`, and in the Series' and each group's `pool` in the Series file. A row of a list gives `failed` only.
 - In a counted Run, `counted_requests` is `succeeded` plus `failed`. In a pool, `requests` (the succeeded ones) plus `failed` is every counted request of its Runs.
 - The warmup request's failure (`warmup_failure`) and failed setups of a kept connection (`setups_failed`) are counted apart, outside these figures.
 - A failed Run's requests are in no figure: `succeeded` and `failed` are 0 on its point.
@@ -161,8 +161,8 @@ Beside each percentile reported, `at_or_above` gives how many requests are ranke
 ### Groups, through, and breakdowns
 
 - **Groups** are `series` v1's, letter for letter (`definitions.groups`). What is said above for a Series with several groups holds here too.
-- **Through** (`definitions.through`): each point gives `through`, the Series' pooled figures over the counted Runs that started at or before it, null before the Series' first counted Run. These are what a quotation of the Series as of that Run's start is checked against.
-- **Group through**: each point also gives `group_through_as_of_run`, the pooled figures of its own group through that Run. It is null while the Series has had Runs of one group only, and while the Run's group has had no counted Run, even when `through` has figures. Do not fill such a null with `through`, which pools every group.
+- **Through** (`definitions.through`): each point gives `through`, the Series' pooled figures over the counted Runs up to and including it, in the Method's order (by start, then Run id), null before the Series' first counted Run. These are what a quotation of the Series as of that Run's start is checked against.
+- **Group through**: each point also gives `group_through_as_of_run`, the same for its own group. It is null while the Series has had Runs of one group only, and while the Run's group has had no counted Run, even when `through` has figures. Do not fill such a null with `through`, which pools every group.
 - **Breakdowns** (`by`, `definitions.breakdown`): the pooled figures again for each value of a request fact that took more than one value among the pool's succeeded requests. `facts` lists every value each fact took, one value included. Both are built from succeeded requests only: a value seen only on failed requests is in neither.
 - **What the Runs record** (`recorded`): the Region each Run names and the Service with its inputs that are not secret. Words, not figures.
 
@@ -178,6 +178,6 @@ Beside each percentile reported, `at_or_above` gives how many requests are ranke
 - The Series' id, and the key of the Method: `series_v1` or `requests_v1`.
 - The figure by its place: for example `percentiles.bytes_per_second.p50`, or `pool.phases.first_byte.p99`.
 - The group's letter, when the figure is a group's.
-- The count behind it: for a `series` v1 percentile, its `count`; for a `requests` v1 phase percentile, that phase's `count`, with the pool's `runs`.
+- The count behind it: for a `series` v1 percentile, its `count`; for a pooled `requests` v1 phase percentile, the phase's `count` and the pool's `runs`; for one Run's own, the phase's `count` and the Run.
 - The unit: nanoseconds of the Run's clock for a time, bytes per second for bytes per second.
 - The moment: the Series file's `newest_run_started_at` when the figure was read.
