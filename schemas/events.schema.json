@@ -6,7 +6,7 @@
   "type": "object",
   "required": ["event", "t"],
   "properties": {
-    "event": { "type": "string", "minLength": 1 },
+    "event": { "description": "The event's name: one of the six universal events, started, observed, sample_started, sample_ended, verified and finished, whose fields are fixed; or a benchmark's own, under any other name.", "type": "string", "minLength": 1 },
     "t": {
       "description": "Whole nanoseconds on the clock that `started` names.",
       "type": "integer",
@@ -22,7 +22,7 @@
         "properties": {
           "event": true,
           "t": true,
-          "schema": { "const": "ledgermath.events/1" },
+          "schema": { "description": "Which version of the stream's shape the binary prints.", "const": "ledgermath.events/1" },
           "wall_utc": {
             "description": "The wall clock read straight after `t`, to the nanosecond.",
             "type": "string",
@@ -35,7 +35,7 @@
             "minimum": 0
           },
           "quick": {
-            "description": "True for a developer's trial stream, from the binary's quick mode, which is never recorded.",
+            "description": "True for a developer's trial stream, from the binary's quick mode. The scheduled box never asks for quick mode; a runner told to run quick passes it on and still writes the Run, but no Method counts a Run whose stream says quick: true.",
             "type": "boolean"
           }
         },
@@ -50,7 +50,7 @@
         "properties": {
           "event": true,
           "t": true,
-          "values": { "type": "object" }
+          "values": { "description": "What the benchmark observed of its own run, by key, as the benchmark documents them: the counterparts of its parameters, and whatever else it records of the run (http_get's include the cost of a clock read, how many responses had each status, how many lines it withheld, and why it ended early). Never a value merely read back from its environment. bytes_per_repetition, when present, is what bytes per second are derived from.", "type": "object" }
         },
         "additionalProperties": false
       }
@@ -63,9 +63,9 @@
         "properties": {
           "event": true,
           "t": true,
-          "sample": { "type": "integer", "minimum": 0 },
-          "warmup": { "type": "boolean" },
-          "repetitions": { "type": "integer", "minimum": 1 }
+          "sample": { "description": "The sample's number: from 0, in stream order.", "type": "integer", "minimum": 0 },
+          "warmup": { "description": "True for a warmup sample: printed and tagged, never dropped, and not a counted sample, so neither one of the LM_SAMPLES samples the stream must hold nor among the samples a Method takes times from. A benchmark's own counts in its observed values may include it: http_get's requests_made does.", "type": "boolean" },
+          "repetitions": { "description": "How many repetitions of the measured work lie between the sample's two edges, 1 or more.", "type": "integer", "minimum": 1 }
         },
         "additionalProperties": false
       }
@@ -78,7 +78,7 @@
         "properties": {
           "event": true,
           "t": true,
-          "sample": { "type": "integer", "minimum": 0 }
+          "sample": { "description": "The number of the sample it closes: the open one.", "type": "integer", "minimum": 0 }
         },
         "additionalProperties": false
       }
@@ -91,7 +91,7 @@
         "properties": {
           "event": true,
           "t": true,
-          "checksum": { "type": "string", "pattern": "^0x[0-9a-f]{16}$" }
+          "checksum": { "description": "The value, 0x and sixteen lower-case hex digits: derived from the data the measured work processed, so that a compiler cannot delete the work.", "type": "string", "pattern": "^0x[0-9a-f]{16}$" }
         },
         "additionalProperties": false
       }

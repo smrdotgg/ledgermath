@@ -7,7 +7,7 @@
   "additionalProperties": false,
   "required": ["schema", "provider", "fetched_at", "measured", "rules", "sources"],
   "properties": {
-    "schema": { "const": "ledgermath.prices/1" },
+    "schema": { "description": "What this file is, and which version of its shape.", "const": "ledgermath.prices/1" },
     "provider": { "description": "Whose price lists these are.", "const": "aws" },
     "fetched_at": {
       "description": "When the fetch started, UTC, to the millisecond. Its date names the file.",
@@ -36,8 +36,8 @@
       "additionalProperties": false,
       "required": ["name", "version"],
       "properties": {
-        "name": { "const": "ledgermath.aws-price-rules" },
-        "version": { "type": "integer", "minimum": 1 }
+        "name": { "description": "The rule set's name.", "const": "ledgermath.aws-price-rules" },
+        "version": { "description": "The rule set's version. A rule set is never changed once a price file names it: a change is a new version.", "type": "integer", "minimum": 1 }
       }
     },
     "sources": {
@@ -68,11 +68,11 @@
           "type": "object",
           "required": ["formatVersion", "offerCode", "version", "publicationDate"],
           "properties": {
-            "formatVersion": { "type": "string" },
-            "disclaimer": { "type": "string" },
-            "offerCode": { "type": "string" },
-            "version": { "type": "string" },
-            "publicationDate": { "type": "string" }
+            "formatVersion": { "description": "The offer file's formatVersion, AWS's, copied as AWS gives it.", "type": "string" },
+            "disclaimer": { "description": "The offer file's disclaimer, AWS's words, copied as AWS gives them.", "type": "string" },
+            "offerCode": { "description": "The offer file's offerCode, AWS's, copied as AWS gives it: the same as the source's offer_code.", "type": "string" },
+            "version": { "description": "The offer file's version, AWS's, copied as AWS gives it: the same as the source's version, and the 14 digits of its url.", "type": "string" },
+            "publicationDate": { "description": "The offer file's publicationDate, AWS's, copied as AWS gives it: the same as the source's publication_date.", "type": "string" }
           }
         },
         "selections": {
@@ -84,9 +84,9 @@
             "additionalProperties": false,
             "required": ["rule", "selects", "skus"],
             "properties": {
-              "rule": { "type": "string", "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$" },
-              "selects": { "type": "string", "minLength": 1 },
-              "skus": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "minLength": 1 } }
+              "rule": { "description": "The rule's name, unique within its rule set.", "type": "string", "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$" },
+              "selects": { "description": "What the rule selects, in words.", "type": "string", "minLength": 1 },
+              "skus": { "description": "The SKUs it selected, in the offer file's order: each is a key of products.", "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "minLength": 1 } }
             }
           }
         },
@@ -97,6 +97,7 @@
           "additionalProperties": { "$ref": "#/$defs/product" }
         },
         "terms": {
+          "description": "The selected products' terms: On-Demand terms only.",
           "type": "object",
           "additionalProperties": false,
           "required": ["OnDemand"],
@@ -106,6 +107,7 @@
               "type": "object",
               "minProperties": 1,
               "additionalProperties": {
+                "description": "One selected product's On-Demand terms, under its SKU: terms.OnDemand.<sku> of the offer file, copied as AWS gives it, each term under <sku>.<offerTermCode>.",
                 "type": "object",
                 "minProperties": 1,
                 "additionalProperties": { "$ref": "#/$defs/term" }
@@ -120,9 +122,13 @@
       "type": "object",
       "required": ["sku", "attributes"],
       "properties": {
-        "sku": { "type": "string", "minLength": 1 },
-        "productFamily": { "type": "string" },
-        "attributes": { "type": "object", "additionalProperties": { "type": "string" } }
+        "sku": { "description": "AWS's SKU for the product: the key it is filed under in products.", "type": "string", "minLength": 1 },
+        "productFamily": { "description": "The product's family, AWS's, such as Compute Instance or Storage, copied as AWS gives it.", "type": "string" },
+        "attributes": {
+          "description": "The product's attributes, AWS's, by name, copied as AWS gives them: such as instanceType, regionCode and operatingSystem, which the rules select on.",
+          "type": "object",
+          "additionalProperties": { "description": "One attribute's value, as AWS gives it.", "type": "string" }
+        }
       }
     },
     "term": {
@@ -130,16 +136,16 @@
       "type": "object",
       "required": ["offerTermCode", "sku", "effectiveDate", "priceDimensions"],
       "properties": {
-        "offerTermCode": { "type": "string", "minLength": 1 },
-        "sku": { "type": "string", "minLength": 1 },
-        "effectiveDate": { "type": "string" },
+        "offerTermCode": { "description": "AWS's code for the term: the term is filed under <sku>.<offerTermCode>.", "type": "string", "minLength": 1 },
+        "sku": { "description": "The SKU of the product the term is for: the SKU it is filed under.", "type": "string", "minLength": 1 },
+        "effectiveDate": { "description": "The term's effectiveDate, AWS's, copied as AWS gives it.", "type": "string" },
         "priceDimensions": {
           "description": "A map from rate code, <sku>.<offerTermCode>.<code>, to a price dimension.",
           "type": "object",
           "minProperties": 1,
           "additionalProperties": { "$ref": "#/$defs/priceDimension" }
         },
-        "termAttributes": { "type": "object" }
+        "termAttributes": { "description": "The term's termAttributes, AWS's, copied as AWS gives them.", "type": "object" }
       }
     },
     "priceDimension": {
@@ -147,18 +153,18 @@
       "type": "object",
       "required": ["rateCode", "unit", "pricePerUnit"],
       "properties": {
-        "rateCode": { "type": "string", "minLength": 1 },
-        "description": { "type": "string" },
-        "beginRange": { "type": "string" },
-        "endRange": { "type": "string" },
-        "unit": { "type": "string" },
+        "rateCode": { "description": "AWS's rate code, <sku>.<offerTermCode>.<code>: the price dimension is filed under it, and a price is cited by it.", "type": "string", "minLength": 1 },
+        "description": { "description": "AWS's words for the price, copied as AWS gives them, such as $0.096 per On Demand Linux m5.large Instance Hour.", "type": "string" },
+        "beginRange": { "description": "Where the range of usage the rate applies to begins, as AWS writes it.", "type": "string" },
+        "endRange": { "description": "Where the range of usage the rate applies to ends, as AWS writes it, such as Inf.", "type": "string" },
+        "unit": { "description": "The unit the rate is per, AWS's, such as Hrs, copied as AWS gives it.", "type": "string" },
         "pricePerUnit": {
           "description": "The price per unit, by currency, as AWS writes the number.",
           "type": "object",
           "minProperties": 1,
-          "additionalProperties": { "type": "string", "pattern": "^[0-9]+(\\.[0-9]+)?$" }
+          "additionalProperties": { "description": "The price of one unit in one currency, under the currency's code, such as USD: a decimal number written as a string, as AWS writes it.", "type": "string", "pattern": "^[0-9]+(\\.[0-9]+)?$" }
         },
-        "appliesTo": { "type": "array", "items": { "type": "string" } }
+        "appliesTo": { "description": "AWS's appliesTo list, copied as AWS gives it.", "type": "array", "items": { "type": "string" } }
       }
     }
   }

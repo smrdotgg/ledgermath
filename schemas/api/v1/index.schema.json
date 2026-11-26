@@ -107,9 +107,9 @@
         "type": "object",
         "required": ["name", "describes", "url"],
         "properties": {
-          "name": { "type": "string" },
+          "name": { "description": "The schema's name: its address ends v1/schemas/<name>.schema.json.", "type": "string" },
           "describes": { "description": "The files it describes, by path from the host's root; for a schema of what is not a file of v1, what it describes, in words.", "type": "string" },
-          "url": { "$ref": "#/$defs/url" }
+          "url": { "description": "The schema's address.", "$ref": "#/$defs/url" }
         }
       }
     },
@@ -118,7 +118,7 @@
       "type": "object",
       "required": ["about", "blob_url_template"],
       "properties": {
-        "about": { "type": "string" },
+        "about": { "description": "Where the evidence is served and how a reader reaches each part of it, in words: a point's Run file and boot summary, and the blobs a Run file names by hash.", "type": "string" },
         "blob_url_template": {
           "description": "A blob's address: replace {hex} with the 64 hex digits of a sha256:<hex> a Run file names (its binary, source, runner, stdout, stderr, dump indexes and their sections).",
           "type": "string",
