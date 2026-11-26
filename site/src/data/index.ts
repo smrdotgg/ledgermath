@@ -27,9 +27,11 @@
  *    A link that leaves the site is named in ../pages.text (OUTSIDE_LINKS) and used by the page
  *    that has it, and `bun run check` fails on any link that is neither inside the site, nor
  *    under https://api.ledgermath.com/, nor exactly one of those.
- * 5. Import this module from the pages' components only (code that runs at build time).
- *    Nothing runs in the browser but the page's one inline script, which sets the page's
- *    feature flags and waits for the font.
+ * 5. siteData runs at build time only, on the build's side (scripts/build.ts). What the pages
+ *    render goes through pageData, which keeps only what they show, as plain JSON: the build
+ *    renders every page from that JSON, and compiles the same JSON into the application the
+ *    browser loads (src/app.tsx), so a page the browser renders after a click is the page the
+ *    build wrote, figure for figure. Nothing else of the tree reaches the browser.
  */
 
 import { benchmarkDocsUrl, DOCS_URL, HEADLINE_CHOICES, type HeadlineChoice } from "./headline";
@@ -270,5 +272,55 @@ export function siteData(tree: Tree): SiteData {
 			seriesFile: (row) => row.url,
 		},
 		notes,
+	};
+}
+
+// ---------------------------------------------------------------- what the pages render
+
+/** A machine type as the pages show it: its name, its facts, its hourly price. */
+export type PageMachine = Pick<Machine, "instanceType" | "vcpu" | "memory" | "processor"> & { price: Pick<Machine["price"], "usdPerHour" | "description"> };
+
+/** A headline cell as the pages show it: the Series' own file instead of the whole Series. */
+export type PageCell = {
+	machine: PageMachine;
+	/** The address of the Series the cell's figure comes from (its row's `url`), or null when the cell has no Series. */
+	seriesUrl: string | null;
+	figure: LeadFigure | null;
+	absent: string | null;
+};
+
+export type PageRow = { choice: HeadlineChoice; cells: PageCell[] };
+
+/**
+ * Everything the pages render, and nothing else, as plain JSON (rule 5 above): the build renders
+ * every page from it and compiles the same JSON into the application the browser loads.
+ */
+export type PageData = {
+	machines: PageMachine[];
+	headline: PageRow[];
+	rounds: Round[] | null;
+	region: string;
+	links: Pick<SiteLinks, "home" | "numbers" | "licences" | "docs" | "index" | "prices">;
+};
+
+/** What the pages render of DATA, as plain JSON: JSON.parse(JSON.stringify(pageData(data))) is the same value. */
+export function pageData(data: SiteData): PageData {
+	const machine = (m: Machine): PageMachine => ({
+		instanceType: m.instanceType,
+		vcpu: m.vcpu,
+		memory: m.memory,
+		processor: m.processor,
+		price: { usdPerHour: m.price.usdPerHour, description: m.price.description },
+	});
+	const { home, numbers, licences, docs, index, prices } = data.links;
+	return {
+		machines: data.machines.map(machine),
+		headline: data.headline.map((row) => ({
+			choice: row.choice,
+			cells: row.cells.map((cell) => ({ machine: machine(cell.machine), seriesUrl: cell.series ? data.links.seriesFile(cell.series) : null, figure: cell.figure, absent: cell.absent })),
+		})),
+		rounds: data.rounds ? data.rounds.map((round) => ({ ...round })) : null,
+		region: data.region,
+		links: { home, numbers, licences, docs, index, prices },
 	};
 }

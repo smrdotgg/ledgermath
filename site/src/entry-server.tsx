@@ -1,34 +1,23 @@
-// The server entry the build renders the site with (scripts/build.ts): each page, its Document
-// around it, rendered once to static HTML with Solid's server renderer, from one tree of the data
-// API. Nothing hydrates: the HTML is the page, and it reads the same with JavaScript off.
+// The server entry the build renders the site with (scripts/build.ts): each page, the application
+// (src/app.tsx) at the page's address inside its Document, rendered once to static HTML with
+// Solid's server renderer. The HTML is the whole page, and it reads the same with JavaScript off;
+// in the browser the application hydrates it (src/entry-client.tsx) and does the navigation from
+// then on. What the pages show is compiled into this bundle as into the browser's (pageData).
 import { renderToString } from "@solidjs/web";
-import type { JSX } from "@solidjs/web";
-import { siteData } from "./data";
-import type { Tree } from "./data/tree";
-import DocsPage from "./docs/Page";
+import { App } from "./app";
 import Document from "./Document";
-import HomePage from "./home/Page";
-import { DOCS, HOME, type SitePage } from "./pages.text";
+import { PAGES, type SitePage } from "./pages.text";
 
-export type RenderedSite = {
-	/** Each page's HTML, by its file in the built site, in the order of PAGES. */
-	pages: { page: SitePage; html: string }[];
-	/** What the tree lacks and the pages leave out, one line each (siteData's notes). */
-	notes: readonly string[];
-};
+/** Each page's HTML, in the order of PAGES. */
+export type RenderedSite = { page: SitePage; html: string }[];
 
-export function render(tree: Tree): RenderedSite {
-	const data = siteData(tree);
-	const page = (meta: SitePage, body: () => JSX.Element) => ({
-		page: meta,
+export function render(): RenderedSite {
+	return PAGES.map((page) => ({
+		page,
 		html: renderToString(() => (
-			<Document title={meta.title} description={meta.description} flags={meta.flags}>
-				{body()}
+			<Document flags={page.flags}>
+				<App url={page.path} />
 			</Document>
 		)),
-	});
-	return {
-		pages: [page(HOME, () => <HomePage data={data} />), page(DOCS, () => <DocsPage data={data} />)],
-		notes: data.notes,
-	};
+	}));
 }

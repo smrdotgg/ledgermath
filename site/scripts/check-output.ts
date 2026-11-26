@@ -9,8 +9,14 @@
  *    it has (and, with a fragment, to an id that file has), or under https://api.ledgermath.com/,
  *    or is, character for character, one of the links out that src/pages.text.ts names
  *    (OUTSIDE_LINKS): nowhere else, so no link is dead and none leaves the site unnamed;
+ *  - every link inside the site that is not a page change carries target (or download), which
+ *    tells the router to leave it to the browser (src/app.tsx, ADR-0036): a link to a file that is
+ *    not a page (third-party-notices.txt), and a link to a place on its own page (#numbers on
+ *    index.html, /#numbers there too). Without it the router would take the file for a page, and
+ *    take the browser's in-page jump, which moves the keyboard focus, for a page change;
  *  - each page, with everything it loads (stylesheets, fonts, images, scripts), weighs under
- *    BUDGET_BYTES, text files weighed gzipped at level 9 as a host sends them, others as they are.
+ *    BUDGET_BYTES, text files weighed gzipped at level 9 as a host sends them, others as they are;
+ *    and the JavaScript it loads, weighed the same way, under SCRIPT_BUDGET_BYTES.
  *
  *     bun scripts/check-output.ts [DIR]     (DIR defaults to dist/client)
  *
@@ -37,15 +43,27 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, extname, join, relative, resolve, sep } from "node:path";
 import { OUTSIDE_LINKS, PAGES } from "../src/pages.text";
 
-export type Result = { problems: string[]; checked: number; weights: { file: string; bytes: number }[] };
+export type Result = { problems: string[]; checked: number; weights: { file: string; bytes: number; script: number }[] };
 
 /** The one origin, besides the site itself, that a link may go to. */
 export const API_ORIGIN = "https://api.ledgermath.com/";
 /** The most a page may weigh, with everything it loads, compressed as a host sends it. */
 export const BUDGET_BYTES = 300_000;
+/**
+ * The most JavaScript a page may load, compressed as a host sends it. It is the application, every
+ * page of the site in one file (ADR-0036): a click never fetches anything, so all of it comes with
+ * the first load, which it never holds up (a module script runs once the HTML is parsed). About
+ * 45,000 bytes in November 2026: some 38,000 of code (Solid, its router, the pages) and 7,000 of
+ * figures. When the documentation brings it near this, split the application by route and
+ * preload the parts (the ADR says how), rather than raise the budget.
+ */
+export const SCRIPT_BUDGET_BYTES = 60_000;
 
-/** A reference found in a file; `link` when a reader follows it rather than the page loading it. */
-type Reference = { url: string; link: boolean };
+/**
+ * A reference found in a file; `link` when a reader follows it rather than the page loading it,
+ * and `browser` when the link carries target or download, which the router leaves to the browser.
+ */
+type Reference = { url: string; link: boolean; browser?: boolean };
 
 const SELF_CONTAINED = /^(data|about|mailto|tel):/i;
 const SCHEME = /^[a-z][a-z0-9+.-]*:/i;
@@ -145,8 +163,9 @@ function htmlReferences(html: string): Reference[] {
 	const { tags, inline } = htmlTags(html);
 	const found: Reference[] = inline.map((url) => ({ url, link: false }));
 	for (const { element, attributes } of tags) {
+		const browser = attributes.some(([name]) => name === "target" || name === "download");
 		for (const [name, value] of attributes) {
-			if (REFERENCE_ATTRIBUTES.has(name)) found.push({ url: value, link: name === "href" && LINK_ELEMENTS.has(element) });
+			if (REFERENCE_ATTRIBUTES.has(name)) found.push(name === "href" && LINK_ELEMENTS.has(element) ? { url: value, link: true, browser } : { url: value, link: false });
 			else if (SRCSET_ATTRIBUTES.has(name)) found.push(...srcsetUrls(value).map((url) => ({ url, link: false })));
 			else if (name === "style") found.push(...cssReferences(value).map((url) => ({ url, link: false })));
 		}
@@ -209,15 +228,18 @@ function target(dir: string, from: string, reference: string): { file: string; f
 
 const gzipped = (bytes: Uint8Array) => Bun.gzipSync(new Uint8Array(bytes), { level: 9 }).byteLength;
 
-/** What PAGE weighs with everything it loads (followed through stylesheets), each file counted once. */
-function weigh(dir: string, page: string): number {
+/** What PAGE weighs with everything it loads (followed through stylesheets and scripts), each file counted once; and of that, its JavaScript. */
+function weigh(dir: string, page: string): { bytes: number; script: number } {
 	const seen = new Set<string>();
 	let bytes = 0;
+	let script = 0;
 	const visit = (file: string) => {
 		if (seen.has(file) || !existsSync(file) || !file.startsWith(dir + sep)) return;
 		seen.add(file);
 		const content = readFileSync(file);
-		bytes += TEXT_FILES.test(file) ? gzipped(content) : content.byteLength;
+		const weight = TEXT_FILES.test(file) ? gzipped(content) : content.byteLength;
+		bytes += weight;
+		if (/\.m?js$/i.test(file)) script += weight;
 		for (const { url, link } of references(file, content.toString("utf8"))) {
 			const reference = url.trim();
 			if (link || reference === "" || reference.startsWith("#") || SELF_CONTAINED.test(reference) || SCHEME.test(reference) || reference.startsWith("//")) continue;
@@ -226,7 +248,7 @@ function weigh(dir: string, page: string): number {
 		}
 	};
 	visit(page);
-	return bytes;
+	return { bytes, script };
 }
 
 /** Checks the built site in DIR against PAGES' words and the links out in OUTSIDE; see the comment at the top. */
@@ -249,9 +271,10 @@ export function checkOutput(
 		for (const text of missingText(readFileSync(path, "utf8"), page.text)) {
 			problems.push(`${page.file} does not hold, in its body outside any script: ${JSON.stringify(text)}`);
 		}
-		const bytes = weigh(dir, path);
-		weights.push({ file: page.file, bytes });
+		const { bytes, script } = weigh(dir, path);
+		weights.push({ file: page.file, bytes, script });
 		if (bytes >= BUDGET_BYTES) problems.push(`${page.file} weighs ${bytes} bytes with what it loads, compressed: over the budget of ${BUDGET_BYTES}`);
+		if (script >= SCRIPT_BUDGET_BYTES) problems.push(`${page.file} loads ${script} bytes of JavaScript, compressed: over the budget of ${SCRIPT_BUDGET_BYTES}`);
 	}
 
 	const ids = new Map<string, Set<string>>();
@@ -261,16 +284,23 @@ export function checkOutput(
 		return found;
 	};
 
+	// The pages the router renders: a link to any other file of the site must carry target.
+	const pageFiles = new Set(pages.map((page) => join(dir, page.file)));
+	const IN_PAGE = "a place on its own page, without target: the router would take the browser's jump, which moves the keyboard focus to the place, for a page change; give it target=\"_self\"";
+	const NOT_A_PAGE = "which is not one of the site's pages (src/pages.text.ts), without target: the router would take it for a page; give it target=\"_self\"";
+
 	let checked = 0;
 	for (const path of files(dir)) {
 		const name = relative(dir, path);
-		for (const { url, link } of references(path, readFileSync(path, "utf8"))) {
+		for (const { url, link, browser } of references(path, readFileSync(path, "utf8"))) {
 			const reference = url.trim();
 			if (reference === "") continue;
 			if (link) {
 				checked += 1;
 				if (reference.startsWith("#")) {
-					if (extname(path) === ".html" && !idsOf(path).has(decodeURIComponent(reference.slice(1)))) problems.push(`${name} links to ${reference}, an id it lacks`);
+					if (extname(path) !== ".html") continue;
+					if (!idsOf(path).has(decodeURIComponent(reference.slice(1)))) problems.push(`${name} links to ${reference}, an id it lacks`);
+					else if (!browser) problems.push(`${name} links to ${reference}, ${IN_PAGE}`);
 					continue;
 				}
 				if (SCHEME.test(reference) || reference.startsWith("//")) {
@@ -283,7 +313,10 @@ export function checkOutput(
 				else if (!existsSync(found.file)) problems.push(`${name} links to ${reference}, which the site lacks`);
 				else if (found.fragment && extname(found.file) === ".html" && !idsOf(found.file).has(decodeURIComponent(found.fragment))) {
 					problems.push(`${name} links to ${reference}, whose page has no id ${JSON.stringify(found.fragment)}`);
-				}
+				} else if (browser || extname(path) !== ".html") {
+					// left to the browser, or a link in a file the router never renders
+				} else if (!pageFiles.has(found.file)) problems.push(`${name} links to ${reference}, ${NOT_A_PAGE}`);
+				else if (found.file === path && found.fragment) problems.push(`${name} links to ${reference}, ${IN_PAGE}`);
 				continue;
 			}
 			if (reference.startsWith("#") || SELF_CONTAINED.test(reference)) continue;
@@ -312,8 +345,8 @@ if (import.meta.main) {
 		process.exit(1);
 	}
 	const words = PAGES.map((page) => `${page.file} holds its ${page.text.length} fixed words`).join(", ");
-	const weighed = weights.map((w) => `${w.file} ${w.bytes.toLocaleString("en")}`).join(", ");
+	const weighed = weights.map((w) => `${w.file} ${w.bytes.toLocaleString("en")} (JavaScript ${w.script.toLocaleString("en")})`).join(", ");
 	console.log(
-		`${relative(process.cwd(), resolve(root)) || "."}: ${words}; ${checked} references and links, each to a file the site has, under ${API_ORIGIN}, or a link out that src/pages.text.ts names (${OUTSIDE_LINKS.join(", ")}); weights with what each page loads, compressed: ${weighed} bytes (budget ${BUDGET_BYTES.toLocaleString("en")})`,
+		`${relative(process.cwd(), resolve(root)) || "."}: ${words}; ${checked} references and links, each to a file the site has, under ${API_ORIGIN}, or a link out that src/pages.text.ts names (${OUTSIDE_LINKS.join(", ")}), and each that is not a page change left to the browser (target); weights with what each page loads, compressed: ${weighed} bytes (budgets ${BUDGET_BYTES.toLocaleString("en")}, JavaScript ${SCRIPT_BUDGET_BYTES.toLocaleString("en")})`,
 	);
 }

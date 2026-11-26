@@ -12,6 +12,7 @@
 		"check:browser": "bun scripts/check-browser.ts"
 	},
 	"dependencies": {
+		"@solidjs/router": "2.0.1",
 		"@solidjs/web": "2.0.1",
 		"solid-js": "2.0.1"
 	},

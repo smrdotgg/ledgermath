@@ -5,6 +5,7 @@
     "": {
       "name": "ledgermath-site",
       "dependencies": {
+        "@solidjs/router": "2.0.1",
         "@solidjs/web": "2.0.1",
         "solid-js": "2.0.1",
       },
@@ -86,6 +87,8 @@
     "@solidjs/compiler-wasm32-wasi": ["@solidjs/compiler-wasm32-wasi@2.0.1", "", { "dependencies": { "@emnapi/core": "1.11.3", "@emnapi/runtime": "1.11.3", "@napi-rs/wasm-runtime": "^1.1.6" } }, "sha512-FjY9OUbldtN+J40cFqa7my56PeN57RyrSHSQAV9TCVXfomRXuPh/l91oFwy8vDgV6HNUb59QHML19RfSIA1Tnw=="],
 
     "@solidjs/compiler-win32-x64-msvc": ["@solidjs/compiler-win32-x64-msvc@2.0.1", "", { "os": "win32", "cpu": "x64" }, "sha512-YHJxc+jTod7V87ftP6i50uTs3a/xMRTWWIWvwSw/oftuWObBbB9n6hfmhDkS1kQF81YcoZK1CwvgP0raAQn+rQ=="],
+
+    "@solidjs/router": ["@solidjs/router@2.0.1", "", { "peerDependencies": { "@solidjs/web": "^2.0.0", "filesystem-routing": ">=0.4.0", "solid-js": "^2.0.0" }, "optionalPeers": ["filesystem-routing"] }, "sha512-XFmb2A08mcvSnhKoM4x16Kt6olZMlnDUlzHA3w8nX3gpxPxOs40YP07rH2uNuTliTU7lavkcKIlpQzWzRi4yDw=="],
 
     "@solidjs/signals": ["@solidjs/signals@2.0.1", "", {}, "sha512-nTdIk7UgGLwATg0wCT/wH/G62aWYjGol2AnqdrN4qVyV7snYTnYoesgJ/G7xRkO34mAr3tayt0cu1+k/dt0lmA=="],
 

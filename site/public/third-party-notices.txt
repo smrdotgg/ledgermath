@@ -2,9 +2,15 @@ Third-party notices for this website
 
 The website serves two fonts of one family, Geist Pixel Circle (GeistPixel-Circle.woff2)
 and Geist Pixel Square (GeistPixel-Square.woff2), each whole and unchanged, as the geist
-package (version 1.9.2) publishes it. Its pages carry no code
-from other projects: they are rendered to HTML before they are served, and the one
-script in them is LedgerMath's own.
+package (version 1.9.2) publishes it.
+
+Its pages are rendered to HTML before they are served, and each loads one script, the
+website as an application (assets/app-*.js), which holds code of these packages, compiled
+and minified: solid-js 2.0.1, @solidjs/signals 2.0.1 and @solidjs/web 2.0.1
+(https://github.com/solidjs/solid), and @solidjs/router 2.0.1
+(https://github.com/solidjs/solid-router). Their notices and licence are below the fonts'.
+The inline scripts in the pages are LedgerMath's own, but for Solid's hydration bootstrap,
+which @solidjs/web writes.
 
 == Geist Pixel ==
 https://github.com/vercel/geist-font
@@ -101,3 +107,31 @@ INCLUDING ANY GENERAL, SPECIAL, INDIRECT, INCIDENTAL, OR CONSEQUENTIAL
 DAMAGES, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
 FROM, OUT OF THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM
 OTHER DEALINGS IN THE FONT SOFTWARE.
+
+== Solid: solid-js, @solidjs/web, @solidjs/signals, @solidjs/router ==
+https://github.com/solidjs/solid
+https://github.com/solidjs/solid-router
+
+solid-js and @solidjs/web: Copyright (c) 2016-2025 Ryan Carniato
+@solidjs/signals: Copyright (c) 2023-2025 Ryan Carniato
+@solidjs/router: Copyright (c) 2020-2022 Ryan Carniato
+
+Each is licensed under the MIT License:
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

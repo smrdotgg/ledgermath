@@ -14,6 +14,7 @@ import {
 	halve,
 	HEADLINE_CHOICES,
 	leadFigure,
+	pageData,
 	perUnit,
 	plain,
 	plannedBenchmarkDocsUrl,
@@ -83,6 +84,38 @@ describe("the fixture tree", () => {
 
 	test("lacks nothing the page shows, so the build has nothing to say", () => {
 		expect(data.notes).toEqual([]);
+	});
+});
+
+describe("pageData: what the pages render, as the browser gets it", () => {
+	const page = pageData(data);
+
+	test("is plain JSON: through JSON and back it is the same value", () => {
+		expect(JSON.parse(JSON.stringify(page))).toEqual(page);
+	});
+
+	test("holds every headline cell, each with its Series' own address and figure, and no Series beyond them", () => {
+		expect(page.headline.map((row) => row.choice)).toEqual(data.headline.map((row) => row.choice));
+		for (const [i, row] of data.headline.entries()) {
+			for (const [j, cell] of row.cells.entries()) {
+				const shown = page.headline[i]!.cells[j]!;
+				expect(shown.seriesUrl).toBe(cell.series ? data.links.seriesFile(cell.series) : null);
+				expect(shown.figure).toEqual(cell.figure);
+				expect(shown.absent).toBe(cell.absent);
+				expect(shown.machine.instanceType).toBe(cell.machine.instanceType);
+			}
+		}
+		const json = JSON.stringify(page);
+		const unshown = data.series.filter((row) => !headlineSeries.includes(row));
+		expect(unshown.length).toBeGreaterThan(0);
+		for (const row of unshown) expect(json).not.toContain(row.url);
+	});
+
+	test("the machines, the rounds, the region and the links the pages show", () => {
+		expect(page.machines.map((m) => [m.instanceType, m.price.usdPerHour])).toEqual(data.machines.map((m) => [m.instanceType, m.price.usdPerHour]));
+		expect(page.rounds).toEqual(data.rounds ? [...data.rounds] : null);
+		expect(page.region).toBe(data.region);
+		expect(page.links).toEqual({ home: "/", numbers: "/#numbers", licences: "/third-party-notices.txt", docs: "/docs/", index: data.links.index, prices: data.links.prices });
 	});
 });
 

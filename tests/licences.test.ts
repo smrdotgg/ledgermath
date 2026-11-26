@@ -122,6 +122,24 @@ describe("THIRD-PARTY-NOTICES.md", () => {
 		}
 	});
 
+	// The site's dependencies (not its devDependencies) are what its served script carries, with
+	// @solidjs/signals, which solid-js is built on (ADR-0036): each, at the version pinned, is
+	// named here and in the notices the site serves, whose licence text travels with them.
+	test("names every package the website's script carries, at its pinned version, and the site's own notices carry it", () => {
+		const site = JSON.parse(read("site/package.json").toString("utf8")) as { dependencies: Record<string, string> };
+		const signals = /^\s*"@solidjs\/signals": \["@solidjs\/signals@([^"]+)"/m.exec(read("site/bun.lock").toString("utf8"))?.[1];
+		expect(signals).toBeDefined();
+		const carried = { ...site.dependencies, "@solidjs/signals": signals! };
+		expect(Object.keys(carried).sort()).toEqual(["@solidjs/router", "@solidjs/signals", "@solidjs/web", "solid-js"]);
+		const siteNotices = read("site/public/third-party-notices.txt").toString("utf8");
+		for (const [name, version] of Object.entries(carried)) {
+			expect(version).toMatch(/^\d+\.\d+\.\d+$/);
+			expect(notices).toContain(`| \`${name}\` | ${version} | MIT |`);
+			expect(siteNotices).toContain(`${name} ${version}`);
+		}
+		expect(siteNotices).toContain("Permission is hereby granted, free of charge");
+	});
+
 	test("the sample Runs, recorded at the pinned release, list the binary package each source package is for", () => {
 		const dumps: string[] = [];
 		for (const sample of readdirSync(join(ROOT, "tests", "samples"), { withFileTypes: true })) {

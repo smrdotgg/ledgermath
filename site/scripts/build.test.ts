@@ -16,10 +16,10 @@ const outsideTree = join(work, "trees", "tree");
 mkdirSync(dirname(outsideTree), { recursive: true });
 cpSync(FIXTURE, outsideTree, { recursive: true });
 
-/** The build's own directories left in DIR, and its server bundles left in site/dist/: none, after any build. */
+/** The build's own directories left in DIR, and its two bundles left in site/dist/: none, after any build. */
 const leftovers = (dir: string) => [
 	...readdirSync(dir).filter((name) => name.includes(".building-")),
-	...(existsSync(BUILD_AREA) ? readdirSync(BUILD_AREA).filter((name) => name.startsWith(".server-")) : []),
+	...(existsSync(BUILD_AREA) ? readdirSync(BUILD_AREA).filter((name) => name.startsWith(".server-") || name.startsWith(".client-")) : []),
 ];
 
 describe("outputProblem refuses", () => {
@@ -122,6 +122,34 @@ describe("buildSite", () => {
 		expect(existsSync(join(dir, "docs", "index.html"))).toBe(true);
 		expect(leftovers(work)).toEqual([]);
 	}, 60_000);
+
+	test("writes one script, the application, and every page loads it as a module from its <head>", () => {
+		const dir = join(work, "fresh");
+		const scripts = readdirSync(join(dir, "assets")).filter((name) => /\.m?js$/.test(name));
+		expect(scripts).toHaveLength(1);
+		expect(scripts[0]).toMatch(/^app-[\w-]+\.js$/);
+		for (const page of ["index.html", join("docs", "index.html")]) {
+			const html = readFileSync(join(dir, page), "utf8");
+			const head = html.slice(0, html.indexOf("</head>"));
+			expect(head).toContain(`<script type="module" src="/assets/${scripts[0]}"></script>`);
+			// No other script file is loaded: the inline ones (the flags and the font, Solid's hydration bootstrap) have no src.
+			expect(html.match(/<script[^>]*\ssrc=/g)).toHaveLength(1);
+		}
+	});
+
+	test("the application holds the figures the pages were rendered from, and nothing of the tree beyond them", () => {
+		const dir = join(work, "fresh");
+		const script = readdirSync(join(dir, "assets")).find((name) => name.startsWith("app-"))!;
+		const code = readFileSync(join(dir, "assets", script), "utf8");
+		const home = readFileSync(join(dir, "index.html"), "utf8");
+		// A Series file the home page links to is in the application too (pageData's seriesUrl) …
+		const linked = /href="(https:\/\/api\.ledgermath\.com\/v1\/series\/[^"]+\.json)"/.exec(home)![1]!;
+		expect(code).toContain(linked);
+		// … and a Series the tree holds that no page shows is not (siteData's Series list stays at build time).
+		const tree = JSON.parse(readFileSync(join(FIXTURE, "v1", "series.json"), "utf8")) as { series: { url: string }[] };
+		const unshown = tree.series.map((row) => row.url).find((url) => !home.includes(url));
+		if (unshown) expect(code).not.toContain(unshown);
+	});
 
 	test("the mark names nothing private: no path, no repository", () => {
 		const mark = readFileSync(join(work, "fresh", BUILD_MARK), "utf8");

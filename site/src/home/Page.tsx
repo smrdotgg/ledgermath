@@ -2,9 +2,10 @@
 // home-page variations (issue #64): a header, a headline with the latest rounds beside it,
 // three graphs, the table, a footer, in the style of smr.gg (Geist Pixel, black and white with
 // one grey: round dots in the dark scheme, squares in the light one). Every figure comes from
-// ../data, from the tree the site is built from; the only arithmetic is a change of unit, done by
-// its helpers. The art beside the headline: ./art.tsx. The header and footer are shared with the
-// other pages: ../chrome.tsx. Under the headline the page credits Napkin Math, the project
+// ../data, from the tree the site is built from (pageData: what the page renders, the same in the
+// build and in the browser); the only arithmetic is a change of unit, done by its helpers. The art
+// beside the headline: ./art.tsx. The header and footer are shared with the other pages:
+// ../chrome.tsx. Under the headline the page credits Napkin Math, the project
 // LedgerMath began from, with the site's one link to another site (../pages.text.ts). A closing
 // note under the table says the same with a napkin drawn beside it (./napkin.tsx); it is behind
 // a flag, so the page shows it only when its address has ?napkin.
@@ -22,14 +23,14 @@ import {
 	formatRate,
 	formatUsd,
 	GRAPH_BENCHMARKS,
-	type HeadlineCell,
-	type HeadlineRow,
 	type LeadFigure,
 	NO_PERCENTILE,
+	type PageCell,
+	type PageData,
+	type PageRow,
 	perUnit,
 	type Section,
 	type Shown,
-	type SiteData,
 } from "../data";
 import { Footer, Header } from "../chrome";
 import { NAPKIN_MATH } from "../pages.text";
@@ -45,7 +46,7 @@ import { Napkin } from "./napkin";
  * has a figure.
  */
 type Fig = (value: number) => Shown;
-function rowFigure(row: HeadlineRow): Fig | null {
+function rowFigure(row: PageRow): Fig | null {
 	const c = row.choice;
 	const figures = row.cells.flatMap((cell) => (cell.figure ? [cell.figure.p50] : []));
 	if (figures.length === 0) return null;
@@ -64,7 +65,7 @@ function rowFigure(row: HeadlineRow): Fig | null {
 }
 
 /** The unit a row's figures are in, with what it is a time of where that is not one repetition. */
-function rowUnit(row: HeadlineRow, fig: Fig): string {
+function rowUnit(row: PageRow, fig: Fig): string {
 	const first = row.cells.find((cell) => cell.figure)!.figure!;
 	const unit = fig(first.p50).unit;
 	return row.choice.per ? `${unit} per ${row.choice.per.of}` : unit;
@@ -81,7 +82,7 @@ function exact(f: LeadFigure, fig: Fig): string {
 }
 
 /** A cell without a figure: a dash, with why in its title (the data module's words). */
-const Dash = (props: { cell: HeadlineCell }) => <span title={`No figure: ${props.cell.absent ?? "the data give none"}.`}>—</span>;
+const Dash = (props: { cell: PageCell }) => <span title={`No figure: ${props.cell.absent ?? "the data give none"}.`}>—</span>;
 
 /** A machine's hourly price, every digit the price file gives. */
 const price = (usdPerHour: string) => `$${formatUsd(usdPerHour).full}/h`;
@@ -107,7 +108,7 @@ function Bar(props: { share: number }) {
 	);
 }
 
-function Graph(props: { row: HeadlineRow; data: SiteData }) {
+function Graph(props: { row: PageRow }) {
 	const row = props.row;
 	const fig = rowFigure(row);
 	const most = Math.max(0, ...row.cells.flatMap((cell) => (cell.figure ? [cell.figure.p50] : [])));
@@ -124,9 +125,9 @@ function Graph(props: { row: HeadlineRow; data: SiteData }) {
 						<span class="machine">
 							{cell.machine.instanceType} <span class="price">{price(cell.machine.price.usdPerHour)}</span>
 						</span>
-						{cell.figure && cell.series && fig ? (
+						{cell.figure && cell.seriesUrl && fig ? (
 							<>
-								<a class="figure" href={props.data.links.seriesFile(cell.series)} title={exact(cell.figure, fig)}>
+								<a class="figure" href={cell.seriesUrl} title={exact(cell.figure, fig)}>
 									{fig(cell.figure.p50).short}
 								</a>
 								<Bar share={most > 0 ? cell.figure.p50 / most : 0} />
@@ -149,7 +150,7 @@ const ROUNDS_SHOWN = 3;
 /** "19 Nov 2026": the long date with its month cut to three letters. */
 const shortDate = (longDate: string) => longDate.replace(/^(\d+ [A-Za-z]{3})[a-z]*/, "$1");
 
-function Latest(props: { data: SiteData }) {
+function Latest(props: { data: PageData }) {
 	return (
 		<section class="latest" aria-labelledby="latest">
 			<h2 id="latest">Latest runs</h2>
@@ -174,7 +175,7 @@ function Latest(props: { data: SiteData }) {
 
 // ---------------------------------------------------------------- the page
 
-export default function HomePage(props: { data: SiteData }) {
+export default function HomePage(props: { data: PageData }) {
 	const data = props.data;
 	const { headline, machines, links } = data;
 	const sections: Section[] = [];
@@ -207,7 +208,7 @@ export default function HomePage(props: { data: SiteData }) {
 					{GRAPH_BENCHMARKS.map((name) => {
 						const row = headline.find((r) => r.choice.benchmark === name);
 						if (!row) throw new Error(`no headline row for ${name}`);
-						return <Graph row={row} data={data} />;
+						return <Graph row={row} />;
 					})}
 				</div>
 
@@ -248,8 +249,8 @@ export default function HomePage(props: { data: SiteData }) {
 													</th>
 													{row.cells.map((cell) => (
 														<td>
-															{cell.figure && cell.series && fig ? (
-																<a href={links.seriesFile(cell.series)} title={exact(cell.figure, fig)}>
+															{cell.figure && cell.seriesUrl && fig ? (
+																<a href={cell.seriesUrl} title={exact(cell.figure, fig)}>
 																	{fig(cell.figure.p50).short}
 																</a>
 															) : (

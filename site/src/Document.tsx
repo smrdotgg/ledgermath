@@ -1,4 +1,5 @@
-import type { JSX } from "@solidjs/web";
+import { Hydration, NoHydration } from "solid-js";
+import { HydrationScript, type JSX } from "@solidjs/web";
 import circle from "./fonts/GeistPixel-Circle.woff2";
 import square from "./fonts/GeistPixel-Square.woff2";
 import "./site.css";
@@ -16,27 +17,35 @@ const HOLD_UNTIL_FONT = `(()=>{const f='1em "Geist Pixel '+(matchMedia("${LIGHT}
 
 // A page's feature flags (pages.text.ts): for each that the address names as a parameter, as in
 // /?napkin, set data-<flag> on <html>, before the body is read, so that site.css shows the part
-// the flag hides from the first frame on. Without JavaScript the part stays hidden.
+// the flag hides from the first frame on. Without JavaScript the part stays hidden. After a page
+// change inside the application, src/app.tsx sets them by the same rule.
 const setFlags = (flags: readonly string[]) =>
 	flags.length === 0 ? "" : `for(const f of ${JSON.stringify(flags)})if(new URLSearchParams(location.search).has(f))document.documentElement.dataset[f]="";`;
 
-// The whole <html> document around a page (design v9's). The build adds the site's stylesheet to <head>.
-export default function Document(props: { title: string; description: string; flags?: readonly string[]; children?: JSX.Element }) {
+// The whole <html> document around a page (design v9's). It is the build's, the same on every page
+// but for the flags: Solid renders it once into the page's HTML and the browser never hydrates it
+// (<NoHydration>). The body's content is the application (src/app.tsx), which the browser
+// hydrates (<Hydration>, src/entry-client.tsx); it puts the page's <title> and description in
+// <head> (useHead). The build adds the stylesheet and the application's script to <head>.
+export default function Document(props: { flags?: readonly string[]; children?: JSX.Element }) {
 	return (
-		<html lang="en">
-			<head>
-				<meta charset="utf-8" />
-				<meta name="viewport" content="width=device-width, initial-scale=1" />
-				<meta name="color-scheme" content="dark light" />
-				<meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)" />
-				<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
-				<title>{props.title}</title>
-				<meta name="description" content={props.description} />
-				<link rel="preload" href={circle} as="font" type="font/woff2" crossorigin="anonymous" media={`not all and ${LIGHT}`} />
-				<link rel="preload" href={square} as="font" type="font/woff2" crossorigin="anonymous" media={LIGHT} />
-				<script innerHTML={setFlags(props.flags ?? []) + HOLD_UNTIL_FONT} />
-			</head>
-			<body>{props.children}</body>
-		</html>
+		<NoHydration>
+			<html lang="en">
+				<head>
+					<meta charset="utf-8" />
+					<meta name="viewport" content="width=device-width, initial-scale=1" />
+					<meta name="color-scheme" content="dark light" />
+					<meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)" />
+					<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
+					<link rel="preload" href={circle} as="font" type="font/woff2" crossorigin="anonymous" media={`not all and ${LIGHT}`} />
+					<link rel="preload" href={square} as="font" type="font/woff2" crossorigin="anonymous" media={LIGHT} />
+					<script innerHTML={setFlags(props.flags ?? []) + HOLD_UNTIL_FONT} />
+					<HydrationScript />
+				</head>
+				<body>
+					<Hydration>{props.children}</Hydration>
+				</body>
+			</html>
+		</NoHydration>
 	);
 }
