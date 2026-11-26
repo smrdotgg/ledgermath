@@ -8,10 +8,10 @@
 
 /* smr.gg's colours: white on black, one grey for what matters less, one darker grey for rules.
    The light scheme is the same page turned over, in the Square face. --dot is one dot of the
-   font: .038em. --far and --near are the greys of the clouds in the headline's art: the text's
-   colour at .45 and at .7. */
-:root { color-scheme: dark light; --pixel: "Geist Pixel Circle"; --bg: #000; --fg: #fff; --muted: #7c7c7c; --rule: #444; --off: #2e2e2e; --far: #737373; --near: #b3b3b3; --dot: .038em; }
-@media (prefers-color-scheme: light) { :root { --pixel: "Geist Pixel Square"; --bg: #fff; --fg: #000; --muted: #6a6a6a; --rule: #bbb; --off: #dcdcdc; --far: #8c8c8c; --near: #4d4d4d; } }
+   font: .038em. --far is the grey of the whiskers in the headline's art and of the napkin's
+   embossing: the text's colour at .45. */
+:root { color-scheme: dark light; --pixel: "Geist Pixel Circle"; --bg: #000; --fg: #fff; --muted: #7c7c7c; --rule: #444; --off: #2e2e2e; --far: #737373; --dot: .038em; }
+@media (prefers-color-scheme: light) { :root { --pixel: "Geist Pixel Square"; --bg: #fff; --fg: #000; --muted: #6a6a6a; --rule: #bbb; --off: #dcdcdc; --far: #8c8c8c; } }
 
 html { background: var(--bg); color: var(--fg); -webkit-text-size-adjust: 100%; }
 .font-loading body { visibility: hidden; } /* set by the script in Document.tsx until the font is ready */
@@ -40,29 +40,27 @@ footer.wrap { display: flex; justify-content: center; flex-wrap: wrap; gap: .5re
 .hero { display: grid; grid-template-columns: minmax(0, 1fr) 19rem; gap: 2rem 4rem; align-items: end; padding: 5.5rem 0 5rem; }
 
 /* The headline is one column as wide as its longer line; the shorter line ends in dot art that
-   runs to the same edge, as the daisies and the church fill the last line on smr.gg. */
-h1 { display: grid; grid-template-columns: fit-content(100%); font-size: clamp(2rem, 10.2vw, 4.5rem); line-height: 1.12; }
+   runs to the same edge, as the daisies and the church fill the last line on smr.gg. The longer
+   line is 233 dots wide, 8.854em: at 10.1vw it fits between the margins of a screen 320px wide. */
+h1 { display: grid; grid-template-columns: fit-content(100%); font-size: clamp(2rem, 10.1vw, 4.5rem); line-height: 1.12; }
 h1 .line { display: flex; align-items: baseline; white-space: nowrap; }
 
 /* The art (art.tsx), drawn on the font's own grid: 1 SVG unit is 1 dot of the font, y = 0 is the
-   baseline, and the SVG's box is the height of a capital letter (19 dots); a taller cloud overflows
-   upward. Every path is dashed so that each unit of its length is one dot, as wide as the font's.
+   baseline, and the SVG's box is the height of a capital letter (19 dots). Every path is dashed so
+   that each unit of its length is one dot, as wide as the font's.
    In the light scheme the font's pixels are squares that touch, so the art's are too: no dashes,
    and each run of pixels is one bar a pixel high. */
 .art, .nap { display: block; flex: none; overflow: visible; fill: none; stroke: currentColor; stroke-width: 1; stroke-linecap: round; stroke-dasharray: 0 1; stroke-dashoffset: .5; }
 @media (prefers-color-scheme: light) { .art, .nap { stroke-linecap: butt; stroke-dasharray: none; } }
 .art { height: calc(var(--dot) * 19); margin: 0 calc(var(--dot) * 2) 0 calc(var(--dot) * 7); }
 .far { stroke: var(--far); }
-.near { stroke: var(--near); }
 /* The motion, for those who have not asked for less of it; without it the picture stands as drawn.
-   The clouds drift to the right, one dot at a time so that every dot stays on the grid, and each
-   layer comes round again after 96 dots (SKY in art.tsx). The near layer moves a dot every .9 s,
-   the far one every 1.6 s. */
+   The chart feeds to the left, one dot at a time so that every dot stays on the grid, a dot every
+   .6 s, and comes round again after 160 dots (LOOP in art.tsx). */
 @media (prefers-reduced-motion: no-preference) {
-  .sky path { animation: v9-drift 86.4s steps(96) infinite; }
-  .sky .far { animation-duration: 153.6s; }
+  .strip path { animation: v9-feed 96s steps(160) infinite; }
 }
-@keyframes v9-drift { to { transform: translateX(96px); } }
+@keyframes v9-feed { to { transform: translateX(-160px); } }
 .sub { margin-top: 1.5rem; max-width: 26em; font-size: 1.5rem; line-height: 2rem; }
 /* The credit to Napkin Math, a quiet third line: grey, with the name, which is the link, in the text's colour. */
 .credit { margin-top: .75rem; color: var(--muted); }
@@ -115,7 +113,7 @@ tbody:first-of-type .section th { padding-top: 0; }
    no empty space beside it pulls the pair to the left. On a phone it wraps as it must (below). */
 .closing p { font-size: 1.5rem; line-height: 2rem; }
 .closing span { display: block; white-space: nowrap; }
-.nap { width: calc(43 * max(2px, .038 * clamp(2rem, 10.2vw, 4.5rem))); height: auto; }
+.nap { width: calc(43 * max(2px, .038 * clamp(2rem, 10.1vw, 4.5rem))); height: auto; }
 
 /* ---------------------------------------------------------------- narrower screens */
 @media (max-width: 66rem) {
