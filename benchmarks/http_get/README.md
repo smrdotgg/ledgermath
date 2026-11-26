@@ -10,7 +10,7 @@ checked against the Fixture.
 
 ## What a figure means
 
-HTTPS GET requests to S3, one request per sample, with every phase of every request an
+HTTPS GET requests to S3, one request per sample, with each phase a request reaches an
 event: name resolved, connected, secured, request sent, first byte, headers, body. The
 binary speaks to S3 itself. It sends its own DNS query to the box's resolver, opens TCP,
 does TLS with AWS-LC (linked statically), writes HTTP/1.1 by hand, signs each request by

@@ -10,7 +10,8 @@ each Run records as each sample's resident pages.
 Reading a file front to back from a cold page cache, the way a program does: buffered
 `pread`s of 8 KiB, with the kernel's stock readahead deciding what the device is asked
 for. napkin-math's "sequential read". Each sample reads one region of the Fixture the box
-made at boot, made cold beforehand, and says how cold it was.
+made at boot, after the kernel is asked to drop it from the page cache, and says how cold it
+was.
 
 ### Samples of fixed work
 
@@ -20,8 +21,8 @@ uses `lm_measure_fixed` (`benchmarks/harness/c/lm_fixed.c`), which emits the sam
 two warmup samples, then `LM_SAMPLES` counted ones, each of exactly
 `bytes_per_sample / request_bytes` repetitions. Sample *k* reads region
 *k* mod (`span_bytes` / `bytes_per_sample`) from its first byte to its last. Before each
-sample, outside its interval, the region is dropped from the page cache with
-`posix_fadvise(POSIX_FADV_DONTNEED)` and its resident pages are counted with `mincore`.
+sample, outside its interval, the kernel is asked to drop the region from the page cache
+with `posix_fadvise(POSIX_FADV_DONTNEED)` and its resident pages are counted with `mincore`.
 The descriptor carries no advice of its own (no `POSIX_FADV_SEQUENTIAL`), so readahead is
 the kernel's default for the device (`read_ahead_kb` 128 on both disks). The two warmup
 samples also drain the root volume's short burst (256 MiB against its ~128 MiB). On the

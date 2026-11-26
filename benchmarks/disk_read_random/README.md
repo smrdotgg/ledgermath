@@ -10,16 +10,16 @@ The latency of one read from a disk, with nothing else outstanding: one `pread` 
 with `O_DIRECT`, at the next offset of a seeded permutation of the span's blocks, from the
 Fixture the box made at boot. A sample's time over its repetitions is the mean time of one
 read; the device's own latency histogram, which the dump records before and after every
-Run, gives its distribution.
+Run, gives the distribution of every request the device served in between.
 
 ### One repetition
 
 One `pread` of `request_bytes` at the next offset of the permutation, with `O_DIRECT`, then
 the first word of the block is added to a running sum. The permutation is a Fisher-Yates
-shuffle of the span's block numbers with a fixed seed (July's), so every Run reads the same
-blocks in the same order, each block at most once until the permutation is used up: about
-200,000 reads per Run on the instance store and 25,000 on the root volume, of 4,194,304 and
-131,072 blocks. `work` says how many reads were made and whether the permutation wrapped.
+shuffle of the span's block numbers with a fixed seed (July's), so every Run of a parameter
+set reads blocks in the same order, each block at most once until the permutation is used
+up: about 200,000 reads per Run on the instance store and 25,000 on the root volume, of
+4,194,304 and 131,072 blocks. `work` says how many reads were made and whether the permutation wrapped.
 
 ### The figure
 

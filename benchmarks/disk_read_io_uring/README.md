@@ -11,8 +11,8 @@ spent over each limit.
 How many reads a disk completes when the binary keeps 64 of them submitted: `O_DIRECT`
 reads through `io_uring`, from the Fixture the box made at boot. A sample's time over its
 repetitions is the time per completion, which gives IOPS and bytes per second. On EC2
-both disks hold their provider's limits, so the counted samples sit on them; the device's
-own counters say which limit bound.
+both disks hold their provider's limits, and in the Runs examined the counted samples sat on
+them; the device's own counters show the time spent over each limit.
 
 "Submitted" is what the binary controls and all it sees: a read it has submitted and not
 yet reaped. How many of those the device holds at a given instant it does not see. A
