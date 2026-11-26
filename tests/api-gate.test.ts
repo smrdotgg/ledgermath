@@ -257,6 +257,19 @@ describe("3. the previous tree is whole, and its history is honoured across a ch
 		}
 	});
 
+	test("a change to the schemas' words alone needs no new baseline: the previous tree, whose schemas have none of today's titles and descriptions, is compared, and every month file is the same", () => {
+		const words = (key: string, value: unknown): boolean => (key === "title" || key === "description") && typeof value === "string";
+		const strip = (node: unknown): unknown =>
+			Array.isArray(node) ? node.map(strip) : typeof node === "object" && node !== null ? Object.fromEntries(Object.entries(node).filter(([key, value]) => !words(key, value)).map(([key, value]) => [key, strip(value)])) : node;
+		const schemas = new Map([...readApiSchemas()].map(([name, bytes]) => [name, new TextEncoder().encode(`${JSON.stringify(strip(JSON.parse(new TextDecoder().decode(bytes))), null, 2)}\n`)] as const));
+		const before = buildApi({ ...sourcesOf(fixture), schemas });
+		// Only the schemas differ: every other file, each month file among them, is the same byte for byte.
+		const differ = [...before.keys()].filter((path) => !Buffer.from(before.get(path) as Uint8Array).equals(Buffer.from(tree.get(path) as Uint8Array)));
+		expect(differ).toEqual([...tree.keys()].filter((path) => path.startsWith("v1/schemas/")));
+		const result = checkStability(writeTree(before), directory);
+		expect([result.compared, result.problems, result.inBoth, result.unchanged]).toEqual([true, [], 5, 5]);
+	});
+
 	test("a previous tree that is missing, of another layout or of none fails unless a new baseline is declared; declared, nothing it published may be missing, read in this layout or in the one before the split", () => {
 		const missing = join(tmpdir(), "api-gate-no-such-tree");
 		const refused = checkStability(missing, directory);

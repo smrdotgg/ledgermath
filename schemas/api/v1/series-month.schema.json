@@ -13,11 +13,11 @@
     "month": { "description": "The month, yyyy-mm, UTC: every Run here started in it.", "type": "string", "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$" },
     "url": { "description": "This file's own address.", "$ref": "#/$defs/url" },
     "series_url": { "description": "The address of the Series' file, v1/series/<id>.json, which lists every month of the Series.", "$ref": "#/$defs/url" },
-    "benchmark": { "type": "string" },
+    "benchmark": { "description": "The benchmark's name, as its Runs give it.", "type": "string" },
     "params": {
       "description": "The parameter set, as each Run was given it (LM_PARAM_*).",
       "type": "object",
-      "additionalProperties": { "anyOf": [{ "type": "string" }, { "type": "number" }, { "type": "boolean" }] }
+      "additionalProperties": { "description": "One parameter's value, under the parameter's name, as each Run was given it.", "anyOf": [{ "type": "string" }, { "type": "number" }, { "type": "boolean" }] }
     },
     "build": { "description": "The named build of the benchmark (static, dynamic).", "type": "string" },
     "instance_type": { "description": "The EC2 instance type, as the provider names it.", "anyOf": [{ "type": "string" }, { "type": "null" }] },
@@ -55,9 +55,10 @@
     "point_failure": { "description": "Why it is not counted, or null: the first 10 of its reasons, each cut to its first 500 characters, joined by \"; \", then how many more there are.", "$ref": "#/$defs/string_or_null" },
 
     "method_series": {
+      "description": "The Method, by name and version: series, version 1.",
       "type": "object",
       "required": ["name", "version"],
-      "properties": { "name": { "const": "series" }, "version": { "const": 1 } }
+      "properties": { "name": { "description": "The Method's name: series.", "const": "series" }, "version": { "description": "The Method's version: 1.", "const": 1 } }
     },
     "series_v1_month": {
       "description": "Method series, version 1, for the month's Runs.",
@@ -93,7 +94,7 @@
             "properties": {
               "sample": { "description": "The sample's number in the stream.", "type": "integer" },
               "ns": { "description": "sample_ended.t minus sample_started.t, in nanoseconds of the Run's clock.", "type": "number" },
-              "repetitions": { "type": "number" },
+              "repetitions": { "description": "How many repetitions of the measured work the sample holds, as its sample_started gives it.", "type": "number" },
               "ns_per_repetition": { "description": "ns / repetitions.", "type": "number" }
             }
           }
@@ -113,14 +114,15 @@
       "properties": {
         "from": { "description": "The earlier Run's id.", "type": "string" },
         "to": { "description": "The later Run's id.", "type": "string" },
-        "facts": { "type": "array", "items": { "type": "string" } },
+        "facts": { "description": "The split facts whose values differ between the two Runs, by name, in the order the Method's split_on lists them.", "type": "array", "items": { "type": "string" } },
         "sections": {
+          "description": "Each section of the before-dump whose hash differs between the two Runs, split on or not, in order of name, with what its change did to the split.",
           "type": "array",
           "items": {
             "type": "object",
             "required": ["section", "effect", "keys"],
             "properties": {
-              "section": { "type": "string" },
+              "section": { "description": "The dump section's name.", "type": "string" },
               "effect": {
                 "description": "splits: its split fact differs; left out: it is split on but differs only in what is left out; not split on: no split fact is read from it.",
                 "enum": ["splits", "left out", "not split on"]
@@ -133,9 +135,10 @@
     },
 
     "method_requests": {
+      "description": "The Method, by name and version: requests, version 1.",
       "type": "object",
       "required": ["name", "version"],
-      "properties": { "name": { "const": "requests" }, "version": { "const": 1 } }
+      "properties": { "name": { "description": "The Method's name: requests.", "const": "requests" }, "version": { "description": "The Method's version: 1.", "const": 1 } }
     },
     "requests_v1_month": {
       "description": "Method requests, version 1, for the month's Runs.",
@@ -151,14 +154,14 @@
       "type": "object",
       "required": ["count", "min", "max", "p50", "p90", "p95", "p99", "p99.9", "at_or_above"],
       "properties": {
-        "count": { "type": "integer", "minimum": 0 },
-        "min": { "type": "number" },
-        "max": { "type": "number" },
-        "p50": { "$ref": "#/$defs/number_or_null" },
-        "p90": { "$ref": "#/$defs/number_or_null" },
-        "p95": { "$ref": "#/$defs/number_or_null" },
-        "p99": { "$ref": "#/$defs/number_or_null" },
-        "p99.9": { "$ref": "#/$defs/number_or_null" },
+        "count": { "description": "How many requests the figures are of: those of the set that succeeded and had this phase.", "type": "integer", "minimum": 0 },
+        "min": { "description": "The least of their times, in nanoseconds, exactly.", "type": "number" },
+        "max": { "description": "The greatest of their times, in nanoseconds, exactly.", "type": "number" },
+        "p50": { "description": "The 50th percentile of their times, in nanoseconds; null when count is under 2, too few to support it. In one Run's own statistics, interpolated between its sorted times; in pooled statistics, read from the summed histogram, within 1/128 of the exact percentile.", "$ref": "#/$defs/number_or_null" },
+        "p90": { "description": "The 90th percentile of their times, in nanoseconds; null when count is under 10, too few to support it. In one Run's own statistics, interpolated between its sorted times; in pooled statistics, read from the summed histogram, within 1/128 of the exact percentile.", "$ref": "#/$defs/number_or_null" },
+        "p95": { "description": "The 95th percentile of their times, in nanoseconds; null when count is under 20, too few to support it. In one Run's own statistics, interpolated between its sorted times; in pooled statistics, read from the summed histogram, within 1/128 of the exact percentile.", "$ref": "#/$defs/number_or_null" },
+        "p99": { "description": "The 99th percentile of their times, in nanoseconds; null when count is under 100, too few to support it. In one Run's own statistics, interpolated between its sorted times; in pooled statistics, read from the summed histogram, within 1/128 of the exact percentile.", "$ref": "#/$defs/number_or_null" },
+        "p99.9": { "description": "The 99.9th percentile of their times, in nanoseconds; null when count is under 1000, too few to support it. In one Run's own statistics, interpolated between its sorted times; in pooled statistics, read from the summed histogram, within 1/128 of the exact percentile.", "$ref": "#/$defs/number_or_null" },
         "at_or_above": { "$ref": "#/$defs/at_or_above" }
       }
     },
@@ -166,11 +169,11 @@
       "description": "For each percentile reported, how many requests are ranked at or above it (ties counted by rank).",
       "type": "object",
       "properties": {
-        "p50": { "type": "integer" },
-        "p90": { "type": "integer" },
-        "p95": { "type": "integer" },
-        "p99": { "type": "integer" },
-        "p99.9": { "type": "integer" }
+        "p50": { "description": "How many requests are ranked at or above the 50th percentile; absent when it is not reported.", "type": "integer" },
+        "p90": { "description": "How many requests are ranked at or above the 90th percentile; absent when it is not reported.", "type": "integer" },
+        "p95": { "description": "How many requests are ranked at or above the 95th percentile; absent when it is not reported.", "type": "integer" },
+        "p99": { "description": "How many requests are ranked at or above the 99th percentile; absent when it is not reported.", "type": "integer" },
+        "p99.9": { "description": "How many requests are ranked at or above the 99.9th percentile; absent when it is not reported.", "type": "integer" }
       }
     },
     "phase_stats": {
@@ -188,13 +191,13 @@
       }
     },
     "failure_count": {
-      "description": "Failed requests of one kind: where (phase) and what kind of failure, and how many.",
+      "description": "Failures of one kind: where (phase), what kind, and how many. Under failures they are requests that failed; under setups_failed they are setups of a kept connection that failed outside any sample, whose phase and kind are their connection_failed event's phase and error.",
       "type": "object",
       "required": ["phase", "kind", "count"],
       "properties": {
-        "phase": { "description": "request_failed.phase; response for a complete response whose status is not 2xx; record for a request one of whose lines the binary withheld (a withheld certificate line, its withheld_event the string certificate, is aside, like a certificate event, and no failure).", "type": "string" },
-        "kind": { "description": "request_failed.error; status_<code>; for a request with withheld lines, from the first of them in stream order that is not a certificate's: line_withheld_<event> when it names the event it replaced as a word of a-z, 0-9 and _ starting with a letter, and line_withheld when it does not.", "type": "string" },
-        "count": { "type": "integer", "minimum": 1 }
+        "phase": { "description": "For a request that failed: record when the binary withheld one of its lines (a withheld certificate line, its withheld_event the string certificate, is set aside first, like a certificate event, and is no failure); otherwise request_failed.phase, or response for a complete response whose status is not 2xx. For a setup of a kept connection that failed (setups_failed): the phase its connection_failed event gives.", "type": "string" },
+        "kind": { "description": "For a request that failed: for record, from the first withheld line in stream order that is not a certificate's, line_withheld_<event> when it names the event it replaced as a word of a-z, 0-9 and _ starting with a letter, and line_withheld when it does not; otherwise request_failed.error, or status_<code>. For a setup of a kept connection that failed (setups_failed): the error its connection_failed event gives.", "type": "string" },
+        "count": { "description": "How many failed in that phase with that kind of failure, 1 or more.", "type": "integer", "minimum": 1 }
       }
     },
     "failures": { "type": "array", "items": { "$ref": "#/$defs/failure_count" } },
@@ -203,11 +206,11 @@
       "type": "object",
       "required": ["runs", "requests", "failed", "phases", "failures"],
       "properties": {
-        "runs": { "type": "integer", "minimum": 0 },
-        "requests": { "type": "integer", "minimum": 0 },
-        "failed": { "type": "integer", "minimum": 0 },
+        "runs": { "description": "How many counted Runs it pools.", "type": "integer", "minimum": 0 },
+        "requests": { "description": "How many succeeded requests it pools.", "type": "integer", "minimum": 0 },
+        "failed": { "description": "How many of its counted requests failed, never timed.", "type": "integer", "minimum": 0 },
         "phases": { "$ref": "#/$defs/phase_stats" },
-        "failures": { "$ref": "#/$defs/failures" }
+        "failures": { "description": "Its failed requests, by where and what kind of failure, with how many.", "$ref": "#/$defs/failures" }
       }
     },
     "requests_point": {
@@ -233,12 +236,19 @@
         "succeeded": { "description": "Of the counted requests, those that succeeded; 0 for a Run not counted.", "type": "integer", "minimum": 0 },
         "failed": { "description": "Of the counted requests, those that failed; 0 for a Run not counted.", "type": "integer", "minimum": 0 },
         "phases": { "description": "Its own succeeded requests' statistics per phase, exactly; empty for a Run not counted or one whose every request failed.", "$ref": "#/$defs/phase_stats" },
-        "failures": { "$ref": "#/$defs/failures" },
-        "setups_failed": { "$ref": "#/$defs/failures" },
+        "failures": { "description": "Its counted requests that failed, by where and what kind of failure, with how many; empty for a Run not counted.", "$ref": "#/$defs/failures" },
+        "setups_failed": { "description": "Its setups of a kept connection that failed outside any sample, by where and what kind of failure, with how many; empty for a Run not counted.", "$ref": "#/$defs/failures" },
         "warmup_failure": {
           "description": "How the warmup request failed, or null.",
           "anyOf": [
-            { "type": "object", "required": ["phase", "kind"], "properties": { "phase": { "type": "string" }, "kind": { "type": "string" } } },
+            {
+              "type": "object",
+              "required": ["phase", "kind"],
+              "properties": {
+                "phase": { "description": "Where the warmup request failed, read as a counted request's failure is: its certificate events, and a withheld certificate line (its withheld_event the string certificate), are set aside first; then it is record when the binary withheld any other of its lines; otherwise request_failed.phase, or response for a complete response whose status is not 2xx.", "type": "string" },
+                "kind": { "description": "What kind of failure, read in the same order: for record, line_withheld_<event> from the first withheld line in stream order that is not a certificate's, when it names the event it replaced as a word of a-z, 0-9 and _ starting with a letter, and line_withheld when it does not; otherwise request_failed.error, or status_<code>.", "type": "string" }
+              }
+            },
             { "type": "null" }
           ]
         },

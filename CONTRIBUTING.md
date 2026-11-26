@@ -25,7 +25,8 @@ reads and what it prints. The contract is section 2 of
   (upper-cased key, value as a plain string) and `LM_SAMPLES`, the number of counted samples.
   The runner (`runner/run.py`) gives it nothing else: no `PATH`, no `HOME`, an empty working
   directory, stdin from `/dev/null`. `--quick` is a developer mode (small sizes, few
-  samples) whose output is never recorded.
+  samples): the scheduled box never passes it, and no Method counts a Run whose stream says
+  `quick: true`, though `runner/run.py --quick` still writes one.
 - **What it prints.** On stdout, one JSON object per line and nothing else; diagnostics go to
   stderr. Every line has `event` and `t`, whole nanoseconds of `CLOCK_MONOTONIC_RAW`. The six
   universal events are `started`, `observed`, `sample_started`, `sample_ended`, `verified`
