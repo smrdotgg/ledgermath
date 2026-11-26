@@ -27,6 +27,17 @@
  *   field that holds the array, the choice or the reference carries them. if,
  *   not and propertyNames are not looked in: they test a value, and declare
  *   no member.
+ * - Every name a schema lists in required is declared at that level, as a
+ *   field the rule above holds to words: under properties, as a schema (not a
+ *   boolean), or matched by a patternProperties pattern. "That level" is every
+ *   schema that applies to the same value: the one holding required, the
+ *   schemas it sits under as a branch (anyOf, oneOf, allOf, then, else,
+ *   dependentSchemas), and, for each of those, the schema its $ref names and
+ *   its allOf branches, which always apply. So a oneOf branch may require a
+ *   member its parent declares, with its words. additionalProperties does not
+ *   count: it is the schema of the names an object does not declare, so a
+ *   required name only it covers is a name the schema never declares, whose
+ *   row in a reference would have the words for every other name, not its own.
  *
  * When it fails it names every gap at once, by file and field path.
  */
@@ -95,7 +106,45 @@ function whyUndescribed(node: Json, root: Json, seen: ReadonlySet<Json> = new Se
 	return whyUndescribed(target, root, new Set([...seen, target])) === undefined ? undefined : `no description, and its $ref ${node.$ref} is to a schema with none`;
 }
 
-/** Every gap in one schema: the root's title or description missing, and each field without words, as "path: why". */
+/**
+ * Every schema that applies to the same value as these: each of them, the
+ * schema its $ref names, and its allOf branches, which always apply, followed
+ * as far as they go.
+ */
+function applying(schemas: readonly Json[], root: Json): Json[] {
+	const found: Json[] = [];
+	const add = (node: unknown): void => {
+		if (!isObject(node) || found.includes(node)) return;
+		found.push(node);
+		if (typeof node.$ref === "string") add(resolve(root, node.$ref));
+		if (Array.isArray(node.allOf)) for (const branch of node.allOf) add(branch);
+	};
+	for (const schema of schemas) add(schema);
+	return found;
+}
+
+/** Why a name in required is not declared at its level, or undefined when it is: under properties as a schema, or by a matching patternProperties pattern. */
+function whyUndeclared(name: string, level: readonly Json[]): string | undefined {
+	let boolean = false;
+	for (const schema of level) {
+		const properties = schema.properties;
+		if (isObject(properties) && Object.hasOwn(properties, name)) {
+			if (isObject(properties[name])) return undefined;
+			boolean = true;
+		}
+		const patterns = schema.patternProperties;
+		if (isObject(patterns)) for (const [pattern, member] of Object.entries(patterns)) if (isObject(member) && new RegExp(pattern, "u").test(name)) return undefined;
+	}
+	return boolean
+		? `requires ${name}, but declares it only by a boolean schema, which has no words`
+		: `requires ${name}, but no properties or patternProperties of that object declare it`;
+}
+
+/**
+ * Every gap in one schema, as "path: why": the root's title or description
+ * missing, each field without words, and each name in required that its level
+ * does not declare.
+ */
 function undescribedFields(schema: unknown): string[] {
 	if (!isObject(schema)) return ["(root): not a JSON object"];
 	const gaps: string[] = [];
@@ -111,31 +160,41 @@ function undescribedFields(schema: unknown): string[] {
 		}
 		const why = whyUndescribed(node, schema);
 		if (why !== undefined) gaps.push(`${render(path)}: ${why}`);
-		walk(node, path);
+		walk(node, path, []);
 	};
-	const walk = (node: unknown, path: Step[]): void => {
+	/** `above`: the schemas this one is a branch of, which apply to the same value; empty for a field, an element or a definition. */
+	const walk = (node: unknown, path: Step[], above: readonly Json[]): void => {
 		if (!isObject(node)) return;
+		if (Array.isArray(node.required)) {
+			const level = applying([node, ...above], schema);
+			for (const name of node.required) {
+				if (typeof name !== "string") continue;
+				const why = whyUndeclared(name, level);
+				if (why !== undefined) gaps.push(`${path.length === 0 ? "(root)" : render(path)}: ${why}`);
+			}
+		}
 		/** A step named by a keyword: after a dot, unless it starts the path. */
 		const keywordStep = (word: string): Step => ({ step: `${path.length === 0 ? "" : "."}${word}` });
+		const branchAbove = [...above, node];
 		for (const [keyword, nameOf] of Object.entries(FIELD_MAPS)) {
 			const members = node[keyword];
 			if (isObject(members)) for (const [name, member] of Object.entries(members)) field(member, [...path, { name: nameOf(name) }]);
 		}
 		for (const keyword of OTHER_MEMBERS) if (isObject(node[keyword])) field(node[keyword], [...path, { name: "*" }]);
-		for (const keyword of ELEMENTS) if (isObject(node[keyword])) walk(node[keyword], [...path, keyword === "items" ? { step: "[]" } : keywordStep(keyword)]);
-		if (Array.isArray(node.prefixItems)) node.prefixItems.forEach((item, i) => walk(item, [...path, { step: `[${i}]` }]));
+		for (const keyword of ELEMENTS) if (isObject(node[keyword])) walk(node[keyword], [...path, keyword === "items" ? { step: "[]" } : keywordStep(keyword)], []);
+		if (Array.isArray(node.prefixItems)) node.prefixItems.forEach((item, i) => walk(item, [...path, { step: `[${i}]` }], []));
 		for (const keyword of BRANCH_LISTS) {
 			const list = node[keyword];
-			if (Array.isArray(list)) list.forEach((item, i) => walk(item, [...path, keywordStep(`${keyword}[${i}]`)]));
+			if (Array.isArray(list)) list.forEach((item, i) => walk(item, [...path, keywordStep(`${keyword}[${i}]`)], branchAbove));
 		}
-		for (const keyword of BRANCHES) if (isObject(node[keyword])) walk(node[keyword], [...path, keywordStep(keyword)]);
-		if (isObject(node.dependentSchemas)) for (const [name, item] of Object.entries(node.dependentSchemas)) walk(item, [...path, { name: "dependentSchemas" }, { name }]);
+		for (const keyword of BRANCHES) if (isObject(node[keyword])) walk(node[keyword], [...path, keywordStep(keyword)], branchAbove);
+		if (isObject(node.dependentSchemas)) for (const [name, item] of Object.entries(node.dependentSchemas)) walk(item, [...path, { name: "dependentSchemas" }, { name }], branchAbove);
 		for (const keyword of DEFINITION_MAPS) {
 			const definitions = node[keyword];
-			if (isObject(definitions)) for (const [name, item] of Object.entries(definitions)) walk(item, [...path, { name: keyword }, { name }]);
+			if (isObject(definitions)) for (const [name, item] of Object.entries(definitions)) walk(item, [...path, { name: keyword }, { name }], []);
 		}
 	};
-	walk(schema, []);
+	walk(schema, [], []);
 	return gaps;
 }
 
@@ -205,6 +264,26 @@ describe("the check", () => {
 	test("refuses a member of every other name, or of a pattern, with no description", () => {
 		expect(undescribedFields(schema({ properties: { map: { description: "A map.", type: "object", additionalProperties: { type: "string" } } } }))).toEqual(["map.*: no description"]);
 		expect(undescribedFields(schema({ patternProperties: { "^x_": { type: "string" } } }))).toEqual(['["/^x_/"]: no description']);
+	});
+
+	test("refuses a name in required that its level does not declare, declares only by a boolean schema, or covers only by additionalProperties", () => {
+		const nowhere = (name: string): string => `requires ${name}, but no properties or patternProperties of that object declare it`;
+		expect(undescribedFields(schema({ required: ["duration_ns"] }))).toEqual([`(root): ${nowhere("duration_ns")}`]);
+		expect(undescribedFields(schema({ required: ["a"], properties: { a: true } }))).toEqual(["(root): requires a, but declares it only by a boolean schema, which has no words"]);
+		expect(undescribedFields(schema({ required: ["a"], additionalProperties: { description: "Any member.", type: "string" } }))).toEqual([`(root): ${nowhere("a")}`]);
+		// Nested, and in a branch whose parent does not declare it either; a sibling branch's declaration does not apply.
+		expect(undescribedFields(schema({ $defs: { x: { description: "An x.", type: "array", items: { type: "object", required: ["b"] } } } }))).toEqual([`$defs.x[]: ${nowhere("b")}`]);
+		expect(undescribedFields(schema({ anyOf: [{ required: ["z"] }, { properties: { z: { description: "A z.", type: "string" } } }] }))).toEqual([`anyOf[0]: ${nowhere("z")}`]);
+	});
+
+	test("passes a name in required declared at its level: in properties, by a pattern, by the parent of a branch, by an allOf branch or by the schema a $ref names", () => {
+		const a = { description: "An a.", type: "string" };
+		expect(undescribedFields(schema({ required: ["a"], properties: { a } }))).toEqual([]);
+		expect(undescribedFields(schema({ required: ["x_a"], patternProperties: { "^x_": { description: "A member named x_ and more.", type: "string" } } }))).toEqual([]);
+		// The Run schema's two shapes: a oneOf branch requires a member its parent declares, and allows it by a boolean schema.
+		expect(undescribedFields(schema({ properties: { a }, oneOf: [{ description: "The one shape.", required: ["a"], properties: { a: true } }] }))).toEqual([]);
+		expect(undescribedFields(schema({ required: ["a"], allOf: [{ properties: { a } }] }))).toEqual([]);
+		expect(undescribedFields(schema({ properties: { f: { description: "An f.", $ref: "#/$defs/base", required: ["a"] } }, $defs: { base: { type: "object", properties: { a } } } }))).toEqual([]);
 	});
 
 	test("refuses a schema with no title or no description of its own", () => {

@@ -3102,8 +3102,12 @@ address is `--base`, so a private or test address can stand in.
   of `anyOf`, `oneOf` or `allOf`, `then` or `else`, or a definition in `$defs`): each member
   of `properties` and `patternProperties`, and `additionalProperties` when it is a schema.
   A field's words are its own, or, when it has none, those of the definition its `$ref`
-  names. `tests/schema-descriptions.test.ts` finds the schemas by directory and fails naming
-  every field without words, so a reference made from the schemas has no empty cell. A
+  names. Every name in a `required` list is declared, with words, at that level: under
+  `properties`, or matched by a `patternProperties` pattern, in the schema holding the list or
+  one that applies to the same value (a schema it is a branch of, a `$ref`'s target, an
+  `allOf` branch); `additionalProperties` does not count, being the schema of names an object
+  does not declare. `tests/schema-descriptions.test.ts` finds the schemas by directory and
+  fails naming every gap, so a reference made from the schemas has no empty cell. A
   change to a schema's words alone needs no new baseline: the gate compares month files,
   not schemas (`tests/api-gate.test.ts`), and the next publish serves the new words.
 - **`v1` only ever gains fields.** The API's own schemas forbid no member they do not list, so
