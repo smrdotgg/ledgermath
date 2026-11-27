@@ -1,0 +1,63 @@
+{
+	"taken_at": "2026-11-26T23:30:59.388Z",
+	"base": "https://api.ledgermath.com",
+	"series": "124066cf09f9",
+	"files": [
+		{
+			"kind": "index",
+			"path": "v1/index.json",
+			"url": "https://api.ledgermath.com/v1/index.json",
+			"bytes": 30871,
+			"sha256": "af261b26b8c7c2465a85ca64d5a6ffcf7da12e756cdf665dd0aa874d22e53fb6"
+		},
+		{
+			"kind": "series-list",
+			"path": "v1/series.json",
+			"url": "https://api.ledgermath.com/v1/series.json",
+			"bytes": 198777,
+			"sha256": "26ab712aa0590dcb8389648f546ced4c382aa19d3b6b8683ade5cccd90fd75ab"
+		},
+		{
+			"kind": "benchmark",
+			"path": "v1/benchmarks/http_get.json",
+			"url": "https://api.ledgermath.com/v1/benchmarks/http_get.json",
+			"bytes": 57331,
+			"sha256": "cc95feda7291a2bee76f5877489148acc9957f42f616abe28863182ee0af9f90"
+		},
+		{
+			"kind": "series",
+			"path": "v1/series/124066cf09f9.json",
+			"url": "https://api.ledgermath.com/v1/series/124066cf09f9.json",
+			"bytes": 151953,
+			"sha256": "56a179d507ae7a9c08716374f7ff0b627d0426c36d3ce1130025a26194545756"
+		},
+		{
+			"kind": "series-month",
+			"path": "v1/series/124066cf09f9/2026-11.json",
+			"url": "https://api.ledgermath.com/v1/series/124066cf09f9/2026-11.json",
+			"bytes": 565082,
+			"sha256": "11cc78ca2533093f1c44ce2518673e9286dd2d6e9375ebd04c16875929216d96"
+		},
+		{
+			"kind": "prices",
+			"path": "v1/prices/2026-11-26.json",
+			"url": "https://api.ledgermath.com/v1/prices/2026-11-26.json",
+			"bytes": 39602,
+			"sha256": "ff02bf959d898635e4e5c168fd633f81b25f7e6bce995cd8ec34818dc64831fc"
+		},
+		{
+			"kind": "run",
+			"path": "runs/2026/11/26/01a218b7-46f4-72cb-83d7-f2477c8b426e.json",
+			"url": "https://api.ledgermath.com/runs/2026/11/26/01a218b7-46f4-72cb-83d7-f2477c8b426e.json",
+			"bytes": 4856,
+			"sha256": "9c77d8b4f746c78978bfe34cb52c0f193f457bae2a2a545538e1eaa15d822ed8"
+		},
+		{
+			"kind": "events",
+			"path": "blobs/sha256/46cf012c4fb71b9e047b3a7a461aaa18d7ec915cdcbf5de2a626abd53bc93fa4",
+			"url": "https://api.ledgermath.com/blobs/sha256/46cf012c4fb71b9e047b3a7a461aaa18d7ec915cdcbf5de2a626abd53bc93fa4",
+			"bytes": 161116,
+			"sha256": "46cf012c4fb71b9e047b3a7a461aaa18d7ec915cdcbf5de2a626abd53bc93fa4"
+		}
+	]
+}

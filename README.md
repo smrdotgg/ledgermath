@@ -33,6 +33,9 @@ as the base the build started from (last section).
 | `scripts/copy-bucket.ts` | Copies one `-runs` bucket into another, across two accounts, only ever adding, and checks the copy (`scripts/lib/bucket-copy.ts`): the move to the production account |
 | `scripts/derive.ts`, `scripts/build-page.ts` | Run the Methods over the Runs; turn their Derivations into the page |
 | `scripts/build-api.ts`, `scripts/check-api.ts`, `scripts/previous-api.ts` | Cut the Derivations and the price files into the data API's static files, laid out as they will be served; check what was written against its schemas, its links, the Derivations and the Runs repository, and against the tree before it; fetch that tree, the one the latest run that checked its tree kept (`scripts/lib/api.ts`, `scripts/lib/api-check.ts`; section "The data API") |
+| `scripts/api-reference.ts`, `scripts/lib/api-reference.ts`, `scripts/lib/api-reference-words.ts` | The data API's reference, as Markdown, generated from the schemas: a page per kind of file with every field, the overview with the API's contract quoted from `scripts/lib/api.ts`, and the machines page from `schedule.json`; the words written by hand (section "The API reference") |
+| `scripts/lib/docs-addresses.ts` | The addresses of the documentation pages, the one list a link between pages is held to |
+| `scripts/fetch-api-sample.ts`, `docs/api-sample/` | Takes the fixed sample of the data API's files the reference's examples come from; the sample, as served, with its manifest `sample.json` |
 | `scripts/read-api-tree.ts` | Reads from the API bucket itself the three files the website is built from (the table of contents, the Series list, the newest price file), of one publication, for the production deploys (section "Where it is deployed") |
 | `scripts/alarm.ts` | Opens, or comments on, one issue when a watched Series has had no Run for 48 hours, the newest price file is more than 48 hours old, or the API bucket's table of contents is more than 14 hours old (or missing, or unreadable) |
 | `.github/workflows/runs.yml` | On a schedule: copy, push, derive, page, the data API's files, alarm; then publish the data API, and rebuild and deploy the website from what the API bucket holds |
@@ -50,7 +53,7 @@ as the base the build started from (last section).
 | `third-party/` | glibc 2.34's `COPYING.LIB` and `LICENSES`, and `sources.lock.json`, the third-party source packages kept in the bucket beside the binaries |
 | `scripts/publish-third-party-source.ts` | Puts the source packages `third-party/sources.lock.json` names into the bucket, create-only, and reads every one back to check its bytes (`scripts/lib/s3-create.ts` sends its conditional PUT, which `scripts/lib/sigv4.ts` signs) |
 | `docs/runs-repository/` | The Runs repository's `README.md` and `LICENSE` (CC BY 4.0), kept here and copied there |
-| `tests/` | `bun test`: the schemas against sample Runs, the Run checker, the schedule's check, the runner's timeout and stop races and its instance-type filtering, the dump's sections, the disk provisioning's decisions, the disk Fixture and the binaries' checks of it, the launch schedules, which account each stage deploys to and which one is scheduled, that SST stops before acting on another account, launch and reap logic, the box's and the workflow's roles, the Method (and that the move to the production account starts no group), the copy job, the bucket copy against a stand-in for S3, the page, the data API's files and their check, the alarm and the workflows, the price fetch, cut, schema and recompute check on excerpts of AWS's files (`tests/samples/prices/`), and that every field of every schema has a description (`tests/schema-descriptions.test.ts`) |
+| `tests/` | `bun test`: the schemas against sample Runs, the Run checker, the schedule's check, the runner's timeout and stop races and its instance-type filtering, the dump's sections, the disk provisioning's decisions, the disk Fixture and the binaries' checks of it, the launch schedules, which account each stage deploys to and which one is scheduled, that SST stops before acting on another account, launch and reap logic, the box's and the workflow's roles, the Method (and that the move to the production account starts no group), the copy job, the bucket copy against a stand-in for S3, the page, the data API's files and their check, the alarm and the workflows, the price fetch, cut, schema and recompute check on excerpts of AWS's files (`tests/samples/prices/`), and that every field of every schema has a description (`tests/schema-descriptions.test.ts`), and the API reference: every schema with a page, every field on it with its words, the sample, the examples, the links (`tests/api-reference.test.ts`) |
 
 ## A benchmark, locally
 
@@ -3493,6 +3496,97 @@ per round (the preflight's, the upload's and the check's: "Requests and time", a
 about 176,000 a month for today's 391 files, $0.07, growing with the tree (about 2,600 files
 a year on, 1,170,000 a month, $0.47), and the alarm's one `GET` a round, 150 a month.
 Transfer into S3 is free.
+
+### The API reference
+
+The documentation's reference to the data API (#64, decision 9) is Markdown generated from
+the schemas, and never kept in the repository: the site's build writes it.
+
+```bash
+bun scripts/api-reference.ts --out /tmp/reference    # /tmp/reference/docs/api/*.md and /tmp/reference/docs/machines.md
+```
+
+| File | Address | From |
+|------|---------|------|
+| `docs/api/index.md` | `/docs/api/` | The overview: words in `scripts/lib/api-reference-words.ts`, with `ABOUT`, `VERSIONING`, `FIGURES`, `MONTHS`, `LIST_UPDATES` and `EVIDENCE` of `scripts/lib/api.ts` quoted where they stand, so the API's contract has one source |
+| `docs/api/<page>.md` | `/docs/api/<page>` | One schema each (`FILE_PAGES`): `table-of-contents`, `series-list`, `benchmark-list`, `series`, `series-month`, `prices`, `run`, `events` |
+| `docs/machines.md` | `/docs/machines` | `schedule.json`: each target, and the entries for some types only |
+
+`writeApiReference(dir)` in `scripts/lib/api-reference.ts` does the same for a caller such as
+`site/scripts/build.ts`. It needs the root's packages (`bun install` at the root), since
+`scripts/lib/api.ts` brings in the Methods' code; the `site` workflow's build job installs only
+`site/`'s today. It refuses, writing nothing, when any of its files is already there. The same
+input gives the same bytes: no clock, no locale, no directory order.
+
+A file page holds, in this order: its title and one paragraph that stands alone (what an index
+of pages shows as its description); where the file is, how a reader reaches it and what it
+links, with its schema (the API serves seven of the eight at `v1/schemas/<name>.schema.json`;
+the Run's is not served, and is linked on GitHub); the schema's own description; an example;
+every field; the shared shapes.
+
+- **Every field, by its full path** from the top of the file (`[]` each element of a list, `*`
+  a member whose name is not fixed, `/…/` a member whose name matches a pattern, `["p99.9"]` a
+  name with a dot), its type in plain words with every constraint its schema states (a pattern
+  the names must match, `propertyNames`, and how many members there are, "one or more of them",
+  among them), whether it is required, and its description whole, copied from the schema and
+  only escaped for Markdown (a code span a description writes in backticks stays one). Beside its
+  own words, a field shows those of a definition it names, and "Each element: …" for a list.
+  `KEYWORDS` lists the keywords of JSON Schema the generator puts into words, and the tests fail
+  on a schema that uses another. An object a schema closes is said to have "no other members";
+  the legend says any other object may hold members the page does not list, and the price and
+  events pages say which (AWS's objects; a benchmark's own events and observed values).
+- **Shared shapes.** A definition the schema names from more than one place, and which has
+  fields of its own, is described once, under "Shared shapes", its fields written `….p50`; it
+  lists every place it is used, and each place links to it. A definition named from one place is
+  written out there. The Series page so has 221 entries and 12 shapes, where writing every path
+  out would take 1,102.
+- **Choices in words.** "string or null"; a `oneOf` of objects is "exactly one of these N
+  shapes", each listed with what it has, may have and never has, and each field says in which
+  shapes it is required or absent (the Run's two shapes, its `exit`); an `allOf` branch with
+  `if`/`then` is a heading, "When `event` is `"started"`", with the branch's words and fields
+  (the events schema); `enum` is "one of …", `const` "always …", `additionalProperties: false`
+  "no other members".
+- **The fold.** A description longer than 200 characters, of more than one sentence, is a
+  `<details>` with its first sentence as the `<summary>`: a person scans, and an agent reading
+  the Markdown has every word. An example longer than 150 lines folds too.
+- **Examples come from the fixed sample**, `docs/api-sample/`, real files taken once from the
+  live API, so a page changes only when its schema, its words or the sample do. Each is an
+  excerpt the generator makes by one rule, `EXCERPT_RULE`, which the page prints word for word
+  beside the list of every place it shortened (a test holds the code to it), and the page links
+  the file at the same address as it is now.
+
+**The sample** follows one Series, `124066cf09f9` (`http_get` on `m5.large`, which Method
+requests v1 derives beside series v1), through every kind of file, taken on 2026-11-26: the
+table of contents, the list of Series, `http_get`'s list, the Series' file, its month file of
+2026-11, the Run file of its newest point, that Run's stdout blob, and the day's price file;
+1,209,588 bytes in eight files, 565,082 of them the month file. `docs/api-sample/sample.json`
+lists each with its kind, address, size and sha256. To take it again (into a directory that
+does not exist yet, or is empty):
+
+```bash
+bun scripts/fetch-api-sample.ts --series 124066cf09f9 --out docs/api-sample
+```
+
+It follows the files' own links, and writes nothing unless they agree as one update (the month
+file's sha256 the one the Series file lists, the Run file's the one its point gives, the stdout
+blob's the one the Run names, the row the same line in both lists).
+
+`tests/api-reference.test.ts` holds: every schema under `schemas/` has a page, or is in
+`SCHEMAS_WITHOUT_A_PAGE` (empty); every field the description test finds is on its schema's
+page with its words in full, under the path or the shared shape that owns it (a field of a
+definition written out where it is used, at each place the definition is named from; one of a
+shared shape, in that shape's section), found by a walk of the test's own; every schema uses only
+the keywords in `KEYWORDS`; the excerpt does what `EXCERPT_RULE` says; each file of the sample is
+the one its manifest lists, validates against its schema (the API's own five against the schema
+closed too, each line of the stream against the events schema), agrees with the others, and
+holds no AWS key; every example is an excerpt of its sample that keeps every top-level member,
+and every list or object it keeps holds something when its source does; every link is a page `scripts/lib/docs-addresses.ts`
+lists, a heading of its own page, the API or the repository; each page starts with its title
+and a paragraph and holds no HTML but `<details>` and `<summary>`; the overview quotes each
+contract paragraph word for word; the machines page gives every target; the same input gives
+the same bytes; and a small schema written in the test gives `tests/api-reference-golden.md`,
+which shows what a page looks like (`LEDGERMATH_WRITE_GOLDEN=1 bun test tests/api-reference.test.ts`
+writes it anew, on purpose).
 
 ## The website (`site/`)
 
