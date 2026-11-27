@@ -23,8 +23,9 @@
  *   field; under items, prefixItems, contains and unevaluatedItems (an
  *   array's elements); under each branch of anyOf, oneOf and allOf, and under
  *   then and else; under each entry of dependentSchemas; and under each entry
- *   of $defs. These places are not fields, and need no words of their own: the
- *   field that holds the array, the choice or the reference carries them. if,
+ *   of $defs. These places are not fields, and need no words as fields: the
+ *   field that holds the array, the choice or the reference carries them (a
+ *   definition needs words of its own all the same, by the last rule). if,
  *   not and propertyNames are not looked in: they test a value, and declare
  *   no member.
  * - Every name a schema lists in required is declared at that level, as a
@@ -42,6 +43,11 @@
  *   schema around the if: the predicate needs no words, but with else false
  *   every valid value must hold such a name, and a reference must say what it
  *   is.
+ * - Every entry of $defs (or definitions), at any depth, has a description of
+ *   its own, a string with more than white space in it. A reference shows a
+ *   definition several fields share once, as a shape of its own, under its own
+ *   words, so a $ref to a described definition does not stand in for them, and
+ *   a boolean schema, which has no place for words, is no definition.
  *
  * When it fails it names every gap at once, by file and field path.
  */
@@ -94,15 +100,25 @@ function resolve(root: Json, ref: string): unknown {
 	return at;
 }
 
+/** Why a description is no words a reader can be shown, or undefined when it is. */
+function whyNotWords(words: unknown): string | undefined {
+	if (typeof words !== "string") return "a description that is not a string";
+	if (words === "") return "an empty description";
+	if (words.trim() === "") return "a description of white space alone";
+	return undefined;
+}
+
+/** Why a definition has no words of its own, or undefined when it has. */
+function whyDefinitionUndescribed(node: unknown): string | undefined {
+	if (typeof node === "boolean") return "a definition that is a boolean schema, with no place for a description";
+	if (!isObject(node)) return "a definition that is not a schema";
+	if (!("description" in node)) return "a definition with no description of its own";
+	return whyNotWords(node.description);
+}
+
 /** Why a field is not described, or undefined when it is. */
 function whyUndescribed(node: Json, root: Json, seen: ReadonlySet<Json> = new Set([node])): string | undefined {
-	if ("description" in node) {
-		const words = node.description;
-		if (typeof words !== "string") return "a description that is not a string";
-		if (words === "") return "an empty description";
-		if (words.trim() === "") return "a description of white space alone";
-		return undefined;
-	}
+	if ("description" in node) return whyNotWords(node.description);
 	if (typeof node.$ref !== "string") return "no description";
 	const target = resolve(root, node.$ref);
 	if (!isObject(target)) return `no description, and its $ref ${node.$ref} is to no schema in this file`;
@@ -200,7 +216,13 @@ function undescribedFields(schema: unknown): string[] {
 		if (isObject(node.dependentSchemas)) for (const [name, item] of Object.entries(node.dependentSchemas)) walk(item, [...path, { name: "dependentSchemas" }, { name }], branchAbove);
 		for (const keyword of DEFINITION_MAPS) {
 			const definitions = node[keyword];
-			if (isObject(definitions)) for (const [name, item] of Object.entries(definitions)) walk(item, [...path, { name: keyword }, { name }], []);
+			if (!isObject(definitions)) continue;
+			for (const [name, item] of Object.entries(definitions)) {
+				const where: Step[] = [...path, { name: keyword }, { name }];
+				const why = whyDefinitionUndescribed(item);
+				if (why !== undefined) gaps.push(`${render(where)}: ${why}`);
+				walk(item, where, []);
+			}
 		}
 	};
 	walk(schema, [], []);
@@ -250,10 +272,11 @@ describe("the check", () => {
 	});
 
 	test("refuses a $ref to a definition with no description, or to none", () => {
-		expect(undescribedFields(schema({ properties: { a: { $ref: "#/$defs/x" } }, $defs: { x: { type: "string" } } }))).toEqual(["a: no description, and its $ref #/$defs/x is to a schema with none"]);
+		const bare = "$defs.x: a definition with no description of its own";
+		expect(undescribedFields(schema({ properties: { a: { $ref: "#/$defs/x" } }, $defs: { x: { type: "string" } } }))).toEqual(["a: no description, and its $ref #/$defs/x is to a schema with none", bare]);
 		expect(undescribedFields(schema({ properties: { a: { $ref: "#/$defs/y" } }, $defs: {} }))).toEqual(["a: no description, and its $ref #/$defs/y is to no schema in this file"]);
 		// A definition that only refers to itself has no words anywhere, and the check ends.
-		expect(undescribedFields(schema({ properties: { a: { $ref: "#/$defs/x" } }, $defs: { x: { $ref: "#/$defs/x" } } }))).toEqual(["a: no description, and its $ref #/$defs/x is to a schema with none"]);
+		expect(undescribedFields(schema({ properties: { a: { $ref: "#/$defs/x" } }, $defs: { x: { $ref: "#/$defs/x" } } }))).toEqual(["a: no description, and its $ref #/$defs/x is to a schema with none", bare]);
 		expect(undescribedFields(schema({ properties: { a: { $ref: "#/properties/a" } } }))).toEqual(["a: no description, and its $ref #/properties/a goes round in a circle"]);
 		// An empty description of its own is what a reader would be shown: it is not excused by its $ref.
 		expect(undescribedFields(schema({ properties: { a: { description: "", $ref: "#/$defs/x" } }, $defs: { x: { description: "An x.", type: "string" } } }))).toEqual(["a: an empty description"]);
@@ -302,7 +325,7 @@ describe("the check", () => {
 		// The Run schema's two shapes: a oneOf branch requires a member its parent declares, and allows it by a boolean schema.
 		expect(undescribedFields(schema({ properties: { a }, oneOf: [{ description: "The one shape.", required: ["a"], properties: { a: true } }] }))).toEqual([]);
 		expect(undescribedFields(schema({ required: ["a"], allOf: [{ properties: { a } }] }))).toEqual([]);
-		expect(undescribedFields(schema({ properties: { f: { description: "An f.", $ref: "#/$defs/base", required: ["a"] } }, $defs: { base: { type: "object", properties: { a } } } }))).toEqual([]);
+		expect(undescribedFields(schema({ properties: { f: { description: "An f.", $ref: "#/$defs/base", required: ["a"] } }, $defs: { base: { description: "A base.", type: "object", properties: { a } } } }))).toEqual([]);
 	});
 
 	test("refuses a schema with no title or no description of its own", () => {
@@ -315,7 +338,24 @@ describe("the check", () => {
 			properties: { a: { type: "string" }, b: { description: "A b.", type: "object", properties: { c: { type: "string" }, "p99.9": { type: "number" } } } },
 			$defs: { x: { type: "object", properties: { y: { type: "string" } } } },
 		});
-		expect(undescribedFields(many)).toEqual(["a: no description", "b.c: no description", 'b["p99.9"]: no description', "$defs.x.y: no description"]);
+		expect(undescribedFields(many)).toEqual(["a: no description", "b.c: no description", 'b["p99.9"]: no description', "$defs.x: a definition with no description of its own", "$defs.x.y: no description"]);
+	});
+
+	test("refuses a definition with no description of its own, an empty one, one of white space alone, a $ref alone, or a boolean schema, at any depth", () => {
+		const no = "a definition with no description of its own";
+		expect(undescribedFields(schema({ $defs: { x: { type: "string" } } }))).toEqual([`$defs.x: ${no}`]);
+		expect(undescribedFields(schema({ $defs: { x: { description: "", type: "string" } } }))).toEqual(["$defs.x: an empty description"]);
+		expect(undescribedFields(schema({ $defs: { x: { description: " \n\t", type: "string" } } }))).toEqual(["$defs.x: a description of white space alone"]);
+		expect(undescribedFields(schema({ $defs: { x: { description: 3, type: "string" } } }))).toEqual(["$defs.x: a description that is not a string"]);
+		// A reference shows each definition as a shape under its own words: the words of the one it refers to are not its own.
+		expect(undescribedFields(schema({ $defs: { x: { description: "An x.", type: "string" }, y: { $ref: "#/$defs/x" } } }))).toEqual([`$defs.y: ${no}`]);
+		expect(undescribedFields(schema({ $defs: { x: true } }))).toEqual(["$defs.x: a definition that is a boolean schema, with no place for a description"]);
+		// Inside a definition, inside a field, and under the older keyword.
+		expect(undescribedFields(schema({ $defs: { x: { description: "An x.", $defs: { y: { type: "string" } } } } }))).toEqual([`$defs.x.$defs.y: ${no}`]);
+		expect(undescribedFields(schema({ properties: { a: { description: "An a.", type: "object", $defs: { y: { type: "string" } } } } }))).toEqual([`a.$defs.y: ${no}`]);
+		expect(undescribedFields(schema({ definitions: { x: { type: "string" } } }))).toEqual([`definitions.x: ${no}`]);
+		// Described, at each of those places.
+		expect(undescribedFields(schema({ $defs: { x: { description: "An x.", $defs: { y: { description: "A y.", type: "string" } } } }, definitions: { z: { description: "A z.", type: "string" } } }))).toEqual([]);
 	});
 
 	test("passes the described forms", () => {
@@ -323,11 +363,11 @@ describe("the check", () => {
 			properties: {
 				// Words of its own.
 				a: { description: "An a.", type: "string" },
-				// A $ref to a definition with words, directly or through another.
+				// A $ref to a definition with words, directly or through a field that refers to it.
 				b: { $ref: "#/$defs/described" },
-				c: { $ref: "#/$defs/through" },
-				// Words of its own beside a $ref to a definition with none.
-				d: { description: "A d.", $ref: "#/$defs/bare" },
+				c: { $ref: "#/properties/b" },
+				// Words of its own beside a $ref, shown instead of the definition's.
+				d: { description: "A d.", $ref: "#/$defs/described" },
 				// An array and a choice: their elements and branches need no words, only the fields inside them.
 				e: { description: "An e.", type: "array", items: { type: "object", properties: { f: { description: "An f.", type: "string" } } } },
 				g: { description: "A g.", anyOf: [{ type: "string" }, { type: "null" }] },
@@ -342,10 +382,10 @@ describe("the check", () => {
 			// What if tests is not looked in: it declares nothing.
 			if: { properties: { a: { const: "x" } } },
 			then: { properties: { j: { description: "A j.", type: "string" } } },
+			// Each definition with words of its own, one of them beside a $ref.
 			$defs: {
 				described: { description: "A described thing.", type: "string" },
-				through: { $ref: "#/$defs/described" },
-				bare: { type: "string" },
+				through: { description: "The described thing, by another name.", $ref: "#/$defs/described" },
 			},
 		});
 		expect(undescribedFields(described)).toEqual([]);

@@ -128,9 +128,10 @@
     }
   },
   "$defs": {
-    "url": { "type": "string", "pattern": "^https?://" },
-    "time": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$" },
+    "url": { "description": "An address: an absolute URL starting http:// or https://.", "type": "string", "pattern": "^https?://" },
+    "time": { "description": "UTC, to the nanosecond, as the Run or the boot summary it is read from records it.", "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$" },
     "price_file": {
+      "description": "One price file held: the date it is filed under, its own path, and its address in the API.",
       "type": "object",
       "required": ["date", "path", "url"],
       "properties": {
