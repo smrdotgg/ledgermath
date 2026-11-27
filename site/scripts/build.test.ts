@@ -16,10 +16,10 @@ const outsideTree = join(work, "trees", "tree");
 mkdirSync(dirname(outsideTree), { recursive: true });
 cpSync(FIXTURE, outsideTree, { recursive: true });
 
-/** The build's own directories left in DIR, and its two bundles left in site/dist/: none, after any build. */
+/** The build's own directories left in DIR, and its two bundles and the documentation's modules left in site/dist/: none, after any build. */
 const leftovers = (dir: string) => [
 	...readdirSync(dir).filter((name) => name.includes(".building-")),
-	...(existsSync(BUILD_AREA) ? readdirSync(BUILD_AREA).filter((name) => name.startsWith(".server-") || name.startsWith(".client-")) : []),
+	...(existsSync(BUILD_AREA) ? readdirSync(BUILD_AREA).filter((name) => name.startsWith(".server-") || name.startsWith(".client-") || name.startsWith(".docs-")) : []),
 ];
 
 describe("outputProblem refuses", () => {
@@ -123,18 +123,56 @@ describe("buildSite", () => {
 		expect(leftovers(work)).toEqual([]);
 	}, 60_000);
 
-	test("writes one script, the application, and every page loads it as a module from its <head>", () => {
+	test("writes the application, the runtime it shares with the documentation's chunks, and a chunk per documentation page; every page loads the application as a module from its <head>", () => {
 		const dir = join(work, "fresh");
 		const scripts = readdirSync(join(dir, "assets")).filter((name) => /\.m?js$/.test(name));
-		expect(scripts).toHaveLength(1);
-		expect(scripts[0]).toMatch(/^app-[\w-]+\.js$/);
-		for (const page of ["index.html", join("docs", "index.html")]) {
+		const app = scripts.filter((name) => /^app-[\w-]+\.js$/.test(name));
+		const chunks = scripts.filter((name) => name.startsWith("docs"));
+		const pages = readFileSync(join(dir, "llms.txt"), "utf8").match(/^- \[/gm) ?? [];
+		expect(app).toHaveLength(1);
+		expect(chunks).toHaveLength(pages.length);
+		expect(scripts.length - app.length - chunks.length).toBeLessThanOrEqual(1);
+		for (const page of ["index.html", join("docs", "index.html"), join("docs", "glossary", "index.html")]) {
 			const html = readFileSync(join(dir, page), "utf8");
 			const head = html.slice(0, html.indexOf("</head>"));
-			expect(head).toContain(`<script type="module" src="/assets/${scripts[0]}"></script>`);
+			expect(head).toContain(`<script type="module" src="/assets/${app[0]}"></script>`);
 			// No other script file is loaded: the inline ones (the flags and the font, Solid's hydration bootstrap) have no src.
 			expect(html.match(/<script[^>]*\ssrc=/g)).toHaveLength(1);
 		}
+		// A documentation page asks for its own chunk ahead (hydration imports it), and no other.
+		const glossary = readFileSync(join(dir, "docs", "glossary", "index.html"), "utf8");
+		const preloaded = [...glossary.matchAll(/<link rel="modulepreload" href="\/assets\/(docs[^"]*)"/g)].map((match) => match[1]);
+		expect(preloaded).toHaveLength(1);
+		expect(preloaded[0]).toStartWith("docs-glossary-");
+	});
+
+	test("writes each documentation page's Markdown beside it, llms.txt, and the comment for agents at the top of every page", () => {
+		const dir = join(work, "fresh");
+		expect(readFileSync(join(dir, "docs", "glossary.md"), "utf8")).toBe(readFileSync(join(SITE, "content", "docs", "glossary.md"), "utf8"));
+		expect(readFileSync(join(dir, "docs", "index.md"), "utf8")).toStartWith("# ");
+		expect(readFileSync(join(dir, "docs", "api", "index.md"), "utf8")).toStartWith("# The data API\n");
+		expect(existsSync(join(dir, "docs", "benchmarks", "memory_read.md"))).toBe(true);
+		const llms = readFileSync(join(dir, "llms.txt"), "utf8");
+		expect(llms).toStartWith("# LedgerMath\n\n> ");
+		expect(llms).toContain("(https://ledgermath.com/docs/glossary.md)");
+		for (const page of ["index.html", join("docs", "methods", "index.html")]) {
+			expect(readFileSync(join(dir, page), "utf8")).toStartWith("<!DOCTYPE html><!-- For agents: https://ledgermath.com/llms.txt ");
+		}
+		const methods = readFileSync(join(dir, "docs", "methods", "index.html"), "utf8");
+		expect(methods).toContain('<link rel="alternate" type="text/markdown" href="/docs/methods.md"');
+	});
+
+	test("ships nothing of the Markdown parser, which runs at build time only", () => {
+		const dir = join(work, "fresh", "assets");
+		for (const script of readdirSync(dir).filter((name) => name.endsWith(".js"))) {
+			expect({ script, parser: readFileSync(join(dir, script), "utf8").includes("github.com/markedjs/marked") }).toEqual({ script, parser: false });
+		}
+	});
+
+	test("points each benchmark's name on the home page at its page", () => {
+		const home = readFileSync(join(work, "fresh", "index.html"), "utf8");
+		expect(home).toContain('href="/docs/benchmarks/memory_read"');
+		expect(home).toContain('href="/docs/benchmarks/http_get"');
 	});
 
 	test("the application holds the figures the pages were rendered from, and nothing of the tree beyond them", () => {

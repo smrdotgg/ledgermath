@@ -10,18 +10,25 @@
  * numbers nobody chose.
  *
  * The tree is read and checked first (src/data/tree.ts), and what the pages render is taken from
- * it (src/data: siteData, then pageData, plain JSON). Then Vite, with Solid's plugin (ssr: true:
- * hydratable output), makes two bundles, each with that JSON compiled in (`define`, as
- * __PAGE_DATA__): the browser's, from src/entry-client.tsx, one JavaScript file with the whole
- * application (ADR-0036); and the server's, from src/entry-server.tsx, which writes the
- * stylesheet and the fonts beside it. The server bundle renders each page (src/pages.text.ts)
- * once with Solid's server renderer, and the pages, with a <link> to the stylesheet and a
- * <script type="module"> for the application in their <head>, are written with the assets and
- * public/. Every line the tree gives the build (what the page leaves out, and why) is printed.
+ * it (src/data: siteData, then pageData, plain JSON). The documentation is made next
+ * (scripts/docs.ts): the API reference generated from the schemas (scripts/api-reference.ts,
+ * which needs the repository's packages), every page rendered from its Markdown and its links
+ * checked, and a module for the application written (virtual:ledgermath-docs: each page's meta,
+ * and each page's body as a lazy() component of its own module). Then Vite, with Solid's plugin
+ * (ssr: true: hydratable output), makes two bundles, each with that JSON compiled in (`define`,
+ * as __PAGE_DATA__): the browser's, from src/entry-client.tsx, the application's script and a
+ * chunk per documentation page (ADR-0036, ADR-0037); and the server's, from src/entry-server.tsx,
+ * which writes the stylesheet and the fonts beside it. The server bundle renders each page once
+ * with Solid's server renderer, and the pages, with a <link> to the stylesheet and a
+ * <script type="module"> for the application in their <head>, and the comment for agents at
+ * their top, are written with the assets, public/, each documentation page's Markdown and
+ * llms.txt. Every line the tree gives the build (what the page leaves out, and why) is printed.
  *
  * What OUT (default dist/client) holds:
- *   index.html, docs/index.html   the pages (src/pages.text.ts)
- *   assets/…                      the application's script, the stylesheet and the two fonts, their names hashed
+ *   index.html                    the home page (src/pages.text.ts)
+ *   docs/…/index.html, docs/….md  each documentation page, and its Markdown (scripts/docs.ts)
+ *   llms.txt                      the index of the documentation for agents
+ *   assets/…                      the application's script, the documentation's chunks, the stylesheet and the two fonts, their names hashed
  *   third-party-notices.txt …     public/, copied as it is
  *   .ledgermath-site-build        BUILD_MARK: says a build of this script wrote the directory
  *
@@ -29,9 +36,10 @@
  * output that is or holds the repository, one inside the repository anywhere but under
  * site/dist/ (where the sources are, it could overwrite them), and one that is, holds or is
  * inside the tree it reads. It builds into new directories of its own, with unique names (the two
- * bundles under site/dist/, the site beside OUT), and only then puts the site in OUT's place, and
- * only when OUT is absent, empty, or a directory this script wrote (it holds BUILD_MARK). Anything
- * else at OUT is left as it is, and the build fails before writing anything.
+ * bundles and the documentation's modules under site/dist/, the site beside OUT), and only then
+ * puts the site in OUT's place, and only when OUT is absent, empty, or a directory this script
+ * wrote (it holds BUILD_MARK). Anything else at OUT is left as it is, and the build fails before
+ * writing anything.
  *
  * Exit 0 when it built, 1 when it did not (with why), 2 on a bad command line or no tree.
  */
@@ -40,10 +48,11 @@ import solid from "@solidjs/vite-plugin";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
-import { build, type InlineConfig } from "vite";
+import { build, type InlineConfig, type Plugin } from "vite";
 import { pageData, siteData } from "../src/data";
 import { readTree } from "../src/data/tree";
 import type { RenderedSite } from "../src/entry-server";
+import { buildDocs, chunkName, generateApiReference, llmsTxt, SITE_ORIGIN, writeDocsModules } from "./docs";
 
 // Real paths: Vite loads modules by their real path.
 export const SITE = realpathSync(resolve(import.meta.dir, ".."));
@@ -123,9 +132,18 @@ function filesUnder(dir: string): string[] {
 	});
 }
 
-type Manifest = Record<string, { file: string; css?: string[] }>;
+type Manifest = Record<string, { file: string; css?: string[]; imports?: string[] }>;
 
 export type BuildResult = { out: string; files: string[]; notes: readonly string[]; newestRunStartedAt: string | null };
+
+/** The name the application imports the documentation's module by (src/docs/content.d.ts). */
+const DOCS_MODULE = "virtual:ledgermath-docs";
+
+/**
+ * The comment at the top of every page, for an agent reading the HTML: where the site is in
+ * Markdown. The documentation's pages also name their Markdown in <head> (src/app.tsx).
+ */
+export const AGENTS_COMMENT = `<!-- For agents: ${SITE_ORIGIN}/llms.txt lists this site's documentation as Markdown. Each documentation page is also Markdown at its address with .md added (index.md in it, for an address that ends in /), and at its own address when the request says Accept: text/markdown. -->`;
 
 /** Builds the site from the tree in TREE into OUT. Throws with the reason when it cannot, leaving OUT as it was. */
 export async function buildSite(options: { tree: string; out: string; quiet?: boolean }): Promise<BuildResult> {
@@ -135,21 +153,12 @@ export async function buildSite(options: { tree: string; out: string; quiet?: bo
 	const out = realPath(options.out);
 	// What the pages render, as the JSON both bundles hold (src/data's pageData).
 	const data = siteData(tree);
-	const shared: InlineConfig = {
-		configFile: false,
-		root: SITE,
-		base: "/",
-		logLevel: options.quiet ? "error" : "warn",
-		publicDir: false,
-		// Hydratable output: the server's HTML carries what the browser's hydration claims.
-		plugins: [solid({ ssr: true })],
-		define: { __PAGE_DATA__: JSON.stringify(pageData(data)) },
-	};
 	mkdirSync(dirname(out), { recursive: true });
 	mkdirSync(BUILD_AREA, { recursive: true });
-	// The build's own directories, new and named uniquely: the two bundles under site/dist/ (they
-	// import Solid from site/node_modules), and the site beside OUT (so on the same file system),
-	// which then takes OUT's place.
+	// The build's own directories, new and named uniquely: the two bundles and the documentation's
+	// modules under site/dist/ (they import Solid from site/node_modules), and the site beside OUT
+	// (so on the same file system), which then takes OUT's place.
+	const docsWork = mkdtempSync(join(BUILD_AREA, ".docs-"));
 	const client = mkdtempSync(join(BUILD_AREA, ".client-"));
 	const server = mkdtempSync(join(BUILD_AREA, ".server-"));
 	const work = mkdtempSync(join(dirname(out), `.${basename(out)}.building-`));
@@ -158,7 +167,25 @@ export async function buildSite(options: { tree: string; out: string; quiet?: bo
 	const nodeEnv = process.env.NODE_ENV;
 	process.env.NODE_ENV = "production";
 	try {
-		// The browser's bundle: one file, the whole application, every page in it (ADR-0036).
+		// The documentation: every page from its Markdown, its links checked, and the application's
+		// module of it (virtual:ledgermath-docs), which the plugin below resolves for both bundles.
+		const docs = buildDocs(REPOSITORY, generateApiReference(REPOSITORY, docsWork));
+		const docsModule = writeDocsModules(docs, join(docsWork, "modules"), SITE);
+		const docsPlugin: Plugin = { name: "ledgermath-docs", enforce: "pre", resolveId: (id) => (id === DOCS_MODULE ? docsModule : null) };
+		const shared: InlineConfig = {
+			configFile: false,
+			root: SITE,
+			base: "/",
+			logLevel: options.quiet ? "error" : "warn",
+			publicDir: false,
+			// Hydratable output: the server's HTML carries what the browser's hydration claims. One
+			// plugin for both builds: Solid's hands the browser's manifest to the server's
+			// (virtual:solid-manifest, which src/entry-server.tsx renders with).
+			plugins: [docsPlugin, solid({ ssr: true })],
+			define: { __PAGE_DATA__: JSON.stringify(pageData(data)) },
+		};
+
+		// The browser's bundle: the application's script, and a chunk per documentation page (ADR-0036, ADR-0037).
 		await build({
 			...shared,
 			build: {
@@ -167,14 +194,26 @@ export async function buildSite(options: { tree: string; out: string; quiet?: bo
 				manifest: true,
 				copyPublicDir: false,
 				modulePreload: { polyfill: false },
-				rollupOptions: { input: CLIENT_ENTRY, output: { entryFileNames: "assets/app-[hash].js" } },
+				rollupOptions: { input: CLIENT_ENTRY, output: { entryFileNames: "assets/app-[hash].js", chunkFileNames: "assets/[name]-[hash].js" } },
 			},
 		});
 		const clientManifest = JSON.parse(readFileSync(join(client, ".vite", "manifest.json"), "utf8")) as Manifest;
-		const app = Object.values(clientManifest).find((entry) => entry.file.startsWith("assets/app-"))?.file;
-		if (!app) throw new Error("the browser's build wrote no application script");
-		const scripts = filesUnder(client).filter((file) => /\.m?js$/.test(file));
-		if (scripts.length !== 1) throw new Error(`the browser's build wrote ${scripts.length} scripts (${scripts.map((file) => relative(client, file)).join(", ")}), not the one the pages load: nothing may be fetched after the first load (ADR-0036)`);
+		const entry = Object.values(clientManifest).find((record) => record.file.startsWith("assets/app-"));
+		const app = entry?.file;
+		if (!entry || !app) throw new Error("the browser's build wrote no application script");
+		// The application's script and what it imports (Solid's runtime, which the documentation's
+		// chunks import too, so the bundler puts it in a chunk of its own: the page's <head> asks for
+		// it beside the script), and one chunk for each documentation page's body: nothing else.
+		const imported = new Set((entry.imports ?? []).map((key) => clientManifest[key]?.file));
+		const scripts = filesUnder(client)
+			.filter((file) => /\.m?js$/.test(file))
+			.map((file) => relative(client, file).split(sep).join("/"));
+		const chunks = new Set(docs.map((page) => chunkName(page.address)));
+		const pageChunks = scripts.filter((file) => chunks.has(/^assets\/(.+)-[\w-]{8}\.js$/.exec(file)?.[1] ?? ""));
+		const stray = scripts.filter((file) => file !== app && !imported.has(file) && !pageChunks.includes(file));
+		if (stray.length > 0 || pageChunks.length !== docs.length) {
+			throw new Error(`the browser's build wrote ${scripts.length} scripts (${scripts.join(", ")}), not the application, what it imports, and one chunk for each of the ${docs.length} documentation pages${stray.length ? `; not one of those: ${stray.join(", ")}` : ""}`);
+		}
 
 		await build({
 			...shared,
@@ -196,13 +235,13 @@ export async function buildSite(options: { tree: string; out: string; quiet?: bo
 		const css = [...new Set(Object.values(manifest).flatMap((entry) => [entry.file, ...(entry.css ?? [])]).filter((file) => file.endsWith(".css")))];
 		if (css.length === 0) throw new Error("the server build wrote no stylesheet");
 
-		const module = (await import(`${pathToFileURL(join(server, "render.mjs")).href}?t=${Date.now()}`)) as { render(): RenderedSite };
-		const pages = module.render();
+		const module = (await import(`${pathToFileURL(join(server, "render.mjs")).href}?t=${Date.now()}`)) as { render(): Promise<RenderedSite> };
+		const pages = await module.render();
 
 		const built = join(work, "site");
 		mkdirSync(built);
 		if (existsSync(PUBLIC)) cpSync(PUBLIC, built, { recursive: true });
-		// The server's assets (the stylesheet, the fonts), not its code; and the browser's script.
+		// The server's assets (the stylesheet, the fonts), not its code; and the browser's scripts.
 		const assets = [
 			...filesUnder(server).filter((file) => !file.endsWith(".js") && !file.endsWith(".mjs")).map((file) => ({ from: server, file })),
 			...filesUnder(client).map((file) => ({ from: client, file })),
@@ -214,15 +253,22 @@ export async function buildSite(options: { tree: string; out: string; quiet?: bo
 			cpSync(file, to);
 		}
 		// A module script runs once the HTML is parsed, so the page paints as it would without it.
-		const head = css.map((file) => `<link rel="stylesheet" href="/${file}">`).join("") + `<script type="module" src="/${app}"></script>`;
+		// And llms.txt, as its convention asks, for the agent that reads the HTML's <head>.
+		const head = css.map((file) => `<link rel="stylesheet" href="/${file}">`).join("") + `<script type="module" src="/${app}"></script><link rel="describedby" type="text/markdown" href="/llms.txt">`;
 		for (const { page, html } of pages) {
 			if (!/<\/head>/i.test(html)) throw new Error(`${page.path} renders no <head>: Document.tsx must render the whole <html> document`);
-			let text = html.replace(/<\/head>/i, `${head}</head>`);
-			if (!/^\s*<!doctype/i.test(text)) text = `<!DOCTYPE html>${text}`;
+			const text = `<!DOCTYPE html>${AGENTS_COMMENT}${html.replace(/^\s*<!doctype html>/i, "").replace(/<\/head>/i, `${head}</head>`)}`;
 			const file = join(built, page.file);
 			mkdirSync(dirname(file), { recursive: true });
 			writeFileSync(file, text);
 		}
+		// Each documentation page's Markdown, beside its HTML, and the index of them for agents.
+		for (const page of docs) {
+			const file = join(built, page.markdownFile);
+			mkdirSync(dirname(file), { recursive: true });
+			writeFileSync(file, page.markdown);
+		}
+		writeFileSync(join(built, "llms.txt"), llmsTxt(docs));
 		writeFileSync(join(built, BUILD_MARK), BUILD_MARK_TEXT);
 
 		// Into OUT's place: asked again now, since OUT may have changed while the site was built.
@@ -244,7 +290,8 @@ export async function buildSite(options: { tree: string; out: string; quiet?: bo
 	} finally {
 		if (nodeEnv === undefined) delete process.env.NODE_ENV;
 		else process.env.NODE_ENV = nodeEnv;
-		// Only the build's own directories: the two bundles, and the site's, with the previous output it replaced.
+		// Only the build's own directories: the documentation's modules, the two bundles, and the site's, with the previous output it replaced.
+		rmSync(docsWork, { recursive: true, force: true });
 		rmSync(client, { recursive: true, force: true });
 		rmSync(server, { recursive: true, force: true });
 		rmSync(work, { recursive: true, force: true });

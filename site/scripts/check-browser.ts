@@ -4,10 +4,12 @@
  *
  *     bun run check:browser [DIR] [--shots OUT]     (DIR defaults to dist/client)
  *
- * It serves DIR as a static host would and loads each page (src/pages.text.ts) in Playwright's
- * Chromium at desktop size (1440×900) and phone size (390×844, at a device scale of 2), each in
- * light and in dark, with reduced motion. A page with feature flags is loaded again with each
- * flag on (as /?napkin), which must set the flag on <html>, for checks 1 to 3 and 6:
+ * It serves DIR as a static host would and loads each page in Playwright's Chromium, with reduced
+ * motion: the home page (src/pages.text.ts) and FULL_PAGES of the documentation's at desktop size
+ * (1440×900) and phone size (390×844, at a device scale of 2), each in light and in dark; every
+ * other documentation page (read back from the site's llms.txt, scripts/site-pages.ts) at both
+ * sizes in light. A page with feature flags is loaded again with each flag on (as /?napkin), which
+ * must set the flag on <html>, for checks 1 to 3 and 6:
  *
  *  1. No console error, no uncaught error, no request that fails or answers 400 or more, and
  *     no request to another origin (each is refused, and counted).
@@ -15,8 +17,10 @@
  *  3. axe-core finds no violation of its WCAG 2.0 and 2.1 A and AA rules (colour contrast among
  *     them) or of its structure rules (one main landmark, one h1, headings in order, all content
  *     in landmarks, unique landmarks).
- *  4. What the page transfers at desktop size (HTML, CSS, fonts, JavaScript, anything else) is
- *     under BUDGET_BYTES compressed: text files weighed gzipped at level 9, others as they are.
+ *  4. What the page's first load transfers at desktop size (HTML, CSS, fonts, JavaScript, its own
+ *     chunk, anything else) is under BUDGET_BYTES compressed: text files weighed gzipped at level
+ *     9, others as they are. The chunks of other documentation pages, which the router loads
+ *     ahead once the page has loaded, are weighed apart, under AHEAD_BUDGET_BYTES.
  *  5. With JavaScript off the page reads the same: every line of text holding a digit that it
  *     shows with JavaScript on, it shows with JavaScript off.
  *  6. Hydration changes nothing on the page: once the HTML is parsed, no element or text of the
@@ -29,8 +33,12 @@
  *     at desktop size in light with Paint Timing hidden from the page, as in a browser without
  *     it, and the font 300 ms late, so that the paint comes after the page's script has run:
  *     the mark still comes after the first contentful frame was painted (its paintTime).
- *  7. Navigation, at desktop size in light (ADR-0036). From each page a click on a link to the
- *     next (the last to the first) changes the page in place: no request, no new document, the
+ *  7. Navigation, at desktop size in light (ADR-0036, ADR-0037), through ROUTE: from the home page
+ *     to /docs/, a benchmark's page, two reference pages, the home page again and a benchmark's
+ *     page by its name in the table, and back to the home page. From each page a click on a link to the
+ *     next changes the page in place: no request for anything the page needs (the chunks of other
+ *     pages, which the router loads ahead for the links the new page brings, are not the click's,
+ *     and are counted apart), no new document, the
  *     next page's title and fixed words, the keyboard focus back at the top (on <body>), its
  *     title announced, and no axe violation (check 3's rules) on the page the click made. And
  *     that page is the one the build wrote for the address: its body and the built file's,
@@ -51,6 +59,13 @@
  *     clicks again still change the page, with no uncaught error. With JavaScript
  *     off the same links are ordinary links, each loading its page as a new document. The time
  *     from each click to the next frame is printed, not judged: a slow runner is slow.
+ *  8. The documentation's own (ADR-0037). On a documentation page, Tab from the top reaches the
+ *     breadcrumb, "View as Markdown", "Copy page" and the list of pages; "Copy page" puts the
+ *     page's Markdown on the clipboard, byte for byte the file the site serves; a link to a
+ *     heading of another page lands on the heading, in view at the top of the window with the
+ *     keyboard focus on it; a click to a page whose chunk the host refuses (as after a deploy
+ *     since the tab opened) loads that page as a new document, with no uncaught error; and with
+ *     JavaScript off, "Copy page" is not shown, and "View as Markdown" is.
  *
  * With --shots OUT it also writes, for each page, size and scheme, the first screen and the whole
  * page as PNG files in OUT: <page>-<size>-<scheme>-{first,full}.png, and <page>-<flag>-… for a
@@ -65,10 +80,36 @@ import { join, resolve } from "node:path";
 import axe from "axe-core";
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
 import { PAGES, type SitePage } from "../src/pages.text";
-import { BUDGET_BYTES, missingText } from "./check-output";
+import { AHEAD_BUDGET_BYTES, BUDGET_BYTES, missingText } from "./check-output";
+import { chunkName } from "./docs";
+import { docsPages } from "./site-pages";
 
 /** The attributes the router sets from the browser's address, which hydration may change (check 6). */
 const ADDRESS_ATTRIBUTES = new Set(["aria-current", "data-active", "target"]);
+
+/** The documentation's pages loaded at both sizes in both schemes: its contents, the longest reference page, the longest README, the glossary. */
+const FULL_PAGES = ["/docs/", "/docs/api/series", "/docs/benchmarks/http_get", "/docs/glossary"];
+/**
+ * The pages check 7 goes through, in order, each by a link on the one before, and back to the
+ * first: the header's "Docs" (the home page never scrolled), a benchmark in /docs/'s list, two
+ * pages of the documentation's list, the header's "LedgerMath", a benchmark's name in the home
+ * page's table.
+ */
+const ROUTE = ["/", "/docs/", "/docs/benchmarks/memory_read", "/docs/api/series", "/docs/glossary", "/", "/docs/benchmarks/http_get"];
+/** The pages whose keyboard paths check 7 follows. */
+const KEYBOARD_PAGES = ["/", "/docs/glossary"];
+/** The page check 8 tabs through: a short one, so that Tab reaches the list of pages soon. */
+const TAB_PAGE = "/docs/benchmarks/sort";
+/** Check 8's link to a heading of another page, from TAB_PAGE: to a heading of this one. */
+const HEADING_LINK = { to: "/docs/api/series" };
+/** The page whose chunk check 8 makes the host refuse, as a deploy since the tab opened would. */
+const GONE_PAGE = "/docs/prices";
+
+/** The documentation page whose body a chunk holds, by its name (scripts/docs.ts, chunkName), or null for any other file. */
+const chunkOf = (url: string): string | null => {
+	const name = /\/assets\/(docs[\w.-]*?)-[\w-]{8}\.js$/.exec(new URL(url, "http://x").pathname)?.[1];
+	return name ?? null;
+};
 
 /**
  * Runs before the page's own scripts: from the moment the HTML is parsed (readyState
@@ -246,15 +287,21 @@ function sameOrigin(url: string, origin: string): boolean {
 
 type Watch = { problems: string[]; responses: { url: string; contentType: string; body: Buffer | null }[] };
 
-/** Watches PAGE: console errors, uncaught errors, failed requests, and requests to another origin, which it refuses. */
-function watch(page: Page, origin: string, keepBodies: boolean): Watch {
+/**
+ * Watches PAGE: console errors, uncaught errors, failed requests, and requests to another origin,
+ * which it refuses. With SCRIPTING off, the browser refusing a script a <link rel="modulepreload">
+ * names (Chromium says "csp") is what JavaScript off means, not a failure.
+ */
+function watch(page: Page, origin: string, keepBodies: boolean, scripting = true): Watch {
 	const seen: Watch = { problems: [], responses: [] };
 	page.on("console", (message) => {
 		if (message.type() === "error" && !message.text().includes("net::ERR_BLOCKED_BY_CLIENT")) seen.problems.push(`console error: ${message.text()}`);
 	});
 	page.on("pageerror", (error) => seen.problems.push(`uncaught error: ${error.message}`));
 	page.on("requestfailed", (request) => {
-		if (sameOrigin(request.url(), origin)) seen.problems.push(`request failed: ${request.url()} (${request.failure()?.errorText ?? "no reason given"})`);
+		const why = request.failure()?.errorText ?? "no reason given";
+		if (!scripting && why === "csp" && request.resourceType() === "script") return;
+		if (sameOrigin(request.url(), origin)) seen.problems.push(`request failed: ${request.url()} (${why})`);
 	});
 	page.on("response", async (response) => {
 		const url = response.url();
@@ -338,19 +385,26 @@ export async function checkBrowser(dir: string, shots?: string): Promise<Result[
 	const weights: string[] = [];
 	const scriptless: string[] = [];
 	const hydration: string[] = [];
-	let moves: { problems: string[]; timings: string[] } = { problems: [], timings: [] };
+	let moves: { problems: string[]; timings: string[]; ahead: string[] } = { problems: [], timings: [], ahead: [] };
+	let own: { problems: string[]; passed: string[] } = { problems: [], passed: [] };
+	const docs = docsPages(root);
+	if (docs.problems.length > 0) throw new Error(`the documentation's pages cannot be read from ${dir}: ${docs.problems.join("; ")}`);
+	const all: SitePage[] = [...PAGES, ...docs.pages];
+	let aheadMost = 0;
 	try {
-		for (const meta of PAGES) {
+		for (const meta of all) {
 			const url = `${server.origin}${meta.path}`;
 			const name = meta.path === "/" ? "home" : meta.path.replace(/^\/|\/$/g, "").replaceAll("/", "-");
 			let withScripts = "";
-			// The page as everyone gets it, then once with each of its flags on.
+			// The page as everyone gets it, then once with each of its flags on; a documentation page
+			// not among FULL_PAGES in light only.
+			const schemes = !meta.markdown || FULL_PAGES.includes(meta.path) ? SCHEMES : (["light"] as const);
 			const addresses: { path: string; name: string; flag?: string }[] = [
 				{ path: meta.path, name },
 				...(meta.flags ?? []).map((flag) => ({ path: `${meta.path}?${flag}`, name: `${name}-${flag}`, flag })),
 			];
 			for (const { address, size } of addresses.flatMap((address) => SIZES.map((size) => ({ address, size })))) {
-				for (const scheme of SCHEMES) {
+				for (const scheme of schemes) {
 					const where = `${address.path} ${size.name} ${scheme}`;
 					const ctx = await context(browser, size, scheme);
 					const page = await ctx.newPage();
@@ -366,7 +420,7 @@ export async function checkBrowser(dir: string, shots?: string): Promise<Result[
 					load.push(...[...new Set(seen.problems)].map((p) => `${where}: ${p}`));
 					hydration.push(...(await paintedFirst(page)).map((p) => `${where}: ${p}`));
 					hydration.push(...(await hydrationChanges(page)).map((p) => `${where}: ${p}`));
-					if (weigh) {
+					if (weigh && schemes.length === SCHEMES.length) {
 						const bare = await context(browser, size, scheme);
 						const without = await bare.newPage();
 						await without.addInitScript(HIDE_PAINT_TIMING);
@@ -390,17 +444,29 @@ export async function checkBrowser(dir: string, shots?: string): Promise<Result[
 					if (weigh) {
 						withScripts = await page.locator("body").innerText();
 						let total = 0;
+						let ahead = 0;
+						let aheadCount = 0;
 						const parts: string[] = [];
+						const mine = meta.markdown ? chunkName(meta.path) : null;
 						for (const r of seen.responses) {
 							if (!r.body) continue;
 							const textual = /^(text\/|application\/(javascript|json|xml)|image\/svg\+xml)/.test(r.contentType) || /\.(html|css|js|mjs|json|svg|txt)(\?|$)/.test(r.url);
 							const bytes = textual ? Bun.gzipSync(new Uint8Array(r.body), { level: 9 }).byteLength : r.body.byteLength;
+							// Another page's chunk: loaded ahead for its link, not for this page.
+							const chunk = chunkOf(r.url);
+							if (chunk !== null && chunk !== mine) {
+								ahead += bytes;
+								aheadCount += 1;
+								continue;
+							}
 							total += bytes;
 							parts.push(`${new URL(r.url).pathname} ${bytes}${textual ? " gzipped" : ""}`);
 						}
-						const line = `${meta.path}: ${total.toLocaleString("en")} bytes (${parts.join(", ")})`;
+						aheadMost = Math.max(aheadMost, ahead);
+						const line = `${meta.path}: ${total.toLocaleString("en")} bytes (${parts.join(", ")}), and ${aheadCount} chunks loaded ahead, ${ahead.toLocaleString("en")} bytes`;
 						weights.push(line);
 						if (total >= BUDGET_BYTES) weight.push(line);
+						if (ahead >= AHEAD_BUDGET_BYTES) weight.push(`${meta.path}: loaded ${ahead.toLocaleString("en")} bytes ahead, over the budget of ${AHEAD_BUDGET_BYTES.toLocaleString("en")}`);
 					}
 
 					if (shots) {
@@ -414,7 +480,7 @@ export async function checkBrowser(dir: string, shots?: string): Promise<Result[
 
 			const ctx = await context(browser, SIZES[0]!, "light", false);
 			const page = await ctx.newPage();
-			const seen = watch(page, server.origin, false);
+			const seen = watch(page, server.origin, false, false);
 			await page.goto(url, { waitUntil: "load" });
 			await page.waitForLoadState("networkidle", { timeout: 10_000 }).catch(() => {});
 			const without = await page.locator("body").innerText();
@@ -425,55 +491,91 @@ export async function checkBrowser(dir: string, shots?: string): Promise<Result[
 			scriptless.push(...[...new Set(seen.problems)].map((p) => `${meta.path} with JavaScript off: ${p}`));
 			await ctx.close();
 		}
-		moves = await navigation(browser, server.origin, root);
+		moves = await navigation(browser, server.origin, root, all);
+		own = await documentation(browser, server.origin, root, all);
 	} finally {
 		await browser.close();
 		server.stop();
 	}
-	const pages = PAGES.map((p) => p.path).join(" and ");
+	const pages = `the home page and the ${docs.pages.length} documentation pages (${FULL_PAGES.join(", ")} in light and dark, the others in light)`;
 	return [
-		{ name: "loads cleanly, from its own origin only", problems: load, passed: `${pages}: no console error, failed request or request to another origin, at either size, in light or dark` },
-		{ name: "no horizontal scroll at 390 px", problems: scroll, passed: `${pages}: none, in light or dark` },
+		{ name: "loads cleanly, from its own origin only", problems: load, passed: `${pages}: no console error, failed request or request to another origin, at either size` },
+		{ name: "no horizontal scroll at 390 px", problems: scroll, passed: `${pages}: none` },
 		{
 			name: "axe-core: contrast and structure",
 			problems: access,
-			passed: `${pages}: no violation, at either size, in light or dark${undecided.size ? `; axe could not decide on some elements (look at them): ${[...undecided].join("; ")}` : ""}`,
+			passed: `${pages}: no violation, at either size${undecided.size ? `; axe could not decide on some elements (look at them): ${[...undecided].join("; ")}` : ""}`,
 		},
-		{ name: `transfers under ${BUDGET_BYTES.toLocaleString("en")} bytes compressed`, problems: weight, passed: weights.join("; ") },
+		{ name: `transfers under ${BUDGET_BYTES.toLocaleString("en")} bytes compressed, and under ${AHEAD_BUDGET_BYTES.toLocaleString("en")} loaded ahead`, problems: weight, passed: `at most ${aheadMost.toLocaleString("en")} bytes loaded ahead; ${weights.join("; ")}` },
 		{ name: "reads the same with JavaScript off", problems: scriptless, passed: `${pages}: every line with a figure is in the HTML` },
 		{
 			name: "hydration waits for the first paint and changes nothing on the page",
 			problems: hydration,
-			passed: `${pages}: hydration began after the first contentful paint (and, with Paint Timing hidden, after the first contentful frame was painted), and no element or text of the body was added, removed or changed, at either size, in light or dark, with each flag`,
+			passed: `${pages}: hydration began after the first contentful paint (and, with Paint Timing hidden, after the first contentful frame was painted, on the home page and ${FULL_PAGES.join(", ")}), and no element or text of the body was added, removed or changed, at either size, with each flag`,
 		},
 		{
 			name: "navigation inside the site: in place, with no request",
 			problems: moves.problems,
-			passed: `each click changed the page in place, with no request and no new document, to the page the build wrote for the address, at its top, its title and words, the focus at the top and the title announced, with no axe violation; back and forward the same, each page scrolled to where it was left; with the keyboard, a link to a place on another page left the focus at the place, the same page without the fragment put it back at the top, and a page's own link brought the page back to its top; after an address whose fragment does not decode, navigation went on; with JavaScript off each link loaded its page. From the click to the next frame (not judged): ${moves.timings.join("; ")}`,
+			passed: `through ${ROUTE.join(" -> ")} -> /, each click changed the page in place, with no request for it and no new document, to the page the build wrote for the address, at its top, its title and words, the focus at the top and the title announced, with no axe violation; back and forward the same, each page scrolled to where it was left; with the keyboard (${KEYBOARD_PAGES.join(", ")}), a link to a place on another page left the focus at the place, the same page without the fragment put it back at the top, and a page's own link brought the page back to its top; after an address whose fragment does not decode, navigation went on; with JavaScript off each link loaded its page. Loaded ahead after the clicks, for the links the new page brought: ${moves.ahead.join("; ") || "nothing"}. From the click to the next frame (not judged): ${moves.timings.join("; ")}`,
 		},
+		{ name: "the documentation's own: the keyboard, the two controls, a link to a heading", problems: own.problems, passed: own.passed.join("; ") },
 	];
 }
 
 /** Check 7: navigation inside the site, with JavaScript on and then off (see the comment at the top). */
-async function navigation(browser: Browser, origin: string, root: string): Promise<{ problems: string[]; timings: string[] }> {
+async function navigation(browser: Browser, origin: string, root: string, all: readonly SitePage[]): Promise<{ problems: string[]; timings: string[]; ahead: string[] }> {
 	const problems: string[] = [];
 	const timings: string[] = [];
-	const first = PAGES[0]!;
+	const aheadLoads: string[] = [];
+	const at = (path: string) => {
+		const found = all.find((meta) => meta.path === path);
+		if (!found) throw new Error(`check 7 goes through ${path}, which is not a page of the site`);
+		return found;
+	};
+	const route = ROUTE.map(at);
+	const first = route[0]!;
 	// From each page to the next, the last back to the first.
-	const order = [...PAGES.slice(1), first];
+	const order = [...route.slice(1), first];
 	const linkTo = (page: Page, meta: SitePage) => page.locator(`a[href="${meta.path}"]:not([target])`).first();
+	/**
+	 * The requests a step to META made that it should not have: anything but the chunks of other
+	 * documentation pages, which the router loads ahead for the links the new page brings (counted
+	 * in AHEAD, by the step's name).
+	 */
+	const forThePage = (requests: string[], meta: SitePage, where: string): string[] => {
+		const ahead = requests.filter((url) => {
+			const chunk = chunkOf(url);
+			return chunk !== null && !(meta.markdown && chunk === chunkName(meta.path));
+		});
+		if (ahead.length > 0) aheadLoads.push(`${where}: ${ahead.length} chunk(s)`);
+		return requests.filter((url) => !ahead.includes(url));
+	};
 
 	// Short, so that every page scrolls and back and forward have positions to restore.
 	const ctx = await context(browser, { ...SIZES[0]!, height: 400 }, "light");
 	const page = await ctx.newPage();
 	const seen = watch(page, origin, false);
 	const requests: string[] = [];
-	page.on("request", (request) => requests.push(request.url().replace(origin, "")));
-	/** Loads META's page and waits until the application has taken it over (the mark "hydrated"). */
+	let inflight = 0;
+	page.on("request", (request) => {
+		requests.push(request.url().replace(origin, ""));
+		inflight += 1;
+	});
+	page.on("requestfinished", () => (inflight -= 1));
+	page.on("requestfailed", () => (inflight -= 1));
+	/** Waits until no request has been under way for 300 ms: what the router loads ahead has come. */
+	const idle = async () => {
+		for (let quiet = 0, step = 0; quiet < 3 && step < 100; step++) {
+			await page.waitForTimeout(100);
+			quiet = inflight === 0 ? quiet + 1 : 0;
+		}
+	};
+	/** Loads META's page and waits until the application has taken it over (the mark "hydrated") and what it loads ahead has come. */
 	const load = async (meta: SitePage) => {
 		await page.goto(`${origin}${meta.path}`, { waitUntil: "load" });
 		await page.waitForLoadState("networkidle", { timeout: 10_000 }).catch(() => {});
 		await page.waitForFunction(() => performance.getEntriesByName("hydrated").length > 0, null, { timeout: 10_000 }).catch(() => {});
+		await idle();
 		await page.evaluate(() => ((window as unknown as { __document: boolean }).__document = true));
 	};
 	await load(first);
@@ -482,7 +584,8 @@ async function navigation(browser: Browser, origin: string, root: string): Promi
 	/** What must hold of the page on screen once a click, or a step back or forward, has brought META. */
 	const shows = async (where: string, meta: SitePage, clicked: boolean) => {
 		if (!(await sameDocument())) return void problems.push(`${where}: a new document was loaded`);
-		if (requests.length > 0) problems.push(`${where}: ${requests.length} request(s): ${requests.join(", ")}`);
+		const made = forThePage(requests, meta, where);
+		if (made.length > 0) problems.push(`${where}: ${made.length} request(s): ${made.join(", ")}`);
 		await page.waitForFunction((title) => document.title === title, meta.title, { timeout: 2_000 }).catch(() => {});
 		const now = await page.evaluate(() => ({
 			html: document.documentElement.outerHTML,
@@ -524,6 +627,7 @@ async function navigation(browser: Browser, origin: string, root: string): Promi
 		const link = i === 0 ? links.first() : links.last();
 		await link.scrollIntoViewIfNeeded();
 		left[visited.length - 1] = await scrollY();
+		await idle();
 		// The click's time, the body's first change, and the next frame after it (a message posted from requestAnimationFrame).
 		await page.evaluate(() => {
 			const m: Record<string, number> = {};
@@ -568,8 +672,8 @@ async function navigation(browser: Browser, origin: string, root: string): Promi
 	}
 
 	// With the keyboard, on each page: a link to a place on another page, and a link to the page itself.
-	const paths = PAGES.map((meta) => meta.path);
-	for (const meta of PAGES) {
+	const paths = all.map((meta) => meta.path);
+	for (const meta of KEYBOARD_PAGES.map(at)) {
 		await load(meta);
 		const hrefs = await page.evaluate(() => [...document.querySelectorAll("a[href]:not([target])")].map((a) => a.getAttribute("href")!));
 		const resolved = (href: string) => new URL(href, `${origin}${meta.path}`);
@@ -586,7 +690,8 @@ async function navigation(browser: Browser, origin: string, root: string): Promi
 			await page.waitForTimeout(100);
 			if (!(await sameDocument())) problems.push(`${where}: a new document was loaded`);
 			else {
-				if (requests.length > 0) problems.push(`${where}: ${requests.length} request(s): ${requests.join(", ")}`);
+				const made = forThePage(requests, at(resolved(away).pathname), where);
+				if (made.length > 0) problems.push(`${where}: ${made.length} request(s): ${made.join(", ")}`);
 				const id = decodeURIComponent(resolved(away).hash.slice(1));
 				if (!(await page.evaluate((id) => document.activeElement === document.getElementById(id), id))) problems.push(`${where}: the focus is not at #${id}`);
 				await page.keyboard.press("Tab");
@@ -613,7 +718,8 @@ async function navigation(browser: Browser, origin: string, root: string): Promi
 					await page.waitForTimeout(100);
 					if (!(await sameDocument())) problems.push(`${from}: a new document was loaded`);
 					else {
-						if (requests.length > 0) problems.push(`${from}: ${requests.length} request(s): ${requests.join(", ")}`);
+						const made = forThePage(requests, at(there.pathname), from);
+						if (made.length > 0) problems.push(`${from}: ${made.length} request(s): ${made.join(", ")}`);
 						if (!(await page.evaluate(() => document.activeElement === document.body))) problems.push(`${from}: the keyboard focus is not back at the top of the page (on <body>)`);
 						await page.keyboard.press("Tab");
 						const first = await page.evaluate(() => {
@@ -641,7 +747,8 @@ async function navigation(browser: Browser, origin: string, root: string): Promi
 			await page.waitForTimeout(100);
 			if (!(await sameDocument())) problems.push(`${where}: a new document was loaded`);
 			else {
-				if (requests.length > 0) problems.push(`${where}: ${requests.length} request(s): ${requests.join(", ")}`);
+				const made = forThePage(requests, meta, where);
+				if (made.length > 0) problems.push(`${where}: ${made.length} request(s): ${made.join(", ")}`);
 				const now = await page.evaluate(() => ({ y: Math.round(window.scrollY), focus: document.activeElement === document.body, announced: document.querySelector("[aria-live]")?.textContent ?? null }));
 				if (now.y !== 0) problems.push(`${where}: the page stays scrolled to ${now.y}, not back at its top`);
 				if (!now.focus) problems.push(`${where}: the keyboard focus is not back at the top of the page (on <body>)`);
@@ -655,6 +762,7 @@ async function navigation(browser: Browser, origin: string, root: string): Promi
 		const odd = `${first.path}#%`;
 		await page.goto(`${origin}${odd}`, { waitUntil: "load" });
 		await page.waitForFunction(() => performance.getEntriesByName("hydrated").length > 0, null, { timeout: 10_000 }).catch(() => {});
+		await idle();
 		await page.evaluate(() => ((window as unknown as { __document: boolean }).__document = true));
 		const next = order[0]!;
 		const step = async (where: string, to: SitePage, act: () => Promise<unknown>) => {
@@ -690,7 +798,140 @@ async function navigation(browser: Browser, origin: string, root: string): Promi
 		current = next;
 	}
 	await off.close();
-	return { problems, timings };
+	return { problems, timings, ahead: aheadLoads };
+}
+
+/** Check 8: the documentation's own (see the comment at the top). */
+async function documentation(browser: Browser, origin: string, root: string, all: readonly SitePage[]): Promise<{ problems: string[]; passed: string[] }> {
+	const problems: string[] = [];
+	const passed: string[] = [];
+	const meta = all.find((page) => page.path === TAB_PAGE);
+	const target = all.find((page) => page.path === HEADING_LINK.to);
+	if (!meta?.markdown || !target?.markdown) return { problems: [`check 8 reads ${TAB_PAGE} and ${HEADING_LINK.to}, which are not both documentation pages of the site`], passed };
+	const ctx = await context(browser, SIZES[0]!, "light");
+	await ctx.grantPermissions(["clipboard-read", "clipboard-write"], { origin });
+	const page = await ctx.newPage();
+	const seen = watch(page, origin, false);
+	const requests: string[] = [];
+	page.on("request", (request) => requests.push(request.url().replace(origin, "")));
+	await page.goto(`${origin}${meta.path}`, { waitUntil: "load" });
+	await page.waitForFunction(() => performance.getEntriesByName("hydrated").length > 0, null, { timeout: 10_000 }).catch(() => problems.push(`${meta.path}: the application never took the page over`));
+	await page.waitForLoadState("networkidle", { timeout: 10_000 }).catch(() => {});
+
+	// Tab from the top of the page, through to the footer.
+	const reached = new Set<string>();
+	for (let i = 0; i < 300 && !reached.has("the footer"); i++) {
+		await page.keyboard.press("Tab");
+		reached.add(
+			await page.evaluate(() => {
+				const at = document.activeElement as HTMLElement | null;
+				if (!at || at === document.body) return "nothing";
+				if (at.closest("nav.crumbs")) return "the breadcrumb";
+				if (at.matches(".doc-actions a")) return "View as Markdown";
+				if (at.matches("button.copy")) return "Copy page";
+				if (at.closest("nav.pages")) return "the list of pages";
+				if (at.closest("footer")) return "the footer";
+				return "elsewhere";
+			}),
+		);
+	}
+	const wanted = ["the breadcrumb", "View as Markdown", "Copy page", "the list of pages"];
+	const missed = wanted.filter((what) => !reached.has(what));
+	if (missed.length > 0) problems.push(`Tab from the top of ${meta.path} never reached ${missed.join(", ")}`);
+	else passed.push(`on ${meta.path}, Tab from the top reached ${wanted.join(", ")}`);
+
+	// "Copy page": the page's Markdown, byte for byte the file the site serves.
+	await page.locator("button.copy").click();
+	await page.waitForFunction(() => (document.querySelector(".said")?.textContent ?? "") !== "", null, { timeout: 5_000 }).catch(() => {});
+	const said = (await page.locator(".said").textContent()) ?? "";
+	const copied = await page.evaluate(() => navigator.clipboard.readText()).catch((error: unknown) => `(the clipboard could not be read: ${String(error)})`);
+	const markdown = readFileSync(join(root, meta.markdown.slice(1)), "utf8");
+	if (copied !== markdown) problems.push(`"Copy page" on ${meta.path} put ${copied.length} characters on the clipboard, not its Markdown (${markdown.length}); it said ${JSON.stringify(said)}`);
+	else passed.push(`"Copy page" put ${meta.markdown} on the clipboard, byte for byte, and said ${JSON.stringify(said)}`);
+
+	// A link to a heading of another page (put on the page here; the generated pages link only to
+	// their own headings): the heading in view at the top, the focus on it, no request for the page.
+	const ids = [...readFileSync(join(root, target.file), "utf8").matchAll(/<h[23] id="([^"]+)"/g)].map((match) => match[1]!);
+	const id = ids[Math.floor(ids.length * 0.6)];
+	if (!id) problems.push(`${target.path} has no heading to link to`);
+	else {
+		const href = `${target.path}#${id}`;
+		await page.evaluate((to) => {
+			const a = document.createElement("a");
+			a.href = to;
+			a.textContent = "A heading of another page";
+			a.className = "check-heading-link";
+			document.querySelector("article")!.append(a);
+		}, href);
+		await page.evaluate(() => ((window as unknown as { __document: boolean }).__document = true));
+		requests.length = 0;
+		await page.locator("a.check-heading-link").click();
+		await page.waitForURL((url) => url.pathname === target.path, { timeout: 5_000 }).catch(() => {});
+		await page.waitForTimeout(200);
+		const now = await page.evaluate((id) => {
+			const heading = document.getElementById(id);
+			return {
+				same: (window as unknown as { __document?: boolean }).__document === true,
+				top: heading ? Math.round(heading.getBoundingClientRect().top) : null,
+				focus: !!heading && document.activeElement === heading,
+			};
+		}, id);
+		const made = requests.filter((url) => chunkOf(url) === chunkName(target.path) || chunkOf(url) === null);
+		if (!now.same) problems.push(`${href}: a new document was loaded`);
+		else if (now.top === null || now.top < -2 || now.top > 40) problems.push(`${href}: the heading is at ${now.top} px from the top of the window, not at its top`);
+		else if (!now.focus) problems.push(`${href}: the keyboard focus is not on the heading`);
+		else if (made.length > 0) problems.push(`${href}: ${made.length} request(s): ${made.join(", ")}`);
+		else passed.push(`a link from ${meta.path} to ${href} changed the page in place and left the heading at the top of the window, ${now.top} px, with the focus on it`);
+	}
+	problems.push(...[...new Set(seen.problems)].map((p) => `the documentation: ${p}`));
+	await ctx.close();
+
+	// A click to a page whose chunk the host no longer has (a deploy since the tab opened replaced
+	// it): the browser loads the page whole, from the new deploy, with no uncaught error, rather than
+	// the router stopping on the failed import. The host refuses the chunk until the page is asked
+	// for as a document.
+	const gone = all.find((page) => page.path === GONE_PAGE);
+	if (!gone?.markdown) problems.push(`check 8 makes ${GONE_PAGE}'s chunk fail, and it is not a documentation page of the site`);
+	else {
+		const where = `a click from ${meta.path} to ${gone.path}, its chunk gone`;
+		const later = await context(browser, SIZES[0]!, "light");
+		const tab = await later.newPage();
+		const errors: string[] = [];
+		tab.on("pageerror", (error) => errors.push(error.message));
+		const pattern = `**/assets/${chunkName(gone.path)}-*.js`;
+		await tab.route(pattern, (route) => route.fulfill({ status: 404, body: "Not found" }));
+		let asDocument = false;
+		tab.on("request", (request) => {
+			if (!request.isNavigationRequest() || new URL(request.url()).pathname !== gone.path) return;
+			asDocument = true;
+			void tab.unroute(pattern);
+		});
+		await tab.goto(`${origin}${meta.path}`, { waitUntil: "load" });
+		await tab.waitForFunction(() => performance.getEntriesByName("hydrated").length > 0, null, { timeout: 10_000 }).catch(() => {});
+		await tab.waitForLoadState("networkidle", { timeout: 10_000 }).catch(() => {});
+		await tab.locator(`nav.pages a[href="${gone.path}"]`).click();
+		await tab.waitForURL((url) => url.pathname === gone.path, { timeout: 10_000 }).catch(() => {});
+		await tab.waitForLoadState("load").catch(() => {});
+		await tab.waitForFunction(() => performance.getEntriesByName("hydrated").length > 0, null, { timeout: 10_000 }).catch(() => {});
+		const title = await tab.title();
+		if (!asDocument) problems.push(`${where}: the page was not loaded as a new document`);
+		else if (title !== gone.title) problems.push(`${where}: the title is ${JSON.stringify(title)}, not ${JSON.stringify(gone.title)}`);
+		else if (errors.length > 0) problems.push(`${where}: uncaught error(s): ${[...new Set(errors)].join("; ")}`);
+		else passed.push(`a click to ${gone.path}, whose chunk the host refused, loaded the page as a new document, with no uncaught error`);
+		await later.close();
+	}
+
+	// With JavaScript off: "View as Markdown", and no "Copy page", which would do nothing.
+	const off = await context(browser, SIZES[0]!, "light", false);
+	const plain = await off.newPage();
+	await plain.goto(`${origin}${meta.path}`, { waitUntil: "load" });
+	const copyShown = await plain.locator("button.copy").isVisible();
+	const viewShown = await plain.locator(".doc-actions a").isVisible();
+	if (copyShown) problems.push(`with JavaScript off, ${meta.path} shows "Copy page", which needs JavaScript`);
+	if (!viewShown) problems.push(`with JavaScript off, ${meta.path} does not show "View as Markdown"`);
+	if (!copyShown && viewShown) passed.push(`with JavaScript off, ${meta.path} shows "View as Markdown" and not "Copy page"`);
+	await off.close();
+	return { problems, passed };
 }
 
 if (import.meta.main) {

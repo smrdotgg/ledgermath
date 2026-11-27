@@ -3120,9 +3120,10 @@ address is `--base`, so a private or test address can stand in.
   schema, at `v1/schemas/events.schema.json`). `tests/api-words.test.ts` builds a tree and
   scans every string but the data (what the Runs recorded, and what a Method derived from
   them for one Series or one Run: a point's `failure`, a Run file's `path`; in a price
-  file, AWS's own words and identifiers), and fails on any such reference. One remains,
-  known: `docs`, the README's section on GitHub, which can be followed once the repository
-  is public.
+  file, AWS's own words and identifiers), and fails on any such reference. None remains:
+  `docs`, which named the README's section on GitHub until the documentation had pages of
+  its own, is `https://ledgermath.com/docs/api/`, the documentation's reference to the API
+  (`DEFAULT_DOCS` in `scripts/lib/api.ts`, ADR-0037).
 - **Every field has words.** Every schema under `schemas/` has a title and a description,
   and so does every field it declares, wherever it sits (under an array's elements, a branch
   of `anyOf`, `oneOf` or `allOf`, `then` or `else`, or a definition in `$defs`): each member
@@ -3533,11 +3534,13 @@ bun scripts/api-reference.ts --out /tmp/reference    # /tmp/reference/docs/api/*
 | `docs/api/<page>.md` | `/docs/api/<page>` | One schema each (`FILE_PAGES`): `table-of-contents`, `series-list`, `benchmark-list`, `series`, `series-month`, `prices`, `run`, `events` |
 | `docs/machines.md` | `/docs/machines` | `schedule.json`: each target, and the entries for some types only |
 
-`writeApiReference(dir)` in `scripts/lib/api-reference.ts` does the same for a caller such as
-`site/scripts/build.ts`. It needs the root's packages (`bun install` at the root), since
-`scripts/lib/api.ts` brings in the Methods' code; the `site` workflow's build job installs only
-`site/`'s today. It refuses, writing nothing, when any of its files is already there. The same
-input gives the same bytes: no clock, no locale, no directory order.
+`writeApiReference(dir)` in `scripts/lib/api-reference.ts` does the same for another caller. The
+site's build runs the script itself, into a new directory of its own (`site/scripts/docs.ts`,
+`generateApiReference`; "The documentation" under "The website"). It needs the root's packages
+(`bun install` at the root), since `scripts/lib/api.ts` brings in the Methods' code: the `site`
+workflow's build job and both production deploys install them before the site's. It refuses,
+writing nothing, when any of its files is already there. The same input gives the same bytes:
+no clock, no locale, no directory order.
 
 A file page holds, in this order: its title and one paragraph that stands alone (what an index
 of pages shows as its description); where the file is, how a reader reaches it and what it
@@ -3611,7 +3614,7 @@ writes it anew, on purpose).
 
 ## The website (`site/`)
 
-Two pages:
+The home page and the documentation:
 
 - **`/`, the home page.** Design v9, the one the maintainer chose from the home-page
   variations (issue #64; the exploration stays on the branch `home-variations`, never
@@ -3624,28 +3627,38 @@ Two pages:
   data API and links to its Series file there. Each shows a median rounded to four
   significant digits, with every digit, its 5th and 95th percentiles and its count of Runs
   in its `title`. Under the headline the page credits the project LedgerMath began from:
-  "Inspired by Simon Eskildsen's Napkin Math", the name a link to its repository.
-- **`/docs/`, a placeholder.** The documentation is not written yet. Until it is, every
-  link to it (the header's and footer's "Docs", each benchmark's name) goes to this page,
-  which says so and links to the API's table of contents. The real documentation replaces
-  it; `site/src/data/headline.ts` holds the documentation's addresses in one place, with
-  each benchmark's planned page (`/docs/benchmarks/<benchmark>`), so pointing the names at
-  their pages is a one-line change.
+  "Inspired by Simon Eskildsen's Napkin Math", the name a link to its repository. Each
+  benchmark's name in the table links to its page in the documentation
+  (`/docs/benchmarks/<benchmark>`; `site/src/data/headline.ts` holds the documentation's
+  addresses in one place).
+- **`/docs/…`, the documentation** (ADR-0037, "The documentation" below): 28 pages on
+  2026-11-27, each rendered at build time from one Markdown file, and each served as that
+  Markdown too: the start-here page with every page listed after it, the API reference,
+  a page per benchmark, the machines, the Methods, the prices and the glossary; and
+  `/llms.txt`, the index of them for agents.
 
-The pages link inside the site and under `https://api.ledgermath.com/`, and to one address
-besides: Napkin Math's repository, from the home page's credit. A link that leaves the
-site must be named whole in `OUTSIDE_LINKS` (`site/src/pages.text.ts`), which holds that
-one address; `bun run check` fails on any other, so no link goes to the source repository.
+The pages link inside the site; under `https://api.ledgermath.com/`; to the repository's
+files on GitHub, under `https://github.com/smrdotgg/ledgermath/blob/main/` or `…/tree/main/`
+(`REPOSITORY_FILES` in `site/src/pages.text.ts`), which the documentation links to (a
+README's relative link to a source file, a schema the API does not serve), each to a file
+or directory the checkout has; and to one address besides, named whole in `OUTSIDE_LINKS`:
+Napkin Math's repository, from the home page's credit. `bun run check` fails on any other.
+Until the repository was public and the documentation linked its files, the rule was
+`OUTSIDE_LINKS` alone, so that no link went to the source repository.
 
-**Navigation is in place** (ADR-0036). Each page is complete HTML, rendered at build time,
-and each also loads one script, the site as a Solid application (`site/src/app.tsx`). In
-the browser it hydrates the page (it takes over what the build rendered without rendering
-it again), once the browser reports the page's first contentful paint, so that the first
-frame the reader sees comes as it would without it, and from then on Solid Router
+**Navigation is in place** (ADR-0036, ADR-0037). Each page is complete HTML, rendered at build
+time, and each also loads the site as a Solid application (`site/src/app.tsx`): one script,
+`assets/app-*.js`, and the runtime chunk it imports, which the page's `<head>` asks for beside
+it. In the browser it hydrates the page (it takes over what the build rendered without
+rendering it again), once the browser reports the page's first contentful paint, so that the
+first frame the reader sees comes as it would without it, and from then on Solid Router
 (`@solidjs/router` 2) does the navigation: a click on a link to another page of the site
-renders that page in place, with no request, from what the application already holds,
-which is every page and the figures the pages were built from (compiled into the script at
-build time: `pageData`, `site/src/data`). With JavaScript off, or before the application
+renders that page in place, with no request, from what the application already holds: the
+home page and the figures it was built from (compiled into the script at build time:
+`pageData`, `site/src/data`), the documentation's layout, every documentation page's title
+and description, and the body of every documentation page whose chunk the router has loaded
+ahead, which, but for a reader who asks to save data, is every page a link on screen leads to,
+once the page has loaded and the browser is idle (below). With JavaScript off, or before the application
 has taken over, the same links are ordinary links between complete pages. The router leaves to the browser the links to another origin (the API),
 those with `target` or `download`, and clicks with a modifier key or another button than
 the first. The site gives `target="_self"` to its links that are not page changes, so the
@@ -3664,25 +3677,32 @@ restoration: the router's is turned off, since it lost the place of a page the r
 scrolled). A link to the page already on screen (the footer's "Docs" on `/docs/`) starts it
 again at its top, with the focus there, as loading it again would. An address no
 route knows goes to the browser, which loads whatever the host has there. The host serves
-`/docs`, `/docs/` and `/docs/index.html` alike, and so do the routes. The script holds
-the figures of the build that wrote it: a tab left open across a rebuild shows them until
-it loads a page again, and since nothing is fetched after the first load, no deploy can
-leave an open tab asking for a file that is gone.
+`/docs/glossary`, `/docs/glossary/` and `/docs/glossary/index.html` alike, and so do the
+routes. The script holds the figures of the build that wrote it: a tab left open across a
+rebuild shows them until it loads a page again. A documentation page's chunk, once loaded, is
+not asked for again, so a deploy can leave an open tab asking for a file that is gone only
+for a chunk the tab had not loaded yet (a click that came before the router loaded it ahead,
+or a reader who asks to save data): that click is then left to the browser, which loads the
+page whole from the new deploy (`useBeforeLeave` in `site/src/app.tsx`; without it the
+router stopped on the failed import, and no click worked after it).
 
 `bun scripts/measure-navigation.ts TARGET…` (in `site/`, by hand) measures a click in
 Chromium, Firefox and WebKit, against a built directory or an address: from the click to
-the changed page and to the next frame, the requests it made, and the first load's bytes and
-paint. Measured on 2026-11-26 on a 2-vCPU cloud machine (an Intel Xeon at 2.9 GHz, headless,
-no GPU), 15 clicks each way per browser, locally and on a Vercel preview: a click from `/` to
-`/docs/` reached the next frame in a median of 6 to 15 ms, and a click to `/`, whose table is
-most of the site's markup, in 17 to 28 ms (at most 45), and no click made a request; with
-Chromium's CPU slowed four times, as a slower phone would be, 24 and 90 ms. The same clicks on
-the site as it was before, as ordinary navigations to `https://ledgermath.com`, took 55 to 97
-ms (medians) to the new page's first paint, up to 198 ms, with three requests each. The first
-paint of a cold load is within a few milliseconds of the site without the application (the
-larger HTML and the script's fetch; hydration comes after it), and the application takes
-over 25 to 55 ms after it, about 90 ms on a phone-class CPU (ADR-0036 has the figures by
-browser; `--loads N` repeats the first load, taking turns between targets).
+the changed page and to the next frame, the requests it made for the page it shows, and the
+first load's bytes and paint (`--first PATH` for another page than `/`, `--cycle A,B,…` for
+the pages the clicks go round, each by a link on the one before). Measured on 2026-11-26 on a
+2-vCPU cloud machine (an Intel Xeon at 2.9 GHz, headless, no GPU), 15 clicks each way per
+browser, locally and on a Vercel preview: a click from `/` to `/docs/` reached the next frame
+in a median of 6 to 15 ms, and a click to `/`, whose table is most of the site's markup, in
+17 to 28 ms (at most 45), and no click made a request; with Chromium's CPU slowed four times,
+as a slower phone would be, 24 and 90 ms. The same clicks on the site as it was before, as
+ordinary navigations to `https://ledgermath.com`, took 55 to 97 ms (medians) to the new page's
+first paint, up to 198 ms, with three requests each. The first paint of a cold load is within
+a few milliseconds of the site without the application (the larger HTML and the script's
+fetch; hydration comes after it), and the application takes over 25 to 55 ms after it, about
+90 ms on a phone-class CPU (ADR-0036 has the figures by browser; `--loads N` repeats the first
+load, taking turns between targets). The documentation's clicks and first loads, measured on
+2026-11-27, are in ADR-0037.
 
 **Feature flags.** A flag is a part of a page that is in its HTML but hidden. A page names
 its flags in `site/src/pages.text.ts` (`flags`); with `?NAME` in the page's address, the
@@ -3753,12 +3773,17 @@ removed by hand once.
 
 It is SolidJS 2, built with Vite and Solid's Vite plugin (`site/scripts/build.ts`). The
 build takes what the pages render from the tree (`pageData`: plain JSON, a few kilobytes),
-and Vite makes two bundles, each with that JSON compiled in: the browser's, from
-`site/src/entry-client.tsx`, one script with the whole application; and the server's, from
-`site/src/entry-server.tsx`, which renders each page once with Solid's server renderer.
-The HTML, the script, the stylesheet, the two self-hosted fonts and `public/` are written to
+makes the documentation from its Markdown ("The documentation", below), and Vite makes two
+bundles, each with that JSON compiled in: the browser's, from `site/src/entry-client.tsx`,
+the application's script, the runtime chunk it imports and a chunk per documentation page;
+and the server's, from `site/src/entry-server.tsx`, which renders each page once with
+Solid's server renderer. The HTML, the scripts, the stylesheet, the two self-hosted fonts,
+each documentation page's Markdown, `llms.txt` and `public/` are written to
 `site/dist/client`. The document around each page (`site/src/Document.tsx`) is the build's
-and is never hydrated; its body is the application's. Each page's `<head>` loads the script
+and is never hydrated; its body is the application's. At the top of every page, before
+`<html>`, a comment tells an agent that reads the HTML where the site is in Markdown
+(`AGENTS_COMMENT` in `site/scripts/build.ts`), and each page's `<head>` names `/llms.txt`
+(`<link rel="describedby">`, as the convention asks). Each page's `<head>` loads the script
 as a module, which runs once the HTML is parsed and hydrates after the first contentful
 paint (`site/src/entry-client.tsx`; `check:browser` holds the order), so the page paints as
 it did without it (in a browser without Paint Timing, once the font the text waits for has
@@ -3767,13 +3792,15 @@ passed, so that the frame showing the text has been painted);
 an inline script sets the page's feature flags (above) and holds the page back until the
 font of the reader's colour scheme has loaded, and another, Solid's, prepares the
 hydration. The pages read the same with JavaScript off. `site/` has its own `package.json`
-and `bun.lock`, apart from the root's, and needs only Bun (Vite runs under Bun, not Node).
+and `bun.lock`, apart from the root's, and needs Bun (Vite runs under Bun, not Node), and
+the root's packages for the API reference's generator (`bun install` at the root).
 
 ```bash
+bun install --frozen-lockfile           # at the root: the API reference's generator needs it
 cd site
 bun install --frozen-lockfile
 bun run typecheck                       # type-check
-bun test                                # the data module's, the build's, the fetcher's, the checks' and the deploy scripts' tests, on fixtures/tree/
+bun test                                # the data module's, the documentation's, the build's, the fetcher's, the checks' and the deploy scripts' tests, on fixtures/tree/
 bun run fetch-tree /path/to/tree        # the three files from https://api.ledgermath.com, into a new directory
 LEDGERMATH_TREE=/path/to/tree bun run build   # site/dist/client (or: bun run build --tree /path/to/tree)
 LEDGERMATH_TREE=/path/to/tree bun run check   # checks site/dist/client against that tree, as the workflow does
@@ -3786,9 +3813,12 @@ bun scripts/measure-navigation.ts dist/client   # by hand: what a click and the 
 2026-11-19, with `recent_rounds` added by hand (its README says how). Nothing published is
 built from it.
 
-`.github/workflows/site.yml` runs on pull requests and pushes to main that touch `site/` or
-the workflow, and by hand. It installs with the lockfile frozen, then type-checks, tests,
-fetches the tree as published (`bun scripts/fetch-tree.ts`), builds from it, runs
+`.github/workflows/site.yml` runs on pull requests and pushes to main that touch what the
+site is built from (`site/`, `benchmarks/`, `schemas/`, `scripts/`, `docs/`, `schedule.json`,
+the root's `package.json` and `bun.lock`, and the workflow; a pull request that breaks a
+documentation link there fails here, not in the next rebuild of production), and by hand.
+It installs the root's packages and the site's with the lockfiles frozen, then type-checks,
+tests, fetches the tree as published (`bun scripts/fetch-tree.ts`), builds from it, runs
 `bun run check` with it and then the browser checks (`bun run check:browser`, below), and
 keeps the built site as the artifact `site`, which a preview deploys. Production is built again, from the API bucket, inside the production deploys'
 group ("Where it is deployed"). The same commands work locally, inside `site/`.
@@ -3797,28 +3827,41 @@ group ("Where it is deployed"). The same commands work locally, inside `site/`.
 
 `bun run check` runs two scripts on `site/dist/client`:
 
-- `site/scripts/check-output.ts`: each page exists and holds its fixed words
-  (`site/src/pages.text.ts`; change them there with the page) in its body, outside any
-  script or style, which shows the prerender ran; no HTML, CSS or JavaScript file refers to
-  a file the output lacks or loads anything from another origin; every link a reader
-  follows (`href` on `<a>` or `<area>`) goes to a file the site has (and, with a fragment,
-  one that decodes, to an id that page has) or under `https://api.ledgermath.com/`, or is exactly one of
-  `OUTSIDE_LINKS`; every link inside the site that is not a page change (to a file that is
-  not one of the pages, or to a place on its own page) carries `target` or `download`, which
-  leaves it to the browser rather than the router; and each page, with what
-  it loads, weighs under 300,000 bytes, text gzipped at level 9 (about 113 KB for the home
-  page, 105 KB for `/docs/`: the two fonts, of which the check counts both and a browser
-  fetches only the one its colour scheme uses, and the application's script, about 45 KB, so
-  some 85 KB and 77 KB in all), and loads under 60,000 bytes of JavaScript, gzipped the same
-  way (the script holds every page, so it grows with them; past that, split it by route and
-  preload the parts, ADR-0036). It reads `src`, `href`, `srcset`,
-  `imagesrcset`, `poster` and `xlink:href` on any HTML element, `url()` in `<style>` blocks
-  and `style` attributes, imports in inline scripts, `url()` and `@import` in CSS files,
-  and `import`, `export … from` and `import()` of a quoted path in JavaScript files. It
-  does not read other file types, `image-set()` with bare strings, or URLs that JavaScript
-  builds as it runs, and it reads the HTML as text: a check on what an honest build
-  writes, not an HTML validator.
-- `site/scripts/check-figures.ts`: every figure on the pages is one the tree holds,
+- `site/scripts/check-output.ts`: each page exists and holds its fixed words in its body,
+  outside any script or style, which shows the prerender ran: the home page's
+  (`site/src/pages.text.ts`; change them there with the page), and each documentation
+  page's, read back from the site's `llms.txt` (`site/scripts/site-pages.ts`): the header's
+  and footer's words, its title and its description; `llms.txt` lists every documentation
+  page and nothing else, each by its Markdown, which the site has beside it, starting with
+  the page's title, and which the page names in its `<head>` (`checkDocs`); no HTML, CSS or
+  JavaScript file refers to a file the output lacks or loads anything from another origin;
+  every link a reader follows (`href` on `<a>` or `<area>`) goes to a file the site has (and,
+  with a fragment, one that decodes, to an id that page has), under
+  `https://api.ledgermath.com/`, under `REPOSITORY_FILES` to a file or directory the
+  repository's checkout has, or is exactly one of `OUTSIDE_LINKS`; every link inside the site
+  that is not a page change (to a file that is not one of the pages, a page's Markdown among
+  them, or to a place on its own page) carries `target` or `download`, which leaves it to
+  the browser rather than the router; and the weights, text gzipped at level 9: each page's
+  first load (the page and what it loads to show itself and be taken over: the stylesheet,
+  both fonts, of which the check counts both and a browser fetches only the one its colour
+  scheme uses, the application, and a documentation page's own chunk) under 300,000 bytes
+  (118,914 for the home page, up to 159,011 for a documentation page, http_get's, on
+  2026-11-27; 113 KB for the home page before the documentation); the application, its
+  script and what it imports, under 60,000 (54,712; about 45 KB before); each documentation
+  page's chunk under 40,000 (the largest, http_get's, 21,409); and every chunk the
+  application may load ahead, together, under 250,000 (181,164 for 28 pages). Past the last,
+  preload fewer pages ahead rather than raise it (ADR-0037). It reads `src`, `href`, `srcset`,
+  `imagesrcset`, `poster` and `xlink:href` on any HTML element (a `<link>` whose `rel` is
+  `alternate` or `describedby` names a file the site must have, which no browser loads),
+  `url()` in `<style>` blocks and `style` attributes, imports in inline scripts, `url()` and
+  `@import` in CSS files, and `import`, `export … from` and `import()` of a quoted path in
+  JavaScript files (a template literal with nothing to fill counts as quoted; `import()` is a
+  chunk loaded ahead). It does not read other file types, `image-set()` with bare strings, or
+  URLs that JavaScript builds as it runs, and it reads the HTML as text: a check on what an
+  honest build writes, not an HTML validator. Its reading of a page's text drops the tags of an
+  element inside a line of text (`code`, `a`, `em`…) without a space, as a reader sees them,
+  so that a description with code in it is found as written.
+- `site/scripts/check-figures.ts`: every figure on the home page is one the tree holds,
   exactly. It goes back from the page to the tree: each link to a Series file must be a
   Series of the tree, the one the headline selection names for its row and machine type,
   and the median, percentiles and count in its `title`, moved back into the tree's unit
@@ -3839,33 +3882,117 @@ group ("Where it is deployed"). The same commands work locally, inside `site/`.
 `site/scripts/check-browser.ts`) run in `site.yml`'s build job, after `bun run check`, and
 by hand; not in the rebuild after each round of boots, which must be quick and needs no
 browser. They load each page in Playwright's Chromium (installed once with
-`bunx playwright install chromium` in `site/`) at 1440×900 and at 390×844, each in light
-and dark, and a page with feature flags again with each flag on, and fail on a console error, a failed request or a request to another origin,
+`bunx playwright install chromium` in `site/`) at 1440×900 and at 390×844: the home page and
+four documentation pages (`/docs/`, the longest reference page, the longest README and the
+glossary) each in light and dark, every other documentation page in light, and a page with
+feature flags again with each flag on; and fail on a console error, a failed request or a request to another origin,
 a horizontal scroll at 390 px, an axe-core violation of WCAG 2.0 and 2.1 A and AA or of
-its structure rules, a page over the size budget as transferred, a line with a figure
+its structure rules, a first load over the size budget as transferred (the chunks of other
+documentation pages, which the router loads ahead, are weighed apart, under their own
+budget), a line with a figure
 that is missing with JavaScript off, hydration that begins before the page's first
-contentful paint (the mark `hydrate` before the paint entry; and once more with Paint
+contentful paint (the mark `hydrate` before the paint entry; and once more, on the home page
+and those four, with Paint
 Timing hidden from the page and the font 300 ms late, before the first contentful frame's
 paint time), or hydration that changes an
 element or text of the page (only the attributes the router derives from the address may
-change). Then, from each
-page, a click on a link to the next: each must change the page in place, with no request
+change). Then a round of clicks, each on a link to the next page: from `/` to `/docs/`, a
+benchmark's page, two reference pages, `/` again and a benchmark's page by its name in the
+table, and back: each must change the page in place, with no request for it (the chunks the
+router then loads ahead for the new page's links are counted apart)
 and no new document, to the page the build wrote for that address (the body, compared with
 the built file's; hydration keeps the HTML's words without comparing them, so a page the
 application would render differently is caught here), with its title and words, the
 keyboard focus at the top, its title announced, and no axe violation; back and forward
-through them the same, each page scrolled to where it was left; with the keyboard, a link
+through them the same, each page scrolled to where it was left; with the keyboard, on the
+home page and the glossary, a link
 to a place on another page must leave the focus at the place (Tab goes on from it), a link
 from there to the same page without the fragment must put it back at the top (Tab starts
 from the first link), and a page's own link must bring the page back to its top; after a
 visit to an address whose fragment does not decode (`/#%`), clicks, back and clicks again
 must still change the page, with no uncaught error; and with JavaScript off each link must
-load its page as a new document. The time from each click to the next frame is printed, not judged. `--shots OUT`
+load its page as a new document. The time from each click to the next frame is printed, not
+judged. And the documentation's own: Tab from the top of a documentation page reaches the
+breadcrumb, "View as Markdown", "Copy page" and the list of pages; "Copy page" puts the page's
+Markdown on the clipboard, byte for byte the file the site serves; a link to a heading of
+another page lands on the heading, at the top of the window with the focus on it; a click to
+a page whose chunk the host refuses, as after a deploy, loads that page as a new document
+with no uncaught error; and with JavaScript off "Copy page" is not shown and "View as
+Markdown" is. They took about three and a half minutes on a 4-vCPU machine. `--shots OUT`
 also writes each page's first screen and whole page as PNG files.
 
 The built site serves two fonts of one family, Geist Pixel Circle and Geist Pixel Square,
 and so carries `third-party-notices.txt`, their copyright and licence (`THIRD-PARTY-NOTICES.md`,
 section 3); the pages link it as "Licences".
+
+### The documentation
+
+Every documentation page has one source, a Markdown file, and the site serves both the HTML
+rendered from it at build time and the Markdown itself, so the two cannot differ (ADR-0037;
+`site/scripts/docs.ts`). The sources, by section, which is the order of the list of pages on
+every documentation page, of `/docs/`'s contents and of `llms.txt`:
+
+| Section | Pages | From |
+|---|---|---|
+| Start here | `/docs/` | `site/content/docs/index.md`, followed by "All pages", every other page with its description; without that file, the contents alone |
+| API reference | `/docs/api/` and its eight pages | `scripts/api-reference.ts`, run by the build into a directory of its own and never kept ("The API reference" under "The data API") |
+| Benchmarks | `/docs/benchmarks/<name>`, each benchmark `schedule.json` runs, in the home table's order | `benchmarks/<name>/README.md` |
+| Machines, Methods, prices and the glossary | `/docs/machines`, `/docs/methods`, `/docs/prices`, `/docs/glossary`, then any other | `docs/machines.md` from the generator; every other `site/content/docs/**.md`, at the address its path gives |
+
+Each source keeps one contract, which the build holds and fails on, naming the file and why:
+GitHub-flavoured Markdown (rendered with `marked`, pinned in `site/package.json`, at build time
+only), no front matter, no image, no HTML but `<details>` and `<summary>`, the first line
+`# Title` and the first block after it a paragraph, the page's description (its `<meta>`, its
+line in `/docs/` and in `llms.txt`). `scripts/lib/docs-addresses.ts` lists the documentation's
+addresses (the list the generated pages' links are held to): an address it lists with no page
+there fails the build, and so does a page at an address it does not list, so a new page is
+added there first. Links become the site's own: `/docs/…` and `https://ledgermath.com/docs/…` are
+the router's; a `#…` on the same page carries `target="_self"`, the browser's own jump; a
+README's relative link to a file of the repository becomes its address on GitHub, on main,
+in the served Markdown too, where the relative one would lead nowhere; links to the API stay.
+A link with no target fails the build: a `/docs/…` address that is no page, a `#…` that is
+no heading of its page (headings get GitHub's anchors, which the generated pages link to, a
+repeated one numbered `-1`, `-2`), a file the checkout does not have, or an address outside
+the site that the site does not link to. A table scrolls in a box of its own, named for its
+headings; one whose header row starts empty takes its first column as its rows' headings.
+
+Each page's Markdown is at its address with `.md` added (`/docs/glossary.md`), or `index.md`
+in it for an address that ends in a slash (`/docs/index.md`, `/docs/api/index.md`), as the
+llms.txt convention has it, and at its own address when the request says
+`Accept: text/markdown` at full weight: the deploy's `config.json` holds a route per page,
+read from the built files (`site/deploy/vercel-config.ts`), with `Vary: Accept` on every
+answer at a page's address and `Content-Type: text/markdown` on the Markdown, and it refuses
+a site with a documentation page that has no Markdown, which would answer an agent with 404.
+`/llms.txt` follows the convention (<https://llmstxt.org>, v2): the site's name, what
+LedgerMath is (the home page's description), where the numbers are, then each section's
+pages, each a link to its Markdown and its description. Every page of the site starts with a
+comment for agents saying where the Markdown is, and names `/llms.txt` in its `<head>`; each
+documentation page also names its Markdown there (`<link rel="alternate"
+type="text/markdown">`, which follows the page after a click).
+
+A documentation page shows the site's header and footer; a breadcrumb ("Docs", which leads
+to `/docs/`, and the page's section); "View as Markdown", a plain link to the `.md`, and
+"Copy page", which fetches it and puts it on the clipboard, the one control that needs
+JavaScript (hidden without it, by the `scripting` media feature); the page; and the list of
+every page by section, beside the page on a wide screen and below it on a narrow one, the
+page on screen marked. Headings and chrome are in the site's pixel type; the page's text,
+tables and code in the reader's own system fonts, which read easily at length and cost no
+file. A long description folds behind its first sentence (`<details>`, which the generated
+pages write), with no JavaScript.
+
+The documentation's pages are routes of the application under one layout, `/docs`, which
+stays while the reader goes from page to page; each page's body is a `lazy()` component whose
+module holds the page's HTML, a chunk of its own (`virtual:ledgermath-docs`, which the build
+writes). The server renders with every body loaded and with the browser's build manifest, so
+a page's `<head>` asks for its own chunk (`modulepreload`) and hydration imports it before
+taking the page over. The router loads the other chunks ahead (`eagerPreload({ all: true })`
+and `intentPreload()`): every link's on the page once it has loaded and the browser is idle,
+which on a documentation page, whose list links every page, is every chunk (181 KB for 28
+pages, 1.4 to 21 KB each), and on the home page the 15 its links lead to (78 KB); and a link's
+at once when the pointer rests on it, it takes the focus or a touch starts on it. A reader
+whose browser asks to save data (Save-Data, or a 2g connection) is spared the first, and a
+click on a link whose chunk has not come yet keeps the page on screen until it has
+(ADR-0037, "What is not instant").
 
 ### Where it is deployed
 
@@ -4020,17 +4147,22 @@ preview job, `deploy-preview`, takes the `site` artifact that job uploaded (buil
 public API's tree) and builds nothing. The production job, `deploy-production`, does not
 take it: it builds again inside the group, from the bucket, by the rule above. Both deploy
 with `site/deploy/deploy.sh`: that lays the files out as Vercel's Build Output API asks
-(`.vercel/output/static`, and a `config.json` saying `{"version":3}`) in a temporary
-directory, and runs `vercel deploy --prebuilt` on it. The Vercel CLI is pinned in
-`site/deploy/package.json` and its `bun.lock`, apart from the site's own packages.
+(`.vercel/output/static`, and a `config.json` of version 3 with the routes that serve each
+documentation page's Markdown to `Accept: text/markdown`, which `site/deploy/vercel-config.ts`
+writes from the files, with Bun) in a temporary directory, and runs `vercel deploy --prebuilt`
+on it. The Vercel CLI is pinned in `site/deploy/package.json` and its `bun.lock`, apart from
+the site's own packages.
 
 - A push to main, or a run by hand on main, deploys production: ledgermath.com moves to
-  the new deployment. The job then fetches https://ledgermath.com/ and
-  https://ledgermath.com/docs/ and fails unless each answers 200, without a redirect, with
-  each of its fixed words (`site/src/pages.text.ts`) in its HTML outside any script
-  (`site/scripts/check-live.ts`, the same test `bun run check` makes of the built files),
-  so the live pages are this site's and read with JavaScript off. It looks for the fixed
-  words, not the figures, which change with every tree.
+  the new deployment. The job then checks the live site (`site/scripts/check-live.ts`) and
+  fails unless each answer is 200, without a redirect, of its type: https://ledgermath.com/
+  with each of its fixed words (`site/src/pages.text.ts`) in its HTML outside any script, the
+  same test `bun run check` makes of the built files; https://ledgermath.com/docs/index.md,
+  as `text/markdown`; https://ledgermath.com/docs/ with the header's and footer's words and
+  that Markdown's title and description; the same address asked for with
+  `Accept: text/markdown`, which must give the Markdown, with `Vary: Accept`; and `/llms.txt`.
+  So the live pages are this site's, read with JavaScript off, and the host serves the
+  Markdown. It looks for the fixed words, not the figures, which change with every tree.
 
   Production deploys run in the job `deploy-production`; its jobs, one per run, share one
   concurrency group with each other and with the `runs` workflow's `site` job (above): one
@@ -4134,6 +4266,7 @@ until the next publish. With the three Vercel values in the environment:
 # scheduled stage's apiBucket output, the repository variable API_BUCKET). Or
 # `(cd site && bun run fetch-tree /path/to/new-tree)`, the tree the API serves now, which can
 # lag a publish by five minutes.
+bun install --frozen-lockfile   # the root's packages: the tree's reader, and the API reference's generator, which the build runs
 ( eval "$(aws configure export-credentials --profile tabot-production --format env)" && bun scripts/read-api-tree.ts --bucket "$API_BUCKET" --out /path/to/new-tree )
 cd site
 bun install --frozen-lockfile
@@ -4143,7 +4276,7 @@ cmp public/third-party-notices.txt dist/client/third-party-notices.txt
 cd ..
 (cd site/deploy && bun install --frozen-lockfile)
 site/deploy/deploy.sh site/dist/client preview      # or production
-(cd site && bun scripts/check-live.ts)              # after production: / and /docs/ are this site's
+(cd site && bun scripts/check-live.ts)              # after production: / and /docs/ are this site's, and the Markdown is served
 ```
 
 It prints the deployment as JSON; `.url` is its URL. It needs `jq`, and checks for it

@@ -8,7 +8,11 @@
 // Hydration takes the main thread for its whole length (tens of milliseconds on a phone), so
 // started any earlier it would put off the first frame the reader sees (ADR-0036).
 // Until it has run, a link is an ordinary link. The marks "hydrate" and "hydrated" say when it
-// started and ended (scripts/check-browser.ts and measure-navigation.ts read them).
+// started and ended (scripts/check-browser.ts and measure-navigation.ts read them); the second is
+// set by the application once its first render has settled (src/app.tsx). On a documentation
+// page that is after the page's body has loaded: hydrate() first imports the chunks the server's
+// render named (the lazy() body, src/app.tsx), which the page's <head> has already asked for
+// (modulepreload), then takes the page over.
 import { hydrate } from "@solidjs/web";
 import { App } from "./app";
 
@@ -56,5 +60,4 @@ function painted(): Promise<void> {
 painted().then(() => {
 	performance.mark("hydrate");
 	hydrate(() => <App />, document.body);
-	performance.mark("hydrated");
 });

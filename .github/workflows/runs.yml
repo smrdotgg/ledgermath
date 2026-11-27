@@ -596,7 +596,7 @@ jobs:
           } >>"$GITHUB_STEP_SUMMARY"
           echo "$url"
 
-      - name: https://ledgermath.com/ and /docs/ answer 200 with their fixed words (src/pages.text.ts) in their HTML
+      - name: https://ledgermath.com/ and /docs/ answer 200 with their fixed words in their HTML, and /docs/ as Markdown, to Accept text/markdown too, and llms.txt
         id: live
         working-directory: site
         run: bun scripts/check-live.ts https://ledgermath.com/

@@ -109,10 +109,10 @@ beforeAll(() => {
 }, 180_000);
 
 describe("the build", () => {
-	test("from the fixture tree: both pages, and nothing to say", () => {
+	test("from the fixture tree: the home page and the documentation, and nothing to say", () => {
 		expect(fixture.status).toBe(0);
 		expect(fixture.stdout).not.toContain("note:");
-		expect(readFileSync(join(fixture.out, "docs", "index.html"), "utf8")).toContain("The documentation is being written.");
+		expect(readFileSync(join(fixture.out, "docs", "index.html"), "utf8")).toContain("Every page of LedgerMath's documentation, by section.");
 	});
 
 	test("with no tree given, fails and says so, never building from old numbers", () => {
@@ -255,7 +255,7 @@ describe("checkFigures refuses", () => {
 		expect(problems(line)).toEqual(['index.html: the graph "Read memory sequentially", machine "m5.large" holds 0 figures and 0 dashes, not exactly one figure or one dash']);
 		const two = fixture.html.replace(/(<td>)(<a href="https:[^"]+" title="Median [^"]+">[^<]+<\/a>)(<\/td>)/, "$1$2$2$3");
 		expect(problems(two)).toEqual(['index.html: the table\'s row "Read memory sequentially", column "m5.large" holds 2 figures and 0 dashes, not exactly one figure or one dash']);
-		const row = fixture.html.replace(/<tr><th scope="row" title="[^"]*"><span class="head"><a href="\/docs\/">GET 4 KiB from S3<\/a>[\s\S]*?<\/tr>/, "");
+		const row = fixture.html.replace(/<tr><th scope="row" title="[^"]*"><span class="head"><a href="\/docs\/benchmarks\/http_get">GET 4 KiB from S3<\/a>[\s\S]*?<\/tr>/, "");
 		expect(row).not.toBe(fixture.html);
 		expect(problems(row)).toEqual(['index.html: the table has no row for "GET 4 KiB from S3"']);
 		const column = fixture.html.replace(/<th scope="col" title="[^"]*">c6i\.8xlarge<span class="price">[^<]*<\/span><\/th>/, "");

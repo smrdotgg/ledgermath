@@ -9,6 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const SCRIPT = join(import.meta.dir, "deploy.sh");
+const CONFIG = join(import.meta.dir, "vercel-config.ts");
 const BASH = Bun.which("bash") ?? "/bin/bash";
 const URL = "https://ledgermath-abc123-team.vercel.app";
 const READY = { id: "dpl_1", url: URL, readyState: "READY", target: "production" };
@@ -25,30 +26,40 @@ function git(dir: string, ...args: string[]): string {
 	return result.stdout.toString().trim();
 }
 
-/** deploy.sh, with a stub CLI that prints OUTPUT, run on a one-file site; with `checkout`, the script's directory is a git checkout of one commit. */
-function deploy(output: string, { target = "production", path = process.env.PATH ?? "", checkout = false } = {}) {
+/**
+ * deploy.sh and vercel-config.ts, with a stub CLI that prints OUTPUT and keeps the config.json it
+ * was handed, run on a one-file site with FILES added; with `checkout`, the script's directory is a
+ * git checkout of one commit.
+ */
+function deploy(output: string, { target = "production", path = process.env.PATH ?? "", checkout = false, files = {} as Record<string, string> } = {}) {
 	const dir = mkdtempSync(join(tmpdir(), "deploy-test-"));
 	made.push(dir);
 	copyFileSync(SCRIPT, join(dir, "deploy.sh"));
+	copyFileSync(CONFIG, join(dir, "vercel-config.ts"));
 	if (checkout) {
 		git(dir, "init", "-q", "-b", "main");
-		git(dir, "add", "deploy.sh");
+		git(dir, "add", "deploy.sh", "vercel-config.ts");
 		git(dir, "commit", "-q", "-m", "the site's sources");
 	}
 	mkdirSync(join(dir, "node_modules/.bin"), { recursive: true });
 	writeFileSync(join(dir, "output.json"), output);
 	const stub = join(dir, "node_modules/.bin/vercel");
-	writeFileSync(stub, `#!${BASH}\nprintf '%s\\n' "$@" >"${dir}/args"\ncat "${dir}/output.json"\n`);
+	writeFileSync(stub, `#!${BASH}\nprintf '%s\\n' "$@" >"${dir}/args"\ncp "$2/.vercel/output/config.json" "${dir}/config.json"\ncat "${dir}/output.json"\n`);
 	chmodSync(stub, 0o755);
 	mkdirSync(join(dir, "site"));
 	writeFileSync(join(dir, "site/index.html"), "<!DOCTYPE html>");
+	for (const [file, text] of Object.entries(files)) {
+		mkdirSync(join(dir, "site", file, ".."), { recursive: true });
+		writeFileSync(join(dir, "site", file), text);
+	}
 	const result = Bun.spawnSync([BASH, join(dir, "deploy.sh"), join(dir, "site"), target], {
 		env: { PATH: path, VERCEL_TOKEN: "t", VERCEL_ORG_ID: "o", VERCEL_PROJECT_ID: "p", GITHUB_SHA: "abc" },
 		stdout: "pipe",
 		stderr: "pipe",
 	});
 	const args = existsSync(join(dir, "args")) ? readFileSync(join(dir, "args"), "utf8").trim().split("\n") : undefined;
-	return { status: result.exitCode, out: result.stdout.toString(), err: result.stderr.toString(), args, dir };
+	const config = existsSync(join(dir, "config.json")) ? (JSON.parse(readFileSync(join(dir, "config.json"), "utf8")) as { version: number; routes: Record<string, unknown>[] }) : undefined;
+	return { status: result.exitCode, out: result.stdout.toString(), err: result.stderr.toString(), args, config, dir };
 }
 
 describe("deploy.sh", () => {
@@ -80,6 +91,21 @@ describe("deploy.sh", () => {
 		const result = deploy(JSON.stringify({ ...READY, target: null }), { target: "preview" });
 		expect(result.status).toBe(0);
 		expect(result.args).not.toContain("--prod");
+	});
+
+	test("hands Vercel a config.json of version 3, with a route that answers Accept: text/markdown for each documentation page", () => {
+		expect(deploy(JSON.stringify(READY)).config).toEqual({ version: 3, routes: [] });
+		const result = deploy(JSON.stringify(READY), { files: { "docs/index.html": "<!DOCTYPE html>", "docs/index.md": "# Docs\n", "docs/glossary/index.html": "<!DOCTYPE html>", "docs/glossary.md": "# Glossary\n" } });
+		expect(result.status).toBe(0);
+		expect(result.config?.version).toBe(3);
+		expect(result.config?.routes.filter((route) => "dest" in route).map((route) => route.dest)).toEqual(["/docs/glossary.md", "/docs/index.md"]);
+	});
+
+	test("fails, before the CLI runs, on a documentation page without its Markdown", () => {
+		const result = deploy(JSON.stringify(READY), { files: { "docs/glossary/index.html": "<!DOCTYPE html>" } });
+		expect(result.status).toBe(1);
+		expect(result.err).toContain("docs/glossary/index.html");
+		expect(result.args).toBeUndefined();
 	});
 
 	const fails = (name: string, output: string, says: string) =>

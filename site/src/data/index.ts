@@ -38,7 +38,7 @@ import { benchmarkDocsUrl, DOCS_URL, HEADLINE_CHOICES, type HeadlineChoice } fro
 import type { PriceFile, SeriesRow, Tree } from "./tree";
 
 export * from "./figures";
-export { benchmarkDocsUrl, DOCS_URL, GRAPH_BENCHMARKS, HEADLINE_CHOICES, plannedBenchmarkDocsUrl } from "./headline";
+export { benchmarkDocsUrl, DOCS_URL, GRAPH_BENCHMARKS, HEADLINE_CHOICES } from "./headline";
 export type { HeadlineChoice, Section } from "./headline";
 export type { Percentiles, SeriesRow, Tree } from "./tree";
 

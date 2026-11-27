@@ -64,18 +64,14 @@ export type HeadlineChoice = {
 
 // ---------------------------------------------------------------- the documentation's addresses
 //
-// The one place for them. The documentation is not written yet: /docs/ is a placeholder page
-// (src/docs/Page.tsx) that says so and points to the data API, and every link to the
-// documentation goes there, the header's and footer's "Docs" and each benchmark's name. When a
-// benchmark's own page exists, point the names at their pages by making benchmarkDocsUrl
-// return plannedBenchmarkDocsUrl(benchmark): one line.
+// The one place for them. The header's and footer's "Docs" go to /docs/, and each benchmark's name
+// to the benchmark's own page, rendered from its README (scripts/docs.ts makes a page for every
+// benchmark the schedule runs; `bun run check` fails on a link to a page the site lacks).
 
-/** The documentation: for now the placeholder page at /docs/, inside the site. */
+/** The documentation's first page, inside the site. */
 export const DOCS_URL = "/docs/";
-/** Where a benchmark's page will be, once the documentation has one: /docs/benchmarks/<benchmark>. Nothing links here yet. */
-export const plannedBenchmarkDocsUrl = (benchmark: string) => `${DOCS_URL}benchmarks/${benchmark}`;
-/** Where a benchmark's name links: the placeholder, until the documentation has the benchmark's page. */
-export const benchmarkDocsUrl = (_benchmark: string): string => DOCS_URL;
+/** A benchmark's page in the documentation: /docs/benchmarks/<benchmark>, its README. */
+export const benchmarkDocsUrl = (benchmark: string): string => `${DOCS_URL}benchmarks/${benchmark}`;
 const README = benchmarkDocsUrl;
 const ROOT_VOLUME = { disk: "root_volume", dir: "/var/tmp/ledgermath/disk" } as const;
 

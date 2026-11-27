@@ -50,7 +50,17 @@ function repo() {
 
 describe("sitePaths", () => {
 	test("reads the push trigger's paths from the workflow", () => {
-		expect(PATHS).toEqual([":(glob)site/**", ":(glob).github/workflows/site.yml"]);
+		expect(PATHS).toEqual([
+			":(glob)site/**",
+			":(glob)benchmarks/**",
+			":(glob)schemas/**",
+			":(glob)scripts/**",
+			":(glob)docs/**",
+			":(glob)schedule.json",
+			":(glob)package.json",
+			":(glob)bun.lock",
+			":(glob).github/workflows/site.yml",
+		]);
 	});
 
 	test("refuses a pattern git cannot match the same way", () => {

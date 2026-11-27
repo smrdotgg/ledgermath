@@ -1,11 +1,15 @@
-// The site's pages: where each is built, its title, and its fixed words, the text it shows
-// whatever the tree it is built from. `bun run check` (scripts/check-output.ts) fails unless
-// each page's built HTML holds every one of its words in its body, outside any script, which
-// shows the prerender ran and the page reads with JavaScript off; scripts/check-live.ts asks
-// the same of the pages as served. Change these with the pages.
+// The site's pages that are not documentation: where each is built, its title, and its fixed
+// words, the text it shows whatever the tree it is built from. `bun run check`
+// (scripts/check-output.ts) fails unless each page's built HTML holds every one of its words in its
+// body, outside any script, which shows the prerender ran and the page reads with JavaScript off;
+// scripts/check-live.ts asks the same of the pages as served. Change these with the pages. The
+// documentation's pages are made from Markdown at build time (scripts/docs.ts); their fixed words
+// are the header's and footer's (HEADER_AND_FOOTER), their title and their description, read back
+// from the built site (scripts/site-pages.ts).
 //
-// And the links that leave the site (OUTSIDE_LINKS): the pages take them from here, and the same
-// check passes a link to another origin only when it is exactly one of them.
+// And where a link may leave the site: the data API (API_ORIGIN), the repository's files on GitHub
+// (REPOSITORY_FILES), which the documentation links to, and the addresses OUTSIDE_LINKS names
+// whole. The same check fails on a link anywhere else.
 //
 // And each page's feature flags (`flags`): parts it shows only when its address asks for them.
 //
@@ -28,18 +32,35 @@ export type SitePage = {
 	 * shows the part. To show the part to everyone, remove the rule that hides it and the flag.
 	 */
 	flags?: readonly string[];
+	/** A documentation page's Markdown, which the host serves at this address. */
+	markdown?: string;
 };
+
+/** The data API: a page may link to any address under it. */
+export const API_ORIGIN = "https://api.ledgermath.com/";
+
+/** The repository on GitHub. */
+export const REPOSITORY_URL = "https://github.com/smrdotgg/ledgermath";
+
+/**
+ * A file or a directory of the repository, on main, as GitHub shows it: a documentation page links
+ * the files it describes (a benchmark's README links its sources relatively, and the build makes
+ * each such link one of these), and a page may link to any address under these two, of a file
+ * the repository has.
+ */
+export const REPOSITORY_FILES: readonly string[] = [`${REPOSITORY_URL}/blob/main/`, `${REPOSITORY_URL}/tree/main/`];
 
 /** Napkin Math, by Simon Eskildsen: the project LedgerMath began from, which the home page credits. */
 export const NAPKIN_MATH = "https://github.com/sirupsen/napkin-math";
 
 /**
- * Every address outside the site and the data API that a page may link to, each whole: a link
- * to anywhere else, or to another address of the same sites, fails `bun run check`.
+ * Every other address outside the site that a page may link to, each whole: a link anywhere else
+ * than these, the data API and the repository's files, fails `bun run check`.
  */
 export const OUTSIDE_LINKS: readonly string[] = [NAPKIN_MATH];
 
-const HEADER_AND_FOOTER = ["LedgerMath", "Numbers", "Docs", "API", "Prices", "Licences"];
+/** The words of the header and footer every page has. */
+export const HEADER_AND_FOOTER: readonly string[] = ["LedgerMath", "Numbers", "Docs", "API", "Prices", "Licences"];
 
 export const HOME: SitePage = {
 	path: "/",
@@ -62,20 +83,5 @@ export const HOME: SitePage = {
 	flags: ["napkin"],
 };
 
-export const DOCS: SitePage = {
-	path: "/docs/",
-	file: "docs/index.html",
-	title: "LedgerMath: documentation",
-	description: "LedgerMath's documentation is being written. Until it is here, the data API describes itself.",
-	text: [
-		...HEADER_AND_FOOTER,
-		"Documentation",
-		"The documentation is being written.",
-		"Until it is here, the data API describes itself.",
-		"The data API's table of contents",
-		"Back to the home page",
-	],
-};
-
-/** Every page the build writes, in order. */
-export const PAGES: readonly SitePage[] = [HOME, DOCS];
+/** The pages that are not documentation, which the build renders besides the documentation's, and whose figures `bun run check` holds to the tree (scripts/check-figures.ts). */
+export const PAGES: readonly SitePage[] = [HOME];

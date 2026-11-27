@@ -5,7 +5,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { checkOutput } from "./check-output";
+import { bodyText, checkDocs, checkOutput } from "./check-output";
 
 const TEXT = ["LedgerMath", "The site is on its way."];
 const PAGES = [{ file: "index.html", text: TEXT }];
@@ -136,7 +136,7 @@ describe("links out of the site", () => {
 	test("any other address fails, of the same site too: a page under it, its owner, the same with a slash, a query or another scheme", () => {
 		const others = [`${NAMED}/issues`, "https://github.com/sirupsen", `${NAMED}/`, `${NAMED}?tab=readme`, NAMED.replace("https:", "http:"), "https://github.com/smrdotgg/ledgermath"];
 		expect(check({ "index.html": page("", BODY + others.map((href) => `<a href="${href}">x</a>`).join("")) }, PAGES, [NAMED])).toEqual(
-			others.map((href) => `index.html links outside the site and the data API: ${href}`),
+			others.map((href) => `index.html links outside the site, the data API and the repository's files: ${href}`),
 		);
 	});
 
@@ -148,6 +148,94 @@ describe("links out of the site", () => {
 
 	test("a page may load nothing from an address it may link to", () => {
 		expect(check({ "index.html": page(`<script src="${NAMED}"></script>`) }, PAGES, [NAMED])).toEqual([`index.html loads from another origin: ${NAMED}`]);
+	});
+
+	test("a file or directory of the repository on main passes when the checkout has it, and fails when it does not; nothing else of GitHub passes", () => {
+		const repository = site({ "benchmarks/sort/sort.c": "int main(void) {}", "docs/dev-log.md": "# Log" });
+		const files = "https://github.com/smrdotgg/ledgermath/blob/main/";
+		const tree = "https://github.com/smrdotgg/ledgermath/tree/main/";
+		const links = [`${files}benchmarks/sort/sort.c`, `${files}docs/dev-log.md#section-8`, `${tree}benchmarks/sort`, `${files}benchmarks/sort/gone.c`, `${files}../outside`, `${files}`, "https://github.com/smrdotgg/ledgermath/blob/other/docs/dev-log.md"];
+		expect(checkOutput(site({ "index.html": page("", BODY + links.map((href) => `<a href="${href}">x</a>`).join("")) }), PAGES, [], repository).problems).toEqual([
+			`index.html links to ${files}benchmarks/sort/gone.c, a file the repository lacks`,
+			`index.html links to ${files}../outside, a file the repository lacks`,
+			`index.html links to ${files}, a file the repository lacks`,
+			"index.html links outside the site, the data API and the repository's files: https://github.com/smrdotgg/ledgermath/blob/other/docs/dev-log.md",
+		]);
+	});
+});
+
+describe("what a page names without loading it, and what the application loads ahead", () => {
+	test("a <link rel=alternate> or describedby must name a file the site has, and is not weighed", () => {
+		const big = "x".repeat(50_000);
+		const result = checkOutput(site({ "index.html": page(`<link rel="alternate" type="text/markdown" href="/index.md"><link rel="describedby" href="/llms.txt">`), "index.md": big, "llms.txt": big }), PAGES);
+		expect(result.problems).toEqual([]);
+		expect(result.weights[0]!.bytes).toBeLessThan(1_000);
+		expect(check({ "index.html": page(`<link rel="alternate" type="text/markdown" href="/gone.md">`) })).toEqual(["index.html refers to /gone.md, which the site lacks"]);
+	});
+
+	test("an import() is a chunk loaded ahead: it must exist, is not in the first load, and is weighed apart, alone and together", () => {
+		const files = {
+			"index.html": page(`<script type="module" src="/app.js"></script>`),
+			"app.js": 'import "./runtime.js"; const a = () => import(`./docs-a-AAAAAAAA.js`), b = () => import("./docs-b-BBBBBBBB.js");',
+			"runtime.js": "export const r = 1;",
+			"docs-a-AAAAAAAA.js": 'import { r } from "./runtime.js"; export default r;',
+			"docs-b-BBBBBBBB.js": "export default 2;",
+		};
+		const result = checkOutput(site(files), PAGES);
+		expect(result.problems).toEqual([]);
+		expect(result.chunks.map((chunk) => chunk.file)).toEqual(["docs-a-AAAAAAAA.js", "docs-b-BBBBBBBB.js"]);
+		expect(result.ahead).toBe(result.chunks[0]!.bytes + result.chunks[1]!.bytes);
+		expect(result.application).toBe(result.weights[0]!.script);
+		const { "docs-b-BBBBBBBB.js": _, ...without } = files;
+		expect(check(without)).toEqual(["app.js refers to ./docs-b-BBBBBBBB.js, which the site lacks"]);
+	});
+
+	test("a chunk over its budget, and the chunks together over theirs", async () => {
+		const { CHUNK_BUDGET_BYTES, AHEAD_BUDGET_BYTES } = await import("./check-output");
+		const letters = (n: number) => Array.from(crypto.getRandomValues(new Uint8Array(n)), (x) => String.fromCharCode(97 + (x % 26))).join("");
+		// Random letters gzip to about three fifths of their length: c0 over a chunk's budget, the eight together over theirs.
+		const size = (i: number) => (i === 0 ? CHUNK_BUDGET_BYTES * 2 : Math.ceil(AHEAD_BUDGET_BYTES / 4.5));
+		const chunks = Object.fromEntries(Array.from({ length: 8 }, (_, i) => [`c${i}.js`, `export default "${letters(size(i))}";`]));
+		const problems = check({ "index.html": page(`<script type="module" src="/app.js"></script>`), "app.js": Object.keys(chunks).map((file) => `import("./${file}");`).join(""), ...chunks });
+		expect(problems.some((p) => p.startsWith("c0.js weighs") && p.endsWith(`over the budget of ${CHUNK_BUDGET_BYTES} for a chunk`))).toBe(true);
+		expect(problems.at(-1)).toMatch(new RegExp(`^the application may load \\d+ bytes ahead, compressed \\(8 chunks\\): over the budget of ${AHEAD_BUDGET_BYTES}$`));
+	});
+});
+
+describe("checkDocs", () => {
+	const DOC = (md: string) => page(`<link rel="alternate" type="text/markdown" href="${md}">`, `<main><h1 id="glossary">Glossary</h1><p>The words.</p></main>`);
+	const LLMS = "# LedgerMath\n\n> Benchmarks.\n\n## Machines, Methods, prices and the glossary\n\n- [Glossary](https://ledgermath.com/docs/glossary.md): The words.\n";
+
+	test("passes a site whose llms.txt lists each documentation page, by its Markdown, which each names in its <head>", () => {
+		expect(checkDocs(site({ "index.html": page(""), "llms.txt": LLMS, "docs/glossary/index.html": DOC("/docs/glossary.md"), "docs/glossary.md": "# Glossary\n\nThe words.\n" }))).toEqual([]);
+	});
+
+	test("fails without llms.txt, on a page it does not list, on Markdown the site lacks, and on a page that names another's Markdown", () => {
+		expect(checkDocs(site({ "index.html": page("") }))).toEqual(["llms.txt is missing"]);
+		expect(
+			checkDocs(
+				site({
+					"index.html": page(""),
+					"llms.txt": LLMS,
+					"docs/glossary/index.html": DOC("/docs/methods.md"),
+					"docs/glossary.md": "# Glossary\n\nThe words.\n",
+					"docs/methods/index.html": DOC("/docs/methods.md"),
+				}),
+			),
+		).toEqual(["docs/methods/index.html is a documentation page llms.txt does not list", "docs/glossary/index.html names /docs/methods.md in its <head>, not its own, /docs/glossary.md"]);
+	});
+
+	test("the pages it reads back hold the header's and footer's words, the title and the description", () => {
+		const dir = site({ "index.html": page(""), "llms.txt": LLMS, "docs/glossary/index.html": DOC("/docs/glossary.md"), "docs/glossary.md": "# Glossary\n\nThe `words`, *each* defined.\n" });
+		const result = checkOutput(dir);
+		expect(result.problems.filter((p) => p.startsWith("docs/glossary/index.html does not hold"))).toContain('docs/glossary/index.html does not hold, in its body outside any script: "The words, each defined."');
+		expect(result.problems).toContain('docs/glossary/index.html does not hold, in its body outside any script: "Numbers"');
+	});
+});
+
+describe("bodyText", () => {
+	test("no space for the tags of an element inside a line of text, a space for any other", () => {
+		expect(bodyText("<body><p>(<code>getpid</code>, <a href=x><em>stat</em></a>)</p><p>Next</p></body>")).toBe(" (getpid, stat) Next ");
 	});
 });
 
@@ -161,11 +249,11 @@ describe("fails", () => {
 				),
 			}),
 		).toEqual([
-			"index.html links outside the site and the data API: https://github.com/smrdotgg/ledgermath",
-			"index.html links outside the site and the data API: https://ledgermath.com/docs/",
-			"index.html links outside the site and the data API: //cdn.example.com/",
-			"index.html links outside the site and the data API: mailto:a@example.com",
-			"index.html links outside the site and the data API: https://api.ledgermath.com.example.com/",
+			"index.html links outside the site, the data API and the repository's files: https://github.com/smrdotgg/ledgermath",
+			"index.html links outside the site, the data API and the repository's files: https://ledgermath.com/docs/",
+			"index.html links outside the site, the data API and the repository's files: //cdn.example.com/",
+			"index.html links outside the site, the data API and the repository's files: mailto:a@example.com",
+			"index.html links outside the site, the data API and the repository's files: https://api.ledgermath.com.example.com/",
 		]);
 	});
 
@@ -200,10 +288,10 @@ describe("fails", () => {
 			[
 				`${join("docs", "index.html")} links to /docs/#intro, a place on its own page, without target`,
 				`${join("docs", "index.html")} links to #intro, a place on its own page, without target`,
-				"index.html links to /notices.txt, which is not one of the site's pages (src/pages.text.ts), without target",
+				"index.html links to /notices.txt, which is not one of the site's pages (src/pages.text.ts and the documentation's), without target",
 				"index.html links to #top, a place on its own page, without target",
 				"index.html links to /#top, a place on its own page, without target",
-				"index.html links to /old.html, which is not one of the site's pages (src/pages.text.ts), without target",
+				"index.html links to /old.html, which is not one of the site's pages (src/pages.text.ts and the documentation's), without target",
 			].sort(),
 		);
 	});
