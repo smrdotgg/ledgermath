@@ -36,10 +36,10 @@
     }
   },
   "$defs": {
-    "url": { "type": "string", "pattern": "^https?://" },
+    "url": { "description": "An address: an absolute URL starting http:// or https://.", "type": "string", "pattern": "^https?://" },
     "time": { "description": "UTC, to the nanosecond, as the Run records it.", "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$" },
-    "number_or_null": { "anyOf": [{ "type": "number" }, { "type": "null" }] },
-    "string_or_null": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
+    "number_or_null": { "description": "A number, or null.", "anyOf": [{ "type": "number" }, { "type": "null" }] },
+    "string_or_null": { "description": "A string, or null.", "anyOf": [{ "type": "string" }, { "type": "null" }] },
     "point_run": { "description": "The Run's id.", "type": "string" },
     "point_path": { "description": "The Run file's path, runs/<yyyy>/<mm>/<dd>/<id>.json: the name LedgerMath gives it, and its address under the API's base (evidence).", "type": "string", "pattern": "^runs/[0-9]{4}/[0-9]{2}/[0-9]{2}/[^/]+\\.json$" },
     "point_sha256": { "description": "The sha256 of the Run file's bytes, in hex: what the Derivation cites.", "type": "string", "pattern": "^[0-9a-f]{64}$" },
@@ -200,7 +200,7 @@
         "count": { "description": "How many failed in that phase with that kind of failure, 1 or more.", "type": "integer", "minimum": 1 }
       }
     },
-    "failures": { "type": "array", "items": { "$ref": "#/$defs/failure_count" } },
+    "failures": { "description": "Failures counted by where and what kind: each entry gives a phase, a kind of failure, and how many failed with both.", "type": "array", "items": { "$ref": "#/$defs/failure_count" } },
     "pool_summary": {
       "description": "The pooled figures as they stood through one Run: the counted Runs that started at or before it. What a citation of an earlier moment is checked against.",
       "type": "object",
