@@ -16,7 +16,7 @@ This will then make its way to a database.
 
 We will then have a website that displays all the numbers.
 
-We will also set up a skill that allows agents to query the website for particular numbers and make estimates. For example, how much money will it cost to distribute a new update of Fortnite to 30 million players? We would probably multiple some bandwidth numbers, some storage numbers, etc and come up with a rough guestimate. This process will be documented in a skill in the future.
+Agents query the numbers and make estimates from them. For example, how much money will it cost to distribute a new update of Fortnite to 30 million players? An agent would probably multiply some bandwidth numbers, some storage numbers, etc and come up with a rough guesstimate. There is no skill for this: an agent reads the data API (https://api.ledgermath.com/v1/index.json) and the documentation (https://ledgermath.com/llms.txt), which says how.
 
 
 

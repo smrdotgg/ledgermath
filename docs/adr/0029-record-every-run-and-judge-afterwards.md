@@ -65,6 +65,7 @@ These shape the Run record or cannot be changed cheaply later. The detail is whe
 10. **An error response's body is not kept.** The Run records the body's length, S3's `Code`, `Message`, `RequestId` and `HostId`, and the names of the body's elements. It keeps neither the body nor its digest, because S3 repeats the session token or the key ID in some error bodies (#43; `benchmarks/http_get/README.md`).
 11. **Prices are records like Runs.** Each day's price file, `prices/<yyyy>/<mm>/<dd>/aws.json`, goes into the Runs repository once and is never edited. It holds AWS's own records for what is measured, verbatim, and names each source by versioned URL, version, size and SHA-256. A price is cited as the file, the SKU and the rate code (#45, decisions 1 to 3).
 12. **A citation of a derived number carries the Method's version and the moment its data ended.** A Series citation reads `[lm:series/<id>/<number>/<statistic>@v1,<moment>]`, where `<moment>` is the start of the Series' newest Run at the time. An answer can therefore be checked after more Runs arrive (#47; `README.md`, "The agent skill").
+    _No longer built: the answer checker that read this syntax was removed with the skill on 2026-11-27 (ADR-0034). The documentation, `https://ledgermath.com/docs/`, gives the form a citation takes now._
 
 ## The terms of `CONTEXT.md`, as built
 

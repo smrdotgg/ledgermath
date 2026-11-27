@@ -420,8 +420,7 @@ included (`facts`): what the requests recorded.
 each Run's provider names it, and the Service each Run names with its inputs that are not
 secret, as delivered. Words for a reader, not figures; nothing about the path between box
 and server, which each Run's dumps record (`network`, `ec2_route_tables`,
-`ec2_vpc_endpoints`). The lookup tool describes a Series of requests from these, its params
-and what its requests' events show, and from nothing else.
+`ec2_vpc_endpoints`).
 
 ### Memory and the record
 

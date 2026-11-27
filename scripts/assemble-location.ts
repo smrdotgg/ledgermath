@@ -1,8 +1,8 @@
 /**
- * Puts together a directory the lookup tool and the answer checker read, from
- * the data API's tree as the runs workflow keeps it (the artifact api) and a
- * clone of the Runs repository: for an agent trial while the API is not
- * served (README, "The agent skill").
+ * Puts together a directory laid out as https://api.ledgermath.com serves the
+ * same files, from the data API's tree as the runs workflow keeps it (the
+ * artifact api) and a clone of the Runs repository: the data of one run,
+ * pinned (README, "Data from one run").
  *
  *     bun scripts/assemble-location.ts --api DIR --runs DIR --out DIR
  *
@@ -13,9 +13,8 @@
  *
  * OUT gets v1/ byte for byte, and beside it every Run file and boot summary
  * the tree links (from its points, and from its table of contents' newest
- * rounds of boots), copied from the clone: the layout the tools read, as
- * https://api.ledgermath.com will serve it. It is read the way the tools read
- * it (scripts/lib/ledger-data.ts): every file the table of contents lists must
+ * rounds of boots), copied from the clone. The tree is read first
+ * (scripts/lib/ledger-data.ts): every file the table of contents lists must
  * be there (each price file read as prices reads it, each schema JSON), every
  * month file must have the sha256 its Series file lists, and every Run file
  * the sha256 its point gives; anything else stops it before it writes,
@@ -62,7 +61,7 @@ async function main(): Promise<void> {
 	if (!existsSync(join(runs, "runs"))) fail(`${runs} holds no runs/: it is not a clone of the Runs repository`);
 	if (existsSync(out) && (!statSync(out).isDirectory() || readdirSync(out).length > 0)) fail(`${out} is not a new or empty directory`);
 
-	// Read the tree as the tools do: its layout, its list, every Series file and every month file, each checked against its sha256.
+	// Read the tree: its layout, its list, every Series file and every month file, each checked against its sha256.
 	const data = await loadLedger(openLocation(api));
 	const list = await data.list();
 	const evidence = new Map<string, string | null>();
@@ -122,7 +121,7 @@ async function main(): Promise<void> {
 	for (const path of [...evidence.keys(), ...boots].sort()) copy(join(runs, path), join(out, path));
 	console.log(
 		`${out}: v1/ (${tree.length} files, layout ${data.index.layout}, ${list.series.length} Series, data through ${data.index.newest_run_started_at}), ${evidence.size} Run files and ${boots.size} boot summaries. ` +
-			`Every month file has its listed sha256 and every Run file its point's.\nRead it with: bun scripts/lookup.ts --data ${out} about`,
+			`Every month file has its listed sha256 and every Run file its point's.\nStart at ${join(out, "v1", "index.json")}; a link in the tree is to the file at its path under ${data.treeBase}.`,
 	);
 }
 

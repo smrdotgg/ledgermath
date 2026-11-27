@@ -1924,6 +1924,21 @@ A migrated benchmark is done only when **all** of these hold:
   harness, `schedule.json` and the Methods. The sections comparing each benchmark with
   July's version, and `http_get`'s "Departures from the study", moved word for word to
   section 8 below. No benchmark, build, Method, schema or workflow changed.
+- **2026-11-27** — **The agent skill and its two tools are removed.** The skill
+  (`skills/ledgermath/SKILL.md`) taught an agent to answer a cost question as napkin math
+  from LedgerMath's numbers, each one cited or marked as an assumption. It used
+  `scripts/lookup.ts`, which looked up Series and prices in the data API and printed each
+  number beside its citation, and `scripts/check-answer.ts`, which checked that every number
+  in an answer was cited, an assumption, from the question, or arithmetic it could redo. On
+  2026-11-27 ten fresh agents with only `curl` to `ledgermath.com` and
+  `api.ledgermath.com` (no repository, no skill, no tool) each answered a question soundly,
+  so none of it was needed. An agent's way in is now `https://ledgermath.com/llms.txt` and
+  the data API. As they last stood:
+  [the skill](https://github.com/smrdotgg/ledgermath/tree/2059cf9/skills/ledgermath),
+  [`lookup.ts`](https://github.com/smrdotgg/ledgermath/blob/2059cf9/scripts/lookup.ts),
+  [`check-answer.ts`](https://github.com/smrdotgg/ledgermath/blob/2059cf9/scripts/check-answer.ts).
+  `scripts/assemble-location.ts` stays, and `scripts/lib/ledger-data.ts` keeps only what it
+  reads with.
 - _(agents: append your entry here, one per merged benchmark)_
 
 ---

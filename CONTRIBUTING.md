@@ -85,10 +85,6 @@ The box builds every benchmark itself, at boot, with what
 to that install line. That is a change under `runner/`, which Method version 1 splits
 every Series on, so say so in the pull request.
 
-Add one line for it to [`scripts/lib/benchmark-notes.ts`](scripts/lib/benchmark-notes.ts):
-what it measures and what one repetition is, in the README's words. The lookup tool shows
-it to agents, and `bun test` fails until it is there.
-
 ## Add it to the schedule
 
 [`schedule.json`](schedule.json) says what each box runs: one entry per benchmark (its
@@ -117,9 +113,8 @@ A Method turns Runs into Derivations; [`methods/README.md`](methods/README.md) d
 the two there are, `series` v1 (`methods/v1/`) and `requests` v1 (`methods/requests/v1/`).
 Once a version's Derivations are published, it is never edited: a change to what it outputs
 is a new version in its own directory (`methods/v2/` beside `methods/v1/` for `series`,
-`methods/requests/v2/` for `requests`), with its own `output.ts`, and `scripts/derive.ts`,
-the page (`scripts/build-page.ts`) and the lookup tool (which reads the data API's
-`series_v1` and `requests_v1` only, `scripts/lib/lookup.ts` and `scripts/lib/citation.ts`) learn to choose it. The data API (`scripts/lib/api.ts`) gives
+`methods/requests/v2/` for `requests`), with its own `output.ts`, and `scripts/derive.ts`
+and the page (`scripts/build-page.ts`) learn to choose it. The data API (`scripts/lib/api.ts`) gives
 it a key of its own, `series_v2` beside `series_v1`, never in its place (ADR-0030). A record kept of a stream is keyed by the
 digest of the code that made it (`methods/records.ts`), so any change to that code makes
 every stream be read again once, and records kept by other code are never read; the Run
