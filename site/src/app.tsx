@@ -75,28 +75,43 @@ function Layout(props: { children?: JSX.Element }) {
 		},
 	);
 
-	// After a page change, the keyboard focus starts again at the top of the page, as after a page
-	// load, and a screen reader is told the new page's title, which a page load would read out.
-	// (Solid Router has no answer of its own for this; this is SvelteKit's.)
+	// After a page change, the keyboard focus starts again where a page load would start it: at the
+	// element the address's #fragment names, else at the top of the page; and a screen reader is
+	// told the new page's title, which a page load would read out. (Solid Router has no answer of
+	// its own for this; this is SvelteKit's.) A change of the fragment alone is the browser's own
+	// jump (such links carry target="_self"), which moves the focus itself.
 	let announcer!: HTMLParagraphElement;
-	createEffect(
-		() => location.pathname,
-		() => {
-			announcer.textContent = page()?.title ?? "";
-			const body = document.body;
-			body.tabIndex = -1;
-			body.focus({ preventScroll: true, focusVisible: false } as FocusOptions);
-			body.removeAttribute("tabindex");
-		},
-		{ defer: true },
-	);
+	const arrive = () => {
+		announcer.textContent = page()?.title ?? "";
+		const id = decodeURIComponent(location.hash.slice(1));
+		const place = (id && document.getElementById(id)) || document.body;
+		// Made focusable for the call when it is not (a heading, the body), as the browser treats a
+		// fragment's target: the body gives it back at once, any other element when the focus leaves.
+		const lent = !place.hasAttribute("tabindex") && place.tabIndex < 0;
+		if (lent) place.tabIndex = -1;
+		place.focus({ preventScroll: true, focusVisible: false } as FocusOptions);
+		if (lent && place === document.body) place.removeAttribute("tabindex");
+		else if (lent) place.addEventListener("blur", () => place.removeAttribute("tabindex"), { once: true });
+	};
+	createEffect(() => location.pathname + location.search, arrive, { defer: true });
 
-	// An address no route knows (a link that should have had target="_self", say) goes to the
-	// browser, which loads whatever the host has there, instead of an empty page here.
 	useBeforeLeave((e) => {
-		if (typeof e.to === "string" && Router.match(e.to).length === 0) {
+		if (typeof e.to !== "string") return;
+		// An address no route knows (a link that should have had target="_self", say) goes to the
+		// browser, which loads whatever the host has there, instead of an empty page here.
+		if (Router.match(e.to).length === 0) {
 			e.preventDefault();
 			window.location.assign(e.to);
+			return;
+		}
+		// A link to the address on screen, which the router leaves as it is: a document navigation
+		// would load the page again, at its top (or its #fragment), with the focus there.
+		if (e.to === location.pathname + location.search + location.hash) {
+			const id = decodeURIComponent(location.hash.slice(1));
+			const place = id && document.getElementById(id);
+			if (place) place.scrollIntoView();
+			else window.scrollTo(0, 0);
+			arrive();
 		}
 	});
 

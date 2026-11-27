@@ -9,8 +9,9 @@
  *    it has (and, with a fragment, to an id that file has), or under https://api.ledgermath.com/,
  *    or is, character for character, one of the links out that src/pages.text.ts names
  *    (OUTSIDE_LINKS): nowhere else, so no link is dead and none leaves the site unnamed;
- *  - every link inside the site that is not a page change carries target (or download), which
- *    tells the router to leave it to the browser (src/app.tsx, ADR-0036): a link to a file that is
+ *  - every link inside the site that is not a page change carries a target with a value (or
+ *    download, or rel="external"), which is what the router reads to leave a link to the browser
+ *    (src/app.tsx, ADR-0036; target="" leaves it to the router): a link to a file that is
  *    not a page (third-party-notices.txt), and a link to a place on its own page (#numbers on
  *    index.html, /#numbers there too). Without it the router would take the file for a page, and
  *    take the browser's in-page jump, which moves the keyboard focus, for a page change;
@@ -61,7 +62,7 @@ export const SCRIPT_BUDGET_BYTES = 60_000;
 
 /**
  * A reference found in a file; `link` when a reader follows it rather than the page loading it,
- * and `browser` when the link carries target or download, which the router leaves to the browser.
+ * and `browser` when the link carries what makes the router leave it to the browser.
  */
 type Reference = { url: string; link: boolean; browser?: boolean };
 
@@ -163,7 +164,10 @@ function htmlReferences(html: string): Reference[] {
 	const { tags, inline } = htmlTags(html);
 	const found: Reference[] = inline.map((url) => ({ url, link: false }));
 	for (const { element, attributes } of tags) {
-		const browser = attributes.some(([name]) => name === "target" || name === "download");
+		// As the router reads an anchor: a target with a value (target="" is none), download, or rel="external".
+		const browser = attributes.some(
+			([name, value]) => (name === "target" && value !== "") || name === "download" || (name === "rel" && value.split(/\s+/).includes("external")),
+		);
 		for (const [name, value] of attributes) {
 			if (REFERENCE_ATTRIBUTES.has(name)) found.push(name === "href" && LINK_ELEMENTS.has(element) ? { url: value, link: true, browser } : { url: value, link: false });
 			else if (SRCSET_ATTRIBUTES.has(name)) found.push(...srcsetUrls(value).map((url) => ({ url, link: false })));

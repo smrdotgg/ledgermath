@@ -3,17 +3,19 @@
  * run by hand, to answer "is navigation instant?" with numbers and their spread. Nothing here is
  * a check: it asserts nothing and fails on no figure (ADR-0036).
  *
- *     bun scripts/measure-navigation.ts [--clicks N] [--browsers chromium,firefox,webkit] [--cpu N] TARGET...
+ *     bun scripts/measure-navigation.ts [--loads N] [--clicks N] [--browsers chromium,firefox,webkit] [--cpu N] TARGET...
  *
  * A TARGET is a built site's directory (served here, as a static host would, uncompressed) or a
- * site's address (https://ledgermath.com, a preview's). For each target and browser:
+ * site's address (https://ledgermath.com, a preview's). For each browser:
  *
- *  - The first load of / in a new browser context (empty cache): the bytes each response brought
- *    (HTML, CSS, fonts, JavaScript, as the server sent them: compressed from a host that
- *    compresses, not from the directory server here), the first paint (Paint Timing's
- *    first-contentful-paint), and DOMContentLoaded, by which a page's module script has run:
- *    with the application, Solid has hydrated the page and the router is in place by then, so a
- *    click before it is an ordinary navigation.
+ *  - N first loads of / per target (default 1), each in a new browser context (empty cache),
+ *    taking turns between the targets, so that the machine's own drift falls on all of them
+ *    alike: the bytes each response brought (HTML, CSS, fonts, JavaScript, as the server sent
+ *    them: compressed from a host that compresses, not from the directory server here; Firefox
+ *    and WebKit report them decompressed), the first paint (Paint Timing's
+ *    first-contentful-paint), DOMContentLoaded, and, with the application, when it had taken over
+ *    (src/entry-client.tsx's mark "hydrated"; a click before then is an ordinary navigation),
+ *    and so how long after the first paint that was.
  *  - N clicks (default 30), alternating between the header's "Docs" on / and its "LedgerMath" on
  *    /docs/, each with the mouse, as Playwright gives it. For each: the time from the click event
  *    (its timeStamp) to the first change of the document's body, and to the next frame after it
@@ -24,7 +26,8 @@
  *    first paint, measured from the click on the same clock (performance.timeOrigin).
  *
  * --cpu N slows Chromium's CPU N times (DevTools' throttling), as a slower phone would be.
- * Each figure is given as min, median, 90th percentile and max over the clicks.
+ * --clicks 0 measures the first loads alone. Each figure is given as min, median, 90th
+ * percentile and max over the loads or the clicks.
  *
  * Firefox and WebKit are Playwright's (bunx playwright install firefox webkit).
  */
@@ -70,7 +73,7 @@ const stats = (all: number[]) => {
 	return `min ${f(sorted[0]!)}  median ${f(at(0.5))}  p90 ${f(at(0.9))}  max ${f(sorted[sorted.length - 1]!)} ms  (n=${values.length})`;
 };
 
-type FirstLoad = { bytes: Record<string, number>; fcp: number | null; dcl: number; load: number };
+type FirstLoad = { bytes: Record<string, number>; fcp: number | null; dcl: number; load: number; hydrated: number | null };
 
 async function firstLoad(browser: Browser, origin: string, cpu: number): Promise<FirstLoad> {
 	const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
@@ -88,6 +91,10 @@ async function firstLoad(browser: Browser, origin: string, cpu: number): Promise
 	});
 	await page.goto(`${origin}/`, { waitUntil: "load" });
 	await page.waitForLoadState("networkidle").catch(() => {});
+	// With the application (a module script), wait until it has taken over.
+	if (await page.evaluate(() => document.querySelector('script[type="module"]') !== null)) {
+		await page.waitForFunction(() => performance.getEntriesByName("hydrated").length > 0, null, { timeout: 10_000 }).catch(() => {});
+	}
 	const timing = await page.evaluate(async () => {
 		const fcp = await new Promise<number | null>((done) => {
 			const found = performance.getEntriesByName("first-contentful-paint")[0];
@@ -100,7 +107,8 @@ async function firstLoad(browser: Browser, origin: string, cpu: number): Promise
 			setTimeout(() => done(null), 3000);
 		});
 		const nav = performance.getEntriesByType("navigation")[0] as PerformanceNavigationTiming;
-		return { fcp, dcl: nav.domContentLoadedEventStart, load: nav.loadEventStart };
+		const hydrated = performance.getEntriesByName("hydrated")[0]?.startTime ?? null;
+		return { fcp, dcl: nav.domContentLoadedEventStart, load: nav.loadEventStart, hydrated };
 	});
 	const bytes: Record<string, number> = {};
 	for (const r of await Promise.all(responses)) bytes[r.type] = (bytes[r.type] ?? 0) + r.bytes;
@@ -198,20 +206,34 @@ if (import.meta.main) {
 	const count = Number(option(argv, "clicks") ?? 30);
 	const engines = (option(argv, "browsers") ?? "chromium,firefox,webkit").split(",");
 	const cpu = Number(option(argv, "cpu") ?? 1);
-	for (const target of argv) {
+	const loadCount = Number(option(argv, "loads") ?? 1);
+	const targets = argv.map((target) => {
 		const local = !/^https?:/.test(target);
 		const server = local ? serve(target) : null;
-		const origin = server ? server.origin : target.replace(/\/$/, "");
-		for (const name of engines) {
-			const engine = ENGINES[name];
-			if (!engine) throw new Error(`no browser ${name}: chromium, firefox or webkit`);
-			if (cpu > 1 && name !== "chromium") continue;
-			const browser = await engine.launch();
-			try {
-				const load = await firstLoad(browser, origin, cpu);
-				const measured = await clicks(browser, origin, count, cpu);
+		return { target, local, server, origin: server ? server.origin : target.replace(/\/$/, "") };
+	});
+	for (const name of engines) {
+		const engine = ENGINES[name];
+		if (!engine) throw new Error(`no browser ${name}: chromium, firefox or webkit`);
+		if (cpu > 1 && name !== "chromium") continue;
+		const browser = await engine.launch();
+		try {
+			// The first loads, taking turns between the targets.
+			const loads = targets.map(() => [] as FirstLoad[]);
+			for (let i = 0; i < loadCount; i++) for (const [t, { origin }] of targets.entries()) loads[t]!.push(await firstLoad(browser, origin, cpu));
+			for (const [t, { target, local, origin }] of targets.entries()) {
+				const these = loads[t]!;
+				const load = these[0]!;
 				console.log(`\n${target} in ${name}${cpu > 1 ? ` (CPU slowed ${cpu}x)` : ""}${local ? " (served uncompressed from the directory)" : ""}`);
-				console.log(`  first load of /: ${Object.entries(load.bytes).map(([k, v]) => `${k} ${v.toLocaleString("en")}`).join(", ")} bytes as sent; first paint ${load.fcp?.toFixed(1) ?? "n/a"} ms, DOMContentLoaded ${load.dcl.toFixed(1)} ms, load ${load.load.toFixed(1)} ms`);
+				console.log(`  first load of /: ${Object.entries(load.bytes).map(([k, v]) => `${k} ${v.toLocaleString("en")}`).join(", ")} bytes as sent`);
+				console.log(`    first paint:              ${stats(these.map((l) => l.fcp ?? Number.NaN))}`);
+				console.log(`    DOMContentLoaded:         ${stats(these.map((l) => l.dcl))}`);
+				if (these.some((l) => l.hydrated !== null)) {
+					console.log(`    application took over:    ${stats(these.map((l) => l.hydrated ?? Number.NaN))}`);
+					console.log(`    ... after the first paint: ${stats(these.map((l) => (l.hydrated ?? Number.NaN) - (l.fcp ?? Number.NaN)))}`);
+				}
+				if (count === 0) continue;
+				const measured = await clicks(browser, origin, count, cpu);
 				for (const kind of ["in-page", "new document"] as const) {
 					for (const to of ["/docs/", "/"]) {
 						const of = measured.filter((c) => c.kind === kind && c.to === to);
@@ -222,10 +244,10 @@ if (import.meta.main) {
 						console.log(`    click to ${kind === "in-page" ? "next frame:        " : "first paint:       "} ${stats(of.map((c) => c.toFrame))}`);
 					}
 				}
-			} finally {
-				await browser.close();
 			}
+		} finally {
+			await browser.close();
 		}
-		server?.stop();
 	}
+	for (const { server } of targets) server?.stop();
 }

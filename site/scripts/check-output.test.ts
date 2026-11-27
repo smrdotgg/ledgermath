@@ -103,7 +103,7 @@ describe("passes", () => {
 				{
 					"index.html": page(
 						"",
-						`${BODY}<a href="/notices.txt" target="_self">notices</a><a href="/notices.txt" download>notices</a><a href="#top" target="_self">top</a><a href="/#top" target="_self">top</a><a href="/docs/#intro">intro</a>`,
+						`${BODY}<a href="/notices.txt" target="_self">notices</a><a href="/notices.txt" download>notices</a><a href="/notices.txt" download="">notices</a><a href="/notices.txt" rel="noopener external">notices</a><a href="#top" target="_self">top</a><a href="/#top" target="_self">top</a><a href="/docs/#intro">intro</a>`,
 					),
 					"docs/index.html": page("", `<main><h1 id="intro">Docs</h1><a href="/docs/#intro" target="_self">intro</a><a href="/#top">top</a></main>`),
 					"notices.txt": "notices",
@@ -186,7 +186,8 @@ describe("fails", () => {
 		expect(
 			check(
 				{
-					"index.html": page("", `${BODY}<a href="/notices.txt">notices</a><a href="#top">top</a><a href="/#top">top</a><a href="/old.html">old</a>`),
+					// target="" is no target to the router, which reads the property; so is rel="noopener".
+					"index.html": page("", `${BODY}<a href="/notices.txt">notices</a><a href="#top" target="">top</a><a href="/#top" rel="noopener">top</a><a href="/old.html">old</a>`),
 					"docs/index.html": page("", `<main><h1 id="intro">Docs</h1><a href="/docs/#intro">intro</a><a href="#intro">intro</a></main>`),
 					"notices.txt": "notices",
 					"old.html": page(""),
