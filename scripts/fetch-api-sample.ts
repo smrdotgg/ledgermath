@@ -3,7 +3,7 @@
  * real files of the data API, fetched once and kept in the repository, so that a page of the
  * reference does not change every six hours with the live files.
  *
- *     bun scripts/fetch-api-sample.ts --series ID --out DIR [--base https://api.ledgermath.com]
+ *     bun scripts/fetch-api-sample.ts --series ID --dump-series ID2 --out DIR [--base https://api.ledgermath.com]
  *
  * One Series is followed through every kind of file, by the links the files give and the
  * templates the table of contents gives, never by an address built from the layout: the table
@@ -11,15 +11,20 @@
  * benchmark's list (benchmarks.list[].url), the Series' file (its row's url), its newest month
  * file (months[].url), the Run file of its newest point (evidence), that Run's stdout blob
  * (evidence.blob_url_template with the Run's stdout hash: one event a line), and the newest
- * price file (prices.newest.url). Each is written byte for byte as served, under DIR at the
- * path of its address below the base, and DIR/sample.json lists them: when they were taken,
- * from where, and each file's kind, path, address, size and sha256.
+ * price file (prices.newest.url). A second Series, ID2, gives one Run's environment dump: the
+ * Run file of its newest point (its Series' file is read, not kept), the index of that Run's
+ * before-dump (environment.before) and the dump's section memory, the box's own /proc/meminfo
+ * among it, which the start-here page's fleet example reads. Each file is written byte for byte
+ * as served, under DIR at the path of its address below the base, and DIR/sample.json lists
+ * them: when they were taken, from where, and each file's kind, path, address, size and sha256.
  *
  * The files must agree, being of one update of the API: the month file's size and sha256 are
  * the ones its Series file lists, the Run file's sha256 the one its point gives, the stdout
  * blob's the one its Run file names, the Series' row the same line in the benchmark's list as
  * in the list of every Series, and the table of contents' count of Series and newest Run those
- * of the list. Otherwise nothing is written, and it says to run again later (the API's own
+ * of the list; and for ID2, its newest point the newest Run its row gives, the Run file's
+ * sha256 the one that point gives, the index's the one the Run names and the section's the one
+ * the index names. Otherwise nothing is written, and it says to run again later (the API's own
  * rule for files of different updates).
  *
  * DIR must not exist or be empty: a sample is written whole, never mixed with an older one. To
@@ -34,8 +39,12 @@ import { dirname, join } from "node:path";
 export const SAMPLE_MANIFEST = "sample.json";
 const TIMEOUT_MS = 30_000;
 
-/** The kinds of file the sample holds, one each: the name of the schema each is checked against (events: each line of the blob). */
-export const SAMPLE_KINDS = ["index", "series-list", "benchmark", "series", "series-month", "prices", "run", "events"] as const;
+/**
+ * The kinds of file the sample holds, one each: the name of the schema each is checked against
+ * (events: each line of the blob; dump-run: the Run schema), but for a dump's index and its
+ * memory section, which have no schema.
+ */
+export const SAMPLE_KINDS = ["index", "series-list", "benchmark", "series", "series-month", "prices", "run", "events", "dump-run", "dump-index", "dump-memory"] as const;
 export type SampleKind = (typeof SAMPLE_KINDS)[number];
 
 export interface SampleFile {
@@ -70,8 +79,9 @@ function rowLine(bytes: Uint8Array, id: string): string | undefined {
 	return line?.trim().replace(/,$/, "");
 }
 
-/** Fetches the sample of Series ID from the API at BASE; throws, saying why, when the files do not agree. */
-export async function takeSample(base: string, id: string): Promise<{ manifest: SampleManifest; contents: Map<string, Uint8Array> }> {
+/** Fetches the sample of Series ID, with the dump of Series DUMP_ID's newest Run, from the API at BASE; throws, saying why, when the files do not agree. */
+export async function takeSample(base: string, id: string, dumpId: string): Promise<{ manifest: SampleManifest; contents: Map<string, Uint8Array> }> {
+	if (dumpId === id) throw new Error("the dump's Series must be another Series than the sample's: the sample holds one file at each address");
 	const files: SampleFile[] = [];
 	const contents = new Map<string, Uint8Array>();
 	const keep = async (kind: SampleKind, url: string): Promise<Uint8Array> => {
@@ -100,10 +110,27 @@ export async function takeSample(base: string, id: string): Promise<{ manifest: 
 	const point = points[points.length - 1];
 	const runBytes = await keep("run", point.evidence);
 	const run = parse(runBytes);
-	const stdoutBytes = await keep("events", String(index.evidence.blob_url_template).replace("{hex}", String(run.stdout).replace(/^sha256:/, "")));
+	const blobUrl = (hash: unknown): string => String(index.evidence.blob_url_template).replace("{hex}", String(hash).replace(/^sha256:/, ""));
+	const stdoutBytes = await keep("events", blobUrl(run.stdout));
 	await keep("prices", index.prices.newest.url);
 
+	const dumpRow = (list.series as any[]).find((candidate) => candidate.id === dumpId);
+	if (dumpRow === undefined) throw new Error(`no Series ${dumpId} in ${index.series.url}`);
+	const dumpSeries = parse(await get(dumpRow.url));
+	const dumpPoints = dumpSeries.derivations.series_v1.newest_points as any[];
+	const dumpPoint = dumpPoints[dumpPoints.length - 1];
+	const dumpRunBytes = await keep("dump-run", dumpPoint.evidence);
+	const dumpRun = parse(dumpRunBytes);
+	const dumpIndexBytes = await keep("dump-index", blobUrl(dumpRun.environment.before));
+	const dumpIndex = parse(dumpIndexBytes);
+	if (typeof dumpIndex.sections?.memory !== "string") throw new Error(`the dump ${dumpRun.environment.before} of the Run ${dumpPoint.evidence} has no section memory`);
+	const memoryBytes = await keep("dump-memory", blobUrl(dumpIndex.sections.memory));
+
 	const disagreements: string[] = [];
+	if (dumpPoint.started_at !== dumpRow.newest_run_started_at) disagreements.push(`the newest point of ${dumpRow.url} is not the newest Run its row in ${index.series.url} gives`);
+	if (sha256(dumpRunBytes) !== dumpPoint.sha256) disagreements.push(`the Run file ${dumpPoint.evidence} is not the sha256 its point gives`);
+	if (`sha256:${sha256(dumpIndexBytes)}` !== dumpRun.environment.before) disagreements.push("the dump's index is not the sha256 its Run file names");
+	if (`sha256:${sha256(memoryBytes)}` !== dumpIndex.sections.memory) disagreements.push("the dump's section memory is not the sha256 its index names");
 	if (monthBytes.length !== month.bytes || sha256(monthBytes) !== month.sha256) disagreements.push(`the month file ${month.url} is not the size and sha256 its Series file lists`);
 	if (sha256(runBytes) !== point.sha256) disagreements.push(`the Run file ${point.evidence} is not the sha256 its point gives`);
 	if (`sha256:${sha256(stdoutBytes)}` !== run.stdout) disagreements.push(`the stdout blob is not the sha256 its Run file names`);
@@ -124,10 +151,11 @@ function option(argv: readonly string[], name: string): string | undefined {
 if (import.meta.main) {
 	const argv = process.argv.slice(2);
 	const id = option(argv, "series");
+	const dumpId = option(argv, "dump-series");
 	const out = option(argv, "out");
 	const base = (option(argv, "base") ?? "https://api.ledgermath.com").replace(/\/+$/, "");
-	if (id === undefined || out === undefined) {
-		console.error("usage: bun scripts/fetch-api-sample.ts --series ID --out DIR [--base URL]");
+	if (id === undefined || dumpId === undefined || out === undefined) {
+		console.error("usage: bun scripts/fetch-api-sample.ts --series ID --dump-series ID2 --out DIR [--base URL]");
 		process.exit(2);
 	}
 	if (existsSync(out) && readdirSync(out).length > 0) {
@@ -135,7 +163,7 @@ if (import.meta.main) {
 		process.exit(1);
 	}
 	try {
-		const { manifest, contents } = await takeSample(base, id);
+		const { manifest, contents } = await takeSample(base, id, dumpId);
 		for (const [path, bytes] of contents) {
 			const file = join(out, ...path.split("/"));
 			mkdirSync(dirname(file), { recursive: true });

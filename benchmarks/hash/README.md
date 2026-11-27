@@ -32,9 +32,14 @@ on one instance type.
 ## What a figure does not show
 
 - Only a 64-byte input is implemented. The figure is not the time to hash a longer one.
-- Every repetition hashes the same 64 bytes, and no repetition uses the result of the one
-  before. The figure is the time per hash of hashes computed back to back, which the
-  processor may overlap, not a measurement of one hash on its own.
+- `bytes_per_second` for `sha256` is a rate of 64-byte messages, each hashed whole: two
+  blocks of SHA-256's work, the message's and its padding's, for every 64 bytes. It is not
+  a rate of hashing a long input.
+- Every repetition hashes the same 64 bytes, which the program fills in before measuring,
+  so the figure includes no cost of bringing new data to the processor, from memory or
+  from anywhere else. No repetition uses the result of the one before: the figure is the
+  time per hash of hashes computed back to back, which the processor may overlap, not a
+  measurement of one hash on its own.
 - `sha256` takes the SHA extensions where the processor has them and scalar code where it
   does not, so its code can differ between instance types; `path_taken` says which (see
   "Findings").
@@ -43,6 +48,10 @@ on one instance type.
 
 Each parameter set runs on every instance type in the schedule. Each parameter set and
 instance type is a Series of its own.
+
+The benchmark's Series and their figures are listed at
+[https://api.ledgermath.com/v1/benchmarks/hash.json](https://api.ledgermath.com/v1/benchmarks/hash.json),
+which says in `left_out` how many it leaves out.
 
 | Variable | Scheduled | Meaning |
 |---|---|---|
@@ -62,8 +71,9 @@ on a processor without it the program exits 1 and says so.
 
 ## Findings
 
-`sha256` has two paths and the processor decides which: of the types scheduled in step 4,
-`m5.large` has no SHA extensions and takes `scalar`; the others take `sha-ni`. A Series
+`sha256` has two paths and the processor decides which: of the five instance types in the
+schedule, `m5.large` has no SHA extensions and takes `scalar`; the others take `sha-ni`
+(each Series' newest Run on 2026-11-26 observed so). A Series
 of `sha256` therefore means the fastest SHA-256 this program has for that processor, and
 `path_taken` says which it was.
 

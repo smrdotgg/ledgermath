@@ -13,8 +13,9 @@ repetitions take successive blocks of a pool, by default 1,000,000 blocks (256,0
 bytes, 244 MiB), so that the packed input comes from memory rather than cache. Whether
 the pool exceeds the cache depends on the machine: some have an L3 of hundreds of MiB.
 The Run's dump records the machine's cache sizes (`lscpu` and `cache/index*/size` in
-`/sys`). It stands for the decode step of a compressed column or posting list, as
-napkin-math's `compressed_memory_read / bitpacker` (BitPacker8x at 8 bits) did.
+`/sys`). It stands for the decode step of a compressed column or posting list, as the
+`compressed_memory_read` benchmark of Simon Eskildsen's Napkin Math, the project LedgerMath
+began from, does with the Rust crate `bitpacking` (BitPacker8x at 8 bits).
 
 Each Run that Method `series` v1 counts gives one figure, the time of one repetition in
 nanoseconds (`time_per_repetition_ns`): the median, over the Run's counted samples, of a
@@ -46,6 +47,10 @@ instance type.
 
 The parameter set runs on every instance type in the schedule. Each instance type is a
 Series of its own.
+
+The benchmark's Series and their figures are listed at
+[https://api.ledgermath.com/v1/benchmarks/compressed_memory_read.json](https://api.ledgermath.com/v1/benchmarks/compressed_memory_read.json),
+which says in `left_out` how many it leaves out.
 
 | Variable | Scheduled | Meaning |
 |---|---|---|

@@ -35,11 +35,18 @@ on one instance type.
   not the kernel's work alone.
 - The two threads are not pinned, so on a 2-vCPU box they share
   both vCPUs with everything else.
+- A Run's figure is the median of its samples' mean time per round trip, and a Series gives
+  the 5th, 50th and 95th percentiles of those figures across Runs. The published figures hold
+  no percentile of single round trips, a 99th or any other.
 
 ## Parameters
 
 The parameter set runs on every instance type in the schedule. Each instance type is a
 Series of its own.
+
+The benchmark's Series and their figures are listed at
+[https://api.ledgermath.com/v1/benchmarks/tcp_echo.json](https://api.ledgermath.com/v1/benchmarks/tcp_echo.json),
+which says in `left_out` how many it leaves out.
 
 | Variable | Scheduled | Meaning |
 |---|---|---|

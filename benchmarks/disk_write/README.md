@@ -52,6 +52,12 @@ Each parameter set is a Series of its own on each instance type it runs on: the 
 volume's sets on every instance type in the schedule, the instance store's on
 `i4i.2xlarge` only.
 
+The benchmark's Series and their figures are listed at
+[https://api.ledgermath.com/v1/benchmarks/disk_write.json](https://api.ledgermath.com/v1/benchmarks/disk_write.json),
+which says in `left_out` how many it leaves out. The figures in the table below are from Runs
+of 2026-11-11, examined when the benchmark was made. They are not the current figures, and
+can lie outside them: the API's figures are the current ones.
+
 | Parameter set | What the reader gets | `i4i.2xlarge`, 2026-11-11 | `m5.large`, 2026-11-11 |
 |---|---|---|---|
 | `disk` `root_volume`, `dir` `/var/tmp/ledgermath/disk`, `request_bytes` 8192, `sync` `none`, `file_bytes` 256 MiB | A buffered 8 KiB write, with nothing asked to be made durable | 1.47 µs a write; 60 device writes while measuring, for 12.6 million writes | 2.62 µs; 49 device writes for 6.3 million |
@@ -95,8 +101,6 @@ device, here the scratch file (`o_direct` is false: the measured writes are buff
   runner, journald) in the same counters.
 
 ## How it works
-
-The design is section 2 of the step-4 brief's study (#42) and the decisions on it.
 
 ### The scratch file, and one repetition
 
@@ -148,8 +152,10 @@ exits 1 at once.
 
 ```bash
 make -C benchmarks/disk_write                      # build/static/disk_write
-LM_PARAM_DIR=/mnt/local/ledgermath-scratch/disk LM_PARAM_SYNC=fdatasync ./benchmarks/disk_write/build/static/disk_write --quick
+mkdir -p /var/tmp/ledgermath-test
+LM_PARAM_DIR=/var/tmp/ledgermath-test LM_PARAM_SYNC=fdatasync ./benchmarks/disk_write/build/static/disk_write --quick
 ```
 
-It needs no Fixture, only a directory to write in. An execution takes 12 to 30 seconds,
+It needs no Fixture, only a directory to write in; the one above is an example, so choose
+one on the disk you mean to write to. An execution takes 12 to 30 seconds,
 of which up to 8 on the root volume go to writing the 1 GiB scratch file in full.

@@ -16,7 +16,7 @@ a Run took it, gives the distribution of every read the device served in between
 
 One `pread` of `request_bytes` at the next offset of the permutation, with `O_DIRECT`, then
 the first word of the block is added to a running sum. The permutation is a Fisher-Yates
-shuffle of the span's block numbers with a fixed seed (July's), so every Run of a parameter
+shuffle of the span's block numbers with a fixed seed, so every Run of a parameter
 set reads blocks in the same order, each block at most once until the permutation is used
 up: about 200,000 reads per Run on the instance store and 25,000 on the root volume, of
 4,194,304 and 131,072 blocks. `work` says how many reads were made and whether the permutation wrapped.
@@ -61,6 +61,12 @@ disk, on one instance type.
 Each parameter set is a Series of its own on each instance type it runs on: the root
 volume's set on every instance type in the schedule, the instance store's on
 `i4i.2xlarge` only.
+
+The benchmark's Series and their figures are listed at
+[https://api.ledgermath.com/v1/benchmarks/disk_read_random.json](https://api.ledgermath.com/v1/benchmarks/disk_read_random.json),
+which says in `left_out` how many it leaves out. The figures in the table below are from Runs
+of 2026-11-11, examined when the benchmark was made. They are not the current figures, and
+can lie outside them: the API's figures are the current ones.
 
 | Parameter set | What the reader gets | `i4i.2xlarge`, 2026-11-11 | `m5.large`, 2026-11-11 |
 |---|---|---|---|
@@ -133,8 +139,6 @@ second).
   `disk_read_sequential` reads through the page cache instead.
 
 ## How it works
-
-The design is section 2 of the step-4 brief's study (#42) and the decisions on it.
 
 ### Events of its own
 
@@ -219,9 +223,10 @@ like the bucket.
 ```bash
 make -C benchmarks/disk_read_random                # build/static/disk_read_random
 cc -O2 -I benchmarks/harness/c -o /tmp/fixture runner/fixture.c
-mkdir -p /mnt/local/ledgermath-scratch/disk && /tmp/fixture /mnt/local/ledgermath-scratch/disk/ledgermath-fixture-v1 67108864
-LM_PARAM_DIR=/mnt/local/ledgermath-scratch/disk ./benchmarks/disk_read_random/build/static/disk_read_random --quick
+mkdir -p /var/tmp/ledgermath-test && /tmp/fixture /var/tmp/ledgermath-test/ledgermath-fixture-v1 67108864
+LM_PARAM_DIR=/var/tmp/ledgermath-test ./benchmarks/disk_read_random/build/static/disk_read_random --quick
 ```
 
-On the box the Fixture is made by `runner/provision.py` at boot; the binary never makes or
-repairs one. An execution takes 15 to 25 seconds.
+The directory is an example: choose one on the disk you mean to read. On the box the Fixture is made by
+`runner/provision.py` at boot; the binary never makes or repairs one. An execution takes 15
+to 25 seconds.

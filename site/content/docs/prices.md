@@ -13,6 +13,7 @@ A price file is a day's copy of AWS's public On-Demand prices selected by Ledger
 
 - Each is served at `https://api.ledgermath.com/v1/prices/<yyyy-mm-dd>.json`, byte for byte as LedgerMath keeps it.
 - The table of contents, `https://api.ledgermath.com/v1/index.json`, lists every file held under `prices.files`, oldest first, and the newest under `prices.newest`. Each entry gives the file's `date`, its `path` (`prices/<yyyy>/<mm>/<dd>/aws.json`, the name a citation gives it) and its `url`.
+- A citation's path is a name, not an address: the API does not serve it, and answers 404 there. The file it names is at the address of the same date: `prices/<yyyy>/<mm>/<dd>/aws.json` is at `https://api.ledgermath.com/v1/prices/<yyyy>-<mm>-<dd>.json`, the `url` the table of contents gives beside that `path`. For example, `prices/2026/11/26/aws.json` is at `https://api.ledgermath.com/v1/prices/2026-11-26.json`.
 - The first file is that of 2026-11-11.
 - Each file follows its own schema, `ledgermath.prices/1`, at `https://api.ledgermath.com/v1/schemas/prices.schema.json`. Its fields are described in the [price file reference](/docs/api/prices).
 
@@ -67,7 +68,7 @@ Rule set version 1 selects these, from three of AWS's offers. Each file describe
 - The S3 Tier1 request price is `0.0000050000` USD per `Requests`, which the description gives as $0.005 per 1,000 requests.
 - The gp3 throughput price is `40.9600000000` USD per `GiBps-mo`, while its description says $0.04 per MiBps-month (40.96 / 1024 = 0.04). Both are kept as AWS wrote them.
 
-**How many bytes AWS's "GB" is.** The price files give `GB`, `GB-Mo` and `GiBps-mo` as AWS writes them. Nothing in a price file, and nothing LedgerMath publishes, says whether AWS's GB is 10^9 or 2^30 bytes; AWS's own documentation is the place to look. What the records show is how AWS's words relate its TB to its GB in a tier: the first transfer tier is described as "first 10 TB / month" and its `endRange` is `10240`.
+**How many bytes AWS's "GB" is.** The price files give `GB`, `GB-Mo` and `GiBps-mo` as AWS writes them. Nothing in a price file, and nothing LedgerMath publishes, says whether AWS's GB is 10^9 or 2^30 bytes; AWS's own documentation is the place to look. What the records show is how AWS's words relate its TB to its GB in a tier: the first transfer tier is described as "first 10 TB / month" and its `endRange` is `10240`. A size you hold in another unit, such as GiB, is best stated in AWS's unit, as so many `GB`, with the conversion marked as your assumption (for example, "GB read as 10^9 bytes").
 
 ## Tiers
 
@@ -81,9 +82,15 @@ In the file of 2026-11-26, each price with tiers is one product whose single On-
 
 In that file, AWS's descriptions give the tiers per month, and the first transfer tier as "beyond the global free tier". LedgerMath applies no tier and states no rule for how AWS applies them; an estimate that uses several tiers cites each tier's price and bounds.
 
+**The global free tier and the Region's tiers.** What the records show, and no more:
+
+- The free tier's price dimension has an `appliesTo`, a list of SKUs. In the file of 2026-11-26 it lists 143, and one of them is in the file: `36H7S3NU9B7S3UT5`, the Region's product for data sent out to the internet. That is the file's own evidence that the free tier covers that transfer. The other SKUs are records no rule selects, and the file does not say what they are.
+- What suggests an order is AWS's wording: the free tier is "$0 for 100GB of data transfer out to the internet, aggregated globally, each month", and the Region's first tier "first 10 TB / month data transfer out beyond the global free tier". The Region's tiers still begin at a `beginRange` of `0`.
+- Neither record says how AWS combines them. That is AWS's billing, which the file does not hold: an estimate that combines them says how, as an assumption.
+
 ## Finding a price
 
-Find a price by its rule's name, not by searching AWS's words. In `sources[]`, the selection whose `rule` names it lists its SKUs (`skus`); the product is `products[<sku>]`, and its prices are under `terms.OnDemand[<sku>]`.
+Find a price by its rule's name, not by searching AWS's words. A file has one entry in `sources[]` for each AWS offer it read. In each, `sources[].selections[]` holds the rules that selected from that offer, each with its `rule`, what it selects in words (`selects`) and the SKUs it selected (`skus`). In the same source as the selection, the product is `sources[].products[<sku>]`, and its prices are under `sources[].terms.OnDemand[<sku>]`: each term at `<sku>.<offerTermCode>`, and in it one price dimension per rate code, under `priceDimensions`.
 
 A search of the words in a file finds more than it means to. "Storage", for example, is in:
 
@@ -102,8 +109,12 @@ prices/2026/11/11/aws.json, SKU 8D49XP354UEYTHGM, rate code 8D49XP354UEYTHGM.JRT
 ```
 
 - The rate code is `<sku>.<offerTermCode>.<code>`. Each term is filed under `<sku>.<offerTermCode>`, and each price dimension under its rate code, so within the source whose `products` hold the SKU, the citation finds exactly one price dimension: `terms.OnDemand[<sku>][<sku>.<offerTermCode>].priceDimensions[<rate code>]`, with its `unit`, `pricePerUnit`, and, where AWS gives them, `beginRange`, `endRange` and `description`.
-- The path holds the file's date, which says which day's price was used.
+- The path holds the file's date, which says which day's price was used. It is a name, not an address: the file is at `https://api.ledgermath.com/v1/prices/<yyyy>-<mm>-<dd>.json` ("Where the files are").
 - A tier is cited by its own rate code; its bounds by the same price dimension's `beginRange` and `endRange`.
+
+## Whether a price changed
+
+Compare the same rate code's `pricePerUnit` in the two days' files. Each term also carries AWS's `effectiveDate`, copied as AWS gives it; LedgerMath does not interpret it, and a new `effectiveDate` does not show a new price. Between the files of 2026-11-11 and 2026-11-26, the `effectiveDate` of the three S3 terms moved from `2026-10-01T00:00:00Z` to `2026-11-01T00:00:00Z`, and every price in both files was the same.
 
 ## What is not held
 
@@ -115,5 +126,7 @@ A record no rule of the file's rule set selects is not in the file, whatever AWS
 - No other S3 storage class, no other EBS volume type, no EBS snapshot.
 - No other operating system, tenancy or licence for an instance, and no instance type LedgerMath does not measure.
 - No other Region's prices.
+- No rule of how AWS bills: how a part of an hour is billed (by the second, with a minimum, or rounded) is not in the file. An instance's price is per `Hrs`, and its description gives it per "Instance Hour".
+- No transfer record of S3's own. The file's record for data sent out to the internet is AWS Data Transfer's (offer `AWSDataTransfer`): its attributes give data sent from the Region (`fromRegionCode` `us-east-2`) to `toLocation` "External", and name no service. Whether a download from S3 is billed under it, the file does not say.
 
 A price being held does not mean LedgerMath measures what it prices. The rules keep, for example, the price of S3's PUT, COPY, POST and LIST requests, while the one benchmark that measures S3, `http_get`, makes GET requests only.

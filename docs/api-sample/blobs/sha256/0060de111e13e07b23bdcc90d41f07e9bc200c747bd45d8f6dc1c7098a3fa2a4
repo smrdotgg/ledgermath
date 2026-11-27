@@ -1,0 +1,26 @@
+{
+  "schema": "ledgermath.dump/1",
+  "taken_at": "2026-11-26T16:13:48.040219323Z",
+  "sections": {
+    "cpuid": "sha256:91b36341043a843443cb74277c0301a46edddd22986e29bb7cc5ddd99db16269",
+    "cpuinfo": "sha256:422d2b7afefe132a52eb80e236c96bf2c3dfbf7c4fbbaeb056b7dcc74ab52c18",
+    "lscpu": "sha256:e7e3f13d1d11a46c1f2e4dbf9f88b3eef8a31fbdec1d60bea18372bbcca18834",
+    "sys_cpu": "sha256:a8627a0a140daf1f9628e4c45d1156a7a9e1d6bf77ae38fcd0a322f5933295be",
+    "kernel": "sha256:738f1722f3281df7a307f6e574e252a64136326116e349f04c47bc4b667ce403",
+    "memory": "sha256:5583c937aba5da5f163b6281cf5f7aed1e6ff90e399fe3c86fe4f16bf7811f6a",
+    "devices": "sha256:98dd617a222c42bd11913281b662f1e0037539d8f281be1e5781dfc070820de8",
+    "block_stat": "sha256:0c987650ae8ed6b1defb43714d3ed1ed94dc0d9fbe3764ceb16193bd6d413b35",
+    "nvme_stats": "sha256:1e4af480ce2d608c811ec4e34daae5c9a181a9a64665a30df7579daa456c1c50",
+    "network": "sha256:0e63a8f0aaf4c6d3e69ba36ab90f6485aca6a4aa60cf269155c4b1fdf2be9b83",
+    "net_counters": "sha256:c1505f5a960cf05a25a9065972131b1658fd986e0c6a259d2d571a21ed092629",
+    "process": "sha256:38919af477169fd95ba88837f556da6b6d183e174803cce88639140572748876",
+    "packages": "sha256:2c84feee6291df01de33c1e9c25e4f2178ae31254056b6ebb4507a83139d09d9",
+    "provider": "sha256:45373a6213b7dffdd7731bf3dfac53a7127caaa3f1f60051fb8b4ea85e562ef2",
+    "ec2_instance_type": "sha256:eb147f6a1249acfb708f3f37f3a5cd519c818fe0190156f94fe2074b5ded8538",
+    "ec2_volumes": "sha256:fc4b18c5301814588d9c8956945bc77aed1dd5d9799a2aa4e905d7010a44a3b2",
+    "ec2_instance": "sha256:70aefa86251b3864e0a7bafb40e1ebfc63ff096e2b2211d565f8ae04ff8ccbb5",
+    "ec2_route_tables": "sha256:065c2cf0e7533ba1bbe7806e20caebbf62d4000f24716ffcb57d642f282b48ac",
+    "ec2_vpc_endpoints": "sha256:18207c5fc58e13a17c432947df12126f97ba2a0992506f0f609e98fb7db45e40",
+    "provision": "sha256:5587d665d2397f1c6801aadb401c451cd162ac0a1b5822b02bfcc20a00aa3236"
+  }
+}

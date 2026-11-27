@@ -8,13 +8,16 @@
  *
  * - Its inputs are a table, | Input | Value | From |, each row from the question, an assumption, or
  *   the fixed sample of the API kept in docs/api-sample/: a Series' figure (`Series <id>`, the
- *   Method's key, the figure's place, its count and its moment) from the list of every Series, or a
- *   price (the price file's path, the SKU, the rate code and the member) from the price file. A
- *   value is a number and its unit as written; a cited value must be the sample's, unit and all.
+ *   Method's key, the figure's place, its count and its moment) from the list of every Series, a
+ *   price (the price file's path, the SKU, the rate code and the member) from the price file, or a
+ *   line of a Run's environment dump (`Run <id>` of `Series <id>`, the dump, the section, the entry
+ *   and the field) from the Run file, its dump's index and the section the sample holds. A value is
+ *   a number and its unit as written; a cited value must be the sample's, unit and all.
  * - Its arithmetic is its one fenced block, one operation per line, "label: expression = result
- *   unit", the result optionally followed by "→ N (rounded up)". Every operand is a number with its
- *   unit, held by an input or a line above; units are carried through, so a result's unit must be
- *   the one its operands give.
+ *   unit", the result optionally followed by "→ N (rounded up)": one ×, ÷, + or −, or a total of
+ *   terms added, or one max(…) of numbers. Every operand is a number with its unit, held by an
+ *   input or a line above; units are carried through, so a result's unit must be the one its
+ *   operands give.
  * - Its answer states each result as a list item "- <label>: <result> <unit>", the label naming
  *   the line that works it out. Anywhere else in its words, a number is an input, as written or
  *   rounded, with the input's unit after it.
@@ -62,6 +65,26 @@ function priceFile(path: string): { url: string; json: Json } {
 	if (entry === undefined) throw new Error(`the sample does not hold ${listed.url}`);
 	return { url: entry.url, json: JSON.parse(readFileSync(join(SAMPLE, entry.path), "utf8")) };
 }
+
+/** The sample's Run file of the Run ID, of either kind of Run file it holds. */
+function sampleRun(id: string): { url: string; json: Json } | undefined {
+	for (const entry of MANIFEST.files) {
+		if (entry.kind !== "run" && entry.kind !== "dump-run") continue;
+		const json = JSON.parse(readFileSync(join(SAMPLE, entry.path), "utf8"));
+		if (json.id === id) return { url: entry.url, json };
+	}
+	return undefined;
+}
+
+/** The sample's blob of a hash, sha256:<hex>, as text. */
+function sampleBlob(hash: unknown): { url: string; text: string } | undefined {
+	const entry = MANIFEST.files.find((file) => file.path === `blobs/sha256/${String(hash).replace(/^sha256:/, "")}`);
+	return entry === undefined ? undefined : { url: entry.url, text: readFileSync(join(SAMPLE, entry.path), "utf8") };
+}
+
+/** A Series' key as one text, from a row of the list or from a Run file: whether a Run is of a Series. */
+const keyText = (key: { benchmark: string; params: Record<string, unknown>; build: string; instance_type: string; availability_zone_id: string }): string =>
+	JSON.stringify([key.benchmark, Object.entries(key.params).sort(([a], [b]) => (a < b ? -1 : 1)), key.build, key.instance_type, key.availability_zone_id]);
 
 /** A member of a JSON value by its dotted place, such as derivations.series_v1.percentiles.bytes_per_second.p50. */
 function at(value: Json, place: string): Json {
@@ -301,6 +324,29 @@ interface Checked {
 /** One row's citation, found in the sample: a list of what does not agree with it. */
 function checkRow(row: Row, read: Set<string>, cited: Json[], counts: Quantity[]): { problems: string[]; tier: boolean } {
 	const problems: string[] = [];
+	const dump = /^Run `([0-9a-f-]{36})` of Series `([0-9a-f]{12})`, `(environment\.(?:before|after))`, section `([a-z0-9_]+)`, `([^`]+)`, `([^`]+)`$/.exec(row.from);
+	if (dump !== null) {
+		const [, id, seriesId, which, section, entry, field] = dump as unknown as [string, string, string, string, string, string, string];
+		const run = sampleRun(id);
+		if (run === undefined) return { problems: [`${row.input}: the sample holds no Run file of ${id}`], tier: false };
+		read.add(run.url);
+		const found = (SERIES_LIST.json.series as Json[]).find((one) => one.id === seriesId);
+		if (found === undefined) return { problems: [`${row.input}: no Series ${seriesId} in ${SERIES_LIST.url}`], tier: false };
+		if (!cited.includes(found)) cited.push(found);
+		const fromRun = { benchmark: run.json.benchmark, params: run.json.params, build: run.json.binary.build, instance_type: run.json.provider.instance_type, availability_zone_id: run.json.provider.availability_zone_id };
+		if (keyText(fromRun) !== keyText(found)) problems.push(`${row.input}: the Run ${id} is not of Series ${seriesId}`);
+		const index = sampleBlob(at(run.json, which));
+		if (index === undefined) return { problems: [...problems, `${row.input}: the sample holds no dump ${at(run.json, which)}, the Run's ${which}`], tier: false };
+		read.add(index.url);
+		const blob = sampleBlob(JSON.parse(index.text).sections?.[section]);
+		if (blob === undefined) return { problems: [...problems, `${row.input}: the sample holds no section ${section} of that dump`], tier: false };
+		read.add(blob.url);
+		const text = JSON.parse(blob.text)[entry];
+		const line = typeof text === "string" ? text.split("\n").find((one) => one.startsWith(`${field}:`)) : undefined;
+		const expected = line?.slice(field.length + 1).trim();
+		if (row.value !== expected) problems.push(`${row.input}: the dump says ${expected}, the page says ${row.value}`);
+		return { problems, tier: false };
+	}
 	const codes = [...row.from.matchAll(/`([^`]+)`/g)].map((match) => match[1] as string);
 	const series = /^Series `([0-9a-f]{12})`/.exec(row.from)?.[1];
 	const pricePath = codes.find((code) => /^prices\/\d{4}\/\d{2}\/\d{2}\/aws\.json$/.test(code));
@@ -390,6 +436,12 @@ function checkExample(example: Example): Checked {
 		let computed: { value: number; unit: Unit };
 		try {
 			const tokens = tokenize(line.slice(label + 2, equals));
+			// One operation a line: one ×, ÷, + or −; a total, every operator a +; or the whole line one max(…) of numbers alone. A call is an operation.
+			const operators = tokens.flatMap((token) => (token.kind === "op" && "+−×÷".includes(token.op) ? [token.op] : []));
+			const calls = tokens.filter((token) => token.kind === "op" && token.op === "max").length;
+			const wholeCall = tokens[0]?.kind === "op" && tokens[0].op === "max";
+			const one = calls === 0 ? operators.length <= 1 || operators.every((op) => op === "+") : calls === 1 && wholeCall && operators.length === 0;
+			if (!one) problems.push(`more than one operation: ${line}`);
 			for (const token of tokens) {
 				if (token.kind === "number" && !held.some((one) => same(one.value, token.value) && one.key === keyOf(token.unit))) {
 					problems.push(`${token.text} ${keyOf(token.unit) || "(no unit)"} is from nowhere above: ${line}`);
@@ -510,14 +562,20 @@ describe("the worked examples of the start-here page", () => {
 			["a count", fleet, "count 63", "count 64", /the count behind it is 63/],
 			["a moment", fleet, "as of `2026-11-26T16:13:49.030665839Z`", "as of `2026-11-26T16:13:49Z`", /the moment is/],
 			["a rounding up", fleet, "= 68.73 → 69", "= 68.73 → 68", /is not rounded up to 68/],
-			["a result", fleet, "= 198.56 USD per Hrs", "= 198.57 USD per Hrs", /works out to/],
+			["a result", fleet, "= 205.36 USD per Hrs", "= 205.37 USD per Hrs", /works out to/],
 			["AWS's words", fleet, "`attributes.memory`", "`attributes.vcpu`", /AWS's words are "32"/],
+			["a line of a dump", fleet, "64776680 kB", "64776681 kB", /the dump says 64776680 kB, the page says 64776681 kB/],
+			["a dump's field", fleet, "`MemTotal`", "`MemAvailable`", /the dump says 63751952 kB/],
+			["a dump's Run of another Series", fleet, "of Series `a655ffb3e7dd`, `environment", "of Series `cdd7309941eb`, `environment", /is not of Series cdd7309941eb/],
 			["a price", tiered, "0.0850000000 USD per GB", "0.0800000000 USD per GB", /the price file says 0\.0850000000 USD per GB/],
 			["a tier's bounds", tiered, "10240 to 51200 GB", "10240 to 51300 GB", /the price file says 10240 to 51200 GB/],
-			["an operand", tiered, "(153600 GB − 51200 GB) × 0.07", "(153600 GB − 51200 GB) × 0.071", /0\.071 .* is from nowhere above/],
+			["an operand", tiered, "102400 GB × 0.07", "102400 GB × 0.071", /0\.071 .* is from nowhere above/],
+			["two operations on one line", tiered, "599846300 GB × 0.05 USD per GB = 29992315", "(599999900 GB − 153600 GB) × 0.05 USD per GB = 29992315", /^more than one operation: Tier 4:/],
+			["a call nested in a call", fleet, "Boxes: max(69, 151)", "Boxes: max(69, max(75, 151))", /^more than one operation: Boxes: max\(69, max/],
+			["a call inside an operation", fleet, "Boxes: max(69, 151)", "Boxes: 1 × max(69, 151)", /^more than one operation: Boxes: 1 × max/],
 			["a source", tiered, "the question", "a guess", /is not the question, an assumption or a citation/],
 			// Item 12: an answer's result is held to its own line, not to any number the example holds.
-			["an answer's result swapped for another the example holds", fleet, "- Boxes: 146", "- Boxes: 75", /^Boxes is 146, the answer says "75"/],
+			["an answer's result swapped for another the example holds", fleet, "- Boxes: 151", "- Boxes: 75", /^Boxes is 151, the answer says "75"/],
 			["an answer's total swapped for the grand total", tiered, "- Transfer cost: 30003886.2 USD.", "- Transfer cost: 30003898.2 USD.", /^Transfer cost is 30003886\.2 USD, the answer says "30003898\.2 USD"/],
 			["a result stated outside its item", fleet, "so few boxes cannot hold", "69 boxes cannot hold", /^"69 boxes" is no input of the example \(a result is stated only in the item that names its line\)/],
 			// Item 13: units, on every row and through the arithmetic.
@@ -566,18 +624,27 @@ describe("the start-here page", () => {
 		});
 	});
 
-	test("links only to documentation pages that exist and to the API", () => {
+	test("links only to documentation pages that exist, to headings of its own, to the API and to files of the repository", () => {
 		const targets = prose.flatMap((line) => [...withoutCode(line).matchAll(/\[[^\]\n]*\]\(([^()\s]+)\)/g)].map((match) => match[1] as string));
 		expect(targets.length).toBeGreaterThan(0);
+		// GitHub's anchor of a heading: lower case, no punctuation but hyphens, a hyphen for each space.
+		const anchors = prose.filter((line) => /^#{1,6} /.test(line)).map((line) => line.replace(/^#+ /, "").replaceAll("`", "").toLowerCase().replace(/[^\w\- ]/g, "").replace(/ /g, "-"));
+		// The repository's files on GitHub, on main, as the site's build allows a link to them (site/src/pages.text.ts, REPOSITORY_FILES).
+		const repository = ["https://github.com/smrdotgg/ledgermath/blob/main/", "https://github.com/smrdotgg/ledgermath/tree/main/"];
 		const problems: string[] = [];
 		for (const target of targets) {
-			if (target.startsWith("/")) {
+			const file = repository.find((prefix) => target.startsWith(prefix));
+			if (target.startsWith("#")) {
+				if (!anchors.includes(target.slice(1))) problems.push(`${target} is no heading of the page`);
+			} else if (target.startsWith("/")) {
 				if (!isDocsAddress(target)) problems.push(`${target} is no documentation page's address`);
 				const benchmark = DOCS_BENCHMARK_ADDRESS.test(target) ? target.slice("/docs/benchmarks/".length) : undefined;
 				if (benchmark !== undefined && !existsSync(join(ROOT, "benchmarks", benchmark, "README.md"))) problems.push(`${target}: there is no benchmark ${benchmark}`);
 				if (target === "/docs/") problems.push("the page links to itself");
+			} else if (file !== undefined) {
+				if (!existsSync(join(ROOT, target.slice(file.length)))) problems.push(`${target}: the repository has no such file or directory`);
 			} else if (!target.startsWith("https://api.ledgermath.com/")) {
-				problems.push(`${target} is neither a documentation page nor the API`);
+				problems.push(`${target} is neither a documentation page, a heading of the page, the API nor a file of the repository`);
 			}
 		}
 		expect(problems).toEqual([]);

@@ -118,6 +118,17 @@ describe("each benchmark's README, as its page", () => {
 			expect(prose(text).filter((line) => line.startsWith("# "))).toEqual([`# ${name}`]);
 		});
 
+		test(`${name}: links its list of Series under "Parameters", where a reader finds its figures`, () => {
+			const lines = prose(text);
+			const start = lines.indexOf("## Parameters");
+			const end = lines.findIndex((line, i) => i > start && line.startsWith("## "));
+			expect(lines.slice(start, end).join("\n")).toContain(`](https://api.ledgermath.com/v1/benchmarks/${name}.json)`);
+		});
+
+		test(`${name}: names no directory of one machine of LedgerMath's own`, () => {
+			expect(text).not.toContain("/mnt/local/");
+		});
+
 		test(`${name}: holds no HTML but <details> and <summary>, outside code`, () => {
 			const outsideCode = prose(text)
 				.map((line) => line.replace(/`[^`]*`/g, ""))

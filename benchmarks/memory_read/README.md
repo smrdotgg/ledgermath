@@ -49,6 +49,10 @@ read loop, on one thread or on all allowed CPUs, on one instance type.
 Each parameter set runs on every instance type in the schedule, in both builds, `static`
 and `dynamic`. Each parameter set, build and instance type is a Series of its own.
 
+The benchmark's Series and their figures are listed at
+[https://api.ledgermath.com/v1/benchmarks/memory_read.json](https://api.ledgermath.com/v1/benchmarks/memory_read.json),
+which says in `left_out` how many it leaves out.
+
 | Variable | Scheduled | Meaning |
 |---|---|---|
 | `LM_PARAM_SIZE_BYTES` | `1073741824` | Bytes read per repetition; a positive multiple of 8 |

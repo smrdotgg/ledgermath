@@ -61,11 +61,17 @@ Each parameter set is a Series of its own on each instance type it runs on: the 
 volume's sets on every instance type in the schedule, the instance store's on
 `i4i.2xlarge` only.
 
+The benchmark's Series and their figures are listed at
+[https://api.ledgermath.com/v1/benchmarks/disk_read_io_uring.json](https://api.ledgermath.com/v1/benchmarks/disk_read_io_uring.json),
+which says in `left_out` how many it leaves out. The figures in the table below are from Runs
+of 2026-11-11, examined when the benchmark was made. They are not the current figures, and
+can lie outside them: the API's figures are the current ones.
+
 | Parameter set (all `queue_depth` 64) | What the counted samples sat on | `i4i.2xlarge`, 2026-11-11 | `m5.large`, 2026-11-11 |
 |---|---|---|---|
 | root volume, `sequential`, 32 KiB, span 1 GiB | The root gp3 volume's throughput limit, as provisioned (125 MiB/s) | 125.0 MiB/s (249.9 µs a completion); `ebs_volume_performance_exceeded_tp` +23.4 s | 125.2 MiB/s |
 | root volume, `random`, 4 KiB, span 1 GiB | Its IOPS limit, as provisioned (3000) | 3000 IOPS (333.3 µs); `ebs_volume_performance_exceeded_iops` +15.3 s | 3000 IOPS |
-| instance store, `sequential`, 32 KiB, span 32 GiB; `i4i.2xlarge` only | The instance store's sustained throughput limit | 1356.3 MiB/s (23.04 µs), 0.01% between samples; the instance-store throughput limit was exceeded for 29.8 s | |
+| instance store, `sequential`, 32 KiB, span 32 GiB; `i4i.2xlarge` only | The instance store's sustained throughput limit | 1356.3 MiB/s (1.42 GB/s; 23.04 µs), 0.01% between samples; the instance-store throughput limit was exceeded for 29.8 s | |
 | instance store, `random`, 4 KiB, span 32 GiB; `i4i.2xlarge` only | Its sustained IOPS limit; AWS gives 200,000 random 4 KiB read IOPS for the type | 199,996 IOPS (5.0001 µs), 0.00%; the IOPS limit was exceeded for 22.2 s | |
 
 The root volume's sets have `"disk": "root_volume", "dir": "/var/tmp/ledgermath/disk"`,
@@ -112,8 +118,6 @@ before measuring and kept submitted), `span_bytes` and `span_blocks`, `bytes_per
 
 ## How it works
 
-The design is section 2 of the step-4 brief's study (#42) and the decisions on it.
-
 ### One repetition, and the ring
 
 The ring is made with raw `io_uring_setup` and `io_uring_enter` system calls and no setup
@@ -127,9 +131,9 @@ Before measuring, `queue_depth` reads are submitted. One repetition takes one co
 request, adds the block's first word to a running sum, and prepares a read in its place,
 which the next `io_uring_enter` submits. So the binary has `queue_depth` reads submitted,
 or `queue_depth - 1` between reaping one and submitting its replacement, across every
-sample and every sample edge, unlike July's batches, whose submissions drained to zero at
-the end of each. That is the count of reads submitted and not reaped, not of reads in the
-device (see above). After measuring, every read still submitted is reaped. One thread is enough: at 200,000 IOPS on the `i4i.2xlarge` the process used 29% of
+sample and every sample edge: the reads in flight never drain between samples, as they
+would if each sample submitted a batch and waited for all of it. That is the count of reads
+submitted and not reaped, not of reads in the device (see above). After measuring, every read still submitted is reaped. One thread is enough: at 200,000 IOPS on the `i4i.2xlarge` the process used 29% of
 a CPU (0.8 s in user space and 8.4 s in the kernel over 31 s), and the device's own counter
 showed its IOPS limit binding.
 
@@ -162,9 +166,9 @@ such as Docker's default) exits 2, saying so.
 
 ```bash
 make -C benchmarks/disk_read_io_uring              # build/static/disk_read_io_uring
-LM_PARAM_DIR=/mnt/local/ledgermath-scratch/disk LM_PARAM_ACCESS=random LM_PARAM_REQUEST_BYTES=4096 \
+LM_PARAM_DIR=/var/tmp/ledgermath-test LM_PARAM_ACCESS=random LM_PARAM_REQUEST_BYTES=4096 \
   ./benchmarks/disk_read_io_uring/build/static/disk_read_io_uring --quick
 ```
 
-(After making a Fixture there; see [`disk_read_random`'s README](https://ledgermath.com/docs/benchmarks/disk_read_random).) An execution takes 15 to
+(After making a Fixture there, as [`disk_read_random`'s README](https://ledgermath.com/docs/benchmarks/disk_read_random) does; the directory is an example.) An execution takes 15 to
 35 seconds.

@@ -320,8 +320,8 @@ const sampleFile = (kind: SampleKind): { url: string; bytes: Uint8Array } => {
 const sampleJson = (kind: SampleKind): any => JSON.parse(new TextDecoder().decode(sampleFile(kind).bytes));
 const sampleLines = (): string[] => new TextDecoder().decode(sampleFile("events").bytes).split("\n").filter((line) => line !== "");
 
-/** The schema each kind of sample file is checked against, by its path in this repository. */
-const SCHEMA_OF: Record<SampleKind, string> = {
+/** The schema each kind of sample file is checked against, by its path in this repository; null for a dump's index and section, which have none. */
+const SCHEMA_OF: Record<SampleKind, string | null> = {
 	index: "schemas/api/v1/index.schema.json",
 	"series-list": "schemas/api/v1/series-list.schema.json",
 	benchmark: "schemas/api/v1/benchmark.schema.json",
@@ -330,6 +330,9 @@ const SCHEMA_OF: Record<SampleKind, string> = {
 	prices: "schemas/prices.schema.json",
 	run: "schemas/run.schema.json",
 	events: "schemas/events.schema.json",
+	"dump-run": "schemas/run.schema.json",
+	"dump-index": null,
+	"dump-memory": null,
 };
 const API_OWN: readonly SampleKind[] = ["index", "series-list", "benchmark", "series", "series-month"];
 
@@ -550,7 +553,9 @@ describe("the fixed sample", () => {
 
 	test("each file validates against its schema, the API's own also against the schema closed, and each line of the stream against the events schema", () => {
 		for (const kind of SAMPLE_KINDS) {
-			const schema = readJson(join(ROOT, SCHEMA_OF[kind])) as object;
+			const path = SCHEMA_OF[kind];
+			if (path === null) continue;
+			const schema = readJson(join(ROOT, path)) as object;
 			const values = kind === "events" ? sampleLines().map((line) => JSON.parse(line)) : [sampleJson(kind)];
 			for (const closed of API_OWN.includes(kind) ? [false, true] : [false]) {
 				const validate = new Ajv2020({ strict: true, allErrors: true }).compile(closed ? (closeSchema(schema) as object) : schema);
@@ -582,6 +587,29 @@ describe("the fixed sample", () => {
 		expect(index.series.count).toBe(list.count);
 		expect(index.prices.newest.url).toBe(sampleFile("prices").url);
 		expect(index.benchmarks.list.some((entry: Json) => entry.url === sampleFile("benchmark").url)).toBe(true);
+	});
+
+	test("its dump is one Run's before-dump, of a Series of the list, as the Run names it: the index by its hash, the memory section by the index's", () => {
+		const list = sampleJson("series-list");
+		const run = sampleJson("dump-run");
+		const dump = sampleJson("dump-index");
+		// The Run is the newest of another Series of the list than the sample's own, by its key.
+		const row = list.series.find(
+			(one: Json) =>
+				one.benchmark === run.benchmark &&
+				JSON.stringify(Object.entries(one.params as Record<string, unknown>).sort()) === JSON.stringify(Object.entries(run.params as Record<string, unknown>).sort()) &&
+				one.build === run.binary.build &&
+				one.instance_type === run.provider.instance_type &&
+				one.availability_zone_id === run.provider.availability_zone_id,
+		);
+		expect(row).toBeDefined();
+		expect(row.id).not.toBe(sampleJson("series").id);
+		expect(run.started_at).toBe(row.newest_run_started_at);
+		expect(`sha256:${sha256(sampleFile("dump-index").bytes)}`).toBe(run.environment.before);
+		expect(dump.schema).toBe("ledgermath.dump/1");
+		expect(`sha256:${sha256(sampleFile("dump-memory").bytes)}`).toBe(dump.sections.memory);
+		// The section maps each file it read to its text, /proc/meminfo among them.
+		expect(typeof sampleJson("dump-memory")["/proc/meminfo"]).toBe("string");
 	});
 
 	test("holds no AWS access key", () => {

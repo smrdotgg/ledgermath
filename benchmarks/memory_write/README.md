@@ -43,6 +43,10 @@ one order, on one instance type.
 Each parameter set runs on every instance type in the schedule. Each parameter set and
 instance type is a Series of its own.
 
+The benchmark's Series and their figures are listed at
+[https://api.ledgermath.com/v1/benchmarks/memory_write.json](https://api.ledgermath.com/v1/benchmarks/memory_write.json),
+which says in `left_out` how many it leaves out.
+
 | Variable | Scheduled | Meaning |
 |---|---|---|
 | `LM_PARAM_SIZE_BYTES` | `1073741824` | Bytes written per repetition; a multiple of 64, at least 128 |

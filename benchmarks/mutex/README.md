@@ -58,9 +58,13 @@ Both one-thread findings are in "What the one-thread figures mean" below.
 
 Each parameter set is a Series of its own on each instance type it is scheduled on.
 
+The benchmark's Series and their figures are listed at
+[https://api.ledgermath.com/v1/benchmarks/mutex.json](https://api.ledgermath.com/v1/benchmarks/mutex.json),
+which says in `left_out` how many it leaves out.
+
 | Parameter set (`threads`, `placement`, `critical_section_lines`, `idle_threads`) | What it measures | Scheduled on |
 |---|---|---|
-| `1`, `one_cpu`, `1`, `1` | The cost of one lock and unlock that nobody contends, in a program that has more than one thread. **Usually the number wanted**, and what napkin-math's "mutex lock/unlock" means | every target |
+| `1`, `one_cpu`, `1`, `1` | The cost of one lock and unlock that nobody contends, in a program that has more than one thread. **Usually the number wanted** | every target |
 | `1`, `one_cpu`, `1`, `0` | The same in a process that has only ever had one thread, where glibc skips the atomic instructions | every target |
 | `2`, `distinct_cores`, `1`, `0` | Lock throughput when the lock and the counter move between two physical cores | `c6i.8xlarge`, `c8i.2xlarge`, `c8a.2xlarge`, `i4i.2xlarge` |
 | `2`, `distinct_cores`, `8`, `0` | The same with eight protected cache lines moving with the lock, which includes glibc's futex sleep and wake-up | the same four |
@@ -98,7 +102,7 @@ single-threaded special case, kept beside it so the difference is measured, not 
 On the development machine, the Amazon Linux build's glibc 2.34 took the plain path for
 every one of the first 100,000 locks and unlocks of the benchmark's mutex with
 `idle_threads` 0, and the atomic path for every one with `idle_threads` 1 (counted with
-breakpoints on the four instructions; see the step-4 log entry in `docs/dev-log.md`).
+breakpoints on the four instructions).
 With the machine otherwise quiet, that build gave 4.36 ns a critical section with
 `idle_threads` 0 and 18.57 ns with `idle_threads` 1 (eight runs of each, within 4.35 to
 4.39 ns and 18.56 to 18.59 ns): the two atomic instructions add about 14 ns to an
@@ -312,7 +316,11 @@ hosts or the time is not known.
 #### Without an idle thread: where the code lands
 
 **Which Series.** `one_cpu` with `idle_threads` 0. The investigation swept it on Ice Lake
-(the processor of `c6i.8xlarge` and `i4i.2xlarge`) and on `m5.large` (Intel Cascade Lake).
+(the processor of `c6i.8xlarge` and `i4i.2xlarge`) and on `m5.large`. Each of the 65
+`m5.large` boots checked, from 2026-11-11 to 2026-11-26 (the boots of Series
+`7e2262f0ec23`, `memory_read` on that type), recorded in its dump section `lscpu` an Intel
+Xeon Platinum 8259CL, family 6, model 85, stepping 7: a Cascade Lake part. AWS's catalog
+words for the type, in the price files, name another, the Intel Xeon Platinum 8175.
 
 **What the recorded Runs show.** Nothing of placement: nothing in a Run records where its
 code landed. Where a Series' Runs ran one binary, its figure is that binary's, with the
@@ -384,8 +392,6 @@ the four Ice Lake boxes and 33.75% on `m5.large` (67,914 to 90,831). Inferred: t
 atomic instructions take most of the time, so instruction delivery has time to spare.
 
 ## How it works
-
-The study of July's data and the design is section 1 of the step-4 brief's study (#42).
 
 ### How a repetition starts and ends
 

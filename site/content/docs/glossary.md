@@ -100,6 +100,10 @@ How Method `requests` v1 tallies a phase's times, in the same fixed bins for eve
 
 The machine image the box booted, by AWS's ID (`provider.image_id`, such as `ami-03499a87bbb39a09a`). It is a split fact of Method `series` v1. Met in: `image` in group `facts`; [Machines](/docs/machines).
 
+## instance store
+
+In the disk benchmarks, the disk of a Series whose parameter `disk` is `instance_store`: the instance's own NVMe disk, not an EBS volume. The box uses it only when it finds exactly one disk whose controller's model is `Amazon EC2 NVMe Instance Storage`, as many as EC2's catalog record of the instance type lists, and that disk is empty; it then formats it with XFS, mounts it at `/mnt/lm/instance-store` and writes there the Fixture the disk read benchmarks read; `disk_write` writes a file of its own there. The schedule runs these sets on `i4i.2xlarge` only. Met in: `params.disk` of the Series of [disk_read_random](/docs/benchmarks/disk_read_random), [disk_read_sequential](/docs/benchmarks/disk_read_sequential), [disk_read_io_uring](/docs/benchmarks/disk_read_io_uring) and [disk_write](/docs/benchmarks/disk_write); dump sections `provision` and `devices`.
+
 ## instance type
 
 The EC2 instance type a Run ran on, as AWS names it, such as `m5.large`. It is part of a Series' key (`instance_type`). Met in: every Series' identity; [Machines](/docs/machines).
@@ -127,6 +131,10 @@ A versioned procedure that turns Runs into published numbers. Two exist: `series
 ## month file
 
 `v1/series/<id>/<yyyy-mm>.json`: every point of a Series' Runs that started that month (UTC), under each Method, and Method `series` v1's `differed` entries. A Series file lists each month file's address, sha256 and size. Met in: [month file](/docs/api/series-month).
+
+## new connection
+
+In `http_get`, what a request has when its parameter `connection` is `new`: it resolves the name, connects and secures a connection of its own inside its sample, so a request that succeeds has the phases `dns`, `connect` and `tls`. See reused connection. Met in: [http_get](/docs/benchmarks/http_get); [Methods](/docs/methods).
 
 ## observed
 
@@ -183,6 +191,10 @@ A fact each request records of its connection or of itself: `address_block`, `ci
 ## reused connection
 
 In `http_get`, a connection opened and secured outside any sample and used by the requests that follow (its parameter `connection` set to `reused`); the API also calls it a kept connection. A request over it has no `dns`, `connect` or `tls` phase. A failed setup of such a connection is counted apart (`setups_failed`). Met in: [Methods](/docs/methods).
+
+## root volume
+
+In the disk benchmarks, the disk of a Series whose parameter `disk` is `root_volume`: the EBS volume the instance boots from, which holds its root file system. The disk read benchmarks read the Fixture the box makes at boot under `/var/tmp/ledgermath/disk` on it, and `disk_write` writes a file of its own there. The value names where the file is; what a figure measures is on the benchmark's page. The volume's type, size and provisioned IOPS and throughput are AWS's record in each boot's dump section `ec2_volumes`, where the dump took it. The schedule runs these sets on every instance type. Met in: `params.disk` of the Series of [disk_read_random](/docs/benchmarks/disk_read_random), [disk_read_sequential](/docs/benchmarks/disk_read_sequential), [disk_read_io_uring](/docs/benchmarks/disk_read_io_uring) and [disk_write](/docs/benchmarks/disk_write).
 
 ## round
 
