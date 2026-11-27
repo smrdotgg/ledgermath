@@ -27,16 +27,17 @@
  *   same whatever Runs the tree is cut from. A place not listed as data is
  *   scanned, so a new field is prose until it is shown to be data.
  *
- * What the scan finds is in REFERENCES; ALLOWED lists, by file, place and
+ * What the scan finds is in REFERENCES (scripts/lib/published-words.ts, the
+ * one set of rules for every word LedgerMath publishes); ALLOWED lists, by file, place and
  * text, the only exception, with why.
  */
 
 import { beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { readdirSync } from "node:fs";
 import { join } from "node:path";
 
 import { API_SCHEMAS, buildApi, DEFAULT_BASE, DEFAULT_DOCS, LEFT_OUT_WHY, readApiSchemas, readBootFiles, readBootSummaries, readPriceFiles, writtenSchemaOf, type WrittenSchema } from "../scripts/lib/api";
 import { RULE_SETS } from "../scripts/lib/price-rules";
+import { wordRules } from "../scripts/lib/published-words";
 import { makeApiFixture } from "./api-fixtures";
 
 setDefaultTimeout(60_000);
@@ -137,38 +138,8 @@ const DATA: Readonly<Record<Kind, readonly string[]>> = {
 /** The words of a schema, by keyword: what JSON Schema gives people to read. */
 const SCHEMA_WORDS = new Set(["title", "description", "$comment"]);
 
-const escape = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-const top = readdirSync(ROOT, { withFileTypes: true }).filter((entry) => ![".git", "node_modules", "local"].includes(entry.name));
-/** The repository's own top-level directories and files, as this checkout has them. */
-const DIRECTORIES = top.filter((entry) => entry.isDirectory()).map((entry) => entry.name);
-const ROOT_FILES = top.filter((entry) => entry.isFile()).map((entry) => entry.name);
-const TREE_SCHEMAS = new Set<string>(API_SCHEMAS.map(({ name }) => name));
-
-/** Each kind of reference a reader of the API cannot follow, with a pattern that finds it. */
-const REFERENCES: ReadonlyArray<{ kind: string; pattern: RegExp }> = [
-	// scripts/check-events.py, runner/, docs/dev-log.md: not after a / or a word, so v1/schemas/… is not one.
-	{ kind: "a path in the repository", pattern: new RegExp(`(?<![\\w./-])(?:${DIRECTORIES.map(escape).join("|")})/`, "g") },
-	{ kind: "a file at the repository's root", pattern: new RegExp(`(?<![\\w./-])(?:${ROOT_FILES.map(escape).join("|")})(?![\\w-])`, "g") },
-	// ./schedule.json, ../docs/dev-log.md, /runner/: a file or directory of the repository, from somewhere in it or from its root.
-	{
-		kind: "a relative path to a file of the repository",
-		pattern: new RegExp(`(?<![\\w.-])(?:(?:\\.\\.?/)+|/)(?:(?:${DIRECTORIES.map(escape).join("|")})/|(?:${ROOT_FILES.map(escape).join("|")})(?![\\w-]))`, "g"),
-	},
-	{ kind: "a source or document file", pattern: /(?<![\w./-])[\w./-]*[\w-]\.(?:py|ts|tsx|js|mjs|cjs|md|c|h|sh|toml|ya?ml|lock)(?![\w-])/g },
-	{ kind: "a README", pattern: /\breadme\b/gi },
-	{ kind: "an ADR", pattern: /\bADR[- ]?\d+/gi },
-	{ kind: "an issue or pull request", pattern: /(?<![\w&/#])#\d+\b|\b(?:issue|pull request|PR)s?\s+#?\d+/gi },
-	{ kind: "a numbered section of a document", pattern: /\bsection\s+\d+(?:\.\d+)*\b/gi },
-	{ kind: "the dev log", pattern: /\bdev[- ]log\b/gi },
-	{ kind: "a function of the code", pattern: /\b[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*\(\)/g },
-	{ kind: "a program's command-line option", pattern: /(?<![\w-])--[A-Za-z][\w-]*/g },
-	{ kind: "the repository on GitHub", pattern: /github\.com|\bsmrdotgg\b/gi },
-];
-
-/** A schema file named in words that is not one of the tree's: schemas/events.schema.json lives in the repository, not under v1/schemas/. */
-function otherSchemas(text: string): string[] {
-	return [...text.matchAll(/(?<![\w-])([\w-]+)\.schema\.json/g)].filter((match) => !TREE_SCHEMAS.has(match[1] as string)).map((match) => match[0]);
-}
+/** Each kind of reference a reader of the API cannot follow, with a pattern that finds it, for this checkout's top-level directories and files. */
+const { references: REFERENCES, otherSchemas, referencesIn } = wordRules(ROOT);
 
 /**
  * The only words the tree publishes that point outside the tree (to the
@@ -219,14 +190,6 @@ function proseOf(path: string, value: unknown): Array<{ pointer: string; text: s
 	};
 	walk(value, []);
 	return out;
-}
-
-/** Each reference a text makes that a reader of the API cannot follow: its kind and the words. */
-function referencesIn(text: string): Array<{ kind: string; text: string }> {
-	return [
-		...REFERENCES.flatMap(({ kind, pattern }) => [...text.matchAll(pattern)].map((match) => ({ kind, text: match[0] }))),
-		...otherSchemas(text).map((name) => ({ kind: "a schema the tree does not serve", text: name })),
-	];
 }
 
 /** Every reference the prose of a tree makes that a reader of the API cannot follow, and the prose scanned. */
