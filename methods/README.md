@@ -72,20 +72,33 @@ Method asked for has no record of it, and then once for all of them.
 - **The key** is the stdout blob's hash and the reducer's key, `requests-v1-<16 hex digits>`
   or `series-v1-<16 hex digits>`: the Method, its version, and the first 16 hex digits of
   the digest of the code that makes the record (`codeDigest`): the source text of the
-  reducer's module, of every module it imports by a relative path, transitively, and of the
-  schemas `run.ts` compiles. Nobody has to remember to change it: any change to that code
-  (for `requests` v1: `records.ts`, `run.ts`, `v1/facts.ts`, `v1/numbers.ts`,
-  `v1/stream.ts`, `requests/v1/numbers.ts`, `requests.ts`, `record.ts`, and the two
-  schemas) gives a new key, under which no record exists yet, so a record made by other
-  code is never read. **The cost**, accepted: after such a change every stream is fetched
-  and reduced once more (about 20 MB on 2026-11-11, growing by about 44 MB a day of
-  `http_get` streams), on the next run of the workflow: about 13 minutes for the 9,400 Runs
-  of 2026-11-23, so the workflow's first job has 60 minutes since 2026-11-24 (its cache is saved only when it
-  succeeds, and a job cut off would leave the next to start over). A change elsewhere (the derive
-  step, the output's shape, the page) costs nothing. `scripts/derive.ts` removes the
-  directories of records made by other code for the Methods it runs, which are never read,
-  so the workflow's cache does not grow with every change. Packages imported by name (ajv) are
-  not in the digest; the lockfile pins them.
+  reducer's module and of every module it imports by a relative path, transitively, and
+  what the schemas `run.ts` compiles say a value must be. Nobody has to remember to change
+  it: any change to that code (for `requests` v1: `records.ts`, `run.ts`, `v1/facts.ts`,
+  `v1/numbers.ts`, `v1/stream.ts`, `requests/v1/numbers.ts`, `requests.ts`, `record.ts`,
+  and the two schemas) gives a new key, under which no record exists yet, so a record made
+  by other code is never read. **A schema's words are not in it**: each schema is
+  digested as it parses, with every string-valued `title` and `description` it holds as a
+  schema's annotation taken out (not a member so named, nor anything under `const`, `enum`,
+  `default` or `examples`) and written as JSON with no white space, its members in the
+  order the file gives them, since a validator reports what a value lacks in that order and
+  those words go into a record's problems. So rewording or reflowing a schema keeps every
+  record, and a change to what it accepts (a type, a `required` list, a pattern, a member)
+  does not (`withoutAnnotations`; `tests/requests-method.test.ts`). Until 2026-11-27 a
+  schema was digested byte for byte, and two pull requests that only reworded the two
+  schemas (#103, #109) each made every stream be read again. **The cost**, accepted: after
+  a change to the code every stream is fetched and reduced once more (11,758 streams, about
+  830 MB, on 2026-11-27, growing by about 44 MB a day of `http_get` streams), on the next
+  run of the workflow: under two minutes from inside AWS, longer from a GitHub runner,
+  which reads the bucket across the internet. A read that fails for a reason that may pass
+  is made again, a bounded number of times (`scripts/derive.ts --bucket`), and what the
+  derive step fetched and reduced is saved in the workflow's cache however the step ended,
+  so a rebuild cut off part way leaves the next run only what it did not read (README,
+  "The workflow"). A change elsewhere (the derive step, the output's shape, the page)
+  costs nothing. `scripts/derive.ts` removes the directories of records made by other code
+  for the Methods it runs, which are never read, so the workflow's cache does not grow with
+  every change. Packages imported by name (ajv) are not in the digest; the lockfile pins
+  them.
 - **A record is kept with the sha256 of its content** (canonical JSON), and used only when
   it parses, names its reducer and its blob, has that digest, and **holds together** by the
   reducer's own checks: for `requests` v1, every count is the sum of its histogram's bins,

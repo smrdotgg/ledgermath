@@ -14,7 +14,11 @@
  *   --blobs DIR         a directory of sha256/<hex> blobs, such as tests/samples/scheduled/blobs;
  *                       may be given more than once, and is looked in before the bucket
  *   --bucket NAME       fetch other blobs from the -runs stage's bucket (credentials from the
- *                       environment: see scripts/lib/bucket.ts)
+ *                       environment: see scripts/lib/bucket.ts), at most 16 at once; a read
+ *                       that fails for a reason that may pass (no answer, a throttling or
+ *                       5xx answer, one the client cannot read) is made again, up to 8
+ *                       tries with a growing pause, each logged with why (scripts/lib/blobs.ts,
+ *                       retryingStore); a blob that is not there is not tried again
  *   --blobs-url URL     or from the public address serving the bucket's blobs/sha256/
  *                       (https://<distribution>.cloudfront.net; no credentials); a redirect
  *                       is refused, never followed
@@ -55,7 +59,7 @@ import type { FetchBlob } from "../methods/run";
 import * as series from "../methods/v1";
 import { SERIES_RECORD } from "../methods/v1/record";
 import { S3Bucket } from "./lib/bucket";
-import { type BlobStore, blobsFromBucket, blobsFromDirectories, firstOf, publicBlobStore } from "./lib/blobs";
+import { type BlobStore, blobsFromBucket, blobsFromDirectories, firstOf, publicBlobStore, retryingStore } from "./lib/blobs";
 import { failurePath, methodFailure } from "./lib/method-failure";
 import { readRunFiles } from "./lib/run-files";
 import { RUNS_BUCKET_REGION } from "./lib/runs-repository";
@@ -63,6 +67,9 @@ import { RUNS_BUCKET_REGION } from "./lib/runs-repository";
 const USAGE =
 	"usage: bun scripts/derive.ts --runs DIR [--out FILE] [--requests-out FILE] [--blobs DIR]... " +
 	"[--bucket NAME | --blobs-url URL [--blobs-per-second N]] [--cache DIR] [--records DIR] [--region R]";
+
+/** Streams read at once by the first pass, and reads from the bucket in flight at once, at most. */
+const READS_IN_FLIGHT = 16;
 
 function write(path: string, text: string): void {
 	mkdirSync(dirname(path), { recursive: true });
@@ -142,11 +149,13 @@ async function main(): Promise<void> {
 		blobSources.push(blobsFromDirectories(values.blobs));
 		streamSources.push(blobsFromDirectories(values.blobs));
 	}
-	const store: BlobStore | null = values.bucket
-		? new S3Bucket(values.bucket, values.region ?? RUNS_BUCKET_REGION)
-		: values["blobs-url"]
-			? publicBlobStore(values["blobs-url"], values["blobs-per-second"] === undefined ? {} : { perSecond: Number(values["blobs-per-second"]) })
-			: null;
+	// A read from the bucket that fails for a reason that may pass is made again
+	// (scripts/lib/blobs.ts, retryingStore), each try logged with the client's
+	// code, and no more than READS_IN_FLIGHT are made at once.
+	const bucket = values.bucket ? retryingStore(new S3Bucket(values.bucket, values.region ?? RUNS_BUCKET_REGION), { inFlight: READS_IN_FLIGHT }) : null;
+	const store: BlobStore | null =
+		bucket ??
+		(values["blobs-url"] ? publicBlobStore(values["blobs-url"], values["blobs-per-second"] === undefined ? {} : { perSecond: Number(values["blobs-per-second"]) }) : null);
 	if (store !== null) {
 		const cache = values.cache ?? null;
 		blobSources.push(blobsFromBucket(store, cache));
@@ -168,7 +177,7 @@ async function main(): Promise<void> {
 		if (values["requests-out"]) reducers.push(REQUESTS_RECORD as StreamReducer<unknown>);
 		const stdouts = series.readRuns(files).runs.map(({ run }) => run.stdout);
 		try {
-			await keepRecords(stdouts, reducers, fetchStream, records, 16, counts);
+			await keepRecords(stdouts, reducers, fetchStream, records, READS_IN_FLIGHT, counts);
 		} catch (error) {
 			console.error(`reading every stream once for every Method stopped (${error instanceof Error ? error.message : String(error)}); each Method reads what it lacks itself`);
 		}
@@ -211,6 +220,7 @@ async function main(): Promise<void> {
 				};
 			})) && ok;
 	}
+	if (bucket !== null && bucket.retried() > 0) console.log(`reads from ${bucket.name} made again after a failure that may pass: ${bucket.retried()} (each is logged above, with why)`);
 	if (records !== null) {
 		console.log(`streams: ${counts.fetched} fetched and reduced, ${counts.kept} records read back from ${values.records}`);
 		const removed = removeOtherCode(values.records as string, [values.out ? SERIES_RECORD.key : null, values["requests-out"] ? REQUESTS_RECORD.key : null]);

@@ -120,10 +120,11 @@ jobs:
     runs-on: ubuntu-24.04
     # Room for a run that must reduce every stream again: when a change to the
     # Methods' reducing code gives their records new keys (methods/records.ts),
-    # the next run fetches and reduces every Run's stdout once more, about 13
-    # minutes for 9,400 Runs on 2026-11-23 and growing with them. The cache is
-    # saved only when the job succeeds, so a job cut off there would lose all
-    # of that work and every later run would start over, without end.
+    # the next run fetches and reduces every Run's stdout once more (11,758 in
+    # under two minutes from inside AWS on 2026-11-27; a GitHub runner reads
+    # the bucket across the internet, slower) and growing with them. What the
+    # derive step made is saved however it ended, so a job cut off there
+    # leaves the next run to fetch only what this one did not.
     timeout-minutes: 60
     # One at a time with every other runs job and every prices run; of those
     # waiting, GitHub keeps only the newest (cancel-in-progress false: the one
@@ -195,14 +196,17 @@ jobs:
       # Method (methods/records.ts), never the stdout blobs themselves: a
       # stream is fetched only for a Run no Method has a record of yet, and
       # let go once reduced. The prefix is new with the records, so the caches
-      # of stdout blobs kept before (blobs-…) are not restored.
+      # of stdout blobs kept before (blobs-…) are not restored. Restored here,
+      # from the newest cache of any earlier run, and saved by the step after
+      # the derive step, however that step ended, under this attempt's key.
       - name: Keep the dump blobs and the streams' reduced records
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        id: derive-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             .cache/blobs
             .cache/records
-          key: derive-${{ github.run_id }}
+          key: derive-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: derive-
 
       # Each Method runs on its own: when one fails, derive.ts still writes the
@@ -216,6 +220,23 @@ jobs:
           bun scripts/derive.ts --runs ledgermath-runs --bucket "$RUNS_BUCKET"
           --cache .cache/blobs --records .cache/records
           --out page/derivations.json --requests-out page/requests-derivations.json
+
+      # What the derive step fetched and reduced, saved as soon as it ends,
+      # however it ended: succeeded, failed, or cut off by the job's time
+      # limit or a cancellation (always()). Each blob and each record is
+      # written whole, under a temporary name and then renamed, as it is made,
+      # so a derive step stopped part way leaves only whole files, and the next
+      # run reads back what this one fetched instead of starting over (#77).
+      # Never when the step did not start, which leaves nothing new. The key is
+      # this attempt's, so a run attempted again saves its own work too.
+      - name: Save the dump blobs and the streams' reduced records, however the derive step ended
+        if: ${{ always() && (steps.derive.outcome == 'success' || steps.derive.outcome == 'failure' || steps.derive.outcome == 'cancelled') }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            .cache/blobs
+            .cache/records
+          key: ${{ steps.derive-cache.outputs.cache-primary-key }}
 
       - name: Build the page
         id: page

@@ -4,7 +4,9 @@
  * or from a public address serving the same paths (the stage's CloudFront
  * distribution, infra/runs/public-blobs.ts), kept in a local cache. Every
  * blob is checked against its hash before it is returned or cached: from a
- * public address that is what makes its bytes trustworthy at all.
+ * public address that is what makes its bytes trustworthy at all. A store
+ * can be made to try a read again when it fails for a reason that may pass
+ * (retryingStore), as scripts/derive.ts does with the bucket.
  */
 
 import { createHash } from "node:crypto";
@@ -12,6 +14,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "
 import { join } from "node:path";
 
 import type { FetchBlob } from "../../methods/run";
+import { describeS3Error } from "./bucket";
 
 const HASH = /^sha256:([0-9a-f]{64})$/;
 const BLOB_KEY = /^blobs\/sha256\/[0-9a-f]{64}$/;
@@ -145,6 +148,129 @@ export function publicBlobStore(base: string, options: PublicStoreOptions = {}):
 				throw new Error(`${url}: HTTP 403, refused by the distribution (its per-address rate limit, or an address AWS lists as bad); slow down and try again later`);
 			}
 			throw new Error(`${url}: HTTP ${response.status}`);
+		},
+	};
+}
+
+/**
+ * Bun's S3 client's words for a request it got no readable answer to: the
+ * connection was refused, closed, reset or timed out (the error's code is then
+ * the client's own name for it: ConnectionClosed, ConnectionRefused…), or S3,
+ * or something in front of it, answered an error with an empty body (code
+ * UnknownError). An error answer S3 writes itself has S3's code and words.
+ */
+export const NO_READABLE_ANSWER = "an unexpected error has occurred";
+
+/**
+ * S3's codes for an answer that may pass, which S3 asks to be tried again
+ * (500 InternalError, 503 ServiceUnavailable and SlowDown, 400
+ * RequestTimeout), and the client's code for an error answer it could not read
+ * as S3's (an empty body, or a page from something in front of S3: a 502).
+ */
+const MAY_PASS_CODES: ReadonlySet<string> = new Set(["InternalError", "ServiceUnavailable", "SlowDown", "RequestTimeout", "UnknownError"]);
+/** A connection that failed, as Node and Bun name it in an error's code. */
+const CONNECTION_CODES: ReadonlySet<string> = new Set([
+	"ConnectionClosed",
+	"ConnectionRefused",
+	"ConnectionReset",
+	"ECONNRESET",
+	"ECONNREFUSED",
+	"ECONNABORTED",
+	"EPIPE",
+	"ETIMEDOUT",
+	"EAI_AGAIN",
+	"Timeout",
+]);
+
+/**
+ * Whether a failed read may succeed if it is made again: no answer, or an
+ * answer S3 gives for a load or a fault of its own. Not an answer about the
+ * request itself (AccessDenied, InvalidAccessKeyId, ExpiredToken…), which
+ * would be the same every time. A blob that is not there is no failure at
+ * all: the store answers null.
+ */
+export function mayPass(error: unknown): boolean {
+	if (typeof error !== "object" || error === null) return false;
+	const { code, message } = error as { code?: unknown; message?: unknown };
+	if (message === NO_READABLE_ANSWER) return true;
+	return typeof code === "string" && (MAY_PASS_CODES.has(code) || CONNECTION_CODES.has(code));
+}
+
+export interface RetryOptions {
+	/** Tries in all, the first among them (default 8). */
+	tries?: number;
+	/** The pause before the second try, in ms (default 500), doubled before each later one up to maxPause (default 8,000). */
+	firstPause?: number;
+	maxPause?: number;
+	/** Reads in flight at once, at most, however many are asked for (default 16); one waiting out its pause is not in flight. */
+	inFlight?: number;
+	/** For tests: the wait, and a number in [0, 1) that sets each pause between half and all of its length. */
+	sleep?: (ms: number) => Promise<void>;
+	random?: () => number;
+	/** Told of each failed try that will be made again. */
+	log?: (line: string) => void;
+}
+
+/**
+ * A store whose reads survive a failure that may pass (mayPass): such a read
+ * is made again, up to `tries` times in all, after a pause that doubles each
+ * time (0.5, 1, 2, 4, 8, 8 and 8 seconds by default, each drawn between half
+ * and all of that, so reads that failed together do not all come back
+ * together), and never more than `inFlight` reads at once. A read that keeps
+ * failing, or fails for a reason that would not pass, throws, naming the key,
+ * the error's code and words, and how many tries were made. A blob that is
+ * not there (null) is answered at once, never tried again: the caller fails on
+ * it plainly, as before.
+ */
+export function retryingStore(store: BlobStore, options: RetryOptions = {}): BlobStore & { readonly retried: () => number } {
+	const tries = options.tries ?? 8;
+	const firstPause = options.firstPause ?? 500;
+	const maxPause = options.maxPause ?? 8_000;
+	const limit = options.inFlight ?? 16;
+	const sleep = options.sleep ?? ((ms: number) => Bun.sleep(ms));
+	const random = options.random ?? Math.random;
+	const log = options.log ?? ((line: string) => console.error(line));
+	if (!(tries >= 1) || !(limit >= 1)) throw new Error(`tries and inFlight must be at least 1, not ${tries} and ${limit}`);
+	let inFlight = 0;
+	const waiting: Array<() => void> = [];
+	let retried = 0;
+	const slot = async (): Promise<void> => {
+		if (inFlight < limit) {
+			inFlight++;
+			return;
+		}
+		await new Promise<void>((resolve) => waiting.push(resolve));
+	};
+	const release = (): void => {
+		const next = waiting.shift();
+		if (next === undefined) inFlight--;
+		else next(); // the slot passes to the next read waiting
+	};
+	return {
+		name: store.name,
+		retried: () => retried,
+		async get(key) {
+			for (let attempt = 1; ; attempt++) {
+				await slot();
+				let failure: unknown;
+				try {
+					return await store.get(key);
+				} catch (error) {
+					failure = error;
+				} finally {
+					release();
+				}
+				// The error's code and words, never a URL: the client's code is the only
+				// place it says why a request got no readable answer.
+				const why = describeS3Error(failure);
+				if (!mayPass(failure)) throw new Error(`${store.name}/${key}: ${why} (not tried again: an answer about the request itself)`, { cause: failure });
+				if (attempt >= tries) throw new Error(`${store.name}/${key}: ${why}, on each of ${tries} tries`, { cause: failure });
+				const pause = Math.min(maxPause, firstPause * 2 ** (attempt - 1));
+				const wait = Math.round(pause / 2 + (random() * pause) / 2);
+				retried++;
+				log(`${store.name}/${key}: ${why}; try ${attempt + 1} of ${tries} in ${wait} ms`);
+				await sleep(wait);
+			}
 		},
 	};
 }

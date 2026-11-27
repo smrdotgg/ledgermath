@@ -1717,6 +1717,11 @@ with_keys bun scripts/copy-runs.ts --bucket "$BUCKET" /tmp/ledgermath-runs
 
 # The Methods, with dump blobs fetched by hash and kept in a cache, and each stream reduced
 # once to a record per Method and kept: a stream is fetched again only for a Run without one.
+# At most 16 reads from the bucket at once; one that fails for a reason that may pass (no
+# answer, a throttling or 5xx answer, one the client cannot read) is made again, up to 8
+# tries with a growing pause, each logged with the client's code. With empty --cache and
+# --records (a cold rebuild): 11,758 streams and 25,574 dump blobs in under two minutes
+# from inside AWS on 2026-11-27.
 with_keys bun scripts/derive.ts --runs /tmp/ledgermath-runs --bucket "$BUCKET" --cache /tmp/blob-cache \
   --records /tmp/records --out /tmp/page/derivations.json --requests-out /tmp/page/requests-derivations.json
 
@@ -1790,7 +1795,16 @@ still writes the other's Derivations and, in place of the failed one's, a note s
 missing and why, the artifact is kept, and the run still ends as failed. Between runs it keeps, in GitHub's cache, the dump blobs it
 fetched and each stream's reduced record per Method (`.cache/records`), never the stdout
 blobs: a stream is fetched only for a Run no Method has a record of yet, about 2 MB of
-records a day where the stdout blobs were about 44 MB. The alarm runs even when an earlier
+records a day where the stdout blobs were about 44 MB. The cache is restored before the
+derive step and saved right after it, however that step ended (succeeded, failed, or cut
+off by the job's time limit or a cancellation), under the key of the run's attempt: every
+blob and record is written whole as it is made, so a cold rebuild stopped part way is taken
+up by the next run where it stopped, not begun again (#77). Until 2026-11-27 the cache was
+saved only when the whole job succeeded, and two runs in a row that failed while reading
+every stream again (a schema's words had changed the records' keys, which they no longer
+do: `methods/README.md`, "The reduced record of a stream") each started from nothing. A
+read from the bucket that fails for a reason that may pass is made again, up to 8 tries
+(`scripts/derive.ts --bucket`); those two failed on the first such read. The alarm runs even when an earlier
 step failed, as long as the Runs repository was checked out, and is told whether the copy
 and its push succeeded on this pass.
 
