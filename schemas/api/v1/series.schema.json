@@ -97,7 +97,7 @@
     "point_started_at": { "description": "When the Run started.", "$ref": "#/$defs/time" },
     "point_boot": { "description": "The boot's id.", "type": "string" },
     "point_group": { "description": "The group its split facts put it in.", "type": "string" },
-    "point_counted": { "description": "Whether the Method counts the Run. A Run it does not count is shown, with why, and is in no figure.", "type": "boolean" },
+    "point_counted": { "description": "Whether the Method counts the Run. A Run it does not count is shown, with why, and is left out of the Method's statistics.", "type": "boolean" },
     "point_failure": { "description": "Why it is not counted, or null: the first 10 of its reasons, each cut to its first 500 characters, joined by \"; \", then how many more there are.", "$ref": "#/$defs/string_or_null" },
 
     "method_series": {
@@ -156,7 +156,7 @@
         "time_per_repetition_ns": { "description": "The median of its samples' ns_per_repetition: the Run's one number, 0 or more. Null when it is not counted; and null when it is infinite, past a double's range, which JSON cannot hold: when it is the mean of its two middle samples' ns_per_repetition and their sum overflows (both near the top of a double's range; no real clock comes near). Such a Run is still counted, and still among the Runs of its Series' and group's time_per_repetition_ns percentiles.", "$ref": "#/$defs/number_or_null" },
         "bytes_per_repetition": { "description": "As the benchmark observed it, a positive number. Null when it is not counted, or when the benchmark observed no bytes per repetition.", "$ref": "#/$defs/number_or_null" },
         "bytes_per_second": {
-          "description": "bytes_per_repetition × 10^9 / time_per_repetition_ns. Null when either is null; and null when the quotient is infinite, past a double's range, which JSON cannot hold: chiefly a counted Run that observed bytes per repetition and whose time per repetition is 0 (its median sample ended at the clock read it started at). Such a Run is still counted, and still among the Runs of its Series' and group's bytes_per_second percentiles.",
+          "description": "bytes_per_repetition × 10^9 / time_per_repetition_ns. Null when either is null; and null when the quotient is infinite, past a double's range, which JSON cannot hold: chiefly a counted Run that observed a finite bytes per repetition above 0 and whose time per repetition is 0 (its median sample ended at the clock read it started at). Such a Run is still counted, and still among the Runs of its Series' and group's bytes_per_second percentiles.",
           "$ref": "#/$defs/number_or_null"
         }
       }
