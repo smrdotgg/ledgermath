@@ -4,15 +4,22 @@
  * the reference it links to. So its worked examples are held to the data, its links to pages that
  * exist, and its words to the rules every published word keeps.
  *
- * Each worked example is a <details> block whose summary begins "Example:". Its inputs are a table,
- * | Input | Value | From |, each row from the question, an assumption, or the fixed sample of the
- * API kept in docs/api-sample/: a Series' figure (`Series <id>`, the Method's key, the figure's
- * place, its count and its moment) from the list of every Series, or a price (the price file's
- * path, the SKU, the rate code and the member) from the price file. Its arithmetic is its one
- * fenced block, one operation per line, "label: expression = result", a result optionally followed
- * by "→ N (rounded up)". The test finds each figure in the sample at the place the row names, works
- * every line again from the numbers the table and the lines above it hold, and checks that every
- * number the example's words state is one of those, as written or rounded.
+ * Each worked example is a <details> block whose summary begins "Example:".
+ *
+ * - Its inputs are a table, | Input | Value | From |, each row from the question, an assumption, or
+ *   the fixed sample of the API kept in docs/api-sample/: a Series' figure (`Series <id>`, the
+ *   Method's key, the figure's place, its count and its moment) from the list of every Series, or a
+ *   price (the price file's path, the SKU, the rate code and the member) from the price file. A
+ *   value is a number and its unit as written; a cited value must be the sample's, unit and all.
+ * - Its arithmetic is its one fenced block, one operation per line, "label: expression = result
+ *   unit", the result optionally followed by "→ N (rounded up)". Every operand is a number with its
+ *   unit, held by an input or a line above; units are carried through, so a result's unit must be
+ *   the one its operands give.
+ * - Its answer states each result as a list item "- <label>: <result> <unit>", the label naming
+ *   the line that works it out. Anywhere else in its words, a number is an input, as written or
+ *   rounded, with the input's unit after it.
+ * - A parameter or build it names for a Series it cites (`threads` `all`, build `static`), and a
+ *   benchmark page it links, must be that Series'.
  */
 
 import { describe, expect, test } from "bun:test";
@@ -73,11 +80,11 @@ function linesOf(text: string): Array<{ line: string; fenced: boolean; fence: bo
 	});
 }
 
-/** A line as prose a reader sees, without its code spans. */
-const withoutCode = (line: string): string => line.replace(/(`+)[\s\S]*?\1/g, "");
+/** A line as prose a reader sees, without its code spans and without its links' targets. */
+const wordsOf = (line: string): string => line.replace(/(`+)[\s\S]*?\1/g, "").replace(/\]\([^)\s]*\)/g, "]");
 
 // ---------------------------------------------------------------------------------------------
-// Numbers as the page writes them.
+// Numbers and units as the page writes them.
 
 /** A number as written: digits with an optional decimal part, or a power such as 10^12. */
 function valueOf(text: string): number {
@@ -100,12 +107,58 @@ function roundedUp(computed: number): number {
 	return Math.abs(computed - nearest) <= 1e-9 * Math.max(1, Math.abs(computed)) ? nearest : Math.ceil(computed);
 }
 
-/** The numbers a cell or a line of words holds: digits standing alone, not part of a name, a date, a time or an address. */
-const NUMBER = /(?<![\w.\/\-:^])(\d+(?:\.\d+)?(?:\^\d+)?)(?![\w\/\-:^]|\.\d)(\s+million\b)?/g;
+/** A unit as the exponent of each word: "USD per GB" is USD^1 GB^-1; "per second" is second^-1. */
+type Unit = Record<string, number>;
 
-type Token = { kind: "number"; value: number; text: string } | { kind: "op"; op: string };
+function unitOf(text: string): Unit {
+	const unit: Unit = {};
+	let sign = 1;
+	for (const word of text.split(/\s+/).filter((one) => one !== "")) {
+		if (word === "per") sign = -1;
+		else unit[word] = (unit[word] ?? 0) + sign;
+	}
+	return unit;
+}
 
-/** An expression's numbers and operators; words between them (units) are skipped. */
+/** A unit written one way only, so that two units can be compared: "" for none. */
+const keyOf = (unit: Unit): string =>
+	Object.entries(unit)
+		.filter(([, power]) => power !== 0)
+		.sort(([a], [b]) => (a < b ? -1 : 1))
+		.map(([word, power]) => `${word}^${power}`)
+		.join(" ");
+
+function combine(a: Unit, b: Unit, sign: 1 | -1): Unit {
+	const unit: Unit = { ...a };
+	for (const [word, power] of Object.entries(b)) unit[word] = (unit[word] ?? 0) + sign * power;
+	return unit;
+}
+
+/** A number the example holds, with its unit: `text` as written after it, `key` for comparing. */
+interface Quantity {
+	value: number;
+	key: string;
+	text: string;
+}
+
+/** The numbers a line of words states: digits standing alone, not part of a name, a date, a time or an address; "million" after one scales it. */
+const NUMBER = /(?<![\w.\/\-:^])(\d+(?:\.\d+)?)(?![\w\/\-:^]|\.\d)(\s+million\b)?/g;
+
+/** Whether the words after a number start with a unit as written. */
+const startsWithUnit = (after: string, text: string): boolean => text === "" || new RegExp(`^\\s*${text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\w])`).test(after);
+
+/** A cell's numbers, each with the unit written after the last of them: "0 to 100 GB" holds 0 GB and 100 GB. */
+function quantitiesOf(cell: string): Quantity[] {
+	const tokens = [...cell.matchAll(/(?<![\w.^])(\d+(?:\.\d+)?(?:\^\d+)?|Inf)(?![\w.^])/g)];
+	const last = tokens[tokens.length - 1];
+	if (last === undefined) return [];
+	const text = cell.slice((last.index as number) + (last[0] as string).length).trim();
+	return tokens.filter((token) => token[1] !== "Inf").map((token) => ({ value: valueOf(token[1] as string), key: keyOf(unitOf(text)), text }));
+}
+
+type Token = { kind: "number"; value: number; text: string; unit: Unit } | { kind: "op"; op: string };
+
+/** An expression's numbers, each with the unit written after it, and its operators. */
 function tokenize(expression: string): Token[] {
 	const tokens: Token[] = [];
 	let i = 0;
@@ -122,11 +175,11 @@ function tokenize(expression: string): Token[] {
 			i++;
 		} else if (/^\d/.test(rest)) {
 			const number = /^\d+(?:\.\d+)?(?:\^\d+)?/.exec(rest)?.[0] as string;
-			if (/^[A-Za-z_]/.test(rest.slice(number.length))) throw new Error(`a number runs into a word in ${JSON.stringify(expression)}`);
-			tokens.push({ kind: "number", value: valueOf(number), text: number });
 			i += number.length;
-		} else if (/^[A-Za-z]/.test(rest)) {
-			i += (/^[A-Za-z][^\s+−×÷(),]*/.exec(rest)?.[0] as string).length;
+			if (/^[A-Za-z_]/.test(expression.slice(i))) throw new Error(`a number runs into a word in ${JSON.stringify(expression)}`);
+			const words = /^(?:\s+[A-Za-z]+)*/.exec(expression.slice(i))?.[0] as string;
+			i += words.length;
+			tokens.push({ kind: "number", value: valueOf(number), text: number, unit: unitOf(words) });
 		} else {
 			throw new Error(`cannot read ${JSON.stringify(rest)} in ${JSON.stringify(expression)}`);
 		}
@@ -134,31 +187,42 @@ function tokenize(expression: string): Token[] {
 	return tokens;
 }
 
-/** The value of an expression of + − × ÷, parentheses and max(…), in the usual order. */
-function evaluate(tokens: Token[]): number {
+/** The value and unit of an expression of + − × ÷, parentheses and max(…), in the usual order; adding unlike units is an error. */
+function evaluate(tokens: Token[]): { value: number; unit: Unit } {
 	let pos = 0;
 	const isOp = (token: Token | undefined, ...ops: string[]): token is { kind: "op"; op: string } => token?.kind === "op" && ops.includes(token.op);
 	const take = (op: string): void => {
+		if (!isOp(tokens[pos++], op)) throw new Error(`expected ${op}`);
+	};
+	const alike = (a: Unit, b: Unit): void => {
+		if (keyOf(a) !== keyOf(b)) throw new Error(`"${keyOf(a)}" and "${keyOf(b)}" are not the same unit`);
+	};
+	const sum = (): { value: number; unit: Unit } => {
+		const left = product();
+		while (isOp(tokens[pos], "+", "−")) {
+			const plus = (tokens[pos++] as { op: string }).op === "+";
+			const right = product();
+			alike(left.unit, right.unit);
+			left.value = plus ? left.value + right.value : left.value - right.value;
+		}
+		return left;
+	};
+	const product = (): { value: number; unit: Unit } => {
+		let left = factor();
+		while (isOp(tokens[pos], "×", "÷")) {
+			const times = (tokens[pos++] as { op: string }).op === "×";
+			const right = factor();
+			left = { value: times ? left.value * right.value : left.value / right.value, unit: combine(left.unit, right.unit, times ? 1 : -1) };
+		}
+		return left;
+	};
+	const factor = (): { value: number; unit: Unit } => {
 		const token = tokens[pos++];
-		if (!isOp(token, op)) throw new Error(`expected ${op}`);
-	};
-	const sum = (): number => {
-		let value = product();
-		while (isOp(tokens[pos], "+", "−")) value = (tokens[pos++] as { op: string }).op === "+" ? value + product() : value - product();
-		return value;
-	};
-	const product = (): number => {
-		let value = factor();
-		while (isOp(tokens[pos], "×", "÷")) value = (tokens[pos++] as { op: string }).op === "×" ? value * factor() : value / factor();
-		return value;
-	};
-	const factor = (): number => {
-		const token = tokens[pos++];
-		if (token?.kind === "number") return token.value;
+		if (token?.kind === "number") return { value: token.value, unit: token.unit };
 		if (isOp(token, "(")) {
-			const value = sum();
+			const inner = sum();
 			take(")");
-			return value;
+			return inner;
 		}
 		if (isOp(token, "max")) {
 			take("(");
@@ -168,13 +232,14 @@ function evaluate(tokens: Token[]): number {
 				values.push(sum());
 			}
 			take(")");
-			return Math.max(...values);
+			for (const one of values) alike(one.unit, (values[0] as { unit: Unit }).unit);
+			return { value: Math.max(...values.map((one) => one.value)), unit: (values[0] as { unit: Unit }).unit };
 		}
 		throw new Error("expected a number, ( or max(");
 	};
-	const value = sum();
+	const result = sum();
 	if (pos !== tokens.length) throw new Error("words left over after the expression");
-	return value;
+	return result;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -217,9 +282,15 @@ function examplesOf(text: string): Example[] {
 
 const EXAMPLES = examplesOf(TEXT);
 
+/** The unit a Series' value is written with, by its place: whole cell equality holds the rest. */
+function seriesUnit(place: string): string {
+	if (/\.bytes_per_second\.p\d+$/.test(place)) return " bytes per second";
+	if (/_ns\.p\d+$/.test(place)) return " ns";
+	if (/_bytes$/.test(place)) return " bytes";
+	return "";
+}
+
 interface Checked {
-	/** Every number the example holds: its inputs as the table writes them, the counts it cites, and each line's results. */
-	known: number[];
 	problems: string[];
 	/** The addresses of the files its citations read. */
 	read: Set<string>;
@@ -228,7 +299,7 @@ interface Checked {
 }
 
 /** One row's citation, found in the sample: a list of what does not agree with it. */
-function checkRow(row: Row, read: Set<string>, known: number[]): { problems: string[]; tier: boolean } {
+function checkRow(row: Row, read: Set<string>, cited: Json[], counts: Quantity[]): { problems: string[]; tier: boolean } {
 	const problems: string[] = [];
 	const codes = [...row.from.matchAll(/`([^`]+)`/g)].map((match) => match[1] as string);
 	const series = /^Series `([0-9a-f]{12})`/.exec(row.from)?.[1];
@@ -237,19 +308,20 @@ function checkRow(row: Row, read: Set<string>, known: number[]): { problems: str
 		read.add(SERIES_LIST.url);
 		const found = (SERIES_LIST.json.series as Json[]).find((one) => one.id === series);
 		if (found === undefined) return { problems: [`${row.input}: no Series ${series} in ${SERIES_LIST.url}`], tier: false };
+		if (!cited.includes(found)) cited.push(found);
 		const key = ["series_v1", "requests_v1"].includes(codes[1] as string) ? codes[1] : undefined;
 		const place = (key === undefined ? codes[1] : codes[2]) as string;
 		const full = key === undefined ? place : `derivations.${key}.${place}`;
 		const value = at(found, full);
 		if (value === undefined || value === null || typeof value === "object") return { problems: [`${row.input}: Series ${series} has no value at ${full}`], tier: false };
-		const unit = /\.bytes_per_second\.p\d+$/.test(place) ? " bytes per second" : /\.time_per_repetition_ns\.p\d+$/.test(place) ? " ns" : undefined;
-		if (unit !== undefined ? row.value !== `${value}${unit}` : row.value.split(" ")[0] !== String(value)) problems.push(`${row.input}: the page says ${row.value}, ${full} is ${value}`);
+		const expected = `${value}${seriesUnit(place)}`;
+		if (row.value !== expected) problems.push(`${row.input}: the page says ${row.value}, ${full} is ${expected}`);
 		const percentile = /^(percentiles\.\w+)\.p\d+$/.exec(place)?.[1];
 		if (percentile !== undefined) {
 			const count = /\bcount (\d+)\b/.exec(row.from)?.[1];
 			const held = at(found, `derivations.${key}.${percentile}.count`);
 			if (count === undefined || Number(count) !== held) problems.push(`${row.input}: the count behind it is ${held}, the page says ${count}`);
-			else known.push(Number(count));
+			else counts.push({ value: Number(count), key: "", text: "" });
 		}
 		if (key !== undefined) {
 			const moment = /as of `([^`]+)`/.exec(row.from)?.[1];
@@ -288,51 +360,104 @@ function checkRow(row: Row, read: Set<string>, known: number[]): { problems: str
 
 function checkExample(example: Example): Checked {
 	const problems: string[] = [];
-	const known: number[] = [];
 	const read = new Set<string>();
+	const cited: Json[] = [];
 	let tier = false;
+
+	// The inputs: each found where its row says, each a number the example holds with its unit.
+	const inputs: Quantity[] = [];
 	if (example.rows.length === 0) problems.push("no table of inputs");
 	for (const row of example.rows) {
-		for (const match of row.value.matchAll(NUMBER)) known.push(valueOf(match[1] as string));
-		const checked = checkRow(row, read, known);
+		inputs.push(...quantitiesOf(row.value));
+		const checked = checkRow(row, read, cited, inputs);
 		problems.push(...checked.problems);
 		tier ||= checked.tier;
 	}
+
+	// The arithmetic: every operand held, with its unit, by an input or a line above; every result worked again, its unit too.
+	const held: Quantity[] = [...inputs];
+	const results = new Map<string, { values: number[]; text: string }>();
 	for (const line of example.arithmetic) {
 		const label = line.indexOf(": ");
 		const equals = line.lastIndexOf(" = ");
-		const result = /^(\d+(?:\.\d+)?)\b[^→]*?(?: → (\d+)( \(rounded up\))?)?$/.exec(line.slice(equals + 3));
+		const result = /^(\d+(?:\.\d+)?)((?: [A-Za-z]+)*)(?: → (\d+)( \(rounded up\))?)?$/.exec(line.slice(equals + 3));
 		if (label < 0 || equals < label || result === null) {
-			problems.push(`not "label: expression = result": ${line}`);
+			problems.push(`not "label: expression = result unit": ${line}`);
 			continue;
 		}
-		let computed: number;
+		const [, stated, written, rounded, up] = result as unknown as [string, string, string, string | undefined, string | undefined];
+		const unitText = written.trim();
+		let computed: { value: number; unit: Unit };
 		try {
 			const tokens = tokenize(line.slice(label + 2, equals));
-			for (const token of tokens) if (token.kind === "number" && !known.some((value) => same(value, token.value))) problems.push(`${token.text} is from nowhere above: ${line}`);
+			for (const token of tokens) {
+				if (token.kind === "number" && !held.some((one) => same(one.value, token.value) && one.key === keyOf(token.unit))) {
+					problems.push(`${token.text} ${keyOf(token.unit) || "(no unit)"} is from nowhere above: ${line}`);
+				}
+			}
 			computed = evaluate(tokens);
 		} catch (error) {
 			problems.push(`${(error as Error).message}: ${line}`);
 			continue;
 		}
-		const [, stated, rounded, up] = result as unknown as [string, string, string | undefined, string | undefined];
-		if (!agrees(stated, computed)) problems.push(`works out to ${computed}, not ${stated}: ${line}`);
-		known.push(Number(stated));
+		if (!agrees(stated, computed.value)) problems.push(`works out to ${computed.value}, not ${stated}: ${line}`);
+		if (keyOf(unitOf(unitText)) !== keyOf(computed.unit)) problems.push(`its unit is "${keyOf(computed.unit)}", not "${unitText}": ${line}`);
+		const values = [Number(stated)];
 		if (rounded !== undefined) {
-			if (up === undefined ? !agrees(rounded, computed) : Number(rounded) !== roundedUp(computed)) problems.push(`${computed} is not ${up ? "rounded up" : "rounded"} to ${rounded}: ${line}`);
-			known.push(Number(rounded));
+			if (up === undefined ? !agrees(rounded, computed.value) : Number(rounded) !== roundedUp(computed.value)) problems.push(`${computed.value} is not ${up ? "rounded up" : "rounded"} to ${rounded}: ${line}`);
+			values.push(Number(rounded));
 		}
+		for (const value of values) held.push({ value, key: keyOf(computed.unit), text: unitText });
+		results.set(line.slice(0, label), { values, text: unitText });
 	}
-	// Every number the words state is one the table or the arithmetic holds, as written or rounded.
+
+	// The words: a result only in the answer's item that names its line; any other number an input, with its unit.
+	const isInput = (stated: string, scale: number, after: string): boolean => inputs.some((one) => agrees(stated, one.value / scale) && startsWithUnit(after, one.text));
+	const answered = new Set<string>();
 	const words = [example.summary, ...example.lines.filter((entry) => !entry.fenced && !entry.line.startsWith("|")).map((entry) => entry.line)];
 	for (const line of words) {
-		for (const match of withoutCode(line).replace(/\]\([^)\s]*\)/g, "]").matchAll(NUMBER)) {
-			const [, stated, million] = match as unknown as [string, string, string | undefined];
+		const item = /^- ([^:]+): /.exec(line);
+		const result = item === null ? undefined : results.get(item[1] as string);
+		const text = wordsOf(item === null || result === undefined ? line : line.slice(item[0].length));
+		let first = result !== undefined;
+		for (const match of text.matchAll(NUMBER)) {
+			const [whole, stated, million] = match as unknown as [string, string, string | undefined];
 			const scale = million === undefined ? 1 : 1e6;
-			if (!known.some((value) => agrees(stated, value / scale))) problems.push(`${stated}${million ?? ""} is not a number the example holds: ${line}`);
+			const after = text.slice((match.index as number) + whole.length);
+			const isResult = result !== undefined && result.values.some((value) => agrees(stated, value / scale)) && startsWithUnit(after, result.text);
+			if (first) {
+				// The item's own result, as its line states it or rounds it, with its unit.
+				if (million !== undefined || !result?.values.some((value) => value === Number(stated)) || !startsWithUnit(after, result.text)) {
+					const unit = result?.text ? ` ${result.text}` : "";
+					problems.push(`${item?.[1]} is ${result?.values.join(" → ")}${unit}, the answer says "${stated}${after.slice(0, unit.length).trimEnd()}": ${line}`);
+				} else answered.add(item?.[1] as string);
+				first = false;
+			} else if (!isResult && !isInput(stated, scale, after)) {
+				const said = `${stated}${million ?? ""}${/^\s*[^\s.,;:()]*/.exec(after)?.[0] ?? ""}`;
+				problems.push(`"${said}" is no input of the example${result === undefined ? " (a result is stated only in the item that names its line)" : ", nor its item's result"}: ${line}`);
+			}
+		}
+		if (result !== undefined && first) problems.push(`${item?.[1]}: the answer's item states no number: ${line}`);
+	}
+	const last = example.arithmetic[example.arithmetic.length - 1];
+	if (last !== undefined && !answered.has(last.slice(0, last.indexOf(": ")))) problems.push(`the answer does not state the last line's result: ${last}`);
+
+	// What it names of a Series it cites: each parameter, the build, the benchmark's page.
+	const prose = example.lines.filter((entry) => !entry.fenced && !entry.line.startsWith("|")).map((entry) => entry.line);
+	for (const line of prose) {
+		for (const [, name, value] of line.matchAll(/`([a-z_][a-z0-9_]*)` `([^`]+)`/g)) {
+			for (const row of cited) {
+				if (row.params[name as string] !== undefined && String(row.params[name as string]) !== value) problems.push(`Series ${row.id}'s ${name} is ${row.params[name as string]}, the page says ${value}: ${line}`);
+			}
+		}
+		for (const [, build] of line.matchAll(/\bbuild `([^`]+)`/g)) {
+			for (const row of cited) if (row.build !== build) problems.push(`Series ${row.id}'s build is ${row.build}, the page says ${build}: ${line}`);
+		}
+		for (const [, benchmark] of line.matchAll(/\]\(\/docs\/benchmarks\/([a-z0-9_]+)\)/g)) {
+			if (cited.length > 0 && !cited.some((row) => row.benchmark === benchmark)) problems.push(`it cites no Series of ${benchmark}: ${line}`);
 		}
 	}
-	return { known, problems, read, tier };
+	return { problems, read, tier };
 }
 
 describe("the worked examples of the start-here page", () => {
@@ -347,7 +472,7 @@ describe("the worked examples of the start-here page", () => {
 	});
 
 	for (const example of EXAMPLES) {
-		test(`${example.summary}: every input is the question's, an assumption, or found in the sample where its row says`, () => {
+		test(`${example.summary}: every input is the question's, an assumption, or found in the sample where its row says, and every result is worked again`, () => {
 			const { problems } = checkExample(example);
 			expect(problems).toEqual([]);
 		});
@@ -361,9 +486,10 @@ describe("the worked examples of the start-here page", () => {
 		});
 	}
 
-	test("the checks catch a figure, a count, a moment, a price or a line of arithmetic that is wrong, and a number from nowhere", () => {
+	describe("catch what is planted in them", () => {
 		const fleet = EXAMPLES.find((example) => example.arithmetic.some((line) => line.includes("max("))) as Example;
 		const tiered = EXAMPLES.find((example) => checkExample(example).tier) as Example;
+		const notHeld = EXAMPLES.find((example) => example.arithmetic.length === 0) as Example;
 		const edit = (example: Example, from: string, to: string): Example => {
 			const text = (entry: { line: string }) => entry.line.replace(from, to);
 			return {
@@ -373,25 +499,44 @@ describe("the worked examples of the start-here page", () => {
 				arithmetic: example.arithmetic.map((line) => line.replace(from, to)),
 			};
 		};
-		const caught = (example: Example, from: string, to: string): boolean => {
+		/** The problems a planted change makes the example show; the change must have changed something. */
+		const planted = (example: Example, from: string, to: string): string[] => {
 			const changed = edit(example, from, to);
 			expect(JSON.stringify(changed)).not.toBe(JSON.stringify(example));
-			return checkExample(changed).problems.length > 0;
+			return checkExample(changed).problems;
 		};
-		expect(checkExample(fleet).problems).toEqual([]);
-		expect(caught(fleet, "145497618462.33847 bytes per second", "145497618462.3385 bytes per second")).toBe(true);
-		expect(caught(fleet, "count 63", "count 64")).toBe(true);
-		expect(caught(fleet, "as of `2026-11-26T16:13:49.030665839Z`", "as of `2026-11-26T16:13:49Z`")).toBe(true);
-		expect(caught(fleet, "= 68.73 → 69", "= 68.73 → 68")).toBe(true);
-		expect(caught(fleet, "= 198.56 USD", "= 198.57 USD")).toBe(true);
-		expect(caught(fleet, "146 boxes of AWS's", "147 boxes of AWS's")).toBe(true);
-		expect(caught(fleet, "`attributes.memory`", "`attributes.vcpu`")).toBe(true);
-		expect(caught(tiered, "0.0850000000 USD per GB", "0.0800000000 USD per GB")).toBe(true);
-		expect(caught(tiered, "10240 to 51200 GB", "10240 to 51300 GB")).toBe(true);
-		expect(caught(tiered, "(153600 − 51200) GB × 0.07", "(153600 − 51200) GB × 0.071")).toBe(true);
-		expect(caught(tiered, "the question", "a guess")).toBe(true);
-		expect(caught(tiered, "= 30003898.2 USD", "= 30003899.2 USD")).toBe(true);
-		expect(caught(tiered, "Cost: 30003886.2 USD + 12 USD", "Cost: 30003886.2 USD + 13 USD")).toBe(true);
+		const cases: Array<[string, Example, string, string, RegExp]> = [
+			["a figure", fleet, "145497618462.33847 bytes per second", "145497618462.3385 bytes per second", /is 145497618462\.33847 bytes per second|from nowhere/],
+			["a count", fleet, "count 63", "count 64", /the count behind it is 63/],
+			["a moment", fleet, "as of `2026-11-26T16:13:49.030665839Z`", "as of `2026-11-26T16:13:49Z`", /the moment is/],
+			["a rounding up", fleet, "= 68.73 → 69", "= 68.73 → 68", /is not rounded up to 68/],
+			["a result", fleet, "= 198.56 USD per Hrs", "= 198.57 USD per Hrs", /works out to/],
+			["AWS's words", fleet, "`attributes.memory`", "`attributes.vcpu`", /AWS's words are "32"/],
+			["a price", tiered, "0.0850000000 USD per GB", "0.0800000000 USD per GB", /the price file says 0\.0850000000 USD per GB/],
+			["a tier's bounds", tiered, "10240 to 51200 GB", "10240 to 51300 GB", /the price file says 10240 to 51200 GB/],
+			["an operand", tiered, "(153600 GB − 51200 GB) × 0.07", "(153600 GB − 51200 GB) × 0.071", /0\.071 .* is from nowhere above/],
+			["a source", tiered, "the question", "a guess", /is not the question, an assumption or a citation/],
+			// Item 12: an answer's result is held to its own line, not to any number the example holds.
+			["an answer's result swapped for another the example holds", fleet, "- Boxes: 146", "- Boxes: 75", /^Boxes is 146, the answer says "75"/],
+			["an answer's total swapped for the grand total", tiered, "- Transfer cost: 30003886.2 USD.", "- Transfer cost: 30003898.2 USD.", /^Transfer cost is 30003886\.2 USD, the answer says "30003898\.2 USD"/],
+			["a result stated outside its item", fleet, "so few boxes cannot hold", "69 boxes cannot hold", /^"69 boxes" is no input of the example \(a result is stated only in the item that names its line\)/],
+			// Item 13: units, on every row and through the arithmetic.
+			["a Series value's unit", fleet, "1073741824 bytes", "1073741824 KiB", /Buffer: the page says 1073741824 KiB, params\.size_bytes is 1073741824 bytes/],
+			["a result's unit", tiered, "= 921.6 USD", "= 921.6 GB", /its unit is "USD\^1", not "GB"/],
+			["an operand's unit", tiered, "× 0.09 USD per GB", "× 0.09 USD per Hrs", /0\.09 GB\^-1|0\.09 Hrs\^-1 USD\^1 is from nowhere above/],
+			["a unit in the words", fleet, "a 10 TB data set", "a 10 GB data set", /^"10 GB" is no input of the example/],
+			// Item 14: what the example names of its Series.
+			["a parameter", fleet, "`threads` `all`", "`threads` `1`", /Series a655ffb3e7dd's threads is all, the page says 1/],
+			["a build", fleet, "build `static`", "build `dynamic`", /Series a655ffb3e7dd's build is static, the page says dynamic/],
+			["a benchmark", notHeld, "[tcp_echo](/docs/benchmarks/tcp_echo)", "[memory_read](/docs/benchmarks/memory_read)", /it cites no Series of memory_read/],
+		];
+		for (const [what, example, from, to, finding] of cases) {
+			test(`${what}: ${JSON.stringify(from)} made ${JSON.stringify(to)}`, () => {
+				expect(checkExample(example).problems).toEqual([]);
+				const problems = planted(example, from, to);
+				expect({ what, caught: problems.some((problem) => finding.test(problem)), problems }).toMatchObject({ what, caught: true });
+			});
+		}
 	});
 });
 
@@ -401,6 +546,7 @@ describe("the worked examples of the start-here page", () => {
 describe("the start-here page", () => {
 	const lines = linesOf(TEXT);
 	const prose = lines.filter((entry) => !entry.fenced).map((entry) => entry.line);
+	const withoutCode = (line: string): string => line.replace(/(`+)[\s\S]*?\1/g, "");
 
 	test("is plain Markdown: a title, an opening paragraph that stands alone, no front matter, no image, no HTML but <details> and <summary>", () => {
 		expect(TEXT.startsWith("# ")).toBe(true);
