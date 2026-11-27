@@ -63,8 +63,10 @@
  *     off the same links are ordinary links, each loading its page as a new document. The time
  *     from each click to the next frame is printed, not judged: a slow runner is slow.
  *  8. The documentation's own (ADR-0037). On a documentation page, Tab from the top reaches the
- *     breadcrumb, "View as Markdown", "Copy page" and the list of pages; "Copy page" puts the
- *     page's Markdown on the clipboard, byte for byte the file the site serves; a link to a
+ *     breadcrumb, "View as Markdown", "Copy page" and the list of pages; "Copy page", clicked
+ *     with its Markdown held back, says "Copying…" at once, aria-disabled and still focused, then
+ *     puts the page's Markdown on the clipboard, byte for byte the file the site serves, and stays
+ *     aria-disabled and focused; a link to a
  *     heading of another page lands on the heading, in view at the top of the window with the
  *     keyboard focus on it; a click to a page whose chunk the host refuses (as after a deploy
  *     since the tab opened) loads that page as a new document, with no uncaught error; a page
@@ -107,6 +109,8 @@ const ROUTE = ["/", "/docs/", "/docs/benchmarks/memory_read", "/docs/api/series"
 const KEYBOARD_PAGES = ["/", "/docs/glossary"];
 /** The page check 8 tabs through: a short one, so that Tab reaches the list of pages soon. */
 const TAB_PAGE = "/docs/benchmarks/sort";
+/** What "Copy page" says from the click until the copy has come to something (src/docs/Page.tsx). */
+const COPYING = "Copying…";
 /** Check 8's link to a heading of another page, from TAB_PAGE: to a heading of this one. */
 const HEADING_LINK = { to: "/docs/api/series" };
 /** The page whose chunk check 8 makes the host refuse, as a deploy since the tab opened would. */
@@ -850,14 +854,35 @@ async function documentation(browser: Browser, origin: string, root: string, all
 	if (missed.length > 0) problems.push(`Tab from the top of ${meta.path} never reached ${missed.join(", ")}`);
 	else passed.push(`on ${meta.path}, Tab from the top reached ${wanted.join(", ")}`);
 
-	// "Copy page": the page's Markdown, byte for byte the file the site serves.
+	// "Copy page": the click is answered at once, while the Markdown is still on its way (held
+	// here); then the page's Markdown, byte for byte the file the site serves.
+	const copyState = () =>
+		page.evaluate(() => {
+			const button = document.querySelector("button.copy");
+			return { said: document.querySelector(".said")?.textContent ?? "", disabled: button?.getAttribute("aria-disabled") ?? null, focused: document.activeElement === button };
+		});
+	let release: () => void = () => {};
+	const held = new Promise<void>((resolve) => (release = resolve));
+	await page.route(`**${meta.markdown}`, async (route) => {
+		await held;
+		await route.fallback().catch(() => {});
+	});
 	await page.locator("button.copy").click();
-	await page.waitForFunction(() => (document.querySelector(".said")?.textContent ?? "") !== "", null, { timeout: 5_000 }).catch(() => {});
-	const said = (await page.locator(".said").textContent()) ?? "";
+	const atOnce = await copyState();
+	release();
+	await page.waitForFunction((copying) => !["", copying].includes(document.querySelector(".said")?.textContent ?? ""), COPYING, { timeout: 5_000 }).catch(() => {});
+	const after = await copyState();
+	const said = after.said;
 	const copied = await page.evaluate(() => navigator.clipboard.readText()).catch((error: unknown) => `(the clipboard could not be read: ${String(error)})`);
 	const markdown = readFileSync(join(root, meta.markdown.slice(1)), "utf8");
-	if (copied !== markdown) problems.push(`"Copy page" on ${meta.path} put ${copied.length} characters on the clipboard, not its Markdown (${markdown.length}); it said ${JSON.stringify(said)}`);
-	else passed.push(`"Copy page" put ${meta.markdown} on the clipboard, byte for byte, and said ${JSON.stringify(said)}`);
+	const copyProblems: string[] = [];
+	if (atOnce.said !== COPYING || atOnce.disabled !== "true" || !atOnce.focused)
+		copyProblems.push(`"Copy page" on ${meta.path}, clicked with its Markdown held back, should at once say ${JSON.stringify(COPYING)}, be aria-disabled and keep the focus; it was ${JSON.stringify(atOnce)}`);
+	if (copied !== markdown) copyProblems.push(`"Copy page" on ${meta.path} put ${copied.length} characters on the clipboard, not its Markdown (${markdown.length}); it said ${JSON.stringify(said)}`);
+	if (after.disabled !== "true" || !after.focused) copyProblems.push(`"Copy page" on ${meta.path}, once it said ${JSON.stringify(said)}, should stay aria-disabled and keep the focus; it was ${JSON.stringify(after)}`);
+	problems.push(...copyProblems);
+	if (copyProblems.length === 0)
+		passed.push(`"Copy page", clicked with its Markdown held back, said ${JSON.stringify(COPYING)} at once, aria-disabled and still focused; then put ${meta.markdown} on the clipboard, byte for byte, and said ${JSON.stringify(said)}, the button still focused`);
 
 	// A link to a heading of another page (put on the page here; the generated pages link only to
 	// their own headings): the heading in view at the top, the focus on it, no request for the page.

@@ -15,6 +15,12 @@ const LIGHT = "(prefers-color-scheme: light)";
 // frame. Without JavaScript the browser's own wait applies.
 const HOLD_UNTIL_FONT = `(()=>{const f='1em "Geist Pixel '+(matchMedia("${LIGHT}").matches?"Square":"Circle")+'"';if(document.fonts.check(f))return;const r=document.documentElement;r.classList.add("font-loading");document.fonts.load(f).finally(()=>r.classList.remove("font-loading"))})()`;
 
+// The site has no logo yet. A page that names no icon gets the browser's own placeholder in its
+// tab (Chrome's globe) and a request for /favicon.ico; so each page names an icon that shows
+// nothing: a 1x1 transparent PNG, carried in the page, which costs no request. The tab still keeps
+// the icon's place: that is the browser's, and no page can take it away.
+const NO_ICON = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mNgAAIAAAUAAen63NgAAAAASUVORK5CYII=";
+
 // A page's feature flags (pages.text.ts): for each that the address names as a parameter, as in
 // /?napkin, set data-<flag> on <html>, before the body is read, so that site.css shows the part
 // the flag hides from the first frame on. Without JavaScript the part stays hidden. After a page
@@ -37,6 +43,7 @@ export default function Document(props: { flags?: readonly string[]; children?: 
 					<meta name="color-scheme" content="dark light" />
 					<meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)" />
 					<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
+					<link rel="icon" type="image/png" href={NO_ICON} />
 					<link rel="preload" href={circle} as="font" type="font/woff2" crossorigin="anonymous" media={`not all and ${LIGHT}`} />
 					<link rel="preload" href={square} as="font" type="font/woff2" crossorigin="anonymous" media={LIGHT} />
 					<script innerHTML={setFlags(props.flags ?? []) + HOLD_UNTIL_FONT} />

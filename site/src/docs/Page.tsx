@@ -38,6 +38,9 @@ async function copyMarkdown(address: string): Promise<void> {
 	await navigator.clipboard.writeText(await text());
 }
 
+/** What "Copy page" says from the click until the copy has come to something. */
+const COPYING = "Copying…";
+
 export default function DocsShell(props: { data: PageData; children?: JSX.Element }) {
 	const links = props.data.links;
 	const location = useLocation();
@@ -47,13 +50,20 @@ export default function DocsShell(props: { data: PageData; children?: JSX.Elemen
 		return DOC_PAGES.find((page) => page.address === address) ?? DOC_PAGES[0]!;
 	};
 	const section = () => SECTIONS.find((s) => s.id === meta().section)!;
-	// What the copy came to, for the page it was asked on: said once, and gone with the page.
+	// What the copy is doing or came to, for the page it was asked on: said, and gone with the page.
 	const [copied, setCopied] = createSignal<{ path: string; said: string } | null>(null);
 	const copy = () => {
+		// One copy a page: once anything is said, copying is disabled until another page;
+		// aria-disabled keeps the button focused.
+		if (said()) return;
 		const path = location.pathname;
+		// Said at the click, before the Markdown has been fetched: the click is answered at once.
+		setCopied({ path, said: COPYING });
+		// What it came to replaces that, unless a copy asked on another page has taken its place.
+		const came = (said: string) => setCopied((now) => (now?.path === path ? { path, said } : now));
 		copyMarkdown(meta().markdown).then(
-			() => setCopied({ path, said: "Copied the page's Markdown." }),
-			() => setCopied({ path, said: "Could not copy: View as Markdown shows it." }),
+			() => came("Copied the page's Markdown."),
+			() => came("Could not copy: View as Markdown shows it."),
 		);
 	};
 	const said = () => (copied()?.path === location.pathname ? copied()!.said : "");
@@ -73,7 +83,7 @@ export default function DocsShell(props: { data: PageData; children?: JSX.Elemen
 							<a href={meta().markdown} target="_self">
 								View as Markdown
 							</a>
-							<button type="button" class="copy" onClick={copy}>
+							<button type="button" class="copy" onClick={copy} aria-disabled={said() ? "true" : undefined}>
 								Copy page
 							</button>
 							{/* A status, which a screen reader reads out when it changes; not an aria-live of its own beside Layout's (src/app.tsx). */}
