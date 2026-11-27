@@ -3,7 +3,8 @@
 What a buffered `pwrite` of `request_bytes` costs, on one thread, one write at a time:
 followed by `fdatasync` (the time until the device has the data) or by nothing (the time
 until the page cache has it). How the kernel and the device make the data durable is
-theirs, not the binary's; each Run observes the disk's write cache and FUA support.
+theirs, not the binary's; where the binary could read them, each Run observes the disk's
+write cache and FUA support.
 
 ## What a figure means
 
@@ -31,14 +32,14 @@ disk, on one instance type.
 
 ## What a figure does not show
 
-- With `sync` `none` the figure is the page cache's, not the disk's: the binary calls
-  `pwrite` alone and asks for nothing to be made durable. The device counters show what
-  reached the device while measuring.
+- With `sync` `none`, the measured loop calls `pwrite` alone and asks for nothing to be
+  made durable: the figure is the time of a buffered write, whatever the kernel made that
+  call wait for.
 - The binary only calls `fdatasync`; how the kernel and the device make the write durable
   is theirs. On the two disks seen, the root gp3 volume and the instance store of an
   `i4i.2xlarge`, both reporting `write_cache` "write through", the device counted no flush
-  while measuring. Each Run records `write_cache` and `fua` beside the device's counters
-  (see "Findings").
+  while measuring. Each Run records `write_cache` and `fua` where the binary could read
+  them; an absent value says nothing either way (see "Findings").
 - The scratch file is written in full before measuring, so the measured writes overwrite
   blocks that are already allocated. Writes that allocate blocks are not measured.
 - With `disk` `root_volume` the sets write to the root EBS volume, not the instance's own
@@ -88,8 +89,8 @@ device, here the scratch file (`o_direct` is false: the measured writes are buff
   and marking it dirty, not the disk; the device counters show it.
 - **fdatasync's cost depends on the write cache.** Both disks seen are "write through", so
   the number is the device's write latency plus what XFS and the kernel add (about 7.5 µs
-  on the instance store: 30.1 µs against the device's mean of 22.6). A disk reporting
-  "write back" would add a flush, which `device_counters` and the dump would show.
+  on the instance store: 30.1 µs against the device's mean of 22.6). No disk reporting
+  "write back" was seen.
 - **The root volume's numbers are gp3's**, with background writes of the box's own (the
   runner, journald) in the same counters.
 

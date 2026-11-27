@@ -5,16 +5,17 @@ names, over a new connection per request or over one kept connection, one reques
 time on one thread, each request after the first preceded by a pause whose mean is
 `gap_mean_ms`: a lightly loaded client. With `auth` `sigv4`, as scheduled, each request is
 signed before its clock starts; each phase it reaches (name resolved, connected, secured,
-request sent, first byte, headers, body) is an event, and each complete 2xx body is
-checked against the Fixture.
+request sent, first byte, headers, body) is an event, and the body of each 2xx response
+that ends without a failure is checked against the Fixture.
 
 ## What a figure means
 
 HTTPS GET requests to S3, one request per sample, with each phase a request reaches an
 event: name resolved, connected, secured, request sent, first byte, headers, body. The
 binary speaks to S3 itself. It sends its own DNS query to the box's resolver, opens TCP,
-does TLS with AWS-LC (linked statically), writes HTTP/1.1 by hand, signs each request by
-hand with SigV4 before the request's first timestamp, and frames the response itself. No
+does TLS with AWS-LC (linked statically), writes HTTP/1.1 by hand, with `auth` `sigv4`
+signs each request by hand with SigV4 before the request's first timestamp, and frames the
+response itself. No
 SDK, no retry, no redirect.
 
 An error (a status that is not 2xx, a reset, a timeout, a short body, a TLS or DNS failure)
@@ -38,10 +39,10 @@ gives each phase of a request, and the total, its percentiles across the succeed
 requests: the 50th, 90th, 95th, 99th and 99.9th, each only where there are enough requests
 for it, within each Run it counts and pooled across them. A Run that exited 4 can count
 there too, when its stream passes the Method's checks and holds as many counted requests
-as the Run asked for; a Run cut short at its budget, or after ten requests in a row that
-reached no server, holds fewer and is in no figure, its succeeded requests included. In a
-Run it counts, failed requests are counted and never timed. The phases are differences of
-the events' times, as "The phases" below defines them. The binary observes no
+as the Run asked for; a Run that holds fewer counted samples than it asked for is in no
+figure, its succeeded requests included. In a Run it counts, failed requests are counted
+and never timed. The phases are differences of the events' times, as "The phases" below
+defines them. The binary observes no
 `bytes_per_repetition`, so no bytes per second is derived.
 
 So a figure is the time of an HTTPS GET of a Fixture object of `object_bytes`, or of one of
@@ -55,10 +56,10 @@ sends one request at a time.
 - With `connection` `reused` the requests have no DNS, TCP or TLS phase, so they do not
   show the cost of a new connection.
 - The box and the endpoint are in one Region, so a figure is not that of a client
-  elsewhere. Each Run's dumps record the box's network settings (`network`) and the
-  subnet's route tables and the VPC's endpoints as the EC2 API describes them
-  (`ec2_route_tables`, `ec2_vpc_endpoints`): configuration, not the route the requests
-  took.
+  elsewhere. Where the dump took them, each Run's dumps record the box's network settings
+  (`network`) and the subnet's route tables and the VPC's endpoints as the EC2 API
+  describes them (`ec2_route_tables`, `ec2_vpc_endpoints`): configuration, not the route
+  the requests took.
 - Method `series` v1's one figure per counted Run is a median, not a tail. The tail of
   the requests is Method `requests` v1's.
 - The Body phase is not a network figure on its own. It starts once the header block is

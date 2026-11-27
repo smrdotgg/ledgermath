@@ -3,7 +3,7 @@
 The cost of one call into the kernel on one thread (`getpid`, `getrusage`, and `stat`,
 whose cost depends on the file system that answers it, which each Run observes), beside
 `gettimeofday`, which the vDSO normally answers without entering the kernel; whether it did
-is not observed, and the clock source in the Run's dump section `kernel` decides it.
+is not observed, and the Run's dump section `kernel` records the clock source.
 
 ## What a figure means
 
@@ -33,8 +33,8 @@ type.
 
 ## What a figure does not show
 
-- `gettimeofday` normally does not enter the kernel, and whether it did is not observed:
-  the clock source in the Run's dump section `kernel` decides it.
+- `gettimeofday` normally does not enter the kernel, and whether it did is not observed;
+  the Run's dump section `kernel` records the clock source.
 - With `call` `stat`, every repetition stats the same path. The cost of `stat` depends on
   the file system that answers it, which `path_fs_type` records.
 - The binary is linked statically, which changes how `gettimeofday` is reached. In two

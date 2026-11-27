@@ -10,7 +10,7 @@ The latency of one read from a disk, with no other read of the binary's outstand
 `pread` of 8 KiB with `O_DIRECT`, at the next offset of a seeded permutation of the span's
 blocks, from the Fixture the box made at boot. A sample's time over its repetitions is the mean time of one
 read; the device's own latency histogram, which the dump records before and after every
-Run, gives the distribution of every request the device served in between.
+Run, gives the distribution of every read the device served in between.
 
 ### One repetition
 
@@ -40,11 +40,11 @@ disk, on one instance type.
 
 ## What a figure does not show
 
-- A Run's figure is a median of means, not a tail. The device's own latency histogram
-  (`nvme amzn stats`, in the dumps taken before and after the Run) is another thing: it
-  counts, in power-of-two bins, every request the device served between those two dumps,
-  the warmup and any other I/O included, and it is the device's latency, not the time the
-  binary measured around its calls.
+- A Run's figure is a median of means, not a tail. The device's own read latency
+  histogram (`nvme amzn stats`, where the dumps before and after the Run took it) is
+  another thing: it counts, in power-of-two bins, every read the device served between
+  those two dumps, the warmup's and any other reads included, and it is the device's
+  latency, not the time the binary measured around its calls.
 - One read is outstanding at a time, so it is not a disk under load. Reads kept in flight
   are [`disk_read_io_uring`](https://ledgermath.com/docs/benchmarks/disk_read_io_uring)'s.
 - With `disk` `root_volume` the set reads the root EBS volume, not the instance's own
@@ -118,7 +118,7 @@ second).
 
 ### What will stay unstable, and what to read with care
 
-- **The same blocks every Run.** The device's histogram put 33.3% of the instance store's
+- **The same order of blocks in every Run of a set.** The device's histogram put 33.3% of the instance store's
   reads in [64, 128) µs and 66.7% in [128, 256) µs, with the same counts to the read in
   three Runs: the latency is a property of the blocks, and the Series is of these blocks.
 - **gp3's first seconds.** On the root volume the first ~4,000 reads of a Run took about

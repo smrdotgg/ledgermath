@@ -75,7 +75,7 @@ export const BENCHMARK_NOTES: Readonly<Record<string, BenchmarkNote>> = {
 	},
 	syscall: {
 		measures:
-			"The cost of one call into the kernel, on one thread (call getpid, getrusage, stat; stat's cost depends on the file system that answers it, which the Run observes), beside call gettimeofday, which the vDSO normally answers without entering the kernel. Whether it did is not observed: the clock source in the Run's dump section kernel decides it.",
+			"The cost of one call into the kernel, on one thread (call getpid, getrusage, stat; stat's cost depends on the file system that answers it, which the Run observes), beside call gettimeofday, which the vDSO normally answers without entering the kernel. Whether it did is not observed; the Run's dump section kernel records the clock source.",
 		repetition: "makes one call",
 		source: "benchmarks/syscall/README.md",
 	},
@@ -116,12 +116,12 @@ export const BENCHMARK_NOTES: Readonly<Record<string, BenchmarkNote>> = {
 				match: { threads: 1, idle_threads: 0 },
 				note: "the same in a process that has only ever had one thread, where glibc skips the atomic instructions",
 			},
-			{ match: { placement: "distinct_cores", critical_section_lines: 1 }, note: "lock handoff throughput between two physical cores" },
+			{ match: { placement: "distinct_cores", critical_section_lines: 1 }, note: "lock throughput between two physical cores" },
 			{
 				match: { placement: "distinct_cores", critical_section_lines: 8 },
-				note: "lock handoff throughput between two physical cores with the protected cache lines of critical_section_lines moving with the lock, which includes glibc's futex sleep and wake-up",
+				note: "lock throughput between two physical cores with the protected cache lines of critical_section_lines moving with the lock, which includes glibc's futex sleep and wake-up",
 			},
-			{ match: { placement: "smt_siblings" }, note: "lock handoff throughput between the two hardware threads of one core" },
+			{ match: { placement: "smt_siblings" }, note: "lock throughput between the two hardware threads of one core" },
 		],
 		source: "benchmarks/mutex/README.md",
 	},
@@ -137,8 +137,8 @@ export const BENCHMARK_NOTES: Readonly<Record<string, BenchmarkNote>> = {
 	},
 	disk_read_io_uring: {
 		measures:
-			"How many reads a disk completes with queue_depth of them kept submitted (O_DIRECT through io_uring), from one thread. In the Runs examined on EC2 the counted samples sat on the provider's throughput or IOPS limit for the disk, not the device's own; the binary does not require a limit to bind, and the device's counters in each Run's dumps show the time spent over each limit.",
-		repetition: "one completed read: time per repetition is a sample's time over the completions it reaped, the inverse of the completion rate",
+			"How many reads a disk completes with queue_depth of them kept submitted (O_DIRECT through io_uring), from one thread. In the Runs examined on EC2 the counted samples sat on the provider's throughput or IOPS limit for the disk, not the device's own; the binary does not require a limit to bind, and where the dumps took them, the device's counters show the time spent over each limit.",
+		repetition: "one completed read: each sample gives its time over the completions it reaped, and time per repetition is the median of those",
 		bytes: "bytes read",
 		variants: [
 			{ match: { disk: "root_volume", access: "sequential" }, note: `${ROOT_VOLUME}; sequential reads of request_bytes, which in the Runs examined sat on its throughput limit` },
@@ -161,11 +161,11 @@ export const BENCHMARK_NOTES: Readonly<Record<string, BenchmarkNote>> = {
 	},
 	disk_write: {
 		measures:
-			"What a buffered pwrite of request_bytes costs, on one thread, one write at a time: followed by fdatasync (sync fdatasync: until the device has the data) or by nothing (sync none: until the page cache has it). How the kernel and the device make the data durable is theirs, not the binary's; each Run observes the disk's write cache and FUA support (write_cache, fua).",
+			"What a buffered pwrite of request_bytes costs, on one thread, one write at a time: followed by fdatasync (sync fdatasync: until the device has the data) or by nothing (sync none: until the page cache has it). How the kernel and the device make the data durable is theirs, not the binary's; where the binary could read them, each Run observes the disk's write cache and FUA support (write_cache, fua).",
 		repetition: "one write, with its fdatasync when sync is fdatasync",
 		bytes: "bytes written",
 		variants: [
-			{ match: { sync: "none" }, note: "the page cache's number, not the disk's" },
+			{ match: { sync: "none" }, note: "pwrite alone, with nothing asked to be made durable: the time of a buffered write" },
 			{ match: { disk: "root_volume", sync: "fdatasync" }, note: `a durable write to ${ROOT_VOLUME}` },
 			{ match: { disk: "instance_store", sync: "fdatasync" }, note: `a durable write, through XFS, to ${INSTANCE_STORE}` },
 		],
@@ -173,10 +173,10 @@ export const BENCHMARK_NOTES: Readonly<Record<string, BenchmarkNote>> = {
 	},
 	http_get: {
 		measures:
-			"How long an HTTPS GET of an object takes, from the box to the endpoint its Service names, on one thread and one request at a time, each request after the first preceded by a pause whose mean is gap_mean_ms: a lightly loaded client. Each phase a request reaches (name resolved, connected, secured, request sent, first byte, headers, body) is an event, and each complete 2xx body is checked against the Fixture. Over a new connection per request (connection new) or one kept connection (connection reused), opened outside any request's time; object_bytes is the object's size; with auth sigv4 the binary signs each request before its clock starts, with auth none it does not. Where a Series' requests went, how they were signed and what they negotiated is what its Runs record, shown with its percentiles across requests; each Run's dumps record the box's network settings and the subnet's routes as configured, not the route the requests took.",
+			"How long an HTTPS GET of an object takes, from the box to the endpoint its Service names, on one thread and one request at a time, each request after the first preceded by a pause whose mean is gap_mean_ms: a lightly loaded client. Each phase a request reaches (name resolved, connected, secured, request sent, first byte, headers, body) is an event, and the body of each 2xx response that ends without a failure is checked against the Fixture. Over a new connection per request (connection new) or one kept connection (connection reused), opened outside any request's time; object_bytes is the object's size; with auth sigv4 the binary signs each request before its clock starts, with auth none it does not. Where a Series' requests went, how they were signed and what they negotiated is what its Runs record, shown with its percentiles across requests; where the dumps took them, each Run's dumps record the box's network settings and the subnet's routes as configured, not the route the requests took.",
 		repetition: "one GET, from just before its DNS query (new) or its request write (reused) to its whole body: one request per sample",
 		caveat:
-			"Method series v1 gives one number per counted Run, the median of the requests' total times, and counts only a Run whose binary exited cleanly. Method requests v1 gives each phase's percentiles across the succeeded requests (show <id>), to the 99th and 99.9th where the requests support them; a Run whose binary reported a failed request or a status that is not 2xx can count there, its failed requests counted and never timed, but a Run cut short, at its budget or because nothing was reachable, counts in neither Method.",
+			"Method series v1 gives one number per counted Run, the median of the requests' total times, and counts only a Run whose binary exited cleanly. Method requests v1 gives each phase's percentiles across the succeeded requests (show <id>), to the 99th and 99.9th where the requests support them; a Run whose binary reported a failed request or a status that is not 2xx can count there, its failed requests counted and never timed, but a Run holding fewer counted samples than it asked for counts in neither Method.",
 		variants: [
 			{ match: { connection: "new" }, note: "each request resolves the name, connects and does a TLS handshake inside its sample: what a fresh client pays" },
 			{ match: { connection: "reused" }, note: "the request on a kept connection: send, first byte, headers and body only" },

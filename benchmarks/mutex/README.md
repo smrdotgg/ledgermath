@@ -34,8 +34,9 @@ shared between two, on one instance type.
 
 - With two threads, the figure is not the time for the lock to pass from one core to the
   other. A thread that has just unlocked may lock again at once (glibc's mutex is unfair,
-  so the thread that unlocks often locks again), and the figure divided by 10,000 is the
-  mean time per critical section across both threads.
+  so the thread that unlocks often locks again). Each sample gives the mean time per
+  critical section across both threads (its time over its repetitions, over 10,000); the
+  Run's figure, divided by 10,000, is the median of those.
 - With `threads` 1, `one_cpu` and `idle_threads` 0, the figure is true only of a process
   that has only ever had one thread, where glibc skips the atomic instructions. A program
   that has started a thread pays for them, as the same set with `idle_threads` 1 does.
@@ -61,9 +62,9 @@ Each parameter set is a Series of its own on each instance type it is scheduled 
 |---|---|---|
 | `1`, `one_cpu`, `1`, `1` | The cost of one lock and unlock that nobody contends, in a program that has more than one thread. **Usually the number wanted**, and what napkin-math's "mutex lock/unlock" means | every target |
 | `1`, `one_cpu`, `1`, `0` | The same in a process that has only ever had one thread, where glibc skips the atomic instructions | every target |
-| `2`, `distinct_cores`, `1`, `0` | Lock handoff throughput when the lock and the counter move between two physical cores | `c6i.8xlarge`, `c8i.2xlarge`, `c8a.2xlarge`, `i4i.2xlarge` |
+| `2`, `distinct_cores`, `1`, `0` | Lock throughput when the lock and the counter move between two physical cores | `c6i.8xlarge`, `c8i.2xlarge`, `c8a.2xlarge`, `i4i.2xlarge` |
 | `2`, `distinct_cores`, `8`, `0` | The same with eight protected cache lines moving with the lock, which includes glibc's futex sleep and wake-up | the same four |
-| `2`, `smt_siblings`, `1`, `0` | Lock handoff between the two hardware threads of one core, which share its L1 and L2 | `m5.large`, `c6i.8xlarge`, `c8i.2xlarge`, `i4i.2xlarge` |
+| `2`, `smt_siblings`, `1`, `0` | Lock throughput between the two hardware threads of one core, which share its L1 and L2 | `m5.large`, `c6i.8xlarge`, `c8i.2xlarge`, `i4i.2xlarge` |
 
 All five use `lock` `pthread_mutex_default`. `m5.large` has one core with two
 hardware threads, so it runs no distinct-cores set; `c8a.2xlarge` has one hardware thread

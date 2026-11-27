@@ -7,11 +7,11 @@ each Run records as each sample's resident pages.
 
 ## What a figure means
 
-Reading a file front to back from a cold page cache, the way a program does: buffered
-`pread`s of 8 KiB, with the kernel's stock readahead deciding what the device is asked
-for. napkin-math's "sequential read". Each sample reads one region of the Fixture the box
-made at boot, after the kernel is asked to drop it from the page cache, and says how cold it
-was.
+Reading a file front to back after asking the kernel to drop it from the page cache, the
+way a program does: buffered `pread`s of 8 KiB, with the kernel's stock readahead deciding
+what the device is asked for. napkin-math's "sequential read". Each sample reads one region
+of the Fixture the box made at boot, after the kernel is asked to drop it from the page
+cache, and records its pages still resident, where it can count them.
 
 ### Samples of fixed work
 
@@ -22,7 +22,8 @@ two warmup samples, then `LM_SAMPLES` counted ones, each of exactly
 `bytes_per_sample / request_bytes` repetitions. Sample *k* reads region
 *k* mod (`span_bytes` / `bytes_per_sample`) from its first byte to its last. Before each
 sample, outside its interval, the kernel is asked to drop the region from the page cache
-with `posix_fadvise(POSIX_FADV_DONTNEED)` and its resident pages are counted with `mincore`.
+with `posix_fadvise(POSIX_FADV_DONTNEED)` and, where it can be, its resident pages are
+counted with `mincore`.
 The descriptor carries no advice of its own (no `POSIX_FADV_SEQUENTIAL`), so readahead is
 the kernel's default for the device (`read_ahead_kb` 128 on both disks). The two warmup
 samples also drain the root volume's short burst (256 MiB against its ~128 MiB). On the
@@ -58,9 +59,9 @@ page cache, from one disk, on one instance type.
   when it cannot count them), and reads on whatever they say. Neither the binary nor the
   Method requires the region to be cold: a sample is a cold read as far as that count
   shows.
-- Readahead asks the device for larger requests than the 8 KiB calls (128 KiB on both
-  disks seen), and the figure is built from means over the calls, not from the latency of
-  one device request.
+- On both disks seen, the device's read requests over the measuring averaged about
+  128 KiB (its read sectors over its reads, other I/O included), against 8 KiB calls; the
+  figure is built from means over the calls, not from the latency of one device request.
 - In the Runs examined readahead kept one or two requests in flight (see "Findings"), so
   it is not the disk's throughput at a deep queue; reads kept in flight at depth are
   [`disk_read_io_uring`](https://ledgermath.com/docs/benchmarks/disk_read_io_uring)'s.
@@ -117,7 +118,7 @@ The design is section 2 of the step-4 brief's study (#42) and the decisions on i
 ### Events of its own
 
 **`device_counters`**, as in `disk_read_random`, over all of `lm_measure_fixed`: the
-warmup samples, the steps between samples that make each region cold, and any other I/O
+warmup samples, the steps between samples that ask the kernel to drop each region, and any other I/O
 on the device at the time. Read sectors × 512 at least the bytes the samples read shows
 the device, not the page cache, served them: 1.0005 times the bytes asked on the root
 volume, 1.0001 on the instance store (readahead reads a little past each region's end,

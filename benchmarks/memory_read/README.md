@@ -13,9 +13,9 @@ unpinned thread, or on one pinned thread per allowed CPU, each reading its own s
 read loop is either a hand-written x86 assembly loop (`scalar`) or AVX2 loads (`avx2`).
 The source is `memory_read.c`; the comment at its top lists the same parameters.
 
-With `threads` `all`, a repetition ends when the last thread has read its slice: the main
-thread releases the threads at one barrier, waits at another until all of them are done,
-and adds up their sums. The measured time includes that synchronisation and that sum.
+With `threads` `all`, a repetition ends once every thread has read its slice and the main
+thread has added up their sums: the main thread releases the threads at one barrier, waits
+at another until all of them are done, and adds up their sums. The measured time includes that synchronisation and that sum.
 
 Each Run that Method `series` v1 counts gives one figure, the time of one repetition in
 nanoseconds (`time_per_repetition_ns`): the median, over the Run's counted samples, of a

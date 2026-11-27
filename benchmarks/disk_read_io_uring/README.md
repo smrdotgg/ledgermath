@@ -3,8 +3,8 @@
 How many reads a disk completes when one thread keeps `queue_depth` of them submitted,
 `O_DIRECT` through `io_uring`. In the Runs examined on EC2 the counted samples sat on the
 provider's throughput or IOPS limit for the disk, not on the device's own; the binary does
-not require a limit to bind, and the device's counters in each Run's dumps show the time
-spent over each limit.
+not require a limit to bind, and where the dumps took them, the device's counters show the
+time spent over each limit.
 
 ## What a figure means
 
@@ -12,7 +12,8 @@ How many reads a disk completes when the binary keeps 64 of them submitted: `O_D
 reads through `io_uring`, from the Fixture the box made at boot. A sample's time over its
 repetitions is the time per completion, which gives IOPS and bytes per second. On EC2
 both disks hold their provider's limits, and in the Runs examined the counted samples sat on
-them; the device's own counters show the time spent over each limit.
+them; where the dumps took them, the device's own counters show the time spent over each
+limit.
 
 "Submitted" is what the binary controls and all it sees: a read it has submitted and not
 yet reaped. How many of those the device holds at a given instant it does not see. A
@@ -42,11 +43,12 @@ one disk, on one instance type: the inverse of the completion rate.
 
 - In the Runs examined, the counted samples sat on the provider's limit for the disk, not
   the device's own (see "Findings"). The binary does not require a limit to bind, nor
-  check that the burst at the start of a Run has ended before the counted samples; the
-  device's counters in the Run's dumps show the time spent over each limit.
-- The figure is a sample's time divided by the completions it reaped. It is not the time
-  between two completions, which nothing times (a completion may already be waiting when
-  a repetition starts), nor the latency of one read.
+  check that the burst at the start of a Run has ended before the counted samples; where
+  the dumps took them, the device's counters show the time spent over each limit.
+- Each sample gives its time divided by the completions it reaped; the Run's figure is the
+  median of those. Neither is the time between two completions, which nothing times (a
+  completion may already be waiting when a repetition starts), nor the latency of one
+  read.
 - `queue_depth` counts reads submitted and not yet reaped, not reads the device held at
   any instant.
 - With `disk` `root_volume` the sets read the root EBS volume, not the instance's own
