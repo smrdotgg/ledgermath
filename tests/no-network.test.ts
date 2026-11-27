@@ -4,11 +4,10 @@ import { connect as http2Connect } from "node:http2";
 import { request as httpsRequest } from "node:https";
 import { connect } from "node:net";
 import { connect as tlsConnect } from "node:tls";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 
 import { isThisMachine } from "./no-network";
 
-const ROOT = resolve(import.meta.dir, "..");
 const REFUSED = "A test reached for the network";
 
 /**
@@ -38,11 +37,11 @@ afterAll(() => {
 	other.stop(true);
 });
 
-/** scripts/lookup.ts's about, run as the tests run the tools: a child process with the test's environment. */
-async function lookupAbout(location: string): Promise<{ code: number; stderr: string }> {
-	const child = Bun.spawn(["bun", join(ROOT, "scripts", "lookup.ts"), "about"], { stdout: "pipe", stderr: "pipe", env: { ...process.env, LEDGERMATH_DATA: location } });
-	const [stderr, code] = await Promise.all([new Response(child.stderr).text(), child.exited]);
-	return { code, stderr };
+/** What tests/no-network-child.ts got from fetching `address`, run as the tests run a script: a child process with the test's environment. */
+async function fetchInChild(address: string): Promise<{ code: number; stdout: string; stderr: string }> {
+	const child = Bun.spawn(["bun", join(import.meta.dir, "no-network-child.ts"), address], { stdout: "pipe", stderr: "pipe", env: { ...process.env } });
+	const [stdout, stderr, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
+	return { code, stdout, stderr };
 }
 
 /** What tests/no-network-worker.ts, in a Worker, got from fetching `address`: the body, or the error's message. */
@@ -108,9 +107,9 @@ describe("the suite makes no request to another machine", () => {
 		}
 	});
 
-	test("a Bun process a test starts refuses it too: the tools' default address", async () => {
+	test("a Bun process a test starts refuses it too", async () => {
 		expect(process.env.BUN_OPTIONS).toContain(join(import.meta.dir, "no-network.ts"));
-		const result = await lookupAbout("");
+		const result = await fetchInChild("https://api.ledgermath.com/v1/index.json");
 		expect(result.code).toBe(2);
 		expect(result.stderr).toContain(REFUSED);
 		expect(result.stderr).toContain("https://api.ledgermath.com/v1/index.json");
@@ -135,9 +134,9 @@ describe("the suite makes no request to another machine", () => {
 		expect(status).toBe(404);
 		// The URL parser spells [::ffff:127.0.0.1] as [::ffff:7f00:1].
 		expect((await fetch(`http://[::ffff:127.0.0.1]:${server.port}/mapped`)).status).toBe(404);
-		const result = await lookupAbout(`${local}/`);
-		expect(result.stderr).not.toContain(REFUSED);
-		expect(asked).toEqual(["/direct", "/node-http", "/mapped", "/v1/index.json"]);
+		const result = await fetchInChild(`${local}/child`);
+		expect([result.code, result.stdout.trim(), result.stderr]).toEqual([0, "404", ""]);
+		expect(asked).toEqual(["/direct", "/node-http", "/mapped", "/child"]);
 	});
 
 	test("this machine is loopback and the any-address; every other host is not", () => {

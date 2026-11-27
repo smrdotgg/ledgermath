@@ -1,5 +1,7 @@
 # The agent tools read the data API
 
+_No longer built: the skill and both tools were removed on 2026-11-27, after ten fresh agents with only `curl`, the documentation and the data API each answered a question soundly without them. `scripts/assemble-location.ts` (decision 10) and its reader, `scripts/lib/ledger-data.ts`, were removed with them, on the same date._
+
 The agent skill's lookup tool and answer checker (#47) read one file, `derivations.json` (about 28 MB for 187 Series on 2026-11-23), from a directory or a web address. The data API (ADR-0030) is LedgerMath's product, its first readers are agents, and the skill is its first real reader. So the tools read the API, and an agent fetches a few small files, not 28 MB; and an awkward shape in the API shows up now, while changing it is free (#64). `scripts/lib/ledger-data.ts` reads the tree, `scripts/lib/lookup.ts` and `scripts/lib/citation.ts` answer and resolve from it, `tests/lookup-tree.test.ts` holds them to it, and the README ("The agent skill") says how they read.
 
 ## The decisions
