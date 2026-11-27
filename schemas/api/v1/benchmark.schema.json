@@ -55,14 +55,14 @@
       }
     },
     "bytes_per_second_summary": {
-      "description": "Percentiles of bytes per second across the Series' counted Runs that observed bytes per repetition. A Run among them whose bytes per second is infinite, past a double's range (chiefly one whose time per repetition is 0), cannot have it written in JSON: it is counted here all the same, and a percentile taken from it, or interpolated towards it, is null. The Runs behind them are the Series' counted points whose bytes_per_repetition is not null, as its month files hold them.",
+      "description": "Percentiles of bytes per second across the Series' counted Runs that observed a finite bytes per repetition above 0.A Run among them whose bytes per second is infinite, past a double's range (chiefly one whose time per repetition is 0), cannot have it written in JSON: it is counted here all the same, and a percentile taken from it, or interpolated towards it, is null. The Runs behind them are the Series' counted points whose bytes_per_repetition is not null, as its month files hold them.",
       "type": "object",
       "required": ["count", "p5", "p50", "p95"],
       "properties": {
-        "count": { "description": "Counted Runs that observed bytes per repetition, a Run with an infinite bytes per second included.", "type": "integer", "minimum": 1 },
-        "p5": { "description": "The 5th percentile of the bytes per second of the counted Runs that observed bytes per repetition (count of them), by linear interpolation between closest ranks (R type 7). Null when it is infinite or undefined: taken from, or interpolated towards, an infinite bytes per second.", "$ref": "#/$defs/number_or_null" },
-        "p50": { "description": "The 50th percentile of the bytes per second of the counted Runs that observed bytes per repetition (count of them), by linear interpolation between closest ranks (R type 7). Null when it is infinite or undefined: taken from, or interpolated towards, an infinite bytes per second.", "$ref": "#/$defs/number_or_null" },
-        "p95": { "description": "The 95th percentile of the bytes per second of the counted Runs that observed bytes per repetition (count of them), by linear interpolation between closest ranks (R type 7). Null when it is infinite or undefined: taken from, or interpolated towards, an infinite bytes per second.", "$ref": "#/$defs/number_or_null" }
+        "count": { "description": "Counted Runs that observed a finite bytes per repetition above 0, a Run with a bytes per second that is not a finite number included.", "type": "integer", "minimum": 1 },
+        "p5": { "description": "The 5th percentile of the bytes per second of the counted Runs that observed a finite bytes per repetition above 0 (count of them), by linear interpolation between closest ranks (R type 7). Null when it is infinite or undefined: taken from, or interpolated towards, a bytes per second that is not a finite number.", "$ref": "#/$defs/number_or_null" },
+        "p50": { "description": "The 50th percentile of the bytes per second of the counted Runs that observed a finite bytes per repetition above 0 (count of them), by linear interpolation between closest ranks (R type 7). Null when it is infinite or undefined: taken from, or interpolated towards, a bytes per second that is not a finite number.", "$ref": "#/$defs/number_or_null" },
+        "p95": { "description": "The 95th percentile of the bytes per second of the counted Runs that observed a finite bytes per repetition above 0 (count of them), by linear interpolation between closest ranks (R type 7). Null when it is infinite or undefined: taken from, or interpolated towards, a bytes per second that is not a finite number.", "$ref": "#/$defs/number_or_null" }
       }
     },
     "request_stats": {
@@ -137,7 +137,7 @@
                 "failed_runs": { "description": "Runs it does not count: shown in their month's file with why, in no percentile.", "type": "integer", "minimum": 0 },
                 "groups": { "description": "How many groups its split facts make of the Series' Runs.", "type": "integer", "minimum": 1 },
                 "percentiles": {
-                  "description": "Across every counted Run of the Series, whatever its group. time_per_repetition_ns is null when no Run counts; bytes_per_second is null when no counted Run observed bytes per repetition.",
+                  "description": "Across every counted Run of the Series, whatever its group. time_per_repetition_ns is null when no Run counts; bytes_per_second is null when no counted Run observed a finite bytes per repetition above 0.",
                   "type": "object",
                   "required": ["time_per_repetition_ns", "bytes_per_second"],
                   "properties": {
@@ -154,7 +154,7 @@
               "properties": {
                 "method": { "$ref": "#/$defs/method_requests" },
                 "counted_runs": { "description": "Runs this Method counts (exit 0, or 4 with failed requests).", "type": "integer", "minimum": 0 },
-                "failed_runs": { "description": "Runs it does not count: shown in their month's file with why, in no figure.", "type": "integer", "minimum": 0 },
+                "failed_runs": { "description": "Runs it does not count: shown in their month's file with why, left out of its request statistics.", "type": "integer", "minimum": 0 },
                 "groups": { "description": "How many groups its split facts, Method series v1's, make of the Series' Runs.", "type": "integer", "minimum": 1 },
                 "pool": {
                   "description": "Every succeeded request of the Series' counted Runs, pooled: each phase's statistics, read from the summed histogram (the Series' file holds the histograms, and the breakdowns by request fact).",
