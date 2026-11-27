@@ -11,9 +11,10 @@
  */
 
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 
 import { keepRecords, memoryRecords, type StreamReducer } from "../methods/records";
 import { type BlobStore, blobsFromBucket, mayPass, NO_READABLE_ANSWER, retryingStore } from "../scripts/lib/blobs";
@@ -24,8 +25,9 @@ setDefaultTimeout(180_000);
 
 const ROOT = resolve(import.meta.dir, "..");
 const SAMPLES = join(ROOT, "tests", "samples", "scheduled");
+const sha256 = (bytes: Uint8Array): string => createHash("sha256").update(bytes).digest("hex");
 const BYTES = new TextEncoder().encode("a blob");
-const HASH = `sha256:${new Bun.CryptoHasher("sha256").update(BYTES).digest("hex")}`;
+const HASH = `sha256:${sha256(BYTES)}`;
 const KEY = `blobs/sha256/${HASH.slice("sha256:".length)}`;
 
 /** An error as Bun's S3 client throws it. */
@@ -97,6 +99,49 @@ describe("a read that fails for a reason that may pass", () => {
 		}
 	});
 
+	test("is decided by S3's code when the code says: a refusal with the client's generic words is not made again, nor is any code about the request", () => {
+		// S3's body named a code but no message: the client keeps its generic words, and the code decides.
+		for (const code of ["AccessDenied", "ExpiredToken", "InvalidAccessKeyId", "SignatureDoesNotMatch", "NoSuchBucket", "RequestTimeTooSkewed", "PermanentRedirect"]) {
+			expect({ code, mayPass: mayPass(s3Error(code, NO_READABLE_ANSWER)) }).toEqual({ code, mayPass: false });
+		}
+		// A code that may pass does, whatever its words.
+		for (const code of ["SlowDown", "InternalError", "ServiceUnavailable", "RequestTimeout", "UnknownError", "ConnectionClosed"]) {
+			expect({ code, mayPass: mayPass(s3Error(code, "any words")) }).toEqual({ code, mayPass: true });
+		}
+		// A code that says neither: the words decide.
+		expect(mayPass(s3Error("SomeNameBunMayUse", NO_READABLE_ANSWER))).toBe(true);
+		expect(mayPass(s3Error("SomeCodeS3MayAdd", "Some words of S3's."))).toBe(false);
+		expect(mayPass(Object.assign(new Error(NO_READABLE_ANSWER), { name: "S3Error" }))).toBe(true);
+	});
+
+	test("a refusal with the client's generic words fails at once, and the error is true of every try that was made", async () => {
+		const refused = scripted([s3Error("AccessDenied", NO_READABLE_ANSWER), BYTES]);
+		await expect(retryingStore(refused, recorded().options).get(KEY)).rejects.toThrow(
+			`s3://scripted/${KEY}: AccessDenied: an unexpected error has occurred (not tried again: an answer about the request itself)`,
+		);
+		expect(refused.calls).toBe(1);
+		// Tries that met different answers: each is named, with how many times, and the last; never "on each of" one of them.
+		const mixed = scripted([NO_ANSWER, s3Error("SlowDown", "Please reduce your request rate."), NO_ANSWER]);
+		const error = await retryingStore(mixed, { ...recorded().options, tries: 3 })
+			.get(KEY)
+			.then(
+				() => null,
+				(caught: Error) => caught,
+			);
+		expect(error?.message).toBe(
+			`s3://scripted/${KEY}: 3 tries met: ConnectionClosed: an unexpected error has occurred (2 times), SlowDown: Please reduce your request rate. (once); ` +
+				"the last: ConnectionClosed: an unexpected error has occurred",
+		);
+		expect(error?.message).not.toContain("on each of");
+		// A retried failure, then a refusal: both are named, and the refusal says it was not tried again.
+		const thenRefused = scripted([NO_ANSWER, s3Error("AccessDenied", "Access Denied"), BYTES]);
+		await expect(retryingStore(thenRefused, recorded().options).get(KEY)).rejects.toThrow(
+			`s3://scripted/${KEY}: 2 tries met: ConnectionClosed: an unexpected error has occurred (once), AccessDenied: Access Denied (once); ` +
+				"the last: AccessDenied: Access Denied (not tried again: an answer about the request itself)",
+		);
+		expect(thenRefused.calls).toBe(2);
+	});
+
 	test("that never succeeds is made 8 times in all, then fails plainly, naming the key, the client's code and words, and the tries", async () => {
 		const store = scripted([NO_ANSWER]);
 		const { sleeps, options } = recorded();
@@ -135,69 +180,134 @@ describe("a read that would not pass, or a blob that is not there", () => {
 	});
 });
 
+describe("a damaged blob in the cache", () => {
+	const scratch = mkdtempSync(join(tmpdir(), "blob-cache-"));
+	afterAll(() => rmSync(scratch, { recursive: true, force: true }));
+	/** A cache holding the blob cut short, as a cache restored only in part can. */
+	const damagedCache = (name: string): { cache: string; file: string } => {
+		const cache = join(scratch, name);
+		const file = join(cache, "sha256", HASH.slice("sha256:".length));
+		mkdirSync(dirname(file), { recursive: true });
+		writeFileSync(file, BYTES.slice(0, 3));
+		return { cache, file };
+	};
+
+	test("is fetched again from the bucket, through the retrying store, checked, and put in place of the damaged file", async () => {
+		const { cache, file } = damagedCache("repaired");
+		const store = scripted([NO_ANSWER, BYTES]);
+		const lines: string[] = [];
+		const fetch = blobsFromBucket(retryingStore(store, recorded().options), cache, { log: (line) => void lines.push(line) });
+		expect(await fetch(HASH)).toEqual(BYTES);
+		// The bucket was asked, and its first failure tried again.
+		expect(store.calls).toBe(2);
+		expect(new Uint8Array(readFileSync(file))).toEqual(BYTES);
+		expect(lines).toEqual([`${file}: its bytes hash to sha256:${sha256(BYTES.slice(0, 3))}, not ${HASH}: fetched again from s3://scripted, and put in its place`]);
+		// The next read is the cache's, the bucket not asked.
+		expect(await fetch(HASH)).toEqual(BYTES);
+		expect(store.calls).toBe(2);
+	});
+
+	test("fails as before when the bucket's bytes do not have the hash either, or the bucket has no such blob; the damaged file is left as it is", async () => {
+		const wrong = damagedCache("wrong");
+		await expect(blobsFromBucket(scripted([new TextEncoder().encode("not the blob")]), wrong.cache, { log: () => {} })(HASH)).rejects.toThrow(
+			`${wrong.file}: its bytes hash to sha256:${sha256(BYTES.slice(0, 3))}, not ${HASH}; fetched again, s3://scripted/${KEY}: its bytes hash to`,
+		);
+		expect(new Uint8Array(readFileSync(wrong.file))).toEqual(BYTES.slice(0, 3));
+		const none = damagedCache("none");
+		await expect(blobsFromBucket(scripted([null]), none.cache, { log: () => {} })(HASH)).rejects.toThrow(`and s3://scripted has no ${KEY} to put in its place`);
+	});
+
+	test("read where blobs are not kept (the stdout reader) is fetched again and not written", async () => {
+		const { cache, file } = damagedCache("not-kept");
+		const lines: string[] = [];
+		expect(await blobsFromBucket(scripted([BYTES]), cache, { keep: false, log: (line) => void lines.push(line) })(HASH)).toEqual(BYTES);
+		expect(new Uint8Array(readFileSync(file))).toEqual(BYTES.slice(0, 3));
+		expect(lines[0]).toEndWith(": fetched again from s3://scripted");
+	});
+});
+
 describe("a pass over the streams that meets a read it cannot make", () => {
 	test("starts no other read, lets those already started end, and only then fails: nothing goes on reading behind the caller", async () => {
 		const hashes = Array.from({ length: 200 }, (_, i) => `sha256:${i.toString(16).padStart(64, "0")}`);
-		let started = 0;
-		let running = 0;
-		const fetchStream = async (hash: string): Promise<Uint8Array | null> => {
-			started++;
-			running++;
-			await Bun.sleep(hash === hashes[5] ? 1 : 10);
-			running--;
-			if (hash === hashes[5]) throw new Error("s3://b/blobs/sha256/5: ConnectionClosed: an unexpected error has occurred, on each of 8 tries");
-			return BYTES;
+		// Every read waits until the test answers it, so the order is the test's, not a clock's.
+		const started: string[] = [];
+		const answers = new Map<string, { resolve: (bytes: Uint8Array) => void; reject: (error: Error) => void }>();
+		const fetchStream = (hash: string): Promise<Uint8Array | null> => {
+			started.push(hash);
+			return new Promise((resolve, reject) => answers.set(hash, { resolve, reject }));
 		};
+		/** Lets every promise that can move, move. */
+		const settle = (): Promise<void> => Bun.sleep(0);
 		const reducer: StreamReducer<unknown> = { key: "series-v1-0123456789abcdef", reduce: () => ({}), toJson: (record) => record, fromJson: (value) => value };
 		const counts = { fetched: 0, kept: 0 };
-		await expect(keepRecords(hashes, [reducer], fetchStream, memoryRecords(), 16, counts)).rejects.toThrow("on each of 8 tries");
-		// Those in flight when it failed have ended; at most the first 16 and the few started before the failure was seen.
-		expect(running).toBe(0);
-		expect(started).toBeLessThan(40);
-		const atFailure = started;
-		await Bun.sleep(100);
-		expect(started).toBe(atFailure);
+		let ended = false;
+		const pass = keepRecords(hashes, [reducer], fetchStream, memoryRecords(), 16, counts).then(
+			() => null,
+			(error: Error) => error,
+		);
+		void pass.finally(() => {
+			ended = true;
+		});
+		await settle();
+		// The first 16, one per worker, and no more.
+		expect(started).toEqual(hashes.slice(0, 16));
+		answers.get(hashes[5] as string)?.reject(new Error("s3://b/blobs/sha256/5: ConnectionClosed: an unexpected error has occurred, on each of 8 tries"));
+		await settle();
+		// Failed, but not yet thrown: 15 reads are still in flight, and none has been started since.
+		expect(ended).toBe(false);
+		expect(started.length).toBe(16);
+		for (const hash of hashes.slice(0, 16)) if (hash !== hashes[5]) answers.get(hash)?.resolve(BYTES);
+		const error = await pass;
+		expect(error?.message).toContain("on each of 8 tries");
+		// Every read it started ended before it threw, and not one more was started, then or after.
+		expect(started.length).toBe(16);
+		await settle();
+		expect(started.length).toBe(16);
 		// The count says what was read, and is not added to afterwards.
-		expect(counts.fetched).toBe(atFailure - 1);
+		expect(counts.fetched).toBe(15);
 	});
 });
 
 describe("reads in flight", () => {
 	test("never more than inFlight at once, however many are asked for; a read waiting out its pause holds no place", async () => {
+		const keys = Array.from({ length: 60 }, (_, i) => `blobs/sha256/${String(i).padStart(64, "0")}`);
+		// The first read of every third key fails once and is made again: decided by the key and its tries, when the read starts.
+		const failsOnce = new Set(keys.filter((_, i) => i % 3 === 0));
+		const tries = new Map<string, number>();
 		let now = 0;
+		let pausing = 0;
 		let peak = 0;
-		let calls = 0;
+		let peakWithPauses = 0;
 		const slow: BlobStore = {
 			name: "s3://slow",
-			async get() {
+			async get(key) {
+				const attempt = (tries.get(key) ?? 0) + 1;
+				tries.set(key, attempt);
 				now++;
 				peak = Math.max(peak, now);
-				calls++;
+				peakWithPauses = Math.max(peakWithPauses, now + pausing);
 				await Bun.sleep(2);
 				now--;
-				// Every third read fails once and is made again.
-				if (calls % 3 === 0) throw NO_ANSWER;
+				if (failsOnce.has(key) && attempt === 1) throw NO_ANSWER;
 				return BYTES;
 			},
 		};
-		let pausing = 0;
-		let peakWithPauses = 0;
 		const retrying = retryingStore(slow, {
 			inFlight: 4,
 			random: () => 0,
 			log: () => {},
 			sleep: async (ms) => {
 				pausing++;
-				peakWithPauses = Math.max(peakWithPauses, now + pausing);
 				await Bun.sleep(ms / 100);
 				pausing--;
 			},
 		});
-		const got = await Promise.all(Array.from({ length: 60 }, (_, i) => retrying.get(`blobs/sha256/${String(i).padStart(64, "0")}`)));
+		const got = await Promise.all(keys.map((key) => retrying.get(key)));
 		expect(got.every((bytes) => bytes === BYTES)).toBe(true);
 		expect(peak).toBe(4);
-		expect(retrying.retried()).toBeGreaterThan(0);
-		// Reads in flight and reads pausing together exceeded the bound: the pausing ones held no place.
+		expect(retrying.retried()).toBe(20);
+		expect([...tries.values()].reduce((sum, n) => sum + n, 0)).toBe(80);
+		// A read started while another waited out its pause: in flight and pausing together exceeded the bound, so the pausing one held no place.
 		expect(peakWithPauses).toBeGreaterThan(4);
 	});
 });
@@ -334,6 +444,24 @@ describe("scripts/derive.ts --bucket", () => {
 		expect(result.stdout).toContain(`reads from s3://runs made again after a failure that may pass: ${2 * blobs} (each is logged above, with why)`);
 		expect(result.stderr.split("\n").filter((line) => line.includes("UnknownError: an unexpected error has occurred; try 2 of 8")).length).toBe(blobs);
 		expect(result.stderr.split("\n").filter((line) => line.includes("SlowDown: Please reduce your request rate.; try 3 of 8")).length).toBe(blobs);
+	});
+
+	test("a dump blob cut short in a restored cache is fetched again, once, and put right: the next run is not failed by it", async () => {
+		const state = ["--records", join(scratch, "damaged-records"), "--cache", join(scratch, "damaged-cache")];
+		expect((await derive("damaged-first", state)).code).toBe(0);
+		const before = (JSON.parse(readFileSync(join(SAMPLES, "runs", firstRun()), "utf8")) as { environment: { before: string } }).environment.before;
+		const file = join(scratch, "damaged-cache", "sha256", before.slice("sha256:".length));
+		const good = readFileSync(file);
+		writeFileSync(file, good.subarray(0, Math.floor(good.length / 2)));
+		const asked = standin.requests.length;
+		const result = await derive("damaged", state);
+		expect(result.code).toBe(0);
+		expect(readFileSync(join(scratch, "damaged.json"), "utf8")).toBe(readFileSync(join(scratch, "damaged-first.json"), "utf8"));
+		expect(result.stderr).toContain(`${file}: its bytes hash to sha256:`);
+		expect(result.stderr).toContain(`fetched again from s3://runs, and put in its place`);
+		// The one damaged blob was asked for, and nothing else: the records and the rest of the cache were whole.
+		expect(standin.requests.slice(asked).map((request) => request.key)).toEqual([`blobs/sha256/${before.slice("sha256:".length)}`]);
+		expect(readFileSync(file).equals(good)).toBe(true);
 	});
 
 	test("a blob the bucket does not hold stops the Methods that read it, plainly, after one read of it", async () => {

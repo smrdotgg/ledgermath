@@ -84,7 +84,10 @@ Method asked for has no record of it, and then once for all of them.
   order the file gives them, since a validator reports what a value lacks in that order and
   those words go into a record's problems. So rewording or reflowing a schema keeps every
   record, and a change to what it accepts (a type, a `required` list, a pattern, a member)
-  does not (`withoutAnnotations`; `tests/requests-method.test.ts`). Until 2026-11-27 a
+  does not (`withoutAnnotations`; `tests/requests-method.test.ts`). A schema holding a
+  number too large for a double (`1e400`, which reads as infinity and would be written as
+  `null`, the same as a schema saying `null` there) is refused with a plain error, and no
+  key is made from it. Until 2026-11-27 a
   schema was digested byte for byte, and two pull requests that only reworded the two
   schemas (#103, #109) each made every stream be read again. **The cost**, accepted: after
   a change to the code every stream is fetched and reduced once more (11,758 streams, about

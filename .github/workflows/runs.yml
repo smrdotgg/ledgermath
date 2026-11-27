@@ -122,9 +122,10 @@ jobs:
     # Methods' reducing code gives their records new keys (methods/records.ts),
     # the next run fetches and reduces every Run's stdout once more (11,758 in
     # under two minutes from inside AWS on 2026-11-27; a GitHub runner reads
-    # the bucket across the internet, slower) and growing with them. What the
-    # derive step made is saved however it ended, so a job cut off there
-    # leaves the next run to fetch only what this one did not.
+    # the bucket across the internet, slower) and growing with them. The
+    # derive step has 40 of these minutes, so a long one is stopped with time
+    # left to save what it made, and the next run fetches only what this one
+    # did not.
     timeout-minutes: 60
     # One at a time with every other runs job and every prices run; of those
     # waiting, GitHub keeps only the newest (cancel-in-progress false: the one
@@ -214,16 +215,24 @@ jobs:
       # (page/<name>.failed.json), and exits 1. The page is then built from
       # what there is and says which part is missing and why, the artifact is
       # kept, and the run still ends as failed, so the failure is seen.
+      #
+      # Its own 40 minutes, inside the job's 60: a derive step that runs long
+      # is stopped there, and the job still has 20 minutes for the save after
+      # it (always() runs a step after a failure or a cancellation, but not once
+      # the job itself is out of time) and for the page and the alarm. A cold
+      # rebuild of 11,758 streams took under two minutes from inside AWS on
+      # 2026-11-27, and the retries of one read pause 31.5 seconds at most.
       - name: Derive every Series (Method series v1) and every Series of requests (Method requests v1)
         id: derive
+        timeout-minutes: 40
         run: >-
           bun scripts/derive.ts --runs ledgermath-runs --bucket "$RUNS_BUCKET"
           --cache .cache/blobs --records .cache/records
           --out page/derivations.json --requests-out page/requests-derivations.json
 
       # What the derive step fetched and reduced, saved as soon as it ends,
-      # however it ended: succeeded, failed, or cut off by the job's time
-      # limit or a cancellation (always()). Each blob and each record is
+      # however it ended: succeeded, failed, stopped at its own 40 minutes, or
+      # cancelled (always()). Each blob and each record is
       # written whole, under a temporary name and then renamed, as it is made,
       # so a derive step stopped part way leaves only whole files, and the next
       # run reads back what this one fetched instead of starting over (#77).

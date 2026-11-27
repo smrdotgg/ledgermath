@@ -821,6 +821,34 @@ describe("the reduced record of a Run, kept between runs", () => {
 		}
 	});
 
+	test("a schema holding a number too large for a double is refused, plainly: it would be digested as null, the same as a schema that says null there", () => {
+		const copy = mkdtempSync(join(tmpdir(), "code-digest-infinite-"));
+		try {
+			cpSync(join(ROOT, "methods"), join(copy, "methods"), { recursive: true });
+			cpSync(join(ROOT, "schemas"), join(copy, "schemas"), { recursive: true });
+			const digest = (): string => codeDigest([join(copy, "methods/v1/record.ts")], SCHEMA_FILES, copy).digest;
+			const file = join(copy, "schemas/run.schema.json");
+			const original = readFileSync(file, "utf8");
+			const withEnum = (literal: string): string => original.replace(/^\{/, `{\n  "$comment": "x",\n  "properties_test": { "enum": [${literal}] },`);
+			// Written as text: 1e400 has no JSON.stringify form, and JSON.parse reads it as Infinity.
+			writeFileSync(file, withEnum("null"));
+			const sayingNull = digest();
+			for (const literal of ["1e400", "-1e400"]) {
+				writeFileSync(file, withEnum(literal));
+				expect(() => digest()).toThrow(
+					`schemas/run.schema.json: the number at /properties_test/enum/0 is too large for a double (it reads as ${literal.startsWith("-") ? "-" : ""}Infinity) and would be digested as null`,
+				);
+			}
+			// The two would have shared a digest without the refusal: the stripped schema of each, as JSON.
+			expect(JSON.stringify(withoutAnnotations(JSON.parse(withEnum("1e400"))))).toBe(JSON.stringify(withoutAnnotations(JSON.parse(withEnum("null")))));
+			// A large number a double holds is a number like any other.
+			writeFileSync(file, withEnum("1e300"));
+			expect(digest()).not.toBe(sayingNull);
+		} finally {
+			rmSync(copy, { recursive: true, force: true });
+		}
+	});
+
 	test("a schema's words are its string-valued titles and descriptions where a schema holds them, never a member so named, nor a value", () => {
 		const schema = {
 			$schema: "https://json-schema.org/draft/2020-12/schema",

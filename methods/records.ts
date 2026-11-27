@@ -108,17 +108,46 @@ export function withoutAnnotations(schema: unknown): unknown {
 }
 
 /**
+ * Refuses a schema that holds a number JSON cannot carry through: one too
+ * large for a double (1e400) parses as Infinity, and JSON.stringify writes it
+ * as null, so the schema would be digested the same as one that says null
+ * there, though the two accept different values. A plain error naming the
+ * file and where in it; the key is never made from such a schema.
+ */
+function refuseNonFinite(value: unknown, file: string, pointer = ""): void {
+	if (typeof value === "number") {
+		if (!Number.isFinite(value)) {
+			throw new Error(
+				`${file}: the number at ${pointer === "" ? "/" : pointer} is too large for a double (it reads as ${value}) and would be digested as null, ` +
+					"the same as a schema that says null there; a record key is not made from such a schema",
+			);
+		}
+	} else if (Array.isArray(value)) value.forEach((item, index) => refuseNonFinite(item, file, `${pointer}/${index}`));
+	else if (typeof value === "object" && value !== null) {
+		for (const [name, item] of Object.entries(value)) refuseNonFinite(item, file, `${pointer}/${name.replaceAll("~", "~0").replaceAll("/", "~1")}`);
+	}
+}
+
+/** What a schema file says a value must be, as it is digested: parsed, refused if it holds a number JSON cannot carry, its words taken out, written as JSON with no white space. */
+export function schemaContent(text: string, file: string): string {
+	const schema: unknown = JSON.parse(text);
+	refuseNonFinite(schema, file);
+	return JSON.stringify(withoutAnnotations(schema));
+}
+
+/**
  * The digest of the code a reducer runs: the sha256, over the files in path
  * order, of each one's path from `root` and its content. The files are the
  * entry modules, every module they import by a relative path, transitively
  * (type-only imports too), whose content is their bytes, and `data`, the JSON
  * Schemas the code reads that no import names (the Run and event schemas),
- * whose content is what they say a value must be: the schema parsed, its
- * titles and descriptions taken out (withoutAnnotations), written as JSON
- * with no white space. So rewording or reflowing a schema leaves the digest as
- * it was, and a change to what it accepts (a type, a required list, a
- * pattern, a member) changes it. A module imported by a package name (ajv,
- * node:) is not in it: those are pinned by the lockfile.
+ * whose content is what they say a value must be (schemaContent): the schema
+ * parsed, its titles and descriptions taken out (withoutAnnotations), written
+ * as JSON with no white space; one holding a number too large for a double is
+ * refused, since it would be written as null. So rewording or reflowing a
+ * schema leaves the digest as it was, and a change to what it accepts (a type,
+ * a required list, a pattern, a member) changes it. A module imported by a
+ * package name (ajv, node:) is not in it: those are pinned by the lockfile.
  */
 export function codeDigest(entries: readonly string[], data: readonly string[] = [], root = ROOT): { digest: string; files: string[] } {
 	const seen = new Set<string>();
@@ -138,7 +167,7 @@ export function codeDigest(entries: readonly string[], data: readonly string[] =
 	const hash = createHash("sha256");
 	for (const { file, path } of files) {
 		hash.update(`${path}\u0000`);
-		hash.update(schemas.has(file) ? JSON.stringify(withoutAnnotations(JSON.parse(readFileSync(file, "utf8")))) : readFileSync(file));
+		hash.update(schemas.has(file) ? schemaContent(readFileSync(file, "utf8"), path) : readFileSync(file));
 		hash.update("\u0000");
 	}
 	return { digest: hash.digest("hex"), files: files.map(({ path }) => path) };

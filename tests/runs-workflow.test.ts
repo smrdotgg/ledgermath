@@ -22,6 +22,7 @@ interface Step {
 	with?: Record<string, string>;
 	env?: Record<string, string>;
 	"working-directory"?: string;
+	"timeout-minutes"?: number;
 }
 
 interface Job {
@@ -306,6 +307,11 @@ describe("the runs workflow", () => {
 		// One restore and one save, the same pinned action, and no other cache of the job.
 		expect(steps.filter((step) => step.uses?.startsWith("actions/cache")).length).toBe(2);
 		expect(save.uses?.split("@")[1]).toBe(cache.uses?.split("@")[1] as string);
+		// The derive step's own limit stops it with 20 of the job's minutes left: always() runs the save after the step
+		// is stopped, but no step runs once the job is out of time. The only step with a limit of its own.
+		expect(derive["timeout-minutes"]).toBe(40);
+		expect((job["timeout-minutes"] as number) - (derive["timeout-minutes"] as number)).toBeGreaterThanOrEqual(20);
+		expect(steps.filter((step) => step["timeout-minutes"] !== undefined)).toEqual([derive]);
 		// A failed Method still leaves the other's Derivations, the page and the artifact; the run ends failed all the same.
 		const ran = "${{ !cancelled() && (steps.derive.outcome == 'success' || steps.derive.outcome == 'failure') }}";
 		expect(derive.id).toBe("derive");

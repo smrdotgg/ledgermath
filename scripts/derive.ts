@@ -25,7 +25,8 @@
  *   --blobs-per-second N  start at most N requests a second there (default 4, under the
  *                       distribution's per-address rate limit)
  *   --cache DIR         keep the dump blobs fetched from the bucket here, as sha256/<hex>.
- *                       Stdout blobs are read from it if there, but never kept in it
+ *                       Stdout blobs are read from it if there, but never kept in it. A file
+ *                       whose bytes do not have its hash is fetched again and replaced
  *   --records DIR       keep each stream's reduced record here, per Method
  *                       (methods/records.ts): a stream with a record for every Method
  *                       asked for is not fetched again. Records made by other code
