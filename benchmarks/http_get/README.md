@@ -74,6 +74,10 @@ sends one request at a time.
 Each parameter set runs on every instance type in the schedule, against the Service
 `s3_fixtures`. Each parameter set and instance type is a Series of its own.
 
+The benchmark's Series and their figures are listed at
+[https://api.ledgermath.com/v1/benchmarks/http_get.json](https://api.ledgermath.com/v1/benchmarks/http_get.json),
+which says in `left_out` how many it leaves out.
+
 | Variable | Scheduled (the study's sets) | Meaning |
 |---|---|---|
 | `LM_PARAM_OBJECT_BYTES` | `4096`, `131072`, `16777216` | The size of the Fixture object. The body of each 2xx response that ends without a failure is checked against the first this-many bytes of the Fixture pattern; the body buffer is this plus 64 KiB |

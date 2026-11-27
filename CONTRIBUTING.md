@@ -67,12 +67,15 @@ The directory holds the source, a `Makefile` and a `README.md`:
   one paragraph of one or two sentences saying what the benchmark measures, which the index
   of pages shows on its own, then has these headings, in this order: "What a figure means"
   (what one repetition is, the figure's unit, and what bytes per second counts), "What a
-  figure does not show", "Parameters" (each with the values the schedule runs), "Observed
-  values", "Findings", "How it works" (its elision guard and its own events) and "Building
-  and testing". A link to another file of the repository is relative; a link to another
-  page of the documentation is its full address. `tests/benchmark-pages.test.ts` checks the
-  headings, and the site's build checks every link, failing the `site` workflow on one with
-  no target (README, "The documentation", under "The website").
+  figure does not show", "Parameters" (each with the values the schedule runs, and a link to
+  the benchmark's list of Series, `https://api.ledgermath.com/v1/benchmarks/<name>.json`),
+  "Observed values", "Findings", "How it works" (its elision guard and its own events) and
+  "Building and testing". A link to another file of the repository is relative; a link to
+  another page of the documentation is its full address. Write for a reader who has only the
+  page: no path of your own machine, and nothing only the project's history explains.
+  `tests/benchmark-pages.test.ts` checks the headings and the link to the list, and the
+  site's build checks every link, failing the `site` workflow on one with no target (README,
+  "The documentation", under "The website").
 - The C benchmarks share a harness, [`benchmarks/harness/c/`](benchmarks/harness/c/), which
   prints the stream. A benchmark in another language prints the same lines without it.
 

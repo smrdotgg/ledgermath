@@ -9,7 +9,7 @@ each Run records, where it can count them, as each sample's resident pages.
 
 Reading a file front to back after asking the kernel to drop it from the page cache, the
 way a program does: buffered `pread`s of 8 KiB, with the kernel's stock readahead deciding
-what the device is asked for. napkin-math's "sequential read". Each sample reads one region
+what the device is asked for. Each sample reads one region
 of the Fixture the box made at boot, after the kernel is asked to drop it from the page
 cache, and records its pages still resident, where it can count them.
 
@@ -75,6 +75,12 @@ Each parameter set is a Series of its own on each instance type it runs on: the 
 volume's set on every instance type in the schedule, the instance store's on
 `i4i.2xlarge` only.
 
+The benchmark's Series and their figures are listed at
+[https://api.ledgermath.com/v1/benchmarks/disk_read_sequential.json](https://api.ledgermath.com/v1/benchmarks/disk_read_sequential.json),
+which says in `left_out` how many it leaves out. The figures in the table below are from Runs
+of 2026-11-11, examined when the benchmark was made. They are not the current figures, and
+can lie outside them: the API's figures are the current ones.
+
 | Parameter set | What the reader gets | `i4i.2xlarge`, 2026-11-11 | `m5.large`, 2026-11-11 |
 |---|---|---|---|
 | `disk` `root_volume`, `dir` `/var/tmp/ledgermath/disk`, `request_bytes` 8192, `bytes_per_sample` 128 MiB, `span_bytes` 1 GiB | Sequential read from the root gp3 volume, which its 125 MiB/s limit capped in the Runs examined | 125.0 MiB/s (62.5 µs an 8 KiB read); 127.6 KiB a device request; `ebs_volume_performance_exceeded_tp` +7.4 s | 125.2 MiB/s (62.4 µs); the same |
@@ -104,8 +110,9 @@ device (`o_direct` is false here), and: `request_bytes`, `bytes_per_sample` and
 
 - **Readahead kept one or two requests in flight** in the Runs examined, so the instance
   store's number was what stock readahead got from this disk (about 210 µs a 128 KiB
-  request), well below its 1.42 GB/s limit at queue depth 64. On the root volume the gp3
-  limit bound instead.
+  request), well below its limit at queue depth 64, about 1.42 GB/s (1356.3 MiB/s), which
+  [`disk_read_io_uring`](https://ledgermath.com/docs/benchmarks/disk_read_io_uring) reached.
+  On the root volume the gp3 limit bound instead.
 - **Regions differ.** On the instance store the first samples ran at 7.15 µs a read and
   the later ones at 7.42, a 4% spread within one Run that the same regions repeated.
 - **On a file system whose pages cannot be dropped** (a tmpfs, as in the container test),
@@ -113,8 +120,6 @@ device (`o_direct` is false here), and: `request_bytes`, `bytes_per_sample` and
   Nothing stops it: the record says what happened.
 
 ## How it works
-
-The design is section 2 of the step-4 brief's study (#42) and the decisions on it.
 
 ### Events of its own
 
@@ -151,8 +156,8 @@ the kernel is asked to drop the whole span from the page cache again, for the ne
 
 ```bash
 make -C benchmarks/disk_read_sequential            # build/static/disk_read_sequential
-LM_PARAM_DIR=/mnt/local/ledgermath-scratch/disk ./benchmarks/disk_read_sequential/build/static/disk_read_sequential --quick
+LM_PARAM_DIR=/var/tmp/ledgermath-test ./benchmarks/disk_read_sequential/build/static/disk_read_sequential --quick
 ```
 
-(After making a Fixture there; see [`disk_read_random`'s README](https://ledgermath.com/docs/benchmarks/disk_read_random).) An execution takes 12 to
+(After making a Fixture there, as [`disk_read_random`'s README](https://ledgermath.com/docs/benchmarks/disk_read_random) does; the directory is an example.) An execution takes 12 to
 25 seconds.

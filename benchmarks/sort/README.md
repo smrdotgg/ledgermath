@@ -8,7 +8,7 @@ sorted by an LSD radix sort.
 How fast one core sorts 64-bit integer keys. One repetition copies 1 MiB of unsorted
 keys (131,072 of them) into a scratch buffer and sorts the copy with an LSD radix sort,
 eight passes of one byte each, with no comparison function. The copy is part of the
-measured work, as it was in napkin-math's model and in July's.
+measured work, so that every repetition sorts unsorted keys.
 
 Each Run that Method `series` v1 counts gives one figure, the time of one repetition in
 nanoseconds (`time_per_repetition_ns`): the median, over the Run's counted samples, of a
@@ -35,11 +35,19 @@ instance type.
   from a fixed seed. The input, its copy and the sort's second buffer take three times
   `size_bytes`; whether they fit in a cache depends on the machine, whose cache sizes the
   Run's dump sections `lscpu` and `sys_cpu` record.
+- Only 1 MiB of keys is scheduled. A larger input divided by the rate (`bytes_per_second`)
+  models many separate sorts of 1 MiB each, which leave the keys sorted in pieces of
+  1 MiB, not one sort of the whole input. One sort of a larger input makes its passes over
+  more memory than this one, which may not fit where this one's did, and is not measured.
 
 ## Parameters
 
 The parameter set runs on every instance type in the schedule. Each instance type is a
 Series of its own.
+
+The benchmark's Series and their figures are listed at
+[https://api.ledgermath.com/v1/benchmarks/sort.json](https://api.ledgermath.com/v1/benchmarks/sort.json),
+which says in `left_out` how many it leaves out.
 
 | Variable | Scheduled | Meaning |
 |---|---|---|
