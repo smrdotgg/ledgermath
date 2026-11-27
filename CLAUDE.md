@@ -28,7 +28,7 @@ be sure to read "local/AGENTS.md" to get context that will not make it to GitHub
 
 ## Current direction
 
-Build plan: GitHub issue #36, "Build plan: record every Run, judge afterwards". Read it before designing, specifying, or building anything. It pauses the wayfinder map (#12); where the plan disagrees with the map's tickets or `docs/adr/`, follow the plan. ADR-0029 (`docs/adr/0029-record-every-run-and-judge-afterwards.md`) records which ADRs stand as built, which have changed and which are superseded, and which terms of `CONTEXT.md` are in force.
+Build plan: GitHub issue #36, "Build plan: record every Run, judge afterwards". Read it before designing, specifying, or building anything. It pauses the wayfinder map (#12); where the plan disagrees with the map's tickets or `docs/adr/`, follow the plan. ADR-0029 (`docs/adr/0029-record-every-run-and-judge-afterwards.md`) records which ADRs stand as built, which have changed and which are superseded, and, in its table "The terms of `CONTEXT.md`, as built", how each term of the earlier design maps onto the built system (`CONTEXT.md` itself was retired on 2026-11-27). The words of the built system are in the public glossary, `site/content/docs/glossary.md`.
 
 Dated checks: GitHub issue #38, "Dated checks: what to verify, and when". Some of the plan's finish lines can only be checked after a date has passed, so the build assumes they pass and lists them there. At the start of a session, read it. If a check's date has passed, make the check with the AWS CLI and record the result on that issue.
 
@@ -44,4 +44,4 @@ Default five canonical roles (`needs-triage`, `needs-info`, `ready-for-agent`, `
 
 ### Domain docs
 
-Single-context — `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.
+The public glossary (`site/content/docs/glossary.md`) for the words of the built system, ADR-0029's table for the earlier design's terms, and `docs/adr/` for decisions. There is no `CONTEXT.md`. See `docs/agents/domain.md`.

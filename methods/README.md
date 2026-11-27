@@ -1,6 +1,7 @@
 # Methods
 
-A Method is a versioned procedure that turns Runs into Derivations (`CONTEXT.md`). Its
+A Method is a versioned procedure that turns Runs into Derivations (see the
+[glossary](../site/content/docs/glossary.md)). Its
 input is a directory of Run files and the blobs they name, fetched by hash. Nothing
 else: no schedule, no hand-kept list. Its output is a file of Derivations, each naming
 the Method, its version, and every Run it used by id, path and the sha256 of the Run

@@ -234,7 +234,8 @@ is not done.
   change, not something a benchmark PR does — the no-shared-edits rule stands.
 - **Monorepo: this repo becomes the whole platform** (2026-08-08): the Ledger, Methods /
   Derivations, and the open data interface will be built here, superseding the §1 note
-  that downstream is "not built here". Vocabulary is pinned in `CONTEXT.md`; the plan is
+  that downstream is "not built here". Vocabulary is pinned in `CONTEXT.md` (retired 2026-11-27; see
+  the glossary and ADR-0029); the plan is
   the wayfinder map (issue #12). Targets widen from machines-only to **Machines and
   Services** — the "EC2 only" rule is now scoped as "Machine benchmarks require owned
   machines", not "only machines get benchmarked". The §2 output contract stays the
@@ -1548,7 +1549,8 @@ A migrated benchmark is done only when **all** of these hold:
   gains `recent_rounds`: the newest 8 rounds of boots, newest first, each with its first
   boot's start, its boots and their instance types, the Runs they left, how many are failed
   and in no Series, failed builds and executions not run, in all and by boot with each
-  summary's address (ADR-0030, rule 12; "Round" in `CONTEXT.md`). The home page's "Latest
+  summary's address (ADR-0030, rule 12; "Round" in `CONTEXT.md`, retired 2026-11-27, its definition now in
+  ADR-0029's table). The home page's "Latest
   runs" reads it. **A round comes from the boot summaries alone**: nothing a boot records
   says the schedule started it (the scheduled time stays in the launch's payload and client
   token), so a boot starts a new round when it started more than 40 minutes after the boot

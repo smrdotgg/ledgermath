@@ -4,7 +4,7 @@ LedgerMath runs small benchmarks on real cloud machines several times a day and 
 execution as a Run, a record that is never edited. Numbers are worked out afterwards from
 the Runs by a versioned Method. The working rules are in GitHub issue #36 ("Build plan:
 record every Run, judge afterwards"); the words used here (Run, Series, Method, Derivation)
-are defined in [`CONTEXT.md`](CONTEXT.md). The [README](README.md) says how every part works;
+are defined in the [glossary](site/content/docs/glossary.md). The [README](README.md) says how every part works;
 this guide says where to make each kind of change and what a pull request needs.
 
 What you can add without access to the AWS accounts: a benchmark, a parameter set, a target
