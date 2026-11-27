@@ -27,7 +27,10 @@
  *     body is added, removed or changed while the application takes over (a structural mismatch
  *     would replace or patch them), but for the attributes the router derives from the address,
  *     which the build cannot know (aria-current, data-active, target: ADR-0036). Words that
- *     differ are not changed by hydration, so check 7 compares them. And hydration begins only
+ *     differ are not changed by hydration, so check 7 compares them. One thing shows on takeover,
+ *     and by design: "Copy page", which only the application can work, is kept invisible until
+ *     then by the stylesheet, which reads data-hydrated on <html> (outside the body; its place
+ *     is kept, so nothing moves). And hydration begins only
  *     after the page's first contentful paint, so it never puts off the frame the reader sees:
  *     the mark "hydrate" that src/entry-client.tsx sets comes after the paint entry. Once more
  *     at desktop size in light with Paint Timing hidden from the page, as in a browser without
@@ -65,7 +68,8 @@
  *     heading of another page lands on the heading, in view at the top of the window with the
  *     keyboard focus on it; a click to a page whose chunk the host refuses (as after a deploy
  *     since the tab opened) loads that page as a new document, with no uncaught error; a page
- *     opened with its own chunk refused is not taken over and stays the static page it is, a
+ *     opened with its own chunk refused is not taken over and stays the static page it is, with
+ *     "View as Markdown" and no "Copy page" (which only the application can work), a
  *     click on its links loading each page as a new document; a click held for its page's chunk
  *     and then superseded by another click does not come back when the chunk arrives; and with
  *     JavaScript off, "Copy page" is not shown, and "View as Markdown" is.
@@ -943,6 +947,9 @@ async function documentation(browser: Browser, origin: string, root: string, all
 		await tab.goto(`${origin}${landing.path}`, { waitUntil: "load" });
 		const left = await tab.waitForFunction(() => performance.getEntriesByName("static").length > 0, null, { timeout: 10_000 }).then(() => true, () => false);
 		const taken = await tab.evaluate(() => performance.getEntriesByName("hydrate").length > 0);
+		// The controls of a page left static: "View as Markdown", and no "Copy page", which would do nothing.
+		const copyOffered = await tab.locator("button.copy").isVisible();
+		const viewOffered = await tab.locator(".doc-actions a").isVisible();
 		const [document] = await Promise.all([
 			tab.waitForEvent("response", { predicate: (r) => r.request().isNavigationRequest() && new URL(r.url()).pathname === away.path, timeout: 10_000 }).catch(() => null),
 			tab.locator(`nav.pages a[href="${away.path}"]`).click(),
@@ -950,10 +957,12 @@ async function documentation(browser: Browser, origin: string, root: string, all
 		await tab.waitForLoadState("load").catch(() => {});
 		const title = await tab.title();
 		if (!left || taken) problems.push(`${where}: the application ${taken ? "began to take the page over" : "never said it left the page as it is (no mark \"static\")"}`);
+		else if (copyOffered) problems.push(`${where}: the page left static shows "Copy page", which does nothing there`);
+		else if (!viewOffered) problems.push(`${where}: the page left static does not show "View as Markdown"`);
 		else if (!document || document.status() !== 200) problems.push(`${where}: a click on ${away.path} did not load it as a new document`);
 		else if (title !== away.title) problems.push(`${where}: after the click the title is ${JSON.stringify(title)}, not ${JSON.stringify(away.title)}`);
 		else if (errors.length > 0) problems.push(`${where}: uncaught error(s): ${[...new Set(errors)].join("; ")}`);
-		else passed.push(`${landing.path}, opened with its own chunk refused, stayed the static page it is, and a click on ${away.path} loaded that page as a new document`);
+		else passed.push(`${landing.path}, opened with its own chunk refused, stayed the static page it is, with "View as Markdown" and no "Copy page", and a click on ${away.path} loaded that page as a new document`);
 		await later.close();
 	}
 

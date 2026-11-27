@@ -93,6 +93,15 @@ describe("ACCEPTS_MARKDOWN: text/markdown at full weight, as a media range of it
 			"TEXT/MARKDOWN",
 			"Text/Markdown; Charset=utf-8",
 			" text/markdown ",
+			// A ";" with no parameter after it (RFC 9110, section 5.6.6).
+			"text/markdown;",
+			"text/markdown; charset=utf-8;",
+			"text/markdown ;",
+			"text/markdown;;q=1",
+			"text/markdown; ; charset=utf-8",
+			"text/markdown;\t",
+			"text/markdown;, text/html;q=0.9",
+			"text/html;q=0.9, text/markdown; charset=utf-8; ",
 		]) {
 			expect([accept, accepts.test(accept)]).toEqual([accept, true]);
 		}
@@ -115,8 +124,31 @@ describe("ACCEPTS_MARKDOWN: text/markdown at full weight, as a media range of it
 			'application/json; note="text/markdown, plain"',
 			'application/json; note="a, text/markdown", text/html',
 			'application/json; note="text/markdown"',
+			"text/markdown; q=0.5;",
+			"text/markdown;; q=0",
+			"text/markdown; charset = utf-8",
+			"text/markdown; q = 1",
 		]) {
 			expect([accept, accepts.test(accept)]).toEqual([accept, false]);
+		}
+	});
+
+	test("answers at once a long header made to send a backtracking engine down many ways", () => {
+		// Each fails at its end, where an expression that could match some text in two ways would try
+		// every way: an empty value then spaces (the earlier expression's "=\s*" and "\s*" overlapped),
+		// empty parameters between spaces, white space around ";", ranges with an unclosed quote.
+		for (const accept of [
+			`text/markdown${"; a=   ".repeat(400)};q=0`,
+			`text/markdown${";  ".repeat(2000)};q=0.5`,
+			`text/markdown${" ; a=b ".repeat(1000)}; q=0`,
+			`${"text/markdown;q=0, ".repeat(500)}text/markdown;q=0`,
+			`${'a="b, '.repeat(1001)}text/markdown`,
+			`${"text/markdown ;".repeat(1000)}`,
+		]) {
+			const started = performance.now();
+			const found = accepts.test(accept);
+			const took = performance.now() - started;
+			expect([accept.slice(0, 40), found, took < 100]).toEqual([accept.slice(0, 40), false, true]);
 		}
 	});
 });

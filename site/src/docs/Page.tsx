@@ -2,7 +2,9 @@
 // from page to page): the site's header and footer, where the page is, the two controls, the page's
 // body (its HTML, rendered from its Markdown at build time: a lazy() component, the route's
 // child), and every other page by section. All of it reads with JavaScript off but "Copy page",
-// which needs it and is hidden without it (site.css, `scripting`).
+// which needs the application: it is shown only once the application has taken the page over
+// (data-hydrated on <html>, src/app.tsx; site.css), so the page as the build wrote it, or left
+// static when its script cannot be loaded, never offers a button that does nothing.
 //
 // The page's body comes first in the document and the list of pages after it, which on a wide
 // screen stands beside it (site.css): the keyboard and a screen reader meet the page before the

@@ -15,7 +15,8 @@
 // hydrate() take the page over. If that chunk cannot be loaded (a deploy since the HTML was
 // served replaced it, or the network is down), the application does not take the page over at
 // all: the page stays the complete static page it is, every link an ordinary link (the mark
-// "static" says so), rather than a page that looks whole and whose links the router holds.
+// "static" says so), rather than a page that looks whole and whose links the router holds; and
+// "Copy page", which only the application can work, is never shown (site.css).
 import { hydrate } from "@solidjs/web";
 import { App, landingBodyLoaded } from "./app";
 

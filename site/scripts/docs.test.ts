@@ -6,7 +6,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { DOCS_ADDRESSES } from "../../scripts/lib/docs-addresses";
-import { addressOf, buildDocs, CONTENTS_HEADING, chunkName, DocsError, headingSlug, llmsTxt, markdownFile, pageFile, readLlmsTxt, type DocsPage } from "./docs";
+import { addressOf, buildDocs, CONTENTS_HEADING, chunkName, DocsError, headingSlug, llmsTxt, markdownFile, pageFile, readLlmsTxt, servedProblems, type DocsPage } from "./docs";
 
 const made: string[] = [];
 afterEach(() => {
@@ -164,6 +164,58 @@ describe("buildDocs", () => {
 		expect(sort.markdown).toBe(code.replace("from [the source](sort.c).", `from [the source](${github}).`).replace("And [the source](sort.c)", `And [the source](${github})`));
 		expect(sort.html.match(/<a href="https:\/\/github\.com[^"]*sort\.c">the source<\/a>/g)).toHaveLength(2);
 		expect(sort.html.match(/\[the source\]\(sort\.c\)/g)).toHaveLength(4);
+	});
+
+	/** A README with the forms the second review of #113 found: a fenced example in a block quote before the real link, a destination in angle brackets, a definition with spaces after its colon. */
+	const FORMS = [
+		"# sort",
+		"",
+		"How fast one thread sorts keys.",
+		"",
+		"> ```md",
+		"> [the source](sort.c)",
+		"> ```",
+		"",
+		"Then [the source](sort.c) after it, [in brackets](<sort.c>) and [by reference][spaced].",
+		"",
+		"[spaced]:    sort.c",
+		"",
+	].join("\n");
+	const GITHUB_SORT = "https://github.com/smrdotgg/ledgermath/blob/main/benchmarks/sort/sort.c";
+
+	test("those forms are rewritten where they are links: after a fenced example in a block quote, in angle brackets, in a definition with spaces after its colon", () => {
+		const sort = pageAt(buildDocs(repository({ "benchmarks/sort/README.md": FORMS }), GENERATED), "/docs/benchmarks/sort");
+		expect(sort.markdown).toBe(
+			FORMS.replace("Then [the source](sort.c)", `Then [the source](${GITHUB_SORT})`)
+				.replace("(<sort.c>)", `(<${GITHUB_SORT}>)`)
+				.replace("[spaced]:    sort.c", `[spaced]:    ${GITHUB_SORT}`),
+		);
+		expect(sort.html.match(/<a href="https:\/\/github\.com[^"]*sort\.c">/g)).toHaveLength(3);
+	});
+
+	test("the build holds a page's served Markdown to its HTML: a link the rewriting missed, or an example it rewrote, is named", () => {
+		const pages = buildDocs(repository({ "benchmarks/sort/README.md": FORMS }), GENERATED);
+		const sort = pageAt(pages, "/docs/benchmarks/sort");
+		const served = (markdown: string) => servedProblems({ ...sort, markdown }, FORMS, pages);
+		expect(served(sort.markdown)).toEqual([]);
+		const missed = (n: number) => `${sort.source}: link ${n} leads to /docs/benchmarks/sort.c in its served Markdown and to ${GITHUB_SORT} in its HTML`;
+		// The rewriting as it was: the example in the block quote rewritten, and the link after it not.
+		expect(served(sort.markdown.replace("> [the source](sort.c)", `> [the source](${GITHUB_SORT})`).replace(`Then [the source](${GITHUB_SORT})`, "Then [the source](sort.c)"))).toEqual([
+			missed(1),
+			`${sort.source}: code span or block 1 is served as ${JSON.stringify(`\`\`\`md\n[the source](${GITHUB_SORT})\n\`\`\``)}, not as written, ${JSON.stringify("```md\n[the source](sort.c)\n```")}`,
+		]);
+		// The destination in angle brackets, and the definition's, left as written.
+		expect(served(sort.markdown.replace(`(<${GITHUB_SORT}>)`, "(<sort.c>)"))).toEqual([missed(2)]);
+		expect(served(sort.markdown.replace(`[spaced]:    ${GITHUB_SORT}`, "[spaced]:    sort.c"))).toEqual([missed(3)]);
+		// A link gone.
+		expect(served(sort.markdown.replace(`[in brackets](<${GITHUB_SORT}>)`, "in brackets"))).toContain(`${sort.source}: its served Markdown has 2 links and its HTML 3`);
+	});
+
+	test("a destination the rewriting cannot place (written with an escape) fails the build, naming the link", () => {
+		const escaped = "# sort\n\nHow fast one thread sorts keys, from [the source](sort\\.c).\n";
+		expect(problemsOf(repository({ "benchmarks/sort/README.md": escaped }))).toEqual([
+			`benchmarks/sort/README.md: link 1 leads to /docs/benchmarks/sort.c in its served Markdown and to ${GITHUB_SORT} in its HTML`,
+		]);
 	});
 
 	test("headings get GitHub's anchors, a repeated one numbered; tables scroll in a box named for them, a first column with no heading its rows' headings", () => {

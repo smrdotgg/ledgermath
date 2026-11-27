@@ -132,9 +132,12 @@ function Layout(props: { children?: JSX.Element }) {
 
 	// When the application has taken the page over (the mark scripts/check-browser.ts and
 	// measure-navigation.ts wait for): once the first render has settled, which, on a documentation
-	// page, is after its body's chunk has loaded (src/entry-client.tsx).
+	// page, is after its body's chunk has loaded (src/entry-client.tsx). And data-hydrated on <html>,
+	// outside the body the build wrote, which shows "Copy page" (site.css): offered only now that its
+	// handler is there.
 	onSettled(() => {
 		performance.mark("hydrated");
+		document.documentElement.dataset.hydrated = "";
 	});
 
 	// The page's feature flags (pages.text.ts), as the inline script in Document.tsx sets them on a

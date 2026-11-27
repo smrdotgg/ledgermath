@@ -26,18 +26,30 @@ import { join, relative, sep } from "node:path";
 /**
  * An Accept header that asks for Markdown at full weight: one of its media ranges, wherever it
  * stands in the list, is text/markdown (in any case) with any parameters (charset=utf-8 among
- * them) but a weight below 1: no q, or q=1, 1., 1.0, 1.00 or 1.000. A media range starts after a
- * comma outside a quoted string: the expression reads the header from its start, range by range,
- * each a run of characters and quoted strings up to a comma, so text/markdown inside a parameter's
- * quoted value (note="text/markdown, plain") is no media range. A parameter's value is a token or
- * a quoted string. Written with what any regular-expression engine has (no look-ahead), since the
- * host matches it.
+ * them) but a weight below 1: no q, or q=1, 1., 1.0, 1.00 or 1.000. Parameters as RFC 9110
+ * writes them (sections 5.6.6 and 12.5.1): white space allowed around each ";" and none around a
+ * parameter's "=" (text/markdown; charset = utf-8 gets the HTML), and a ";" with no parameter
+ * after it allowed (text/markdown; and text/markdown; charset=utf-8; ask for Markdown); a value
+ * is a quoted string or any run of other characters up to the next ";", "," or space. A media range starts after
+ * a comma outside a quoted string: the expression reads the header from its start, range by
+ * range, each a run of characters and quoted strings up to a comma, so text/markdown inside a
+ * parameter's quoted value (note="text/markdown, plain") is no media range.
+ *
+ * Written with what any regular-expression engine has (no look-ahead), since the host matches it,
+ * and so that no text can be matched by it in two ways, since it runs on every request: each
+ * repeated part starts with a character that the part before it cannot end with (a range after a
+ * comma, a parameter after a ";"), white space is matched only after a ";", after text/markdown
+ * and after a parameter's value, where nothing else can take it, and alternatives start apart (a
+ * quoted string with '"', which nothing else takes; a parameter named q with q alone before "=").
+ * A header that would make a backtracking engine try many ways fails at once
+ * (vercel-config.test.ts).
  */
 const TOKEN = "[!#$%&'*+.^_`|~0-9A-Za-z-]";
+const TOKEN_NOT_Q = "[!#$%&'*+.^_`|~0-9A-PR-Za-pr-z-]";
 const QUOTED = '"(?:[^"\\\\]|\\\\.)*"';
-const PARAMETER_NOT_Q = `(?:${TOKEN}{2,}|[!#$%&'*+.^_\`|~0-9A-PR-Za-pr-z-])\\s*=\\s*(?:${QUOTED}|[^;,"\\s]*)`;
-const FULL_WEIGHT = "[qQ]\\s*=\\s*1(?:\\.0{0,3})?";
-export const ACCEPTS_MARKDOWN = `^(?:(?:[^",]|${QUOTED})*,)*\\s*[tT][eE][xX][tT]/[mM][aA][rR][kK][dD][oO][wW][nN]\\s*(?:;\\s*(?:${FULL_WEIGHT}|${PARAMETER_NOT_Q})\\s*)*(?:,|$)`;
+const PARAMETER_NOT_Q = `(?:${TOKEN}{2,}|${TOKEN_NOT_Q})=(?:${QUOTED}|[^;,"\\s]*)`;
+const FULL_WEIGHT = "[qQ]=1(?:\\.0{0,3})?";
+export const ACCEPTS_MARKDOWN = `^(?:(?:[^",]|${QUOTED})*,)*\\s*[tT][eE][xX][tT]/[mM][aA][rR][kK][dD][oO][wW][nN]\\s*(?:;\\s*(?:(?:${FULL_WEIGHT}|${PARAMETER_NOT_Q})\\s*)?)*(?:,|$)`;
 
 const MARKDOWN_TYPE = "text/markdown; charset=utf-8";
 

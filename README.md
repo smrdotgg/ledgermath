@@ -3848,9 +3848,9 @@ group ("Where it is deployed"). The same commands work locally, inside `site/`.
   first load (the page and what it loads to show itself and be taken over: the stylesheet,
   both fonts, of which the check counts both and a browser fetches only the one its colour
   scheme uses, the application, and a documentation page's own chunk) under 300,000 bytes
-  (119,089 for the home page, up to 159,186 for a documentation page, http_get's, on
+  (119,125 for the home page, up to 159,221 for a documentation page, http_get's, on
   2026-11-27; 113 KB for the home page before the documentation); the application, its
-  script and what it imports, under 60,000 (54,888; about 45 KB before); each documentation
+  script and what it imports, under 60,000 (54,902; about 45 KB before); each documentation
   page's chunk under 40,000 (the largest, http_get's, 21,409); and every chunk the
   application may load ahead, together, under 250,000 (181,164 for 28 pages). Past the last,
   preload fewer pages ahead rather than raise it (ADR-0037). It reads `src`, `href`, `srcset`,
@@ -3920,8 +3920,10 @@ breadcrumb, "View as Markdown", "Copy page" and the list of pages; "Copy page" p
 Markdown on the clipboard, byte for byte the file the site serves; a link to a heading of
 another page lands on the heading, at the top of the window with the focus on it; a click to
 a page whose chunk the host refuses, as after a deploy, loads that page as a new document
-with no uncaught error; and with JavaScript off "Copy page" is not shown and "View as
-Markdown" is. They took about three and a half minutes on a 4-vCPU machine. `--shots OUT`
+with no uncaught error; a page opened with its own chunk refused stays the static page it is,
+with "View as Markdown" and no "Copy page", each link loading its page as a new document; a
+click held for its page's chunk and superseded by another does not come back when the chunk
+arrives; and with JavaScript off "Copy page" is not shown and "View as Markdown" is. They took about three and a half minutes on a 4-vCPU machine. `--shots OUT`
 also writes each page's first screen and whole page as PNG files.
 
 The built site serves two fonts of one family, Geist Pixel Circle and Geist Pixel Square,
@@ -3954,7 +3956,11 @@ the router's; a `#…` on the same page carries `target="_self"`, the browser's 
 README's relative link to a file of the repository becomes its address on GitHub, on main,
 in the served Markdown too, where the relative one would lead nowhere; links to the API stay.
 A link is rewritten only where it is a link: an example in code that shows one is served as
-written, in the HTML and in the Markdown.
+written, in the HTML and in the Markdown. The build holds each page's served Markdown to its
+HTML (`servedProblems`): the Markdown's links, parsed again, must lead where the HTML's do, one
+for one and in order, each read from the address it is served at, and its code spans and blocks
+must be the source's, byte for byte; so a link the rewriting misses (a form it does not know,
+such as a destination written with an escape) fails the build, naming the link.
 A link with no target fails the build: a `/docs/…` address that is no page, a `#…` that is
 no heading of its page (headings get GitHub's anchors, which the generated pages link to, a
 repeated one numbered `-1`, `-2`), a file the checkout does not have, or an address outside
@@ -3965,9 +3971,11 @@ Each page's Markdown is at its address with `.md` added (`/docs/glossary.md`), o
 in it for an address that ends in a slash (`/docs/index.md`, `/docs/api/index.md`), as the
 llms.txt convention has it, and at its own address when the request's `Accept` names
 `text/markdown` at full weight (one of its media ranges, in any case, is `text/markdown` with
-any parameters but a `q` below 1, `text/markdown; charset=utf-8` among them; a media range
-starts after a comma outside a quoted string, so `text/markdown` inside a parameter's quoted
-value is none; `ACCEPTS_MARKDOWN`): the deploy's `config.json` holds a route per page,
+any parameters but a `q` below 1, `text/markdown; charset=utf-8` among them, a `;` with
+nothing after it allowed and no white space around a parameter's `=`, as RFC 9110 writes them;
+a media range starts after a comma outside a quoted string, so `text/markdown` inside a
+parameter's quoted value is none; `ACCEPTS_MARKDOWN`, which no text can match in two ways, so
+that no header makes it slow): the deploy's `config.json` holds a route per page,
 read from the built files (`site/deploy/vercel-config.ts`), with `Vary: Accept` on every
 answer at a page's address and `Content-Type: text/markdown` on the Markdown, and it refuses
 a site with a documentation page that has no Markdown, which would answer an agent with 404.
@@ -3980,8 +3988,11 @@ type="text/markdown">`, which follows the page after a click).
 
 A documentation page shows the site's header and footer; a breadcrumb ("Docs", which leads
 to `/docs/`, and the page's section); "View as Markdown", a plain link to the `.md`, and
-"Copy page", which fetches it and puts it on the clipboard, the one control that needs
-JavaScript (hidden without it, by the `scripting` media feature); the page; and the list of
+"Copy page", which fetches it and puts it on the clipboard, the one control that needs the
+application, and so is shown only once the application has taken the page over (the
+stylesheet reads `data-hydrated` on `<html>`, which `src/app.tsx` sets; until then its place is
+kept, so that nothing moves, and without JavaScript, or on a page whose script could not be
+loaded, it is never shown); the page; and the list of
 every page by section, beside the page on a wide screen and below it on a narrow one, the
 page on screen marked. Headings and chrome are in the site's pixel type; the page's text,
 tables and code in the reader's own system fonts, which read easily at length and cost no

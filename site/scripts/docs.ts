@@ -25,6 +25,9 @@
  * (the router's), a #fragment on the same page carries target="_self" (the browser's own jump), a
  * file of the repository, linked relatively from its README, becomes its address on GitHub (in the
  * served Markdown too, where the relative link would lead nowhere), and links to the API stay.
+ * The build then holds each page's served Markdown to its HTML (servedProblems): its links, parsed
+ * again, lead where the HTML's do, one for one, and its code is the source's, byte for byte, so a
+ * link the rewriting misses or text it rewrites that is no link fails the build.
  * Headings get GitHub's anchors (headingSlug), which the generated pages link to.
  */
 
@@ -409,28 +412,50 @@ function servedMarkdown(page: Lexed, links: ReadonlyMap<Token, Rewritten>): stri
 			continue;
 		}
 		if (token.type !== "link" && token.type !== "def") continue;
-		const href = (token as Tokens.Link).href;
-		const to = absolute.get(href);
+		const to = absolute.get((token as Tokens.Link).href);
 		const at = find(token.raw, cursor);
 		if (at < 0) continue;
-		const changed = !to ? token.raw : token.type === "link" ? token.raw.replace(`](${href}`, `](${to}`) : token.raw.replace(`]: ${href}`, `]: ${to}`);
-		out += source.slice(cursor, at) + changed;
+		out += source.slice(cursor, at) + (to ? withDestination(token as Tokens.Link | Tokens.Def, to) : token.raw);
 		cursor = at + token.raw.length;
 	}
 	return out + source.slice(cursor);
 }
 
-/** Where SOURCE's fenced code blocks are, as [start, end) offsets: from a line opening with ``` or ~~~ (indented or not) to the line that closes it. */
+/**
+ * A link's or a reference definition's raw text with its destination made TO: the destination as
+ * written, bare or in <angle brackets>, after the label's "](" or "]:" and any white space (a
+ * definition's may be on the next line). The raw text as it is when the destination is not written
+ * as the token's href (an escape in it, say): the check of the served Markdown (servedProblems)
+ * then fails the build, naming the link.
+ */
+function withDestination(token: Tokens.Link | Tokens.Def, to: string): string {
+	const raw = token.raw;
+	const opening = token.type === "link" ? `[${(token as Tokens.Link).text}](` : /^ {0,3}\[(?:\\.|[^\\\]])*\]:/.exec(raw)?.[0];
+	if (!opening || !raw.startsWith(opening)) return raw;
+	const rest = raw.slice(opening.length);
+	const before = /^\s*<?/.exec(rest)![0].length;
+	return rest.startsWith(token.href, before) ? raw.slice(0, opening.length + before) + to + rest.slice(before + token.href.length) : raw;
+}
+
+/**
+ * Where SOURCE's fenced code blocks are, as [start, end) offsets: from a line opening with ``` or
+ * ~~~ (indented or not, in a block quote or not) to the line that closes it, or, in a block quote,
+ * to the first line that is not quoted.
+ */
 function fencedBlocks(source: string): [number, number][] {
 	const blocks: [number, number][] = [];
-	let open: { fence: string; start: number } | null = null;
+	let open: { fence: string; start: number; quoted: boolean } | null = null;
 	let at = 0;
 	for (const line of source.split("\n")) {
 		const end = at + line.length + 1;
+		if (open?.quoted && !/^\s*>/.test(line)) {
+			blocks.push([open.start, at]);
+			open = null;
+		}
 		if (open === null) {
-			const fence = /^\s*(`{3,}|~{3,})/.exec(line)?.[1];
-			if (fence) open = { fence, start: at };
-		} else if (new RegExp(`^\\s*${open.fence[0] === "`" ? "`" : "~"}{${open.fence.length},}\\s*$`).test(line)) {
+			const opening = /^((?:\s*>)*)\s*(`{3,}|~{3,})/.exec(line);
+			if (opening) open = { fence: opening[2]!, start: at, quoted: opening[1] !== "" };
+		} else if (new RegExp(`^(?:\\s*>)*\\s*${open.fence[0] === "`" ? "`" : "~"}{${open.fence.length},}\\s*$`).test(line)) {
 			blocks.push([open.start, end]);
 			open = null;
 		}
@@ -438,6 +463,50 @@ function fencedBlocks(source: string): [number, number][] {
 	}
 	if (open !== null) blocks.push([open.start, source.length]);
 	return blocks;
+}
+
+/**
+ * Where a page's served Markdown and its HTML disagree, one line each, so that a link the rewriting
+ * of servedMarkdown misses, or text it rewrites that is no link (in an example), fails the build:
+ * the links of the served Markdown, parsed again, must lead where the HTML's links lead, one for
+ * one and in order, each read from the address it is served at (a page's forms, /docs/api,
+ * /docs/api/, /docs/api/index.html and its Markdown, all name the page); and its code spans and
+ * blocks must be those of SOURCE, the page's Markdown as written, byte for byte. PAGES are every
+ * page of the documentation.
+ */
+export function servedProblems(page: DocsPage, source: string, pages: readonly DocsPage[]): string[] {
+	const forms = new Map<string, string>();
+	for (const other of pages) {
+		const bare = other.address.replace(/\/$/, "");
+		for (const form of [bare, `${bare}/`, `${bare}/index.html`, other.markdownAddress]) forms.set(form, other.address);
+	}
+	const leadsTo = (href: string, from: string): string => {
+		let url: URL;
+		try {
+			url = new URL(href, `${SITE_ORIGIN}${from}`);
+		} catch {
+			return `nowhere (${href})`;
+		}
+		return url.origin === SITE_ORIGIN ? `${forms.get(url.pathname) ?? url.pathname}${url.search}${url.hash}` : url.href;
+	};
+	const reread = lexer.lexer(page.markdown) as Token[];
+	const problems: string[] = [];
+	const say = (what: string) => problems.push(`${page.source}: ${what}`);
+	const inMarkdown = [...allTokens(reread)].filter((token) => token.type === "link").map((token) => leadsTo((token as Tokens.Link).href, page.markdownAddress));
+	const inHtml = [...page.html.matchAll(/<a href="([^"]*)"/g)].map((match) => leadsTo(decode(match[1]!), page.address));
+	const nth = (i: number) => `link ${i + 1}`;
+	if (inMarkdown.length !== inHtml.length) say(`its served Markdown has ${inMarkdown.length} links and its HTML ${inHtml.length}`);
+	for (let i = 0; i < Math.min(inMarkdown.length, inHtml.length); i++) {
+		if (inMarkdown[i] !== inHtml[i]) say(`${nth(i)} leads to ${inMarkdown[i]} in its served Markdown and to ${inHtml[i]} in its HTML`);
+	}
+	const code = (tokens: readonly Token[]) => [...allTokens(tokens)].filter((token) => token.type === "code" || token.type === "codespan").map((token) => token.raw);
+	const written = code(lexer.lexer(source) as Token[]);
+	const served = code(reread);
+	if (written.length !== served.length) say(`its served Markdown has ${served.length} code spans and blocks, its source ${written.length}`);
+	for (let i = 0; i < Math.min(written.length, served.length); i++) {
+		if (written[i] !== served[i]) say(`code span or block ${i + 1} is served as ${JSON.stringify(served[i])}, not as written, ${JSON.stringify(written[i])}`);
+	}
+	return problems;
 }
 
 // ---------------------------------------------------------------- the sources
@@ -690,6 +759,7 @@ export function buildDocs(repository: string, generated: ReadonlyMap<string, str
 			ids: [...page.ids.values()],
 		});
 	}
+	for (const [i, page] of pages.entries()) problems.push(...servedProblems(page, lexed[i]!.source.markdown, pages));
 	if (problems.length > 0) throw new DocsError(problems);
 	return pages;
 }

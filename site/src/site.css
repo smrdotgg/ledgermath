@@ -134,7 +134,12 @@ nav.crumbs { display: block; color: inherit; }
 .copy { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; text-decoration: underline; text-decoration-color: transparent; text-underline-offset: .25em; transition: color .2s, text-decoration-color .2s; }
 .copy:hover, .copy:focus-visible { color: var(--fg); text-decoration-color: var(--fg); outline: none; }
 .said:empty { display: none; }
-/* "Copy page" needs JavaScript; without it there is only "View as Markdown". */
+/* "Copy page" needs the application: it is offered only once the application has taken the page
+   over (data-hydrated on <html>, src/app.tsx), and until then it is neither seen, nor reached by the
+   keyboard, nor read out; its place is kept, so that nothing moves when it comes. If the page is
+   never taken over (its script could not be loaded, src/entry-client.tsx), there is only "View as
+   Markdown"; and without JavaScript, not even its place. */
+:root:not([data-hydrated]) .copy { visibility: hidden; }
 @media (scripting: none) { .copy { display: none; } }
 
 nav.pages { grid-area: pages; display: block; position: sticky; top: 0; max-height: 100vh; overflow-y: auto; box-sizing: border-box; padding: 2.25rem 0 2rem; color: var(--muted); font-size: .9375rem; line-height: 1.35; }
