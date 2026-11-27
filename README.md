@@ -3525,24 +3525,27 @@ one address; `bun run check` fails on any other, so no link goes to the source r
 **Navigation is in place** (ADR-0036). Each page is complete HTML, rendered at build time,
 and each also loads one script, the site as a Solid application (`site/src/app.tsx`). In
 the browser it hydrates the page (it takes over what the build rendered without rendering
-it again), and from then on Solid Router (`@solidjs/router` 2) does the navigation: a click
-on a link to another page of the site renders that page in place, with no request, from
-what the application already holds, which is every page and the figures the pages were
-built from (compiled into the script at build time: `pageData`, `site/src/data`). With
-JavaScript off, or before the script has run, the same links are ordinary links between
-complete pages. The router leaves to the browser the links to another origin (the API),
+it again), once the browser reports the page's first contentful paint, so that the first
+frame the reader sees comes as it would without it, and from then on Solid Router
+(`@solidjs/router` 2) does the navigation: a click on a link to another page of the site
+renders that page in place, with no request, from what the application already holds,
+which is every page and the figures the pages were built from (compiled into the script at
+build time: `pageData`, `site/src/data`). With JavaScript off, or before the application
+has taken over, the same links are ordinary links between complete pages. The router leaves to the browser the links to another origin (the API),
 those with `target` or `download`, and clicks with a modifier key or another button than
 the first. The site gives `target="_self"` to its links that are not page changes, so the
 router leaves them to the browser too: a file that is not a page (`third-party-notices.txt`),
 and a place on the page on screen (the header's "Numbers" on the home page), which the
 browser's own jump handles, moving the keyboard focus there as on any page; `bun run check`
 fails on such a link without it. After a page change in place: the `<title>` and
-description change (Solid's `useHead`); the keyboard focus starts again at the top of the
-page and a screen reader is told the new page's title (a page load would do both); the
-page's feature flags (below) follow its address; the page starts at the top, or at its
-`#…` target; back and forward restore the scroll position (the browser's own restoration:
-the router's is turned off, since it lost the place of a page the reader never scrolled).
-An address no
+description change (Solid's `useHead`); the keyboard focus starts again where a page load
+would start it, at the element the address's `#…` names (so Tab after "Numbers" from
+`/docs/` goes into the table) or else at the top, and a screen reader is told the new page's
+title; the page's feature flags (below) follow its address; the page starts at the top, or
+at its `#…` target; back and forward restore the scroll position (the browser's own
+restoration: the router's is turned off, since it lost the place of a page the reader never
+scrolled). A link to the page already on screen (the footer's "Docs" on `/docs/`) starts it
+again at its top, with the focus there, as loading it again would. An address no
 route knows goes to the browser, which loads whatever the host has there. The host serves
 `/docs`, `/docs/` and `/docs/index.html` alike, and so do the routes. The script holds
 the figures of the build that wrote it: a tab left open across a rebuild shows them until
@@ -3558,8 +3561,11 @@ no GPU), 15 clicks each way per browser, locally and on a Vercel preview: a clic
 most of the site's markup, in 17 to 28 ms (at most 45), and no click made a request; with
 Chromium's CPU slowed four times, as a slower phone would be, 24 and 90 ms. The same clicks on
 the site as it was before, as ordinary navigations to `https://ledgermath.com`, took 55 to 97
-ms (medians) to the new page's first paint, up to 198 ms, with three requests each (ADR-0036
-has the figures by browser).
+ms (medians) to the new page's first paint, up to 198 ms, with three requests each. The first
+paint of a cold load is within a few milliseconds of the site without the application (the
+larger HTML and the script's fetch; hydration comes after it), and the application takes
+over 25 to 55 ms after it, about 90 ms on a phone-class CPU (ADR-0036 has the figures by
+browser; `--loads N` repeats the first load, taking turns between targets).
 
 **Feature flags.** A flag is a part of a page that is in its HTML but hidden. A page names
 its flags in `site/src/pages.text.ts` (`flags`); with `?NAME` in the page's address, the
@@ -3636,7 +3642,9 @@ and Vite makes two bundles, each with that JSON compiled in: the browser's, from
 The HTML, the script, the stylesheet, the two self-hosted fonts and `public/` are written to
 `site/dist/client`. The document around each page (`site/src/Document.tsx`) is the build's
 and is never hydrated; its body is the application's. Each page's `<head>` loads the script
-as a module, which runs once the HTML is parsed, so the page paints as it did without it;
+as a module, which runs once the HTML is parsed and hydrates after the first contentful
+paint (`site/src/entry-client.tsx`; `check:browser` holds the order), so the page paints as
+it did without it;
 an inline script sets the page's feature flags (above) and holds the page back until the
 font of the reader's colour scheme has loaded, and another, Solid's, prepares the
 hydration. The pages read the same with JavaScript off. `site/` has its own `package.json`
@@ -3716,14 +3724,18 @@ browser. They load each page in Playwright's Chromium (installed once with
 and dark, and a page with feature flags again with each flag on, and fail on a console error, a failed request or a request to another origin,
 a horizontal scroll at 390 px, an axe-core violation of WCAG 2.0 and 2.1 A and AA or of
 its structure rules, a page over the size budget as transferred, a line with a figure
-that is missing with JavaScript off, or hydration that changes an element or text of the
-page (only the attributes the router derives from the address may change). Then, from each
+that is missing with JavaScript off, hydration that begins before the page's first
+contentful paint (the mark `hydrate` before the paint entry), or hydration that changes an
+element or text of the page (only the attributes the router derives from the address may
+change). Then, from each
 page, a click on a link to the next: each must change the page in place, with no request
 and no new document, to the page the build wrote for that address (the body, compared with
 the built file's; hydration keeps the HTML's words without comparing them, so a page the
 application would render differently is caught here), with its title and words, the
 keyboard focus at the top, its title announced, and no axe violation; back and forward
-through them the same; and with JavaScript off each link must load its page as a new
+through them the same, each page scrolled to where it was left; with the keyboard, a link
+to a place on another page must leave the focus at the place (Tab goes on from it) and a
+page's own link must bring the page back to its top; and with JavaScript off each link must load its page as a new
 document. The time from each click to the next frame is printed, not judged. `--shots OUT`
 also writes each page's first screen and whole page as PNG files.
 
