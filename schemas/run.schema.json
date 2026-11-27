@@ -23,7 +23,7 @@
     }
   ],
   "properties": {
-    "schema": { "const": "ledgermath.run/1" },
+    "schema": { "description": "What this file is, and which version of its shape.", "const": "ledgermath.run/1" },
     "id": {
       "description": "A version 7 UUID, minted on the box when the binary is launched.",
       "type": "string",
@@ -35,12 +35,12 @@
     },
     "started_at": { "description": "Read just before the binary was launched.", "$ref": "#/$defs/time" },
     "ended_at": { "description": "Read just after the binary exited.", "$ref": "#/$defs/time" },
-    "benchmark": { "description": "The benchmark's directory name under benchmarks/.", "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
+    "benchmark": { "description": "The benchmark's name, as the schedule entry gives it. The binary was built from the directory of that name under benchmarks in the source archive (source), a git archive of source_commit.", "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
     "params": {
       "description": "Exactly the parameters delivered to the binary, as LM_PARAM_<KEY>.",
       "type": "object",
       "propertyNames": { "pattern": "^[a-z][a-z0-9_]*$" },
-      "additionalProperties": { "anyOf": [{ "type": "string" }, { "type": "number" }, { "type": "boolean" }] }
+      "additionalProperties": { "description": "One parameter's value, under its key: delivered to the binary as LM_PARAM_<KEY>, the key upper-cased, a boolean as true or false.", "anyOf": [{ "type": "string" }, { "type": "number" }, { "type": "boolean" }] }
     },
     "samples": { "description": "Delivered to the binary as LM_SAMPLES.", "type": "integer", "minimum": 1 },
     "service": {
@@ -51,11 +51,13 @@
       "properties": {
         "name": { "description": "The Service, as the schedule entry names it.", "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
         "inputs": {
+          "description": "Every input of the Service that is not secret, by name, exactly as delivered to the binary as LM_SERVICE_<KEY>: for s3_fixtures, endpoint and region.",
           "type": "object",
           "propertyNames": { "pattern": "^[a-z][a-z0-9_]*$" },
-          "additionalProperties": { "type": "string" }
+          "additionalProperties": { "description": "One input's value, exactly as delivered.", "type": "string" }
         },
         "secret_inputs": {
+          "description": "The names of the Service's secret inputs, delivered to the binary as LM_SERVICE_<KEY>, whose values are written nowhere: for s3_fixtures, aws_access_key_id, aws_secret_access_key and aws_session_token.",
           "type": "array",
           "uniqueItems": true,
           "items": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" }
@@ -69,6 +71,7 @@
     },
     "source": { "description": "The source archive the box unpacked and built from.", "$ref": "#/$defs/hash" },
     "binary": {
+      "description": "The binary that ran, as the box built it: its bytes, the build, the compiler, what the build printed, and what the compiler resolved its flags to.",
       "type": "object",
       "additionalProperties": false,
       "required": ["blob", "build", "compiler", "command", "resolved_flags"],
@@ -84,11 +87,11 @@
       }
     },
     "provider": {
-      "description": "The provider's own words for where this ran, verbatim. `name` says whose words they are; the other keys are that provider's.",
+      "description": "Where this ran, in the provider's own words: under LedgerMath's names for them, each value is the provider's, verbatim, or null when the box could not read it. `name` says whose words the values are.",
       "type": "object",
       "required": ["name"],
-      "properties": { "name": { "type": "string" } },
-      "additionalProperties": { "anyOf": [{ "type": "string" }, { "type": "null" }] }
+      "properties": { "name": { "description": "Whose words the other keys' values are: aws; or unknown, with no other key, when the box could not read its instance ID from the instance metadata service.", "type": "string" } },
+      "additionalProperties": { "description": "One fact of where the binary ran: the key is LedgerMath's name for it, the value the provider's words, verbatim; null when the box could not read that value. For aws, read from the instance metadata service: instance_type, region, availability_zone, availability_zone_id, image_id (the service's ami-id) and instance_id.", "anyOf": [{ "type": "string" }, { "type": "null" }] }
     },
     "environment": {
       "description": "The box's environment dump taken just before the launch and just after the exit. Each names an index blob that lists the dump's sections by hash.",
@@ -96,12 +99,12 @@
       "additionalProperties": false,
       "required": ["before", "after"],
       "properties": {
-        "before": { "$ref": "#/$defs/hash" },
-        "after": { "$ref": "#/$defs/hash" }
+        "before": { "description": "The index blob of the dump taken just before the binary was launched.", "$ref": "#/$defs/hash" },
+        "after": { "description": "The index blob of the dump taken just after the binary exited.", "$ref": "#/$defs/hash" }
       }
     },
     "runner": {
-      "description": "The runner that launched the binary: a blob listing every file of runner/ with its hash.",
+      "description": "The runner that launched the binary: a blob listing every file of the directory named runner in the source archive (source), one line each, its sha256 in hex, two spaces and its path within that directory, sorted by path, leaving out any directory named build or __pycache__.",
       "$ref": "#/$defs/hash"
     },
     "exit": {
@@ -112,7 +115,7 @@
           "additionalProperties": false,
           "required": ["code"],
           "properties": {
-            "code": { "type": "integer", "minimum": 0 },
+            "code": { "description": "The binary's exit status, when it exited by itself rather than being killed by a signal. 0 means it completed. Each benchmark defines what its other codes mean; a non-zero code does not by itself mean the binary stopped short (http_get exits 4 only after printing its whole stream, finished included). Method series v1 counts a Run only when its code is 0; Method requests v1 accepts 4 as well, subject to its other checks.", "type": "integer", "minimum": 0 },
             "runner_signal": { "$ref": "#/$defs/runner_signal" }
           }
         },
@@ -121,22 +124,22 @@
           "additionalProperties": false,
           "required": ["signal"],
           "properties": {
-            "signal": { "type": "integer", "minimum": 1 },
-            "timeout_seconds": { "type": "integer", "minimum": 1 },
+            "signal": { "description": "The number of the signal that ended the binary.", "type": "integer", "minimum": 1 },
+            "timeout_seconds": { "description": "The runner's timeout for the execution, in seconds: present only when the runner killed the binary (signal 9) for running that long.", "type": "integer", "minimum": 1 },
             "runner_signal": { "$ref": "#/$defs/runner_signal" }
           }
         }
       ]
     },
     "events": {
-      "description": "Carried only by Runs written before the runner stopped copying stdout into the Run (they have no `stdout_bytes`): every line the binary printed to stdout, parsed, in order, stopping at the first line that is not a JSON object. Later Runs do not carry it. For every Run the `stdout` blob is the source of its events (schemas/events.schema.json, one per line), and every reader reads them there; for a Run that carries `events`, they must equal the blob's lines.",
+      "description": "Carried only by Runs written before the runner stopped copying stdout into the Run (they have no `stdout_bytes`): the JSON objects parsed from the binary's stdout lines, in order, up to and not including the first line the runner that wrote the Run could not parse as a JSON object, which `events_error` then names. Later Runs do not carry it. For every Run the `stdout` blob is the source of its events, and every reader reads them there, parsed the same way; for a Run that carries `events`, they must equal the events read from the blob, line for line.",
       "type": "array",
       "items": {
         "type": "object",
         "required": ["event", "t"],
         "properties": {
-          "event": { "type": "string" },
-          "t": { "type": "integer", "minimum": 0 }
+          "event": { "description": "The event's name.", "type": "string" },
+          "t": { "description": "Whole nanoseconds on the clock that the stream's started event names.", "type": "integer", "minimum": 0 }
         }
       }
     },
@@ -146,11 +149,11 @@
       "additionalProperties": false,
       "required": ["line", "message"],
       "properties": {
-        "line": { "type": "integer", "minimum": 1 },
-        "message": { "type": "string" }
+        "line": { "description": "The number of the stdout line that could not be parsed, counting from 1.", "type": "integer", "minimum": 1 },
+        "message": { "description": "Why it could not be parsed: not JSON, with the parser's error, or not a JSON object.", "type": "string" }
       }
     },
-    "stdout": { "description": "The binary's stdout, verbatim: one event per line (schemas/events.schema.json). The source of the Run's events for every Run.", "$ref": "#/$defs/hash" },
+    "stdout": { "description": "The binary's stdout, exactly as it printed it. Each line is meant to be one event, of the shape the events schema gives (the data API serves it at v1/schemas/events.schema.json), and a Method counts a Run only when every line is; a line may fail that, or not be JSON at all. The source of the Run's events for every Run.", "$ref": "#/$defs/hash" },
     "stdout_bytes": { "description": "The length of the stdout blob, in bytes. Written, with `stdout_lines`, by every Run since the runner stopped copying stdout into the Run; such a Run carries no `events`.", "type": "integer", "minimum": 0 },
     "stdout_lines": {
       "description": "The number of lines in the stdout blob: the pieces between newlines, a last line without one counted too. Written with `stdout_bytes`.",

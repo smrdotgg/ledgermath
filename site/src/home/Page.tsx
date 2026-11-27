@@ -189,9 +189,9 @@ export default function HomePage(props: { data: PageData }) {
 				<div class="hero">
 					<div class="claim">
 						<h1>
-							<span class="line">Independent Cloud</span>
+							<span class="line">Continuous Napkin</span>
 							<span class="line">
-								Benchmarks
+								Math
 								<HeadlineArt />
 							</span>
 						</h1>

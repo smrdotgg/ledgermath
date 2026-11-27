@@ -22,25 +22,6 @@ export class Dots {
 		return this;
 	}
 
-	/** Every cell whose centre is within r of the point (cx, cy), at or above the row `floor`. */
-	disc(cx: number, cy: number, r: number, floor: number): this {
-		for (let j = Math.max(floor, Math.floor(cy - r)); j <= Math.ceil(cy + r); j++)
-			for (let i = Math.floor(cx - r); i <= Math.ceil(cx + r); i++) if ((i + 0.5 - cx) ** 2 + (j + 0.5 - cy) ** 2 <= r * r) this.dot(i, j);
-		return this;
-	}
-
-	/**
-	 * A cloud with a flat bottom on row y, about w wide and h tall (w up to about three times h):
-	 * four round lobes, the second the tallest, over a flat base.
-	 */
-	cloud(x: number, y: number, w: number, h: number): this {
-		this.disc(x + 0.17 * w, y + 0.35 * h, 0.35 * h, y);
-		this.disc(x + 0.42 * w, y + 0.5 * h, 0.5 * h, y);
-		this.disc(x + 0.69 * w, y + 0.4 * h, 0.4 * h, y);
-		this.disc(x + w - 0.27 * h, y + 0.27 * h, 0.27 * h, y);
-		return this.fill(Math.round(x + 0.17 * w), y, Math.round(w - 0.17 * w - 0.27 * h), Math.round(0.3 * h));
-	}
-
 	/** The same dots, moved dx columns to the right. */
 	moved(dx: number): Dots {
 		const to = new Dots();
