@@ -55,7 +55,7 @@
       }
     },
     "bytes_per_second_summary": {
-      "description": "Percentiles of bytes per second across the Series' counted Runs that observed a finite bytes per repetition above 0.A Run among them whose bytes per second is infinite, past a double's range (chiefly one whose time per repetition is 0), cannot have it written in JSON: it is counted here all the same, and a percentile taken from it, or interpolated towards it, is null. The Runs behind them are the Series' counted points whose bytes_per_repetition is not null, as its month files hold them.",
+      "description": "Percentiles of bytes per second across the Series' counted Runs that observed a finite bytes per repetition above 0. A Run among them whose bytes per second is infinite, past a double's range (chiefly one whose time per repetition is 0), cannot have it written in JSON: it is counted here all the same, and a percentile taken from it, or interpolated towards it, is null. The Runs behind them are the Series' counted points whose bytes_per_repetition is not null, as its month files hold them.",
       "type": "object",
       "required": ["count", "p5", "p50", "p95"],
       "properties": {

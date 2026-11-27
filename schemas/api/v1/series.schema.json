@@ -173,7 +173,7 @@
       }
     },
     "bytes_per_second_stat": {
-      "description": "Percentiles of bytes per second across the counted Runs that observed a finite bytes per repetition above 0.The Runs behind it are not listed: they are every counted point of the Series whose bytes_per_repetition is not null (for a group's, the points with the group's letter, counted or not, and of those the counted ones whose bytes_per_repetition is not null), in order of start, then Run id, as the month files hold them. A Run among them whose bytes per second is infinite, past a double's range (chiefly one whose time per repetition is 0), cannot have it written in JSON: its point shows null, it is counted here all the same, and a percentile taken from it, or interpolated towards it, is null.",
+      "description": "Percentiles of bytes per second across the counted Runs that observed a finite bytes per repetition above 0. The Runs behind it are not listed: they are every counted point of the Series whose bytes_per_repetition is not null (for a group's, the points with the group's letter, counted or not, and of those the counted ones whose bytes_per_repetition is not null), in order of start, then Run id, as the month files hold them. A Run among them whose bytes per second is infinite, past a double's range (chiefly one whose time per repetition is 0), cannot have it written in JSON: its point shows null, it is counted here all the same, and a percentile taken from it, or interpolated towards it, is null.",
       "type": "object",
       "required": ["count", "p5", "p50", "p95"],
       "properties": {
