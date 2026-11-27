@@ -62,8 +62,8 @@ import { parseStrictJson } from "./strict-json";
 const ROOT = resolve(import.meta.dir, "..", "..");
 
 export const DEFAULT_BASE = "https://api.ledgermath.com";
-/** Where the API is described in words, until the docs have pages of their own. */
-export const DEFAULT_DOCS = "https://github.com/smrdotgg/ledgermath/blob/main/README.md#the-data-api";
+/** Where the API is described in words: the documentation's reference to it, on the site (ADR-0037). */
+export const DEFAULT_DOCS = "https://ledgermath.com/docs/api/";
 
 /**
  * How many of a Series' newest Runs have their points in its Series file as
