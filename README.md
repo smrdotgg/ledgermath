@@ -3577,23 +3577,32 @@ every field; the shared shapes.
   live API, so a page changes only when its schema, its words or the sample do. Each is an
   excerpt the generator makes by one rule, `EXCERPT_RULE`, which the page prints word for word
   beside the list of every place it shortened (a test holds the code to it), and the page links
-  the file at the same address as it is now.
+  the file at the same address: as it is now, for a file of the API's own that changes in place;
+  the same bytes, for a price file or a Run file, which is never edited (`writtenOnce` in
+  `scripts/lib/api-reference-words.ts`).
 
 **The sample** follows one Series, `124066cf09f9` (`http_get` on `m5.large`, which Method
 requests v1 derives beside series v1), through every kind of file, taken on 2026-11-26: the
 table of contents, the list of Series, `http_get`'s list, the Series' file, its month file of
-2026-11, the Run file of its newest point, that Run's stdout blob, and the day's price file;
-1,209,588 bytes in eight files, 565,082 of them the month file. `docs/api-sample/sample.json`
-lists each with its kind, address, size and sha256. To take it again (into a directory that
-does not exist yet, or is empty):
+2026-11, the Run file of its newest point, that Run's stdout blob, and the day's price file.
+Beside them, one Run's environment dump, for the start-here page's fleet example: the Run file
+of the newest point of a second Series, `a655ffb3e7dd` (`memory_read` on `c6i.8xlarge`), the
+index of its before-dump, and the dump's section `memory`, which holds the box's own
+`/proc/meminfo` (added on 2026-11-27 from the Run the sample's list names as that Series'
+newest; a Run file and its blobs never change). 1,216,792 bytes in eleven files, 565,082 of
+them the month file. `docs/api-sample/sample.json` lists each with its kind, address, size and
+sha256. To take it again (into a directory that does not exist yet, or is empty):
 
 ```bash
-bun scripts/fetch-api-sample.ts --series 124066cf09f9 --out docs/api-sample
+bun scripts/fetch-api-sample.ts --series 124066cf09f9 --dump-series a655ffb3e7dd --out docs/api-sample
 ```
 
 It follows the files' own links, and writes nothing unless they agree as one update (the month
 file's sha256 the one the Series file lists, the Run file's the one its point gives, the stdout
-blob's the one the Run names, the row the same line in both lists).
+blob's the one the Run names, the row the same line in both lists; the dump's Run the newest
+its row gives, the index's sha256 the one the Run names, the section's the one the index
+names). A new sample changes every figure the start-here page's examples cite, and its test
+then fails until they are worked again.
 
 `tests/api-reference.test.ts` holds: every schema under `schemas/` has a page, or is in
 `SCHEMAS_WITHOUT_A_PAGE` (empty); every field the description test finds is on its schema's
@@ -3602,7 +3611,9 @@ definition written out where it is used, at each place the definition is named f
 shared shape, in that shape's section), found by a walk of the test's own; every schema uses only
 the keywords in `KEYWORDS`; the excerpt does what `EXCERPT_RULE` says; each file of the sample is
 the one its manifest lists, validates against its schema (the API's own five against the schema
-closed too, each line of the stream against the events schema), agrees with the others, and
+closed too, each line of the stream against the events schema; a dump's index and section have
+none), agrees with the others (the dump's Run of a Series of the list, its index and section by
+the hashes the Run and the index name), and
 holds no AWS key; every example is an excerpt of its sample that keeps every top-level member,
 and every list or object it keeps holds something when its source does; every link is a page `scripts/lib/docs-addresses.ts`
 lists, a heading of its own page, the API or the repository; each page starts with its title

@@ -58,6 +58,27 @@
 			"url": "https://api.ledgermath.com/blobs/sha256/46cf012c4fb71b9e047b3a7a461aaa18d7ec915cdcbf5de2a626abd53bc93fa4",
 			"bytes": 161116,
 			"sha256": "46cf012c4fb71b9e047b3a7a461aaa18d7ec915cdcbf5de2a626abd53bc93fa4"
+		},
+		{
+			"kind": "dump-run",
+			"path": "runs/2026/11/26/01a218a2-7266-7944-8543-12fe31110096.json",
+			"url": "https://api.ledgermath.com/runs/2026/11/26/01a218a2-7266-7944-8543-12fe31110096.json",
+			"bytes": 1799,
+			"sha256": "9d952cba3253a5f806f378ac26feecb36cb504c13ba7c25fbc4e6fc539079950"
+		},
+		{
+			"kind": "dump-index",
+			"path": "blobs/sha256/0060de111e13e07b23bdcc90d41f07e9bc200c747bd45d8f6dc1c7098a3fa2a4",
+			"url": "https://api.ledgermath.com/blobs/sha256/0060de111e13e07b23bdcc90d41f07e9bc200c747bd45d8f6dc1c7098a3fa2a4",
+			"bytes": 1951,
+			"sha256": "0060de111e13e07b23bdcc90d41f07e9bc200c747bd45d8f6dc1c7098a3fa2a4"
+		},
+		{
+			"kind": "dump-memory",
+			"path": "blobs/sha256/5583c937aba5da5f163b6281cf5f7aed1e6ff90e399fe3c86fe4f16bf7811f6a",
+			"url": "https://api.ledgermath.com/blobs/sha256/5583c937aba5da5f163b6281cf5f7aed1e6ff90e399fe3c86fe4f16bf7811f6a",
+			"bytes": 3454,
+			"sha256": "5583c937aba5da5f163b6281cf5f7aed1e6ff90e399fe3c86fe4f16bf7811f6a"
 		}
 	]
 }
