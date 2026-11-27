@@ -3988,7 +3988,7 @@ a page's `<head>` asks for its own chunk (`modulepreload`) and hydration imports
 taking the page over. The router loads the other chunks ahead (`eagerPreload({ all: true })`
 and `intentPreload()`): every link's on the page once it has loaded and the browser is idle,
 which on a documentation page, whose list links every page, is every chunk (181 KB for 28
-pages, 1.4 to 21 KB each), and on the home page the 15 its links lead to (78 KB); and a link's
+pages, 1.4 to 21 KB each), and on the home page the 15 its links lead to (88 KB); and a link's
 at once when the pointer rests on it, it takes the focus or a touch starts on it. A reader
 whose browser asks to save data (Save-Data, or a 2g connection) is spared the first, and a
 click on a link whose chunk has not come yet keeps the page on screen until it has

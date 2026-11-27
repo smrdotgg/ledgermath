@@ -112,7 +112,8 @@ describe("the build", () => {
 	test("from the fixture tree: the home page and the documentation, and nothing to say", () => {
 		expect(fixture.status).toBe(0);
 		expect(fixture.stdout).not.toContain("note:");
-		expect(readFileSync(join(fixture.out, "docs", "index.html"), "utf8")).toContain("Every page of LedgerMath's documentation, by section.");
+		// /docs/ lists every page: after the start-here page, under "All pages", or, without it, alone.
+		expect(readFileSync(join(fixture.out, "docs", "index.html"), "utf8")).toMatch(/>All pages<\/h2>|Every page of LedgerMath's documentation, by section\./);
 	});
 
 	test("with no tree given, fails and says so, never building from old numbers", () => {
