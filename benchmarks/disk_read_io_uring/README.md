@@ -1,10 +1,19 @@
 # disk_read_io_uring
 
+How many reads a disk completes when one thread keeps `queue_depth` of them submitted,
+`O_DIRECT` through `io_uring`. In the Runs examined on EC2 the counted samples sat on the
+provider's throughput or IOPS limit for the disk, not on the device's own; the binary does
+not require a limit to bind, and where the dumps took them, the device's counters show the
+time spent over each limit.
+
+## What a figure means
+
 How many reads a disk completes when the binary keeps 64 of them submitted: `O_DIRECT`
 reads through `io_uring`, from the Fixture the box made at boot. A sample's time over its
 repetitions is the time per completion, which gives IOPS and bytes per second. On EC2
-both disks hold their provider's limits, so the counted samples sit on them; the device's
-own counters say which limit bound.
+both disks hold their provider's limits, and in the Runs examined the counted samples sat on
+them; where the dumps took them, the device's own counters show the time spent over each
+limit.
 
 "Submitted" is what the binary controls and all it sees: a read it has submitted and not
 yet reaped. How many of those the device holds at a given instant it does not see. A
@@ -13,9 +22,46 @@ fewer than 64, and a probe found moments with 64 completions waiting and none in
 device. `device_counters` gives the device's own count of requests in flight, at the two
 edges of the measuring only (`in_flight_before`, `in_flight_after`).
 
-The design is section 2 of the step-4 brief's study (#42) and the decisions on it.
+One repetition takes one completed read, waiting only when none has arrived, and prepares
+a read in its place. Each Run that Method `series` v1 counts gives one figure, the time of
+one repetition in nanoseconds (`time_per_repetition_ns`): the median, over the Run's
+counted samples, of a sample's time divided by its repetitions, so of the samples' mean
+time per completed read. 10^9 divided by it is the completion rate, reads per second. A Run
+it does not count gives none. The harness reads the clock once at each edge of a sample,
+around the whole loop of its repetitions, and never inside that loop. Before the counted
+samples it runs warmup samples, doubling the repetitions until a sample lasts at least a
+second; each of the 10 counted samples the schedule asks for then runs that many
+repetitions. Bytes per second (`bytes_per_second`) is `bytes_per_repetition` × 10^9
+divided by the time per repetition, where `bytes_per_repetition` is `request_bytes`, the
+bytes one read asks for. A Series gives the 5th, 50th and 95th percentiles of its counted
+Runs' figures ([Methods](https://ledgermath.com/docs/methods)).
 
-| Parameter set (all `queue_depth` 64) | What the reader gets | `i4i.2xlarge`, 2026-11-11 | `m5.large`, 2026-11-11 |
+So a figure is the time per completed read with `queue_depth` reads kept submitted, from
+one disk, on one instance type: the inverse of the completion rate.
+
+## What a figure does not show
+
+- In the Runs examined, the counted samples sat on the provider's limit for the disk, not
+  the device's own (see "Findings"). The binary does not require a limit to bind, nor
+  check that the burst at the start of a Run has ended before the counted samples; where
+  the dumps took them, the device's counters show the time spent over each limit.
+- Each sample gives its time divided by the completions it reaped; the Run's figure is the
+  median of those. Neither is the time between two completions, which nothing times (a
+  completion may already be waiting when a repetition starts), nor the latency of one
+  read.
+- `queue_depth` counts reads submitted and not yet reaped, not reads the device held at
+  any instant.
+- With `disk` `root_volume` the sets read the root EBS volume, not the instance's own
+  disk: an EBS figure, whose volume type, size and provisioned IOPS and throughput are
+  AWS's record in each boot's dump section `ec2_volumes`.
+
+## Parameters
+
+Each parameter set is a Series of its own on each instance type it runs on: the root
+volume's sets on every instance type in the schedule, the instance store's on
+`i4i.2xlarge` only.
+
+| Parameter set (all `queue_depth` 64) | What the counted samples sat on | `i4i.2xlarge`, 2026-11-11 | `m5.large`, 2026-11-11 |
 |---|---|---|---|
 | root volume, `sequential`, 32 KiB, span 1 GiB | The root gp3 volume's throughput limit, as provisioned (125 MiB/s) | 125.0 MiB/s (249.9 µs a completion); `ebs_volume_performance_exceeded_tp` +23.4 s | 125.2 MiB/s |
 | root volume, `random`, 4 KiB, span 1 GiB | Its IOPS limit, as provisioned (3000) | 3000 IOPS (333.3 µs); `ebs_volume_performance_exceeded_iops` +15.3 s | 3000 IOPS |
@@ -24,17 +70,6 @@ The design is section 2 of the step-4 brief's study (#42) and the decisions on i
 
 The root volume's sets have `"disk": "root_volume", "dir": "/var/tmp/ledgermath/disk"`,
 the instance store's `"disk": "instance_store", "dir": "/mnt/lm/instance-store"`.
-
-```bash
-make -C benchmarks/disk_read_io_uring              # build/static/disk_read_io_uring
-LM_PARAM_DIR=/mnt/local/ledgermath-scratch/disk LM_PARAM_ACCESS=random LM_PARAM_REQUEST_BYTES=4096 \
-  ./benchmarks/disk_read_io_uring/build/static/disk_read_io_uring --quick
-```
-
-(After making a Fixture there; see `disk_read_random`'s README.) An execution takes 15 to
-35 seconds.
-
-## Parameters
 
 | Variable | Scheduled | Meaning |
 |---|---|---|
@@ -48,7 +83,38 @@ LM_PARAM_DIR=/mnt/local/ledgermath-scratch/disk LM_PARAM_ACCESS=random LM_PARAM_
 `--quick` uses `/var/tmp/ledgermath/disk`, `sequential`, 32 KiB and 64 when the variables
 are unset, and reads at most 64 MiB of the span.
 
-## One repetition, and the ring
+## Observed values
+
+Everything [`disk_read_random`'s README](https://ledgermath.com/docs/benchmarks/disk_read_random) lists under "Observed values" about the file and its
+device, and: `access` (as carried out), `request_bytes`, `queue_depth` (reads submitted
+before measuring and kept submitted), `span_bytes` and `span_blocks`, `bytes_per_repetition`
+(`request_bytes`), `ring_sq_entries` and `ring_cq_entries` (the ring the kernel made), and
+`ring_features` (`io_uring_params.features`, in hexadecimal).
+
+## Findings
+
+### What will stay unstable, and what to read with care
+
+- **These were the provider's limits, not the device's.** The device's counters
+  `ebs_volume_performance_exceeded_{iops,tp}` (root volume) and, on the instance store, the
+  fields nvme-cli 2.13 names `ec2_instance_ebs_performance_exceeded_{iops,tp}` (its JSON
+  gives every disk EBS's field names) grew for most of each Run seen.
+- **Both disks burst first.** On the root volume the first ~128 MiB, or ~4,000 random
+  reads, of each Run seen went at 0.8 to 1.9 GB/s, or 77,000 to 116,000 IOPS; on the
+  instance store, about 2 GiB at 3.2 GB/s, or 265,000 IOPS. Then the limits held. The burst came
+  back for a second Run started a few seconds after the first. In every Run seen, the last
+  warmup sample straddled the change and the counted samples were all after it; a larger
+  burst would show in the counted samples' times and in the exceeded counters, and a
+  Method should look there.
+- **`m5.large`'s own EBS limit** (81.25 MB/s baseline, 593.75 MB/s while its burst credit
+  lasts, 30 minutes a day) did not bind on the fresh boxes seen: the instance's exceeded
+  counters stayed at zero and gp3's bound first.
+
+## How it works
+
+The design is section 2 of the step-4 brief's study (#42) and the decisions on it.
+
+### One repetition, and the ring
 
 The ring is made with raw `io_uring_setup` and `io_uring_enter` system calls and no setup
 flags: Amazon Linux 2023's `liburing-devel` (2.6) ships no static library (checked on a
@@ -67,15 +133,7 @@ device (see above). After measuring, every read still submitted is reaped. One t
 a CPU (0.8 s in user space and 8.4 s in the kernel over 31 s), and the device's own counter
 showed its IOPS limit binding.
 
-## Observed
-
-Everything `disk_read_random`'s README lists under "Observed" about the file and its
-device, and: `access` (as carried out), `request_bytes`, `queue_depth` (reads submitted
-before measuring and kept submitted), `span_bytes` and `span_blocks`, `bytes_per_repetition`
-(`request_bytes`), `ring_sq_entries` and `ring_cq_entries` (the ring the kernel made), and
-`ring_features` (`io_uring_params.features`, in hexadecimal).
-
-## Events of its own
+### Events of its own
 
 **`device_counters`**, as in `disk_read_random`, over all of `lm_measure`: its warmup
 samples, the gaps between samples, and any other I/O on the device at the time. It starts
@@ -88,7 +146,7 @@ store's random set: 6,291,475 device reads of 4 KiB for 6,291,456 completions me
 `enters_during_measuring` and `waits_during_measuring` (the `io_uring_enter` calls, and of
 them those that waited for a completion), `bytes_read`, `span_passes`.
 
-## Elision guard
+### Elision guard
 
 The Fixture's checks before measuring are `disk_read_random`'s, and exit 1 the same way.
 `verified` is the running sum of the first word of every block whose read completed while
@@ -100,37 +158,13 @@ A read that fails or comes back short exits 1 at once. `io_uring_setup` refused 
 `ENOSYS` or `EPERM` (a kernel without it, `kernel.io_uring_disabled`, or a seccomp filter
 such as Docker's default) exits 2, saying so.
 
-## What will stay unstable, and what to read with care
+## Building and testing
 
-- **These are the provider's limits, not the device's.** The device's counters
-  `ebs_volume_performance_exceeded_{iops,tp}` (root volume) and, on the instance store, the
-  fields nvme-cli 2.13 names `ec2_instance_ebs_performance_exceeded_{iops,tp}` (its JSON
-  gives every disk EBS's field names) grew for most of each Run.
-- **Both disks burst first.** On the root volume the first ~128 MiB, or ~4,000 random
-  reads, of each Run went at 0.8 to 1.9 GB/s, or 77,000 to 116,000 IOPS; on the instance
-  store, about 2 GiB at 3.2 GB/s, or 265,000 IOPS. Then the limits held. The burst came
-  back for a second Run started a few seconds after the first. In every Run seen, the last
-  warmup sample straddled the change and the counted samples were all after it; a larger
-  burst would show in the counted samples' times and in the exceeded counters, and a
-  Method should look there.
-- **`m5.large`'s own EBS limit** (81.25 MB/s baseline, 593.75 MB/s while its burst credit
-  lasts, 30 minutes a day) never bound on a fresh box: the instance's exceeded counters
-  stayed at zero and gp3's bound first.
+```bash
+make -C benchmarks/disk_read_io_uring              # build/static/disk_read_io_uring
+LM_PARAM_DIR=/mnt/local/ledgermath-scratch/disk LM_PARAM_ACCESS=random LM_PARAM_REQUEST_BYTES=4096 \
+  ./benchmarks/disk_read_io_uring/build/static/disk_read_io_uring --quick
+```
 
-## Differences from July's version
-
-July's is `benchmarks/c/bench_disk_read_io_uring.c`, variant `32 KiB × 64 in flight`.
-
-- **Reads kept submitted.** July's repetition submitted 64 reads of 32 KiB and waited for
-  all 64, so its submissions drained to zero 64 times per 2 MiB; its 125.07 MiB/s every
-  day was the root gp3 volume's limit. Now the binary keeps 64 submitted (63 for an
-  instant after each reap) and the time is per completion.
-- **Both disks, named,** and a random 4 KiB set beside the sequential 32 KiB one.
-- **Raw system calls** instead of liburing, which has no static library on the image.
-- **The Fixture is the box's**, checked here; July's binary wrote a 1 GiB scratch file
-  with buffered writes and checked the first batch.
-- **The guard** sums the first word of every block read and recomputes it from the
-  pattern; July's emitted the sum of one batch, unchecked.
-- **New:** `observed` with the device, `device_counters`, `work`, and the parameters.
-- **What is common to every port:** the event stream, a static binary, and July's
-  sampling, with the warmup samples emitted.
+(After making a Fixture there; see [`disk_read_random`'s README](https://ledgermath.com/docs/benchmarks/disk_read_random).) An execution takes 15 to
+35 seconds.

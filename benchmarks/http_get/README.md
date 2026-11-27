@@ -1,64 +1,232 @@
 # http_get
 
-HTTPS GET requests to S3, one request per sample, with every phase of every request an
+How long an HTTPS GET of an object takes, from the box to the S3 endpoint its Service
+names, over a new connection per request or over one kept connection, one request at a
+time on one thread, each request after the first preceded by a pause whose mean is
+`gap_mean_ms`: a lightly loaded client. With `auth` `sigv4`, as scheduled, each request is
+signed before its clock starts; each phase it reaches (name resolved, connected, secured,
+request sent, first byte, headers, body) is an event, and the body of each 2xx response
+that ends without a failure is checked against the Fixture.
+
+## What a figure means
+
+HTTPS GET requests to S3, one request per sample, with each phase a request reaches an
 event: name resolved, connected, secured, request sent, first byte, headers, body. The
 binary speaks to S3 itself. It sends its own DNS query to the box's resolver, opens TCP,
-does TLS with AWS-LC (linked statically), writes HTTP/1.1 by hand, signs each request by
-hand with SigV4 before the request's first timestamp, and frames the response itself. No
+does TLS with AWS-LC (linked statically), writes HTTP/1.1 by hand, with `auth` `sigv4`
+signs each request by hand with SigV4 before the request's first timestamp, and frames the
+response itself. No
 SDK, no retry, no redirect.
 
 An error (a status that is not 2xx, a reset, a timeout, a short body, a TLS or DNS failure)
 is an event holding what was received. The Run goes on to the next request, and the exit
 code says a completed Run contained an error.
 
-The design is the study in the first comment of the step-5 brief (#43). Where this differs,
-the reasons are in "Departures from the study" at the end.
+One repetition is one request, and each sample holds one: over a new connection
+(`connection` `new`) from just before its DNS query, over a kept connection (`reused`) from
+just before its request is written, to its whole body or to the failure that ends it; a
+kept connection is opened outside any sample. Request 0 is a warmup sample; the counted
+requests follow it, at most as many as the Run asks for, 200 in the schedule (40 for the
+16 MiB object); a Run that ends early can make fewer (see "What ends a Run early").
 
-```bash
-# AWS-LC's source is not in git: fetch the pinned archive once, then build.
-benchmarks/harness/c/vendor/fetch-aws-lc.sh /path/to/aws-lc.tar.gz
-make -C benchmarks/http_get AWS_LC_ARCHIVE=/path/to/aws-lc.tar.gz   # build/static/http_get
-```
+Two Methods read these Runs ([Methods](https://ledgermath.com/docs/methods)). Method
+`series` v1 counts only a Run whose binary exited 0 and whose stream passes its checks,
+with as many counted samples as the Run asked for. Each Run it counts gives one figure,
+the median of its counted requests' total times, in nanoseconds
+(`time_per_repetition_ns`); a Run it does not count gives none. A Series gives the 5th,
+50th and 95th percentiles of those figures across its counted Runs. Method `requests` v1
+gives each phase of a request, and the total, its percentiles across the succeeded
+requests: the 50th, 90th, 95th, 99th and 99.9th, each only where there are enough requests
+for it, within each Run it counts and pooled across them. A Run that exited 4 can count
+there too, when its stream passes the Method's checks and holds as many counted requests
+as the Run asked for; a Run that holds fewer counted samples than it asked for is in no
+figure, its succeeded requests included. In a Run it counts, failed requests are counted
+and never timed. The phases are differences of the events' times, as "The phases" below
+defines them. The binary observes no
+`bytes_per_repetition`, so no bytes per second is derived.
 
-The first build unpacks the archive (336 MB) and builds AWS-LC into `build/aws-lc` (28 MB).
-Later builds, `make -B` included, reuse it as long as the archive, flags and compilers are
-the same. `make clean` leaves it. A run against S3 needs the Service inputs below; the
-tests run it against a local stand-in (see "Testing").
+So a figure is the time of an HTTPS GET of a Fixture object of `object_bytes`, or of one of
+its phases, from a box of one instance type to S3 in the same Region, by a client that
+sends one request at a time.
+
+## What a figure does not show
+
+- One thread sends one request at a time, with a pause before each request after the
+  first whose mean is `gap_mean_ms`. It is not S3 under load.
+- With `connection` `reused` the requests have no DNS, TCP or TLS phase, so they do not
+  show the cost of a new connection.
+- The box and the endpoint are in one Region, so a figure is not that of a client
+  elsewhere. Where the dump took them, each Run's dumps record the box's network settings
+  (`network`) and the subnet's route tables and the VPC's endpoints as the EC2 API
+  describes them (`ec2_route_tables`, `ec2_vpc_endpoints`): configuration, not the route
+  the requests took.
+- Method `series` v1's one figure per counted Run is a median, not a tail. The tail of
+  the requests is Method `requests` v1's.
+- The Body phase is not a network figure on its own. It starts once the header block is
+  parsed and takes in every later read, any wait for the network included; for a small
+  object most of it can be the program's own work on bytes already received. In ten
+  requests for one 5,545-byte object from a development machine, five over new
+  connections and five over a kept one, the median Body phase was almost all CPU (see
+  "What our CPU contributes").
 
 ## Parameters
 
+Each parameter set runs on every instance type in the schedule, against the Service
+`s3_fixtures`. Each parameter set and instance type is a Series of its own.
+
 | Variable | Scheduled (the study's sets) | Meaning |
 |---|---|---|
-| `LM_PARAM_OBJECT_BYTES` | `4096`, `131072`, `16777216` | The size of the Fixture object. Each 2xx body is checked against the first this-many bytes of the Fixture pattern; the body buffer is this plus 64 KiB |
+| `LM_PARAM_OBJECT_BYTES` | `4096`, `131072`, `16777216` | The size of the Fixture object. The body of each 2xx response that ends without a failure is checked against the first this-many bytes of the Fixture pattern; the body buffer is this plus 64 KiB |
 | `LM_PARAM_KEY` | `http_get/v1/<object_bytes>` | The object key, sent as the path, encoded as S3 wants (once, every byte but `A-Z a-z 0-9 - . _ ~ /` as `%XX`) |
 | `LM_PARAM_CONNECTION` | `new`, `reused` | `new`: every request resolves the name, connects and secures a connection of its own, inside its sample. `reused`: one kept connection, opened outside any sample, carries every request; it is reopened (outside a sample) when the server closes it |
 | `LM_PARAM_GAP_MEAN_MS` | `200` | The mean of the pause before each request after the first: exponential, from a fixed seed, so every Run pauses the same sequence |
-| `LM_PARAM_BUDGET_SECONDS` | `240` (`120` for 16 MiB) | No request starts once this long has passed since the Run began preparing its first request (signing it and, over a reused connection, opening that connection); the Run then ends early. See "What ends a Run early" |
+| `LM_PARAM_BUDGET_SECONDS` | `240` (`120` for 16 MiB) | No request starts once this long has passed since the Run began preparing its first request (signing it with `auth` `sigv4` and, over a reused connection, opening that connection); the Run then ends early. See "What ends a Run early" |
 | `LM_PARAM_TIMEOUT_MS` | `10000` | The longest the binary waits for any one thing: the DNS reply, `connect`, and each TLS read or write (the sockets' `SO_RCVTIMEO` and `SO_SNDTIMEO`; the latter also bounds a blocking `connect` on Linux) |
 | `LM_PARAM_CA_FILE` | `/etc/pki/tls/certs/ca-bundle.crt` | The PEM bundle the server's chain is verified against: the box's own trust store |
 | `LM_PARAM_RESOLV_CONF` | `/etc/resolv.conf` | The file whose first IPv4 `nameserver` line is the resolver queried. An address may carry a port, `<address>:<port>`, which no system resolver reads; the tests' stand-in listens on one |
 | `LM_PARAM_AUTH` | `sigv4` | `sigv4`: each request is signed with the credentials below. `none`: unsigned, and no credential is read. That is how a public object can be fetched (it was, once; see "A real exchange") |
 
-`LM_SAMPLES` is the number of counted requests; request 0 is a warmup sample before them.
+`LM_SAMPLES` is the number of counted requests asked for; request 0 is a warmup sample before them.
 `--quick` takes 3 counted requests and gives every unset parameter a default (4 KiB, a new
 connection, 10 ms gaps, 60 s budget, 5 s timeout, the paths above, `sigv4`).
 
-## Service inputs
+Gaps run from the end of one request's output to the start of the next, not start to
+start, so requests never overlap.
 
-These come from the runner, never from the schedule, and never reach the Run:
+## Observed values
 
-| Variable | Meaning |
+Two `observed` events. The first comes before any sample, so a crash still leaves it:
+
+| Key | What it is |
 |---|---|
-| `LM_SERVICE_ENDPOINT` | `https://<host>[:<port>]`, no path. On the box `https://<fixtures-bucket>.s3.us-east-2.amazonaws.com`: virtual-hosted style, so the bucket is the host's first label. The host is resolved, used for SNI and certificate verification, and sent as `Host` (with the port when it is not 443) |
-| `LM_SERVICE_REGION` | The Region the signature is scoped to, `us-east-2`. Read only with `auth` `sigv4` |
-| `LM_SERVICE_AWS_ACCESS_KEY_ID` | Short-lived credentials from `AssumeRole`: the key ID (16 to 128 capital letters and digits) |
-| `LM_SERVICE_AWS_SECRET_ACCESS_KEY` | The secret key (at least 16 characters) |
-| `LM_SERVICE_AWS_SESSION_TOKEN` | The session token (at least 16 characters); optional, sent as `x-amz-security-token` when given |
+| `tls_library` | `AWS-LC 5.14.0`, from the headers compiled in |
+| `tls_library_source_sha256` | The source archive's SHA-256, compiled in from `aws-lc.lock` |
+| `client_hello` | The ClientHello this binary's TLS configuration makes for the endpoint's host, read back from a memory BIO with no network. It is the observed counterpart of the pinned offer (below). It has its sizes, legacy version, cipher suites and extensions in order, groups, key shares, signature algorithms, versions, ALPN and PSK modes. Making it is also the library's one-time warm-up (seeding its RNG, first allocations) |
+| `ca_file_sha256`, `ca_certificates_loaded`, `ca_certificates_rejected` | The CA bundle read, and how many of its certificates the trust store took (143 and 0 for Amazon Linux 2023's) |
+| `resolver` | `<address>:<port>` queried |
+| `fixture_sha256` | The Fixture digest every 2xx body must have |
+| `body_buffer_bytes` | `object_bytes` + 64 KiB |
+| `cpu_clock_read_ns` | The median cost of one read of the thread CPU clock |
 
-A missing or malformed input is a usage error: exit 2 after `started` alone, with a line on
-stderr naming the variable and never its value.
+The second comes after the last sample:
 
-## One request's events
+- `requests_made` and `requests_not_made`;
+- `ended_early`;
+- `connections_opened` and `connection_setups_failed`;
+- `responses`, `responses_2xx_verified` and `requests_failed`;
+- `body_bytes`: the length every verified body had, or null;
+- `body_mismatch`;
+- `statuses` (status → count) and `failures` (error → count);
+- `fields_withheld` and `lines_withheld` (see "What is recorded").
+
+The two lists are what the stream also shows, gathered.
+
+## Findings
+
+### What our CPU contributes
+
+Every phase's `cpu_ns` is this thread's CPU in that phase. It is context for a reader, not
+a quantity to subtract from the wall time: our CPU and the network overlap, the two clocks
+are read one after the other, and the CPU clock counts kernel work done for this thread. On
+real S3 the Body phase of one request took 19,751 ns of wall time and 19,872 ns of CPU.
+
+Measured against real S3 from the dev machine, an `m6id.xlarge` in `use2-az1` (other work
+was running on it), with the Amazon Linux build. Medians of the counted requests:
+
+| Phase | 5,545 B, new (5 requests) | Our CPU | 5,545 B, reused (5) | Our CPU |
+|---|---|---|---|---|
+| DNS | 0.26 ms | 0.05 ms | | |
+| TCP | 1.17 ms | 0.10 ms | | |
+| TLS | 2.42 ms | 0.85 ms (0.72 to 0.87) | | |
+| Send | 0.011 ms | 0.010 ms | 0.052 ms | 0.052 ms |
+| First byte | 27.4 ms | 0.06 ms | 21.8 ms | 0.09 ms |
+| Body | 0.019 ms | 0.018 ms | 0.017 ms | 0.017 ms |
+
+- **TLS phase:** about a third of it is ours.
+- **TCP phase:** our 0.1 ms is the kernel's own work on our thread, sending the SYN and the
+  final ACK through a virtual NIC.
+- **Body of a small object:** in these requests the body arrived with or just after the
+  headers, so the Body phase was almost entirely our own work on bytes already received:
+  copying and parsing what came in the header block's record, and reading and decrypting
+  any record after it. Its wall time was not a network number.
+- **Send on a reused connection:** five times a new connection's, all of it CPU. It is the
+  first write after a 200 ms sleep, with cold caches.
+
+The numbers will differ by instance type, which is why every request carries them.
+
+### A real exchange
+
+Once, on 2026-11-11, the Amazon Linux build (sha256 `12b9e582…b119`, then `0487aa4c…971d`
+after the ETag fix) made 23 requests to real S3 in us-east-2. Two more were made with curl
+(below), 25 in all. The resolver was 172.31.0.2 (the VPC's) and the trust store was Amazon
+Linux 2023's bundle.
+
+**The public bucket `aws-public-blockchain`, unsigned (`auth` `none`).** Its objects are
+not the Fixture, so these Runs exit 1, as they must.
+
+- `/manifest.json` (5,545 B): six requests over new connections, six over one reused
+  connection, and two more after the fix.
+- `/index.html` (44,170 B): three requests.
+- Every response was 200 with `Content-Length` framing.
+
+**The regional endpoint, signed with deliberately invalid credentials:**
+
+| Credentials | S3's answer | Body |
+|---|---|---|
+| A fake `ASIA` key ID with a fake session token | `HTTP/1.1 400 Bad Request`, `InvalidToken`, "The provided token is malformed or otherwise invalid.", chunked, `Connection: close` | 550 to 570 B, withheld by the rule |
+| A fake `AKIA` key ID, no token | `HTTP/1.1 403 Forbidden`, `InvalidAccessKeyId`, "The AWS Access Key Id you provided does not exist in our records.", chunked | 374 B, withheld by the rule |
+
+`error_fields` kept the code, message and IDs in both cases. No byte of the fake
+credentials reached stdout or stderr. That build printed an error body of at most 4 KiB when
+it passed the rule; today's prints none (see "What is recorded").
+
+Two requests with curl's own SigV4 showed why the bodies were withheld. The `InvalidToken`
+body carries the token in `<Token-0>`; the `InvalidAccessKeyId` body carries the key ID in
+`<AWSAccessKeyId>`. The study's proposed rule (withhold on twelve digits or an AKIA/ASIA key
+ID) would have printed the token.
+
+**One counted request over a new connection,** from that build, with this machine's
+address removed and the fingerprints shortened. Today's binary writes the same events, with
+one more field, `sessions_received`, in `connection_closed`; its `name_resolved` is read
+after the reply is parsed and its `response_headers` before any body byte is handled, so on
+the same request each would be a microsecond or two later and earlier respectively:
+
+```json
+{"event":"sample_started","t":327318522624393,"sample":1,"warmup":false,"repetitions":1}
+{"event":"name_resolved","t":327318522831979,"request":1,"server":"172.31.0.2:53","name":"aws-public-blockchain.s3.us-east-2.amazonaws.com","reply_bytes":238,"rcode":0,"truncated":false,"answers":["aws-public-blockchain.s3.us-east-2.amazonaws.com. 194 CNAME s3-r-w.us-east-2.amazonaws.com.","s3-r-w.us-east-2.amazonaws.com. 5 A 3.5.92.92","s3-r-w.us-east-2.amazonaws.com. 5 A 3.5.104.55","s3-r-w.us-east-2.amazonaws.com. 5 A 3.5.88.87","s3-r-w.us-east-2.amazonaws.com. 5 A 3.5.105.240","s3-r-w.us-east-2.amazonaws.com. 5 A 3.5.93.57","s3-r-w.us-east-2.amazonaws.com. 5 A 3.5.89.24","s3-r-w.us-east-2.amazonaws.com. 5 A 3.5.128.144","s3-r-w.us-east-2.amazonaws.com. 5 A 3.5.105.176"],"address":"3.5.92.92","cpu_ns":27179}
+{"event":"connection_opened","t":327318524098388,"connection":1,"request":1,"address":"3.5.92.92","port":443,"nodelay":true,"local":"172.31.x.x:53096","cpu_ns":60382}
+{"event":"connection_secured","t":327318526289638,"connection":1,"tls":"TLSv1.3","cipher":"TLS_AES_128_GCM_SHA256","group":"X25519MLKEM768","peer_signature":"rsa_pss_rsae_sha256","alpn":"http/1.1","hello_retry":false,"resumed":false,"verify":"ok","peer_chain_sha256":["ffb529f1…c1a1","138bdf6e…019b","87dcd4dc…2706"],"cpu_ns":556401}
+{"event":"request_sent","t":327318526297502,"request":1,"connection":1,"method":"GET","target":"/manifest.json","request_bytes":152,"headers":[["Host","aws-public-blockchain.s3.us-east-2.amazonaws.com"],["User-Agent","ledgermath-http_get/1"],["x-amz-checksum-mode","ENABLED"]],"cpu_ns":7666}
+{"event":"first_byte","t":327318554774556,"request":1,"cpu_ns":32261}
+{"event":"response_headers","t":327318554780793,"request":1,"status_line":"HTTP/1.1 200 OK","status":200,"headers":[["x-amz-request-id","SWYJSXZ7FQHJKTK2"],["x-amz-id-2","dOi6+afXMKwQTQyj0kpV2CmnfDnI2Mi0OEB7jQXhVKJKt8XzfJOr88HpZ7owcxcdoCymYEmPGV8Ge3fnTUyJgii99sM9IOqC"],["Content-Length","5545"],["Accept-Ranges","bytes"],["Date","Wed, 11 Nov 2026 11:53:12 GMT"],["Server","AmazonS3"],["Last-Modified","Thu, 15 Jan 2026 19:21:26 GMT"],["ETag","\"7f3295ffaa17252261001785f819a205\""],["x-amz-checksum-crc64nvme","4l04sRZeHUk="],["x-amz-checksum-type","FULL_OBJECT"],["Content-Type","application/json"],["x-amz-server-side-encryption","AES256"]],"cpu_ns":5599}
+{"event":"response_ended","t":327318554790612,"request":1,"bytes":5545,"wire_bytes":5545,"framing":"length","body_sha256":"e321ab031b0e7deaf2f74b38e1b9c5200013c1e9aa53fe1ae77710632113f950","cpu_ns":9790,"tcp_info":{"rtt_us":1143,"rttvar_us":344,"min_rtt_us":1000,"rcv_rtt_us":0,"rcv_space":56587,"rcv_mss":5567,"snd_mss":8228,"pmtu":9001,"snd_cwnd":10,"total_retrans":0,"bytes_acked":1757,"bytes_received":12091,"segs_out":12,"segs_in":12},"fixture":"mismatch","s3_checksum":"absent"}
+{"event":"sample_ended","t":327318554790612,"sample":1}
+{"event":"connection_closed","t":327318554850258,"connection":1,"reason":"done","requests":1,"session_tickets_received":0}
+```
+
+The phases of this request:
+
+| DNS | TCP | TLS | Send | First byte | Body | Total |
+|---|---|---|---|---|---|---|
+| 0.21 ms | 1.27 ms | 2.19 ms (0.56 ms ours) | 0.01 ms | 28.48 ms | 0.01 ms | 32.17 ms |
+
+The `ETag`, `"7f3295ffaa17252261001785f819a205"`, holds a run of fourteen digits between
+letters. The build before the fix withheld it in the earlier Runs; this one prints it.
+
+A few facts S3 showed along the way:
+
+- It answered with `x-amz-checksum-crc64nvme` for this object; the object was uploaded
+  without a SHA-256 checksum. The Fixtures are to be uploaded with one.
+- An unsigned request may still send `x-amz-checksum-mode`.
+- The path MTU was 9001: jumbo frames inside the VPC.
+
+## How it works
+
+The design is the study in the first comment of the step-5 brief (#43). Where this differs,
+the reasons are in "Departures from the study", now in
+[`docs/dev-log.md`](../../docs/dev-log.md), section 8.
+
+### One request's events
 
 Over a new connection, in stream order. The request's lines are written once it has ended
 (with its body checked), so a binary that dies mid-request leaves none of them.
@@ -78,14 +246,14 @@ Over a new connection, in stream order. The request's lines are written once it 
 | `sample_ended` | `sample` |
 | `connection_closed` | `connection`, `reason`, `requests`, `sessions_received`, `session_tickets_received` |
 
-### Where each clock is read
+#### Where each clock is read
 
 The binary reads the clock (`CLOCK_MONOTONIC_RAW`, and the thread's CPU clock beside it) at
 these points and nowhere else inside a sample:
 
 | Event | Its `t` is read | What that moment is |
 |---|---|---|
-| `sample_started`, new connection | just before the DNS query's `send`, after the UDP socket, the TCP socket, the TLS object and the signed request are made and the budget is checked | nothing of the request has left the program |
+| `sample_started`, new connection | just before the DNS query's `send`, after the UDP socket, the TCP socket, the TLS object and the request (signed with `auth` `sigv4`) are made and the budget is checked | nothing of the request has left the program |
 | `sample_started`, reused connection | just before the request's `SSL_write`, after the idle check, any reopening and the budget check | the same |
 | `name_resolved` | after `recv` returned the reply and the reply was parsed and judged (its ID, question, TC bit, rcode, and an A record at the end of the CNAME chain) | the program knows the address to connect to, or that the reply gives none. Formatting the records as text waits until the request has ended |
 | `connection_opened` | just after the blocking `connect` returns, whether it succeeded or failed (refused, unreachable, or not established within `timeout_ms`) | on success, the kernel has the server's SYN-ACK and has sent its ACK: TCP is established on our side. On failure, `connect` has said so; `nodelay` and `local` are then absent, and the `request_failed` (or `connection_failed`) that follows has the same `t` |
@@ -117,7 +285,7 @@ offered, `session_tickets_received` those that came as a ticket. Under TLS 1.3 e
 is a ticket; under TLS 1.2 a server may offer a session by its Session ID alone, which is a
 session and not a ticket.
 
-### The phases
+#### The phases
 
 | Phase | Interval | Includes, besides the network and the server |
 |---|---|---|
@@ -131,13 +299,13 @@ session and not a ticket.
 | Transfer | `response_ended` − `first_byte` | Headers and Body together, the study's transfer |
 | Total | `sample_ended` − `sample_started` | |
 
-The socket, the TLS object, the DNS query and the signed request are all made before the
-sample starts. Each phase event's `cpu_ns` is this thread's CPU time
+The socket, the TLS object, the DNS query and the request (signed with `auth` `sigv4`) are
+all made before the sample starts. Each phase event's `cpu_ns` is this thread's CPU time
 (`CLOCK_THREAD_CPUTIME_ID`) over that phase alone, from the previous boundary of the same
 request to this one. Reading that clock costs a system call at every boundary;
 `observed.cpu_clock_read_ns` is its measured cost, about 0.34 µs on the dev machine.
 
-### Failures
+#### Failures
 
 `request_failed.phase` is `dns`, `connect`, `tls`, `send`, `first_byte`, `headers` or
 `body`: where the request was when the failure was seen. `headers` means the header block
@@ -190,7 +358,7 @@ What had arrived is kept:
 A DNS reply that cannot be used is still in `name_resolved`, its records included, before
 the failure.
 
-### Bytes after a response
+#### Bytes after a response
 
 Bytes that arrive in the same TLS record as the end of a response, after its
 `Content-Length` body or its chunked terminator, were received with it. They make that
@@ -206,13 +374,14 @@ as the start of the next response, and that request fails, though the bytes may 
 the one before. The look happens after the pause between requests, so a server would have
 to send them hundreds of milliseconds after its response for this to happen.
 
-### What ends a Run early
+#### What ends a Run early
 
 Nothing retries. Every request is attempted, with two exceptions, after which the Run goes
 straight to its closing `observed`, `verified` and `finished`:
 
 - **The budget.** No request starts once `budget_seconds` have passed. They are counted
-  from just before the first request is prepared: its signing, its socket and TLS object,
+  from just before the first request is prepared: its signing with `auth` `sigv4`, its
+  socket and TLS object,
   and over a reused connection the first opening of that connection, all fall inside the
   budget. A first lookup or handshake that takes the whole budget therefore leaves a Run
   that made no request. The budget is asked immediately before every sample starts, after
@@ -227,11 +396,11 @@ straight to its closing `observed`, `verified` and `finished`:
   requests a second that is 1/1000 of what one prefix supports.
 
 `observed.ended_early` says which (`budget`, `unreachable`, or null), and
-`requests_not_made` how many requests were not made. Such a stream has fewer counted
-samples than `LM_SAMPLES`, so it fails `check-events.py --samples N` on purpose, and the
+`requests_not_made` how many requests were not made. Such a stream can have fewer counted
+samples than `LM_SAMPLES`, and then fails `check-events.py --samples N` on purpose, and the
 exit code is 4.
 
-### Exit codes
+#### Exit codes
 
 | Code | When |
 |---|---|
@@ -244,7 +413,7 @@ exit code is 4.
 Method version 1 counts only exit 0. A Method that reads requests one by one can take the
 good requests of an exit-4 Run.
 
-## What is recorded, what is withheld, and why
+### What is recorded, what is withheld, and why
 
 **Verbatim:**
 
@@ -327,50 +496,22 @@ parameter values, never a Service input.
 zero and marks itself not dumpable (`prctl(PR_SET_DUMPABLE, 0)`): a crash leaves no core
 file, and no other process of the same user can read its memory.
 
-## Checking the body, and the elision guard
+### Checking the body, and the elision guard
 
 Outside every timed interval:
 
 - **Before the first sample:** the binary computes the Fixture's SHA-256 for `object_bytes`
   (`observed.fixture_sha256`). The pattern is `benchmarks/harness/c/lm_fixture.h`'s: the
   64-bit little-endian word at offset o is `mix64(o ^ 0x8d6d2f9d5f9d1b37)`.
-- **After each 2xx response:** it hashes the de-chunked body. `fixture` is `match` when the
-  length and digest are the Fixture's. `s3_checksum` is `match` when `x-amz-checksum-sha256`
+- **After each 2xx response that ends without a failure:** it hashes the de-chunked body.
+  `fixture` is `match` when the length and digest are the Fixture's. `s3_checksum` is `match` when `x-amz-checksum-sha256`
   (requested with `x-amz-checksum-mode: ENABLED` on every request) is that digest in base64.
   Every verified body therefore matches every other.
 
 `verified` is the first 64 bits of one SHA-256 over every complete 2xx response's body
 digest, in order. Error bodies are left out: nothing derived from them is printed.
 
-## Observed
-
-Two `observed` events. The first comes before any sample, so a crash still leaves it:
-
-| Key | What it is |
-|---|---|
-| `tls_library` | `AWS-LC 5.14.0`, from the headers compiled in |
-| `tls_library_source_sha256` | The source archive's SHA-256, compiled in from `aws-lc.lock` |
-| `client_hello` | The ClientHello this binary's TLS configuration makes for the endpoint's host, read back from a memory BIO with no network. It is the observed counterpart of the pinned offer (below). It has its sizes, legacy version, cipher suites and extensions in order, groups, key shares, signature algorithms, versions, ALPN and PSK modes. Making it is also the library's one-time warm-up (seeding its RNG, first allocations) |
-| `ca_file_sha256`, `ca_certificates_loaded`, `ca_certificates_rejected` | The CA bundle read, and how many of its certificates the trust store took (143 and 0 for Amazon Linux 2023's) |
-| `resolver` | `<address>:<port>` queried |
-| `fixture_sha256` | The Fixture digest every 2xx body must have |
-| `body_buffer_bytes` | `object_bytes` + 64 KiB |
-| `cpu_clock_read_ns` | The median cost of one read of the thread CPU clock |
-
-The second comes after the last sample:
-
-- `requests_made` and `requests_not_made`;
-- `ended_early`;
-- `connections_opened` and `connection_setups_failed`;
-- `responses`, `responses_2xx_verified` and `requests_failed`;
-- `body_bytes`: the length every verified body had, or null;
-- `body_mismatch`;
-- `statuses` (status → count) and `failures` (error → count);
-- `fields_withheld` and `lines_withheld` (see "What is recorded").
-
-The two lists are what the stream also shows, gathered.
-
-## TLS
+### TLS
 
 **AWS-LC 5.14.0** is built from the pinned archive and linked statically; the final link
 with `gcc` needs no `libstdc++`. The binary checks at start that its headers are the
@@ -411,104 +552,7 @@ tickets.
 - The link warns that AWS-LC's socket BIO references `getaddrinfo`. Nothing calls it: the
   binary resolves names itself.
 
-## What our CPU contributes
-
-Every phase's `cpu_ns` is this thread's CPU in that phase. It is context for a reader, not
-a quantity to subtract from the wall time: our CPU and the network overlap, the two clocks
-are read one after the other, and the CPU clock counts kernel work done for this thread. On
-real S3 the Body phase of one request took 19,751 ns of wall time and 19,872 ns of CPU.
-
-Measured against real S3 from the dev machine, an `m6id.xlarge` in `use2-az1` (other work
-was running on it), with the Amazon Linux build. Medians of the counted requests:
-
-| Phase | 5,545 B, new (5 requests) | Our CPU | 5,545 B, reused (5) | Our CPU |
-|---|---|---|---|---|
-| DNS | 0.26 ms | 0.05 ms | | |
-| TCP | 1.17 ms | 0.10 ms | | |
-| TLS | 2.42 ms | 0.85 ms (0.72 to 0.87) | | |
-| Send | 0.011 ms | 0.010 ms | 0.052 ms | 0.052 ms |
-| First byte | 27.4 ms | 0.06 ms | 21.8 ms | 0.09 ms |
-| Body | 0.019 ms | 0.018 ms | 0.017 ms | 0.017 ms |
-
-- **TLS phase:** about a third of it is ours.
-- **TCP phase:** our 0.1 ms is the kernel's own work on our thread, sending the SYN and the
-  final ACK through a virtual NIC.
-- **Body of a small object:** the body arrives with or just after the headers, so the Body
-  phase is almost entirely our own work on bytes already received: copying and parsing what
-  came in the header block's record, and reading and decrypting any record after it. Its
-  wall time is not a network number.
-- **Send on a reused connection:** five times a new connection's, all of it CPU. It is the
-  first write after a 200 ms sleep, with cold caches.
-
-The numbers will differ by instance type, which is why every request carries them.
-
-## A real exchange
-
-Once, on 2026-11-11, the Amazon Linux build (sha256 `12b9e582…b119`, then `0487aa4c…971d`
-after the ETag fix) made 23 requests to real S3 in us-east-2. Two more were made with curl
-(below), 25 in all. The resolver was 172.31.0.2 (the VPC's) and the trust store was Amazon
-Linux 2023's bundle.
-
-**The public bucket `aws-public-blockchain`, unsigned (`auth` `none`).** Its objects are
-not the Fixture, so these Runs exit 1, as they must.
-
-- `/manifest.json` (5,545 B): six requests over new connections, six over one reused
-  connection, and two more after the fix.
-- `/index.html` (44,170 B): three requests.
-- Every response was 200 with `Content-Length` framing.
-
-**The regional endpoint, signed with deliberately invalid credentials:**
-
-| Credentials | S3's answer | Body |
-|---|---|---|
-| A fake `ASIA` key ID with a fake session token | `HTTP/1.1 400 Bad Request`, `InvalidToken`, "The provided token is malformed or otherwise invalid.", chunked, `Connection: close` | 550 to 570 B, withheld by the rule |
-| A fake `AKIA` key ID, no token | `HTTP/1.1 403 Forbidden`, `InvalidAccessKeyId`, "The AWS Access Key Id you provided does not exist in our records.", chunked | 374 B, withheld by the rule |
-
-`error_fields` kept the code, message and IDs in both cases. No byte of the fake
-credentials reached stdout or stderr. That build printed an error body of at most 4 KiB when
-it passed the rule; today's prints none (see "What is recorded").
-
-Two requests with curl's own SigV4 showed why the bodies were withheld. The `InvalidToken`
-body carries the token in `<Token-0>`; the `InvalidAccessKeyId` body carries the key ID in
-`<AWSAccessKeyId>`. The study's proposed rule (withhold on twelve digits or an AKIA/ASIA key
-ID) would have printed the token.
-
-**One counted request over a new connection,** from that build, with this machine's
-address removed and the fingerprints shortened. Today's binary writes the same events, with
-one more field, `sessions_received`, in `connection_closed`; its `name_resolved` is read
-after the reply is parsed and its `response_headers` before any body byte is handled, so on
-the same request each would be a microsecond or two later and earlier respectively:
-
-```json
-{"event":"sample_started","t":327318522624393,"sample":1,"warmup":false,"repetitions":1}
-{"event":"name_resolved","t":327318522831979,"request":1,"server":"172.31.0.2:53","name":"aws-public-blockchain.s3.us-east-2.amazonaws.com","reply_bytes":238,"rcode":0,"truncated":false,"answers":["aws-public-blockchain.s3.us-east-2.amazonaws.com. 194 CNAME s3-r-w.us-east-2.amazonaws.com.","s3-r-w.us-east-2.amazonaws.com. 5 A 3.5.92.92","s3-r-w.us-east-2.amazonaws.com. 5 A 3.5.104.55","s3-r-w.us-east-2.amazonaws.com. 5 A 3.5.88.87","s3-r-w.us-east-2.amazonaws.com. 5 A 3.5.105.240","s3-r-w.us-east-2.amazonaws.com. 5 A 3.5.93.57","s3-r-w.us-east-2.amazonaws.com. 5 A 3.5.89.24","s3-r-w.us-east-2.amazonaws.com. 5 A 3.5.128.144","s3-r-w.us-east-2.amazonaws.com. 5 A 3.5.105.176"],"address":"3.5.92.92","cpu_ns":27179}
-{"event":"connection_opened","t":327318524098388,"connection":1,"request":1,"address":"3.5.92.92","port":443,"nodelay":true,"local":"172.31.x.x:53096","cpu_ns":60382}
-{"event":"connection_secured","t":327318526289638,"connection":1,"tls":"TLSv1.3","cipher":"TLS_AES_128_GCM_SHA256","group":"X25519MLKEM768","peer_signature":"rsa_pss_rsae_sha256","alpn":"http/1.1","hello_retry":false,"resumed":false,"verify":"ok","peer_chain_sha256":["ffb529f1…c1a1","138bdf6e…019b","87dcd4dc…2706"],"cpu_ns":556401}
-{"event":"request_sent","t":327318526297502,"request":1,"connection":1,"method":"GET","target":"/manifest.json","request_bytes":152,"headers":[["Host","aws-public-blockchain.s3.us-east-2.amazonaws.com"],["User-Agent","ledgermath-http_get/1"],["x-amz-checksum-mode","ENABLED"]],"cpu_ns":7666}
-{"event":"first_byte","t":327318554774556,"request":1,"cpu_ns":32261}
-{"event":"response_headers","t":327318554780793,"request":1,"status_line":"HTTP/1.1 200 OK","status":200,"headers":[["x-amz-request-id","SWYJSXZ7FQHJKTK2"],["x-amz-id-2","dOi6+afXMKwQTQyj0kpV2CmnfDnI2Mi0OEB7jQXhVKJKt8XzfJOr88HpZ7owcxcdoCymYEmPGV8Ge3fnTUyJgii99sM9IOqC"],["Content-Length","5545"],["Accept-Ranges","bytes"],["Date","Wed, 11 Nov 2026 11:53:12 GMT"],["Server","AmazonS3"],["Last-Modified","Thu, 15 Jan 2026 19:21:26 GMT"],["ETag","\"7f3295ffaa17252261001785f819a205\""],["x-amz-checksum-crc64nvme","4l04sRZeHUk="],["x-amz-checksum-type","FULL_OBJECT"],["Content-Type","application/json"],["x-amz-server-side-encryption","AES256"]],"cpu_ns":5599}
-{"event":"response_ended","t":327318554790612,"request":1,"bytes":5545,"wire_bytes":5545,"framing":"length","body_sha256":"e321ab031b0e7deaf2f74b38e1b9c5200013c1e9aa53fe1ae77710632113f950","cpu_ns":9790,"tcp_info":{"rtt_us":1143,"rttvar_us":344,"min_rtt_us":1000,"rcv_rtt_us":0,"rcv_space":56587,"rcv_mss":5567,"snd_mss":8228,"pmtu":9001,"snd_cwnd":10,"total_retrans":0,"bytes_acked":1757,"bytes_received":12091,"segs_out":12,"segs_in":12},"fixture":"mismatch","s3_checksum":"absent"}
-{"event":"sample_ended","t":327318554790612,"sample":1}
-{"event":"connection_closed","t":327318554850258,"connection":1,"reason":"done","requests":1,"session_tickets_received":0}
-```
-
-The phases of this request:
-
-| DNS | TCP | TLS | Send | First byte | Body | Total |
-|---|---|---|---|---|---|---|
-| 0.21 ms | 1.27 ms | 2.19 ms (0.56 ms ours) | 0.01 ms | 28.48 ms | 0.01 ms | 32.17 ms |
-
-The `ETag`, `"7f3295ffaa17252261001785f819a205"`, holds a run of fourteen digits between
-letters. The build before the fix withheld it in the earlier Runs; this one prints it.
-
-A few facts S3 showed along the way:
-
-- It answered with `x-amz-checksum-crc64nvme` for this object; the object was uploaded
-  without a SHA-256 checksum. The Fixtures are to be uploaded with one.
-- An unsigned request may still send `x-amz-checksum-mode`.
-- The path MTU was 9001: jumbo frames inside the VPC.
-
-## Size of a Run's stream
+### Size of a Run's stream
 
 | | Per request | 200 counted requests and the warmup, against the stand-in (measured) | Projected for S3 |
 |---|---|---|---|
@@ -536,7 +580,35 @@ These figures are larger than the study's estimate (541 KB and 261 KB) because:
 
 Where long streams live is the maintainer's decision (#43, decision 4).
 
-## Building it
+## Building and testing
+
+```bash
+# AWS-LC's source is not in git: fetch the pinned archive once, then build.
+benchmarks/harness/c/vendor/fetch-aws-lc.sh /path/to/aws-lc.tar.gz
+make -C benchmarks/http_get AWS_LC_ARCHIVE=/path/to/aws-lc.tar.gz   # build/static/http_get
+```
+
+The first build unpacks the archive (336 MB) and builds AWS-LC into `build/aws-lc` (28 MB).
+Later builds, `make -B` included, reuse it as long as the archive, flags and compilers are
+the same. `make clean` leaves it. A run against S3 needs the Service inputs below; the
+tests run it against a local stand-in (see "Testing").
+
+### Service inputs
+
+These come from the runner, never from the schedule, and never reach the Run:
+
+| Variable | Meaning |
+|---|---|
+| `LM_SERVICE_ENDPOINT` | `https://<host>[:<port>]`, no path. On the box `https://<fixtures-bucket>.s3.us-east-2.amazonaws.com`: virtual-hosted style, so the bucket is the host's first label. The host is resolved, used for SNI and certificate verification, and sent as `Host` (with the port when it is not 443) |
+| `LM_SERVICE_REGION` | The Region the signature is scoped to, `us-east-2`. Read only with `auth` `sigv4` |
+| `LM_SERVICE_AWS_ACCESS_KEY_ID` | Short-lived credentials from `AssumeRole`: the key ID (16 to 128 capital letters and digits) |
+| `LM_SERVICE_AWS_SECRET_ACCESS_KEY` | The secret key (at least 16 characters) |
+| `LM_SERVICE_AWS_SESSION_TOKEN` | The session token (at least 16 characters); optional, sent as `x-amz-security-token` when given |
+
+A missing or malformed input is a usage error: exit 2 after `started` alone, with a line on
+stderr naming the variable and never its value.
+
+### Building it
 
 `aws-lc.lock` (`benchmarks/harness/c/vendor/`) pins:
 
@@ -563,7 +635,7 @@ machine:
 | Byte identity | Two libraries built separately, in different directories, gave the same `http_get` bytes |
 | Packages beyond `box.sh`'s | `cmake` and `gcc-c++`, which pull in nine more: `cmake-data`, `cmake-filesystem`, `cmake-rpm-macros`, `emacs-filesystem`, `jsoncpp`, `libstdc++-devel`, `libuv`, `rhash`, `vim-filesystem` |
 
-## Testing
+### Testing
 
 `tests/http-get.test.ts` builds this binary and `build/test/http_get_test` with the
 machine's compiler. It needs `cmake`, a C++ compiler and `AWS_LC_ARCHIVE`, and skips with a
@@ -626,7 +698,7 @@ The test driver checks the parts directly:
 `scripts/check-scratch.py` runs the study's five sets in a `FROM scratch` container
 against the same stand-in.
 
-## What the runner and the stage must provide
+### What the runner and the stage must provide
 
 - **The build:**
   - `make BUILD=static` here, with `AWS_LC_ARCHIVE` set to the archive's path.
@@ -662,64 +734,3 @@ against the same stand-in.
   missing object is a 403 rather than a 404. Either way it is an event. SSE-S3 needs no KMS
   permission.
 - **A schedule `timeout_seconds`** of at least `budget_seconds` plus a minute.
-
-## Departures from the study
-
-- **Service inputs.**
-  - The endpoint comes whole, as `LM_SERVICE_ENDPOINT`, instead of being built from
-    `region` and `LM_SERVICE_BUCKET`. The stand-in needs another host and port, and the host
-    sent is recorded in every request anyway.
-  - The Region comes as `LM_SERVICE_REGION`, as the brief lists it.
-  - The key is the parameter `key`, not derived from `object_bytes`, so a public object
-    could be fetched for the real exchange.
-- **New parameters:** `key`, `timeout_ms` (the study fixed 2 s for DNS and nothing else),
-  `resolv_conf` (the tests cannot replace `/etc/resolv.conf`; it may name a port) and
-  `auth`.
-- **`Authorization` is withheld whole.** The scope and signed headers move to `signing`.
-  The rule ("a credential's value is never printed") is then one line, not a parser.
-- **Error bodies and the rule:**
-  - An error body is never printed: its length, S3's four fields and its element names
-    instead. The study printed a body that held no twelve-digit run and no key ID.
-  - The rule matches our own credentials and signatures, in their common encodings, ignoring
-    case, beside the key-ID and account-ID shapes. Real S3 echoes the token, which the
-    study's rule would have printed.
-  - A twelve-digit number must stand alone.
-  - A withheld item keeps no digest, and `verified` is made from 2xx bodies alone.
-  - Headers, trailers, the status line, DNS records and certificates pass the same rule,
-    decided once on the text that would be written.
-- **Events:**
-  - Every phase event carries `cpu_ns` for its own phase, where the study had
-    `handshake_cpu_ns` and two others.
-  - `idle_ns` is dropped: it is derivable from the `t` values.
-  - `connection_secured` has no `request`; join on `connection`.
-  - `response_ended` gains `framing`, `trailers`, `fixture`, `s3_checksum`, `error_fields`
-    and `error_elements`.
-  - A failed reused-connection setup is `connection_failed`.
-  - `request_failed` carries the partial header block or body digest, `surplus_bytes`, a
-    received alert, and a refused chain's fingerprints; `error` has `alert`.
-  - `name_resolved` gains `additional`, `reply_bytes_read` and `trailing_bytes`.
-  - `connection_closed` gains `sessions_received`.
-  - A line the guard withholds becomes `line_withheld`.
-  - An SOA in DNS is in presentation form, so its numbers do not read as an account ID.
-- **`observed` is two events.** The setup facts come first, so a crash still leaves them.
-  The offer is read back from the ClientHello's bytes. Counts the stream shows directly are
-  not repeated, beyond the summary above. `host` and `key` are left out: they were told,
-  and `request_sent` shows them as sent.
-- **A Run can end early.** It ends at its budget, or after ten requests in a row that
-  reach no server. The study had nothing stop early.
-- **An absent S3 checksum fails the body (exit 1).** The Fixtures are uploaded with one, so
-  its absence means the Fixture is not what the stage made.
-- **Gaps** run from the end of one request's output to the start of the next, not start to
-  start, so requests never overlap.
-- **The whole offer is pinned:** versions, both suite lists, groups, signature algorithms,
-  GREASE and extension order. The study pinned the groups. The TLS 1.2 list is six ECDHE
-  AEAD suites.
-- **Two CMake flags added:** `ENABLE_CRYPTO_POLICIES=OFF` and `-ffile-prefix-map`. The
-  study's byte-identical builds held only for one path; the AWS-LC source names are compiled
-  in.
-- **A 1xx interim response is a protocol error.** S3 sends none, and the event keeps it.
-- **The lock** is `benchmarks/harness/c/vendor/aws-lc.lock`, in make syntax, rather than
-  JSON.
-- **The stand-in is Python, not TypeScript.** `scripts/check-scratch.py`, which is Python
-  in a CI job without Bun, starts it too. Python's `ssl` gives socket-level control (a
-  reset by `SO_LINGER`).

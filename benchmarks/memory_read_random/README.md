@@ -1,5 +1,12 @@
 # memory_read_random
 
+How fast one thread reads a buffer in random order: the first word of every 64-byte
+element, in a shuffled order, with reads that do not depend on one another, so that many
+cache misses can be in flight at once. It is the throughput of random reads, not the
+latency of one.
+
+## What a figure means
+
 How fast one core reads a large buffer in random order. The buffer, 1 GiB by default, is
 divided into 64-byte elements, one cache line each. One repetition reads the first 8
 bytes of every element once, in an order shuffled once at startup from a fixed seed, and
@@ -9,13 +16,35 @@ The reads do not depend on one another, so the core may have many cache misses i
 at once. This is the throughput of random reads, not the latency of one: divide a
 repetition's time by `reads_per_repetition` for the time per read at that throughput.
 
-```bash
-make -C benchmarks/memory_read_random              # build/static/memory_read_random
-LM_PARAM_SIZE_BYTES=1073741824 LM_PARAM_THREADS=1 LM_SAMPLES=10 \
-  ./benchmarks/memory_read_random/build/static/memory_read_random
-```
+Each Run that Method `series` v1 counts gives one figure, the time of one repetition in
+nanoseconds (`time_per_repetition_ns`): the median, over the Run's counted samples, of a
+sample's time divided by its repetitions. A Run it does not count gives none. The harness
+reads the clock once at each edge of a sample, around the whole loop of its repetitions,
+and never inside that loop. Before the counted samples it runs warmup samples, doubling the
+repetitions until a sample lasts at least a second; each of the 10 counted samples the
+schedule asks for then runs that many repetitions. Bytes per second (`bytes_per_second`)
+is `bytes_per_repetition` × 10^9 divided by the time per repetition, where
+`bytes_per_repetition` is 64 bytes for every element read, the element each read lands
+in, not the 8 bytes the thread uses. A Series gives the 5th, 50th and 95th percentiles of
+its counted Runs' figures ([Methods](https://ledgermath.com/docs/methods)).
+
+So a figure is the time one thread takes to read every element of `size_bytes` once, in
+random order, on one instance type.
+
+## What a figure does not show
+
+- It is not the latency of one read. Each read's address comes from the shuffled order,
+  not from the read before it, so the reads can overlap; nothing records whether they did.
+- Each repetition also reads the shuffled order front to back, 8 bytes per element.
+- Bytes per second counts the 64 bytes of every element the loop reads from, of which the
+  thread uses 8. Nothing measures the traffic to memory, and nothing requires a read to
+  miss the cache: a buffer and order array small enough for a cache can be served from it.
+  The Run's dump sections `lscpu` and `sys_cpu` record the cache sizes.
 
 ## Parameters
+
+The parameter set runs on every instance type in the schedule. Each instance type is a
+Series of its own.
 
 | Variable | Scheduled | Meaning |
 |---|---|---|
@@ -25,39 +54,33 @@ LM_PARAM_SIZE_BYTES=1073741824 LM_PARAM_THREADS=1 LM_SAMPLES=10 \
 `--quick` uses 64 MiB when `LM_PARAM_SIZE_BYTES` is unset, which may fit in a large
 processor cache.
 
-## Observed
+## Observed values
 
 | Key | What it is |
 |---|---|
-| `bytes_per_repetition` | Bytes of the elements one repetition reads from: 64 per read, the cache line the read brings in |
+| `bytes_per_repetition` | Bytes of the elements one repetition reads from: 64 per read, the cache line the read lands in |
 | `reads_per_repetition` | Elements one repetition reads, each exactly once |
 | `threads_used` | Threads that read: 1 |
 
 The program also holds the shuffled order: 8 bytes per element (128 MiB for 1 GiB),
 read front to back during each repetition. Its peak memory is about 1.13 GiB.
 
-## Elision guard
+## Findings
+
+No finding of its own so far.
+
+## How it works
+
+### Elision guard
 
 One repetition returns the sum of the words it read. Element *i*'s first word is *i*, so
 the sum of one pass is 0 + 1 + … + (*n* − 1); the program checks that before measuring
 and exits 1 if it is wrong.
 
-## Differences from July's version
+## Building and testing
 
-July's is `benchmarks/c/bench_memory_read_random.c`, variant `1 thread`.
-
-- **The same measured work.** The read loop, the element layout, the shuffle, its seed
-  and the `madvise` hints (`MADV_RANDOM` on the data, `MADV_SEQUENTIAL` on the order) are
-  unchanged. Built by the same compiler with the same flags (checked with gcc 11.5, `-march=native`, on an Ice Lake Xeon), the read loop's machine code
-  is identical to July's.
-- **The buffer size and the thread count are parameters** (`size_bytes`, `threads`). They
-  were constants, 1 GiB and one thread. July's `--quick` size was 512 MiB; it is now
-  64 MiB.
-- **What is common to every port:** the output is the event stream
-  (`docs/dev-log.md` section 2) instead of July's JSON record, whose `median_ns` is now
-  the Method's median of each sample's time over its repetitions, and whose
-  `bytes_per_op` is now `bytes_per_repetition`. The binary is linked statically; July's
-  was dynamic. The harness takes samples the way July's did (one repetition, then
-  doubling until a sample lasts a second, then the counted samples at that count), but
-  emits the warmup samples July discarded, and takes the count of counted samples from
-  `LM_SAMPLES`.
+```bash
+make -C benchmarks/memory_read_random              # build/static/memory_read_random
+LM_PARAM_SIZE_BYTES=1073741824 LM_PARAM_THREADS=1 LM_SAMPLES=10 \
+  ./benchmarks/memory_read_random/build/static/memory_read_random
+```

@@ -1,21 +1,50 @@
 # syscall
 
-The cost of one call into the kernel, beside one the C library answers without entering
-it. One repetition makes one call:
+The cost of one call into the kernel on one thread (`getpid`, `getrusage`, and `stat`,
+whose cost depends on the file system that answers it, which each Run observes), beside
+`gettimeofday`, which the vDSO normally answers without entering the kernel; whether it did
+is not observed, and the Run's dump section `kernel` records the clock source.
+
+## What a figure means
+
+The cost of one call into the kernel, beside one the C library normally answers without
+entering it. One repetition makes one call:
 
 | `call` | What one repetition does |
 |---|---|
 | `getpid` | `syscall(SYS_getpid)`: enters the kernel every time, where `getpid()` may not |
-| `gettimeofday` | `gettimeofday()`: answered in user space by the vDSO, normally without entering the kernel |
+| `gettimeofday` | `gettimeofday()`: answered by the vDSO, normally without entering the kernel |
 | `getrusage` | `getrusage(RUSAGE_SELF)` |
 | `stat` | `stat()` of `LM_PARAM_PATH` |
 
-```bash
-make -C benchmarks/syscall                         # build/static/syscall
-LM_PARAM_CALL=stat LM_PARAM_PATH=/tmp LM_SAMPLES=10 ./benchmarks/syscall/build/static/syscall
-```
+Each Run that Method `series` v1 counts gives one figure, the time of one repetition in
+nanoseconds (`time_per_repetition_ns`): the median, over the Run's counted samples, of a
+sample's time divided by its repetitions. A Run it does not count gives none. The harness
+reads the clock once at each edge of a sample, around the whole loop of its repetitions,
+and never inside that loop; with `call` `gettimeofday`, reading the time is the measured
+work itself. Before the counted samples it runs warmup samples, doubling the repetitions
+until a sample lasts at least a second; each of the 10 counted samples the schedule asks
+for then runs that many repetitions. The binary observes no `bytes_per_repetition`, so no
+bytes per second is derived. A Series gives the 5th, 50th and 95th percentiles of its
+counted Runs' figures ([Methods](https://ledgermath.com/docs/methods)).
+
+So a figure is the time of one call, made again and again by one thread, on one instance
+type.
+
+## What a figure does not show
+
+- `gettimeofday` normally does not enter the kernel, and whether it did is not observed;
+  the Run's dump section `kernel` records the clock source.
+- With `call` `stat`, every repetition stats the same path. The cost of `stat` depends on
+  the file system that answers it, which `path_fs_type` records.
+- The binary is linked statically, which changes how `gettimeofday` is reached. In two
+  measurements on a development machine it cost more than in a dynamically linked binary
+  (see "Findings").
 
 ## Parameters
+
+Each parameter set runs on every instance type in the schedule. Each parameter set and
+instance type is a Series of its own.
 
 | Variable | Scheduled | Meaning |
 |---|---|---|
@@ -24,53 +53,37 @@ LM_PARAM_CALL=stat LM_PARAM_PATH=/tmp LM_SAMPLES=10 ./benchmarks/syscall/build/s
 
 `--quick` uses `getpid`, and `/tmp` for `stat`, when the variables are unset.
 
-## Observed
+## Observed values
 
 | Key | What it is |
 |---|---|
 | `call_made` | The call the measured loop makes |
 | `path_fs_type` | With `stat` only: `statfs()`'s `f_type` for the path, in hex. `0x1021994` is tmpfs, `0x58465342` XFS, `0xef53` ext4, `0x794c7630` overlayfs. The cost of `stat()` depends on the filesystem that answers it |
 
-Whether `gettimeofday` went through the vDSO is not observed by the binary; the dump's
-clock source (`current_clocksource`) is what decides it.
+Whether `gettimeofday` went through the vDSO is not observed by the binary; the dump
+records the clock source (`current_clocksource`).
 
-## Elision guard
+## Findings
+
+The binary is linked statically. Static glibc 2.34 still answers `gettimeofday` through
+the vDSO, but through a wrapper that loads the vDSO function's address and calls it, where
+a dynamic binary's `gettimeofday` resolves to the vDSO function itself. In two
+measurements on a development machine, against an earlier, dynamically linked binary
+making the same calls, `gettimeofday` was 2.4% slower with the machine otherwise idle and
+10% slower with other work on the processor's sibling threads; the measurements are in
+[`docs/dev-log.md`](../../docs/dev-log.md), section 8, under `syscall`.
+
+## How it works
+
+### Elision guard
 
 Each repetition adds a field of what its call returned (the pid; the seconds and
 microseconds; user time, system time and minor faults; the inode and size) to a running
 sum, which it returns. A call that fails exits 1, naming the call and the error.
 
-## Differences from July's version
+## Building and testing
 
-July's is `benchmarks/c/bench_syscall.c`, variants `getpid`, `gettimeofday`, `getrusage`
-and `stat`.
-
-- **The same calls.** Each call and the field it adds to the sum are unchanged. Built by
-  the same compiler with the same flags (checked with gcc 11.5, `-march=native`, on an
-  Ice Lake Xeon), the four functions differ from July's only in their error paths (which
-  now name the error) and, for `getpid`, in the stack frame around the call: one or two
-  instructions beside a call into the kernel.
-- **One call per process.** July measured the four in one process, in that order. Each is
-  now its own execution, chosen by `call`.
-- **The path `stat()` is given is a parameter** (`path`), so the Run says which path was
-  measured, and the filesystem behind it is observed. July's was the constant `/tmp`, the
-  scheduled value. The measured function now loads the path from memory instead of using
-  a constant address: one load beside the system call.
-- **Static linking moves two of the numbers slightly.** Static glibc 2.34 still answers
-  `gettimeofday` through the vDSO, but through a wrapper that loads the vDSO function's
-  address and calls it, where a dynamic binary's `gettimeofday` resolves to the vDSO
-  function itself. And `syscall()` is now called directly, where July's dynamic binary
-  called it through the PLT. On the development machine (an Ice Lake Xeon), July's and
-  this binary, both built by gcc 13.3 and run back to back on an otherwise idle machine,
-  gave `gettimeofday` 21.0 ns against July's 20.5 ns (+2.4%), and `getpid` 106.3 ns
-  against July's 108.4 ns (−1.9%), the fastest sample of several runs each; `getrusage`
-  and `stat` agreed within 0.2%. Built by gcc 11.5 and run in the Amazon Linux 2023
-  container while other work kept the processor's sibling threads busy, the wrapper
-  cost more: `gettimeofday` 30.5 ns against 27.8 ns (+10%), `getpid` within 1%.
-- **What is common to every port:** the output is the event stream
-  (`docs/dev-log.md` section 2) instead of July's JSON record, whose `median_ns` is now
-  the Method's median of each sample's time over its repetitions. The binary is linked
-  statically; July's was dynamic. The harness takes samples the way July's did (one
-  repetition, then doubling until a sample lasts a second, then the counted samples at
-  that count), but emits the warmup samples July discarded, and takes the count of
-  counted samples from `LM_SAMPLES`.
+```bash
+make -C benchmarks/syscall                         # build/static/syscall
+LM_PARAM_CALL=stat LM_PARAM_PATH=/tmp LM_SAMPLES=10 ./benchmarks/syscall/build/static/syscall
+```
