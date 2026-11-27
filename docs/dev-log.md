@@ -234,7 +234,8 @@ is not done.
   change, not something a benchmark PR does — the no-shared-edits rule stands.
 - **Monorepo: this repo becomes the whole platform** (2026-08-08): the Ledger, Methods /
   Derivations, and the open data interface will be built here, superseding the §1 note
-  that downstream is "not built here". Vocabulary is pinned in `CONTEXT.md`; the plan is
+  that downstream is "not built here". Vocabulary is pinned in `CONTEXT.md` (retired 2026-11-27; see
+  the glossary and ADR-0029); the plan is
   the wayfinder map (issue #12). Targets widen from machines-only to **Machines and
   Services** — the "EC2 only" rule is now scoped as "Machine benchmarks require owned
   machines", not "only machines get benchmarked". The §2 output contract stays the
@@ -1548,7 +1549,8 @@ A migrated benchmark is done only when **all** of these hold:
   gains `recent_rounds`: the newest 8 rounds of boots, newest first, each with its first
   boot's start, its boots and their instance types, the Runs they left, how many are failed
   and in no Series, failed builds and executions not run, in all and by boot with each
-  summary's address (ADR-0030, rule 12; "Round" in `CONTEXT.md`). The home page's "Latest
+  summary's address (ADR-0030, rule 12; "Round" in `CONTEXT.md`, retired 2026-11-27, its definition now in
+  ADR-0029's table). The home page's "Latest
   runs" reads it. **A round comes from the boot summaries alone**: nothing a boot records
   says the schedule started it (the scheduled time stays in the launch's payload and client
   token), so a boot starts a new round when it started more than 40 minutes after the boot
@@ -1911,4 +1913,388 @@ A migrated benchmark is done only when **all** of these hold:
   after each, and why the change only goes forward once published. On the publication of
   2026-11-25 the table of contents, re-cut, comes to 30,745 bytes. The lookup tool and the
   skill are unchanged and pass.
+- **2026-11-26** — **Each benchmark's README is laid out as its public page.** The pages
+  at `https://ledgermath.com/docs/benchmarks/<name>` are to be rendered from
+  `benchmarks/<name>/README.md`, so all fourteen now open with one or two sentences that
+  stand alone as the page's description, then the same headings in the same order: "What a
+  figure means" (what one repetition is, the figure's unit, and what bytes per second
+  counts), "What a figure does not show", "Parameters", "Observed values", "Findings",
+  "How it works" and "Building and testing". The sections the READMEs had moved under those
+  headings unchanged; the new sentences were checked against each benchmark's source, the
+  harness, `schedule.json` and the Methods. The sections comparing each benchmark with
+  July's version, and `http_get`'s "Departures from the study", moved word for word to
+  section 8 below. No benchmark, build, Method, schema or workflow changed.
 - _(agents: append your entry here, one per merged benchmark)_
+
+---
+
+## 8. How each benchmark differs from July's version or its study
+
+Until 2026-11-26 each benchmark's README ended with a section comparing it with July's
+proof of concept in `benchmarks/c/`, or, for `http_get`, with the study it was built from
+(#43). That comparison is the project's own history. When the READMEs became the
+benchmarks' public pages, those sections moved here, word for word, one sub-section per
+benchmark. Where one of them points to another README's section of the same name ("under
+the same heading"), that section is now the other benchmark's sub-section below.
+
+### memory_read
+
+#### Differences from July's version
+
+The hot loops are the ones the July 2026 proof of concept ran, unchanged. July's binary
+was linked dynamically; the `static` build is not, and the `dynamic` build is, as July's
+was. What is common to every port (the event stream, the harness's samples) is in
+`benchmarks/memory_write/README.md`, under the same heading.
+
+### compressed_memory_read
+
+#### Differences from July's version
+
+July's is `benchmarks/c/bench_compressed_memory_read.c`, variant `bitpacker`.
+
+- **The same measured work.** The unpack loop, the block layout, the pool of 1,000,000
+  blocks and the cycling are unchanged. Built by the same compiler with the same flags (checked with gcc 11.5, `-march=native`, on an Ice Lake Xeon),
+  the unpack function's machine code is identical to July's.
+- **The pool size and the bit width are parameters** (`blocks`, `bits`). They were
+  constants. Their scheduled values are July's.
+- **Every block is checked at startup.** July unpacked and checked block 0 only. As a
+  result the first measured repetition unpacks block 0, where July's unpacked block 1.
+- **What is common to every port:** the output is the event stream
+  (`docs/dev-log.md` section 2) instead of July's JSON record, whose `median_ns` is now
+  the Method's median of each sample's time over its repetitions, and whose
+  `bytes_per_op` is now `bytes_per_repetition`. The binary is linked statically; July's
+  was dynamic. The harness takes samples the way July's did (one repetition, then
+  doubling until a sample lasts a second, then the counted samples at that count), but
+  emits the warmup samples July discarded, and takes the count of counted samples from
+  `LM_SAMPLES`.
+
+### memory_read_random
+
+#### Differences from July's version
+
+July's is `benchmarks/c/bench_memory_read_random.c`, variant `1 thread`.
+
+- **The same measured work.** The read loop, the element layout, the shuffle, its seed
+  and the `madvise` hints (`MADV_RANDOM` on the data, `MADV_SEQUENTIAL` on the order) are
+  unchanged. Built by the same compiler with the same flags (checked with gcc 11.5, `-march=native`, on an Ice Lake Xeon), the read loop's machine code
+  is identical to July's.
+- **The buffer size and the thread count are parameters** (`size_bytes`, `threads`). They
+  were constants, 1 GiB and one thread. July's `--quick` size was 512 MiB; it is now
+  64 MiB.
+- **What is common to every port:** the output is the event stream
+  (`docs/dev-log.md` section 2) instead of July's JSON record, whose `median_ns` is now
+  the Method's median of each sample's time over its repetitions, and whose
+  `bytes_per_op` is now `bytes_per_repetition`. The binary is linked statically; July's
+  was dynamic. The harness takes samples the way July's did (one repetition, then
+  doubling until a sample lasts a second, then the counted samples at that count), but
+  emits the warmup samples July discarded, and takes the count of counted samples from
+  `LM_SAMPLES`.
+
+### memory_write
+
+#### Differences from July's version
+
+July's is `benchmarks/c/bench_memory_write.c`, variants `1 thread, Sequential` and
+`1 thread, Random`.
+
+- **The same measured work.** The two write loops, the element layout, the AVX2 stores,
+  the volatile read-back, the shuffle, its seed and the `MADV_RANDOM` hint are unchanged.
+  Built by the same compiler with the same flags (checked with gcc 11.5, `-march=native`, on an Ice Lake Xeon), both loops' machine code is identical
+  to July's.
+- **One order per process.** July measured `Sequential` then `Random` in one process, on
+  one buffer. Each is now its own execution, chosen by `order`, on a buffer of its own.
+- **The buffer size and the thread count are parameters** (`size_bytes`, `threads`). They
+  were constants, 1 GiB and one thread. July's `--quick` size was 512 MiB; it is now
+  64 MiB.
+- **Only the loop that is measured is checked, and only `random` builds the order.** July
+  built and shuffled the order array, and checked both loops, before measuring either.
+  `sequential` now allocates no order array, so its process holds 128 MiB less.
+- **AVX2 is checked at run time.** The write functions are marked `target("avx2")` and the
+  program exits 1 on a processor without AVX2. July relied on its harness refusing to
+  compile without AVX2. On an AVX2 machine the attribute changes no instruction.
+- **What is common to every port:** the output is the event stream
+  (`docs/dev-log.md` section 2) instead of July's JSON record, whose `median_ns` is now
+  the Method's median of each sample's time over its repetitions, and whose
+  `bytes_per_op` is now `bytes_per_repetition`. The binary is linked statically; July's
+  was dynamic. The harness takes samples the way July's did (one repetition, then
+  doubling until a sample lasts a second, then the counted samples at that count), but
+  emits the warmup samples July discarded, and takes the count of counted samples from
+  `LM_SAMPLES`.
+
+### syscall
+
+#### Differences from July's version
+
+July's is `benchmarks/c/bench_syscall.c`, variants `getpid`, `gettimeofday`, `getrusage`
+and `stat`.
+
+- **The same calls.** Each call and the field it adds to the sum are unchanged. Built by
+  the same compiler with the same flags (checked with gcc 11.5, `-march=native`, on an
+  Ice Lake Xeon), the four functions differ from July's only in their error paths (which
+  now name the error) and, for `getpid`, in the stack frame around the call: one or two
+  instructions beside a call into the kernel.
+- **One call per process.** July measured the four in one process, in that order. Each is
+  now its own execution, chosen by `call`.
+- **The path `stat()` is given is a parameter** (`path`), so the Run says which path was
+  measured, and the filesystem behind it is observed. July's was the constant `/tmp`, the
+  scheduled value. The measured function now loads the path from memory instead of using
+  a constant address: one load beside the system call.
+- **Static linking moves two of the numbers slightly.** Static glibc 2.34 still answers
+  `gettimeofday` through the vDSO, but through a wrapper that loads the vDSO function's
+  address and calls it, where a dynamic binary's `gettimeofday` resolves to the vDSO
+  function itself. And `syscall()` is now called directly, where July's dynamic binary
+  called it through the PLT. On the development machine (an Ice Lake Xeon), July's and
+  this binary, both built by gcc 13.3 and run back to back on an otherwise idle machine,
+  gave `gettimeofday` 21.0 ns against July's 20.5 ns (+2.4%), and `getpid` 106.3 ns
+  against July's 108.4 ns (−1.9%), the fastest sample of several runs each; `getrusage`
+  and `stat` agreed within 0.2%. Built by gcc 11.5 and run in the Amazon Linux 2023
+  container while other work kept the processor's sibling threads busy, the wrapper
+  cost more: `gettimeofday` 30.5 ns against 27.8 ns (+10%), `getpid` within 1%.
+- **What is common to every port:** the output is the event stream
+  (`docs/dev-log.md` section 2) instead of July's JSON record, whose `median_ns` is now
+  the Method's median of each sample's time over its repetitions. The binary is linked
+  statically; July's was dynamic. The harness takes samples the way July's did (one
+  repetition, then doubling until a sample lasts a second, then the counted samples at
+  that count), but emits the warmup samples July discarded, and takes the count of
+  counted samples from `LM_SAMPLES`.
+
+### hash
+
+#### Differences from July's version
+
+July's is `benchmarks/c/bench_hash.c`, variants `crc32`, `siphash` and `sha256`.
+
+- **The same hash functions.** Every line from `load_be32` to `sha256_ni_run` is
+  July's, unchanged, and so is the rule choosing SHA-256's path. Built by the same
+  compiler with the same flags (checked with gcc 11.5, `-march=native`, on an Ice Lake
+  Xeon), the measured functions' machine code is identical to July's apart from the
+  addresses of their constants.
+- **One algorithm per process.** July measured the three in one process, in that order.
+  Each is now its own execution, chosen by `algorithm`.
+- **The path SHA-256 took is observed** (`path_taken`). July printed it to stderr only,
+  so its record could not say which it was.
+- **Only the hash that is measured is checked, and SSE4.2 is required only for `crc32`.**
+  July checked all three and refused to run any of them without SSE4.2.
+- **The input size is a parameter** (`size_bytes`), accepting only July's 64.
+- **What is common to every port:** the output is the event stream
+  (`docs/dev-log.md` section 2) instead of July's JSON record, whose `median_ns` is now
+  the Method's median of each sample's time over its repetitions, and whose
+  `bytes_per_op` is now `bytes_per_repetition`. The binary is linked statically; July's
+  was dynamic. The harness takes samples the way July's did (one repetition, then
+  doubling until a sample lasts a second, then the counted samples at that count), but
+  emits the warmup samples July discarded, and takes the count of counted samples from
+  `LM_SAMPLES`.
+
+### sort
+
+#### Differences from July's version
+
+July's is `benchmarks/c/bench_sort.c`, variant `u64`.
+
+- **The same measured work.** The input, its seed, the copy, the radix sort and the
+  checksum are unchanged. Built by the same compiler with the same flags (checked with gcc 11.5, `-march=native`, on an Ice Lake Xeon), the measured
+  function and the radix sort have machine code identical to July's.
+- **The size is a parameter** (`size_bytes`). It was the constant 1 MiB, the scheduled
+  value.
+- **The startup check also compares sums.** July checked only that the sorted copy was
+  in order; a sort that lost or duplicated keys could have passed it.
+- **What is common to every port:** the output is the event stream
+  (`docs/dev-log.md` section 2) instead of July's JSON record, whose `median_ns` is now
+  the Method's median of each sample's time over its repetitions, and whose
+  `bytes_per_op` is now `bytes_per_repetition`. The binary is linked statically; July's
+  was dynamic. The harness takes samples the way July's did (one repetition, then
+  doubling until a sample lasts a second, then the counted samples at that count), but
+  emits the warmup samples July discarded, and takes the count of counted samples from
+  `LM_SAMPLES`.
+
+### tcp_echo
+
+#### Differences from July's version
+
+July's is `benchmarks/c/bench_tcp_echo.c`, variant `32 KiB`.
+
+- **The same round trip.** The connection, its socket options, the server, the
+  send-then-read loop and the hash of the bytes read back are unchanged.
+- **The size is a parameter** (`size_bytes`). It was the constant 32 KiB, the scheduled
+  value. So the length is now a variable where July's compiler saw a constant: the
+  measured function differs from July's in how it loads the length and counts the hash's
+  33 steps, beside at least two system calls on each side of the connection and a
+  32 KiB copy each way.
+- **What is common to every port:** the output is the event stream
+  (`docs/dev-log.md` section 2) instead of July's JSON record, whose `median_ns` is now
+  the Method's median of each sample's time over its repetitions, and whose
+  `bytes_per_op` is now `bytes_per_repetition`. The binary is linked statically; July's
+  was dynamic. The harness takes samples the way July's did (one repetition, then
+  doubling until a sample lasts a second, then the counted samples at that count), but
+  emits the warmup samples July discarded, and takes the count of counted samples from
+  `LM_SAMPLES`.
+
+### mutex
+
+#### July's `mutex / contended` ends here
+
+July's is `benchmarks/c/bench_mutex.c`, variant `contended`. Its Series ends here: this
+is a different measurement, not a port.
+
+- **July counted only the measured thread's acquisitions,** while its contender, unlimited
+  and uncounted, did between 22% and 87% of the work, depending on the day; its number
+  was roughly the time per acquisition over the measured thread's share, which is why it
+  ranged from half to double its median. Here every thread's work is counted, and a
+  repetition is a fixed total.
+- **July had one shape, two threads on the first two allowed CPUs,** whatever cores those
+  were. Here the placement is a parameter the binary carries out from the topology, and
+  the Run says which CPUs and cores it used.
+- **New:** the two uncontended sets (single-threaded and multi-threaded), the siblings
+  set, the eight-line set, the events `cpu_pair` and `mutex_threads`, and the guard's count
+  of lost increments. July's guard
+  was the shared counter alone.
+- **What is common to every port:** the output is the event stream
+  (`docs/dev-log.md` section 2), the binary is linked statically, and the harness takes
+  samples the way July's did (one repetition, then doubling until a sample lasts a second,
+  then `LM_SAMPLES` counted samples), emitting the warmup samples July discarded.
+
+### disk_read_random
+
+#### Differences from July's version
+
+July's is `benchmarks/c/bench_disk_read_random.c`, variant `8 KiB`.
+
+- **July measured the root EBS volume and reported it as the instance's disk.** A
+  `c6i.8xlarge` has no disk of its own. Now each set names its disk, the binary reports
+  the device it opened, and the dump proves it.
+- **The Fixture is the box's, made at boot** by `runner/fixture.c` with `O_DIRECT` and
+  `fdatasync`, and checked here; July's binary wrote a 4 GiB scratch file of its own with
+  buffered writes before measuring, and deleted it after. The pattern is July's io_uring
+  pattern; July's random-read pattern differed.
+- **The span** is 1 GiB on the root volume and 32 GiB on the instance store, where July's
+  was 4 GiB. The permutation's seed and the read are July's.
+- **The guard** recomputes the sum of every block read from the pattern; July's checked
+  block 0 before measuring and emitted an unchecked sum.
+- **New:** `observed` with the device, `device_counters` and `work`; the parameters.
+- **What is common to every port:** the event stream (`docs/dev-log.md` section 2), a
+  static binary, and July's sampling (one repetition, then doubling until a sample lasts a
+  second, then `LM_SAMPLES` counted samples), with the warmup samples emitted.
+
+### disk_read_io_uring
+
+#### Differences from July's version
+
+July's is `benchmarks/c/bench_disk_read_io_uring.c`, variant `32 KiB × 64 in flight`.
+
+- **Reads kept submitted.** July's repetition submitted 64 reads of 32 KiB and waited for
+  all 64, so its submissions drained to zero 64 times per 2 MiB; its 125.07 MiB/s every
+  day was the root gp3 volume's limit. Now the binary keeps 64 submitted (63 for an
+  instant after each reap) and the time is per completion.
+- **Both disks, named,** and a random 4 KiB set beside the sequential 32 KiB one.
+- **Raw system calls** instead of liburing, which has no static library on the image.
+- **The Fixture is the box's**, checked here; July's binary wrote a 1 GiB scratch file
+  with buffered writes and checked the first batch.
+- **The guard** sums the first word of every block read and recomputes it from the
+  pattern; July's emitted the sum of one batch, unchecked.
+- **New:** `observed` with the device, `device_counters`, `work`, and the parameters.
+- **What is common to every port:** the event stream, a static binary, and July's
+  sampling, with the warmup samples emitted.
+
+### disk_read_sequential
+
+#### Differences from July's version
+
+July's is `benchmarks/c/bench_disk_read_sequential.c`, variant `8 KiB`.
+
+- **Buffered and cold, not `O_DIRECT`.** July's read 8 KiB with `O_DIRECT` at consecutive
+  offsets, one at a time: with no readahead, that is the device's latency at queue depth
+  1, the same as `disk_read_random` (fio on the instance store: 120.7 µs sequential, 122.7
+  µs random). Its July value, 587 µs, was the root gp3 volume's read latency. This reads
+  through the page cache and lets readahead do what it does for any program.
+- **Samples of fixed work** with a cold region each, through the new harness file
+  `lm_fixed.c`, where July calibrated over a 1 GiB scratch file it wrote itself.
+- **Both disks, named; the Fixture is the box's.**
+- **The guard** recomputes the sum of every block read; July's checked block 0.
+- **New:** `observed` with the device, `device_counters`, `work` with each sample's
+  coldness, and the parameters.
+- **What is common to every port:** the event stream and a static binary. The warmup
+  samples are emitted, two of them.
+
+### disk_write
+
+#### Differences from July's version
+
+July's is `benchmarks/c/bench_disk_write.c`, variants `8 KiB, No fsync` and `8 KiB, fsync`.
+
+- **The no-sync set is named as the page cache's** and runs on the root volume only; July
+  reported it as the disk's. July's fsync value, 911 µs, was the root gp3 volume's durable
+  write latency; here it is 913.5 µs on the same kind of volume.
+- **One set per execution,** with both disks named, where July ran its two variants in one
+  process on one file.
+- **The scratch file is created exclusively, never through a symbolic link,** where July's
+  opened its name with `O_TRUNC`, following links; it is preallocated by writing it with
+  `O_DIRECT` and checked with `FIEMAP`, where July wrote zeros through the page cache and
+  synced.
+- **The guard** reads back the last write and sums distinct tags; July's sum was of the
+  same first word and the offset.
+- **New:** `observed` with the device, `device_counters`, `work`, and the parameters.
+- **What is common to every port:** the event stream, a static binary, and July's
+  sampling, with the warmup samples emitted.
+
+### http_get
+
+#### Departures from the study
+
+- **Service inputs.**
+  - The endpoint comes whole, as `LM_SERVICE_ENDPOINT`, instead of being built from
+    `region` and `LM_SERVICE_BUCKET`. The stand-in needs another host and port, and the host
+    sent is recorded in every request anyway.
+  - The Region comes as `LM_SERVICE_REGION`, as the brief lists it.
+  - The key is the parameter `key`, not derived from `object_bytes`, so a public object
+    could be fetched for the real exchange.
+- **New parameters:** `key`, `timeout_ms` (the study fixed 2 s for DNS and nothing else),
+  `resolv_conf` (the tests cannot replace `/etc/resolv.conf`; it may name a port) and
+  `auth`.
+- **`Authorization` is withheld whole.** The scope and signed headers move to `signing`.
+  The rule ("a credential's value is never printed") is then one line, not a parser.
+- **Error bodies and the rule:**
+  - An error body is never printed: its length, S3's four fields and its element names
+    instead. The study printed a body that held no twelve-digit run and no key ID.
+  - The rule matches our own credentials and signatures, in their common encodings, ignoring
+    case, beside the key-ID and account-ID shapes. Real S3 echoes the token, which the
+    study's rule would have printed.
+  - A twelve-digit number must stand alone.
+  - A withheld item keeps no digest, and `verified` is made from 2xx bodies alone.
+  - Headers, trailers, the status line, DNS records and certificates pass the same rule,
+    decided once on the text that would be written.
+- **Events:**
+  - Every phase event carries `cpu_ns` for its own phase, where the study had
+    `handshake_cpu_ns` and two others.
+  - `idle_ns` is dropped: it is derivable from the `t` values.
+  - `connection_secured` has no `request`; join on `connection`.
+  - `response_ended` gains `framing`, `trailers`, `fixture`, `s3_checksum`, `error_fields`
+    and `error_elements`.
+  - A failed reused-connection setup is `connection_failed`.
+  - `request_failed` carries the partial header block or body digest, `surplus_bytes`, a
+    received alert, and a refused chain's fingerprints; `error` has `alert`.
+  - `name_resolved` gains `additional`, `reply_bytes_read` and `trailing_bytes`.
+  - `connection_closed` gains `sessions_received`.
+  - A line the guard withholds becomes `line_withheld`.
+  - An SOA in DNS is in presentation form, so its numbers do not read as an account ID.
+- **`observed` is two events.** The setup facts come first, so a crash still leaves them.
+  The offer is read back from the ClientHello's bytes. Counts the stream shows directly are
+  not repeated, beyond the summary above. `host` and `key` are left out: they were told,
+  and `request_sent` shows them as sent.
+- **A Run can end early.** It ends at its budget, or after ten requests in a row that
+  reach no server. The study had nothing stop early.
+- **An absent S3 checksum fails the body (exit 1).** The Fixtures are uploaded with one, so
+  its absence means the Fixture is not what the stage made.
+- **Gaps** run from the end of one request's output to the start of the next, not start to
+  start, so requests never overlap.
+- **The whole offer is pinned:** versions, both suite lists, groups, signature algorithms,
+  GREASE and extension order. The study pinned the groups. The TLS 1.2 list is six ECDHE
+  AEAD suites.
+- **Two CMake flags added:** `ENABLE_CRYPTO_POLICIES=OFF` and `-ffile-prefix-map`. The
+  study's byte-identical builds held only for one path; the AWS-LC source names are compiled
+  in.
+- **A 1xx interim response is a protocol error.** S3 sends none, and the event keeps it.
+- **The lock** is `benchmarks/harness/c/vendor/aws-lc.lock`, in make syntax, rather than
+  JSON.
+- **The stand-in is Python, not TypeScript.** `scripts/check-scratch.py`, which is Python
+  in a CI job without Bun, starts it too. Python's `ssl` gives socket-level control (a
+  reset by `SO_LINGER`).

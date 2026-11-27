@@ -1,22 +1,86 @@
 # mutex
 
+What a critical section under a pthread mutex costs: uncontended on one thread, and with
+two threads contending for it on two physical cores or on the two hardware threads of one
+core.
+
+## What a figure means
+
 What a critical section under a `pthread_mutex_t` costs, with nobody contending and with
-a fixed number of threads handing the lock between CPUs the binary chooses itself. One
+a fixed number of threads taking the lock on CPUs the binary chooses itself. One
 repetition is exactly K = 10,000 critical sections, done by whichever threads win the
 lock. Every thread, the main thread included, loops: lock; if the counter has reached
 the repetition's target, unlock and stop; otherwise increment the counter and the other
 protected lines, then unlock. A sample's time divided by (repetitions × 10,000) is the
 time per critical section across all threads: a Method's division, not the binary's.
 
-The study of July's data and the design is section 1 of the step-4 brief's study (#42).
+Each Run that Method `series` v1 counts gives one figure, the time of one repetition in
+nanoseconds (`time_per_repetition_ns`): the median, over the Run's counted samples, of a
+sample's time divided by its repetitions. A Run it does not count gives none. It is the
+time of 10,000 critical sections, not of one: divide it by
+`critical_sections_per_repetition`, which each Run observes, for one. The harness reads
+the clock once at each edge of a sample, around the whole loop of its repetitions, and
+never inside that loop. Before the counted samples it runs warmup samples, doubling the
+repetitions until a sample lasts at least a second; each of the 10 counted samples the
+schedule asks for then runs that many repetitions. The binary observes no
+`bytes_per_repetition`, so no bytes per second is derived. A Series gives the 5th, 50th
+and 95th percentiles of its counted Runs' figures
+([Methods](https://ledgermath.com/docs/methods)).
+
+So a figure is the time of 10,000 critical sections under one mutex, by one thread or
+shared between two, on one instance type.
+
+## What a figure does not show
+
+- With two threads, the figure is not the time for the lock to pass from one core to the
+  other. A thread that has just unlocked may lock again at once (glibc's mutex is unfair,
+  so the thread that unlocks often locks again). Each sample gives the mean time per
+  critical section across both threads (its time over its repetitions, over 10,000); the
+  Run's figure, divided by 10,000, is the median of those.
+- With `threads` 1, `one_cpu` and `idle_threads` 0, the figure is true only of a process
+  that has only ever had one thread, where glibc skips the atomic instructions. A program
+  that has started a thread pays for them, as the same set with `idle_threads` 1 does.
+- With `threads` 1, `one_cpu` and `idle_threads` 1, on `c6i.8xlarge` and `i4i.2xlarge`,
+  the Runs counted on 2026-11-25 usually sat at one of two levels from boot to boot, about
+  30% apart, with one Run between them, and in the Runs examined no recorded fact told the
+  levels apart. The spread between such a Series' percentiles can be two levels, not
+  noise: say which level an estimate uses, or carry both.
+- With `threads` 1, `one_cpu` and `idle_threads` 0, the figure moves with where glibc's
+  lock and unlock and the benchmark's loop land in the binary, as an investigation on Ice
+  Lake and on `m5.large` showed: another binary of the same code can be faster or slower,
+  and nothing in a Series says where its code landed. The two-thread sets were not part
+  of that investigation's sweeps; an earlier, smaller one saw `smt_siblings` on
+  `m5.large` spread by 11% as the code moved.
+
+Both one-thread findings are in "What the one-thread figures mean" below.
+
+## Parameters
+
+Each parameter set is a Series of its own on each instance type it is scheduled on.
 
 | Parameter set (`threads`, `placement`, `critical_section_lines`, `idle_threads`) | What it measures | Scheduled on |
 |---|---|---|
 | `1`, `one_cpu`, `1`, `1` | The cost of one lock and unlock that nobody contends, in a program that has more than one thread. **Usually the number wanted**, and what napkin-math's "mutex lock/unlock" means | every target |
 | `1`, `one_cpu`, `1`, `0` | The same in a process that has only ever had one thread, where glibc skips the atomic instructions | every target |
-| `2`, `distinct_cores`, `1`, `0` | Lock handoff throughput when the lock and the counter move between two physical cores | `c6i.8xlarge`, `c8i.2xlarge`, `c8a.2xlarge`, `i4i.2xlarge` |
+| `2`, `distinct_cores`, `1`, `0` | Lock throughput when the lock and the counter move between two physical cores | `c6i.8xlarge`, `c8i.2xlarge`, `c8a.2xlarge`, `i4i.2xlarge` |
 | `2`, `distinct_cores`, `8`, `0` | The same with eight protected cache lines moving with the lock, which includes glibc's futex sleep and wake-up | the same four |
-| `2`, `smt_siblings`, `1`, `0` | Lock handoff between the two hardware threads of one core, which share its L1 and L2 | `m5.large`, `c6i.8xlarge`, `c8i.2xlarge`, `i4i.2xlarge` |
+| `2`, `smt_siblings`, `1`, `0` | Lock throughput between the two hardware threads of one core, which share its L1 and L2 | `m5.large`, `c6i.8xlarge`, `c8i.2xlarge`, `i4i.2xlarge` |
+
+All five use `lock` `pthread_mutex_default`. `m5.large` has one core with two
+hardware threads, so it runs no distinct-cores set; `c8a.2xlarge` has one hardware thread
+per core, so it runs no siblings set. The schedule keeps them off with `instance_types`;
+the binary would exit 2 there.
+
+| Variable | Scheduled | Meaning |
+|---|---|---|
+| `LM_PARAM_THREADS` | `1`, `2` | Threads that take the lock, the main thread included; 1 to 1024 |
+| `LM_PARAM_PLACEMENT` | `one_cpu`, `distinct_cores`, `smt_siblings` | Where the binary pins them; see below. `one_cpu` takes 1 thread, `smt_siblings` 2 or more |
+| `LM_PARAM_CRITICAL_SECTION_LINES` | `1`, `8` | 64-byte cache lines each critical section increments, the counter's included; 1 to 64 |
+| `LM_PARAM_LOCK` | `pthread_mutex_default` | `pthread_mutex_default`, a mutex made from a default attribute (glibc's `PTHREAD_MUTEX_NORMAL`, which never spins), or `pthread_mutex_adaptive` (`PTHREAD_MUTEX_ADAPTIVE_NP`, which spins briefly before sleeping; not scheduled: the study measured it no better) |
+| `LM_PARAM_IDLE_THREADS` | `0`, `1` | `1` starts one more thread, after thread 0 is pinned and before any other thread or the first critical section, that blocks for the life of the process and never touches the lock; the binary waits, up to five seconds, until the kernel shows it sleeping. Not pinned. `0` starts none |
+
+`--quick` uses 1 thread, `one_cpu`, 1 line, `pthread_mutex_default` and 0 idle threads
+when the variables are unset.
 
 ### The two one-thread sets
 
@@ -45,36 +109,6 @@ level a critical section with `idle_threads` 1 takes about 14.1 ns, against abou
 with `idle_threads` 0, so the atomic instructions add about 9.8 ns. See "What the
 one-thread figures mean" below.
 
-All five use `lock` `pthread_mutex_default`. `m5.large` has one core with two
-hardware threads, so it runs no distinct-cores set; `c8a.2xlarge` has one hardware thread
-per core, so it runs no siblings set. The schedule keeps them off with `instance_types`;
-the binary would exit 2 there.
-
-```bash
-make -C benchmarks/mutex                           # build/static/mutex
-LM_PARAM_THREADS=2 LM_PARAM_PLACEMENT=distinct_cores LM_PARAM_CRITICAL_SECTION_LINES=1 \
-  LM_PARAM_LOCK=pthread_mutex_default LM_SAMPLES=10 ./benchmarks/mutex/build/static/mutex
-```
-
-A sample lasts one to two seconds (the harness doubles the repetitions until one lasts at
-least a second), so an execution takes about 15 to 25 seconds (17 to 18 seconds each on
-the development machine when it was quiet), and the three to five sets a box runs
-together one to two minutes. On the shared development machine under load they took up
-to 47 seconds each.
-
-## Parameters
-
-| Variable | Scheduled | Meaning |
-|---|---|---|
-| `LM_PARAM_THREADS` | `1`, `2` | Threads that take the lock, the main thread included; 1 to 1024 |
-| `LM_PARAM_PLACEMENT` | `one_cpu`, `distinct_cores`, `smt_siblings` | Where the binary pins them; see below. `one_cpu` takes 1 thread, `smt_siblings` 2 or more |
-| `LM_PARAM_CRITICAL_SECTION_LINES` | `1`, `8` | 64-byte cache lines each critical section increments, the counter's included; 1 to 64 |
-| `LM_PARAM_LOCK` | `pthread_mutex_default` | `pthread_mutex_default`, a mutex made from a default attribute (glibc's `PTHREAD_MUTEX_NORMAL`, which never spins), or `pthread_mutex_adaptive` (`PTHREAD_MUTEX_ADAPTIVE_NP`, which spins briefly before sleeping; not scheduled: the study measured it no better) |
-| `LM_PARAM_IDLE_THREADS` | `0`, `1` | `1` starts one more thread, after thread 0 is pinned and before any other thread or the first critical section, that blocks for the life of the process and never touches the lock; the binary waits, up to five seconds, until the kernel shows it sleeping. Not pinned. `0` starts none |
-
-`--quick` uses 1 thread, `one_cpu`, 1 line, `pthread_mutex_default` and 0 idle threads
-when the variables are unset.
-
 ### Placement
 
 The binary reads the CPUs it may run on (`sched_getaffinity`) and, for each,
@@ -100,20 +134,7 @@ error: placement smt_siblings is impossible here: 2 threads need 2 hardware thre
 
 It never falls back to another placement.
 
-### How a repetition starts and ends
-
-Thread 0 runs `lm_measure`. It starts a repetition by writing the target (the counter
-plus 10,000) and bumping a generation word, which the other threads spin on with
-`pause`; it then works like the others, and ends the repetition when every other thread
-has written that generation to its own line. No barrier: `pthread_barrier_wait` sleeps
-on a futex and would add microsecond wake-ups to every repetition. Each thread makes one
-acquisition per repetition that finds the target reached and does nothing under it; with
-two threads that adds 0.02% to the acquisitions.
-
-The lock is alone in a 128-byte block (Intel's adjacent-line prefetcher moves lines in
-pairs), and the protected lines follow, 64 bytes apart, the first holding the counter.
-
-## Observed
+## Observed values
 
 In two `observed` events. The first is emitted after one checked repetition, before
 `cpu_pair`:
@@ -153,68 +174,9 @@ The second is emitted just before measuring, after `cpu_pair`:
 `idle_threads_sleeping` and `libc_single_threaded` are those of `idle_threads`. The Run's
 dump holds the whole topology.
 
-## Events of its own
+## Findings
 
-Both pass `schemas/events.schema.json` and `scripts/check-events.py` as a benchmark's own
-events; the harness file `benchmarks/harness/c/lm_event.{h,c}` emits them.
-
-**`cpu_pair`**, before measuring, once for each thread after the first (once with two
-threads, never with one): the round trip of one cache line between thread 0's CPU and
-that thread's. Thread 0 writes an odd value and spins until the other thread writes the
-next even one, without `pause` on either side; 10,000 round trips of warmup, then 10
-batches of 100,000 (10,000 under `--quick`), each timed by two clock reads. About 0.05
-to 0.2 seconds. It explains spread that comes from which two cores the pair landed on.
-
-```json
-{"event":"cpu_pair","t":301635096352260,"cpus":[0,1],"warmup_round_trips":10000,"round_trips_per_batch":100000,"batch_ns":[19417633,9858676,12869288,18858494,54144633,13268226,57880689,18705976,10670837,51811787]}
-```
-
-(From the shared development machine under load, where the threads were often preempted;
-the fastest batch, 98.6 ns a round trip, is the closest to the cache's own figure.)
-
-| Field | What it is |
-|---|---|
-| `cpus` | Thread 0's CPU, then the other thread's |
-| `warmup_round_trips` | Round trips made before the first batch, untimed |
-| `round_trips_per_batch` | Round trips in each batch |
-| `batch_ns` | Each batch's duration; one round trip is a batch over `round_trips_per_batch` |
-
-**`mutex_threads`**, after measuring (after `verified`, before `finished`): one entry per
-thread, over the whole of `lm_measure` (its warmup samples included, the checked
-repetition and `cpu_pair` not).
-
-```json
-{"event":"mutex_threads","t":301654414329209,"threads":[{"thread":0,"cpu":0,"cpu_at_end":0,"critical_sections":64500898,"acquisitions":64513186,"voluntary_switches":1997,"involuntary_switches":1796,"user_time_us":9108888,"system_time_us":2688647},{"thread":1,"cpu":1,"cpu_at_end":1,"critical_sections":58379102,"acquisitions":58391390,"voluntary_switches":2117,"involuntary_switches":2090,"user_time_us":9122884,"system_time_us":2484444}]}
-```
-
-| Field | What it is |
-|---|---|
-| `thread`, `cpu` | The thread's number and its CPU after pinning |
-| `cpu_at_end` | `sched_getcpu()` after measuring |
-| `critical_sections` | Critical sections it did; the threads' shares of the work |
-| `acquisitions` | Locks it took: its critical sections plus one per repetition |
-| `voluntary_switches`, `involuntary_switches` | `getrusage(RUSAGE_THREAD)`'s `ru_nvcsw` and `ru_nivcsw`: a voluntary switch is mostly a futex sleep on the lock; an involuntary one is preemption |
-| `user_time_us`, `system_time_us` | Its CPU time in user space and in the kernel (futex calls) |
-
-## Elision guard
-
-`verified` is the counter after the last repetition. After measuring, and after
-`mutex_threads` is emitted, the binary checks three things and exits 1, naming the one
-that failed, if any does not hold:
-
-1. The counter equals 10,000 × every repetition run, the checked one and the warmups
-   included: no repetition did less work.
-2. The critical sections the threads counted, each in a register of its own, add up to
-   the counter: no increment was lost. This is what proves mutual exclusion with one
-   protected line, whose counter is also the loop's stopping condition: when two threads
-   race, the counter still ends at its target, but the threads have done more increments
-   than it moved by.
-3. Every other protected line equals the counter.
-
-The checked repetition before measuring makes the same checks and exits 1 too. With the
-lock skipped in one thread, the binary exits 1 at the first of them that sees the race.
-
-## What will stay unstable
+### What will stay unstable
 
 - **1 thread, either set:** a busy hardware sibling of its CPU slows it, up to 2.5× in the
   study. On a box running nothing else the sibling should be idle. From boot to boot, the
@@ -231,7 +193,7 @@ lock skipped in one thread, the binary exits 1 at the first of them that sees th
   thread that unlocks often locks again. Counting every thread's work makes the time per
   critical section hold still regardless; the shares are in `mutex_threads`.
 
-## What the one-thread figures mean
+### What the one-thread figures mean
 
 An investigation on 2026-11-25 (issue #84) found two separate things about the two
 one-thread sets (`threads` 1, `one_cpu`):
@@ -253,7 +215,7 @@ measured. The investigation's figures are one-off measurements on machines start
 not Runs of the pipeline. Its evidence is on issue #84. What LedgerMath does about either
 finding is not decided yet.
 
-### With an idle thread: two levels, by boot
+#### With an idle thread: two levels, by boot
 
 **Which Series.** `one_cpu` with `idle_threads` 1, on `c6i.8xlarge` and `i4i.2xlarge`.
 Both have the same Intel Ice Lake processor (Xeon Platinum 8375C). On `m5.large`,
@@ -305,7 +267,7 @@ which level you use, or carry both.
   slow), all 69 processes run with the sibling idle or offline were fast, 140,990 to
   141,254 ns: on each of its 8 CPUs, with the sibling offline, with address randomisation
   off, with speculative store bypass disable on, and at the start and the end of the boot.
-- No recorded fact tells the levels apart. For each published `c6i.8xlarge` Run, every key
+- No recorded fact told the levels apart. For each published `c6i.8xlarge` Run, every key
   of ten sections of the dump taken before it (`cpuid`, `cpuinfo`, `lscpu`, `sys_cpu`,
   `kernel`, `memory`, `process`, `provider`, `provision`, `ec2_instance`) was compared
   between the fast Runs and the slow ones. A key whose value is new in nearly every Run,
@@ -347,7 +309,7 @@ fast hosts are: the boxes started by hand found one in 19 (none of 12 small `c6i
 pipeline's `c6i.8xlarge` boots. Whether the share depends on the instance size, the pool of
 hosts or the time is not known.
 
-### Without an idle thread: where the code lands
+#### Without an idle thread: where the code lands
 
 **Which Series.** `one_cpu` with `idle_threads` 0. The investigation swept it on Ice Lake
 (the processor of `c6i.8xlarge` and `i4i.2xlarge`) and on `m5.large` (Intel Cascade Lake).
@@ -421,24 +383,94 @@ three Ice Lake boxes, 3.33% on the fourth (183,242 to 189,349 ns per repetition)
 the four Ice Lake boxes and 33.75% on `m5.large` (67,914 to 90,831). Inferred: the two
 atomic instructions take most of the time, so instruction delivery has time to spare.
 
-## July's `mutex / contended` ends here
+## How it works
 
-July's is `benchmarks/c/bench_mutex.c`, variant `contended`. Its Series ends here: this
-is a different measurement, not a port.
+The study of July's data and the design is section 1 of the step-4 brief's study (#42).
 
-- **July counted only the measured thread's acquisitions,** while its contender, unlimited
-  and uncounted, did between 22% and 87% of the work, depending on the day; its number
-  was roughly the time per acquisition over the measured thread's share, which is why it
-  ranged from half to double its median. Here every thread's work is counted, and a
-  repetition is a fixed total.
-- **July had one shape, two threads on the first two allowed CPUs,** whatever cores those
-  were. Here the placement is a parameter the binary carries out from the topology, and
-  the Run says which CPUs and cores it used.
-- **New:** the two uncontended sets (single-threaded and multi-threaded), the siblings
-  set, the eight-line set, the events `cpu_pair` and `mutex_threads`, and the guard's count
-  of lost increments. July's guard
-  was the shared counter alone.
-- **What is common to every port:** the output is the event stream
-  (`docs/dev-log.md` section 2), the binary is linked statically, and the harness takes
-  samples the way July's did (one repetition, then doubling until a sample lasts a second,
-  then `LM_SAMPLES` counted samples), emitting the warmup samples July discarded.
+### How a repetition starts and ends
+
+Thread 0 runs `lm_measure`. It starts a repetition by writing the target (the counter
+plus 10,000) and bumping a generation word, which the other threads spin on with
+`pause`; it then works like the others, and ends the repetition when every other thread
+has written that generation to its own line. No barrier: `pthread_barrier_wait` sleeps
+on a futex and would add microsecond wake-ups to every repetition. Each thread makes one
+acquisition per repetition that finds the target reached and does nothing under it; with
+two threads that adds 0.02% to the acquisitions.
+
+The lock is alone in a 128-byte block (Intel's adjacent-line prefetcher moves lines in
+pairs), and the protected lines follow, 64 bytes apart, the first holding the counter.
+
+### Events of its own
+
+Both pass `schemas/events.schema.json` and `scripts/check-events.py` as a benchmark's own
+events; the harness file `benchmarks/harness/c/lm_event.{h,c}` emits them.
+
+**`cpu_pair`**, before measuring, once for each thread after the first (once with two
+threads, never with one): the round trip of one cache line between thread 0's CPU and
+that thread's. Thread 0 writes an odd value and spins until the other thread writes the
+next even one, without `pause` on either side; 10,000 round trips of warmup, then 10
+batches of 100,000 (10,000 under `--quick`), each timed by two clock reads. About 0.05
+to 0.2 seconds. It explains spread that comes from which two cores the pair landed on.
+
+```json
+{"event":"cpu_pair","t":301635096352260,"cpus":[0,1],"warmup_round_trips":10000,"round_trips_per_batch":100000,"batch_ns":[19417633,9858676,12869288,18858494,54144633,13268226,57880689,18705976,10670837,51811787]}
+```
+
+(From the shared development machine under load, where the threads were often preempted;
+the fastest batch, 98.6 ns a round trip, is the closest to the cache's own figure.)
+
+| Field | What it is |
+|---|---|
+| `cpus` | Thread 0's CPU, then the other thread's |
+| `warmup_round_trips` | Round trips made before the first batch, untimed |
+| `round_trips_per_batch` | Round trips in each batch |
+| `batch_ns` | Each batch's duration; one round trip is a batch over `round_trips_per_batch` |
+
+**`mutex_threads`**, after measuring (after `verified`, before `finished`): one entry per
+thread, over the whole of `lm_measure` (its warmup samples included, the checked
+repetition and `cpu_pair` not).
+
+```json
+{"event":"mutex_threads","t":301654414329209,"threads":[{"thread":0,"cpu":0,"cpu_at_end":0,"critical_sections":64500898,"acquisitions":64513186,"voluntary_switches":1997,"involuntary_switches":1796,"user_time_us":9108888,"system_time_us":2688647},{"thread":1,"cpu":1,"cpu_at_end":1,"critical_sections":58379102,"acquisitions":58391390,"voluntary_switches":2117,"involuntary_switches":2090,"user_time_us":9122884,"system_time_us":2484444}]}
+```
+
+| Field | What it is |
+|---|---|
+| `thread`, `cpu` | The thread's number and its CPU after pinning |
+| `cpu_at_end` | `sched_getcpu()` after measuring |
+| `critical_sections` | Critical sections it did; the threads' shares of the work |
+| `acquisitions` | Locks it took: its critical sections plus one per repetition |
+| `voluntary_switches`, `involuntary_switches` | `getrusage(RUSAGE_THREAD)`'s `ru_nvcsw` and `ru_nivcsw`: a voluntary switch is mostly a futex sleep on the lock; an involuntary one is preemption |
+| `user_time_us`, `system_time_us` | Its CPU time in user space and in the kernel (futex calls) |
+
+### Elision guard
+
+`verified` is the counter after the last repetition. After measuring, and after
+`mutex_threads` is emitted, the binary checks three things and exits 1, naming the one
+that failed, if any does not hold:
+
+1. The counter equals 10,000 × every repetition run, the checked one and the warmups
+   included: no repetition did less work.
+2. The critical sections the threads counted, each in a register of its own, add up to
+   the counter: no increment was lost. This is what proves mutual exclusion with one
+   protected line, whose counter is also the loop's stopping condition: when two threads
+   race, the counter still ends at its target, but the threads have done more increments
+   than it moved by.
+3. Every other protected line equals the counter.
+
+The checked repetition before measuring makes the same checks and exits 1 too. With the
+lock skipped in one thread, the binary exits 1 at the first of them that sees the race.
+
+## Building and testing
+
+```bash
+make -C benchmarks/mutex                           # build/static/mutex
+LM_PARAM_THREADS=2 LM_PARAM_PLACEMENT=distinct_cores LM_PARAM_CRITICAL_SECTION_LINES=1 \
+  LM_PARAM_LOCK=pthread_mutex_default LM_SAMPLES=10 ./benchmarks/mutex/build/static/mutex
+```
+
+A sample lasts one to two seconds (the harness doubles the repetitions until one lasts at
+least a second), so an execution takes about 15 to 25 seconds (17 to 18 seconds each on
+the development machine when it was quiet), and the three to five sets a box runs
+together one to two minutes. On the shared development machine under load they took up
+to 47 seconds each.

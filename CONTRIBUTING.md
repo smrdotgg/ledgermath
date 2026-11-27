@@ -4,7 +4,7 @@ LedgerMath runs small benchmarks on real cloud machines several times a day and 
 execution as a Run, a record that is never edited. Numbers are worked out afterwards from
 the Runs by a versioned Method. The working rules are in GitHub issue #36 ("Build plan:
 record every Run, judge afterwards"); the words used here (Run, Series, Method, Derivation)
-are defined in [`CONTEXT.md`](CONTEXT.md). The [README](README.md) says how every part works;
+are defined in the [glossary](site/content/docs/glossary.md). The [README](README.md) says how every part works;
 this guide says where to make each kind of change and what a pull request needs.
 
 What you can add without access to the AWS accounts: a benchmark, a parameter set, a target
@@ -61,7 +61,17 @@ The directory holds the source, a `Makefile` and a `README.md`:
   short one to copy.
 - The `README.md` says what one repetition is and what it measures, its parameters, what it
   observes, its elision guard, and what its numbers must not be used for.
-  [`benchmarks/tcp_echo/README.md`](benchmarks/tcp_echo/README.md) is a short one.
+  [`benchmarks/tcp_echo/README.md`](benchmarks/tcp_echo/README.md) is a short one. It is
+  also the benchmark's page at `https://ledgermath.com/docs/benchmarks/<name>`, for readers
+  who have a number from the data API and no repository. So it opens with `# <name>` and
+  one paragraph of one or two sentences saying what the benchmark measures, which the index
+  of pages shows on its own, then has these headings, in this order: "What a figure means"
+  (what one repetition is, the figure's unit, and what bytes per second counts), "What a
+  figure does not show", "Parameters" (each with the values the schedule runs), "Observed
+  values", "Findings", "How it works" (its elision guard and its own events) and "Building
+  and testing". A link to another file of the repository is relative; a link to another
+  page of the documentation is its full address. `tests/benchmark-pages.test.ts` checks the
+  headings.
 - The C benchmarks share a harness, [`benchmarks/harness/c/`](benchmarks/harness/c/), which
   prints the stream. A benchmark in another language prints the same lines without it.
 

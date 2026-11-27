@@ -1,5 +1,12 @@
 # compressed_memory_read
 
+How fast one thread unpacks integers stored at a width of `bits` into 32-bit integers,
+the decode step of a compressed column, cycling through a pool of `blocks` blocks meant to
+come from memory rather than cache. Whether the pool exceeds the cache depends on the
+machine.
+
+## What a figure means
+
 How fast one core unpacks integers stored at 8 bits each into 32-bit integers. One
 repetition unpacks one block: 256 bytes in, 256 `u32`s (1024 bytes) out. Successive
 repetitions take successive blocks of a pool, by default 1,000,000 blocks (256,000,000
@@ -9,13 +16,36 @@ The Run's dump records the machine's cache sizes (`lscpu` and `cache/index*/size
 `/sys`). It stands for the decode step of a compressed column or posting list, as
 napkin-math's `compressed_memory_read / bitpacker` (BitPacker8x at 8 bits) did.
 
-```bash
-make -C benchmarks/compressed_memory_read          # build/static/compressed_memory_read
-LM_PARAM_BLOCKS=1000000 LM_PARAM_BITS=8 LM_SAMPLES=10 \
-  ./benchmarks/compressed_memory_read/build/static/compressed_memory_read
-```
+Each Run that Method `series` v1 counts gives one figure, the time of one repetition in
+nanoseconds (`time_per_repetition_ns`): the median, over the Run's counted samples, of a
+sample's time divided by its repetitions. A Run it does not count gives none. The harness
+reads the clock once at each edge of a sample, around the whole loop of its repetitions,
+and never inside that loop. Before the counted samples it runs warmup samples, doubling the
+repetitions until a sample lasts at least a second; each of the 10 counted samples the
+schedule asks for then runs that many repetitions. Bytes per second (`bytes_per_second`) is `bytes_per_repetition` × 10^9 divided by the time
+per repetition, where `bytes_per_repetition` is the 1024 bytes one repetition writes out.
+Those are four times the 256 bytes it reads (`compressed_bytes_per_repetition`), so bytes
+per second counts the unpacked output, not the packed input. A Series gives the 5th, 50th
+and 95th percentiles of its counted Runs' figures
+([Methods](https://ledgermath.com/docs/methods)).
+
+So a figure is the time one thread takes to unpack one block of 256 values, on one
+instance type.
+
+## What a figure does not show
+
+- Only 8 bits per value is implemented. At that width, unpacking a value is widening one
+  byte to a 32-bit integer, so the figure says nothing of other widths.
+- Every repetition writes its 256 values to the same 1024-byte output array; only the
+  packed input moves through the pool.
+- Whether the pool is read from memory or from cache depends on its size and on the
+  machine's caches, which the Run's dump sections `lscpu` and `sys_cpu` record. A pool that
+  fits in a cache gives a cache figure.
 
 ## Parameters
+
+The parameter set runs on every instance type in the schedule. Each instance type is a
+Series of its own.
 
 | Variable | Scheduled | Meaning |
 |---|---|---|
@@ -24,7 +54,7 @@ LM_PARAM_BLOCKS=1000000 LM_PARAM_BITS=8 LM_SAMPLES=10 \
 
 `--quick` uses 100,000 blocks when `LM_PARAM_BLOCKS` is unset.
 
-## Observed
+## Observed values
 
 | Key | What it is |
 |---|---|
@@ -33,28 +63,22 @@ LM_PARAM_BLOCKS=1000000 LM_PARAM_BITS=8 LM_SAMPLES=10 \
 | `blocks_verified` | Blocks in the pool, each unpacked and compared value by value with the source block at startup |
 | `bits_per_value` | The bits the largest unpacked value needs, computed from the unpacked data the way `bitpacking`'s `num_bits` does |
 
-## Elision guard
+## Findings
+
+No finding of its own so far.
+
+## How it works
+
+### Elision guard
 
 One repetition returns the sum of the 256 values it unpacked (32640 for every block),
 and writes them to an output array that outlives it. Every block is unpacked and checked
 at startup, and the program exits 1 if any differs.
 
-## Differences from July's version
+## Building and testing
 
-July's is `benchmarks/c/bench_compressed_memory_read.c`, variant `bitpacker`.
-
-- **The same measured work.** The unpack loop, the block layout, the pool of 1,000,000
-  blocks and the cycling are unchanged. Built by the same compiler with the same flags (checked with gcc 11.5, `-march=native`, on an Ice Lake Xeon),
-  the unpack function's machine code is identical to July's.
-- **The pool size and the bit width are parameters** (`blocks`, `bits`). They were
-  constants. Their scheduled values are July's.
-- **Every block is checked at startup.** July unpacked and checked block 0 only. As a
-  result the first measured repetition unpacks block 0, where July's unpacked block 1.
-- **What is common to every port:** the output is the event stream
-  (`docs/dev-log.md` section 2) instead of July's JSON record, whose `median_ns` is now
-  the Method's median of each sample's time over its repetitions, and whose
-  `bytes_per_op` is now `bytes_per_repetition`. The binary is linked statically; July's
-  was dynamic. The harness takes samples the way July's did (one repetition, then
-  doubling until a sample lasts a second, then the counted samples at that count), but
-  emits the warmup samples July discarded, and takes the count of counted samples from
-  `LM_SAMPLES`.
+```bash
+make -C benchmarks/compressed_memory_read          # build/static/compressed_memory_read
+LM_PARAM_BLOCKS=1000000 LM_PARAM_BITS=8 LM_SAMPLES=10 \
+  ./benchmarks/compressed_memory_read/build/static/compressed_memory_read
+```
