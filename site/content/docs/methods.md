@@ -161,7 +161,7 @@ Beside each percentile reported, `at_or_above` gives how many requests are ranke
 ### Groups, through, and breakdowns
 
 - **Groups** are `series` v1's, letter for letter (`definitions.groups`). What is said above for a Series with several groups holds here too.
-- **Through** (`definitions.through`): each point gives `through`, the Series' pooled figures over the counted Runs up to and including it, in the Method's order (by start, then Run id), null before the Series' first counted Run. These are what a quotation of the Series as of that Run's start is checked against.
+- **Through** (`definitions.through`): each point gives `through`, the Series' pooled figures over the counted Runs up to and including it, in the Method's order (by start, then Run id), null before the Series' first counted Run. These are what a quotation of the Series as of that Run's start is checked against, as the files stand when the check is made: a counted Run that arrives late, having started before Runs already published, comes before them in the Method's order and changes the `through` of every point after it (a late Run is one of the causes the table of contents' `months` gives for a month file to change), so a quotation that matched a point's `through` can fail to match it later. If an exact check matters, keep the values you read.
 - **Group through**: each point also gives `group_through_as_of_run`, the same for its own group. It is null while the Series has had Runs of one group only, and while the Run's group has had no counted Run, even when `through` has figures. Do not fill such a null with `through`, which pools every group.
 - **Breakdowns** (`by`, `definitions.breakdown`): the pooled figures again for each value of a request fact that took more than one value among the pool's succeeded requests. `facts` lists every value each fact took, one value included. Both are built from succeeded requests only: a value seen only on failed requests is in neither.
 - **What the Runs record** (`recorded`): the Region each Run names and the Service with its inputs that are not secret. Words, not figures.
@@ -176,7 +176,7 @@ Beside each percentile reported, `at_or_above` gives how many requests are ranke
 ## What a quotation names
 
 - The Series' id, and the key of the Method: `series_v1` or `requests_v1`.
-- The figure by its place: for example `percentiles.bytes_per_second.p50`, or `pool.phases.first_byte.p99`.
+- The figure by its place: for example `percentiles.bytes_per_second.p50`, or `pool.phases.total.p99`.
 - The group's letter, when the figure is a group's.
 - The count behind it: for a `series` v1 percentile, its `count`; for a pooled `requests` v1 phase percentile, the phase's `count` and the pool's `runs`; for one Run's own, the phase's `count` and the Run.
 - The unit: nanoseconds of the Run's clock for a time, bytes per second for bytes per second.

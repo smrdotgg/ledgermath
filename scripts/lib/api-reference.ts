@@ -928,7 +928,7 @@ function exampleBlocks(root: Json, page: FilePage, source: ExampleSource): strin
 	}
 	const shown = excerpt(root, JSON.parse(text), root, "", cuts);
 	return [
-		`An excerpt, made by the generator, of the file at ${link(source.url)} (${count(source.bytes.length)} bytes) as LedgerMath's fixed sample took it on ${source.takenOn}; that address serves the file as it is now.`,
+		`An excerpt, made by the generator, of the file at ${link(source.url)} (${count(source.bytes.length)} bytes) as LedgerMath's fixed sample took it on ${source.takenOn}; ${page.writtenOnce ? "the file is never edited, so that address serves the same bytes." : "that address serves the file as it is now."}`,
 		exampleCode(formatJson(shown), "json", "JSON"),
 		leftOut(cuts),
 	];

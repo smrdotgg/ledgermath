@@ -33,6 +33,8 @@ export interface FilePage {
 	where: string[];
 	/** True for the API's own files of v1, whose schemas forbid no member they do not list. */
 	v1: boolean;
+	/** True for a kind of file that is written once and never edited, so that its address serves the bytes the sample holds; absent for one that changes in place. */
+	writtenOnce?: true;
 	/** What the fields below leave out on purpose, said at the head of the fields: members a schema leaves open. */
 	fieldsNote?: string;
 }
@@ -132,9 +134,10 @@ export const FILE_PAGES: readonly FilePage[] = [
 			"Address: `https://api.ledgermath.com/v1/prices/<yyyy-mm-dd>.json`, with the UTC date its fetch started; at most one for each day.",
 			"Reached from: the table of contents (`prices.files[].url`; the newest, `prices.newest.url`).",
 			"Links to: the versioned price list files of AWS it was cut from (`sources[].url`).",
-			"A price is cited by the file's path, as the table of contents gives it (`prices.files[].path`), the SKU and the rate code: see [Prices](/docs/prices).",
+			"A price is cited by the file's path, as the table of contents gives it (`prices.files[].path`), the SKU and the rate code: see [Prices](/docs/prices). The path is a name, not an address: the file is at the `url` the same entry gives.",
 		],
 		v1: false,
+		writtenOnce: true,
 		fieldsNote:
 			"The file and LedgerMath's own objects in it hold no member but those listed. AWS's objects (a source's `header`, each product, each term and its `termAttributes`, and each price dimension) are copied as AWS gives them, and may hold members this page does not list.",
 	},
@@ -153,6 +156,7 @@ export const FILE_PAGES: readonly FilePage[] = [
 			"Not a file of version 1: a Run file is evidence, written once, on the box that ran the binary, and never edited.",
 		],
 		v1: false,
+		writtenOnce: true,
 	},
 	{
 		file: "docs/api/events.md",
@@ -187,6 +191,13 @@ const BOOT =
 	"A boot is one fresh launch of an EC2 instance of one instance type: the box builds and runs the executions LedgerMath's schedule names for its type, then shuts down. An execution that runs normally leaves a Run.";
 
 /**
+ * The environment dump, as runner/run.py takes it (dump_sections, boot_sections, take_dump) and as
+ * methods/v1/facts.ts reads it: nothing more is said of what a Method does with it.
+ */
+const DUMP =
+	"**The environment dump.** Around every Run the box records what it reports about itself, raw: a Run file names two dumps by hash, `environment.before`, taken just before the binary was launched, and `environment.after`, taken just after it exited. Each hash names the dump's index, a blob at `https://api.ledgermath.com/blobs/sha256/<hex>`: a JSON object whose `schema` is `ledgermath.dump/1`, with `taken_at` and `sections`, which names each section by hash, `sha256:<hex>`; each section is a blob of its own, at the same template. So a reader goes from a Run file to a section in two fetches: the index, by `environment.before` or `environment.after`, then the section, by its hash in `sections`. A section is a JSON object of what the box read: mostly each file's text under the file's path, and each command's exit code and output under its command line, written `$ …`. The sections taken around every Run are `cpuid` (the raw cpuid leaves of every CPU, when the runner has its tool for them), `cpuinfo` (`/proc/cpuinfo`), `lscpu` (the output of `lscpu -J`: the processor's model, its count of CPUs, cores per socket and threads per core, its caches), `sys_cpu` (the CPUs' topology, caches, vulnerabilities, microcode, frequency scaling and idle states, from `/sys/devices/system/cpu`), `kernel` (its version and command line, the operating system's release, settings of the kernel and of its memory management, its clock source, `uname -a`), `memory` (`/proc/meminfo`, the load average, uptime, swap, pressure, and each memory node's meminfo), `devices` (the NVMe controllers, the disks and their queues, the machine's vendor, product and BIOS as its firmware names them, `lsblk`, `findmnt`, `xfs_info`), `block_stat` (each block device's I/O counters), `nvme_stats` (each Amazon NVMe disk's own counters and latency histograms), `network` (routes, MTUs, TCP and socket settings, resolver files, the network driver), `net_counters` (the network card's and the kernel's traffic counters), `process` (the runner's limits, cgroup and the CPUs it may run on), `packages` (every installed package and version) and `provider` (what the instance metadata service answered). Taken once per boot, and named in every index of that boot: `ec2_instance_type`, `ec2_volumes`, `ec2_instance`, `ec2_route_tables` and `ec2_vpc_endpoints` (what the EC2 API says of the instance type, the volumes attached, the instance and the path out of its subnet), and `provision` (the record of preparing the disks at boot). A section the box did not take is not named, so not every index names all of them. Method `series` v1 reads six sections of the before-dump (`cpuid`, `lscpu`, `sys_cpu`, `kernel`, `process`, `packages`) to put Runs into groups, and compares the hash of every section of the before-dump between consecutive Runs (its `split_on`, `not_split_on` and `differed`, on [Methods](/docs/methods)). The dump has no schema yet, so it has no page of its own here.";
+
+/**
  * The overview's words, with the API's own contract paragraphs quoted where `quote` puts them
  * (the generator passes the constants of scripts/lib/api.ts, never a copy) and the list of file
  * pages where `pages` puts it.
@@ -204,8 +215,8 @@ export function overviewBody(parts: {
 		"There is no server: every file is a static file. LedgerMath is scheduled to update the files several times a day. Run files, boot summaries, blobs and price files are written once and not changed; a month file's bytes change only for the causes the table of contents' `months` gives (quoted below). Every address a reader needs is written in the files: a reader never builds one from an id, but for three templates the table of contents gives, the address of a blob from its hash, of a Series' file from its id, and of a benchmark's list from the benchmark's name.",
 		"## How a reader walks it",
 		[
-			"1. **The table of contents**, [https://api.ledgermath.com/v1/index.json](https://api.ledgermath.com/v1/index.json) ([the page](/docs/api/table-of-contents)). It links the list of every Series (`series.url`), the price files (`prices`) and the schemas (`schemas`); it names benchmarks' lists with their counts, as many as fit its budget (`benchmarks.list`; `benchmarks.unlisted` counts the lists it does not name); and it gives the newest rounds of boots (`recent_rounds`).",
-			`2. **A benchmark's list**, \`https://api.ledgermath.com/v1/benchmarks/<benchmark>.json\` ([the page](/docs/api/benchmark-list)), at the address \`benchmarks.list[].url\` gives, or at \`benchmarks.benchmark_file_url_template\` with the benchmark's name. One row per Series it lists: its parameters, build, instance type and zone ID, its counts, a summary of each Method's figures, and the address of the Series' file (\`url\`). A list may leave rows out, and says how many (\`left_out\`), and ${NO_LIST}; [the list of every Series](/docs/api/series-list), \`https://api.ledgermath.com/v1/series.json\`, is the complete list.`,
+			"1. **The table of contents**, [https://api.ledgermath.com/v1/index.json](https://api.ledgermath.com/v1/index.json) ([the page](/docs/api/table-of-contents)). It links the list of every Series (`series.url`), the price files (`prices`) and the schemas (`schemas`); it names benchmarks' lists, as many as fit its budget, each by the benchmark's name (`benchmarks.list[].name`) with its address (`benchmarks.list[].url`) and how many Series it holds (`benchmarks.list[].series`), and `benchmarks.unlisted` counts the lists it does not name; and it gives the newest rounds of boots (`recent_rounds`).",
+			`2. **A benchmark's list**, \`https://api.ledgermath.com/v1/benchmarks/<benchmark>.json\` ([the page](/docs/api/benchmark-list)), at the address \`benchmarks.list[].url\` gives, or at \`benchmarks.benchmark_file_url_template\` with the benchmark's name. One row per Series it lists, under \`series\`: its id, parameters, build, instance type and zone ID, its counts, a summary of each Method's figures, and the address of the Series' file (\`url\`). A list may leave rows out, and says how many (\`left_out\`), and ${NO_LIST}; [the list of every Series](/docs/api/series-list), \`https://api.ledgermath.com/v1/series.json\`, is the complete list.`,
 			"3. **A Series' file**, `https://api.ledgermath.com/v1/series/<id>.json` ([the page](/docs/api/series)), at its row's `url`, or at `series.series_file_url_template` with the Series' id. Each Method's summary figures and definitions, its groups, the points of its newest Runs, and `months`: each month a Run of the Series started in, with the month file's address, sha256 and size.",
 			"4. **A month file**, `https://api.ledgermath.com/v1/series/<id>/<yyyy-mm>.json` ([the page](/docs/api/series-month)), at `months[].url`. Every point of the Runs that started that month. Check its sha256 against the one `months` lists before using it (below).",
 			"5. **The evidence.** Each point links its Run file (`evidence`), `https://api.ledgermath.com/runs/<yyyy>/<mm>/<dd>/<id>.json` ([the page](/docs/api/run)), and its boot's summary (`boot_summary`), `https://api.ledgermath.com/boots/<yyyy>/<mm>/<dd>/<boot>.json` (below), which is null when there is no boot summary the API can link. A Run file names by hash, `sha256:<hex>`, its binary, its source archive, its runner, its resolved compiler flags, its stdout, its stderr and its dumps; each is a blob at `https://api.ledgermath.com/blobs/sha256/<hex>`, the table of contents' `evidence.blob_url_template`. The stdout blob is what the binary printed, each line meant to be one event ([the page](/docs/api/events)).",
@@ -218,7 +229,7 @@ export function overviewBody(parts: {
 			"2. If they differ, fetch the Series file again, then the month file, and compare again.",
 			"3. While they still differ, use neither, and try again later.",
 		].join("\n"),
-		"LedgerMath's own lookup tool follows it at a web address: it reads the Series file and the month file up to three times in all, two seconds apart, and while they still differ uses neither and says to try again in a few minutes. A copy of a month file kept from earlier is current while its sha256 is the one the Series file lists now. The table of contents gives the contract in full, with when a month file changes:",
+		"A copy of a month file kept from earlier is current while its sha256 is the one the Series file lists now. The table of contents gives the contract in full, with when a month file changes:",
 		quote(quotes.months, "`months`, in the table of contents"),
 		"The table of contents, a benchmark's list, the list of every Series and a Series' file can be of different updates too, and the table of contents says what a reader does then:",
 		quote(quotes.listUpdates, "from `benchmarks.about`, in the table of contents"),
@@ -230,6 +241,7 @@ export function overviewBody(parts: {
 		"## The evidence",
 		quote(quotes.evidence, "`evidence.about`, in the table of contents"),
 		`**The boot summary.** ${BOOT} At the end, the box writes one boot summary, at \`https://api.ledgermath.com/boots/<yyyy>/<mm>/<dd>/<boot>.json\`, dated by the UTC day the runner started. Its parts are \`runs\`, the Runs the boot left; \`not_run\`, the executions it did not start because it was told to stop or a Service's inputs could not be had, each with the reason; \`build_failures\`, the builds that failed and the binaries that could not be started; \`left_out\`, the executions of entries that are for other instance types; and \`error\`, when the runner stopped on one. The summary is not a complete account in every case: a boot that was cut off, or that stopped on an error, can leave executions it does not list, Runs with no summary, or no summary, so an absence proves nothing. A point links its boot's summary as \`boot_summary\`, null when there is no boot summary the API can link. The boot summary has no schema yet, so it has no page of its own here.`,
+		DUMP,
 		"## The files",
 		parts.pages,
 	];
@@ -245,7 +257,7 @@ export const MACHINES = {
 	boot: `${BOOT} See the [glossary](/docs/glossary); Runs and boot summaries are described in [the data API](/docs/api/).`,
 	columns: "| Instance type | vCPUs | Zone | Scheduled boots (UTC) |",
 	after:
-		"vCPUs is the type's default number of vCPUs, as the schedule declares it. The zone is named as the schedule names it. A Series is keyed by the zone's ID, not its name; a Run's `provider` gives each where the box could read it from the instance metadata service (`availability_zone_id`, `availability_zone`).",
+		"vCPUs is the type's default number of vCPUs, as the schedule declares it. The zone is named as the schedule names it; a Series is keyed by the zone's ID, not its name. The ID is in every Series' row and file (`availability_zone_id`), and a Run's `provider` gives both where the box could read them from the instance metadata service (`availability_zone_id`, `availability_zone`). The schedule names no processor and no count of cores or threads: each Run's environment dump records them, in its section `lscpu` (the processor's model name, its CPUs, cores per socket and threads per core), with the topology in its section `sys_cpu` (the environment dump, on [the data API](/docs/api/)). The catalog words a price file holds for a type (`physicalProcessor`, `vcpu`, `memory`) are AWS's, and need not name what a box recorded: for `m5.large`, AWS's words name the Intel Xeon Platinum 8175, and each of the 65 boots of it checked, from 2026-11-11 to 2026-11-26, recorded the Xeon Platinum 8259CL in its section `lscpu`.",
 	someTypesHeading: "## Benchmarks for some types only",
 	someTypes: "Every entry of the schedule is for every type above, except these, each of which names the types it is for:",
 } as const;
