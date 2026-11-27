@@ -132,21 +132,35 @@ function proseLines(text: string): Array<{ line: string; at: number }> {
  * Each field entry of a page: the shared shape whose section holds it (none for the section
  * "Fields"), the path its heading names, and the words up to the next heading.
  */
-function entries(text: string): Array<{ shape?: string; path: string; words: string }> {
+function entries(text: string): Array<{ shape?: string; condition?: string; path: string; words: string }> {
 	const lines = text.split("\n");
 	const prose = proseLines(text);
-	const found: Array<{ shape?: string; path: string; words: string }> = [];
+	const found: Array<{ shape?: string; condition?: string; path: string; words: string }> = [];
 	let shape: string | undefined;
+	// The heading of the condition a field stands under ("When `event` is …"), and its level: a later heading of that level or higher ends it.
+	let condition: { text: string; level: number } | undefined;
 	prose.forEach(({ line, at }, i) => {
-		if (/^## /.test(line)) shape = undefined;
+		const level = /^(#{1,6}) /.exec(line)?.[1]?.length;
+		if (level === undefined) return;
+		if (level === 2) shape = undefined;
 		const section = /^### Shape (`+)(.+?)\1$/.exec(line);
 		if (section !== null) shape = (section[2] as string).trim();
+		if (condition !== undefined && level <= condition.level) condition = undefined;
+		if (/^#{1,6} (When|Otherwise) /.test(line)) condition = { text: line.replace(/^#+ /, ""), level };
 		const heading = /^#{3,6} (`+)(.+?)\1$/.exec(line);
 		if (heading === null) return;
 		const next = prose.slice(i + 1).find((candidate) => /^#{1,6} /.test(candidate.line));
-		found.push({ shape, path: (heading[2] as string).trim(), words: plainText(lines.slice(at + 1, next?.at ?? lines.length).join("\n")) });
+		found.push({ shape, condition: condition?.text, path: (heading[2] as string).trim(), words: plainText(lines.slice(at + 1, next?.at ?? lines.length).join("\n")) });
 	});
 	return found;
+}
+
+/** Whether a heading names the condition an if gives: each member it tests, with the value it requires. */
+function namesCondition(heading: string | undefined, condition: Json | undefined): boolean {
+	if (condition === undefined) return heading === undefined;
+	if (heading === undefined || !heading.startsWith("When ")) return false;
+	const tests = isObject(condition.properties) ? Object.entries(condition.properties) : [];
+	return tests.length > 0 && tests.every(([name, test]) => isObject(test) && "const" in test && heading.includes(`\`${name}\``) && heading.includes(JSON.stringify(test.const)));
 }
 
 /** The shared shapes a page describes, by name. */
@@ -203,59 +217,75 @@ interface Field {
 	/** The definition it is declared in, if any, and its path from the root or within that definition. */
 	definition?: string;
 	steps: Step[];
+	/** The if whose then declares it (or whose else, with otherwise true), if any. */
+	condition?: Condition;
 	words: string;
 }
 
-/** Where each definition is named from: the definition holding the $ref (none for the root's fields), and the path of the $ref within it. */
-type Sites = Map<string, Array<{ definition?: string; steps: Step[] }>>;
+type Condition = { if: Json; otherwise: boolean };
+
+/** Where each definition is named from: the definition holding the $ref (none for the root's fields), the path of the $ref within it, and the condition it stands under. */
+type Sites = Map<string, Array<{ definition?: string; steps: Step[]; condition?: Condition }>>;
 
 /**
  * Every field of a schema, found where the description test looks: under each field, an array's
  * elements, each branch of anyOf, oneOf and allOf, then and else, and each definition; and where
- * each definition is named from, found in the same places.
+ * each definition is named from, found in the same places. A field declared under a then or an
+ * else carries that condition.
  */
 function fieldsOf(schema: Json): { fields: Field[]; sites: Sites } {
 	const found: Field[] = [];
 	const sites: Sites = new Map();
-	const field = (node: unknown, steps: Step[], definition: string | undefined): void => {
+	const field = (node: unknown, steps: Step[], definition: string | undefined, condition: Condition | undefined): void => {
 		if (!isObject(node)) return;
 		const rendered = renderSteps(steps);
 		const words = wordsOf(node, schema);
 		if (words === undefined) throw new Error(`${rendered} has no words`);
-		found.push({ where: definition === undefined ? rendered : `$defs.${definition}${rendered.startsWith("[") ? "" : "."}${rendered}`, definition, steps, words });
-		walk(node, steps, definition);
+		found.push({ where: definition === undefined ? rendered : `$defs.${definition}${rendered.startsWith("[") ? "" : "."}${rendered}`, definition, steps, condition, words });
+		walk(node, steps, definition, condition);
 	};
-	const walk = (node: unknown, steps: Step[], definition: string | undefined): void => {
+	const walk = (node: unknown, steps: Step[], definition: string | undefined, condition: Condition | undefined): void => {
 		if (!isObject(node)) return;
 		const named = typeof node.$ref === "string" ? /^#\/\$defs\/([^/]+)$/.exec(node.$ref)?.[1] : undefined;
-		if (named !== undefined) sites.set(named, [...(sites.get(named) ?? []), { definition, steps }]);
-		if (isObject(node.properties)) for (const [name, member] of Object.entries(node.properties)) field(member, [...steps, { name }], definition);
-		if (isObject(node.patternProperties)) for (const [pattern, member] of Object.entries(node.patternProperties)) field(member, [...steps, { pattern }], definition);
-		for (const keyword of ["additionalProperties", "unevaluatedProperties"]) if (isObject(node[keyword])) field(node[keyword], [...steps, { any: true }], definition);
-		for (const keyword of ["items", "contains", "unevaluatedItems"]) if (isObject(node[keyword])) walk(node[keyword], [...steps, { item: true }], definition);
-		if (Array.isArray(node.prefixItems)) for (const item of node.prefixItems) walk(item, [...steps, { item: true }], definition);
-		for (const keyword of ["anyOf", "oneOf", "allOf"]) if (Array.isArray(node[keyword])) for (const branch of node[keyword] as unknown[]) walk(branch, steps, definition);
-		for (const keyword of ["then", "else"]) walk(node[keyword], steps, definition);
-		if (isObject(node.dependentSchemas)) for (const branch of Object.values(node.dependentSchemas)) walk(branch, steps, definition);
-		for (const keyword of ["$defs", "definitions"]) if (isObject(node[keyword])) for (const [name, inner] of Object.entries(node[keyword] as Json)) walk(inner, [], name);
+		if (named !== undefined) sites.set(named, [...(sites.get(named) ?? []), { definition, steps, condition }]);
+		if (isObject(node.properties)) for (const [name, member] of Object.entries(node.properties)) field(member, [...steps, { name }], definition, condition);
+		if (isObject(node.patternProperties)) for (const [pattern, member] of Object.entries(node.patternProperties)) field(member, [...steps, { pattern }], definition, condition);
+		for (const keyword of ["additionalProperties", "unevaluatedProperties"]) if (isObject(node[keyword])) field(node[keyword], [...steps, { any: true }], definition, condition);
+		for (const keyword of ["items", "contains", "unevaluatedItems"]) if (isObject(node[keyword])) walk(node[keyword], [...steps, { item: true }], definition, condition);
+		if (Array.isArray(node.prefixItems)) for (const item of node.prefixItems) walk(item, [...steps, { item: true }], definition, condition);
+		for (const keyword of ["anyOf", "oneOf", "allOf"]) if (Array.isArray(node[keyword])) for (const branch of node[keyword] as unknown[]) walk(branch, steps, definition, condition);
+		if (isObject(node.if)) {
+			walk(node.then, steps, definition, { if: node.if, otherwise: false });
+			walk(node.else, steps, definition, { if: node.if, otherwise: true });
+		} else for (const keyword of ["then", "else"]) walk(node[keyword], steps, definition, condition);
+		if (isObject(node.dependentSchemas)) for (const branch of Object.values(node.dependentSchemas)) walk(branch, steps, definition, condition);
+		for (const keyword of ["$defs", "definitions"]) if (isObject(node[keyword])) for (const [name, inner] of Object.entries(node[keyword] as Json)) walk(inner, [], name, undefined);
 	};
-	walk(schema, [], undefined);
+	walk(schema, [], undefined, undefined);
 	return { fields: found, sites };
 }
 
 /**
  * Where a page must show a field: in the section of the shared shape its definition is (its path
  * written from `…`), or, for a definition written out where it is used, at each place it is named
- * from, followed back to the root or to the shared shape that holds that place.
+ * from, followed back to the root or to the shared shape that holds that place; and under the
+ * heading of the condition it stands under (its own, or else its definition's place's), if any.
  */
-function placesOf(field: Field, sites: Sites, shapes: ReadonlySet<string>): Array<{ shape?: string; path: string }> {
-	const expand = (definition: string | undefined, steps: Step[], seen: ReadonlySet<string>): Array<{ shape?: string; path: string }> => {
-		if (definition === undefined) return [{ path: renderSteps(steps) }];
-		if (shapes.has(definition)) return [{ shape: definition, path: renderSteps([{ shape: true }, ...steps]) }];
+function placesOf(field: Field, sites: Sites, shapes: ReadonlySet<string>): Array<{ shape?: string; path: string; condition?: Condition }> {
+	const expand = (definition: string | undefined, steps: Step[], condition: Condition | undefined, seen: ReadonlySet<string>): Array<{ shape?: string; path: string; condition?: Condition }> => {
+		if (definition === undefined) return [{ path: renderSteps(steps), condition }];
+		if (shapes.has(definition)) return [{ shape: definition, path: renderSteps([{ shape: true }, ...steps]), condition }];
 		if (seen.has(definition)) return [];
-		return (sites.get(definition) ?? []).flatMap((site) => expand(site.definition, [...site.steps, ...steps], new Set([...seen, definition])));
+		return (sites.get(definition) ?? []).flatMap((site) => expand(site.definition, [...site.steps, ...steps], condition ?? site.condition, new Set([...seen, definition])));
 	};
-	return expand(field.definition, field.steps, new Set());
+	return expand(field.definition, field.steps, field.condition, new Set());
+}
+
+/** Whether an entry's condition heading is the one a place stands under: none for none; "Otherwise" for an else; for a then, a "When" heading naming what its if tests. */
+function underCondition(heading: string | undefined, condition: Condition | undefined): boolean {
+	if (condition === undefined) return heading === undefined;
+	if (condition.otherwise) return heading !== undefined && heading.startsWith("Otherwise ");
+	return namesCondition(heading, condition.if);
 }
 
 /** Every field of SCHEMA that PAGE does not show in full at each place it owns: an empty list when the page holds them all. */
@@ -268,8 +298,9 @@ function missingFields(schema: Json, text: string): string[] {
 		const places = placesOf(field, sites, shapesOf(text));
 		if (places.length === 0) missing.push(`${field.where}: no place on the page`);
 		for (const place of places) {
-			const at = shown.filter((entry) => entry.shape === place.shape && entry.path === place.path);
-			const where = `${place.path}${place.shape === undefined ? "" : ` in shape ${place.shape}`}`;
+			const at = shown.filter((entry) => entry.shape === place.shape && entry.path === place.path && underCondition(entry.condition, place.condition));
+			const when = place.condition === undefined ? "" : ` under the condition ${JSON.stringify(place.condition.if)}${place.condition.otherwise ? " (otherwise)" : ""}`;
+			const where = `${place.path}${place.shape === undefined ? "" : ` in shape ${place.shape}`}${when}`;
 			if (at.length === 0) missing.push(`${field.where}: no entry ${where}`);
 			else if (!at.some((entry) => entry.words.includes(words))) missing.push(`${field.where}: its words are not in full under ${where}`);
 		}
@@ -565,6 +596,9 @@ describe("the fixed sample", () => {
 			if (one.sample === "events") {
 				expect(example.info).toBe("jsonl");
 				const stream = sampleLines().map((line) => JSON.parse(line));
+				// One line for each kind of universal event the stream holds, and no kind twice.
+				const kinds = example.body.split("\n").map((line) => String((JSON.parse(line) as Json).event)).filter((name) => UNIVERSAL.includes(name));
+				expect(kinds.sort()).toEqual(UNIVERSAL.filter((name) => stream.some((event) => event.event === name)).sort());
 				for (const line of example.body.split("\n")) {
 					const shown = JSON.parse(line) as Json;
 					const source = stream.find((event) => event.event === shown.event && event.t === shown.t);

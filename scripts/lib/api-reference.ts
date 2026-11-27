@@ -778,17 +778,18 @@ function elementSchema(schemas: readonly Json[], index: number): unknown {
 	return undefined;
 }
 
-/** A member's schema that is a shape and nothing else, no words of its own: { "$ref": … }. Members named with one such schema are alike, as a list's elements are. */
+/** A member's schema that is nothing but a reference to a definition: { "$ref": … } and no other keyword. Members whose schemas are each such a reference, to one and the same definition, are alike, as a list's elements are. */
 const shapeOnly = (schema: unknown): schema is Json => isObject(schema) && typeof schema.$ref === "string" && Object.keys(schema).length === 1;
 
 /**
  * An excerpt of a value, made by one rule and noted in CUTS: a list keeps its first element
  * (a list of plain values whose JSON takes at most SHORT_LIST characters is kept whole); an
- * object keeps every member its schema names but that of the members it names with one shape
- * and no words of their own (a request's eight phases) it keeps the first, and of its members of
- * any name the first, while their JSON takes at most MEMBERS_BUDGET bytes, and at least one; a
- * string longer than STRING_CUT characters keeps its first STRING_CUT and ends with "…".
- * Nothing else changes.
+ * object keeps every member its schema names, but of members whose schemas are each nothing
+ * but a reference to one and the same definition (a request's eight phases) it keeps the first,
+ * and of its members whose names its schema does not fix the first, then each next while their
+ * values take at most MEMBERS_BUDGET bytes of JSON; a string longer than STRING_CUT characters
+ * keeps its first STRING_CUT and ends with "…". Nothing else changes. EXCERPT_RULE says this in
+ * words, and the pages print it.
  */
 export function excerpt(root: Json, value: unknown, schema: unknown, path: string, cuts: Cut[]): unknown {
 	const place = path === "" ? "the file" : path;
@@ -838,7 +839,7 @@ export function excerpt(root: Json, value: unknown, schema: unknown, path: strin
 			bytes += size;
 			out[key] = excerpt(root, member, inner, at, cuts);
 		}
-		for (const members of alike.values()) if (members > 1) cuts.push({ path: place, what: `the first of its ${count(members)} members of one shape` });
+		for (const members of alike.values()) if (members > 1) cuts.push({ path: place, what: `the first of its ${count(members)} members whose schemas are the same reference` });
 		if (kept < anyName) cuts.push({ path: place, what: `${count(kept)} of its ${count(anyName)} members whose names its schema does not fix` });
 		return out;
 	}
@@ -860,7 +861,7 @@ const link = (url: string): string => `[${url}](${url})`;
 /** The rule excerpt() follows, in words: what the page prints with every list of what an example left out. */
 export const EXCERPT_RULE =
 	`The excerpt is made by one rule, applied at every depth, and changes nothing else. A list of more than one element keeps its first, unless every element is a string, a number, true, false or null and the list takes at most ${SHORT_LIST} characters as JSON: then it is kept whole. ` +
-	"An object keeps every member its schema names, but of members its schema names with one and the same shape and no words of their own (such as a request's eight phases) it keeps the first. " +
+	"An object keeps every member its schema names, but of members whose schemas are each nothing but a reference to one and the same definition (such as a request's eight phases), it keeps the first. " +
 	`Of an object's members whose names its schema does not fix, it keeps the first, then each next one while the values kept, as excerpted, take at most ${MEMBERS_BUDGET} bytes as JSON, and none after the first that does not fit. ` +
 	`A string longer than ${STRING_CUT} characters keeps its first ${STRING_CUT} and ends with …`;
 

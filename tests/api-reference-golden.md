@@ -43,7 +43,7 @@ An excerpt, made by the generator, of the file at [https://api.ledgermath.com/v1
 <details>
 <summary>What the excerpt leaves out, in 2 places</summary>
 
-The excerpt is made by one rule, applied at every depth, and changes nothing else. A list of more than one element keeps its first, unless every element is a string, a number, true, false or null and the list takes at most 120 characters as JSON: then it is kept whole. An object keeps every member its schema names, but of members its schema names with one and the same shape and no words of their own (such as a request's eight phases) it keeps the first. Of an object's members whose names its schema does not fix, it keeps the first, then each next one while the values kept, as excerpted, take at most 300 bytes as JSON, and none after the first that does not fit. A string longer than 160 characters keeps its first 160 and ends with …
+The excerpt is made by one rule, applied at every depth, and changes nothing else. A list of more than one element keeps its first, unless every element is a string, a number, true, false or null and the list takes at most 120 characters as JSON: then it is kept whole. An object keeps every member its schema names, but of members whose schemas are each nothing but a reference to one and the same definition (such as a request's eight phases), it keeps the first. Of an object's members whose names its schema does not fix, it keeps the first, then each next one while the values kept, as excerpted, take at most 300 bytes as JSON, and none after the first that does not fit. A string longer than 160 characters keeps its first 160 and ends with …
 
 - `items`: its first element of 3
 - `tags.note`: its first 160 of 400 characters

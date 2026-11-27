@@ -53,7 +53,7 @@ export const FILE_PAGES: readonly FilePage[] = [
 		where: [
 			"Address: [https://api.ledgermath.com/v1/index.json](https://api.ledgermath.com/v1/index.json), the one address a reader needs to know.",
 			"Reached from: the list of every Series, each benchmark's list, each Series file and each month file name it (`index`).",
-			"Links to: the list of every Series (`series.url`); the benchmarks' lists it names (`benchmarks.list[].url`), as many as fit its budget, `benchmarks.unlisted` saying how many lists it does not name; the list of any benchmark that has one, by the benchmark's name (`benchmarks.benchmark_file_url_template`); any Series' file, by the Series' id (`series.series_file_url_template`); the price files (`prices.files[].url`, the newest also at `prices.newest.url`); the schemas (`schemas[].url`, and the `schema_url` of each kind); the summaries of the first 12 boots of each of the newest rounds (`recent_rounds.rounds[].by_boot[].boot_summary`; a round's figures count all its boots), and of the newest 8 boot summaries left out of every round, when the API serves them (`recent_rounds.left_out.summaries[].boot_summary`); and any blob, by its hash (`evidence.blob_url_template`).",
+			"Links to: the list of every Series (`series.url`); the benchmarks' lists it names (`benchmarks.list[].url`), as many as fit its budget, `benchmarks.unlisted` saying how many lists it does not name; the list of any benchmark that has one, by the benchmark's name (`benchmarks.benchmark_file_url_template`); any Series' file, by the Series' id (`series.series_file_url_template`); the price files (`prices.files[].url`, the newest also at `prices.newest.url`); the schemas (`schemas[].url`); the summaries of the first 12 boots of each of the newest rounds (`recent_rounds.rounds[].by_boot[].boot_summary`; a round's figures count all its boots), and of eight of the boot summaries in no round, the last by path, when the API serves them (`recent_rounds.left_out.summaries[].boot_summary`); and any blob, by its hash (`evidence.blob_url_template`).",
 			"Changes: with the data; no promise covers its bytes.",
 		],
 		v1: true,
@@ -101,7 +101,7 @@ export const FILE_PAGES: readonly FilePage[] = [
 		where: [
 			"Address: `https://api.ledgermath.com/v1/series/<id>.json`, with the Series' id, 12 lower-case hex digits.",
 			"Reached from: a row's `url`, in the list of every Series or a benchmark's list; or the table of contents' template `series.series_file_url_template` with the Series' id.",
-			"Links to: each of its month files (`months[].url`); the table of contents (`index`); its schema (`schema_url`); and, for each of its newest points, its Run file (`evidence`) and its boot's summary (`boot_summary`, null when LedgerMath holds none).",
+			"Links to: each of its month files (`months[].url`); the table of contents (`index`); its schema (`schema_url`); and, for each of its newest points, its Run file (`evidence`) and its boot's summary (`boot_summary`, null when there is no boot summary the API can link).",
 		],
 		v1: true,
 	},
@@ -112,11 +112,11 @@ export const FILE_PAGES: readonly FilePage[] = [
 		sample: "series-month",
 		title: "A month file",
 		intro:
-			"`v1/series/<id>/<yyyy-mm>.json` holds every point of the Runs of one Series that started in one month (UTC), each with its Run file's sha256 and address, and its boot summary's address when LedgerMath holds one; and Method `series` v1's entries of what differed between consecutive Runs.",
+			"`v1/series/<id>/<yyyy-mm>.json` holds every point of the Runs of one Series that started in one month (UTC), each with its Run file's sha256 and address, and its boot summary's address when there is one the API can link; and Method `series` v1's entries of what differed between consecutive Runs.",
 		where: [
 			"Address: `https://api.ledgermath.com/v1/series/<id>/<yyyy-mm>.json`, with the Series' id and the month.",
 			"Reached from: its Series' file (`months[].url`), which also gives the month file's `sha256` and size in `bytes`: a reader checks the file it fetched against them ([what to do when they differ](/docs/api/)).",
-			"Links to: its Series' file (`series_url`); the table of contents (`index`); its schema (`schema_url`); each point's Run file (`evidence`) and its boot's summary (`boot_summary`, null when LedgerMath holds none).",
+			"Links to: its Series' file (`series_url`); the table of contents (`index`); its schema (`schema_url`); each point's Run file (`evidence`) and its boot's summary (`boot_summary`, null when there is no boot summary the API can link).",
 		],
 		v1: true,
 	},
@@ -182,9 +182,9 @@ export const OVERVIEW = {
 		"LedgerMath's data API, at `https://api.ledgermath.com`, is a tree of static JSON files: the table of contents, the list of every Series, the benchmarks' lists, a file per Series and per month of it, and the price files, at most one a day, each kind with a JSON schema, which a reader reaches by following links from the table of contents; and, linked from them, the evidence behind the numbers: Run files, boot summaries and blobs.",
 } as const;
 
-/** The boot, as the glossary says it. */
+/** The boot, in the words agreed for it: what it is and what an execution leaves, and no account of how a boot can fail. */
 const BOOT =
-	"A boot is one fresh launch of an EC2 instance of one instance type. The box builds the benchmarks it is to run and runs each execution LedgerMath's schedule names for its instance type, then shuts down, which terminates the instance. An execution that ran to its end leaves a Run, whatever its binary did, unless writing the Run failed (a full disk, say), which stops the boot with that error. An execution that never started has no Run: its build failed, its binary could not be started, its Service's inputs could not be had, or the boot was told to stop, stopped on an error or was cut off before it. A boot cut off may leave neither a Run for the execution in flight nor a boot summary, and nothing leaves the machine until the end of the boot, so a machine lost before then leaves no Run at all.";
+	"A boot is one fresh launch of an EC2 instance of one instance type: the box builds and runs the executions LedgerMath's schedule names for its type, then shuts down. An execution that runs normally leaves a Run.";
 
 /**
  * The overview's words, with the API's own contract paragraphs quoted where `quote` puts them
@@ -201,14 +201,14 @@ export function overviewBody(parts: {
 		"## What it is",
 		"The table of contents describes LedgerMath and the API in its own words:",
 		quote(quotes.about, "`about`, in the table of contents"),
-		"There is no server: every file is a static file. LedgerMath is scheduled to update the files several times a day. An update changes the bytes only of the files whose data changed, unless LedgerMath changed how the files are written (`layout`, below); a Run file, a boot summary, a blob and a price file are each written once and never changed. Every address a reader needs is written in the files: a reader never builds one from an id, but for three templates the table of contents gives, the address of a blob from its hash, of a Series' file from its id, and of a benchmark's list from the benchmark's name.",
+		"There is no server: every file is a static file. LedgerMath is scheduled to update the files several times a day. Run files, boot summaries, blobs and price files are written once and not changed; a month file's bytes change only for the causes the table of contents' `months` gives (quoted below). Every address a reader needs is written in the files: a reader never builds one from an id, but for three templates the table of contents gives, the address of a blob from its hash, of a Series' file from its id, and of a benchmark's list from the benchmark's name.",
 		"## How a reader walks it",
 		[
 			"1. **The table of contents**, [https://api.ledgermath.com/v1/index.json](https://api.ledgermath.com/v1/index.json) ([the page](/docs/api/table-of-contents)). It links the list of every Series (`series.url`), the price files (`prices`) and the schemas (`schemas`); it names benchmarks' lists with their counts, as many as fit its budget (`benchmarks.list`; `benchmarks.unlisted` counts the lists it does not name); and it gives the newest rounds of boots (`recent_rounds`).",
 			`2. **A benchmark's list**, \`https://api.ledgermath.com/v1/benchmarks/<benchmark>.json\` ([the page](/docs/api/benchmark-list)), at the address \`benchmarks.list[].url\` gives, or at \`benchmarks.benchmark_file_url_template\` with the benchmark's name. One row per Series it lists: its parameters, build, instance type and zone ID, its counts, a summary of each Method's figures, and the address of the Series' file (\`url\`). A list may leave rows out, and says how many (\`left_out\`), and ${NO_LIST}; [the list of every Series](/docs/api/series-list), \`https://api.ledgermath.com/v1/series.json\`, is the complete list.`,
 			"3. **A Series' file**, `https://api.ledgermath.com/v1/series/<id>.json` ([the page](/docs/api/series)), at its row's `url`, or at `series.series_file_url_template` with the Series' id. Each Method's summary figures and definitions, its groups, the points of its newest Runs, and `months`: each month a Run of the Series started in, with the month file's address, sha256 and size.",
 			"4. **A month file**, `https://api.ledgermath.com/v1/series/<id>/<yyyy-mm>.json` ([the page](/docs/api/series-month)), at `months[].url`. Every point of the Runs that started that month. Check its sha256 against the one `months` lists before using it (below).",
-			"5. **The evidence.** Each point links its Run file (`evidence`), `https://api.ledgermath.com/runs/<yyyy>/<mm>/<dd>/<id>.json` ([the page](/docs/api/run)), and its boot's summary (`boot_summary`), `https://api.ledgermath.com/boots/<yyyy>/<mm>/<dd>/<boot>.json` (below), which is null when LedgerMath holds no summary of the boot. A Run file names by hash, `sha256:<hex>`, its binary, its source archive, its runner, its resolved compiler flags, its stdout, its stderr and its dumps; each is a blob at `https://api.ledgermath.com/blobs/sha256/<hex>`, the table of contents' `evidence.blob_url_template`. The stdout blob is what the binary printed, each line meant to be one event ([the page](/docs/api/events)).",
+			"5. **The evidence.** Each point links its Run file (`evidence`), `https://api.ledgermath.com/runs/<yyyy>/<mm>/<dd>/<id>.json` ([the page](/docs/api/run)), and its boot's summary (`boot_summary`), `https://api.ledgermath.com/boots/<yyyy>/<mm>/<dd>/<boot>.json` (below), which is null when there is no boot summary the API can link. A Run file names by hash, `sha256:<hex>`, its binary, its source archive, its runner, its resolved compiler flags, its stdout, its stderr and its dumps; each is a blob at `https://api.ledgermath.com/blobs/sha256/<hex>`, the table of contents' `evidence.blob_url_template`. The stdout blob is what the binary printed, each line meant to be one event ([the page](/docs/api/events)).",
 		].join("\n"),
 		"The prices are beside the Series: at most one file a day, `https://api.ledgermath.com/v1/prices/<yyyy-mm-dd>.json` ([the page](/docs/api/prices)), listed in the table of contents (`prices.files`, the newest also as `prices.newest`); a price is cited by the file's path, the SKU and the rate code ([Prices](/docs/prices)). The machines LedgerMath measures are on [Machines](/docs/machines); the words it uses, such as Run, Series, boot and Method, in the [glossary](/docs/glossary); how each Method makes its numbers, on [Methods](/docs/methods).",
 		"## When a month file does not match its Series file",
@@ -229,7 +229,7 @@ export function overviewBody(parts: {
 		quote(quotes.figures, "`figures`, in the table of contents"),
 		"## The evidence",
 		quote(quotes.evidence, "`evidence.about`, in the table of contents"),
-		`**The boot summary.** ${BOOT} The boot summary is the file a boot writes as it ends, at \`https://api.ledgermath.com/boots/<yyyy>/<mm>/<dd>/<boot>.json\`, dated by the boot's start (UTC) and named by the boot's id, the kernel's boot id, which each Run of the boot gives as \`boot\` (\`unknown\` when the box could not read it). It names the instance, the source commit and the runner, and lists every Run the boot made with how its binary exited (\`runs\`), every build that failed or binary that could not be started (\`build_failures\`), every execution that was not run with why (\`not_run\`), and every execution left out because it runs on other instance types (\`left_out\`). A build that failed is listed once, for its benchmark and build, not for each of the executions it would have run. A boot that stopped on an unexpected error writes its summary with that error (\`error\`), listing only what it reached. A point links its boot's summary as \`boot_summary\`, null when none is held, and the table of contents links the summaries of the first 12 boots of each of its newest rounds. The boot summary has no schema yet, so it has no page of its own here.`,
+		`**The boot summary.** ${BOOT} At the end, the box writes one boot summary, at \`https://api.ledgermath.com/boots/<yyyy>/<mm>/<dd>/<boot>.json\`, dated by the UTC day the runner started. Its parts are \`runs\`, the Runs the boot left; \`not_run\`, the executions it did not start because it was told to stop or a Service's inputs could not be had, each with the reason; \`build_failures\`, the builds that failed and the binaries that could not be started; \`left_out\`, the executions of entries that are for other instance types; and \`error\`, when the runner stopped on one. The summary is not a complete account in every case: a boot that was cut off, or that stopped on an error, can leave executions it does not list, Runs with no summary, or no summary, so an absence proves nothing. A point links its boot's summary as \`boot_summary\`, null when there is no boot summary the API can link. The boot summary has no schema yet, so it has no page of its own here.`,
 		"## The files",
 		parts.pages,
 	];
@@ -242,10 +242,10 @@ export const MACHINES = {
 	title: "Machines",
 	intro: (count: number): string =>
 		`LedgerMath's schedule runs its benchmarks on ${count} EC2 instance types, each booted fresh at fixed times of day in one Availability Zone: this page lists each type with its vCPUs, its zone and the times the schedule boots it. A boot started by hand may be at another time, or of another type.`,
-	boot: `${BOOT} See the [glossary](/docs/glossary); the Runs and boot summaries a boot leaves are described in [the data API](/docs/api/).`,
+	boot: `${BOOT} See the [glossary](/docs/glossary); Runs and boot summaries are described in [the data API](/docs/api/).`,
 	columns: "| Instance type | vCPUs | Zone | Scheduled boots (UTC) |",
 	after:
-		"vCPUs is the type's default number of vCPUs, as the schedule declares it. The zone is named as the schedule names it. A Series is keyed by the zone's ID, not its name; a Run records both, as the box reads them from the instance metadata service (`provider.availability_zone_id`, `provider.availability_zone`).",
+		"vCPUs is the type's default number of vCPUs, as the schedule declares it. The zone is named as the schedule names it. A Series is keyed by the zone's ID, not its name; a Run's `provider` gives each where the box could read it from the instance metadata service (`availability_zone_id`, `availability_zone`).",
 	someTypesHeading: "## Benchmarks for some types only",
 	someTypes: "Every entry of the schedule is for every type above, except these, each of which names the types it is for:",
 } as const;
