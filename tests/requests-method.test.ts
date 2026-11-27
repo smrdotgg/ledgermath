@@ -1,9 +1,9 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { appendFileSync, cpSync, mkdtempSync, rmSync } from "node:fs";
+import { appendFileSync, cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
-import { codeDigest, memoryRecords, recordDigest, SCHEMA_FILES } from "../methods/records";
+import { codeDigest, memoryRecords, recordDigest, SCHEMA_FILES, withoutAnnotations } from "../methods/records";
 import * as requests from "../methods/requests/v1";
 import {
 	atOrAbove,
@@ -748,20 +748,153 @@ describe("the reduced record of a Run, kept between runs", () => {
 			expect(before).toBe(codeDigest([join(ROOT, "methods/requests/v1/record.ts")], SCHEMA_FILES).digest);
 			const touch = (path: string): void => appendFileSync(join(copy, path), "\n");
 			let last = before;
-			for (const path of ["methods/run.ts", "methods/v1/stream.ts", "methods/requests/v1/requests.ts", "methods/records.ts", "schemas/events.schema.json"]) {
+			for (const path of ["methods/run.ts", "methods/v1/stream.ts", "methods/requests/v1/requests.ts", "methods/records.ts"]) {
 				touch(path);
 				const now = digest();
 				expect(now).not.toBe(last);
 				last = now;
 			}
-			// What the reduction does not run leaves it as it was: the Derivations' shape, the derive step.
-			for (const path of ["methods/requests/v1/output.ts", "methods/requests/v1/index.ts", "methods/v1/index.ts"]) {
+			// A schema by what it accepts: a new member of the event schema changes it.
+			const events = join(copy, "schemas/events.schema.json");
+			const schema = JSON.parse(readFileSync(events, "utf8")) as { properties: Record<string, unknown> };
+			writeFileSync(events, `${JSON.stringify({ ...schema, properties: { ...schema.properties, added: { type: "string" } } }, null, 2)}\n`);
+			expect(digest()).not.toBe(last);
+			last = digest();
+			// What the reduction does not run leaves it as it was: the Derivations' shape, the derive step, and a schema reflowed.
+			for (const path of ["methods/requests/v1/output.ts", "methods/requests/v1/index.ts", "methods/v1/index.ts", "schemas/run.schema.json"]) {
 				touch(path);
 				expect(digest()).toBe(last);
 			}
 		} finally {
 			rmSync(copy, { recursive: true, force: true });
 		}
+	});
+
+	test("a schema's words leave the key as it was; what the schema accepts changes it", () => {
+		const copy = mkdtempSync(join(tmpdir(), "code-digest-words-"));
+		try {
+			cpSync(join(ROOT, "methods"), join(copy, "methods"), { recursive: true });
+			cpSync(join(ROOT, "schemas"), join(copy, "schemas"), { recursive: true });
+			const digest = (): string => codeDigest([join(copy, "methods/v1/record.ts")], SCHEMA_FILES, copy).digest;
+			type Json = Record<string, unknown>;
+			const edit = (path: string, change: (schema: Json) => Json): void => {
+				const file = join(copy, path);
+				writeFileSync(file, `${JSON.stringify(change(JSON.parse(readFileSync(file, "utf8")) as Json), null, 2)}\n`);
+			};
+			/** Every string-valued title and description, at any depth, reworded. */
+			const reword = (value: unknown): unknown => {
+				if (Array.isArray(value)) return value.map(reword);
+				if (typeof value !== "object" || value === null) return value;
+				return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, (key === "title" || key === "description") && typeof item === "string" ? `${item} Reworded.` : reword(item)]));
+			};
+			const before = digest();
+			for (const path of SCHEMA_FILES) {
+				// Every word reworded, and the file reflowed: one line, then four spaces.
+				edit(path, (schema) => reword(schema) as Json);
+				writeFileSync(join(copy, path), JSON.stringify(JSON.parse(readFileSync(join(copy, path), "utf8"))));
+				expect(digest()).toBe(before);
+				edit(path, (schema) => schema);
+				writeFileSync(join(copy, path), JSON.stringify(JSON.parse(readFileSync(join(copy, path), "utf8")), null, 4));
+				expect(digest()).toBe(before);
+			}
+			// The words removed altogether are no change either.
+			edit("schemas/events.schema.json", (schema) => withoutAnnotations(schema) as Json);
+			expect(digest()).toBe(before);
+
+			// What a schema accepts: each change below gives another digest, and undoing it gives the first back.
+			const run = JSON.parse(readFileSync(join(copy, "schemas/run.schema.json"), "utf8")) as Json & { properties: Record<string, Json>; required: string[] };
+			const changes: Array<[string, (schema: typeof run) => Json]> = [
+				["a type", (s) => ({ ...s, properties: { ...s.properties, id: { ...s.properties.id, type: "integer" } } })],
+				["a required list", (s) => ({ ...s, required: s.required.slice(1) })],
+				["a pattern", (s) => ({ ...s, properties: { ...s.properties, id: { ...s.properties.id, pattern: "^x$" } } })],
+				["a member added", (s) => ({ ...s, properties: { ...s.properties, added: { type: "string" } } })],
+				["the members in another order, which is the order a validator reports what is missing in", (s) => ({ ...s, properties: Object.fromEntries(Object.entries(s.properties).reverse()) })],
+			];
+			for (const [what, change] of changes) {
+				edit("schemas/run.schema.json", () => change(run));
+				expect({ what, same: digest() === before }).toEqual({ what, same: false });
+				edit("schemas/run.schema.json", () => run);
+				expect(digest()).toBe(before);
+			}
+		} finally {
+			rmSync(copy, { recursive: true, force: true });
+		}
+	});
+
+	test("a schema holding a number too large for a double is refused, plainly: it would be digested as null, the same as a schema that says null there", () => {
+		const copy = mkdtempSync(join(tmpdir(), "code-digest-infinite-"));
+		try {
+			cpSync(join(ROOT, "methods"), join(copy, "methods"), { recursive: true });
+			cpSync(join(ROOT, "schemas"), join(copy, "schemas"), { recursive: true });
+			const digest = (): string => codeDigest([join(copy, "methods/v1/record.ts")], SCHEMA_FILES, copy).digest;
+			const file = join(copy, "schemas/run.schema.json");
+			const original = readFileSync(file, "utf8");
+			const withEnum = (literal: string): string => original.replace(/^\{/, `{\n  "$comment": "x",\n  "properties_test": { "enum": [${literal}] },`);
+			// Written as text: 1e400 has no JSON.stringify form, and JSON.parse reads it as Infinity.
+			writeFileSync(file, withEnum("null"));
+			const sayingNull = digest();
+			for (const literal of ["1e400", "-1e400"]) {
+				writeFileSync(file, withEnum(literal));
+				expect(() => digest()).toThrow(
+					`schemas/run.schema.json: the number at /properties_test/enum/0 is too large for a double (it reads as ${literal.startsWith("-") ? "-" : ""}Infinity) and would be digested as null`,
+				);
+			}
+			// The two would have shared a digest without the refusal: the stripped schema of each, as JSON.
+			expect(JSON.stringify(withoutAnnotations(JSON.parse(withEnum("1e400"))))).toBe(JSON.stringify(withoutAnnotations(JSON.parse(withEnum("null")))));
+			// A large number a double holds is a number like any other.
+			writeFileSync(file, withEnum("1e300"));
+			expect(digest()).not.toBe(sayingNull);
+		} finally {
+			rmSync(copy, { recursive: true, force: true });
+		}
+	});
+
+	test("a schema's words are its string-valued titles and descriptions where a schema holds them, never a member so named, nor a value", () => {
+		const schema = {
+			$schema: "https://json-schema.org/draft/2020-12/schema",
+			title: "A thing",
+			description: "What it is.",
+			type: "object",
+			required: ["title", "description"],
+			properties: {
+				// Members named title and description: names, kept with their schemas, whose own words go.
+				title: { description: "Its title.", type: "string" },
+				description: { title: "Words", description: "AWS's words for it.", type: "string", minLength: 1 },
+				kind: { description: "A kind.", const: { description: "a value, not words" }, enum: [{ title: "a value too" }], default: { title: "and this" }, examples: [{ description: "and this" }] },
+				list: { description: "A list.", type: "array", items: { description: "One.", type: "string" }, prefixItems: [{ title: "First", type: "string" }] },
+				choice: { description: "One of two.", anyOf: [{ description: "A string.", type: "string" }, { type: "null", title: "None" }] },
+			},
+			patternProperties: { "^x_": { description: "Other members.", type: "string" } },
+			additionalProperties: { description: "Any other.", not: { description: "Never this.", type: "null" } },
+			if: { description: "When.", properties: { kind: { const: "a" } } },
+			then: { description: "Then.", required: ["list"] },
+			$defs: { description: { description: "A definition named description.", type: "string" }, title: { title: "Named title", type: "number" } },
+			// Not a string: not words, kept as it is.
+			$comment: "kept: not title or description",
+		};
+		expect(withoutAnnotations(schema)).toEqual({
+			$schema: "https://json-schema.org/draft/2020-12/schema",
+			type: "object",
+			required: ["title", "description"],
+			properties: {
+				title: { type: "string" },
+				description: { type: "string", minLength: 1 },
+				kind: { const: { description: "a value, not words" }, enum: [{ title: "a value too" }], default: { title: "and this" }, examples: [{ description: "and this" }] },
+				list: { type: "array", items: { type: "string" }, prefixItems: [{ type: "string" }] },
+				choice: { anyOf: [{ type: "string" }, { type: "null" }] },
+			},
+			patternProperties: { "^x_": { type: "string" } },
+			additionalProperties: { not: { type: "null" } },
+			if: { properties: { kind: { const: "a" } } },
+			then: { required: ["list"] },
+			$defs: { description: { type: "string" }, title: { type: "number" } },
+			$comment: "kept: not title or description",
+		});
+		// Booleans and anything that is not an object are schemas or values with no words.
+		expect(withoutAnnotations(true)).toBe(true);
+		expect(withoutAnnotations({ properties: { a: false } })).toEqual({ properties: { a: false } });
+		// The order of what remains is the schema's.
+		expect(Object.keys(withoutAnnotations({ b: 1, description: "x", a: 2 }) as object)).toEqual(["b", "a"]);
 	});
 
 	test("a record made by other code is never read: its key is another, and the stream is read again", async () => {

@@ -22,6 +22,7 @@ interface Step {
 	with?: Record<string, string>;
 	env?: Record<string, string>;
 	"working-directory"?: string;
+	"timeout-minutes"?: number;
 }
 
 interface Job {
@@ -288,12 +289,29 @@ describe("the runs workflow", () => {
 		expect(command).toContain("--records .cache/records");
 		const page = steps.find((step) => step.run?.includes("scripts/build-page.ts")) as Step;
 		expect(page.run).toContain("--requests page/requests-derivations.json");
-		const cache = steps.find((step) => step.uses?.startsWith("actions/cache@")) as Step;
-		expect((cache.with?.path ?? "").trim().split("\n").map((line) => line.trim())).toEqual([".cache/blobs", ".cache/records"]);
-		expect(cache.with?.key).toBe("derive-${{ github.run_id }}");
+		const paths = (step: Step): string[] => (step.with?.path ?? "").trim().split("\n").map((line) => line.trim());
+		const cache = steps.find((step) => step.uses?.startsWith("actions/cache/restore@")) as Step;
+		expect(paths(cache)).toEqual([".cache/blobs", ".cache/records"]);
+		// This attempt's key: a run attempted again saves its own work, not under a key an earlier attempt took.
+		expect(cache.with?.key).toBe("derive-${{ github.run_id }}-${{ github.run_attempt }}");
 		// Caches made before the records held stdout blobs: their prefix is never restored.
 		expect(cache.with?.["restore-keys"]).toBe("derive-");
 		expect(steps.indexOf(cache)).toBeLessThan(steps.indexOf(derive));
+		// Saved right after the derive step however it ended, cut off included, so a rebuild stopped part way resumes (#77); under the key restored with.
+		const save = steps.find((step) => step.uses?.startsWith("actions/cache/save@")) as Step;
+		expect(steps.indexOf(save)).toBe(steps.indexOf(derive) + 1);
+		expect(save.if).toBe("${{ always() && (steps.derive.outcome == 'success' || steps.derive.outcome == 'failure' || steps.derive.outcome == 'cancelled') }}");
+		expect(paths(save)).toEqual(paths(cache));
+		expect(save.with?.key).toBe(`\${{ steps.${cache.id}.outputs.cache-primary-key }}`);
+		expect(cache.id).toBe("derive-cache");
+		// One restore and one save, the same pinned action, and no other cache of the job.
+		expect(steps.filter((step) => step.uses?.startsWith("actions/cache")).length).toBe(2);
+		expect(save.uses?.split("@")[1]).toBe(cache.uses?.split("@")[1] as string);
+		// The derive step's own limit stops it with 20 of the job's minutes left: always() runs the save after the step
+		// is stopped, but no step runs once the job is out of time. The only step with a limit of its own.
+		expect(derive["timeout-minutes"]).toBe(40);
+		expect((job["timeout-minutes"] as number) - (derive["timeout-minutes"] as number)).toBeGreaterThanOrEqual(20);
+		expect(steps.filter((step) => step["timeout-minutes"] !== undefined)).toEqual([derive]);
 		// A failed Method still leaves the other's Derivations, the page and the artifact; the run ends failed all the same.
 		const ran = "${{ !cancelled() && (steps.derive.outcome == 'success' || steps.derive.outcome == 'failure') }}";
 		expect(derive.id).toBe("derive");
@@ -371,11 +389,11 @@ describe("the runs workflow", () => {
 		expect(JSON.stringify(job.env)).not.toMatch(/API_BUCKET|api-bucket/);
 		expect(JSON.stringify(job.env)).not.toMatch(publishing);
 		expect(job.needs).toBeUndefined();
-		// Room to reduce every stream again after the records' keys change (about 13 minutes on 2026-11-23): a job cut off saves no cache, and the next starts over.
+		// Room to reduce every stream again after the records' keys change; a job cut off still saves what its derive step made.
 		expect(job["timeout-minutes"]).toBe(60);
 		expect(steps.at(-1)?.run).toContain("bun scripts/alarm.ts");
-		// Its caches are saved by its own success, whatever any other job does.
-		expect(steps.some((step) => step.uses?.startsWith("actions/cache@"))).toBe(true);
+		// Its caches are saved by its own derive step having run, whatever any other job does.
+		expect(steps.some((step) => step.uses?.startsWith("actions/cache/save@"))).toBe(true);
 	});
 
 	test("the publish job runs after the first, only when it succeeded and API_BUCKET is set, with its own 15 minutes, its own minimal permissions, and one at a time against the bucket", () => {
@@ -460,6 +478,7 @@ describe("the runs workflow", () => {
 			"Commit and push them to the Runs repository",
 			"Keep the dump blobs and the streams' reduced records",
 			"Derive every Series (Method series v1) and every Series of requests (Method requests v1)",
+			"Save the dump blobs and the streams' reduced records, however the derive step ended",
 			"Build the page",
 			"Keep the page and the Derivations",
 			"Build the data API's files",
@@ -972,10 +991,11 @@ describe("every action in the workflows", () => {
 			const uses = text.split("\n").filter((line) => /^\s*(-\s+)?uses:/.test(line));
 			expect(uses.length).toBeGreaterThan(0);
 			for (const line of uses) {
-				const match = /^\s*(?:-\s+)?uses: ([\w.-]+\/[\w.-]+)@([0-9a-f]{40}) # (v\d+\.\d+\.\d+)$/.exec(line);
+				// An action, or one of its sub-actions (actions/cache/restore): the repository it is in is pinned.
+				const match = /^\s*(?:-\s+)?uses: ([\w.-]+\/[\w.-]+)(?:\/[\w.-]+)*@([0-9a-f]{40}) # (v\d+\.\d+\.\d+)$/.exec(line);
 				if (match === null) throw new Error(`${name}: not pinned to a commit with its version: ${line.trim()}`);
 				const [, action, sha, version] = match as unknown as [string, string, string, string];
-				// One action, one pin, across every file.
+				// One action, one pin, across every file and every sub-action of it.
 				expect(pins.get(action) ?? `${sha} ${version}`).toBe(`${sha} ${version}`);
 				pins.set(action, `${sha} ${version}`);
 			}

@@ -29,7 +29,7 @@
  * Same Run files and blobs in, same bytes out, records kept or not.
  */
 
-import { type RecordStore, type ReduceCounts, reduceStreams, type StreamReducer } from "../../records";
+import { eachAtMost, type RecordStore, type ReduceCounts, reduceStreams, type StreamReducer } from "../../records";
 import { canonicalJson, compareText, type FetchBlob, parseDumpIndex, type Run, type RunExit, type RunFile } from "../../run";
 import { countProblem } from "../../v1/stream";
 import {
@@ -189,16 +189,11 @@ export async function gather(files: readonly RunFile[], fetchBlob: FetchBlob, op
 	const blobs = new Map<string, Uint8Array>();
 	const fetchAll = async (hashes: Iterable<string>): Promise<void> => {
 		const wanted = [...new Set(hashes)].filter((hash) => !blobs.has(hash)).sort(compareText);
-		let next = 0;
-		const worker = async (): Promise<void> => {
-			while (next < wanted.length) {
-				const hash = wanted[next++] as string;
-				const bytes = await fetchBlob(hash);
-				if (bytes === null) throw new Error(`blob ${hash} cannot be fetched`);
-				blobs.set(hash, bytes);
-			}
-		};
-		await Promise.all(Array.from({ length: Math.min(concurrency, wanted.length) }, worker));
+		await eachAtMost(wanted, concurrency, async (hash) => {
+			const bytes = await fetchBlob(hash);
+			if (bytes === null) throw new Error(`blob ${hash} cannot be fetched`);
+			blobs.set(hash, bytes);
+		});
 	};
 	await fetchAll(mine.map(({ run }) => run.environment.before));
 	const sections: string[] = [];

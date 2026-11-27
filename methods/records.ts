@@ -7,11 +7,13 @@
  * `<method name>-v<version>-<code>`: the Method and version that made it, and
  * the first 16 hex digits of the digest of the code that made it (codeDigest:
  * the source text of the reducer's module and of every file it imports,
- * transitively, and of the schemas that code reads). Any change to that code,
+ * transitively, and what the schemas that code reads say a value must be,
+ * their titles and descriptions left out). Any change to that code,
  * remembered or not, gives a new key, so a record made by other code is never
  * read: its stream is fetched and reduced again. That is the cost of a change
  * to the code that reduces, every stream fetched once more, and it is
- * accepted: a record that may be wrong costs more than a fetch.
+ * accepted: a record that may be wrong costs more than a fetch. A schema's
+ * words change nothing the code computes, so they cost nothing.
  *
  * A record is kept with the sha256 of its own content. One found under its
  * key is used only when it parses, names its reducer and its blob, has that
@@ -72,13 +74,80 @@ function resolveImport(from: string, specifier: string): string {
 	throw new Error(`${relative(ROOT, from)} imports ${JSON.stringify(specifier)}, which is no .ts file`);
 }
 
+/** The keywords of a JSON Schema whose value is one schema. */
+const ONE_SCHEMA: ReadonlySet<string> = new Set(["items", "additionalItems", "contains", "additionalProperties", "unevaluatedProperties", "unevaluatedItems", "propertyNames", "if", "then", "else", "not"]);
+/** Those whose value is a list of schemas (items too, as older drafts wrote it). */
+const SCHEMA_LIST: ReadonlySet<string> = new Set(["allOf", "anyOf", "oneOf", "prefixItems", "items"]);
+/** Those whose value maps names to schemas: the names are a member's, a pattern's or a definition's, never a keyword. */
+const SCHEMA_MAP: ReadonlySet<string> = new Set(["properties", "patternProperties", "$defs", "definitions", "dependentSchemas"]);
+/** The annotations a schema's words are written in, which no validator reads. */
+const ANNOTATIONS: ReadonlySet<string> = new Set(["title", "description"]);
+
+/**
+ * A JSON Schema with its words taken out: every string-valued title and
+ * description where a schema can hold one, at its root and in every schema
+ * inside it (under properties, items, a branch, a definition…). A member
+ * named title or description is a name under properties, not an annotation,
+ * and stays with its schema; so does anything under const, enum, default or
+ * examples, which is a value, not a schema. The order of what remains is
+ * kept: a validator reports what a value lacks in the order the schema lists
+ * it, and those words go into a record's problems.
+ */
+export function withoutAnnotations(schema: unknown): unknown {
+	if (typeof schema !== "object" || schema === null || Array.isArray(schema)) return schema; // true, false, or not a schema
+	const kept: Array<[string, unknown]> = [];
+	for (const [key, value] of Object.entries(schema)) {
+		if (ANNOTATIONS.has(key) && typeof value === "string") continue;
+		if (SCHEMA_LIST.has(key) && Array.isArray(value)) kept.push([key, value.map(withoutAnnotations)]);
+		else if (ONE_SCHEMA.has(key)) kept.push([key, withoutAnnotations(value)]);
+		else if (SCHEMA_MAP.has(key) && typeof value === "object" && value !== null && !Array.isArray(value)) {
+			kept.push([key, Object.fromEntries(Object.entries(value).map(([name, member]) => [name, withoutAnnotations(member)]))]);
+		} else kept.push([key, value]);
+	}
+	return Object.fromEntries(kept);
+}
+
+/**
+ * Refuses a schema that holds a number JSON cannot carry through: one too
+ * large for a double (1e400) parses as Infinity, and JSON.stringify writes it
+ * as null, so the schema would be digested the same as one that says null
+ * there, though the two accept different values. A plain error naming the
+ * file and where in it; the key is never made from such a schema.
+ */
+function refuseNonFinite(value: unknown, file: string, pointer = ""): void {
+	if (typeof value === "number") {
+		if (!Number.isFinite(value)) {
+			throw new Error(
+				`${file}: the number at ${pointer === "" ? "/" : pointer} is too large for a double (it reads as ${value}) and would be digested as null, ` +
+					"the same as a schema that says null there; a record key is not made from such a schema",
+			);
+		}
+	} else if (Array.isArray(value)) value.forEach((item, index) => refuseNonFinite(item, file, `${pointer}/${index}`));
+	else if (typeof value === "object" && value !== null) {
+		for (const [name, item] of Object.entries(value)) refuseNonFinite(item, file, `${pointer}/${name.replaceAll("~", "~0").replaceAll("/", "~1")}`);
+	}
+}
+
+/** What a schema file says a value must be, as it is digested: parsed, refused if it holds a number JSON cannot carry, its words taken out, written as JSON with no white space. */
+export function schemaContent(text: string, file: string): string {
+	const schema: unknown = JSON.parse(text);
+	refuseNonFinite(schema, file);
+	return JSON.stringify(withoutAnnotations(schema));
+}
+
 /**
  * The digest of the code a reducer runs: the sha256, over the files in path
- * order, of each one's path from `root` and its bytes. The files are the
+ * order, of each one's path from `root` and its content. The files are the
  * entry modules, every module they import by a relative path, transitively
- * (type-only imports too), and `data`, files the code reads that no import
- * names (the event schema). A module imported by a package name (ajv, node:)
- * is not in it: those are pinned by the lockfile.
+ * (type-only imports too), whose content is their bytes, and `data`, the JSON
+ * Schemas the code reads that no import names (the Run and event schemas),
+ * whose content is what they say a value must be (schemaContent): the schema
+ * parsed, its titles and descriptions taken out (withoutAnnotations), written
+ * as JSON with no white space; one holding a number too large for a double is
+ * refused, since it would be written as null. So rewording or reflowing a
+ * schema leaves the digest as it was, and a change to what it accepts (a type,
+ * a required list, a pattern, a member) changes it. A module imported by a
+ * package name (ajv, node:) is not in it: those are pinned by the lockfile.
  */
 export function codeDigest(entries: readonly string[], data: readonly string[] = [], root = ROOT): { digest: string; files: string[] } {
 	const seen = new Set<string>();
@@ -92,18 +161,19 @@ export function codeDigest(entries: readonly string[], data: readonly string[] =
 		}
 	};
 	for (const entry of entries) visit(resolve(entry));
-	for (const file of data) seen.add(resolve(root, file));
+	const schemas = new Set(data.map((file) => resolve(root, file)));
+	for (const file of schemas) seen.add(file);
 	const files = [...seen].map((file) => ({ file, path: relative(root, file).split(sep).join("/") })).sort((a, b) => compareText(a.path, b.path));
 	const hash = createHash("sha256");
 	for (const { file, path } of files) {
 		hash.update(`${path}\u0000`);
-		hash.update(readFileSync(file));
+		hash.update(schemas.has(file) ? schemaContent(readFileSync(file, "utf8"), path) : readFileSync(file));
 		hash.update("\u0000");
 	}
 	return { digest: hash.digest("hex"), files: files.map(({ path }) => path) };
 }
 
-/** The files the shared Run reader (run.ts) reads at run time: the schemas it compiles. */
+/** The files the shared Run reader (run.ts) reads at run time: the schemas it compiles, digested without their words. */
 export const SCHEMA_FILES: readonly string[] = ["schemas/run.schema.json", "schemas/events.schema.json"];
 
 /** `<name>-v<version>-<first 16 hex digits of the code digest of entry and what it imports>`. */
@@ -188,7 +258,8 @@ export interface ReduceCounts {
  * Each stdout blob's record for each reducer. A blob whose records are all
  * kept is not fetched; any other is fetched once, at most `concurrency` at a
  * time, reduced by every reducer that lacks a record, its new records kept,
- * and let go. Throws if a blob that must be read cannot be fetched.
+ * and let go. Throws if a blob that must be read cannot be fetched, once the
+ * reads already started have ended, and starts none after it (eachAtMost).
  */
 export async function reduceStreams(
 	hashes: Iterable<string>,
@@ -221,6 +292,31 @@ export async function keepRecords(
 	await walk(hashes, reducers, fetchStream, store, concurrency, counts, () => {});
 }
 
+/**
+ * Calls `each` on every item, at most `concurrency` at a time, starting them
+ * in order. On the first failure no other item is started, those already
+ * started are let finish, and then that failure is thrown: once the caller is
+ * told of a failure, nothing goes on reading behind its back (with Promise.all
+ * alone, the other workers would go on fetching, beside whatever the caller
+ * does next).
+ */
+export async function eachAtMost<T>(items: readonly T[], concurrency: number, each: (item: T) => Promise<void>): Promise<void> {
+	let next = 0;
+	const failures: unknown[] = [];
+	const worker = async (): Promise<void> => {
+		while (failures.length === 0 && next < items.length) {
+			const item = items[next++] as T;
+			try {
+				await each(item);
+			} catch (error) {
+				failures.push(error);
+			}
+		}
+	};
+	await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, worker));
+	if (failures.length > 0) throw failures[0];
+}
+
 async function walk(
 	hashes: Iterable<string>,
 	reducers: ReadonlyArray<StreamReducer<unknown>>,
@@ -231,34 +327,29 @@ async function walk(
 	found: (index: number, hash: string, record: unknown) => void,
 ): Promise<void> {
 	const wanted = [...new Set(hashes)].sort(compareText);
-	let next = 0;
-	const worker = async (): Promise<void> => {
-		while (next < wanted.length) {
-			const hash = wanted[next++] as string;
-			const missing: number[] = [];
-			for (const [index, reducer] of reducers.entries()) {
-				const kept = store === null ? null : reducer.fromJson(await store.get(reducer.key, hash));
-				if (kept === null) missing.push(index);
-				else {
-					found(index, hash, kept);
-					counts.kept++;
-				}
-			}
-			if (missing.length === 0) continue;
-			const bytes = await fetchStream(hash);
-			if (bytes === null) throw new Error(`blob ${hash} cannot be fetched`);
-			counts.fetched++;
-			for (const index of missing) {
-				const reducer = reducers[index] as StreamReducer<unknown>;
-				// The record is used as it reads back from its kept form, kept or not, so a
-				// Method sees the same values on the run that makes a record as on every later one.
-				const json = reducer.toJson(reducer.reduce(bytes));
-				const record = reducer.fromJson(JSON.parse(JSON.stringify(json)));
-				if (record === null) throw new Error(`reducer ${reducer.key} does not read back its own record of ${hash}`);
-				found(index, hash, record);
-				if (store !== null) await store.put(reducer.key, hash, json);
+	await eachAtMost(wanted, concurrency, async (hash) => {
+		const missing: number[] = [];
+		for (const [index, reducer] of reducers.entries()) {
+			const kept = store === null ? null : reducer.fromJson(await store.get(reducer.key, hash));
+			if (kept === null) missing.push(index);
+			else {
+				found(index, hash, kept);
+				counts.kept++;
 			}
 		}
-	};
-	await Promise.all(Array.from({ length: Math.min(concurrency, wanted.length) }, worker));
+		if (missing.length === 0) return;
+		const bytes = await fetchStream(hash);
+		if (bytes === null) throw new Error(`blob ${hash} cannot be fetched`);
+		counts.fetched++;
+		for (const index of missing) {
+			const reducer = reducers[index] as StreamReducer<unknown>;
+			// The record is used as it reads back from its kept form, kept or not, so a
+			// Method sees the same values on the run that makes a record as on every later one.
+			const json = reducer.toJson(reducer.reduce(bytes));
+			const record = reducer.fromJson(JSON.parse(JSON.stringify(json)));
+			if (record === null) throw new Error(`reducer ${reducer.key} does not read back its own record of ${hash}`);
+			found(index, hash, record);
+			if (store !== null) await store.put(reducer.key, hash, json);
+		}
+	});
 }
