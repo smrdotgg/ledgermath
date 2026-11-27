@@ -3541,7 +3541,9 @@ fails on such a link without it. After a page change in place: the `<title>` and
 description change (Solid's `useHead`); the keyboard focus starts again where a page load
 would start it, at the element the address's `#…` names (so Tab after "Numbers" from
 `/docs/` goes into the table) or else at the top, and a screen reader is told the new page's
-title; the page's feature flags (below) follow its address; the page starts at the top, or
+title (a link that changes only the `#…`, LedgerMath from `/#numbers`, moves the focus the
+same way; a `#…` that does not decode, as in `/#%`, names nothing, and the focus goes to the
+top); the page's feature flags (below) follow its address; the page starts at the top, or
 at its `#…` target; back and forward restore the scroll position (the browser's own
 restoration: the router's is turned off, since it lost the place of a page the reader never
 scrolled). A link to the page already on screen (the footer's "Docs" on `/docs/`) starts it
@@ -3644,7 +3646,9 @@ The HTML, the script, the stylesheet, the two self-hosted fonts and `public/` ar
 and is never hydrated; its body is the application's. Each page's `<head>` loads the script
 as a module, which runs once the HTML is parsed and hydrates after the first contentful
 paint (`site/src/entry-client.tsx`; `check:browser` holds the order), so the page paints as
-it did without it;
+it did without it (in a browser without Paint Timing, once the font the text waits for has
+loaded, the body is shown, and two animation frames, one asked for inside the other, have
+passed, so that the frame showing the text has been painted);
 an inline script sets the page's feature flags (above) and holds the page back until the
 font of the reader's colour scheme has loaded, and another, Solid's, prepares the
 hydration. The pages read the same with JavaScript off. `site/` has its own `package.json`
@@ -3683,7 +3687,7 @@ group ("Where it is deployed"). The same commands work locally, inside `site/`.
   script or style, which shows the prerender ran; no HTML, CSS or JavaScript file refers to
   a file the output lacks or loads anything from another origin; every link a reader
   follows (`href` on `<a>` or `<area>`) goes to a file the site has (and, with a fragment,
-  to an id that page has) or under `https://api.ledgermath.com/`, or is exactly one of
+  one that decodes, to an id that page has) or under `https://api.ledgermath.com/`, or is exactly one of
   `OUTSIDE_LINKS`; every link inside the site that is not a page change (to a file that is
   not one of the pages, or to a place on its own page) carries `target` or `download`, which
   leaves it to the browser rather than the router; and each page, with what
@@ -3725,7 +3729,9 @@ and dark, and a page with feature flags again with each flag on, and fail on a c
 a horizontal scroll at 390 px, an axe-core violation of WCAG 2.0 and 2.1 A and AA or of
 its structure rules, a page over the size budget as transferred, a line with a figure
 that is missing with JavaScript off, hydration that begins before the page's first
-contentful paint (the mark `hydrate` before the paint entry), or hydration that changes an
+contentful paint (the mark `hydrate` before the paint entry; and once more with Paint
+Timing hidden from the page and the font 300 ms late, before the first contentful frame's
+paint time), or hydration that changes an
 element or text of the page (only the attributes the router derives from the address may
 change). Then, from each
 page, a click on a link to the next: each must change the page in place, with no request
@@ -3734,9 +3740,12 @@ the built file's; hydration keeps the HTML's words without comparing them, so a 
 application would render differently is caught here), with its title and words, the
 keyboard focus at the top, its title announced, and no axe violation; back and forward
 through them the same, each page scrolled to where it was left; with the keyboard, a link
-to a place on another page must leave the focus at the place (Tab goes on from it) and a
-page's own link must bring the page back to its top; and with JavaScript off each link must load its page as a new
-document. The time from each click to the next frame is printed, not judged. `--shots OUT`
+to a place on another page must leave the focus at the place (Tab goes on from it), a link
+from there to the same page without the fragment must put it back at the top (Tab starts
+from the first link), and a page's own link must bring the page back to its top; after a
+visit to an address whose fragment does not decode (`/#%`), clicks, back and clicks again
+must still change the page, with no uncaught error; and with JavaScript off each link must
+load its page as a new document. The time from each click to the next frame is printed, not judged. `--shots OUT`
 also writes each page's first screen and whole page as PNG files.
 
 The built site serves two fonts of one family, Geist Pixel Circle and Geist Pixel Square,

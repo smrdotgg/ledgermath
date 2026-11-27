@@ -292,6 +292,15 @@ export function checkOutput(
 	const pageFiles = new Set(pages.map((page) => join(dir, page.file)));
 	const IN_PAGE = "a place on its own page, without target: the router would take the browser's jump, which moves the keyboard focus to the place, for a page change; give it target=\"_self\"";
 	const NOT_A_PAGE = "which is not one of the site's pages (src/pages.text.ts), without target: the router would take it for a page; give it target=\"_self\"";
+	// The router decodes a fragment (decodeURIComponent) when it scrolls to it, and throws on one that does not decode.
+	const UNDECODABLE = "whose fragment does not decode (a % not followed by two hex digits): the router would throw on it";
+	const decoded = (text: string): string | null => {
+		try {
+			return decodeURIComponent(text);
+		} catch {
+			return null;
+		}
+	};
 
 	let checked = 0;
 	for (const path of files(dir)) {
@@ -303,7 +312,9 @@ export function checkOutput(
 				checked += 1;
 				if (reference.startsWith("#")) {
 					if (extname(path) !== ".html") continue;
-					if (!idsOf(path).has(decodeURIComponent(reference.slice(1)))) problems.push(`${name} links to ${reference}, an id it lacks`);
+					const id = decoded(reference.slice(1));
+					if (id === null) problems.push(`${name} links to ${reference}, ${UNDECODABLE}`);
+					else if (!idsOf(path).has(id)) problems.push(`${name} links to ${reference}, an id it lacks`);
 					else if (!browser) problems.push(`${name} links to ${reference}, ${IN_PAGE}`);
 					continue;
 				}
@@ -315,7 +326,8 @@ export function checkOutput(
 				if (!found) continue; // "?query": the page itself
 				if (!found.file.startsWith(dir + sep)) problems.push(`${name} links outside the site: ${reference}`);
 				else if (!existsSync(found.file)) problems.push(`${name} links to ${reference}, which the site lacks`);
-				else if (found.fragment && extname(found.file) === ".html" && !idsOf(found.file).has(decodeURIComponent(found.fragment))) {
+				else if (found.fragment && decoded(found.fragment) === null) problems.push(`${name} links to ${reference}, ${UNDECODABLE}`);
+				else if (found.fragment && extname(found.file) === ".html" && !idsOf(found.file).has(decoded(found.fragment)!)) {
 					problems.push(`${name} links to ${reference}, whose page has no id ${JSON.stringify(found.fragment)}`);
 				} else if (browser || extname(path) !== ".html") {
 					// left to the browser, or a link in a file the router never renders

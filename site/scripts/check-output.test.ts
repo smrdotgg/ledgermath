@@ -208,6 +208,18 @@ describe("fails", () => {
 		);
 	});
 
+	test("a link whose fragment does not decode, which the router would throw on, is refused rather than read", () => {
+		expect(
+			check(
+				{
+					"index.html": page("", `${BODY}<a href="#%" target="_self">top</a><a href="/docs/#%zz">intro</a>`),
+					"docs/index.html": page("", `<main><h1 id="intro">Docs</h1></main>`),
+				},
+				[...PAGES, { file: "docs/index.html", text: ["Docs"] }],
+			).map((problem) => problem.replace(/ \(a % .*/, "")),
+		).toEqual(["index.html links to #%, whose fragment does not decode", "index.html links to /docs/#%zz, whose fragment does not decode"]);
+	});
+
 	test("a page loading more JavaScript than its budget", async () => {
 		const { SCRIPT_BUDGET_BYTES } = await import("./check-output");
 		// Random letters gzip to about three quarters of their length: well over the budget.

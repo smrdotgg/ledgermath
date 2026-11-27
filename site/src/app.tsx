@@ -42,6 +42,23 @@ export const Router = createRouter({
 const FLAGS = [...new Set(PAGES.flatMap((page) => page.flags ?? []))];
 
 /**
+ * The element an address's #fragment names, as the browser finds it (the id as written, then
+ * decoded), or null. An address is anyone's to write: a fragment that does not decode (/#%)
+ * names no element, and must not stop the navigation it comes with.
+ */
+function named(hash: string): HTMLElement | null {
+	const raw = hash.slice(1);
+	if (!raw) return null;
+	const found = document.getElementById(raw);
+	if (found) return found;
+	try {
+		return document.getElementById(decodeURIComponent(raw));
+	} catch {
+		return null;
+	}
+}
+
+/**
  * Around every page: what a page load would give and a page change inside the application does
  * not, by itself.
  */
@@ -78,13 +95,14 @@ function Layout(props: { children?: JSX.Element }) {
 	// After a page change, the keyboard focus starts again where a page load would start it: at the
 	// element the address's #fragment names, else at the top of the page; and a screen reader is
 	// told the new page's title, which a page load would read out. (Solid Router has no answer of
-	// its own for this; this is SvelteKit's.) A change of the fragment alone is the browser's own
-	// jump (such links carry target="_self"), which moves the focus itself.
+	// its own for this; this is SvelteKit's.) A change of the fragment alone is left as the browser
+	// leaves it when it makes one (its own jump, for a link with target="_self", moves the focus;
+	// back and forward between such entries do not); one made by the router is seen before it
+	// happens, below.
 	let announcer!: HTMLParagraphElement;
-	const arrive = () => {
+	const arrive = (hash: string = location.hash) => {
 		announcer.textContent = page()?.title ?? "";
-		const id = decodeURIComponent(location.hash.slice(1));
-		const place = (id && document.getElementById(id)) || document.body;
+		const place = named(hash) || document.body;
 		// Made focusable for the call when it is not (a heading, the body), as the browser treats a
 		// fragment's target: the body gives it back at once, any other element when the focus leaves.
 		const lent = !place.hasAttribute("tabindex") && place.tabIndex < 0;
@@ -93,7 +111,7 @@ function Layout(props: { children?: JSX.Element }) {
 		if (lent && place === document.body) place.removeAttribute("tabindex");
 		else if (lent) place.addEventListener("blur", () => place.removeAttribute("tabindex"), { once: true });
 	};
-	createEffect(() => location.pathname + location.search, arrive, { defer: true });
+	createEffect(() => location.pathname + location.search, () => arrive(), { defer: true });
 
 	useBeforeLeave((e) => {
 		if (typeof e.to !== "string") return;
@@ -104,15 +122,20 @@ function Layout(props: { children?: JSX.Element }) {
 			window.location.assign(e.to);
 			return;
 		}
-		// A link to the address on screen, which the router leaves as it is: a document navigation
-		// would load the page again, at its top (or its #fragment), with the focus there.
-		if (e.to === location.pathname + location.search + location.hash) {
-			const id = decodeURIComponent(location.hash.slice(1));
-			const place = id && document.getElementById(id);
+		const here = location.pathname + location.search;
+		const cut = e.to.indexOf("#");
+		const [path, hash] = cut < 0 ? [e.to, ""] : [e.to.slice(0, cut), e.to.slice(cut)];
+		if (path !== here) return;
+		if (hash === location.hash) {
+			// A link to the address on screen, which the router leaves as it is: a document
+			// navigation would load the page again, at its top (or its #fragment), with the focus there.
+			const place = named(hash);
 			if (place) place.scrollIntoView();
 			else window.scrollTo(0, 0);
-			arrive();
 		}
+		// The same page at another fragment, or at none (LedgerMath on /#numbers): the router scrolls
+		// there, and the focus goes with it, where a document navigation would put it.
+		arrive(hash);
 	});
 
 	return (

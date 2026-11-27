@@ -25,7 +25,10 @@
  *     which the build cannot know (aria-current, data-active, target: ADR-0036). Words that
  *     differ are not changed by hydration, so check 7 compares them. And hydration begins only
  *     after the page's first contentful paint, so it never puts off the frame the reader sees:
- *     the mark "hydrate" that src/entry-client.tsx sets comes after the paint entry.
+ *     the mark "hydrate" that src/entry-client.tsx sets comes after the paint entry. Once more
+ *     at desktop size in light with Paint Timing hidden from the page, as in a browser without
+ *     it, and the font 300 ms late, so that the paint comes after the page's script has run:
+ *     the mark still comes after the first contentful frame was painted (its paintTime).
  *  7. Navigation, at desktop size in light (ADR-0036). From each page a click on a link to the
  *     next (the last to the first) changes the page in place: no request, no new document, the
  *     next page's title and fixed words, the keyboard focus back at the top (on <body>), its
@@ -40,9 +43,12 @@
  *     again each comes back, with no request and no new document, scrolled to where it was
  *     left. Then, with the keyboard, on each page: a link to a place on another page (/#numbers
  *     from /docs/) leaves the focus at the place, so that Tab goes on from there, not from the
- *     top; and the page's own link (the footer's "Docs" on /docs/), from the page's end, brings
- *     the page back to its top with the focus there and its title announced, as a document
- *     navigation would, with no request. With JavaScript
+ *     top, and from there a link to the same page without the fragment (LedgerMath) puts the
+ *     focus back at the top, so that Tab starts from the first link; and the page's own link
+ *     (the footer's "Docs" on /docs/), from the page's end, brings the page back to its top with
+ *     the focus there and its title announced, as a document navigation would, with no request.
+ *     And after a visit to an address whose fragment does not decode (/#%), clicks, back and
+ *     clicks again still change the page, with no uncaught error. With JavaScript
  *     off the same links are ordinary links, each loading its page as a new document. The time
  *     from each click to the next frame is printed, not judged: a slow runner is slow.
  *
@@ -99,6 +105,40 @@ async function paintedFirst(page: Page): Promise<string[]> {
 	if (!at.hydrated || at.hydrate === null) return ["the application never took over the page (no mark \"hydrated\")"];
 	if (at.paint === null) return ["the browser reported no first contentful paint"];
 	return at.hydrate < at.paint ? [`hydration began at ${at.hydrate.toFixed(1)} ms, before the first contentful paint at ${at.paint.toFixed(1)} ms`] : [];
+}
+
+/**
+ * Runs before the page's own scripts: hides Paint Timing from the page, as a browser without it
+ * would be (no entry "first-contentful-paint", no entry type "paint"), and keeps the real lookup
+ * in window.__paint for the check (check 6).
+ */
+const HIDE_PAINT_TIMING = `(() => {
+	const real = performance.getEntriesByName.bind(performance);
+	window.__paint = () => real("first-contentful-paint");
+	performance.getEntriesByName = (name, type) => (name === "first-contentful-paint" ? [] : real(name, type));
+	const types = PerformanceObserver.supportedEntryTypes.filter((type) => type !== "paint");
+	Object.defineProperty(PerformanceObserver, "supportedEntryTypes", { get: () => types, configurable: true });
+})();`;
+
+/** How late the font comes in check 6's load without Paint Timing. */
+const FONT_DELAY_MS = 300;
+
+/**
+ * Check 6 in a browser without Paint Timing: PAGE (with HIDE_PAINT_TIMING added, then loaded)
+ * must take over only after the browser painted its first contentful frame, by its own record:
+ * the end of that frame's paint (paintTime; else its start time). One line per problem.
+ */
+async function paintedFirstWithoutPaintTiming(page: Page): Promise<string[]> {
+	const hydrated = await page.waitForFunction(() => performance.getEntriesByName("hydrated").length > 0, null, { timeout: 10_000 }).then(() => true, () => false);
+	if (!hydrated) return ["without Paint Timing, the application never took over the page (no mark \"hydrated\")"];
+	// The browser reports the paint a little after making it.
+	await page.waitForFunction(() => (window as unknown as { __paint(): PerformanceEntry[] }).__paint().length > 0, null, { timeout: 10_000 }).catch(() => {});
+	const at = await page.evaluate(() => {
+		const entry = (window as unknown as { __paint(): (PerformanceEntry & { paintTime?: number })[] }).__paint()[0];
+		return { paint: entry ? (entry.paintTime ?? entry.startTime) : null, hydrate: performance.getEntriesByName("hydrate")[0]!.startTime };
+	});
+	if (at.paint === null) return ["without Paint Timing, the browser reported no first contentful paint"];
+	return at.hydrate < at.paint ? [`without Paint Timing, hydration began at ${at.hydrate.toFixed(1)} ms, before the first contentful frame was painted at ${at.paint.toFixed(1)} ms`] : [];
 }
 
 /** What hydration changed on the page that it must not have (check 6), one line each. */
@@ -326,6 +366,16 @@ export async function checkBrowser(dir: string, shots?: string): Promise<Result[
 					load.push(...[...new Set(seen.problems)].map((p) => `${where}: ${p}`));
 					hydration.push(...(await paintedFirst(page)).map((p) => `${where}: ${p}`));
 					hydration.push(...(await hydrationChanges(page)).map((p) => `${where}: ${p}`));
+					if (weigh) {
+						const bare = await context(browser, size, scheme);
+						const without = await bare.newPage();
+						await without.addInitScript(HIDE_PAINT_TIMING);
+						// A slow font (its text waits for it): the paint comes late, after the page's script runs.
+						await without.route("**/*.woff2", (route) => Bun.sleep(FONT_DELAY_MS).then(() => route.continue()));
+						await without.goto(`${server.origin}${address.path}`, { waitUntil: "load" });
+						hydration.push(...(await paintedFirstWithoutPaintTiming(without)).map((p) => `${where}: ${p}`));
+						await bare.close();
+					}
 
 					if (size.name === "phone") {
 						const widths = await page.evaluate(() => ({ document: document.documentElement.scrollWidth, body: document.body.scrollWidth, visual: window.innerWidth }));
@@ -394,12 +444,12 @@ export async function checkBrowser(dir: string, shots?: string): Promise<Result[
 		{
 			name: "hydration waits for the first paint and changes nothing on the page",
 			problems: hydration,
-			passed: `${pages}: hydration began after the first contentful paint, and no element or text of the body was added, removed or changed, at either size, in light or dark, with each flag`,
+			passed: `${pages}: hydration began after the first contentful paint (and, with Paint Timing hidden, after the first contentful frame was painted), and no element or text of the body was added, removed or changed, at either size, in light or dark, with each flag`,
 		},
 		{
 			name: "navigation inside the site: in place, with no request",
 			problems: moves.problems,
-			passed: `each click changed the page in place, with no request and no new document, to the page the build wrote for the address, at its top, its title and words, the focus at the top and the title announced, with no axe violation; back and forward the same, each page scrolled to where it was left; with the keyboard, a link to a place on another page left the focus at the place and a page's own link brought it back to its top; with JavaScript off each link loaded its page. From the click to the next frame (not judged): ${moves.timings.join("; ")}`,
+			passed: `each click changed the page in place, with no request and no new document, to the page the build wrote for the address, at its top, its title and words, the focus at the top and the title announced, with no axe violation; back and forward the same, each page scrolled to where it was left; with the keyboard, a link to a place on another page left the focus at the place, the same page without the fragment put it back at the top, and a page's own link brought the page back to its top; after an address whose fragment does not decode, navigation went on; with JavaScript off each link loaded its page. From the click to the next frame (not judged): ${moves.timings.join("; ")}`,
 		},
 	];
 }
@@ -545,6 +595,34 @@ async function navigation(browser: Browser, origin: string, root: string): Promi
 					return !!(place.compareDocumentPosition(document.activeElement!) & Node.DOCUMENT_POSITION_FOLLOWING);
 				}, id);
 				if (!after) problems.push(`${where}: Tab went to an element before #${id}, not on from it`);
+
+				// Then, from the place, the same page without the fragment (LedgerMath on /#numbers):
+				// only the fragment changes, and the focus goes back to the top, as loading the page
+				// again would leave it, so that Tab starts from the page's first link.
+				const there = resolved(away);
+				const back = await page.evaluate(
+					({ path }) => [...document.querySelectorAll("a[href]:not([target])")].map((a) => a.getAttribute("href")!).find((href) => { const u = new URL(href, location.href); return u.pathname === path && !u.hash && !u.search; }) ?? null,
+					{ path: there.pathname },
+				);
+				if (back) {
+					const from = `${where}, then ${back}`;
+					requests.length = 0;
+					await page.locator(`a[href="${back}"]:not([target])`).first().evaluate((a: HTMLElement) => a.focus({ preventScroll: true }));
+					await page.keyboard.press("Enter");
+					await page.waitForURL((url) => url.pathname === there.pathname && url.hash === "", { timeout: 5_000 }).catch(() => {});
+					await page.waitForTimeout(100);
+					if (!(await sameDocument())) problems.push(`${from}: a new document was loaded`);
+					else {
+						if (requests.length > 0) problems.push(`${from}: ${requests.length} request(s): ${requests.join(", ")}`);
+						if (!(await page.evaluate(() => document.activeElement === document.body))) problems.push(`${from}: the keyboard focus is not back at the top of the page (on <body>)`);
+						await page.keyboard.press("Tab");
+						const first = await page.evaluate(() => {
+							const focusable = [...document.querySelectorAll<HTMLElement>("a[href], button, input, select, textarea, [tabindex]")].find((element) => element.tabIndex >= 0);
+							return document.activeElement === focusable;
+						});
+						if (!first) problems.push(`${from}: Tab did not start from the page's first link`);
+					}
+				}
 			}
 			await load(meta);
 		}
@@ -570,6 +648,25 @@ async function navigation(browser: Browser, origin: string, root: string): Promi
 				if (now.announced !== meta.title) problems.push(`${where}: a screen reader is told ${JSON.stringify(now.announced)}, not the page's title`);
 			}
 		}
+	}
+	// An address whose fragment does not decode (/#%), as anyone may write one: the application
+	// takes it as naming nothing, and navigation goes on, out, back to it, and out again.
+	{
+		const odd = `${first.path}#%`;
+		await page.goto(`${origin}${odd}`, { waitUntil: "load" });
+		await page.waitForFunction(() => performance.getEntriesByName("hydrated").length > 0, null, { timeout: 10_000 }).catch(() => {});
+		await page.evaluate(() => ((window as unknown as { __document: boolean }).__document = true));
+		const next = order[0]!;
+		const step = async (where: string, to: SitePage, act: () => Promise<unknown>) => {
+			requests.length = 0;
+			await act();
+			await page.waitForURL((url) => url.pathname === to.path, { timeout: 5_000 }).catch(() => {});
+			await shows(`after ${odd}, ${where}`, to, false);
+		};
+		await step(`a click to ${next.path}`, next, () => linkTo(page, next).click());
+		await step(`back to ${odd}`, first, () => page.goBack());
+		await step(`a click to ${next.path} again`, next, () => linkTo(page, next).click());
+		if (next !== first) await step(`a click to ${first.path}`, first, () => linkTo(page, first).click());
 	}
 	problems.push(...[...new Set(seen.problems)].map((p) => `navigation: ${p}`));
 	await ctx.close();
