@@ -41,7 +41,9 @@ An excerpt, made by the generator, of the file at [https://api.ledgermath.com/v1
 ```
 
 <details>
-<summary>What the excerpt leaves out, in 2 places: each list keeps its first element; each object the first of its members of one shape, and its members of any name up to 300 bytes; each string longer than 160 characters its first 160, ending in …</summary>
+<summary>What the excerpt leaves out, in 2 places</summary>
+
+The excerpt is made by one rule, applied at every depth, and changes nothing else. A list of more than one element keeps its first, unless every element is a string, a number, true, false or null and the list takes at most 120 characters as JSON: then it is kept whole. An object keeps every member its schema names, but of members its schema names with one and the same shape and no words of their own (such as a request's eight phases) it keeps the first. Of an object's members whose names its schema does not fix, it keeps the first, then each next one while the values kept, as excerpted, take at most 300 bytes as JSON, and none after the first that does not fit. A string longer than 160 characters keeps its first 160 and ends with …
 
 - `items`: its first element of 3
 - `tags.note`: its first 160 of 400 characters
@@ -50,7 +52,7 @@ An excerpt, made by the generator, of the file at [https://api.ledgermath.com/v1
 
 ## Fields
 
-Each field is named by its path from the top of the file: `a.b` is the member `b` of the object `a`, `[]` stands for each element of a list, `*` for a member of any name, and a name with a dot in it is written `["p99.9"]`. Under each path are its type and whether it is required (present wherever the object holding it is) or optional (it may be absent). A shape used in more than one place is described once, under [Shared shapes](#shared-shapes), and each place links to it. Version 1 only ever gains fields, so a file may hold a field this page does not list yet: a reader ignores it.
+Each field is named by its path from the top of the file: `a.b` is the member `b` of the object `a`, `[]` stands for each element of a list, `*` for a member whose name is not fixed (its object's type says when the names must match a pattern), and a name with a dot in it is written `["p99.9"]`. Under each path are its type and whether it is required (present wherever the object holding it is) or optional (it may be absent). An object said to have no other members holds none but those listed for it; any other object may hold members this page does not list. A shape used in more than one place is described once, under [Shared shapes](#shared-shapes), and each place links to it. Version 1 only ever gains fields, so a file may hold a field this page does not list yet: a reader ignores it.
 
 ### `kind`
 
@@ -86,13 +88,13 @@ Its first item, again.
 
 ### `tags`
 
-object · optional
+object, at least 1 member, each member's name matching `^[a-z]+$` · optional
 
 Words about it, by name.
 
 ### `tags.*`
 
-string · any number of them
+string · one or more of them, each named to match `^[a-z]+$`
 
 One tag, under its name.
 

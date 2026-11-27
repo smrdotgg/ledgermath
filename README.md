@@ -3525,11 +3525,16 @@ the Run's is not served, and is linked on GitHub); the schema's own description;
 every field; the shared shapes.
 
 - **Every field, by its full path** from the top of the file (`[]` each element of a list, `*`
-  a member of any name, `/…/` a member whose name matches a pattern, `["p99.9"]` a name with a
-  dot), its type in plain words, whether it is required, and its description whole, copied from
-  the schema and only escaped for Markdown (a code span a description writes in backticks stays
-  one). Beside its own words, a field shows those of a definition it names, and "Each element:
-  …" for a list.
+  a member whose name is not fixed, `/…/` a member whose name matches a pattern, `["p99.9"]` a
+  name with a dot), its type in plain words with every constraint its schema states (a pattern
+  the names must match, `propertyNames`, and how many members there are, "one or more of them",
+  among them), whether it is required, and its description whole, copied from the schema and
+  only escaped for Markdown (a code span a description writes in backticks stays one). Beside its
+  own words, a field shows those of a definition it names, and "Each element: …" for a list.
+  `KEYWORDS` lists the keywords of JSON Schema the generator puts into words, and the tests fail
+  on a schema that uses another. An object a schema closes is said to have "no other members";
+  the legend says any other object may hold members the page does not list, and the price and
+  events pages say which (AWS's objects; a benchmark's own events and observed values).
 - **Shared shapes.** A definition the schema names from more than one place, and which has
   fields of its own, is described once, under "Shared shapes", its fields written `….p50`; it
   lists every place it is used, and each place links to it. A definition named from one place is
@@ -3546,10 +3551,9 @@ every field; the shared shapes.
   the Markdown has every word. An example longer than 150 lines folds too.
 - **Examples come from the fixed sample**, `docs/api-sample/`, real files taken once from the
   live API, so a page changes only when its schema, its words or the sample do. Each is an
-  excerpt the generator makes by one rule (a list keeps its first element; an object the first
-  of its members of one shape, such as a request's eight phases, and its members of any name up
-  to 300 bytes; a string its first 160 characters, ending in …); the page lists every place it
-  shortened, and links the file at the same address as it is now.
+  excerpt the generator makes by one rule, `EXCERPT_RULE`, which the page prints word for word
+  beside the list of every place it shortened (a test holds the code to it), and the page links
+  the file at the same address as it is now.
 
 **The sample** follows one Series, `124066cf09f9` (`http_get` on `m5.large`, which Method
 requests v1 derives beside series v1), through every kind of file, taken on 2026-11-26: the
@@ -3569,11 +3573,14 @@ blob's the one the Run names, the row the same line in both lists).
 
 `tests/api-reference.test.ts` holds: every schema under `schemas/` has a page, or is in
 `SCHEMAS_WITHOUT_A_PAGE` (empty); every field the description test finds is on its schema's
-page, by its path (for a field within a definition, a path that ends with its path there), with
-its words in full, found by a walk of the test's own; each file of the sample is the one its
-manifest lists, validates against its schema (the API's own five against the schema closed too,
-each line of the stream against the events schema), agrees with the others, and holds no AWS
-key; every example is an excerpt of its sample; every link is a page `scripts/lib/docs-addresses.ts`
+page with its words in full, under the path or the shared shape that owns it (a field of a
+definition written out where it is used, at each place the definition is named from; one of a
+shared shape, in that shape's section), found by a walk of the test's own; every schema uses only
+the keywords in `KEYWORDS`; the excerpt does what `EXCERPT_RULE` says; each file of the sample is
+the one its manifest lists, validates against its schema (the API's own five against the schema
+closed too, each line of the stream against the events schema), agrees with the others, and
+holds no AWS key; every example is an excerpt of its sample that keeps every top-level member,
+and every list or object it keeps holds something when its source does; every link is a page `scripts/lib/docs-addresses.ts`
 lists, a heading of its own page, the API or the repository; each page starts with its title
 and a paragraph and holds no HTML but `<details>` and `<summary>`; the overview quotes each
 contract paragraph word for word; the machines page gives every target; the same input gives

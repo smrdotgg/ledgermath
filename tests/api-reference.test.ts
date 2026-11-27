@@ -30,7 +30,21 @@ import { join, relative, sep } from "node:path";
 import { SAMPLE_KINDS, SAMPLE_MANIFEST, type SampleKind, type SampleManifest } from "../scripts/fetch-api-sample";
 import { ABOUT, EVIDENCE, FIGURES, LIST_UPDATES, MONTHS, VERSIONING } from "../scripts/lib/api";
 import { closeSchema } from "../scripts/lib/api-check";
-import { apiReference, markdownText, SAMPLE_DIRECTORY, SCHEMAS_WITHOUT_A_PAGE, schemaPage, splitFirstSentence, writeApiReference } from "../scripts/lib/api-reference";
+import {
+	apiReference,
+	EXCERPT_RULE,
+	excerpt,
+	KEYWORDS,
+	markdownText,
+	MEMBERS_BUDGET,
+	SAMPLE_DIRECTORY,
+	SCHEMAS_WITHOUT_A_PAGE,
+	schemaPage,
+	SHORT_LIST,
+	splitFirstSentence,
+	STRING_CUT,
+	writeApiReference,
+} from "../scripts/lib/api-reference";
 import { FILE_PAGES, type FilePage, MACHINES, OVERVIEW } from "../scripts/lib/api-reference-words";
 import { API_SCHEMAS } from "../scripts/lib/api-schemas";
 import { isDocsAddress } from "../scripts/lib/docs-addresses";
@@ -114,19 +128,29 @@ function proseLines(text: string): Array<{ line: string; at: number }> {
 	return out;
 }
 
-/** Each field entry of a page: the path its heading names, and the words up to the next heading. */
-function entries(text: string): Array<{ path: string; words: string }> {
+/**
+ * Each field entry of a page: the shared shape whose section holds it (none for the section
+ * "Fields"), the path its heading names, and the words up to the next heading.
+ */
+function entries(text: string): Array<{ shape?: string; path: string; words: string }> {
 	const lines = text.split("\n");
 	const prose = proseLines(text);
-	const found: Array<{ path: string; words: string }> = [];
+	const found: Array<{ shape?: string; path: string; words: string }> = [];
+	let shape: string | undefined;
 	prose.forEach(({ line, at }, i) => {
+		if (/^## /.test(line)) shape = undefined;
+		const section = /^### Shape (`+)(.+?)\1$/.exec(line);
+		if (section !== null) shape = (section[2] as string).trim();
 		const heading = /^#{3,6} (`+)(.+?)\1$/.exec(line);
 		if (heading === null) return;
 		const next = prose.slice(i + 1).find((candidate) => /^#{1,6} /.test(candidate.line));
-		found.push({ path: (heading[2] as string).trim(), words: plainText(lines.slice(at + 1, next?.at ?? lines.length).join("\n")) });
+		found.push({ shape, path: (heading[2] as string).trim(), words: plainText(lines.slice(at + 1, next?.at ?? lines.length).join("\n")) });
 	});
 	return found;
 }
+
+/** The shared shapes a page describes, by name. */
+const shapesOf = (text: string): Set<string> => new Set([...text.matchAll(/^### Shape (`+)(.+?)\1$/gm)].map((match) => (match[2] as string).trim()));
 
 /** A heading's anchor, as GitHub makes it. */
 const slug = (heading: string): string => heading.toLowerCase().replace(/[^\p{L}\p{M}\p{N} _-]/gu, "").replaceAll(" ", "-");
@@ -142,12 +166,13 @@ function schemaFiles(): string[] {
 		.sort();
 }
 
-type Step = { name: string } | { any: true } | { pattern: string } | { item: true };
+type Step = { name: string } | { any: true } | { pattern: string } | { item: true } | { shape: true };
 
 function renderSteps(steps: readonly Step[]): string {
 	let out = "";
 	for (const step of steps) {
-		if ("item" in step) out += "[]";
+		if ("shape" in step) out += "…";
+		else if ("item" in step) out += "[]";
 		else if ("any" in step) out += `${out === "" ? "" : "."}*`;
 		else if ("pattern" in step) out += `${out === "" ? "" : "."}/${step.pattern}/`;
 		else out += /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(step.name) ? `${out === "" ? "" : "."}${step.name}` : `[${JSON.stringify(step.name)}]`;
@@ -175,27 +200,35 @@ function wordsOf(node: Json, root: Json): string | undefined {
 interface Field {
 	/** Where the description test names it: the path of the field from the root, or within a definition. */
 	where: string;
-	/** The page's path for it: exactly this, for a field outside any definition... */
-	exact?: string;
-	/** ...or ending with this, for a field within a definition, wherever the definition is used. */
-	suffix?: string;
+	/** The definition it is declared in, if any, and its path from the root or within that definition. */
+	definition?: string;
+	steps: Step[];
 	words: string;
 }
 
-/** Every field of a schema, found where the description test looks: under each field, an array's elements, each branch of anyOf, oneOf and allOf, then and else, and each definition. */
-function fieldsOf(schema: Json): Field[] {
+/** Where each definition is named from: the definition holding the $ref (none for the root's fields), and the path of the $ref within it. */
+type Sites = Map<string, Array<{ definition?: string; steps: Step[] }>>;
+
+/**
+ * Every field of a schema, found where the description test looks: under each field, an array's
+ * elements, each branch of anyOf, oneOf and allOf, then and else, and each definition; and where
+ * each definition is named from, found in the same places.
+ */
+function fieldsOf(schema: Json): { fields: Field[]; sites: Sites } {
 	const found: Field[] = [];
+	const sites: Sites = new Map();
 	const field = (node: unknown, steps: Step[], definition: string | undefined): void => {
 		if (!isObject(node)) return;
 		const rendered = renderSteps(steps);
 		const words = wordsOf(node, schema);
 		if (words === undefined) throw new Error(`${rendered} has no words`);
-		if (definition === undefined) found.push({ where: rendered, exact: rendered, words });
-		else found.push({ where: `$defs.${definition}${rendered.startsWith("[") ? "" : "."}${rendered}`, suffix: rendered.startsWith("[") ? rendered : `.${rendered}`, words });
+		found.push({ where: definition === undefined ? rendered : `$defs.${definition}${rendered.startsWith("[") ? "" : "."}${rendered}`, definition, steps, words });
 		walk(node, steps, definition);
 	};
 	const walk = (node: unknown, steps: Step[], definition: string | undefined): void => {
 		if (!isObject(node)) return;
+		const named = typeof node.$ref === "string" ? /^#\/\$defs\/([^/]+)$/.exec(node.$ref)?.[1] : undefined;
+		if (named !== undefined) sites.set(named, [...(sites.get(named) ?? []), { definition, steps }]);
 		if (isObject(node.properties)) for (const [name, member] of Object.entries(node.properties)) field(member, [...steps, { name }], definition);
 		if (isObject(node.patternProperties)) for (const [pattern, member] of Object.entries(node.patternProperties)) field(member, [...steps, { pattern }], definition);
 		for (const keyword of ["additionalProperties", "unevaluatedProperties"]) if (isObject(node[keyword])) field(node[keyword], [...steps, { any: true }], definition);
@@ -207,7 +240,41 @@ function fieldsOf(schema: Json): Field[] {
 		for (const keyword of ["$defs", "definitions"]) if (isObject(node[keyword])) for (const [name, inner] of Object.entries(node[keyword] as Json)) walk(inner, [], name);
 	};
 	walk(schema, [], undefined);
-	return found;
+	return { fields: found, sites };
+}
+
+/**
+ * Where a page must show a field: in the section of the shared shape its definition is (its path
+ * written from `…`), or, for a definition written out where it is used, at each place it is named
+ * from, followed back to the root or to the shared shape that holds that place.
+ */
+function placesOf(field: Field, sites: Sites, shapes: ReadonlySet<string>): Array<{ shape?: string; path: string }> {
+	const expand = (definition: string | undefined, steps: Step[], seen: ReadonlySet<string>): Array<{ shape?: string; path: string }> => {
+		if (definition === undefined) return [{ path: renderSteps(steps) }];
+		if (shapes.has(definition)) return [{ shape: definition, path: renderSteps([{ shape: true }, ...steps]) }];
+		if (seen.has(definition)) return [];
+		return (sites.get(definition) ?? []).flatMap((site) => expand(site.definition, [...site.steps, ...steps], new Set([...seen, definition])));
+	};
+	return expand(field.definition, field.steps, new Set());
+}
+
+/** Every field of SCHEMA that PAGE does not show in full at each place it owns: an empty list when the page holds them all. */
+function missingFields(schema: Json, text: string): string[] {
+	const shown = entries(text);
+	const { fields, sites } = fieldsOf(schema);
+	const missing: string[] = [];
+	for (const field of fields) {
+		const words = field.words.replace(/\s+/g, " ").trim();
+		const places = placesOf(field, sites, shapesOf(text));
+		if (places.length === 0) missing.push(`${field.where}: no place on the page`);
+		for (const place of places) {
+			const at = shown.filter((entry) => entry.shape === place.shape && entry.path === place.path);
+			const where = `${place.path}${place.shape === undefined ? "" : ` in shape ${place.shape}`}`;
+			if (at.length === 0) missing.push(`${field.where}: no entry ${where}`);
+			else if (!at.some((entry) => entry.words.includes(words))) missing.push(`${field.where}: its words are not in full under ${where}`);
+		}
+	}
+	return missing;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -235,13 +302,23 @@ const SCHEMA_OF: Record<SampleKind, string> = {
 };
 const API_OWN: readonly SampleKind[] = ["index", "series-list", "benchmark", "series", "series-month"];
 
-/** Whether EXAMPLE could be cut from VALUE: lists their first elements, objects some of their members, strings their first characters ending in "…", and nothing else changed. */
+/**
+ * Whether EXAMPLE could be cut from VALUE: lists their first elements, objects some of their
+ * members, strings their first characters ending in "…", and nothing else changed; and no list
+ * or object that holds something is cut to nothing.
+ */
 function isExcerptOf(example: unknown, value: unknown): boolean {
 	if (typeof example === "string") return example === value || (typeof value === "string" && example.endsWith("…") && value.length >= example.length && value.startsWith(example.slice(0, -1)));
 	if (Array.isArray(example)) return Array.isArray(value) && example.length <= value.length && (example.length > 0 || value.length === 0) && example.every((element, i) => isExcerptOf(element, value[i]));
-	if (isObject(example)) return isObject(value) && Object.keys(example).every((key) => Object.hasOwn(value, key) && isExcerptOf(example[key], value[key]));
+	if (isObject(example)) {
+		const keys = Object.keys(example);
+		return isObject(value) && (keys.length > 0 || Object.keys(value).length === 0) && keys.every((key) => Object.hasOwn(value, key) && isExcerptOf(example[key], value[key]));
+	}
 	return example === value;
 }
+
+/** The six universal events, whose members the events schema names. */
+const UNIVERSAL = ["started", "observed", "sample_started", "sample_ended", "verified", "finished"];
 
 /** The first fenced block after a page's "## Example". */
 function exampleOf(text: string): { info: string; body: string } {
@@ -284,20 +361,70 @@ describe("the API reference", () => {
 	});
 
 	for (const one of FILE_PAGES) {
-		test(`${one.file}: every field of ${one.schema} is there, by its path, with its words in full`, () => {
-			const schema = readJson(join(ROOT, one.schema)) as Json;
-			const shown = entries(page(one.file));
-			const missing: string[] = [];
-			for (const field of fieldsOf(schema)) {
-				const words = field.words.replace(/\s+/g, " ").trim();
-				const places = shown.filter((entry) => (field.exact !== undefined ? entry.path === field.exact : entry.path.endsWith(field.suffix as string)));
-				if (places.length === 0) missing.push(`${field.where}: no entry ${field.exact ?? `ending ${field.suffix}`}`);
-				else if (!places.some((entry) => entry.words.includes(words))) missing.push(`${field.where}: its words are not in full under ${places.map((entry) => entry.path).join(", ")}`);
-			}
-			expect(missing).toEqual([]);
-			expect(shown.length).toBeGreaterThan(0);
+		test(`${one.file}: every field of ${one.schema} is there, under the path or the shared shape that owns it, with its words in full`, () => {
+			expect(missingFields(readJson(join(ROOT, one.schema)) as Json, page(one.file))).toEqual([]);
+			expect(entries(page(one.file)).length).toBeGreaterThan(0);
 		});
 	}
+
+	test("every schema uses only keywords the generator puts into words, and a name pattern and a condition only in the forms it reads", () => {
+		const known = new Set<string>(KEYWORDS);
+		const problems: string[] = [];
+		const NAMES = new Set(["properties", "patternProperties", "$defs", "dependentSchemas"]);
+		const visit = (node: unknown, file: string, at: string): void => {
+			if (Array.isArray(node)) {
+				node.forEach((item, i) => visit(item, file, `${at}/${i}`));
+				return;
+			}
+			if (!isObject(node)) return;
+			for (const [key, value] of Object.entries(node)) {
+				if (!known.has(key)) problems.push(`${file}${at}: ${key}`);
+				if (key === "propertyNames" && isObject(value) && Object.keys(value).some((inner) => inner !== "pattern")) problems.push(`${file}${at}: propertyNames holds more than a pattern`);
+				if (key === "if" && isObject(value)) {
+					if (Object.keys(value).some((inner) => inner !== "properties" && inner !== "required")) problems.push(`${file}${at}: an if holds more than properties and required`);
+					if (isObject(value.properties)) for (const test of Object.values(value.properties)) if (!isObject(test) || Object.keys(test).some((inner) => inner !== "const" && inner !== "enum")) problems.push(`${file}${at}: an if tests a member by more than const or enum`);
+				}
+				if (["description", "title", "const", "enum", "pattern", "$ref", "$id", "$schema", "required"].includes(key)) continue;
+				if (NAMES.has(key) && isObject(value)) for (const [name, inner] of Object.entries(value)) visit(inner, file, `${at}/${key}/${name}`);
+				else visit(value, file, `${at}/${key}`);
+			}
+		};
+		for (const file of schemaFiles()) visit(readJson(join(ROOT, file)), file, "");
+		expect(problems).toEqual([]);
+	});
+
+	test("an example's excerpt does what the rule printed with it says", () => {
+		const root = {
+			type: "object",
+			properties: {
+				short: { type: "array", items: { type: "string" } },
+				long: { type: "array", items: { type: "integer" } },
+				phases: { type: "object", properties: { a: { $ref: "#/$defs/p" }, b: { $ref: "#/$defs/p" }, c: { description: "Its own words.", $ref: "#/$defs/p" } } },
+				map: { type: "object", additionalProperties: { type: "string" } },
+				text: { type: "string" },
+			},
+			$defs: { p: { type: "object", properties: { n: { type: "integer" } } } },
+		};
+		const long = Array.from({ length: 50 }, (_, i) => i);
+		// Two bytes a character in UTF-8: cut to STRING_CUT characters, it still takes more than MEMBERS_BUDGET bytes.
+		const big = "é".repeat(STRING_CUT + 10);
+		expect(new TextEncoder().encode(JSON.stringify(`${"é".repeat(STRING_CUT)}…`)).length).toBeGreaterThan(MEMBERS_BUDGET);
+		const value = { short: ["x", "y", "z"], long, phases: { a: { n: 1 }, b: { n: 2 }, c: { n: 3 } }, map: { first: big, second: "s" }, text: "z".repeat(STRING_CUT + 5) };
+		const cuts: Array<{ path: string; what: string }> = [];
+		expect(JSON.stringify(long).length).toBeGreaterThan(SHORT_LIST);
+		expect(excerpt(root, value, root, "", cuts)).toEqual({
+			// A short list of plain values is kept whole; a longer one keeps its first element.
+			short: ["x", "y", "z"],
+			long: [0],
+			// Of members named with one shape and no words of their own, the first; one with words of its own is kept.
+			phases: { a: { n: 1 }, c: { n: 3 } },
+			// The first member whose name is not fixed is kept whatever its size, and none after the first that does not fit.
+			map: { first: `${"é".repeat(STRING_CUT)}…` },
+			text: `${"z".repeat(STRING_CUT)}…`,
+		});
+		expect(cuts.map((cut) => cut.path)).toEqual(["long", "phases", "map.first", "map", "text"]);
+		for (const one of FILE_PAGES) if (page(one.file).includes("What the excerpt leaves out")) expect(page(one.file)).toContain(EXCERPT_RULE);
+	});
 
 	test("every page is the Markdown the pipeline relies on: a title, a paragraph, no HTML but <details> and <summary>, no front matter, no image", () => {
 		for (const [file, text] of PAGES) {
@@ -438,10 +565,20 @@ describe("the fixed sample", () => {
 			if (one.sample === "events") {
 				expect(example.info).toBe("jsonl");
 				const stream = sampleLines().map((line) => JSON.parse(line));
-				for (const line of example.body.split("\n")) expect({ line, fromTheStream: stream.some((event) => isExcerptOf(JSON.parse(line), event)) }).toEqual({ line, fromTheStream: true });
+				for (const line of example.body.split("\n")) {
+					const shown = JSON.parse(line) as Json;
+					const source = stream.find((event) => event.event === shown.event && event.t === shown.t);
+					expect({ line, fromTheStream: source !== undefined && isExcerptOf(shown, source) }).toEqual({ line, fromTheStream: true });
+					// The floor: every line keeps its name and time, and a universal event every member it has.
+					const kept = UNIVERSAL.includes(String(shown.event)) ? Object.keys(source as Json) : ["event", "t"];
+					expect({ line, keeps: kept.every((key) => Object.hasOwn(shown, key)) }).toEqual({ line, keeps: true });
+				}
 			} else {
 				expect(example.info).toBe("json");
-				expect({ page: one.file, excerpt: isExcerptOf(JSON.parse(example.body), sampleJson(one.sample)) }).toEqual({ page: one.file, excerpt: true });
+				const shown = JSON.parse(example.body) as Json;
+				expect({ page: one.file, excerpt: isExcerptOf(shown, sampleJson(one.sample)) }).toEqual({ page: one.file, excerpt: true });
+				// The floor: the example keeps every member the file has at its top level.
+				expect({ page: one.file, top: Object.keys(shown) }).toEqual({ page: one.file, top: Object.keys(sampleJson(one.sample)) });
 			}
 		}
 	});
@@ -477,7 +614,7 @@ describe("the Markdown the generator writes", () => {
 				when: { description: "When it was made; null when nobody knows.", anyOf: [{ $ref: "#/$defs/time" }, { type: "null" }] },
 				items: { description: "Its items, oldest first.", type: "array", minItems: 1, items: { $ref: "#/$defs/item" } },
 				first: { description: "Its first item, again.", $ref: "#/$defs/item" },
-				tags: { description: "Words about it, by name.", type: "object", additionalProperties: { description: "One tag, under its name.", type: "string" } },
+				tags: { description: "Words about it, by name.", type: "object", minProperties: 1, propertyNames: { pattern: "^[a-z]+$" }, additionalProperties: { description: "One tag, under its name.", type: "string" } },
 				counters: { description: "Counts, each under a name that starts x_.", type: "object", patternProperties: { "^x_": { description: "One count.", type: "integer" } } },
 				mode: { description: "How fast it was made.", enum: ["fast", "slow"] },
 				end: {
@@ -528,8 +665,7 @@ describe("the Markdown the generator writes", () => {
 		const written = schemaPage(small, schema, source);
 		if (process.env.LEDGERMATH_WRITE_GOLDEN === "1") writeFileSync(GOLDEN, written);
 		expect(written).toBe(readFileSync(GOLDEN, "utf8"));
-		// The golden page holds every field of its schema too, by the same walk as the real pages.
-		const shown = entries(written);
-		for (const field of fieldsOf(schema as unknown as Json)) expect(shown.some((entry) => (field.exact !== undefined ? entry.path === field.exact : entry.path.endsWith(field.suffix as string)) && entry.words.includes(field.words))).toBe(true);
+		// The golden page holds every field of its schema too, by the same check as the real pages.
+		expect(missingFields(schema as unknown as Json, written)).toEqual([]);
 	});
 });

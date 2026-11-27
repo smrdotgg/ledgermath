@@ -45,12 +45,52 @@ export const SCHEMAS_WITHOUT_A_PAGE: ReadonlyArray<{ schema: string; why: string
 export const FOLD_ABOVE = 200;
 /** An example keeps this many characters of a longer string, and ends it with "…". */
 export const STRING_CUT = 160;
-/** An example keeps an object's members of any name (not named by its schema) up to this many bytes of JSON, and at least one. */
+/** An example keeps an object's members whose names its schema does not fix: the first, then each next while the values kept take at most this many bytes of JSON. */
 export const MEMBERS_BUDGET = 300;
 /** An example keeps a list of plain values whole when its JSON takes at most this many characters; any other list keeps its first element. */
 export const SHORT_LIST = 120;
 /** A pattern longer than this is not written out in a field's type: the schema has it. */
 export const PATTERN_SHOWN = 80;
+
+/**
+ * Every keyword of JSON Schema the generator puts into words (or, for $schema, $id and $defs,
+ * needs none): tests/api-reference.test.ts fails on a schema under schemas/ that uses any other,
+ * so a constraint a schema gains is never dropped from its page unseen.
+ */
+export const KEYWORDS = [
+	"$schema",
+	"$id",
+	"$defs",
+	"$ref",
+	"title",
+	"description",
+	"type",
+	"const",
+	"enum",
+	"properties",
+	"patternProperties",
+	"additionalProperties",
+	"propertyNames",
+	"required",
+	"minProperties",
+	"maxProperties",
+	"items",
+	"prefixItems",
+	"minItems",
+	"maxItems",
+	"uniqueItems",
+	"pattern",
+	"minLength",
+	"maxLength",
+	"minimum",
+	"maximum",
+	"anyOf",
+	"oneOf",
+	"allOf",
+	"if",
+	"then",
+	"else",
+] as const;
 
 type Json = { [key: string]: unknown };
 
@@ -233,10 +273,28 @@ interface View {
 	conditionals: Array<{ if: Json; then: unknown; else: unknown }>;
 	types: string[];
 	description: string | undefined;
+	/** The pattern every member's name must match (propertyNames), if any. */
+	namePattern: string | undefined;
+	minProperties: number | undefined;
+	maxProperties: number | undefined;
 }
 
 function view(root: Json, node: unknown): View {
-	const v: View = { properties: [], patterns: [], additional: undefined, required: new Set(), items: undefined, prefixItems: [], branches: undefined, conditionals: [], types: [], description: undefined };
+	const v: View = {
+		properties: [],
+		patterns: [],
+		additional: undefined,
+		required: new Set(),
+		items: undefined,
+		prefixItems: [],
+		branches: undefined,
+		conditionals: [],
+		types: [],
+		description: undefined,
+		namePattern: undefined,
+		minProperties: undefined,
+		maxProperties: undefined,
+	};
 	const seen = new Set<Json>();
 	const add = (n: unknown): void => {
 		if (!isObject(n) || seen.has(n)) return;
@@ -253,6 +311,9 @@ function view(root: Json, node: unknown): View {
 		if (v.branches === undefined && Array.isArray(n.oneOf)) v.branches = { word: "oneOf", list: n.oneOf };
 		if (v.branches === undefined && Array.isArray(n.anyOf)) v.branches = { word: "anyOf", list: n.anyOf };
 		if (isObject(n.if)) v.conditionals.push({ if: n.if, then: n.then, else: n.else });
+		if (v.namePattern === undefined && isObject(n.propertyNames) && typeof n.propertyNames.pattern === "string") v.namePattern = n.propertyNames.pattern;
+		if (v.minProperties === undefined && typeof n.minProperties === "number") v.minProperties = n.minProperties;
+		if (v.maxProperties === undefined && typeof n.maxProperties === "number") v.maxProperties = n.maxProperties;
 		if (typeof n.$ref === "string") add(resolveRef(root, n.$ref));
 		if (Array.isArray(n.allOf)) {
 			for (const branch of n.allOf) {
@@ -412,6 +473,8 @@ function typeWords(m: Model, node: unknown, many = false): string {
 	if (type === "object") {
 		if (node.additionalProperties === false) parts.push("no other members");
 		if (typeof node.minProperties === "number" && node.minProperties > 0) parts.push(`at least ${plural(node.minProperties, "member")}`);
+		if (typeof node.maxProperties === "number") parts.push(`at most ${plural(node.maxProperties, "member")}`);
+		if (isObject(node.propertyNames) && typeof node.propertyNames.pattern === "string") parts.push(`each member's name matching ${code(node.propertyNames.pattern)}`);
 		return [noun(type, many), ...parts].join(", ");
 	}
 	return noun(type, many);
@@ -499,8 +562,8 @@ function walkObject(m: Model, v: View, path: readonly Step[], level: number): vo
 		if (typeof schema === "boolean") continue;
 		emitField(m, { name }, schema, path, level, requiredWords(name, v, shapeViews));
 	}
-	for (const [pattern, schema] of v.patterns) emitField(m, { pattern }, schema, path, level, "any number of them");
-	if (isObject(v.additional)) emitField(m, ANY, v.additional, path, level, "any number of them");
+	for (const [pattern, schema] of v.patterns) emitField(m, { pattern }, schema, path, level, othersWords(v, false));
+	if (isObject(v.additional)) emitField(m, ANY, v.additional, path, level, othersWords(v, true));
 	const extra: Array<{ name: string; schema: Json; shapes: number[] }> = [];
 	shapeViews.forEach((shape, i) => {
 		for (const [name, schema] of shape.properties) {
@@ -517,6 +580,22 @@ function walkObject(m: Model, v: View, path: readonly Step[], level: number): vo
 		emitField(m, { name: field.name }, field.schema, path, level, words.join("; "));
 	}
 	for (const conditional of v.conditionals) emitConditional(m, conditional, path, level);
+}
+
+/**
+ * How many members of names not fixed an object holds, and what their names must match: "one or
+ * more of them, each named to match `^[a-z]…`". The count is the object's own (minProperties,
+ * maxProperties) when it names no member, so that every member it holds is one of these; else
+ * the type of the object says it. ANY: the members of every other name (`*`), whose names the
+ * object's pattern (propertyNames) restricts; a pattern's members are named by their pattern.
+ */
+function othersWords(v: View, any: boolean): string {
+	const alone = v.properties.length === 0 && v.patterns.length + (isObject(v.additional) ? 1 : 0) === 1;
+	const min = alone ? (v.minProperties ?? 0) : 0;
+	const max = alone ? v.maxProperties : undefined;
+	let words = max !== undefined ? `${min} to ${max} of them` : min === 1 ? "one or more of them" : min > 1 ? `${min} or more of them` : "any number of them";
+	if (any && v.namePattern !== undefined) words += `, each named to match ${code(v.namePattern)}`;
+	return words;
 }
 
 /** Whether a member is required: always, never, or in which of the object's shapes, and in which it is absent. */
@@ -722,7 +801,7 @@ export function excerpt(root: Json, value: unknown, schema: unknown, path: strin
 	if (Array.isArray(value)) {
 		const schemas = applicable(root, schema, value);
 		const plain = value.every((element) => element === null || typeof element !== "object");
-		if (value.length <= 1 || (plain && JSON.stringify(value).length <= SHORT_LIST)) return value.map((element, i) => excerpt(root, element, elementSchema(schemas, i), memberPath(path, i), cuts));
+		if (value.length <= 1 || (plain && Array.from(JSON.stringify(value)).length <= SHORT_LIST)) return value.map((element, i) => excerpt(root, element, elementSchema(schemas, i), memberPath(path, i), cuts));
 		cuts.push({ path: place, what: `its first element of ${count(value.length)}` });
 		return [excerpt(root, value[0], elementSchema(schemas, 0), memberPath(path, 0), cuts)];
 	}
@@ -760,7 +839,7 @@ export function excerpt(root: Json, value: unknown, schema: unknown, path: strin
 			out[key] = excerpt(root, member, inner, at, cuts);
 		}
 		for (const members of alike.values()) if (members > 1) cuts.push({ path: place, what: `the first of its ${count(members)} members of one shape` });
-		if (kept < anyName) cuts.push({ path: place, what: `${count(kept)} of its ${count(anyName)} members of any name` });
+		if (kept < anyName) cuts.push({ path: place, what: `${count(kept)} of its ${count(anyName)} members whose names its schema does not fix` });
 		return out;
 	}
 	return value;
@@ -778,10 +857,16 @@ export interface ExampleSource {
 
 const link = (url: string): string => `[${url}](${url})`;
 
+/** The rule excerpt() follows, in words: what the page prints with every list of what an example left out. */
+export const EXCERPT_RULE =
+	`The excerpt is made by one rule, applied at every depth, and changes nothing else. A list of more than one element keeps its first, unless every element is a string, a number, true, false or null and the list takes at most ${SHORT_LIST} characters as JSON: then it is kept whole. ` +
+	"An object keeps every member its schema names, but of members its schema names with one and the same shape and no words of their own (such as a request's eight phases) it keeps the first. " +
+	`Of an object's members whose names its schema does not fix, it keeps the first, then each next one while the values kept, as excerpted, take at most ${MEMBERS_BUDGET} bytes as JSON, and none after the first that does not fit. ` +
+	`A string longer than ${STRING_CUT} characters keeps its first ${STRING_CUT} and ends with …`;
+
 function leftOut(cuts: readonly Cut[]): string {
 	if (cuts.length === 0) return "The example is the whole file.";
-	const rule = `What the excerpt leaves out, in ${plural(cuts.length, "place")}: each list keeps its first element; each object the first of its members of one shape, and its members of any name up to ${MEMBERS_BUDGET} bytes; each string longer than ${STRING_CUT} characters its first ${STRING_CUT}, ending in …`;
-	return `<details>\n<summary>${htmlText(rule)}</summary>\n\n${cuts.map((cut) => `- ${code(cut.path)}: ${cut.what}`).join("\n")}\n\n</details>`;
+	return `<details>\n<summary>${htmlText(`What the excerpt leaves out, in ${plural(cuts.length, "place")}`)}</summary>\n\n${EXCERPT_RULE}\n\n${cuts.map((cut) => `- ${code(cut.path)}: ${cut.what}`).join("\n")}\n\n</details>`;
 }
 
 /** An example longer than this many lines folds behind a line that says how long it is. */
@@ -814,7 +899,7 @@ function exampleCode(text: string, info: string, what: string): string {
 	return `<details>\n<summary>${htmlText(`The example: ${plural(lines, "line")} of ${what}`)}</summary>\n\n${block}\n\n</details>`;
 }
 
-/** The six events every benchmark prints, whose fields are fixed. */
+/** The six universal events, whose fields the events schema fixes; a stream need not hold all six (an observed event is optional, and a failed execution's stream can stop short). */
 const UNIVERSAL_EVENTS = ["started", "observed", "sample_started", "sample_ended", "verified", "finished"];
 
 function exampleBlocks(root: Json, page: FilePage, source: ExampleSource): string[] {
@@ -835,7 +920,7 @@ function exampleBlocks(root: Json, page: FilePage, source: ExampleSource): strin
 		const shown = chosen.map((at) => JSON.stringify(excerpt(root, events[at], root, `line ${at + 1}`, cuts)));
 		const ownWords = own === -1 ? "" : `, and the first of the benchmark's own events (${code(String(events[own]?.event))})`;
 		return [
-			`${plural(chosen.length, "line")} of the ${count(lines.length)} of the stream at ${link(source.url)} (${count(source.bytes.length)} bytes), the stdout of the Run at ${source.runUrl === undefined ? "its Run file" : link(source.runUrl)}, as LedgerMath's fixed sample took it on ${source.takenOn}: the first line of each of the six events every benchmark prints${ownWords}, each an excerpt the generator made.`,
+			`${plural(chosen.length, "line")} of the ${count(lines.length)} of the stream at ${link(source.url)} (${count(source.bytes.length)} bytes), the stdout of the Run at ${source.runUrl === undefined ? "its Run file" : link(source.runUrl)}, as LedgerMath's fixed sample took it on ${source.takenOn}: the first line of each of the six universal events the stream holds${ownWords}, each an excerpt the generator made.`,
 			exampleCode(shown.join("\n"), "jsonl", "JSON, one event a line"),
 			leftOut(cuts),
 		];
@@ -866,11 +951,14 @@ export function schemaPage(page: FilePage, schema: Json, source: ExampleSource):
 	const fields = m.blocks;
 	const shapes = shapeSections(m);
 	const legend = [
-		"Each field is named by its path from the top of the file: `a.b` is the member `b` of the object `a`, `[]` stands for each element of a list, `*` for a member of any name, and a name with a dot in it is written `[\"p99.9\"]`. Under each path are its type and whether it is required (present wherever the object holding it is) or optional (it may be absent).",
+		`Each field is named by its path from the top of the ${page.sample === "events" ? "line" : "file"}: ` +
+			"`a.b` is the member `b` of the object `a`, `[]` stands for each element of a list, `*` for a member whose name is not fixed (its object's type says when the names must match a pattern), and a name with a dot in it is written `[\"p99.9\"]`. Under each path are its type and whether it is required (present wherever the object holding it is) or optional (it may be absent).",
+		"An object said to have no other members holds none but those listed for it; any other object may hold members this page does not list.",
 	];
+	if (schema.additionalProperties === false) legend.push("The file holds no top-level member but those below.");
 	if (shapes.length > 0) legend.push("A shape used in more than one place is described once, under [Shared shapes](#shared-shapes), and each place links to it.");
 	if (page.v1) legend.push("Version 1 only ever gains fields, so a file may hold a field this page does not list yet: a reader ignores it.");
-	if (schema.additionalProperties === false) legend.push("The file holds no member but those below.");
+	if (page.fieldsNote !== undefined) legend.push(page.fieldsNote);
 	const blocks = [
 		`# ${page.title}`,
 		page.intro,
@@ -911,7 +999,7 @@ export function machinesPage(schedule: Schedule): string {
 	if (limited.length > 0) {
 		const items = limited.map((entry) => {
 			const sets = entry.params.map((params) => `  - ${code(JSON.stringify(params))}`).join("\n");
-			return `- [${markdownText(entry.name)}](/docs/benchmarks/${entry.name}), ${plural(entry.params.length, "parameter set")}, on ${orList((entry.instance_types ?? []).map(markdownText), "and")}:\n${sets}`;
+			return `- [${markdownText(entry.name)}](/docs/benchmarks/${entry.name}), ${plural(entry.params.length, "parameter set")}, for ${orList((entry.instance_types ?? []).map(markdownText), "and")}:\n${sets}`;
 		});
 		blocks.push(MACHINES.someTypesHeading, MACHINES.someTypes, items.join("\n"));
 	}
