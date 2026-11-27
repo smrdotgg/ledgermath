@@ -3,14 +3,14 @@
 // here until it is (see src/data/headline.ts). It is meant to look like a placeholder: the
 // site's header, type and colours, a heading, and plain sentences that are true, with no date
 // and no list of sections that do not exist. Its words are in ../pages.text.ts too.
-import type { SiteData } from "../data";
+import type { PageData } from "../data";
 import { Footer, Header } from "../chrome";
 
-export default function DocsPage(props: { data: SiteData }) {
+export default function DocsPage(props: { data: PageData }) {
 	const links = props.data.links;
 	return (
 		<>
-			<Header links={links} current="docs" />
+			<Header links={links} />
 
 			<main class="wrap">
 				<div class="hero">

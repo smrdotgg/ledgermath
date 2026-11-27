@@ -30,7 +30,15 @@ function treeCopy(name: string, change: (path: string, json: Record<string, any>
 	return dir;
 }
 
-type Built = { out: string; status: number; stdout: string; stderr: string; html: string; tree: Tree };
+/**
+ * A built site. `raw` is the home page as the build wrote it; `html` is the same with what Solid
+ * adds for hydration taken out (its <!--…--> markers and _hk keys), the HTML the changes by hand
+ * below are written against. The check reads both the same (a test below holds that).
+ */
+type Built = { out: string; status: number; stdout: string; stderr: string; raw: string; html: string; tree: Tree };
+
+/** HTML without Solid's hydration markers and keys, which say nothing a reader sees. */
+const withoutHydration = (html: string) => html.replace(/<!--[^>]*-->/g, "").replace(/ _hk=\w+/g, "");
 
 function build(tree: string, name: string, env: Record<string, string> = {}): Built {
 	const out = join(work, `site-${name}`);
@@ -42,11 +50,11 @@ function build(tree: string, name: string, env: Record<string, string> = {}): Bu
 	});
 	const stdout = run.stdout.toString();
 	const stderr = run.stderr.toString();
-	let html = "";
+	let raw = "";
 	try {
-		html = readFileSync(join(out, "index.html"), "utf8");
+		raw = readFileSync(join(out, "index.html"), "utf8");
 	} catch {}
-	return { out, status: run.exitCode ?? -1, stdout, stderr, html, tree: readTree(tree) };
+	return { out, status: run.exitCode ?? -1, stdout, stderr, raw, html: withoutHydration(raw), tree: readTree(tree) };
 }
 
 let fixture: Built;
@@ -164,6 +172,13 @@ describe("checkFigures passes", () => {
 
 	test("the page built from a tree with nulls: two dashes for the null median, one for the Series with no machine type", () => {
 		expect(checkFigures(nulls.html, nulls.tree)).toEqual({ problems: [], figures: 82, prices: 20, rounds: 3, dashes: 3 });
+	});
+
+	test("each page as the build wrote it, hydration markers and keys in, reads as without them", () => {
+		for (const built of [fixture, lacking, failing, nulls]) {
+			expect(built.raw).toContain(" _hk=");
+			expect(checkFigures(built.raw, built.tree)).toEqual(checkFigures(built.html, built.tree));
+		}
 	});
 
 	test("and the output check passes each built site: words, links, budget", () => {

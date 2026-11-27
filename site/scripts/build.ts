@@ -9,27 +9,29 @@
  * the run just built. With no tree given, the build fails and says so: it never builds from
  * numbers nobody chose.
  *
- * The tree is read and checked first (src/data/tree.ts). Then Vite, with Solid's plugin, bundles
- * src/entry-server.tsx for the server, writing the stylesheet and the fonts beside it; the bundle
- * renders each page (src/pages.text.ts) once with Solid's server renderer; and the pages, with a
- * <link> to the stylesheet in their <head>, are written with the assets and public/. Nothing
- * hydrates and no JavaScript file is written: the one script is inline in each page's <head>
- * (it sets the page's feature flags and waits for the font). Every line the tree gives the build (what the page leaves out, and
- * why) is printed.
+ * The tree is read and checked first (src/data/tree.ts), and what the pages render is taken from
+ * it (src/data: siteData, then pageData, plain JSON). Then Vite, with Solid's plugin (ssr: true:
+ * hydratable output), makes two bundles, each with that JSON compiled in (`define`, as
+ * __PAGE_DATA__): the browser's, from src/entry-client.tsx, one JavaScript file with the whole
+ * application (ADR-0036); and the server's, from src/entry-server.tsx, which writes the
+ * stylesheet and the fonts beside it. The server bundle renders each page (src/pages.text.ts)
+ * once with Solid's server renderer, and the pages, with a <link> to the stylesheet and a
+ * <script type="module"> for the application in their <head>, are written with the assets and
+ * public/. Every line the tree gives the build (what the page leaves out, and why) is printed.
  *
  * What OUT (default dist/client) holds:
  *   index.html, docs/index.html   the pages (src/pages.text.ts)
- *   assets/…                      the stylesheet and the two fonts, their names hashed
+ *   assets/…                      the application's script, the stylesheet and the two fonts, their names hashed
  *   third-party-notices.txt …     public/, copied as it is
  *   .ledgermath-site-build        BUILD_MARK: says a build of this script wrote the directory
  *
  * OUT is replaced whole, so the build guards it (outputProblem): it refuses an empty --out, an
  * output that is or holds the repository, one inside the repository anywhere but under
  * site/dist/ (where the sources are, it could overwrite them), and one that is, holds or is
- * inside the tree it reads. It builds into a new directory of its own, with a unique name, beside
- * OUT, and only then puts it in OUT's place, and only when OUT is absent, empty, or a directory
- * this script wrote (it holds BUILD_MARK). Anything else at OUT is left as it is, and the build
- * fails before writing anything.
+ * inside the tree it reads. It builds into new directories of its own, with unique names (the two
+ * bundles under site/dist/, the site beside OUT), and only then puts the site in OUT's place, and
+ * only when OUT is absent, empty, or a directory this script wrote (it holds BUILD_MARK). Anything
+ * else at OUT is left as it is, and the build fails before writing anything.
  *
  * Exit 0 when it built, 1 when it did not (with why), 2 on a bad command line or no tree.
  */
@@ -38,7 +40,8 @@ import solid from "@solidjs/vite-plugin";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
-import { build } from "vite";
+import { build, type InlineConfig } from "vite";
+import { pageData, siteData } from "../src/data";
 import { readTree } from "../src/data/tree";
 import type { RenderedSite } from "../src/entry-server";
 
@@ -49,6 +52,7 @@ export const REPOSITORY = dirname(SITE);
 /** Where inside the repository a build may write: site/dist/, which git ignores. */
 export const BUILD_AREA = join(SITE, "dist");
 const ENTRY = join(SITE, "src", "entry-server.tsx");
+const CLIENT_ENTRY = join(SITE, "src", "entry-client.tsx");
 const PUBLIC = join(SITE, "public");
 
 /**
@@ -129,21 +133,51 @@ export async function buildSite(options: { tree: string; out: string; quiet?: bo
 	const problem = outputProblem(options.out, options.tree);
 	if (problem) throw new Error(problem);
 	const out = realPath(options.out);
+	// What the pages render, as the JSON both bundles hold (src/data's pageData).
+	const data = siteData(tree);
+	const shared: InlineConfig = {
+		configFile: false,
+		root: SITE,
+		base: "/",
+		logLevel: options.quiet ? "error" : "warn",
+		publicDir: false,
+		// Hydratable output: the server's HTML carries what the browser's hydration claims.
+		plugins: [solid({ ssr: true })],
+		define: { __PAGE_DATA__: JSON.stringify(pageData(data)) },
+	};
 	mkdirSync(dirname(out), { recursive: true });
 	mkdirSync(BUILD_AREA, { recursive: true });
-	// The build's own directories, new and named uniquely: the server bundle under site/dist/ (it
-	// imports Solid from site/node_modules), and the site beside OUT (so on the same file system),
+	// The build's own directories, new and named uniquely: the two bundles under site/dist/ (they
+	// import Solid from site/node_modules), and the site beside OUT (so on the same file system),
 	// which then takes OUT's place.
+	const client = mkdtempSync(join(BUILD_AREA, ".client-"));
 	const server = mkdtempSync(join(BUILD_AREA, ".server-"));
 	const work = mkdtempSync(join(dirname(out), `.${basename(out)}.building-`));
+	// A production build whatever the caller's NODE_ENV (`bun test` sets "test"): Vite picks the
+	// packages' development builds, Solid's among them, and compiles in process.env.NODE_ENV, by it.
+	const nodeEnv = process.env.NODE_ENV;
+	process.env.NODE_ENV = "production";
 	try {
+		// The browser's bundle: one file, the whole application, every page in it (ADR-0036).
 		await build({
-			configFile: false,
-			root: SITE,
-			base: "/",
-			logLevel: options.quiet ? "error" : "warn",
-			publicDir: false,
-			plugins: [solid({ ssr: false })],
+			...shared,
+			build: {
+				outDir: client,
+				emptyOutDir: true,
+				manifest: true,
+				copyPublicDir: false,
+				modulePreload: { polyfill: false },
+				rollupOptions: { input: CLIENT_ENTRY, output: { entryFileNames: "assets/app-[hash].js" } },
+			},
+		});
+		const clientManifest = JSON.parse(readFileSync(join(client, ".vite", "manifest.json"), "utf8")) as Manifest;
+		const app = Object.values(clientManifest).find((entry) => entry.file.startsWith("assets/app-"))?.file;
+		if (!app) throw new Error("the browser's build wrote no application script");
+		const scripts = filesUnder(client).filter((file) => /\.m?js$/.test(file));
+		if (scripts.length !== 1) throw new Error(`the browser's build wrote ${scripts.length} scripts (${scripts.map((file) => relative(client, file)).join(", ")}), not the one the pages load: nothing may be fetched after the first load (ADR-0036)`);
+
+		await build({
+			...shared,
 			build: {
 				ssr: ENTRY,
 				ssrEmitAssets: true,
@@ -162,20 +196,26 @@ export async function buildSite(options: { tree: string; out: string; quiet?: bo
 		const css = [...new Set(Object.values(manifest).flatMap((entry) => [entry.file, ...(entry.css ?? [])]).filter((file) => file.endsWith(".css")))];
 		if (css.length === 0) throw new Error("the server build wrote no stylesheet");
 
-		const module = (await import(`${pathToFileURL(join(server, "render.mjs")).href}?t=${Date.now()}`)) as { render(tree: unknown): RenderedSite };
-		const site = module.render(tree);
+		const module = (await import(`${pathToFileURL(join(server, "render.mjs")).href}?t=${Date.now()}`)) as { render(): RenderedSite };
+		const pages = module.render();
 
 		const built = join(work, "site");
 		mkdirSync(built);
 		if (existsSync(PUBLIC)) cpSync(PUBLIC, built, { recursive: true });
-		for (const file of filesUnder(server)) {
-			if (file.endsWith(".js") || file.endsWith(".mjs") || file.includes(`${sep}.vite${sep}`)) continue;
-			const to = join(built, relative(server, file));
+		// The server's assets (the stylesheet, the fonts), not its code; and the browser's script.
+		const assets = [
+			...filesUnder(server).filter((file) => !file.endsWith(".js") && !file.endsWith(".mjs")).map((file) => ({ from: server, file })),
+			...filesUnder(client).map((file) => ({ from: client, file })),
+		];
+		for (const { from, file } of assets) {
+			if (file.includes(`${sep}.vite${sep}`)) continue;
+			const to = join(built, relative(from, file));
 			mkdirSync(dirname(to), { recursive: true });
 			cpSync(file, to);
 		}
-		const head = css.map((file) => `<link rel="stylesheet" href="/${file}">`).join("");
-		for (const { page, html } of site.pages) {
+		// A module script runs once the HTML is parsed, so the page paints as it would without it.
+		const head = css.map((file) => `<link rel="stylesheet" href="/${file}">`).join("") + `<script type="module" src="/${app}"></script>`;
+		for (const { page, html } of pages) {
 			if (!/<\/head>/i.test(html)) throw new Error(`${page.path} renders no <head>: Document.tsx must render the whole <html> document`);
 			let text = html.replace(/<\/head>/i, `${head}</head>`);
 			if (!/^\s*<!doctype/i.test(text)) text = `<!DOCTYPE html>${text}`;
@@ -200,9 +240,12 @@ export async function buildSite(options: { tree: string; out: string; quiet?: bo
 		} else {
 			renameSync(built, out);
 		}
-		return { out, files: filesUnder(out).map((file) => relative(out, file)), notes: site.notes, newestRunStartedAt: tree.index.newest_run_started_at };
+		return { out, files: filesUnder(out).map((file) => relative(out, file)), notes: data.notes, newestRunStartedAt: tree.index.newest_run_started_at };
 	} finally {
-		// Only the build's own directories: the server bundle, and the site's, with the previous output it replaced.
+		if (nodeEnv === undefined) delete process.env.NODE_ENV;
+		else process.env.NODE_ENV = nodeEnv;
+		// Only the build's own directories: the two bundles, and the site's, with the previous output it replaced.
+		rmSync(client, { recursive: true, force: true });
 		rmSync(server, { recursive: true, force: true });
 		rmSync(work, { recursive: true, force: true });
 	}

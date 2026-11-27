@@ -56,7 +56,7 @@ describe("passes", () => {
 				{
 					"index.html": page(
 						"",
-						`${BODY}<a href="/docs/">docs</a><a href="/notices.txt">notices</a><a href="/#top">top</a><a href="docs/#intro">intro</a><a href="https://api.ledgermath.com/v1/index.json">API</a>`,
+						`${BODY}<a href="/docs/">docs</a><a href="/notices.txt" target="_self">notices</a><a href="/#top" target="_self">top</a><a href="docs/#intro">intro</a><a href="https://api.ledgermath.com/v1/index.json">API</a>`,
 					),
 					"docs/index.html": page("", `<main><h1 id="intro">Docs</h1><a href="../">home</a><a href="/#top">top</a></main>`),
 					"notices.txt": "notices",
@@ -80,6 +80,37 @@ describe("passes", () => {
 		// The font, not compressible as a binary file, counts as it is, once; the HTML and CSS gzipped.
 		expect(result.weights[0]!.bytes).toBeGreaterThan(1000);
 		expect(result.weights[0]!.bytes).toBeLessThan(1400);
+		expect(result.weights[0]!.script).toBe(0);
+	});
+
+	test("weighs the JavaScript a page loads, and what that imports, apart", () => {
+		const result = checkOutput(
+			site({
+				"index.html": page(`<script type="module" src="/app.js"></script>`),
+				"app.js": `import "./part.js";${"let a=1;".repeat(50)}`,
+				"part.js": "export const b = 2;",
+			}),
+			PAGES,
+		);
+		expect(result.problems).toEqual([]);
+		expect(result.weights[0]!.script).toBeGreaterThan(40);
+		expect(result.weights[0]!.script).toBeLessThan(result.weights[0]!.bytes);
+	});
+
+	test("links the router leaves to the browser: to a file that is not a page, and to a place on the same page, with target or download", () => {
+		expect(
+			check(
+				{
+					"index.html": page(
+						"",
+						`${BODY}<a href="/notices.txt" target="_self">notices</a><a href="/notices.txt" download>notices</a><a href="/notices.txt" download="">notices</a><a href="/notices.txt" rel="noopener external">notices</a><a href="#top" target="_self">top</a><a href="/#top" target="_self">top</a><a href="/docs/#intro">intro</a>`,
+					),
+					"docs/index.html": page("", `<main><h1 id="intro">Docs</h1><a href="/docs/#intro" target="_self">intro</a><a href="/#top">top</a></main>`),
+					"notices.txt": "notices",
+				},
+				[...PAGES, { file: "docs/index.html", text: ["Docs"] }],
+			),
+		).toEqual([]);
 	});
 
 	test("a data: URL in srcset, src, a style attribute and a <style> block, and a fragment-only href", () => {
@@ -87,7 +118,7 @@ describe("passes", () => {
 			check({
 				"index.html": page(
 					`<style>body{background:url("${PIXEL}")}</style>`,
-					`${BODY}<img src="${PIXEL}" srcset="${PIXEL} 1x, ${PIXEL} 2x" alt=""><div style="background-image:url('${PIXEL}')"></div><a href="#top">top</a>`,
+					`${BODY}<img src="${PIXEL}" srcset="${PIXEL} 1x, ${PIXEL} 2x" alt=""><div style="background-image:url('${PIXEL}')"></div><a href="#top" target="_self">top</a>`,
 				),
 			}),
 		).toEqual([]);
@@ -148,6 +179,53 @@ describe("fails", () => {
 			"index.html links to /docs/benchmarks/mutex, which the site lacks",
 			"index.html links to #numbers, an id it lacks",
 			'index.html links to /#numbers, whose page has no id "numbers"',
+		]);
+	});
+
+	test("a link inside the site that is not a page change and has no target: to a file that is not a page, to a place on its own page", () => {
+		expect(
+			check(
+				{
+					// target="" is no target to the router, which reads the property; so is rel="noopener".
+					"index.html": page("", `${BODY}<a href="/notices.txt">notices</a><a href="#top" target="">top</a><a href="/#top" rel="noopener">top</a><a href="/old.html">old</a>`),
+					"docs/index.html": page("", `<main><h1 id="intro">Docs</h1><a href="/docs/#intro">intro</a><a href="#intro">intro</a></main>`),
+					"notices.txt": "notices",
+					"old.html": page(""),
+				},
+				[...PAGES, { file: "docs/index.html", text: ["Docs"] }],
+			)
+				.map((problem) => problem.replace(/, without target.*/, ", without target"))
+				.sort(),
+		).toEqual(
+			[
+				`${join("docs", "index.html")} links to /docs/#intro, a place on its own page, without target`,
+				`${join("docs", "index.html")} links to #intro, a place on its own page, without target`,
+				"index.html links to /notices.txt, which is not one of the site's pages (src/pages.text.ts), without target",
+				"index.html links to #top, a place on its own page, without target",
+				"index.html links to /#top, a place on its own page, without target",
+				"index.html links to /old.html, which is not one of the site's pages (src/pages.text.ts), without target",
+			].sort(),
+		);
+	});
+
+	test("a link whose fragment does not decode, which the router would throw on, is refused rather than read", () => {
+		expect(
+			check(
+				{
+					"index.html": page("", `${BODY}<a href="#%" target="_self">top</a><a href="/docs/#%zz">intro</a>`),
+					"docs/index.html": page("", `<main><h1 id="intro">Docs</h1></main>`),
+				},
+				[...PAGES, { file: "docs/index.html", text: ["Docs"] }],
+			).map((problem) => problem.replace(/ \(a % .*/, "")),
+		).toEqual(["index.html links to #%, whose fragment does not decode", "index.html links to /docs/#%zz, whose fragment does not decode"]);
+	});
+
+	test("a page loading more JavaScript than its budget", async () => {
+		const { SCRIPT_BUDGET_BYTES } = await import("./check-output");
+		// Random letters gzip to about three quarters of their length: well over the budget.
+		const letters = Array.from(crypto.getRandomValues(new Uint8Array(SCRIPT_BUDGET_BYTES * 2)), (n) => String.fromCharCode(97 + (n % 26))).join("");
+		expect(check({ "index.html": page(`<script type="module" src="/app.js"></script>`), "app.js": `const s="${letters}";` })).toEqual([
+			expect.stringMatching(new RegExp(`^index\\.html loads \\d+ bytes of JavaScript, compressed: over the budget of ${SCRIPT_BUDGET_BYTES}$`)),
 		]);
 	});
 

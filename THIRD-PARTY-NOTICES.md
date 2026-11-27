@@ -15,8 +15,8 @@ advice.
    cases; mattpocock/skills; Linux's `statx` declarations; AWS's data in test fixtures
 2. [In the published benchmark binaries](#2-in-the-published-benchmark-binaries): the GNU
    C Library; GCC's runtime library; AWS-LC
-3. [JavaScript packages](#3-javascript-packages): the tools; the website, `site/`, and
-   its fonts, Geist Pixel Circle and Geist Pixel Square
+3. [JavaScript packages](#3-javascript-packages): the tools; the website, `site/`, the
+   Solid packages its script carries, and its fonts, Geist Pixel Circle and Geist Pixel Square
 4. [What is not listed](#4-what-is-not-listed)
 
 ## 1. In this repository
@@ -809,20 +809,28 @@ and are not published.
 ### The website, `site/`
 
 The website (https://ledgermath.com) has its own packages, which `site/package.json` names
-at the versions `site/bun.lock` pins. They build and check it; none is in what is served.
-Its build (`bun run build` in `site/`) renders each page to HTML with Solid's server
-renderer and writes the site to `site/dist/client`: HTML, one stylesheet, the fonts below
-and the notices. Nothing hydrates and no JavaScript file is served; the one script, inline
-in each page, is LedgerMath's own.
+at the versions `site/bun.lock` pins. Its build (`bun run build` in `site/`) renders each
+page to HTML with Solid's server renderer and writes the site to `site/dist/client`: HTML,
+one stylesheet, the fonts below, the notices, and one script, `assets/app-*.js`, which each
+page loads: the site as a Solid application, which takes over the page in the browser and
+does the navigation inside the site (ADR-0036). That script carries code of four of the
+packages, compiled and minified: `solid-js`, `@solidjs/signals`, `@solidjs/web` and
+`@solidjs/router`, all MIT, whose licence asks for its copyright notice and text to travel
+with every copy. Both are in
+[`site/public/third-party-notices.txt`](site/public/third-party-notices.txt), with the
+fonts' (below). The other packages build and check the site and are not in what is served.
+The inline scripts in each page are LedgerMath's own, but for Solid's hydration bootstrap,
+which `@solidjs/web` writes.
 
 | Package | Version | Licence | What uses it |
 |---|---|---|---|
-| `solid-js` | 2.0.1 | MIT | Renders the pages at build time |
-| `@solidjs/web` | 2.0.1 | MIT | Solid's server renderer, at build time |
-| `@solidjs/signals` | 2.0.1 | MIT | The reactive core `solid-js` is built on, at build time |
-| `@solidjs/vite-plugin` | 3.0.1 | MIT | Compiles the pages for the server renderer |
+| `solid-js` | 2.0.1 | MIT | Renders the pages at build time; in the served script |
+| `@solidjs/web` | 2.0.1 | MIT | Solid's server renderer, at build time; its client renderer and hydration, in the served script |
+| `@solidjs/signals` | 2.0.1 | MIT | The reactive core `solid-js` is built on; in the served script |
+| `@solidjs/router` | 2.0.1 | MIT | The navigation inside the site; in the served script |
+| `@solidjs/vite-plugin` | 3.0.1 | MIT | Compiles the pages for the server renderer and the browser |
 | `vite` | 8.3.8 | MIT | Builds the site |
-| `playwright` | 1.65.0 | Apache-2.0 | The browser checks run by hand (`bun run check:browser` in `site/`) |
+| `playwright` | 1.65.0 | Apache-2.0 | The browser checks (`bun run check:browser` in `site/`, by the `site` workflow and by hand) |
 | `axe-core` | 4.14.0 | MPL-2.0 | The same checks: contrast and structure. Injected into the page under test, never served |
 | `typescript` | 7.0.2 | Apache-2.0 | Type checking (`bun run typecheck` in `site/`) |
 | `@types/bun` | 1.3.14 | MIT | Type definitions |
@@ -842,7 +850,7 @@ License 1.1, which requires its copyright notice and the licence's text to trave
 fonts. Both are in
 [`site/public/third-party-notices.txt`](site/public/third-party-notices.txt), which the
 build copies into the site as `third-party-notices.txt` and the pages link as "Licences",
-so they travel with it wherever it is put.
+so they travel with it wherever it is put, as the Solid packages' notices do.
 
 ## 4. What is not listed
 

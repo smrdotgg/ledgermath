@@ -1,13 +1,13 @@
 /**
- * The checks a browser makes of the built site: run by hand before a change to the design, not
- * by `bun run check` or the workflow (the six-hourly rebuild needs no browser).
+ * The checks a browser makes of the built site: by the `site` workflow's build job on every pull
+ * request and push to main, and by hand (the six-hourly rebuild runs no browser).
  *
  *     bun run check:browser [DIR] [--shots OUT]     (DIR defaults to dist/client)
  *
  * It serves DIR as a static host would and loads each page (src/pages.text.ts) in Playwright's
  * Chromium at desktop size (1440×900) and phone size (390×844, at a device scale of 2), each in
  * light and in dark, with reduced motion. A page with feature flags is loaded again with each
- * flag on (as /?napkin), which must set the flag on <html>, for checks 1 to 3:
+ * flag on (as /?napkin), which must set the flag on <html>, for checks 1 to 3 and 6:
  *
  *  1. No console error, no uncaught error, no request that fails or answers 400 or more, and
  *     no request to another origin (each is refused, and counted).
@@ -15,10 +15,42 @@
  *  3. axe-core finds no violation of its WCAG 2.0 and 2.1 A and AA rules (colour contrast among
  *     them) or of its structure rules (one main landmark, one h1, headings in order, all content
  *     in landmarks, unique landmarks).
- *  4. What the page transfers at desktop size (HTML, CSS, fonts, anything else) is under
- *     BUDGET_BYTES compressed: text files weighed gzipped at level 9, others as they are.
+ *  4. What the page transfers at desktop size (HTML, CSS, fonts, JavaScript, anything else) is
+ *     under BUDGET_BYTES compressed: text files weighed gzipped at level 9, others as they are.
  *  5. With JavaScript off the page reads the same: every line of text holding a digit that it
  *     shows with JavaScript on, it shows with JavaScript off.
+ *  6. Hydration changes nothing on the page: once the HTML is parsed, no element or text of the
+ *     body is added, removed or changed while the application takes over (a structural mismatch
+ *     would replace or patch them), but for the attributes the router derives from the address,
+ *     which the build cannot know (aria-current, data-active, target: ADR-0036). Words that
+ *     differ are not changed by hydration, so check 7 compares them. And hydration begins only
+ *     after the page's first contentful paint, so it never puts off the frame the reader sees:
+ *     the mark "hydrate" that src/entry-client.tsx sets comes after the paint entry. Once more
+ *     at desktop size in light with Paint Timing hidden from the page, as in a browser without
+ *     it, and the font 300 ms late, so that the paint comes after the page's script has run:
+ *     the mark still comes after the first contentful frame was painted (its paintTime).
+ *  7. Navigation, at desktop size in light (ADR-0036). From each page a click on a link to the
+ *     next (the last to the first) changes the page in place: no request, no new document, the
+ *     next page's title and fixed words, the keyboard focus back at the top (on <body>), its
+ *     title announced, and no axe violation (check 3's rules) on the page the click made. And
+ *     that page is the one the build wrote for the address: its body and the built file's,
+ *     both parsed by the browser, are the same, but for Solid's hydration markers and keys, the
+ *     scripts and the attributes of check 6. Hydration keeps the HTML's words without comparing
+ *     them, so this is where a page whose words or figures the application would render
+ *     otherwise is caught. A page a click brings starts at the top. The first page is left where
+ *     it loaded, never scrolled, and each other from its end, by its last link to the next (the
+ *     viewport is 400 px tall, so that each page scrolls); back through them all and forward
+ *     again each comes back, with no request and no new document, scrolled to where it was
+ *     left. Then, with the keyboard, on each page: a link to a place on another page (/#numbers
+ *     from /docs/) leaves the focus at the place, so that Tab goes on from there, not from the
+ *     top, and from there a link to the same page without the fragment (LedgerMath) puts the
+ *     focus back at the top, so that Tab starts from the first link; and the page's own link
+ *     (the footer's "Docs" on /docs/), from the page's end, brings the page back to its top with
+ *     the focus there and its title announced, as a document navigation would, with no request.
+ *     And after a visit to an address whose fragment does not decode (/#%), clicks, back and
+ *     clicks again still change the page, with no uncaught error. With JavaScript
+ *     off the same links are ordinary links, each loading its page as a new document. The time
+ *     from each click to the next frame is printed, not judged: a slow runner is slow.
  *
  * With --shots OUT it also writes, for each page, size and scheme, the first screen and the whole
  * page as PNG files in OUT: <page>-<size>-<scheme>-{first,full}.png, and <page>-<flag>-… for a
@@ -28,12 +60,149 @@
  * Exit 0 when every check passes, 1 when one fails (each failure listed).
  */
 
-import { mkdirSync, existsSync, statSync } from "node:fs";
+import { mkdirSync, existsSync, readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import axe from "axe-core";
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
-import { PAGES } from "../src/pages.text";
-import { BUDGET_BYTES } from "./check-output";
+import { PAGES, type SitePage } from "../src/pages.text";
+import { BUDGET_BYTES, missingText } from "./check-output";
+
+/** The attributes the router sets from the browser's address, which hydration may change (check 6). */
+const ADDRESS_ATTRIBUTES = new Set(["aria-current", "data-active", "target"]);
+
+/**
+ * Runs before the page's own scripts: from the moment the HTML is parsed (readyState
+ * "interactive", which comes before a module script runs), records every change to the body
+ * in window.__changes (check 6).
+ */
+const WATCH_HYDRATION = `document.addEventListener("readystatechange", () => {
+	if (document.readyState !== "interactive" || !document.body) return;
+	const changes = (window.__changes = []);
+	new MutationObserver((list) => {
+		for (const m of list) {
+			const at = m.target.nodeName.toLowerCase();
+			if (m.type === "attributes") changes.push({ kind: "attribute", name: m.attributeName, at, before: m.oldValue, after: m.target.getAttribute(m.attributeName) });
+			else if (m.type === "characterData") changes.push({ kind: "text", at: m.target.parentNode ? m.target.parentNode.nodeName.toLowerCase() : at, before: m.oldValue, after: m.target.nodeValue });
+			else changes.push({ kind: "elements", at, added: [...m.addedNodes].map((n) => n.nodeName.toLowerCase()), removed: [...m.removedNodes].map((n) => n.nodeName.toLowerCase()) });
+		}
+	}).observe(document.body, { subtree: true, childList: true, attributes: true, attributeOldValue: true, characterData: true, characterDataOldValue: true });
+});`;
+
+type Change = { kind: "attribute" | "text" | "elements"; at: string; name?: string; before?: string | null; after?: string | null; added?: string[]; removed?: string[] };
+
+/**
+ * Whether the application took over the page only after the reader saw it (check 6): the mark
+ * "hydrate" (src/entry-client.tsx) after the paint entry first-contentful-paint, both on the
+ * page's own clock. One line per problem.
+ */
+async function paintedFirst(page: Page): Promise<string[]> {
+	await page.waitForFunction(() => performance.getEntriesByName("hydrated").length > 0, null, { timeout: 10_000 }).catch(() => {});
+	const at = await page.evaluate(() => ({
+		paint: performance.getEntriesByName("first-contentful-paint")[0]?.startTime ?? null,
+		hydrate: performance.getEntriesByName("hydrate")[0]?.startTime ?? null,
+		hydrated: performance.getEntriesByName("hydrated").length > 0,
+	}));
+	if (!at.hydrated || at.hydrate === null) return ["the application never took over the page (no mark \"hydrated\")"];
+	if (at.paint === null) return ["the browser reported no first contentful paint"];
+	return at.hydrate < at.paint ? [`hydration began at ${at.hydrate.toFixed(1)} ms, before the first contentful paint at ${at.paint.toFixed(1)} ms`] : [];
+}
+
+/**
+ * Runs before the page's own scripts: hides Paint Timing from the page, as a browser without it
+ * would be (no entry "first-contentful-paint", no entry type "paint"), and keeps the real lookup
+ * in window.__paint for the check (check 6).
+ */
+const HIDE_PAINT_TIMING = `(() => {
+	const real = performance.getEntriesByName.bind(performance);
+	window.__paint = () => real("first-contentful-paint");
+	performance.getEntriesByName = (name, type) => (name === "first-contentful-paint" ? [] : real(name, type));
+	const types = PerformanceObserver.supportedEntryTypes.filter((type) => type !== "paint");
+	Object.defineProperty(PerformanceObserver, "supportedEntryTypes", { get: () => types, configurable: true });
+})();`;
+
+/** How late the font comes in check 6's load without Paint Timing. */
+const FONT_DELAY_MS = 300;
+
+/**
+ * Check 6 in a browser without Paint Timing: PAGE (with HIDE_PAINT_TIMING added, then loaded)
+ * must take over only after the browser painted its first contentful frame, by its own record:
+ * the end of that frame's paint (paintTime; else its start time). One line per problem.
+ */
+async function paintedFirstWithoutPaintTiming(page: Page): Promise<string[]> {
+	const hydrated = await page.waitForFunction(() => performance.getEntriesByName("hydrated").length > 0, null, { timeout: 10_000 }).then(() => true, () => false);
+	if (!hydrated) return ["without Paint Timing, the application never took over the page (no mark \"hydrated\")"];
+	// The browser reports the paint a little after making it.
+	await page.waitForFunction(() => (window as unknown as { __paint(): PerformanceEntry[] }).__paint().length > 0, null, { timeout: 10_000 }).catch(() => {});
+	const at = await page.evaluate(() => {
+		const entry = (window as unknown as { __paint(): (PerformanceEntry & { paintTime?: number })[] }).__paint()[0];
+		return { paint: entry ? (entry.paintTime ?? entry.startTime) : null, hydrate: performance.getEntriesByName("hydrate")[0]!.startTime };
+	});
+	if (at.paint === null) return ["without Paint Timing, the browser reported no first contentful paint"];
+	return at.hydrate < at.paint ? [`without Paint Timing, hydration began at ${at.hydrate.toFixed(1)} ms, before the first contentful frame was painted at ${at.paint.toFixed(1)} ms`] : [];
+}
+
+/** What hydration changed on the page that it must not have (check 6), one line each. */
+async function hydrationChanges(page: Page): Promise<string[]> {
+	const changes = await page.evaluate(() => (window as unknown as { __changes?: Change[] }).__changes ?? null);
+	if (changes === null) return ["the watch on the body never started (the page's HTML did not parse?)"];
+	return changes
+		.filter((c) => !(c.kind === "attribute" && ADDRESS_ATTRIBUTES.has(c.name ?? "")))
+		.map((c) =>
+			c.kind === "attribute"
+				? `hydration changed ${c.name} on <${c.at}>: ${JSON.stringify(c.before)} -> ${JSON.stringify(c.after)}`
+				: c.kind === "text"
+					? `hydration changed text in <${c.at}>: ${JSON.stringify(c.before)} -> ${JSON.stringify(c.after)}`
+					: `hydration changed the elements in <${c.at}>: added ${c.added!.join(", ") || "none"}, removed ${c.removed!.join(", ") || "none"}`,
+		);
+}
+
+/**
+ * Where the body on screen differs from the body of BUILT (a page's HTML as the build wrote it),
+ * both parsed by the browser and compared without Solid's hydration markers and keys, scripts,
+ * the attributes of check 6 and the announcement's words; null when they are the same (check 7).
+ */
+function differsFromBuilt(page: Page, built: string): Promise<string | null> {
+	return page.evaluate(
+		({ built, attributes }) => {
+			const clean = (body: HTMLElement) => {
+				const copy = body.cloneNode(true) as HTMLElement;
+				const walker = document.createTreeWalker(copy, NodeFilter.SHOW_COMMENT);
+				const comments: Node[] = [];
+				while (walker.nextNode()) comments.push(walker.currentNode);
+				for (const comment of comments) comment.parentNode!.removeChild(comment);
+				for (const script of [...copy.querySelectorAll("script")]) script.remove();
+				for (const element of [...copy.querySelectorAll("*")]) for (const name of ["_hk", ...attributes]) element.removeAttribute(name);
+				for (const element of [...copy.querySelectorAll("[aria-live]")]) element.textContent = "";
+				copy.normalize();
+				return copy.innerHTML;
+			};
+			const shown = clean(document.body);
+			const written = clean(new DOMParser().parseFromString(built, "text/html").body);
+			if (shown === written) return null;
+			let i = 0;
+			while (i < shown.length && shown[i] === written[i]) i++;
+			return `the page differs from the one the build wrote, at character ${i}: shown ${JSON.stringify(shown.slice(Math.max(0, i - 40), i + 60))}, built ${JSON.stringify(written.slice(Math.max(0, i - 40), i + 60))}`;
+		},
+		{ built, attributes: [...ADDRESS_ATTRIBUTES] },
+	);
+}
+
+/** axe-core's violations of check 3's rules on the page as it is now, one line each. */
+async function axeViolations(page: Page): Promise<{ violations: string[]; incomplete: string[] }> {
+	if (!(await page.evaluate(() => "axe" in window))) await page.addScriptTag({ content: axe.source });
+	return page.evaluate(
+		async ({ tags, structure }) => {
+			const a = (window as unknown as { axe: typeof import("axe-core") }).axe;
+			const rules = [...new Set([...a.getRules(tags).map((rule) => rule.ruleId), ...structure])];
+			const result = await a.run(document, { runOnly: { type: "rule", values: rules }, resultTypes: ["violations", "incomplete"] });
+			return {
+				violations: result.violations.map((v) => `${v.id} (${v.impact ?? "?"}): ${v.help}; ${v.nodes.length} element(s), e.g. ${v.nodes[0]?.target.join(" ") ?? "?"}`),
+				incomplete: result.incomplete.map((v) => `${v.id}: ${v.nodes.length} element(s) axe could not decide, e.g. ${v.nodes[0]?.target.join(" ") ?? "?"}`),
+			};
+		},
+		{ tags: WCAG_TAGS, structure: STRUCTURE_RULES },
+	);
+}
 
 type Size = { name: "desktop" | "phone"; width: number; height: number; deviceScaleFactor: number; isMobile: boolean };
 const SIZES: readonly Size[] = [
@@ -168,6 +337,8 @@ export async function checkBrowser(dir: string, shots?: string): Promise<Result[
 	const weight: string[] = [];
 	const weights: string[] = [];
 	const scriptless: string[] = [];
+	const hydration: string[] = [];
+	let moves: { problems: string[]; timings: string[] } = { problems: [], timings: [] };
 	try {
 		for (const meta of PAGES) {
 			const url = `${server.origin}${meta.path}`;
@@ -185,6 +356,7 @@ export async function checkBrowser(dir: string, shots?: string): Promise<Result[
 					const page = await ctx.newPage();
 					const weigh = !address.flag && size.name === "desktop" && scheme === "light";
 					const seen = watch(page, server.origin, weigh);
+					await page.addInitScript(WATCH_HYDRATION);
 					const response = await page.goto(`${server.origin}${address.path}`, { waitUntil: "load" });
 					if (address.flag && !(await page.evaluate((flag) => flag in document.documentElement.dataset, address.flag))) {
 						load.push(`${where}: the flag ${address.flag} is not set on <html>`);
@@ -192,6 +364,18 @@ export async function checkBrowser(dir: string, shots?: string): Promise<Result[
 					if (!response || response.status() !== 200) load.push(`${where}: the page answered ${response?.status() ?? "nothing"}`);
 					await settle(page);
 					load.push(...[...new Set(seen.problems)].map((p) => `${where}: ${p}`));
+					hydration.push(...(await paintedFirst(page)).map((p) => `${where}: ${p}`));
+					hydration.push(...(await hydrationChanges(page)).map((p) => `${where}: ${p}`));
+					if (weigh) {
+						const bare = await context(browser, size, scheme);
+						const without = await bare.newPage();
+						await without.addInitScript(HIDE_PAINT_TIMING);
+						// A slow font (its text waits for it): the paint comes late, after the page's script runs.
+						await without.route("**/*.woff2", (route) => Bun.sleep(FONT_DELAY_MS).then(() => route.continue()));
+						await without.goto(`${server.origin}${address.path}`, { waitUntil: "load" });
+						hydration.push(...(await paintedFirstWithoutPaintTiming(without)).map((p) => `${where}: ${p}`));
+						await bare.close();
+					}
 
 					if (size.name === "phone") {
 						const widths = await page.evaluate(() => ({ document: document.documentElement.scrollWidth, body: document.body.scrollWidth, visual: window.innerWidth }));
@@ -199,19 +383,7 @@ export async function checkBrowser(dir: string, shots?: string): Promise<Result[
 						if (widest > size.width) scroll.push(`${where}: the page is ${widest} px wide in a ${size.width} px viewport`);
 					}
 
-					await page.addScriptTag({ content: axe.source });
-					const found = await page.evaluate(
-						async ({ tags, structure }) => {
-							const a = (window as unknown as { axe: typeof import("axe-core") }).axe;
-							const rules = [...new Set([...a.getRules(tags).map((rule) => rule.ruleId), ...structure])];
-							const result = await a.run(document, { runOnly: { type: "rule", values: rules }, resultTypes: ["violations", "incomplete"] });
-							return {
-								violations: result.violations.map((v) => `${v.id} (${v.impact ?? "?"}): ${v.help}; ${v.nodes.length} element(s), e.g. ${v.nodes[0]?.target.join(" ") ?? "?"}`),
-								incomplete: result.incomplete.map((v) => `${v.id}: ${v.nodes.length} element(s) axe could not decide, e.g. ${v.nodes[0]?.target.join(" ") ?? "?"}`),
-							};
-						},
-						{ tags: WCAG_TAGS, structure: STRUCTURE_RULES },
-					);
+					const found = await axeViolations(page);
 					access.push(...found.violations.map((v) => `${where}: ${v}`));
 					for (const note of found.incomplete) undecided.add(`${where}: ${note}`);
 
@@ -253,6 +425,7 @@ export async function checkBrowser(dir: string, shots?: string): Promise<Result[
 			scriptless.push(...[...new Set(seen.problems)].map((p) => `${meta.path} with JavaScript off: ${p}`));
 			await ctx.close();
 		}
+		moves = await navigation(browser, server.origin, root);
 	} finally {
 		await browser.close();
 		server.stop();
@@ -268,7 +441,256 @@ export async function checkBrowser(dir: string, shots?: string): Promise<Result[
 		},
 		{ name: `transfers under ${BUDGET_BYTES.toLocaleString("en")} bytes compressed`, problems: weight, passed: weights.join("; ") },
 		{ name: "reads the same with JavaScript off", problems: scriptless, passed: `${pages}: every line with a figure is in the HTML` },
+		{
+			name: "hydration waits for the first paint and changes nothing on the page",
+			problems: hydration,
+			passed: `${pages}: hydration began after the first contentful paint (and, with Paint Timing hidden, after the first contentful frame was painted), and no element or text of the body was added, removed or changed, at either size, in light or dark, with each flag`,
+		},
+		{
+			name: "navigation inside the site: in place, with no request",
+			problems: moves.problems,
+			passed: `each click changed the page in place, with no request and no new document, to the page the build wrote for the address, at its top, its title and words, the focus at the top and the title announced, with no axe violation; back and forward the same, each page scrolled to where it was left; with the keyboard, a link to a place on another page left the focus at the place, the same page without the fragment put it back at the top, and a page's own link brought the page back to its top; after an address whose fragment does not decode, navigation went on; with JavaScript off each link loaded its page. From the click to the next frame (not judged): ${moves.timings.join("; ")}`,
+		},
 	];
+}
+
+/** Check 7: navigation inside the site, with JavaScript on and then off (see the comment at the top). */
+async function navigation(browser: Browser, origin: string, root: string): Promise<{ problems: string[]; timings: string[] }> {
+	const problems: string[] = [];
+	const timings: string[] = [];
+	const first = PAGES[0]!;
+	// From each page to the next, the last back to the first.
+	const order = [...PAGES.slice(1), first];
+	const linkTo = (page: Page, meta: SitePage) => page.locator(`a[href="${meta.path}"]:not([target])`).first();
+
+	// Short, so that every page scrolls and back and forward have positions to restore.
+	const ctx = await context(browser, { ...SIZES[0]!, height: 400 }, "light");
+	const page = await ctx.newPage();
+	const seen = watch(page, origin, false);
+	const requests: string[] = [];
+	page.on("request", (request) => requests.push(request.url().replace(origin, "")));
+	/** Loads META's page and waits until the application has taken it over (the mark "hydrated"). */
+	const load = async (meta: SitePage) => {
+		await page.goto(`${origin}${meta.path}`, { waitUntil: "load" });
+		await page.waitForLoadState("networkidle", { timeout: 10_000 }).catch(() => {});
+		await page.waitForFunction(() => performance.getEntriesByName("hydrated").length > 0, null, { timeout: 10_000 }).catch(() => {});
+		await page.evaluate(() => ((window as unknown as { __document: boolean }).__document = true));
+	};
+	await load(first);
+	const sameDocument = () => page.evaluate(() => (window as unknown as { __document?: boolean }).__document === true).catch(() => false);
+
+	/** What must hold of the page on screen once a click, or a step back or forward, has brought META. */
+	const shows = async (where: string, meta: SitePage, clicked: boolean) => {
+		if (!(await sameDocument())) return void problems.push(`${where}: a new document was loaded`);
+		if (requests.length > 0) problems.push(`${where}: ${requests.length} request(s): ${requests.join(", ")}`);
+		await page.waitForFunction((title) => document.title === title, meta.title, { timeout: 2_000 }).catch(() => {});
+		const now = await page.evaluate(() => ({
+			html: document.documentElement.outerHTML,
+			title: document.title,
+			focus: document.activeElement === document.body,
+			announced: document.querySelector("[aria-live]")?.textContent ?? null,
+		}));
+		if (now.title !== meta.title) problems.push(`${where}: the title is ${JSON.stringify(now.title)}, not ${JSON.stringify(meta.title)}`);
+		for (const text of missingText(now.html, meta.text)) problems.push(`${where}: the page does not hold ${JSON.stringify(text)}`);
+		if (!clicked) return;
+		const differs = await differsFromBuilt(page, readFileSync(join(root, meta.file), "utf8"));
+		if (differs) problems.push(`${where}: ${differs}`);
+		if (!now.focus) problems.push(`${where}: the keyboard focus is not back at the top of the page (on <body>)`);
+		if (now.announced !== meta.title) problems.push(`${where}: a screen reader is told ${JSON.stringify(now.announced)}, not the page's title`);
+		const found = await axeViolations(page);
+		problems.push(...found.violations.map((v) => `${where}: axe: ${v}`));
+	};
+
+	const visited: SitePage[] = [first];
+	// Where each visited entry was left: the first where it loaded, never scrolled (its first link
+	// to the next is in view); each other at its end, by its last link to the next.
+	const left: number[] = [];
+	const scrollY = () => page.evaluate(() => Math.round(window.scrollY));
+	const toEnd = () => page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+	const restored = async (where: string, at: number) => {
+		await page.waitForFunction((y) => Math.abs(window.scrollY - y) <= 1, at, { timeout: 2_000 }).catch(() => {});
+		const y = await page.evaluate(() => Math.round(window.scrollY));
+		if (Math.abs(y - at) > 1) problems.push(`${where}: the page is scrolled to ${y}, not to ${at}, where it was left`);
+	};
+	let current = first;
+	for (const [i, next] of order.entries()) {
+		const where = `${current.path} -> ${next.path}`;
+		const links = page.locator(`a[href="${next.path}"]:not([target])`);
+		if ((await links.count()) === 0) {
+			problems.push(`${where}: ${current.path} has no link to ${next.path} without a target`);
+			break;
+		}
+		if (i > 0) await toEnd();
+		const link = i === 0 ? links.first() : links.last();
+		await link.scrollIntoViewIfNeeded();
+		left[visited.length - 1] = await scrollY();
+		// The click's time, the body's first change, and the next frame after it (a message posted from requestAnimationFrame).
+		await page.evaluate(() => {
+			const m: Record<string, number> = {};
+			(window as unknown as { __click: Record<string, number> }).__click = m;
+			document.addEventListener("click", (e) => (m.click = e.timeStamp), { capture: true, once: true });
+			const observer = new MutationObserver(() => {
+				observer.disconnect();
+				requestAnimationFrame(() => {
+					const channel = new MessageChannel();
+					channel.port1.onmessage = () => (m.frame = performance.now());
+					channel.port2.postMessage(0);
+				});
+			});
+			observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+		});
+		requests.length = 0;
+		await link.click();
+		await page.waitForURL((url) => url.pathname === next.path, { timeout: 5_000 }).catch(() => {});
+		await page.waitForFunction(() => (window as unknown as { __click?: Record<string, number> }).__click?.frame !== undefined, null, { timeout: 5_000 }).catch(() => {});
+		const m = await page.evaluate(() => (window as unknown as { __click?: Record<string, number> }).__click).catch(() => undefined);
+		if (m?.click !== undefined && m.frame !== undefined) timings.push(`${where} ${(m.frame - m.click).toFixed(1)} ms`);
+		await shows(`click ${where}`, next, true);
+		if (!(await sameDocument())) break;
+		const top = await page.evaluate(() => Math.round(window.scrollY));
+		if (top !== 0) problems.push(`click ${where}: the new page starts scrolled to ${top}, not at the top`);
+		visited.push(next);
+		current = next;
+	}
+	await toEnd();
+	left[visited.length - 1] = await scrollY();
+	for (let i = visited.length - 2; i >= 0; i--) {
+		requests.length = 0;
+		await page.goBack();
+		await shows(`back to ${visited[i]!.path}`, visited[i]!, false);
+		await restored(`back to ${visited[i]!.path}`, left[i]!);
+	}
+	for (let i = 1; i < visited.length; i++) {
+		requests.length = 0;
+		await page.goForward();
+		await shows(`forward to ${visited[i]!.path}`, visited[i]!, false);
+		await restored(`forward to ${visited[i]!.path}`, left[i]!);
+	}
+
+	// With the keyboard, on each page: a link to a place on another page, and a link to the page itself.
+	const paths = PAGES.map((meta) => meta.path);
+	for (const meta of PAGES) {
+		await load(meta);
+		const hrefs = await page.evaluate(() => [...document.querySelectorAll("a[href]:not([target])")].map((a) => a.getAttribute("href")!));
+		const resolved = (href: string) => new URL(href, `${origin}${meta.path}`);
+
+		// A place on another page (/#numbers from /docs/): the focus at the place, so that Tab goes
+		// on from there, as after a document navigation to it.
+		const away = hrefs.find((href) => resolved(href).hash.length > 1 && resolved(href).pathname !== meta.path && paths.includes(resolved(href).pathname));
+		if (away) {
+			const where = `keyboard on ${meta.path}, ${away}`;
+			requests.length = 0;
+			await page.focus(`a[href="${away}"]:not([target])`);
+			await page.keyboard.press("Enter");
+			await page.waitForURL((url) => url.href === resolved(away).href, { timeout: 5_000 }).catch(() => {});
+			await page.waitForTimeout(100);
+			if (!(await sameDocument())) problems.push(`${where}: a new document was loaded`);
+			else {
+				if (requests.length > 0) problems.push(`${where}: ${requests.length} request(s): ${requests.join(", ")}`);
+				const id = decodeURIComponent(resolved(away).hash.slice(1));
+				if (!(await page.evaluate((id) => document.activeElement === document.getElementById(id), id))) problems.push(`${where}: the focus is not at #${id}`);
+				await page.keyboard.press("Tab");
+				const after = await page.evaluate((id) => {
+					const place = document.getElementById(id)!;
+					return !!(place.compareDocumentPosition(document.activeElement!) & Node.DOCUMENT_POSITION_FOLLOWING);
+				}, id);
+				if (!after) problems.push(`${where}: Tab went to an element before #${id}, not on from it`);
+
+				// Then, from the place, the same page without the fragment (LedgerMath on /#numbers):
+				// only the fragment changes, and the focus goes back to the top, as loading the page
+				// again would leave it, so that Tab starts from the page's first link.
+				const there = resolved(away);
+				const back = await page.evaluate(
+					({ path }) => [...document.querySelectorAll("a[href]:not([target])")].map((a) => a.getAttribute("href")!).find((href) => { const u = new URL(href, location.href); return u.pathname === path && !u.hash && !u.search; }) ?? null,
+					{ path: there.pathname },
+				);
+				if (back) {
+					const from = `${where}, then ${back}`;
+					requests.length = 0;
+					await page.locator(`a[href="${back}"]:not([target])`).first().evaluate((a: HTMLElement) => a.focus({ preventScroll: true }));
+					await page.keyboard.press("Enter");
+					await page.waitForURL((url) => url.pathname === there.pathname && url.hash === "", { timeout: 5_000 }).catch(() => {});
+					await page.waitForTimeout(100);
+					if (!(await sameDocument())) problems.push(`${from}: a new document was loaded`);
+					else {
+						if (requests.length > 0) problems.push(`${from}: ${requests.length} request(s): ${requests.join(", ")}`);
+						if (!(await page.evaluate(() => document.activeElement === document.body))) problems.push(`${from}: the keyboard focus is not back at the top of the page (on <body>)`);
+						await page.keyboard.press("Tab");
+						const first = await page.evaluate(() => {
+							const focusable = [...document.querySelectorAll<HTMLElement>("a[href], button, input, select, textarea, [tabindex]")].find((element) => element.tabIndex >= 0);
+							return document.activeElement === focusable;
+						});
+						if (!first) problems.push(`${from}: Tab did not start from the page's first link`);
+					}
+				}
+			}
+			await load(meta);
+		}
+
+		// The page itself (the footer's "Docs" on /docs/, "LedgerMath" on /), from its end: the page
+		// again at its top, the focus there and its title announced, as a document navigation would.
+		const self = hrefs.filter((href) => resolved(href).pathname === meta.path && resolved(href).hash === "" && resolved(href).search === "").at(-1);
+		if (self) {
+			const where = `keyboard on ${meta.path}, its own link ${self}, from the page's end`;
+			await toEnd();
+			await page.evaluate(() => (document.querySelector("[aria-live]")!.textContent = ""));
+			requests.length = 0;
+			// Focused without scrolling, as a reader who has scrolled down meets it.
+			await page.locator(`a[href="${self}"]:not([target])`).last().evaluate((a: HTMLElement) => a.focus({ preventScroll: true }));
+			await page.keyboard.press("Enter");
+			await page.waitForTimeout(100);
+			if (!(await sameDocument())) problems.push(`${where}: a new document was loaded`);
+			else {
+				if (requests.length > 0) problems.push(`${where}: ${requests.length} request(s): ${requests.join(", ")}`);
+				const now = await page.evaluate(() => ({ y: Math.round(window.scrollY), focus: document.activeElement === document.body, announced: document.querySelector("[aria-live]")?.textContent ?? null }));
+				if (now.y !== 0) problems.push(`${where}: the page stays scrolled to ${now.y}, not back at its top`);
+				if (!now.focus) problems.push(`${where}: the keyboard focus is not back at the top of the page (on <body>)`);
+				if (now.announced !== meta.title) problems.push(`${where}: a screen reader is told ${JSON.stringify(now.announced)}, not the page's title`);
+			}
+		}
+	}
+	// An address whose fragment does not decode (/#%), as anyone may write one: the application
+	// takes it as naming nothing, and navigation goes on, out, back to it, and out again.
+	{
+		const odd = `${first.path}#%`;
+		await page.goto(`${origin}${odd}`, { waitUntil: "load" });
+		await page.waitForFunction(() => performance.getEntriesByName("hydrated").length > 0, null, { timeout: 10_000 }).catch(() => {});
+		await page.evaluate(() => ((window as unknown as { __document: boolean }).__document = true));
+		const next = order[0]!;
+		const step = async (where: string, to: SitePage, act: () => Promise<unknown>) => {
+			requests.length = 0;
+			await act();
+			await page.waitForURL((url) => url.pathname === to.path, { timeout: 5_000 }).catch(() => {});
+			await shows(`after ${odd}, ${where}`, to, false);
+		};
+		await step(`a click to ${next.path}`, next, () => linkTo(page, next).click());
+		await step(`back to ${odd}`, first, () => page.goBack());
+		await step(`a click to ${next.path} again`, next, () => linkTo(page, next).click());
+		if (next !== first) await step(`a click to ${first.path}`, first, () => linkTo(page, first).click());
+	}
+	problems.push(...[...new Set(seen.problems)].map((p) => `navigation: ${p}`));
+	await ctx.close();
+
+	// JavaScript off: the same links are ordinary links, each loading its page.
+	const off = await context(browser, SIZES[0]!, "light", false);
+	const plain = await off.newPage();
+	await plain.goto(`${origin}${first.path}`, { waitUntil: "load" });
+	current = first;
+	for (const next of order) {
+		const where = `with JavaScript off, ${current.path} -> ${next.path}`;
+		const link = linkTo(plain, next);
+		if ((await link.count()) === 0) {
+			problems.push(`${where}: no link`);
+			break;
+		}
+		const [response] = await Promise.all([plain.waitForEvent("response", { predicate: (r) => r.request().isNavigationRequest() && new URL(r.url()).pathname === next.path, timeout: 5_000 }).catch(() => null), link.click()]);
+		await plain.waitForLoadState("load");
+		if (!response || response.status() !== 200) problems.push(`${where}: the link did not load ${next.path} as a new document (${response ? `it answered ${response.status()}` : "no document was requested"})`);
+		else if ((await plain.title()) !== next.title) problems.push(`${where}: the title is ${JSON.stringify(await plain.title())}`);
+		current = next;
+	}
+	await off.close();
+	return { problems, timings };
 }
 
 if (import.meta.main) {
