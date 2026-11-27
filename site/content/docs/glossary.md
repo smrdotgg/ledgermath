@@ -134,7 +134,7 @@ A versioned procedure that turns Runs into published numbers. Two exist: `series
 
 ## new connection
 
-In `http_get`, what a request has when its parameter `connection` is `new`: it resolves the name, connects and secures a connection of its own inside its sample, so its phases include `dns`, `connect` and `tls`. See reused connection. Met in: [http_get](/docs/benchmarks/http_get); [Methods](/docs/methods).
+In `http_get`, what a request has when its parameter `connection` is `new`: it resolves the name, connects and secures a connection of its own inside its sample, so a request that succeeds has the phases `dns`, `connect` and `tls`. See reused connection. Met in: [http_get](/docs/benchmarks/http_get); [Methods](/docs/methods).
 
 ## observed
 
@@ -194,7 +194,7 @@ In `http_get`, a connection opened and secured outside any sample and used by th
 
 ## root volume
 
-In the disk benchmarks, the disk of a Series whose parameter `disk` is `root_volume`: the EBS volume the instance boots from, which holds its root file system. The disk read benchmarks read the Fixture the box makes at boot under `/var/tmp/ledgermath/disk` on it, and `disk_write` writes a file of its own there. A figure from it is an EBS figure: the volume's type, size and provisioned IOPS and throughput are AWS's record in each boot's dump section `ec2_volumes`. The schedule runs these sets on every instance type. Met in: `params.disk` of the Series of [disk_read_random](/docs/benchmarks/disk_read_random), [disk_read_sequential](/docs/benchmarks/disk_read_sequential), [disk_read_io_uring](/docs/benchmarks/disk_read_io_uring) and [disk_write](/docs/benchmarks/disk_write).
+In the disk benchmarks, the disk of a Series whose parameter `disk` is `root_volume`: the EBS volume the instance boots from, which holds its root file system. The disk read benchmarks read the Fixture the box makes at boot under `/var/tmp/ledgermath/disk` on it, and `disk_write` writes a file of its own there. The value names where the file is; what a figure measures is on the benchmark's page. The volume's type, size and provisioned IOPS and throughput are AWS's record in each boot's dump section `ec2_volumes`, where the dump took it. The schedule runs these sets on every instance type. Met in: `params.disk` of the Series of [disk_read_random](/docs/benchmarks/disk_read_random), [disk_read_sequential](/docs/benchmarks/disk_read_sequential), [disk_read_io_uring](/docs/benchmarks/disk_read_io_uring) and [disk_write](/docs/benchmarks/disk_write).
 
 ## round
 

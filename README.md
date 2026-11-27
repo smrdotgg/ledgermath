@@ -3601,7 +3601,7 @@ It follows the files' own links, and writes nothing unless they agree as one upd
 file's sha256 the one the Series file lists, the Run file's the one its point gives, the stdout
 blob's the one the Run names, the row the same line in both lists; the dump's Run the newest
 its row gives, the index's sha256 the one the Run names, the section's the one the index
-names). A new sample changes every figure the start-here page's examples cite, and its test
+names). A new sample can change any figure the start-here page's examples cite, and its test
 then fails until they are worked again.
 
 `tests/api-reference.test.ts` holds: every schema under `schemas/` has a page, or is in

@@ -436,10 +436,12 @@ function checkExample(example: Example): Checked {
 		let computed: { value: number; unit: Unit };
 		try {
 			const tokens = tokenize(line.slice(label + 2, equals));
-			// One operation a line: one ×, ÷, + or −; a total, every operator a +; or max(…) of numbers alone.
+			// One operation a line: one ×, ÷, + or −; a total, every operator a +; or the whole line one max(…) of numbers alone. A call is an operation.
 			const operators = tokens.flatMap((token) => (token.kind === "op" && "+−×÷".includes(token.op) ? [token.op] : []));
-			const isMax = tokens[0]?.kind === "op" && tokens[0].op === "max";
-			if (isMax ? operators.length > 0 : operators.length > 1 && !operators.every((op) => op === "+")) problems.push(`more than one operation: ${line}`);
+			const calls = tokens.filter((token) => token.kind === "op" && token.op === "max").length;
+			const wholeCall = tokens[0]?.kind === "op" && tokens[0].op === "max";
+			const one = calls === 0 ? operators.length <= 1 || operators.every((op) => op === "+") : calls === 1 && wholeCall && operators.length === 0;
+			if (!one) problems.push(`more than one operation: ${line}`);
 			for (const token of tokens) {
 				if (token.kind === "number" && !held.some((one) => same(one.value, token.value) && one.key === keyOf(token.unit))) {
 					problems.push(`${token.text} ${keyOf(token.unit) || "(no unit)"} is from nowhere above: ${line}`);
@@ -569,6 +571,8 @@ describe("the worked examples of the start-here page", () => {
 			["a tier's bounds", tiered, "10240 to 51200 GB", "10240 to 51300 GB", /the price file says 10240 to 51200 GB/],
 			["an operand", tiered, "102400 GB × 0.07", "102400 GB × 0.071", /0\.071 .* is from nowhere above/],
 			["two operations on one line", tiered, "599846300 GB × 0.05 USD per GB = 29992315", "(599999900 GB − 153600 GB) × 0.05 USD per GB = 29992315", /^more than one operation: Tier 4:/],
+			["a call nested in a call", fleet, "Boxes: max(69, 151)", "Boxes: max(69, max(75, 151))", /^more than one operation: Boxes: max\(69, max/],
+			["a call inside an operation", fleet, "Boxes: max(69, 151)", "Boxes: 1 × max(69, 151)", /^more than one operation: Boxes: 1 × max/],
 			["a source", tiered, "the question", "a guess", /is not the question, an assumption or a citation/],
 			// Item 12: an answer's result is held to its own line, not to any number the example holds.
 			["an answer's result swapped for another the example holds", fleet, "- Boxes: 151", "- Boxes: 75", /^Boxes is 151, the answer says "75"/],

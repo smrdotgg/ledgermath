@@ -36,8 +36,8 @@ on one instance type.
 - The two threads are not pinned, so on a 2-vCPU box they share
   both vCPUs with everything else.
 - A Run's figure is the median of its samples' mean time per round trip, and a Series gives
-  the 5th, 50th and 95th percentiles of those figures across Runs. No single round trip is
-  timed: nothing here is a 99th percentile, or any percentile, of single round trips.
+  the 5th, 50th and 95th percentiles of those figures across Runs. The published figures hold
+  no percentile of single round trips, a 99th or any other.
 
 ## Parameters
 
