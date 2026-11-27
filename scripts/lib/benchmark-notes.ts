@@ -150,7 +150,7 @@ export const BENCHMARK_NOTES: Readonly<Record<string, BenchmarkNote>> = {
 	},
 	disk_read_sequential: {
 		measures:
-			"Reading a file front to back the way a program does, on one thread: buffered preads of request_bytes with the kernel's stock readahead, the kernel asked first to drop each sample's region from the page cache. It is a cold read when the eviction worked, which the Run records as each sample's resident pages.",
+			"Reading a file front to back the way a program does, on one thread: buffered preads of request_bytes with the kernel's stock readahead, the kernel asked first to drop each sample's region from the page cache. It is a cold read when the eviction worked, which the Run records, where it can count them, as each sample's resident pages.",
 		repetition: "one pread of request_bytes",
 		bytes: "bytes read",
 		variants: [
@@ -161,7 +161,7 @@ export const BENCHMARK_NOTES: Readonly<Record<string, BenchmarkNote>> = {
 	},
 	disk_write: {
 		measures:
-			"What a buffered pwrite of request_bytes costs, on one thread, one write at a time: followed by fdatasync (sync fdatasync: until the device has the data) or by nothing (sync none: until the page cache has it). How the kernel and the device make the data durable is theirs, not the binary's; where the binary could read them, each Run observes the disk's write cache and FUA support (write_cache, fua).",
+			"What a buffered pwrite of request_bytes costs, on one thread, one write at a time: followed by fdatasync (sync fdatasync: until the device has the data) or by nothing (sync none: the buffered write alone). How the kernel and the device make the data durable is theirs, not the binary's; where the binary could read them, each Run observes the disk's write cache and FUA support (write_cache, fua).",
 		repetition: "one write, with its fdatasync when sync is fdatasync",
 		bytes: "bytes written",
 		variants: [

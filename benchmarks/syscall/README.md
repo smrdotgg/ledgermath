@@ -7,13 +7,13 @@ is not observed, and the Run's dump section `kernel` records the clock source.
 
 ## What a figure means
 
-The cost of one call into the kernel, beside one the C library answers without entering
-it. One repetition makes one call:
+The cost of one call into the kernel, beside one the C library normally answers without
+entering it. One repetition makes one call:
 
 | `call` | What one repetition does |
 |---|---|
 | `getpid` | `syscall(SYS_getpid)`: enters the kernel every time, where `getpid()` may not |
-| `gettimeofday` | `gettimeofday()`: answered in user space by the vDSO, normally without entering the kernel |
+| `gettimeofday` | `gettimeofday()`: answered by the vDSO, normally without entering the kernel |
 | `getrusage` | `getrusage(RUSAGE_SELF)` |
 | `stat` | `stat()` of `LM_PARAM_PATH` |
 
@@ -60,8 +60,8 @@ instance type is a Series of its own.
 | `call_made` | The call the measured loop makes |
 | `path_fs_type` | With `stat` only: `statfs()`'s `f_type` for the path, in hex. `0x1021994` is tmpfs, `0x58465342` XFS, `0xef53` ext4, `0x794c7630` overlayfs. The cost of `stat()` depends on the filesystem that answers it |
 
-Whether `gettimeofday` went through the vDSO is not observed by the binary; the dump's
-clock source (`current_clocksource`) is what decides it.
+Whether `gettimeofday` went through the vDSO is not observed by the binary; the dump
+records the clock source (`current_clocksource`).
 
 ## Findings
 

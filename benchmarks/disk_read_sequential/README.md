@@ -3,7 +3,7 @@
 Reading a file front to back the way a program does, on one thread: buffered `pread`s of
 `request_bytes` with the kernel's stock readahead, the kernel asked first to drop each
 sample's region from the page cache. It is a cold read when the eviction worked, which
-each Run records as each sample's resident pages.
+each Run records, where it can count them, as each sample's resident pages.
 
 ## What a figure means
 
@@ -77,8 +77,8 @@ volume's set on every instance type in the schedule, the instance store's on
 
 | Parameter set | What the reader gets | `i4i.2xlarge`, 2026-11-11 | `m5.large`, 2026-11-11 |
 |---|---|---|---|
-| `disk` `root_volume`, `dir` `/var/tmp/ledgermath/disk`, `request_bytes` 8192, `bytes_per_sample` 128 MiB, `span_bytes` 1 GiB | Cold sequential read from the root gp3 volume, which its 125 MiB/s limit caps | 125.0 MiB/s (62.5 µs an 8 KiB read); 127.6 KiB a device request; `ebs_volume_performance_exceeded_tp` +7.4 s | 125.2 MiB/s (62.4 µs); the same |
-| `disk` `instance_store`, `dir` `/mnt/lm/instance-store`, `request_bytes` 8192, `bytes_per_sample` 2 GiB, `span_bytes` 32 GiB; `i4i.2xlarge` only | Cold sequential read from the instance's own NVMe disk with stock readahead | 1054 to 1094 MiB/s (7.14 to 7.41 µs a read, in two Runs); 128 KiB device requests; no limit exceeded | |
+| `disk` `root_volume`, `dir` `/var/tmp/ledgermath/disk`, `request_bytes` 8192, `bytes_per_sample` 128 MiB, `span_bytes` 1 GiB | Sequential read from the root gp3 volume, which its 125 MiB/s limit capped in the Runs examined | 125.0 MiB/s (62.5 µs an 8 KiB read); 127.6 KiB a device request; `ebs_volume_performance_exceeded_tp` +7.4 s | 125.2 MiB/s (62.4 µs); the same |
+| `disk` `instance_store`, `dir` `/mnt/lm/instance-store`, `request_bytes` 8192, `bytes_per_sample` 2 GiB, `span_bytes` 32 GiB; `i4i.2xlarge` only | Sequential read from the instance's own NVMe disk with stock readahead | 1054 to 1094 MiB/s (7.14 to 7.41 µs a read, in two Runs); 128 KiB device requests; no limit exceeded | |
 
 | Variable | Scheduled | Meaning |
 |---|---|---|
@@ -102,14 +102,15 @@ device (`o_direct` is false here), and: `request_bytes`, `bytes_per_sample` and
 
 ### What will stay unstable, and what to read with care
 
-- **Readahead keeps one or two requests in flight**, so the instance store's number is
-  what stock readahead gets from this disk (about 210 µs a 128 KiB request), well below its
-  1.42 GB/s limit at queue depth 64. On the root volume the gp3 limit binds instead.
+- **Readahead kept one or two requests in flight** in the Runs examined, so the instance
+  store's number was what stock readahead got from this disk (about 210 µs a 128 KiB
+  request), well below its 1.42 GB/s limit at queue depth 64. On the root volume the gp3
+  limit bound instead.
 - **Regions differ.** On the instance store the first samples ran at 7.15 µs a read and
   the later ones at 7.42, a 4% spread within one Run that the same regions repeated.
 - **On a file system whose pages cannot be dropped** (a tmpfs, as in the container test),
-  `resident_pages_before` says so and the Run is not cold. Nothing stops it: the record
-  says what happened.
+  `resident_pages_before` says so where it can count them, and the Run is not cold.
+  Nothing stops it: the record says what happened.
 
 ## How it works
 
@@ -118,8 +119,8 @@ The design is section 2 of the step-4 brief's study (#42) and the decisions on i
 ### Events of its own
 
 **`device_counters`**, as in `disk_read_random`, over all of `lm_measure_fixed`: the
-warmup samples, the steps between samples that ask the kernel to drop each region, and any other I/O
-on the device at the time. Read sectors × 512 at least the bytes the samples read shows
+warmup samples, the steps between samples that ask the kernel to drop each region, and any
+other I/O on the device at the time. Read sectors × 512 at least the bytes the samples read shows
 the device, not the page cache, served them: 1.0005 times the bytes asked on the root
 volume, 1.0001 on the instance store (readahead reads a little past each region's end,
 and other I/O adds a little). Read sectors over reads is the mean size of the device's
@@ -127,7 +128,8 @@ read requests in that time, nearly all of them readahead's.
 
 **`work`**: `reads`, `bytes_read`, and `samples`, one entry per sample: its `offset`,
 `posix_fadvise`'s result (`fadvise_result`, 0 for success) and `resident_pages_before`,
-the region's pages in the page cache as the sample began. Every sample on both disks began
+the region's pages in the page cache as the sample began, or -1 where they could not be
+counted. Every sample on both disks began
 with 0.
 
 ```json
@@ -137,13 +139,13 @@ with 0.
 ### Elision guard
 
 The Fixture's checks before measuring are `disk_read_random`'s, and exit 1 the same way;
-they read through the page cache here, so the whole span is dropped from it before the
-first sample. `verified` is the running sum of the first word of every 8 KiB block read.
+they read through the page cache here, so the kernel is asked to drop the whole span from
+it before the first sample. `verified` is the running sum of the first word of every 8 KiB block read.
 After measuring, the binary checks that it made exactly the reads the samples ask for, and
 that the sum equals the pattern's over every region read; otherwise it exits 1. The sum's
 reach is `disk_read_random`'s: it shows that each 8 KiB block read began with the
 Fixture's word, not that the rest of the block is, nor anything of the span not read. At the end
-the whole span is dropped from the page cache, so the next Run finds it as this one did.
+the kernel is asked to drop the whole span from the page cache again, for the next Run.
 
 ## Building and testing
 

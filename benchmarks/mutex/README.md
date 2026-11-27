@@ -7,7 +7,7 @@ core.
 ## What a figure means
 
 What a critical section under a `pthread_mutex_t` costs, with nobody contending and with
-a fixed number of threads handing the lock between CPUs the binary chooses itself. One
+a fixed number of threads taking the lock on CPUs the binary chooses itself. One
 repetition is exactly K = 10,000 critical sections, done by whichever threads win the
 lock. Every thread, the main thread included, loops: lock; if the counter has reached
 the repetition's target, unlock and stop; otherwise increment the counter and the other
@@ -267,7 +267,7 @@ which level you use, or carry both.
   slow), all 69 processes run with the sibling idle or offline were fast, 140,990 to
   141,254 ns: on each of its 8 CPUs, with the sibling offline, with address randomisation
   off, with speculative store bypass disable on, and at the start and the end of the boot.
-- No recorded fact tells the levels apart. For each published `c6i.8xlarge` Run, every key
+- No recorded fact told the levels apart. For each published `c6i.8xlarge` Run, every key
   of ten sections of the dump taken before it (`cpuid`, `cpuinfo`, `lscpu`, `sys_cpu`,
   `kernel`, `memory`, `process`, `provider`, `provision`, `ec2_instance`) was compared
   between the fast Runs and the slow ones. A key whose value is new in nearly every Run,

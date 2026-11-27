@@ -26,8 +26,8 @@ One repetition is one request, and each sample holds one: over a new connection
 (`connection` `new`) from just before its DNS query, over a kept connection (`reused`) from
 just before its request is written, to its whole body or to the failure that ends it; a
 kept connection is opened outside any sample. Request 0 is a warmup sample; the counted
-requests follow it, as many as the Run asks for, 200 in the schedule (40 for the 16 MiB
-object), unless the Run ends early (see "What ends a Run early").
+requests follow it, at most as many as the Run asks for, 200 in the schedule (40 for the
+16 MiB object); a Run that ends early can make fewer (see "What ends a Run early").
 
 Two Methods read these Runs ([Methods](https://ledgermath.com/docs/methods)). Method
 `series` v1 counts only a Run whose binary exited 0 and whose stream passes its checks,
@@ -76,17 +76,17 @@ Each parameter set runs on every instance type in the schedule, against the Serv
 
 | Variable | Scheduled (the study's sets) | Meaning |
 |---|---|---|
-| `LM_PARAM_OBJECT_BYTES` | `4096`, `131072`, `16777216` | The size of the Fixture object. Each 2xx body is checked against the first this-many bytes of the Fixture pattern; the body buffer is this plus 64 KiB |
+| `LM_PARAM_OBJECT_BYTES` | `4096`, `131072`, `16777216` | The size of the Fixture object. The body of each 2xx response that ends without a failure is checked against the first this-many bytes of the Fixture pattern; the body buffer is this plus 64 KiB |
 | `LM_PARAM_KEY` | `http_get/v1/<object_bytes>` | The object key, sent as the path, encoded as S3 wants (once, every byte but `A-Z a-z 0-9 - . _ ~ /` as `%XX`) |
 | `LM_PARAM_CONNECTION` | `new`, `reused` | `new`: every request resolves the name, connects and secures a connection of its own, inside its sample. `reused`: one kept connection, opened outside any sample, carries every request; it is reopened (outside a sample) when the server closes it |
 | `LM_PARAM_GAP_MEAN_MS` | `200` | The mean of the pause before each request after the first: exponential, from a fixed seed, so every Run pauses the same sequence |
-| `LM_PARAM_BUDGET_SECONDS` | `240` (`120` for 16 MiB) | No request starts once this long has passed since the Run began preparing its first request (signing it and, over a reused connection, opening that connection); the Run then ends early. See "What ends a Run early" |
+| `LM_PARAM_BUDGET_SECONDS` | `240` (`120` for 16 MiB) | No request starts once this long has passed since the Run began preparing its first request (signing it with `auth` `sigv4` and, over a reused connection, opening that connection); the Run then ends early. See "What ends a Run early" |
 | `LM_PARAM_TIMEOUT_MS` | `10000` | The longest the binary waits for any one thing: the DNS reply, `connect`, and each TLS read or write (the sockets' `SO_RCVTIMEO` and `SO_SNDTIMEO`; the latter also bounds a blocking `connect` on Linux) |
 | `LM_PARAM_CA_FILE` | `/etc/pki/tls/certs/ca-bundle.crt` | The PEM bundle the server's chain is verified against: the box's own trust store |
 | `LM_PARAM_RESOLV_CONF` | `/etc/resolv.conf` | The file whose first IPv4 `nameserver` line is the resolver queried. An address may carry a port, `<address>:<port>`, which no system resolver reads; the tests' stand-in listens on one |
 | `LM_PARAM_AUTH` | `sigv4` | `sigv4`: each request is signed with the credentials below. `none`: unsigned, and no credential is read. That is how a public object can be fetched (it was, once; see "A real exchange") |
 
-`LM_SAMPLES` is the number of counted requests; request 0 is a warmup sample before them.
+`LM_SAMPLES` is the number of counted requests asked for; request 0 is a warmup sample before them.
 `--quick` takes 3 counted requests and gives every unset parameter a default (4 KiB, a new
 connection, 10 ms gaps, 60 s budget, 5 s timeout, the paths above, `sigv4`).
 
@@ -145,10 +145,10 @@ was running on it), with the Amazon Linux build. Medians of the counted requests
 - **TLS phase:** about a third of it is ours.
 - **TCP phase:** our 0.1 ms is the kernel's own work on our thread, sending the SYN and the
   final ACK through a virtual NIC.
-- **Body of a small object:** the body arrives with or just after the headers, so the Body
-  phase is almost entirely our own work on bytes already received: copying and parsing what
-  came in the header block's record, and reading and decrypting any record after it. Its
-  wall time is not a network number.
+- **Body of a small object:** in these requests the body arrived with or just after the
+  headers, so the Body phase was almost entirely our own work on bytes already received:
+  copying and parsing what came in the header block's record, and reading and decrypting
+  any record after it. Its wall time was not a network number.
 - **Send on a reused connection:** five times a new connection's, all of it CPU. It is the
   first write after a 200 ms sleep, with cold caches.
 
@@ -253,7 +253,7 @@ these points and nowhere else inside a sample:
 
 | Event | Its `t` is read | What that moment is |
 |---|---|---|
-| `sample_started`, new connection | just before the DNS query's `send`, after the UDP socket, the TCP socket, the TLS object and the signed request are made and the budget is checked | nothing of the request has left the program |
+| `sample_started`, new connection | just before the DNS query's `send`, after the UDP socket, the TCP socket, the TLS object and the request (signed with `auth` `sigv4`) are made and the budget is checked | nothing of the request has left the program |
 | `sample_started`, reused connection | just before the request's `SSL_write`, after the idle check, any reopening and the budget check | the same |
 | `name_resolved` | after `recv` returned the reply and the reply was parsed and judged (its ID, question, TC bit, rcode, and an A record at the end of the CNAME chain) | the program knows the address to connect to, or that the reply gives none. Formatting the records as text waits until the request has ended |
 | `connection_opened` | just after the blocking `connect` returns, whether it succeeded or failed (refused, unreachable, or not established within `timeout_ms`) | on success, the kernel has the server's SYN-ACK and has sent its ACK: TCP is established on our side. On failure, `connect` has said so; `nodelay` and `local` are then absent, and the `request_failed` (or `connection_failed`) that follows has the same `t` |
@@ -299,8 +299,8 @@ session and not a ticket.
 | Transfer | `response_ended` − `first_byte` | Headers and Body together, the study's transfer |
 | Total | `sample_ended` − `sample_started` | |
 
-The socket, the TLS object, the DNS query and the signed request are all made before the
-sample starts. Each phase event's `cpu_ns` is this thread's CPU time
+The socket, the TLS object, the DNS query and the request (signed with `auth` `sigv4`) are
+all made before the sample starts. Each phase event's `cpu_ns` is this thread's CPU time
 (`CLOCK_THREAD_CPUTIME_ID`) over that phase alone, from the previous boundary of the same
 request to this one. Reading that clock costs a system call at every boundary;
 `observed.cpu_clock_read_ns` is its measured cost, about 0.34 µs on the dev machine.
@@ -380,7 +380,8 @@ Nothing retries. Every request is attempted, with two exceptions, after which th
 straight to its closing `observed`, `verified` and `finished`:
 
 - **The budget.** No request starts once `budget_seconds` have passed. They are counted
-  from just before the first request is prepared: its signing, its socket and TLS object,
+  from just before the first request is prepared: its signing with `auth` `sigv4`, its
+  socket and TLS object,
   and over a reused connection the first opening of that connection, all fall inside the
   budget. A first lookup or handshake that takes the whole budget therefore leaves a Run
   that made no request. The budget is asked immediately before every sample starts, after
@@ -395,8 +396,8 @@ straight to its closing `observed`, `verified` and `finished`:
   requests a second that is 1/1000 of what one prefix supports.
 
 `observed.ended_early` says which (`budget`, `unreachable`, or null), and
-`requests_not_made` how many requests were not made. Such a stream has fewer counted
-samples than `LM_SAMPLES`, so it fails `check-events.py --samples N` on purpose, and the
+`requests_not_made` how many requests were not made. Such a stream can have fewer counted
+samples than `LM_SAMPLES`, and then fails `check-events.py --samples N` on purpose, and the
 exit code is 4.
 
 #### Exit codes
@@ -502,8 +503,8 @@ Outside every timed interval:
 - **Before the first sample:** the binary computes the Fixture's SHA-256 for `object_bytes`
   (`observed.fixture_sha256`). The pattern is `benchmarks/harness/c/lm_fixture.h`'s: the
   64-bit little-endian word at offset o is `mix64(o ^ 0x8d6d2f9d5f9d1b37)`.
-- **After each 2xx response:** it hashes the de-chunked body. `fixture` is `match` when the
-  length and digest are the Fixture's. `s3_checksum` is `match` when `x-amz-checksum-sha256`
+- **After each 2xx response that ends without a failure:** it hashes the de-chunked body.
+  `fixture` is `match` when the length and digest are the Fixture's. `s3_checksum` is `match` when `x-amz-checksum-sha256`
   (requested with `x-amz-checksum-mode: ENABLED` on every request) is that digest in base64.
   Every verified body therefore matches every other.
 

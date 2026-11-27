@@ -61,7 +61,7 @@ Each parameter set is a Series of its own on each instance type it runs on: the 
 volume's sets on every instance type in the schedule, the instance store's on
 `i4i.2xlarge` only.
 
-| Parameter set (all `queue_depth` 64) | What the reader gets | `i4i.2xlarge`, 2026-11-11 | `m5.large`, 2026-11-11 |
+| Parameter set (all `queue_depth` 64) | What the counted samples sat on | `i4i.2xlarge`, 2026-11-11 | `m5.large`, 2026-11-11 |
 |---|---|---|---|
 | root volume, `sequential`, 32 KiB, span 1 GiB | The root gp3 volume's throughput limit, as provisioned (125 MiB/s) | 125.0 MiB/s (249.9 µs a completion); `ebs_volume_performance_exceeded_tp` +23.4 s | 125.2 MiB/s |
 | root volume, `random`, 4 KiB, span 1 GiB | Its IOPS limit, as provisioned (3000) | 3000 IOPS (333.3 µs); `ebs_volume_performance_exceeded_iops` +15.3 s | 3000 IOPS |
@@ -95,20 +95,20 @@ before measuring and kept submitted), `span_bytes` and `span_blocks`, `bytes_per
 
 ### What will stay unstable, and what to read with care
 
-- **These are the provider's limits, not the device's.** The device's counters
+- **These were the provider's limits, not the device's.** The device's counters
   `ebs_volume_performance_exceeded_{iops,tp}` (root volume) and, on the instance store, the
   fields nvme-cli 2.13 names `ec2_instance_ebs_performance_exceeded_{iops,tp}` (its JSON
-  gives every disk EBS's field names) grew for most of each Run.
+  gives every disk EBS's field names) grew for most of each Run seen.
 - **Both disks burst first.** On the root volume the first ~128 MiB, or ~4,000 random
-  reads, of each Run went at 0.8 to 1.9 GB/s, or 77,000 to 116,000 IOPS; on the instance
-  store, about 2 GiB at 3.2 GB/s, or 265,000 IOPS. Then the limits held. The burst came
+  reads, of each Run seen went at 0.8 to 1.9 GB/s, or 77,000 to 116,000 IOPS; on the
+  instance store, about 2 GiB at 3.2 GB/s, or 265,000 IOPS. Then the limits held. The burst came
   back for a second Run started a few seconds after the first. In every Run seen, the last
   warmup sample straddled the change and the counted samples were all after it; a larger
   burst would show in the counted samples' times and in the exceeded counters, and a
   Method should look there.
 - **`m5.large`'s own EBS limit** (81.25 MB/s baseline, 593.75 MB/s while its burst credit
-  lasts, 30 minutes a day) never bound on a fresh box: the instance's exceeded counters
-  stayed at zero and gp3's bound first.
+  lasts, 30 minutes a day) did not bind on the fresh boxes seen: the instance's exceeded
+  counters stayed at zero and gp3's bound first.
 
 ## How it works
 

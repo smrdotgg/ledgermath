@@ -8,9 +8,9 @@ own NVMe disk on the instance types that have one.
 
 The latency of one read from a disk, with no other read of the binary's outstanding: one
 `pread` of 8 KiB with `O_DIRECT`, at the next offset of a seeded permutation of the span's
-blocks, from the Fixture the box made at boot. A sample's time over its repetitions is the mean time of one
-read; the device's own latency histogram, which the dump records before and after every
-Run, gives the distribution of every read the device served in between.
+blocks, from the Fixture the box made at boot. A sample's time over its repetitions is the
+mean time of one read; the device's own latency histogram, where the dumps before and after
+a Run took it, gives the distribution of every read the device served in between.
 
 ### One repetition
 
@@ -45,7 +45,7 @@ disk, on one instance type.
   another thing: it counts, in power-of-two bins, every read the device served between
   those two dumps, the warmup's and any other reads included, and it is the device's
   latency, not the time the binary measured around its calls.
-- One read is outstanding at a time, so it is not a disk under load. Reads kept in flight
+- One read of the binary's is outstanding at a time, so it is not a disk under load. Reads kept in flight
   are [`disk_read_io_uring`](https://ledgermath.com/docs/benchmarks/disk_read_io_uring)'s.
 - With `disk` `root_volume` the set reads the root EBS volume, not the instance's own
   disk: an EBS figure, whose volume type, size and provisioned IOPS and throughput are
@@ -118,8 +118,8 @@ second).
 
 ### What will stay unstable, and what to read with care
 
-- **The same order of blocks in every Run of a set.** The device's histogram put 33.3% of the instance store's
-  reads in [64, 128) µs and 66.7% in [128, 256) µs, with the same counts to the read in
+- **The same order of blocks in every Run of a set.** The device's histogram put 33.3% of
+  the instance store's reads in [64, 128) µs and 66.7% in [128, 256) µs, with the same counts to the read in
   three Runs: the latency is a property of the blocks, and the Series is of these blocks.
 - **gp3's first seconds.** On the root volume the first ~4,000 reads of a Run took about
   310 µs each, then 582 µs. The warmup samples took them; they show in its stream.
@@ -206,7 +206,7 @@ like the bucket.
 - `device_counters.before` and `.after` lie between `/sys/block/<disk>/stat` in the
   `block_stat` sections of the dumps before and after the Run.
 - `nvme amzn stats` of `/dev/<disk>` (the `nvme_stats` sections) gives the device's own
-  account of the same reads, with its latency histogram (28 power-of-two bins, in µs) and
+  account of its reads, with its latency histogram (28 power-of-two bins, in µs) and
   the time spent over the volume's or the instance's limits.
 - An EBS serial `vol0abc…` is the volume `vol-0abc…` in `ec2_volumes`, which gives its type,
   size, IOPS and throughput; an instance-store disk is the one the `provision` section's

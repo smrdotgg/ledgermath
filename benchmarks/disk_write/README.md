@@ -1,8 +1,8 @@
 # disk_write
 
 What a buffered `pwrite` of `request_bytes` costs, on one thread, one write at a time:
-followed by `fdatasync` (the time until the device has the data) or by nothing (the time
-until the page cache has it). How the kernel and the device make the data durable is
+followed by `fdatasync` (the time until the device has the data) or by nothing (the
+buffered write alone). How the kernel and the device make the data durable is
 theirs, not the binary's; where the binary could read them, each Run observes the disk's
 write cache and FUA support.
 
@@ -10,8 +10,8 @@ write cache and FUA support.
 
 What a write costs: a buffered `pwrite` of 8 KiB at the next offset of a scratch file of
 the binary's own, followed by `fdatasync` (the time until the device has the data) or by
-nothing (the time until the page cache has it). The set with no sync is the page cache's
-number, not the disk's, and is named and scheduled as such: on the root volume only.
+nothing (the buffered write alone). The set with no sync asks for nothing to be made
+durable, and is scheduled on the root volume only.
 
 One repetition is one write, with its `fdatasync` when `sync` is `fdatasync`. Each Run that
 Method `series` v1 counts gives one figure, the time of one repetition in nanoseconds
@@ -54,7 +54,7 @@ volume's sets on every instance type in the schedule, the instance store's on
 
 | Parameter set | What the reader gets | `i4i.2xlarge`, 2026-11-11 | `m5.large`, 2026-11-11 |
 |---|---|---|---|
-| `disk` `root_volume`, `dir` `/var/tmp/ledgermath/disk`, `request_bytes` 8192, `sync` `none`, `file_bytes` 256 MiB | A buffered 8 KiB write absorbed by the page cache: the page cache's number | 1.47 µs a write; 60 device writes while measuring, for 12.6 million writes | 2.62 µs; 49 device writes for 6.3 million |
+| `disk` `root_volume`, `dir` `/var/tmp/ledgermath/disk`, `request_bytes` 8192, `sync` `none`, `file_bytes` 256 MiB | A buffered 8 KiB write, with nothing asked to be made durable | 1.47 µs a write; 60 device writes while measuring, for 12.6 million writes | 2.62 µs; 49 device writes for 6.3 million |
 | `disk` `root_volume`, `dir` `/var/tmp/ledgermath/disk`, `request_bytes` 8192, `sync` `fdatasync`, `file_bytes` 1 GiB | A durable 8 KiB write to the root gp3 volume at queue depth 1 | 913.5 µs, 0.11% between samples; 1.0002 device writes and 0 flushes a write | 910.8 µs; 1.0024 device writes, 0 flushes |
 | `disk` `instance_store`, `dir` `/mnt/lm/instance-store`, `request_bytes` 8192, `sync` `fdatasync`, `file_bytes` 1 GiB; `i4i.2xlarge` only | A durable 8 KiB write to the instance's own NVMe disk, through XFS | 29.9 to 30.1 µs (two Runs); 1.0000 device writes and 0 flushes a write; device mean 22.6 µs | |
 
@@ -70,8 +70,8 @@ volume's sets on every instance type in the schedule, the instance store's on
 variables are unset, and writes a scratch file of at most 16 MiB.
 
 256 MiB with no sync stays under the kernel's background writeback threshold (10% of
-available memory: about 750 MiB on an `m5.large`), so the flusher leaves it alone for the
-30 seconds `dirty_expire_centisecs` gives; the dump's `kernel` section holds every
+available memory: about 750 MiB on an `m5.large`), so the flusher should leave it alone for
+the 30 seconds `dirty_expire_centisecs` gives; the dump's `kernel` section holds every
 `/proc/sys/vm/dirty_*` value.
 
 ## Observed values
@@ -85,12 +85,12 @@ device, here the scratch file (`o_direct` is false: the measured writes are buff
 
 ### What will stay unstable, and what to read with care
 
-- **With no sync it is a memory benchmark.** It measures copying 8 KiB into the page cache
-  and marking it dirty, not the disk; the device counters show it.
-- **fdatasync's cost depends on the write cache.** Both disks seen are "write through", so
-  the number is the device's write latency plus what XFS and the kernel add (about 7.5 µs
-  on the instance store: 30.1 µs against the device's mean of 22.6). No disk reporting
-  "write back" was seen.
+- **With no sync, nothing is asked to be made durable.** Each measured call is a buffered
+  `pwrite` of 8 KiB.
+- **fdatasync on the two disks seen.** Both were "write through", and the number was the
+  device's write latency plus what XFS and the kernel add (about 7.5 µs on the instance
+  store: 30.1 µs against the device's mean of 22.6). No disk reporting "write back" was
+  seen.
 - **The root volume's numbers are gp3's**, with background writes of the box's own (the
   runner, journald) in the same counters.
 
@@ -126,8 +126,8 @@ distinct. A sample's time over its repetitions is the time per write.
 **`device_counters`**, as in `disk_read_random`, over all of `lm_measure`: its warmup
 samples, the gaps between samples, and every other request to the device in that time.
 So writes and flushes per repetition are upper bounds of what a durable write cost the
-device; on both disks they came to exactly one write and no flush, because both report
-`write_cache` "write through", so `fdatasync` sends no flush command. The `nvme amzn
+device; on both disks they came to exactly one write and no flush, and both report
+`write_cache` "write through". The `nvme amzn
 stats` histograms in the dump, taken before and after the whole process, also hold the
 preparation's 1 GiB of writes. With no sync, the root volume saw 60 writes while measuring, for 12.6 million
 `pwrite`s (5 per million, which the box's own background writes could account for); the

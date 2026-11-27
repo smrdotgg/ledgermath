@@ -58,7 +58,7 @@ processor cache.
 
 | Key | What it is |
 |---|---|
-| `bytes_per_repetition` | Bytes of the elements one repetition reads from: 64 per read, the cache line the read brings in |
+| `bytes_per_repetition` | Bytes of the elements one repetition reads from: 64 per read, the cache line the read lands in |
 | `reads_per_repetition` | Elements one repetition reads, each exactly once |
 | `threads_used` | Threads that read: 1 |
 

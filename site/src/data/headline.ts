@@ -242,7 +242,7 @@ export const HEADLINE_CHOICES: readonly HeadlineChoice[] = [
 		build: "static",
 		params: { ...ROOT_VOLUME, request_bytes: 8192, sync: "fdatasync", file_bytes: 1073741824 },
 		lead: "time",
-		reason: "Without a sync the write ends in the page cache: the README calls that the page cache's number, not the disk's.",
+		reason: "Without a sync the binary calls pwrite alone and asks for nothing to be made durable: the README gives that as the time of a buffered write, not of a durable one.",
 		readme: README("disk_write"),
 	},
 	{
