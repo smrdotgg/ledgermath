@@ -73,6 +73,20 @@ export const Router = createRouter({
 	scrollRestoration: false,
 });
 
+/**
+ * Whether the page the browser opened can be taken over whole (src/entry-client.tsx): for a
+ * documentation page, once its body's chunk has loaded; false if it cannot be, and the page is
+ * then left as the static page it is.
+ */
+export function landingBodyLoaded(): Promise<boolean> {
+	const page = Router.match(window.location.pathname).at(-1)?.info?.page as SitePage | undefined;
+	if (!page?.markdown) return Promise.resolve(true);
+	return DOC_BODIES[page.path]!.preload().then(
+		() => true,
+		() => false,
+	);
+}
+
 /** Every feature flag of every page (pages.text.ts). */
 const FLAGS = [...new Set(PAGES.flatMap((page) => page.flags ?? []))];
 
@@ -161,7 +175,12 @@ function Layout(props: { children?: JSX.Element }) {
 	const landed = untrack(page);
 	if (landed?.markdown && !isServer) LOADED.add(landed.path);
 
+	// Each navigation the router is asked for, counted: one held for its page's body goes on only if
+	// none has been asked for since and the address is still the one it was asked from.
+	let asked = 0;
+
 	useBeforeLeave((e) => {
+		const ask = ++asked;
 		if (typeof e.to !== "string") return;
 		const matched = Router.match(e.to);
 		// An address no route knows (a link that should have had target="_self", say) goes to the
@@ -175,14 +194,18 @@ function Layout(props: { children?: JSX.Element }) {
 		// so only a click that came first, or a reader who asked to save data, meets one): it is
 		// loaded first, the page on screen staying as it is, and the click then goes on; if it cannot
 		// be loaded (a deploy since this tab opened has replaced it, or the network is down), the
-		// browser loads the page whole, rather than the router stopping on the failed import.
+		// browser loads the page whole, rather than the router stopping on the failed import. Either
+		// only while it is still the reader's latest wish: a click or a step back or forward made
+		// meanwhile has superseded it, and the page it went to stays.
 		const target = matched.at(-1)?.info?.page as SitePage | undefined;
 		if (target?.markdown && !LOADED.has(target.path)) {
 			e.preventDefault();
 			const to = e.to;
+			const from = window.location.href;
+			const current = () => ask === asked && window.location.href === from;
 			DOC_BODIES[target.path]!.preload().then(
-				() => e.retry(true),
-				() => window.location.assign(to),
+				() => current() && e.retry(true),
+				() => current() && window.location.assign(to),
 			);
 			return;
 		}

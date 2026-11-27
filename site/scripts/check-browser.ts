@@ -64,7 +64,10 @@
  *     page's Markdown on the clipboard, byte for byte the file the site serves; a link to a
  *     heading of another page lands on the heading, in view at the top of the window with the
  *     keyboard focus on it; a click to a page whose chunk the host refuses (as after a deploy
- *     since the tab opened) loads that page as a new document, with no uncaught error; and with
+ *     since the tab opened) loads that page as a new document, with no uncaught error; a page
+ *     opened with its own chunk refused is not taken over and stays the static page it is, a
+ *     click on its links loading each page as a new document; a click held for its page's chunk
+ *     and then superseded by another click does not come back when the chunk arrives; and with
  *     JavaScript off, "Copy page" is not shown, and "View as Markdown" is.
  *
  * With --shots OUT it also writes, for each page, size and scheme, the first screen and the whole
@@ -104,6 +107,9 @@ const TAB_PAGE = "/docs/benchmarks/sort";
 const HEADING_LINK = { to: "/docs/api/series" };
 /** The page whose chunk check 8 makes the host refuse, as a deploy since the tab opened would. */
 const GONE_PAGE = "/docs/prices";
+/** The page check 8 opens with its own chunk refused, and the page it then leaves for. */
+const LANDING_FAILS = "/docs/methods";
+const LANDING_AWAY = "/docs/glossary";
 
 /** The documentation page whose body a chunk holds, by its name (scripts/docs.ts, chunkName), or null for any other file. */
 const chunkOf = (url: string): string | null => {
@@ -918,6 +924,73 @@ async function documentation(browser: Browser, origin: string, root: string, all
 		else if (title !== gone.title) problems.push(`${where}: the title is ${JSON.stringify(title)}, not ${JSON.stringify(gone.title)}`);
 		else if (errors.length > 0) problems.push(`${where}: uncaught error(s): ${[...new Set(errors)].join("; ")}`);
 		else passed.push(`a click to ${gone.path}, whose chunk the host refused, loaded the page as a new document, with no uncaught error`);
+		await later.close();
+	}
+
+	// A page opened whose own chunk the host refuses: the application does not take it over at all,
+	// and the page stays the static page it is, each link loading its page as a new document, rather
+	// than a page that looks whole and whose links the router holds and drops.
+	const landing = all.find((page) => page.path === LANDING_FAILS);
+	const away = all.find((page) => page.path === LANDING_AWAY);
+	if (!landing?.markdown || !away?.markdown) problems.push(`check 8 opens ${LANDING_FAILS} and leaves for ${LANDING_AWAY}, which are not both documentation pages of the site`);
+	else {
+		const where = `${landing.path} opened with its own chunk refused`;
+		const later = await context(browser, SIZES[0]!, "light");
+		const tab = await later.newPage();
+		const errors: string[] = [];
+		tab.on("pageerror", (error) => errors.push(error.message));
+		await tab.route(`**/assets/${chunkName(landing.path)}-*.js`, (route) => route.fulfill({ status: 404, body: "Not found" }));
+		await tab.goto(`${origin}${landing.path}`, { waitUntil: "load" });
+		const left = await tab.waitForFunction(() => performance.getEntriesByName("static").length > 0, null, { timeout: 10_000 }).then(() => true, () => false);
+		const taken = await tab.evaluate(() => performance.getEntriesByName("hydrate").length > 0);
+		const [document] = await Promise.all([
+			tab.waitForEvent("response", { predicate: (r) => r.request().isNavigationRequest() && new URL(r.url()).pathname === away.path, timeout: 10_000 }).catch(() => null),
+			tab.locator(`nav.pages a[href="${away.path}"]`).click(),
+		]);
+		await tab.waitForLoadState("load").catch(() => {});
+		const title = await tab.title();
+		if (!left || taken) problems.push(`${where}: the application ${taken ? "began to take the page over" : "never said it left the page as it is (no mark \"static\")"}`);
+		else if (!document || document.status() !== 200) problems.push(`${where}: a click on ${away.path} did not load it as a new document`);
+		else if (title !== away.title) problems.push(`${where}: after the click the title is ${JSON.stringify(title)}, not ${JSON.stringify(away.title)}`);
+		else if (errors.length > 0) problems.push(`${where}: uncaught error(s): ${[...new Set(errors)].join("; ")}`);
+		else passed.push(`${landing.path}, opened with its own chunk refused, stayed the static page it is, and a click on ${away.path} loaded that page as a new document`);
+		await later.close();
+	}
+
+	// A click held for its page's chunk, then another click before the chunk comes: the second page
+	// stays, and the first does not come back when its chunk arrives.
+	const slow = all.find((page) => page.path === LANDING_AWAY);
+	const fast = all.find((page) => page.path === GONE_PAGE);
+	if (!slow?.markdown || !fast?.markdown) problems.push(`check 8 holds ${LANDING_AWAY}'s chunk and clicks ${GONE_PAGE}, which are not both documentation pages of the site`);
+	else {
+		const where = `a click to ${slow.path} held for its chunk, then a click to ${fast.path}`;
+		const later = await context(browser, SIZES[0]!, "light");
+		const tab = await later.newPage();
+		const errors: string[] = [];
+		tab.on("pageerror", (error) => errors.push(error.message));
+		let release: () => void = () => {};
+		const held = new Promise<void>((resolve) => (release = resolve));
+		await tab.route(`**/assets/${chunkName(slow.path)}-*.js`, async (route) => {
+			await held;
+			await route.continue().catch(() => {});
+		});
+		await tab.goto(`${origin}${LANDING_FAILS}`, { waitUntil: "load" });
+		await tab.waitForFunction(() => performance.getEntriesByName("hydrated").length > 0, null, { timeout: 10_000 }).catch(() => {});
+		await tab.waitForTimeout(1_500); // the other chunks, loaded ahead
+		await tab.evaluate(() => ((window as unknown as { __document: boolean }).__document = true));
+		await tab.locator(`nav.pages a[href="${slow.path}"]`).click();
+		await tab.waitForTimeout(200);
+		const stayed = new URL(tab.url()).pathname;
+		await tab.locator(`nav.pages a[href="${fast.path}"]`).click();
+		await tab.waitForURL((url) => url.pathname === fast.path, { timeout: 5_000 }).catch(() => {});
+		release();
+		await tab.waitForTimeout(1_000);
+		const now = await tab.evaluate(() => ({ path: location.pathname, same: (window as unknown as { __document?: boolean }).__document === true, title: document.title }));
+		if (stayed !== LANDING_FAILS) problems.push(`${where}: the address changed to ${stayed} before ${slow.path}'s chunk came`);
+		else if (!now.same) problems.push(`${where}: a new document was loaded`);
+		else if (now.path !== fast.path || now.title !== fast.title) problems.push(`${where}: once the first chunk came, the page is ${now.path} (${JSON.stringify(now.title)}), not ${fast.path}`);
+		else if (errors.length > 0) problems.push(`${where}: uncaught error(s): ${[...new Set(errors)].join("; ")}`);
+		else passed.push(`${where}: ${fast.path} stayed when ${slow.path}'s chunk came`);
 		await later.close();
 	}
 

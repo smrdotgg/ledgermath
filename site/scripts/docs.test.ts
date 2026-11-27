@@ -134,6 +134,38 @@ describe("buildDocs", () => {
 		expect(pageAt(pages, "/docs/glossary").markdown).toBe("# Glossary\n\nThe words.\n\n## Run\n\nOne execution. See [Methods](/docs/methods#which-runs) and [prices](/docs/prices).\n");
 	});
 
+	test("a link is rewritten where it is a link, never where code shows one: in a code span, a fenced block, a fenced block in a list, an indented block", () => {
+		const code = [
+			"# sort",
+			"",
+			"How fast one thread sorts keys, from [the source](sort.c).",
+			"",
+			"## What a figure means",
+			"",
+			"Write `[the source](sort.c)` to link it.",
+			"",
+			"```markdown",
+			"See [the source](sort.c).",
+			"```",
+			"",
+			"- An item:",
+			"",
+			"  ~~~",
+			"  [the source](sort.c)",
+			"  ~~~",
+			"",
+			"      [the source](sort.c) indented",
+			"",
+			"And [the source](sort.c) once more.",
+			"",
+		].join("\n");
+		const sort = pageAt(buildDocs(repository({ "benchmarks/sort/README.md": code }), GENERATED), "/docs/benchmarks/sort");
+		const github = "https://github.com/smrdotgg/ledgermath/blob/main/benchmarks/sort/sort.c";
+		expect(sort.markdown).toBe(code.replace("from [the source](sort.c).", `from [the source](${github}).`).replace("And [the source](sort.c)", `And [the source](${github})`));
+		expect(sort.html.match(/<a href="https:\/\/github\.com[^"]*sort\.c">the source<\/a>/g)).toHaveLength(2);
+		expect(sort.html.match(/\[the source\]\(sort\.c\)/g)).toHaveLength(4);
+	});
+
 	test("headings get GitHub's anchors, a repeated one numbered; tables scroll in a box named for them, a first column with no heading its rows' headings", () => {
 		const sort = pageAt(buildDocs(repository(), GENERATED), "/docs/benchmarks/sort");
 		expect(sort.ids).toEqual(["sort", "what-a-figure-means", "notes", "notes-1"]);

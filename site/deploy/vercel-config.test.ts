@@ -72,12 +72,51 @@ describe("vercelConfig", () => {
 	});
 });
 
-describe("ACCEPTS_MARKDOWN: text/markdown at full weight", () => {
+describe("ACCEPTS_MARKDOWN: text/markdown at full weight, as a media range of its own", () => {
 	const accepts = new RegExp(ACCEPTS_MARKDOWN);
-	test("an agent's request for Markdown", () => {
-		for (const accept of ["text/markdown", "text/markdown;q=1", "text/markdown; q=1.0", "text/markdown, text/html;q=0.9", "text/markdown;q=1.0, text/html;q=0.5", "text/markdown, text/html, */*"]) expect([accept, accepts.test(accept)]).toEqual([accept, true]);
+	test("an agent's request for Markdown: alone, first or later, with any parameters but a lower weight, in any case", () => {
+		for (const accept of [
+			"text/markdown",
+			"text/markdown;q=1",
+			"text/markdown; q=1.0",
+			"text/markdown;q=1.000",
+			"text/markdown; charset=utf-8",
+			"text/markdown;charset=UTF-8;q=1",
+			'text/markdown; variant="GFM, CommonMark"',
+			"text/markdown; qs=0.5",
+			"text/markdown, text/html;q=0.9",
+			"text/markdown;q=1.0, text/html;q=0.5",
+			"text/markdown, text/html, */*",
+			"text/html, text/markdown",
+			"text/html;q=0.9, text/markdown; charset=utf-8",
+			'application/json; note="a, b", text/markdown',
+			"TEXT/MARKDOWN",
+			"Text/Markdown; Charset=utf-8",
+			" text/markdown ",
+		]) {
+			expect([accept, accepts.test(accept)]).toEqual([accept, true]);
+		}
 	});
-	test("not a browser's, nor Markdown asked for below full weight", () => {
-		for (const accept of ["text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8", "*/*", "", "text/html, text/markdown;q=0.5", "text/markdown;q=0.9, text/html;q=0.8", "text/markdownx"]) expect([accept, accepts.test(accept)]).toEqual([accept, false]);
+
+	test("not a browser's, nor any type at all, nor Markdown below full weight, nor text/markdown inside a quoted value", () => {
+		for (const accept of [
+			"text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+			"*/*",
+			"text/*",
+			"",
+			"text/html, text/markdown;q=0.5",
+			"text/markdown;q=0.9, text/html;q=0.8",
+			"text/markdown; charset=utf-8; q=0.5",
+			"text/markdown;q=0",
+			"text/markdown;Q=0.99",
+			"text/markdownx",
+			"text/markdown-x; charset=utf-8",
+			"xtext/markdown",
+			'application/json; note="text/markdown, plain"',
+			'application/json; note="a, text/markdown", text/html',
+			'application/json; note="text/markdown"',
+		]) {
+			expect([accept, accepts.test(accept)]).toEqual([accept, false]);
+		}
 	});
 });

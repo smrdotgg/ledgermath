@@ -2,9 +2,9 @@
 // inside site/.
 
 import { afterEach, describe, expect, test } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { freshness, SKIP, sitePaths, WORKFLOW } from "./fresh";
 
 const PATHS = sitePaths(await Bun.file(WORKFLOW).text());
@@ -55,12 +55,36 @@ describe("sitePaths", () => {
 			":(glob)benchmarks/**",
 			":(glob)schemas/**",
 			":(glob)scripts/**",
+			":(glob)methods/**",
+			":(glob)infra/runs/**",
 			":(glob)docs/**",
 			":(glob)schedule.json",
 			":(glob)package.json",
 			":(glob)bun.lock",
 			":(glob).github/workflows/site.yml",
 		]);
+	});
+
+	// What the site is built from includes every module the build runs through its imports: the
+	// site's own, and the API reference's generator's (scripts/lib/api.ts brings in methods/ and
+	// infra/runs/). A change to one of them must start the workflow, which checks the build.
+	test("cover every repository file the build and the API reference's generator import", () => {
+		const repository = join(import.meta.dir, "..", "..");
+		const seen = new Set<string>();
+		const visit = (file: string) => {
+			if (seen.has(file)) return;
+			seen.add(file);
+			for (const match of readFileSync(file, "utf8").matchAll(/(?:import|export)[^"';]*?from\s*["'](\.[^"']+)["']|import\(\s*["'](\.[^"']+)["']\s*\)/g)) {
+				const base = resolve(dirname(file), match[1] ?? match[2]!);
+				const found = [base, `${base}.ts`, `${base}.tsx`, join(base, "index.ts")].find((candidate) => existsSync(candidate) && statSync(candidate).isFile());
+				if (found) visit(found);
+			}
+		};
+		for (const entry of ["site/scripts/build.ts", "scripts/api-reference.ts"]) visit(join(repository, entry));
+		const patterns = PATHS.map((pathspec) => new Bun.Glob(pathspec.replace(":(glob)", "")));
+		const outside = [...seen].map((file) => relative(repository, file)).filter((path) => !patterns.some((glob) => glob.match(path)));
+		expect(seen.size).toBeGreaterThan(30);
+		expect(outside).toEqual([]);
 	});
 
 	test("refuses a pattern git cannot match the same way", () => {

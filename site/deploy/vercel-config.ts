@@ -4,9 +4,9 @@
  *
  *  - each page's Markdown, which the build writes beside it (docs/glossary.md beside
  *    docs/glossary/index.html; docs/api/index.md in docs/api/), served as text/markdown;
- *  - the same Markdown at the page's own address when the request asks for it with
- *    `Accept: text/markdown` at full weight (no q, or q=1), as an agent does; any other Accept
- *    (a browser's, any type at all, text/markdown at a lower weight than HTML) gets the HTML;
+ *  - the same Markdown at the page's own address when the request's Accept names text/markdown
+ *    at full weight (ACCEPTS_MARKDOWN: with any parameters but a q below 1), as an agent does; any
+ *    other Accept (a browser's, any type at all, text/markdown at a lower weight) gets the HTML;
  *  - Vary: Accept on every answer at a page's address, so that a cache keeps the two apart.
  *
  * One route per page, read from the files: a page's address may end in a slash or not, and only
@@ -23,8 +23,21 @@
 import { existsSync, readdirSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 
-/** Accept asking for Markdown at full weight: text/markdown, alone or first in a list, with no q or q=1. */
-export const ACCEPTS_MARKDOWN = "text/markdown\\s*(?:;\\s*q\\s*=\\s*1(?:\\.0*)?\\s*)?(?:,|$)";
+/**
+ * An Accept header that asks for Markdown at full weight: one of its media ranges, wherever it
+ * stands in the list, is text/markdown (in any case) with any parameters (charset=utf-8 among
+ * them) but a weight below 1: no q, or q=1, 1., 1.0, 1.00 or 1.000. A media range starts after a
+ * comma outside a quoted string: the expression reads the header from its start, range by range,
+ * each a run of characters and quoted strings up to a comma, so text/markdown inside a parameter's
+ * quoted value (note="text/markdown, plain") is no media range. A parameter's value is a token or
+ * a quoted string. Written with what any regular-expression engine has (no look-ahead), since the
+ * host matches it.
+ */
+const TOKEN = "[!#$%&'*+.^_`|~0-9A-Za-z-]";
+const QUOTED = '"(?:[^"\\\\]|\\\\.)*"';
+const PARAMETER_NOT_Q = `(?:${TOKEN}{2,}|[!#$%&'*+.^_\`|~0-9A-PR-Za-pr-z-])\\s*=\\s*(?:${QUOTED}|[^;,"\\s]*)`;
+const FULL_WEIGHT = "[qQ]\\s*=\\s*1(?:\\.0{0,3})?";
+export const ACCEPTS_MARKDOWN = `^(?:(?:[^",]|${QUOTED})*,)*\\s*[tT][eE][xX][tT]/[mM][aA][rR][kK][dD][oO][wW][nN]\\s*(?:;\\s*(?:${FULL_WEIGHT}|${PARAMETER_NOT_Q})\\s*)*(?:,|$)`;
 
 const MARKDOWN_TYPE = "text/markdown; charset=utf-8";
 

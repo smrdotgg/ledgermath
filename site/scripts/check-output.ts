@@ -82,7 +82,7 @@ export const BUDGET_BYTES = 300_000;
  * script runs once the HTML is parsed, and hydration waits for the paint). It holds Solid, its
  * router, the home page with its figures, and the documentation's layout with every page's
  * title and description; not the documentation's bodies, which are chunks of their own (below).
- * About 45,000 bytes before the documentation, 54,700 with it (November 2026).
+ * About 45,000 bytes before the documentation, 54,900 with it (November 2026).
  */
 export const SCRIPT_BUDGET_BYTES = 60_000;
 /** The most one documentation page's chunk may weigh: its body's HTML, which a click to the page needs. The longest, http_get's, was 21,200 bytes. */

@@ -3814,9 +3814,12 @@ bun scripts/measure-navigation.ts dist/client   # by hand: what a click and the 
 built from it.
 
 `.github/workflows/site.yml` runs on pull requests and pushes to main that touch what the
-site is built from (`site/`, `benchmarks/`, `schemas/`, `scripts/`, `docs/`, `schedule.json`,
-the root's `package.json` and `bun.lock`, and the workflow; a pull request that breaks a
-documentation link there fails here, not in the next rebuild of production), and by hand.
+site is built from (`site/`, `benchmarks/`, `schemas/`, `scripts/`, `methods/` and
+`infra/runs/`, which the API reference's generator imports through `scripts/lib/api.ts`,
+`docs/`, `schedule.json`, the root's `package.json` and `bun.lock`, and the workflow; a test of
+`site/deploy/fresh.ts` holds the list to every file the build and the generator import; a pull
+request that breaks a documentation link, or the generator, there fails here, not in the next
+rebuild of production), and by hand.
 It installs the root's packages and the site's with the lockfiles frozen, then type-checks,
 tests, fetches the tree as published (`bun scripts/fetch-tree.ts`), builds from it, runs
 `bun run check` with it and then the browser checks (`bun run check:browser`, below), and
@@ -3845,9 +3848,9 @@ group ("Where it is deployed"). The same commands work locally, inside `site/`.
   first load (the page and what it loads to show itself and be taken over: the stylesheet,
   both fonts, of which the check counts both and a browser fetches only the one its colour
   scheme uses, the application, and a documentation page's own chunk) under 300,000 bytes
-  (118,914 for the home page, up to 159,011 for a documentation page, http_get's, on
+  (119,089 for the home page, up to 159,186 for a documentation page, http_get's, on
   2026-11-27; 113 KB for the home page before the documentation); the application, its
-  script and what it imports, under 60,000 (54,712; about 45 KB before); each documentation
+  script and what it imports, under 60,000 (54,888; about 45 KB before); each documentation
   page's chunk under 40,000 (the largest, http_get's, 21,409); and every chunk the
   application may load ahead, together, under 250,000 (181,164 for 28 pages). Past the last,
   preload fewer pages ahead rather than raise it (ADR-0037). It reads `src`, `href`, `srcset`,
@@ -3950,6 +3953,8 @@ added there first. Links become the site's own: `/docs/…` and `https://ledgerm
 the router's; a `#…` on the same page carries `target="_self"`, the browser's own jump; a
 README's relative link to a file of the repository becomes its address on GitHub, on main,
 in the served Markdown too, where the relative one would lead nowhere; links to the API stay.
+A link is rewritten only where it is a link: an example in code that shows one is served as
+written, in the HTML and in the Markdown.
 A link with no target fails the build: a `/docs/…` address that is no page, a `#…` that is
 no heading of its page (headings get GitHub's anchors, which the generated pages link to, a
 repeated one numbered `-1`, `-2`), a file the checkout does not have, or an address outside
@@ -3958,8 +3963,11 @@ headings; one whose header row starts empty takes its first column as its rows' 
 
 Each page's Markdown is at its address with `.md` added (`/docs/glossary.md`), or `index.md`
 in it for an address that ends in a slash (`/docs/index.md`, `/docs/api/index.md`), as the
-llms.txt convention has it, and at its own address when the request says
-`Accept: text/markdown` at full weight: the deploy's `config.json` holds a route per page,
+llms.txt convention has it, and at its own address when the request's `Accept` names
+`text/markdown` at full weight (one of its media ranges, in any case, is `text/markdown` with
+any parameters but a `q` below 1, `text/markdown; charset=utf-8` among them; a media range
+starts after a comma outside a quoted string, so `text/markdown` inside a parameter's quoted
+value is none; `ACCEPTS_MARKDOWN`): the deploy's `config.json` holds a route per page,
 read from the built files (`site/deploy/vercel-config.ts`), with `Vary: Accept` on every
 answer at a page's address and `Content-Type: text/markdown` on the Markdown, and it refuses
 a site with a documentation page that has no Markdown, which would answer an agent with 404.
@@ -3992,7 +4000,10 @@ pages, 1.4 to 21 KB each), and on the home page the 15 its links lead to (88 KB)
 at once when the pointer rests on it, it takes the focus or a touch starts on it. A reader
 whose browser asks to save data (Save-Data, or a 2g connection) is spared the first, and a
 click on a link whose chunk has not come yet keeps the page on screen until it has
-(ADR-0037, "What is not instant").
+(ADR-0037, "What is not instant"), unless the reader clicks elsewhere or goes back or forward
+meanwhile, when the newer wish stands and the older one is dropped. The page the browser opened
+is taken over only once its own chunk has loaded; if it cannot be, the page stays the static
+page it is, every link an ordinary link (`src/entry-client.tsx`).
 
 ### Where it is deployed
 

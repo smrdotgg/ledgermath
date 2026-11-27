@@ -39,10 +39,11 @@ name: site
 
 # What the site is built from: site/, and the documentation's sources outside
 # it (each benchmark's README and the files the READMEs link, the API
-# reference's generator with its schemas, sample and words, schedule.json,
-# the files of docs/ a page may link, and the packages the generator runs
-# with). A pull request that breaks a link in any of them fails here, not in
-# the next rebuild of production.
+# reference's generator with its schemas, sample and words, and the modules it
+# imports through scripts/lib/api.ts, in methods/ and infra/runs/;
+# schedule.json, the files of docs/ a page may link, and the packages the
+# generator runs with). A pull request that breaks a link in any of them, or
+# the generator, fails here, not in the next rebuild of production.
 on:
   pull_request:
     paths:
@@ -50,6 +51,8 @@ on:
       - "benchmarks/**"
       - "schemas/**"
       - "scripts/**"
+      - "methods/**"
+      - "infra/runs/**"
       - "docs/**"
       - "schedule.json"
       - "package.json"
@@ -63,6 +66,8 @@ on:
       - "benchmarks/**"
       - "schemas/**"
       - "scripts/**"
+      - "methods/**"
+      - "infra/runs/**"
       - "docs/**"
       - "schedule.json"
       - "package.json"

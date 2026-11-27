@@ -377,8 +377,8 @@ function render(page: Lexed, links: ReadonlyMap<Token, Rewritten>): string {
  * repository made its address on GitHub, since from https://ledgermath.com it would lead nowhere.
  */
 function servedMarkdown(page: Lexed, links: ReadonlyMap<Token, Rewritten>): string {
-	let markdown = page.source.markdown;
-	if (page.source.directory === null) return markdown;
+	const source = page.source.markdown;
+	if (page.source.directory === null) return source;
 	const isRelative = (href: string) => !/^[a-z][a-z0-9+.-]*:/i.test(href) && !href.startsWith("/") && !href.startsWith("#");
 	// Each relative address as written, and where it goes: a reference definition's links share its address.
 	const absolute = new Map<string, string>();
@@ -386,16 +386,58 @@ function servedMarkdown(page: Lexed, links: ReadonlyMap<Token, Rewritten>): stri
 		const to = token.type === "link" ? links.get(token) : undefined;
 		if (to && isRelative((token as Tokens.Link).href)) absolute.set((token as Tokens.Link).href, to.href);
 	}
+	if (absolute.size === 0) return source;
+	// Each link is rewritten where it stands in the source, never text that only looks like one in
+	// code: the tokens come in the source's order, so a cursor walks the source past each code span,
+	// code block and link in turn, and a fenced block (which in a list the lexer holds de-indented,
+	// unlike the source) is skipped whole.
+	const fenced = fencedBlocks(source);
+	const find = (raw: string, from: number): number => {
+		let at = source.indexOf(raw, from);
+		for (let block = fenced.find(([start, end]) => at >= start && at < end); at >= 0 && block; block = fenced.find(([start, end]) => at >= start && at < end)) at = source.indexOf(raw, block[1]);
+		return at;
+	};
+	let out = "";
+	let cursor = 0;
 	for (const token of allTokens(page.tokens)) {
+		if (token.type === "code" || token.type === "codespan") {
+			const at = source.indexOf(token.raw, cursor);
+			if (at >= 0) {
+				out += source.slice(cursor, at + token.raw.length);
+				cursor = at + token.raw.length;
+			}
+			continue;
+		}
 		if (token.type !== "link" && token.type !== "def") continue;
 		const href = (token as Tokens.Link).href;
 		const to = absolute.get(href);
-		if (!to) continue;
-		const raw = token.raw;
-		const changed = token.type === "link" ? raw.replace(`](${href}`, `](${to}`) : raw.replace(`]: ${href}`, `]: ${to}`);
-		if (changed !== raw) markdown = markdown.split(raw).join(changed);
+		const at = find(token.raw, cursor);
+		if (at < 0) continue;
+		const changed = !to ? token.raw : token.type === "link" ? token.raw.replace(`](${href}`, `](${to}`) : token.raw.replace(`]: ${href}`, `]: ${to}`);
+		out += source.slice(cursor, at) + changed;
+		cursor = at + token.raw.length;
 	}
-	return markdown;
+	return out + source.slice(cursor);
+}
+
+/** Where SOURCE's fenced code blocks are, as [start, end) offsets: from a line opening with ``` or ~~~ (indented or not) to the line that closes it. */
+function fencedBlocks(source: string): [number, number][] {
+	const blocks: [number, number][] = [];
+	let open: { fence: string; start: number } | null = null;
+	let at = 0;
+	for (const line of source.split("\n")) {
+		const end = at + line.length + 1;
+		if (open === null) {
+			const fence = /^\s*(`{3,}|~{3,})/.exec(line)?.[1];
+			if (fence) open = { fence, start: at };
+		} else if (new RegExp(`^\\s*${open.fence[0] === "`" ? "`" : "~"}{${open.fence.length},}\\s*$`).test(line)) {
+			blocks.push([open.start, end]);
+			open = null;
+		}
+		at = end;
+	}
+	if (open !== null) blocks.push([open.start, source.length]);
+	return blocks;
 }
 
 // ---------------------------------------------------------------- the sources
