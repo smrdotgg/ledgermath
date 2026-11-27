@@ -120,6 +120,72 @@ tbody:first-of-type .section th { padding-top: 0; }
 .closing span { display: block; white-space: nowrap; }
 .nap { width: calc(43 * max(2px, .038 * clamp(2rem, 10.1vw, 4.5rem))); height: auto; }
 
+/* ---------------------------------------------------------------- the documentation (docs/Page.tsx)
+   The site's header, footer, colours and pixel type for the headings and the chrome; the body of a
+   page, which is long text, tables and code, in the reader's own system fonts, which read easily at
+   length and cost no file. The page comes first in the document; on a wide screen the list of pages
+   stands to its left and stays in view, on a narrow one it follows the page. */
+.docs { flex: 1; display: grid; grid-template-columns: 14rem minmax(0, 1fr); grid-template-areas: "pages doc"; column-gap: 4rem; align-items: start; padding-top: .5rem; }
+.doc { grid-area: doc; min-width: 0; max-width: 46rem; }
+.doc-top { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: .5rem 2rem; color: var(--muted); }
+nav.crumbs { display: block; color: inherit; }
+.crumbs span::before { content: "/"; margin: 0 .6rem; }
+.doc-actions { display: flex; flex-wrap: wrap; align-items: baseline; gap: .5rem 1.5rem; }
+.copy { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; text-decoration: underline; text-decoration-color: transparent; text-underline-offset: .25em; transition: color .2s, text-decoration-color .2s; }
+.copy:hover, .copy:focus-visible { color: var(--fg); text-decoration-color: var(--fg); outline: none; }
+.said:empty { display: none; }
+/* "Copy page" needs the application: it is offered only once the application has taken the page
+   over (data-hydrated on <html>, src/app.tsx), and until then it is neither seen, nor reached by the
+   keyboard, nor read out; its place is kept, so that nothing moves when it comes. If the page is
+   never taken over (its script could not be loaded, src/entry-client.tsx), there is only "View as
+   Markdown"; and without JavaScript, not even its place. */
+:root:not([data-hydrated]) .copy { visibility: hidden; }
+@media (scripting: none) { .copy { display: none; } }
+
+nav.pages { grid-area: pages; display: block; position: sticky; top: 0; max-height: 100vh; overflow-y: auto; box-sizing: border-box; padding: 2.25rem 0 2rem; color: var(--muted); font-size: .9375rem; line-height: 1.35; }
+.pages-section + .pages-section { margin-top: 1.75rem; }
+.pages-title { color: var(--fg); margin-bottom: .6rem; }
+.pages li + li { margin-top: .45rem; }
+.pages a { overflow-wrap: anywhere; }
+.pages a[aria-current="page"] { color: var(--fg); text-decoration-color: var(--fg); }
+
+.prose { font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; font-size: 1.0625rem; line-height: 1.65; font-feature-settings: normal; -webkit-font-smoothing: auto; overflow-wrap: break-word; }
+.prose h1, .prose h2, .prose h3, .prose h4, .prose h5, .prose h6 { font-family: var(--pixel), ui-monospace, Menlo, monospace; font-feature-settings: "ss09"; font-weight: normal; line-height: 1.25; -webkit-font-smoothing: antialiased; }
+.prose h1 { display: block; font-size: clamp(2rem, 7vw, 3rem); line-height: 1.15; margin: 2rem 0 1.5rem; }
+.prose h2 { font-size: 1.5rem; margin: 3rem 0 1rem; }
+.prose h3 { font-size: 1.25rem; margin: 2.25rem 0 .75rem; }
+.prose h4, .prose h5, .prose h6 { font-size: 1.0625rem; margin: 1.75rem 0 .5rem; }
+.prose p, .prose ul, .prose ol, .prose pre, .prose .table, .prose details, .prose blockquote { margin: 0 0 1rem; }
+.prose ul { list-style: disc; padding-left: 1.4rem; }
+.prose ol { list-style: decimal; padding-left: 1.4rem; }
+.prose li + li { margin-top: .35rem; }
+.prose li > ul, .prose li > ol, .prose li > p { margin: .35rem 0 0; }
+/* Links in running text are underlined, so that they stand apart from it without colour. */
+.prose a { text-decoration-color: var(--muted); }
+.prose a:hover, .prose a:focus-visible { text-decoration-color: var(--fg); }
+.prose strong, .prose th { font-weight: 600; }
+.prose code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; font-size: .875em; }
+.prose pre { overflow-x: auto; padding: .85rem 1rem; border: 1px solid var(--rule); line-height: 1.5; }
+.prose pre code { font-size: .8125rem; }
+.prose pre:focus-visible, .prose .table:focus-visible { outline: 1px solid var(--fg); outline-offset: 2px; }
+.prose .table { overflow-x: auto; }
+.prose table { width: 100%; white-space: normal; font-variant-numeric: normal; font-size: .9375rem; line-height: 1.5; }
+.prose th, .prose td { padding: .5rem 1rem .5rem 0; text-align: left; vertical-align: top; border-bottom: 1px solid var(--rule); }
+.prose td:last-child, .prose th:last-child { padding-right: 0; }
+.prose thead th { padding-top: 0; }
+.prose .align-right { text-align: right; }
+.prose .align-center { text-align: center; }
+.prose details { padding-left: 1rem; border-left: 1px solid var(--rule); }
+.prose summary { cursor: pointer; }
+.prose details[open] > summary { margin-bottom: .75rem; }
+.prose blockquote { margin-left: 0; padding-left: 1rem; border-left: 2px solid var(--rule); }
+.prose hr { border: 0; border-top: 1px solid var(--rule); margin: 2rem 0; }
+
+@media (max-width: 60rem) {
+  .docs { grid-template-columns: minmax(0, 1fr); grid-template-areas: "doc" "pages"; }
+  nav.pages { position: static; max-height: none; overflow: visible; margin-top: 3rem; padding-top: 2rem; border-top: 1px solid var(--rule); }
+}
+
 /* ---------------------------------------------------------------- narrower screens */
 @media (max-width: 66rem) {
   .hero { grid-template-columns: minmax(0, 1fr); align-items: start; padding: 3.5rem 0 4rem; }
@@ -141,5 +207,6 @@ tbody:first-of-type .section th { padding-top: 0; }
   th, td { padding-left: 1.25rem; }
   tbody th[scope="row"], thead td { position: sticky; left: 0; z-index: 1; background: var(--bg); }
   .head { grid-template-columns: 9rem; white-space: normal; }
+  .prose { font-size: 1rem; line-height: 1.6; }
 }
-@media (prefers-reduced-motion: reduce) { a { transition: none; } }
+@media (prefers-reduced-motion: reduce) { a, .copy { transition: none; } }

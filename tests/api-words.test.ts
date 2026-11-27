@@ -36,6 +36,7 @@ import { beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { join } from "node:path";
 
 import { API_SCHEMAS, buildApi, DEFAULT_BASE, DEFAULT_DOCS, LEFT_OUT_WHY, readApiSchemas, readBootFiles, readBootSummaries, readPriceFiles, writtenSchemaOf, type WrittenSchema } from "../scripts/lib/api";
+import { isDocsAddress } from "../scripts/lib/docs-addresses";
 import { RULE_SETS } from "../scripts/lib/price-rules";
 import { wordRules } from "../scripts/lib/published-words";
 import { makeApiFixture } from "./api-fixtures";
@@ -145,18 +146,12 @@ const { references: REFERENCES, otherSchemas, referencesIn } = wordRules(ROOT);
  * The only words the tree publishes that point outside the tree (to the
  * repository, a document or a section of one), each with why it stays. Every
  * entry must still be found: one that is not fails the test, so the list never
- * outlives its reason.
+ * outlives its reason. None is left: the docs' address, the README's section on
+ * GitHub until the documentation had pages of its own, is now its reference to
+ * the API on the site (DEFAULT_DOCS, ADR-0037), which names nothing of the
+ * repository.
  */
-const ALLOWED: ReadonlyArray<{ file: string; pointer: string; text: string; why: string }> = [
-	{
-		file: "v1/index.json",
-		pointer: "/docs",
-		text: DEFAULT_DOCS,
-		why:
-			"The docs' address is the README's section on GitHub until the docs have pages of their own (ADR-0030, Costs); " +
-			"it is an address, not words, and it can be followed, the repository being public. Changing it is a decision of its own.",
-	},
-];
+const ALLOWED: ReadonlyArray<{ file: string; pointer: string; text: string; why: string }> = [];
 
 interface Finding {
 	file: string;
@@ -226,6 +221,12 @@ beforeAll(async () => {
 });
 
 describe("the words the data API publishes", () => {
+	test("give the docs' address as the documentation's reference to the API, on the site", () => {
+		expect(DEFAULT_DOCS).toBe("https://ledgermath.com/docs/api/");
+		expect(isDocsAddress(new URL(DEFAULT_DOCS).pathname)).toBe(true);
+		expect(JSON.parse(new TextDecoder().decode(tree.get("v1/index.json"))).docs).toBe(DEFAULT_DOCS);
+	});
+
 	test("name no file, document, issue, pull request, ADR, function or option a reader of the API alone cannot fetch", () => {
 		const { findings } = scanWords(tree);
 		const allowed = (finding: Finding) => ALLOWED.find((entry) => entry.file === finding.file && entry.pointer === finding.pointer && finding.text.length > 0 && entry.text.includes(finding.text));

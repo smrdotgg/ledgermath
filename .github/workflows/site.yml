@@ -1,19 +1,23 @@
 # Builds the website in site/ from the data API's tree as published now
 # (site/scripts/fetch-tree.ts fetches the files the pages read from
-# https://api.ledgermath.com) and checks what the build wrote with `bun run
-# check`: each page holds its fixed words (site/src/pages.text.ts) in its body
-# outside any script, so the prerender ran and it reads with JavaScript off;
-# nothing in the output refers to a file it lacks or loads from another
-# origin; every link goes inside the site, under https://api.ledgermath.com/,
-# or to an address site/src/pages.text.ts names whole (OUTSIDE_LINKS);
-# each page is under its size budget (site/scripts/check-output.ts); and every
-# figure on the pages is the tree's, exactly (site/scripts/check-figures.ts).
-# Then the browser checks, in Playwright's Chromium (site/scripts/check-browser.ts):
-# each page loads cleanly and reads the same with JavaScript off, hydration
-# changes nothing on it, and a click on a link inside the site changes the page
-# in place, with no request, to the page the build wrote (ADR-0036). The same
-# commands work locally inside site/. Keeps the built site as the artifact
-# `site`, which a preview deploys.
+# https://api.ledgermath.com), with the documentation rendered from its
+# Markdown (site/scripts/docs.ts, which fails the build on a link with no
+# target), and checks what the build wrote with `bun run check`: each page
+# holds its fixed words in its body outside any script, so the prerender ran
+# and it reads with JavaScript off; llms.txt lists every documentation page,
+# each with its Markdown beside it; nothing in the output refers to a file it
+# lacks or loads from another origin; every link goes inside the site, under
+# https://api.ledgermath.com/, to a file of the repository on GitHub, or to an
+# address site/src/pages.text.ts names whole (OUTSIDE_LINKS); the pages, the
+# application and its chunks are under their budgets
+# (site/scripts/check-output.ts); and every figure on the home page is the
+# tree's, exactly (site/scripts/check-figures.ts). Then the browser checks, in
+# Playwright's Chromium (site/scripts/check-browser.ts): each page loads
+# cleanly and reads the same with JavaScript off, hydration changes nothing on
+# it, a click on a link inside the site changes the page in place, with no
+# request, to the page the build wrote (ADR-0036, ADR-0037), and the
+# documentation's controls work. The same commands work locally inside site/.
+# Keeps the built site as the artifact `site`, which a preview deploys.
 #
 # Production is not deployed from that artifact. On a push to main or a run by
 # hand on main, `deploy-production`, inside the production deploys'
@@ -33,16 +37,41 @@
 # pull request is given AWS credentials.
 name: site
 
+# What the site is built from: site/, and the documentation's sources outside
+# it (each benchmark's README and the files the READMEs link, the API
+# reference's generator with its schemas, sample and words, and the modules it
+# imports through scripts/lib/api.ts, in methods/ and infra/runs/;
+# schedule.json, the files of docs/ a page may link, and the packages the
+# generator runs with). A pull request that breaks a link in any of them, or
+# the generator, fails here, not in the next rebuild of production.
 on:
   pull_request:
     paths:
       - "site/**"
+      - "benchmarks/**"
+      - "schemas/**"
+      - "scripts/**"
+      - "methods/**"
+      - "infra/runs/**"
+      - "docs/**"
+      - "schedule.json"
+      - "package.json"
+      - "bun.lock"
       - ".github/workflows/site.yml"
   push:
     branches: [main]
     # site/deploy/fresh.ts reads this list, as what the site is built from.
     paths:
       - "site/**"
+      - "benchmarks/**"
+      - "schemas/**"
+      - "scripts/**"
+      - "methods/**"
+      - "infra/runs/**"
+      - "docs/**"
+      - "schedule.json"
+      - "package.json"
+      - "bun.lock"
       - ".github/workflows/site.yml"
   workflow_dispatch:
 
@@ -53,7 +82,7 @@ jobs:
   build:
     name: type-check, build and check the site
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: site
@@ -62,6 +91,10 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: 1.4.4
+      # The API reference's generator (scripts/api-reference.ts, which the build runs) needs them.
+      - name: The repository's packages
+        working-directory: .
+        run: bun install --frozen-lockfile
       - run: bun install --frozen-lockfile
       - name: Type-check
         run: bun run typecheck
@@ -79,7 +112,7 @@ jobs:
           LEDGERMATH_TREE: ${{ runner.temp }}/tree
       - name: Playwright's Chromium, at the version site/package.json pins, with the libraries it needs
         run: bunx playwright install --with-deps chromium
-      - name: In a browser, each page loads cleanly and reads the same without JavaScript, hydration changes nothing, and a click inside the site changes the page in place with no request
+      - name: In a browser, each page loads cleanly and reads the same without JavaScript, hydration changes nothing, a click inside the site changes the page in place with no request, and the documentation's controls work
         run: bun run check:browser
       - name: The site carries the notices of the code it ships (THIRD-PARTY-NOTICES.md, section 3)
         run: cmp public/third-party-notices.txt dist/client/third-party-notices.txt
@@ -226,7 +259,7 @@ jobs:
             echo "- Tree: as the API bucket held it when this job read it; newest Run $newest"
           } >>"$GITHUB_STEP_SUMMARY"
           echo "$url"
-      - name: https://ledgermath.com/ and /docs/ answer 200 with their fixed words (src/pages.text.ts) in their HTML
+      - name: https://ledgermath.com/ and /docs/ answer 200 with their fixed words in their HTML, and /docs/ as Markdown, to Accept text/markdown too, and llms.txt
         if: steps.fresh.outputs.deploy == 'true'
         working-directory: site
         run: bun scripts/check-live.ts https://ledgermath.com/

@@ -810,17 +810,20 @@ and are not published.
 
 The website (https://ledgermath.com) has its own packages, which `site/package.json` names
 at the versions `site/bun.lock` pins. Its build (`bun run build` in `site/`) renders each
-page to HTML with Solid's server renderer and writes the site to `site/dist/client`: HTML,
-one stylesheet, the fonts below, the notices, and one script, `assets/app-*.js`, which each
-page loads: the site as a Solid application, which takes over the page in the browser and
-does the navigation inside the site (ADR-0036). That script carries code of four of the
-packages, compiled and minified: `solid-js`, `@solidjs/signals`, `@solidjs/web` and
-`@solidjs/router`, all MIT, whose licence asks for its copyright notice and text to travel
-with every copy. Both are in
+page to HTML with Solid's server renderer, the documentation's pages from their Markdown
+with `marked` (ADR-0037), and writes the site to `site/dist/client`: HTML, one stylesheet,
+the fonts below, the notices, each documentation page's Markdown and `llms.txt` (LedgerMath's
+own words), and the scripts: `assets/app-*.js`, which each page loads, the runtime chunk it
+imports, and a chunk per documentation page, holding that page's HTML: the site as a Solid
+application, which takes over the page in the browser and does the navigation inside the site
+(ADR-0036). Those scripts carry code of four of the packages, compiled and minified:
+`solid-js`, `@solidjs/signals`, `@solidjs/web` and `@solidjs/router`, all MIT, whose licence
+asks for its copyright notice and text to travel with every copy. Both are in
 [`site/public/third-party-notices.txt`](site/public/third-party-notices.txt), with the
-fonts' (below). The other packages build and check the site and are not in what is served.
-The inline scripts in each page are LedgerMath's own, but for Solid's hydration bootstrap,
-which `@solidjs/web` writes.
+fonts' (below). The other packages build and check the site and are not in what is served:
+`marked` runs at build time only, and nothing of it reaches the browser, since the pages'
+HTML is rendered before they are served. The inline scripts in each page are LedgerMath's own,
+but for Solid's hydration bootstrap, which `@solidjs/web` writes.
 
 | Package | Version | Licence | What uses it |
 |---|---|---|---|
@@ -830,6 +833,7 @@ which `@solidjs/web` writes.
 | `@solidjs/router` | 2.0.1 | MIT | The navigation inside the site; in the served script |
 | `@solidjs/vite-plugin` | 3.0.1 | MIT | Compiles the pages for the server renderer and the browser |
 | `vite` | 8.3.8 | MIT | Builds the site |
+| `marked` | 18.2.0 | MIT | Renders the documentation's Markdown to HTML at build time (`site/scripts/docs.ts`); not in what is served |
 | `playwright` | 1.65.0 | Apache-2.0 | The browser checks (`bun run check:browser` in `site/`, by the `site` workflow and by hand) |
 | `axe-core` | 4.14.0 | MPL-2.0 | The same checks: contrast and structure. Injected into the page under test, never served |
 | `typescript` | 7.0.2 | Apache-2.0 | Type checking (`bun run typecheck` in `site/`) |

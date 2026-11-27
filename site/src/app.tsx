@@ -4,23 +4,34 @@
 // that page here, with no request, from what the application already holds; with JavaScript off
 // the same link is an ordinary link to a complete page (ADR-0036).
 //
-// Everything a page shows is in the application: the components, and the figures, which are
-// compiled in at build time (__PAGE_DATA__, src/data's pageData, the JSON every page was
-// rendered from). So nothing is fetched after the first load, and a tab open across a deploy
-// keeps working: it never asks for a file the deploy took away. What it shows after a click is
-// the build it loaded, figures included, until the reader loads a page again.
+// What the home page shows is in the application's one script: its components, and the figures,
+// which are compiled in at build time (__PAGE_DATA__, src/data's pageData, the JSON every page was
+// rendered from). The documentation's pages are routes of the same application, each page's body
+// (its HTML, rendered from its Markdown at build time) a lazy() component in a chunk of its own
+// (virtual:ledgermath-docs, ADR-0037). The router loads those chunks ahead: every link's on the
+// page once it has loaded and the browser is idle (eagerPreload, which a reader who asks to save
+// data, or is on a 2g connection, is spared), and a link's at once when the pointer rests on it,
+// it takes the focus or a touch starts on it (intentPreload). So a click finds the next page
+// already held, and fetches nothing. A chunk not yet loaded when its link is clicked is fetched
+// then, and the page on screen stays until it has come; one that cannot be fetched sends the click
+// to the browser, which loads the page whole (Layout's useBeforeLeave).
+//
+// What a page shows after a click is the build the tab loaded, figures included, until the reader
+// loads a page again.
 //
 // The router leaves some links to the browser: those to another origin, with a target, with
 // download, or clicked with a modifier key or another button than the first. The site gives
 // target="_self" to its links that are not page changes (a place on the same page, a file that
 // is not a page), and `bun run check` holds every such link to it (scripts/check-output.ts).
-import { createRouter, useBeforeLeave, useLocation, useRouteMatches } from "@solidjs/router";
-import { createEffect } from "solid-js";
-import { type JSX, useHead } from "@solidjs/web";
+import { createRouter, eagerPreload, intentPreload, useBeforeLeave, useLocation, useRouteMatches } from "@solidjs/router";
+import { createEffect, onSettled, untrack } from "solid-js";
+import { isServer, type JSX, useHead } from "@solidjs/web";
+import { DOC_BODIES, DOC_PAGES, LOADED } from "virtual:ledgermath-docs";
 import type { PageData } from "./data";
-import DocsPage from "./docs/Page";
+import DocsShell from "./docs/Page";
+import type { DocMeta } from "./docs/sections";
 import HomePage from "./home/Page";
-import { DOCS, HOME, PAGES, type SitePage } from "./pages.text";
+import { HOME, PAGES, type SitePage } from "./pages.text";
 
 /** What the pages render: scripts/build.ts compiles it in (Vite's `define`) from the tree the site is built from. */
 declare const __PAGE_DATA__: PageData;
@@ -29,14 +40,52 @@ const data: PageData = __PAGE_DATA__;
 /** A page's route: its address, and its file, which the host serves at its own address too (/docs/index.html). */
 const route = (page: SitePage, component: () => JSX.Element) => ({ path: [page.path, `/${page.file}`], component, info: { page } });
 
+/** What Layout knows of a documentation page, as of any other: its address, its <title> and description, and its Markdown. */
+export const docSitePage = (meta: DocMeta): SitePage => ({
+	path: meta.address,
+	file: meta.file,
+	title: meta.documentTitle,
+	description: meta.description,
+	text: [],
+	markdown: meta.markdown,
+});
+
+/** A documentation page's route, under /docs: its address and its file's (/glossary, /glossary/index.html), its body the lazy() component of its chunk. */
+const docRoute = (meta: DocMeta) => ({
+	path: [meta.address.slice("/docs".length), `/${meta.file.slice("docs/".length)}`],
+	component: DOC_BODIES[meta.address]!,
+	info: { page: docSitePage(meta) },
+});
+
 export const Router = createRouter({
-	routes: [route(HOME, () => <HomePage data={data} />), route(DOCS, () => <DocsPage data={data} />)],
+	routes: [
+		route(HOME, () => <HomePage data={data} />),
+		// The documentation: one layout, the header, the navigation and the footer, which stays while
+		// the reader goes from page to page, around each page's body.
+		{ path: "/docs", component: (props: { children?: JSX.Element }) => <DocsShell data={data}>{props.children}</DocsShell>, children: DOC_PAGES.map(docRoute) },
+	],
+	// Each link's chunk, ahead of its click: see the comment at the top.
+	preloadLinks: [eagerPreload({ all: true }), intentPreload()],
 	// Back and forward restore the scroll position as the browser does for any page: a page here
 	// renders in the same task as its address changes, so the browser's own restoration finds it.
 	// The router's (on by default) saves a position only from a scroll event, so going back to a
 	// page the reader never scrolled left it where the page after it was (ADR-0036).
 	scrollRestoration: false,
 });
+
+/**
+ * Whether the page the browser opened can be taken over whole (src/entry-client.tsx): for a
+ * documentation page, once its body's chunk has loaded; false if it cannot be, and the page is
+ * then left as the static page it is.
+ */
+export function landingBodyLoaded(): Promise<boolean> {
+	const page = Router.match(window.location.pathname).at(-1)?.info?.page as SitePage | undefined;
+	if (!page?.markdown) return Promise.resolve(true);
+	return DOC_BODIES[page.path]!.preload().then(
+		() => true,
+		() => false,
+	);
+}
 
 /** Every feature flag of every page (pages.text.ts). */
 const FLAGS = [...new Set(PAGES.flatMap((page) => page.flags ?? []))];
@@ -67,16 +116,28 @@ function Layout(props: { children?: JSX.Element }) {
 	const matches = useRouteMatches();
 	const page = (): SitePage | undefined => matches().at(-1)?.route.info?.page;
 
-	// The page's <title> and description: Solid's own head registry, which the build's render
-	// writes into the HTML and which changes them in the browser with the page.
+	// The page's <title> and description, and a documentation page's Markdown (llms.txt's
+	// convention: an alternate of type text/markdown): Solid's own head registry, which the build's
+	// render writes into the HTML and which changes them in the browser with the page.
 	useHead(() => {
 		const p = page();
 		return p
 			? [
 					{ tag: "title", props: { children: p.title } },
 					{ tag: "meta", props: { name: "description", content: p.description } },
+					...(p.markdown ? [{ tag: "link" as const, props: { rel: "alternate", type: "text/markdown", href: p.markdown } }] : []),
 				]
 			: [];
+	});
+
+	// When the application has taken the page over (the mark scripts/check-browser.ts and
+	// measure-navigation.ts wait for): once the first render has settled, which, on a documentation
+	// page, is after its body's chunk has loaded (src/entry-client.tsx). And data-hydrated on <html>,
+	// outside the body the build wrote, which shows "Copy page" (site.css): offered only now that its
+	// handler is there.
+	onSettled(() => {
+		performance.mark("hydrated");
+		document.documentElement.dataset.hydrated = "";
 	});
 
 	// The page's feature flags (pages.text.ts), as the inline script in Document.tsx sets them on a
@@ -113,13 +174,42 @@ function Layout(props: { children?: JSX.Element }) {
 	};
 	createEffect(() => location.pathname + location.search, () => arrive(), { defer: true });
 
+	// The documentation page the application took over has its body loaded: hydration imported it.
+	const landed = untrack(page);
+	if (landed?.markdown && !isServer) LOADED.add(landed.path);
+
+	// Each navigation the router is asked for, counted: one held for its page's body goes on only if
+	// none has been asked for since and the address is still the one it was asked from.
+	let asked = 0;
+
 	useBeforeLeave((e) => {
+		const ask = ++asked;
 		if (typeof e.to !== "string") return;
+		const matched = Router.match(e.to);
 		// An address no route knows (a link that should have had target="_self", say) goes to the
 		// browser, which loads whatever the host has there, instead of an empty page here.
-		if (Router.match(e.to).length === 0) {
+		if (matched.length === 0) {
 			e.preventDefault();
 			window.location.assign(e.to);
+			return;
+		}
+		// A documentation page whose body this tab has not loaded yet (the router loads them ahead,
+		// so only a click that came first, or a reader who asked to save data, meets one): it is
+		// loaded first, the page on screen staying as it is, and the click then goes on; if it cannot
+		// be loaded (a deploy since this tab opened has replaced it, or the network is down), the
+		// browser loads the page whole, rather than the router stopping on the failed import. Either
+		// only while it is still the reader's latest wish: a click or a step back or forward made
+		// meanwhile has superseded it, and the page it went to stays.
+		const target = matched.at(-1)?.info?.page as SitePage | undefined;
+		if (target?.markdown && !LOADED.has(target.path)) {
+			e.preventDefault();
+			const to = e.to;
+			const from = window.location.href;
+			const current = () => ask === asked && window.location.href === from;
+			DOC_BODIES[target.path]!.preload().then(
+				() => current() && e.retry(true),
+				() => current() && window.location.assign(to),
+			);
 			return;
 		}
 		const here = location.pathname + location.search;

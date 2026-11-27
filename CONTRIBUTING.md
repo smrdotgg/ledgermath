@@ -71,7 +71,8 @@ The directory holds the source, a `Makefile` and a `README.md`:
   values", "Findings", "How it works" (its elision guard and its own events) and "Building
   and testing". A link to another file of the repository is relative; a link to another
   page of the documentation is its full address. `tests/benchmark-pages.test.ts` checks the
-  headings.
+  headings, and the site's build checks every link, failing the `site` workflow on one with
+  no target (README, "The documentation", under "The website").
 - The C benchmarks share a harness, [`benchmarks/harness/c/`](benchmarks/harness/c/), which
   prints the stream. A benchmark in another language prints the same lines without it.
 

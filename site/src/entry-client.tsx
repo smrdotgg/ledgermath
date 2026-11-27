@@ -8,9 +8,17 @@
 // Hydration takes the main thread for its whole length (tens of milliseconds on a phone), so
 // started any earlier it would put off the first frame the reader sees (ADR-0036).
 // Until it has run, a link is an ordinary link. The marks "hydrate" and "hydrated" say when it
-// started and ended (scripts/check-browser.ts and measure-navigation.ts read them).
+// started and ended (scripts/check-browser.ts and measure-navigation.ts read them); the second is
+// set by the application once its first render has settled (src/app.tsx). On a documentation
+// page that is after the page's body has loaded: the page's own chunk (its lazy() body, which the
+// page's <head> has already asked for, modulepreload) is loaded first, and only then does
+// hydrate() take the page over. If that chunk cannot be loaded (a deploy since the HTML was
+// served replaced it, or the network is down), the application does not take the page over at
+// all: the page stays the complete static page it is, every link an ordinary link (the mark
+// "static" says so), rather than a page that looks whole and whose links the router holds; and
+// "Copy page", which only the application can work, is never shown (site.css).
 import { hydrate } from "@solidjs/web";
-import { App } from "./app";
+import { App, landingBodyLoaded } from "./app";
 
 /** Resolves once the body is shown: when the inline script in <head> (Document.tsx) has taken away its class "font-loading", or at once if it never set it. */
 function shown(): Promise<void> {
@@ -53,8 +61,14 @@ function painted(): Promise<void> {
 	});
 }
 
-painted().then(() => {
-	performance.mark("hydrate");
-	hydrate(() => <App />, document.body);
-	performance.mark("hydrated");
-});
+painted()
+	.then(landingBodyLoaded)
+	.then((loaded) => {
+		if (!loaded) {
+			performance.mark("static");
+			console.warn("This page's script could not be loaded: it stays as it is, and its links load each page whole.");
+			return;
+		}
+		performance.mark("hydrate");
+		hydrate(() => <App />, document.body);
+	});

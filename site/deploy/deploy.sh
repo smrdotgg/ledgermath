@@ -2,8 +2,11 @@
 # Deploys a built site to the Vercel project as prebuilt files: Vercel builds
 # nothing. SITE_DIR is what `bun run build` writes (site/dist/client), or the
 # workflow's artifact `site`. The script lays it out as the Build Output API
-# asks, .vercel/output/static plus a config.json that says version 3, in a
-# new temporary directory, and runs `vercel deploy --prebuilt` on it.
+# asks, .vercel/output/static plus a config.json (version 3, with the routes
+# that serve each documentation page's Markdown at its address to a request
+# that says Accept: text/markdown: site/deploy/vercel-config.ts, which needs
+# Bun, and refuses a site with a documentation page that has no Markdown), in
+# a new temporary directory, and runs `vercel deploy --prebuilt` on it.
 #
 #     site/deploy/deploy.sh SITE_DIR production|preview
 #
@@ -50,11 +53,16 @@ if [ ! -x "$vercel" ]; then
   exit 2
 fi
 
+if ! command -v bun >/dev/null; then
+  echo "bun is not installed: it writes the deployment's routes (vercel-config.ts)" >&2
+  exit 2
+fi
+
 out=$(mktemp -d)
 trap 'rm -rf "$out"' EXIT
 mkdir -p "$out/.vercel/output"
 cp -R "$site/." "$out/.vercel/output/static"
-printf '{"version":3}\n' >"$out/.vercel/output/config.json"
+bun "$here/vercel-config.ts" "$site" >"$out/.vercel/output/config.json"
 
 args=(deploy "$out" --prebuilt --yes --json)
 if [ "$target" = production ]; then

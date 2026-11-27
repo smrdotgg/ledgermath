@@ -17,7 +17,6 @@ import {
 	pageData,
 	perUnit,
 	plain,
-	plannedBenchmarkDocsUrl,
 	powerOfTen,
 	roundPlaces,
 	roundSignificant,
@@ -133,13 +132,12 @@ describe("links", () => {
 		expect(data.links.licences).toBe("/third-party-notices.txt");
 	});
 
-	test("every documentation link goes to the placeholder at /docs/ for now; each benchmark's planned page is one line away", () => {
+	test("the documentation is at /docs/, and each benchmark's name goes to its own page there", () => {
 		expect(data.links.docs).toBe("/docs/");
 		for (const choice of HEADLINE_CHOICES) {
-			expect(choice.readme).toBe("/docs/");
-			expect(data.links.benchmarkDocs(choice.benchmark)).toBe("/docs/");
+			expect(choice.readme).toBe(`/docs/benchmarks/${choice.benchmark}`);
+			expect(data.links.benchmarkDocs(choice.benchmark)).toBe(`/docs/benchmarks/${choice.benchmark}`);
 		}
-		expect(plannedBenchmarkDocsUrl("mutex")).toBe("/docs/benchmarks/mutex");
 	});
 
 	test("no link goes to GitHub, though the tree's own docs field does", () => {
