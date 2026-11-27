@@ -50,6 +50,8 @@ export default function DocsShell(props: { data: PageData; children?: JSX.Elemen
 	// What the copy came to, for the page it was asked on: said once, and gone with the page.
 	const [copied, setCopied] = createSignal<{ path: string; said: string } | null>(null);
 	const copy = () => {
+		// A result disables copying until another page; aria-disabled keeps the button focused.
+		if (said()) return;
 		const path = location.pathname;
 		copyMarkdown(meta().markdown).then(
 			() => setCopied({ path, said: "Copied the page's Markdown." }),
@@ -73,7 +75,7 @@ export default function DocsShell(props: { data: PageData; children?: JSX.Elemen
 							<a href={meta().markdown} target="_self">
 								View as Markdown
 							</a>
-							<button type="button" class="copy" onClick={copy}>
+							<button type="button" class="copy" onClick={copy} aria-disabled={!!said()}>
 								Copy page
 							</button>
 							{/* A status, which a screen reader reads out when it changes; not an aria-live of its own beside Layout's (src/app.tsx). */}
