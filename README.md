@@ -595,8 +595,8 @@ AWS, read-only, in the account of the stage that is or will be scheduled:
 `bun scripts/check-targets.ts --stage production-runs` reads the production account with
 its profile, `--stage smr-runs` the development account.
 
-A boot's summary (`boots/<yyyy>/<mm>/<dd>/<boot>.json`) accounts for every execution the
-schedule names: `runs`; `not_run`, with the `reason` (told to stop before starting it, or
+A boot's summary (`boots/<yyyy>/<mm>/<dd>/<boot>.json`) lists these parts, though it is
+not a complete account in every case: `runs`; `not_run`, with the `reason` (told to stop before starting it, or
 its Service's inputs could not be had); `build_failures`, a build that failed, whose
 executions did not run; and `left_out`, each execution of an entry for other instance
 types, with the `instance_types` it is for. A box whose type
