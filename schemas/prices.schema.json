@@ -49,6 +49,7 @@
   },
   "$defs": {
     "source": {
+      "description": "One offer file the rules read: the versioned URL its bytes were downloaded from, their size and SHA-256, the file's header, what each rule selected from it, and the selected products and their On-Demand terms, verbatim.",
       "type": "object",
       "additionalProperties": false,
       "required": ["offer_code", "url", "version", "publication_date", "bytes", "sha256", "header", "selections", "products", "terms"],

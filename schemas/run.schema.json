@@ -108,7 +108,7 @@
       "$ref": "#/$defs/hash"
     },
     "exit": {
-      "description": "How the process ended: its exit code, or the signal that killed it. `timeout_seconds` is present when the runner killed it for running that long. `runner_signal` is present when the runner was told to stop before it collected the binary's exit: see $defs/runner_signal.",
+      "description": "How the process ended: its exit code, or the signal that killed it. `timeout_seconds` is present when the runner killed it for running that long. `runner_signal` is present when the runner was told to stop before it collected the binary's exit: it is the number of the signal that told it.",
       "oneOf": [
         {
           "type": "object",
@@ -168,7 +168,7 @@
       "type": "integer",
       "minimum": 1
     },
-    "hash": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "hash": { "description": "A blob's name: sha256: and the 64 hex digits of the SHA-256 of its bytes, which are stored at blobs/sha256/<hex>.", "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
     "time": {
       "description": "UTC, to the nanosecond.",
       "type": "string",
