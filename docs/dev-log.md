@@ -1937,8 +1937,11 @@ A migrated benchmark is done only when **all** of these hold:
   [the skill](https://github.com/smrdotgg/ledgermath/tree/2059cf9/skills/ledgermath),
   [`lookup.ts`](https://github.com/smrdotgg/ledgermath/blob/2059cf9/scripts/lookup.ts),
   [`check-answer.ts`](https://github.com/smrdotgg/ledgermath/blob/2059cf9/scripts/check-answer.ts).
-  `scripts/assemble-location.ts` stays, and `scripts/lib/ledger-data.ts` keeps only what it
-  reads with.
+  With them went `scripts/assemble-location.ts`, which put together a directory of one run's
+  data for the tools to read in a trial, and `scripts/lib/ledger-data.ts`, which read the
+  data API's tree for the tools and for it: nothing else used them. As they last stood:
+  [`assemble-location.ts`](https://github.com/smrdotgg/ledgermath/blob/2059cf9/scripts/assemble-location.ts),
+  [`ledger-data.ts`](https://github.com/smrdotgg/ledgermath/blob/2059cf9/scripts/lib/ledger-data.ts).
 - _(agents: append your entry here, one per merged benchmark)_
 
 ---

@@ -44,7 +44,6 @@ as the base the build started from (last section).
 | `scripts/lib/price-rules.ts` | The selection rules, versioned: which of AWS's price records a price file keeps |
 | `scripts/lib/offer-file.ts`, `scripts/lib/prices.ts`, `scripts/lib/price-file-check.ts` | Reading AWS's offer files without holding them in memory; the cut, the download and the price file; whether a price file holds together |
 | `.github/workflows/prices.yml` | The price fetch, twice a day, adding at most one file a day to the Runs repository |
-| `scripts/assemble-location.ts` | Puts together a directory laid out as `https://api.ledgermath.com` serves the same files, from the artifact `api` and a clone of the Runs repository: the data of one run, pinned (`scripts/lib/ledger-data.ts` reads the tree; section "Data from one run" below) |
 | `site/` | The website: the home page (design v9) with every figure read at build time from a tree of the data API, and a placeholder at `/docs/`; SolidJS 2, rendered to static files and hydrated in the browser, where Solid Router changes the page in place (section "The website" below); `.github/workflows/site.yml` builds and checks it, and deploys it to Vercel (`site/deploy/`) at https://ledgermath.com, and the `runs` workflow rebuilds and deploys it after every publish |
 | `CONTRIBUTING.md` | How to add a benchmark in any language, a target, a Method version, and what a pull request says |
 | `LICENSE`, `NOTICE`, `THIRD-PARTY-NOTICES.md` | The code's licence (Apache-2.0), its notice, and what comes from other projects, with their licences (section "Licence" below) |
@@ -2712,37 +2711,6 @@ It needs only the secret `RUNS_REPO_DEPLOY_KEY`, which `runs.yml` already uses (
 deploy key of `smrdotgg/ledgermath-runs` with write access. No AWS credentials and no
 variables. GitHub runs scheduled workflows from the default branch only, so it starts
 once it is on `main`.
-
-## Data from one run
-
-An agent reads LedgerMath's numbers from the data API and the documentation, starting at
-`https://ledgermath.com/llms.txt`; there is no skill or tool for it (the skill and its tools,
-#47 and ADR-0034, were removed on 2026-11-27). For data pinned to one run instead of the
-API's newest, `scripts/assemble-location.ts` puts together a directory laid out as
-`https://api.ledgermath.com` serves the same files: the tree a run of the `runs` workflow
-kept (the artifact `api`, 7 days), `v1/`, and beside it the Run files and boot summaries it
-links, from a clone of the Runs repository. It reads the tree first
-(`scripts/lib/ledger-data.ts`), following its links from `v1/index.json`: every file the
-table of contents lists, each price file checked as a price file, each schema, and every
-month file against the sha256 and size its Series file lists. It reads only plain paths of
-safe characters inside `api`, follows no symbolic link out of it, and holds each file to a
-size limit. Then it checks every Run file the tree links against the sha256 its point
-gives, and that every boot summary it links is in the clone. It copies nothing until all
-of it holds, and the same inputs give the same directory. `tests/assemble-location.test.ts`
-holds it to a tree the generator writes.
-
-```bash
-cd <an empty working directory, on a disk with room for about 200 MB>
-gh run list --repo smrdotgg/ledgermath --workflow runs.yml --branch main --limit 5   # the newest run that kept api
-gh run download <run id> --repo smrdotgg/ledgermath --name api --dir api
-gh repo clone smrdotgg/ledgermath-runs ledgermath-runs     # or git pull in a clone you have
-bun <checkout>/scripts/assemble-location.ts --api api --runs ledgermath-runs --out location
-```
-
-It prints where to start: `v1/index.json` in the directory. A link in the tree is to the file at its
-path under the address the tree was built for (`v1/index.json`'s own `url`, without
-`v1/index.json`). On 2026-11-24, from run 45282492212: 394 files of `v1/`, 9,399 Run files
-and 254 boot summaries, 109 MB, put together in under a second.
 
 ## The data API
 
