@@ -3667,12 +3667,32 @@ and is never hydrated; its body is the application's. At the top of every page, 
 (`<link rel="describedby">`, as the convention asks). Each page's `<head>` loads the script
 as a module, which runs once the HTML is parsed and hydrates after the first contentful
 paint (`site/src/entry-client.tsx`; `check:browser` holds the order), so the page paints as
-it did without it (in a browser without Paint Timing, once the font the text waits for has
-loaded, the body is shown, and two animation frames, one asked for inside the other, have
-passed, so that the frame showing the text has been painted);
-an inline script sets the page's feature flags (above) and holds the page back until the
-font of the reader's colour scheme has loaded, and another, Solid's, prepares the
-hydration. The pages read the same with JavaScript off. `site/` has its own `package.json`
+it did without it (in a browser without Paint Timing or `PerformanceObserver`, once the body
+is shown and two animation frames, one asked for inside the other, have passed, so that the
+frame showing the body has been painted: when the script shows it, with its text, in its font
+or a fallback; when the stylesheet's animation shows it instead, the text waits for its font
+as the browser decides, and that frame may have none);
+an inline script sets the page's feature flags (above) and holds the page back, hidden from
+before the body is read, until the font of the reader's colour scheme has loaded, so that
+the text and the dot art and bars, which are not text, appear in the same frame. The
+guarantee is the stylesheet's: the rule that hides the body ends the hiding by itself, with
+an animation, 3.5 s after it first applies, whatever the script sees or misses. The script
+acts on the load and error events of every stylesheet, without asking whose: the first
+starts a bound of 3 s (the block period CSS Fonts 4 recommends for `font-display: block`);
+once `--pixel` names a face it waits for that face, and when the wait settles it reads
+`--pixel` again, waits for the new face if the reader changed colour scheme meanwhile, starts
+again at the next stylesheet event if the face was not known yet, and else shows the page.
+If the face failed or the bound came first, it shows the page with its text in the reader's
+own monospace font (the class `font-fallback`), and the text changes to the face if it comes
+later. Showing the page takes the class away first, so that nothing that goes wrong
+afterwards can leave it hidden. Not handled: around a change of colour scheme during the
+first load the page may wait for the old face, or for the 3 s, before it is shown; a change
+once the page is shown in its face is left to the browser, which hides the text in the new
+face for its own block period, as on any change of scheme; under `font-fallback` the text
+stays in the fallback font until the face it was set for comes. A repeat visit, the font in
+the browser's cache, was held 6 to 7 ms in Chromium, and shown before its first frame.
+Without JavaScript nothing is hidden. Another inline script, Solid's, prepares
+the hydration. The pages read the same with JavaScript off. `site/` has its own `package.json`
 and `bun.lock`, apart from the root's, and needs Bun (Vite runs under Bun, not Node), and
 the root's packages for the API reference's generator (`bun install` at the root).
 
@@ -3780,7 +3800,28 @@ and those four, with Paint
 Timing hidden from the page and the font 300 ms late, before the first contentful frame's
 paint time), or hydration that changes an
 element or text of the page (only the attributes the router derives from the address may
-change). Then a round of clicks, each on a link to the next page: from `/` to `/docs/`, a
+change). They fail, too, when the page is not held back for its font. Each of these is
+judged from the page's own record (each frame's visibility, classes and heading's font, each
+face's status, the stylesheet events, the fonts' responses); in any load, a frame that shows
+the page before the bound while the face is neither loaded nor failed fails the check; a load
+with nothing wrong in its record in which the face came after the bound, so that the case
+had no chance, is made again, three times at most, and the case fails if it is never judged
+(for the cases in which the check lets a font through).
+With the font held back by the host and the stylesheet made late, on the home page and the
+glossary in light and dark, every frame between the stylesheet's load and the font's
+response must have the body hidden, the page shown within a second of the font's response
+ending, and the first frame that shows it must draw the heading in the scheme's face; another
+stylesheet loading or failing before the site's (from another origin; on the site's own
+origin empty, failing, or naming the face whose `@font-face` comes later) must change
+nothing; switched from light to dark during the hold, the page must be shown only after the
+dark face's response, in it; opened at an address with a username, shown by the script (in
+the face, or at the 3 s if the face came later, in the fallback); with
+the script deaf to every stylesheet event, the body shown by the stylesheet's own animation
+3.5 s after it loaded, the class still on; with the font not come, the page must be shown 3 s
+after the first stylesheet event (and not a second later), its heading in a fallback font
+from the first frame, then in the face once it comes; with the font refused (404, a network
+error), shown within a second of the face's failure in a fallback font; and with JavaScript
+off, shown once the HTML is parsed and the stylesheet loaded. Then a round of clicks, each on a link to the next page: from `/` to `/docs/`, a
 benchmark's page, two reference pages, `/` again and a benchmark's page by its name in the
 table, and back: each must change the page in place, with no request for it (the chunks the
 router then loads ahead for the new page's links are counted apart)

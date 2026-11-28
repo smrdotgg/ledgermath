@@ -1942,6 +1942,70 @@ A migrated benchmark is done only when **all** of these hold:
   data API's tree for the tools and for it: nothing else used them. As they last stood:
   [`assemble-location.ts`](https://github.com/smrdotgg/ledgermath/blob/2059cf9/scripts/assemble-location.ts),
   [`ledger-data.ts`](https://github.com/smrdotgg/ledgermath/blob/2059cf9/scripts/lib/ledger-data.ts).
+- **2026-11-28** — **The site is held back until its font is ready, on a first visit too.**
+  The inline script in `<head>` (`site/src/Document.tsx`) was meant to hide the page while the
+  pixel font loads, so that the text, which `font-display: block` hides, and the dot art and
+  bars, which are not text, appear in one frame. It never did: it ran before the stylesheet's
+  `<link>`, which the build writes at the end of `<head>`, so no `@font-face` was known yet,
+  and `document.fonts.check()` answered that the font was ready (in Chromium, with the font
+  made late: true, no face known, no stylesheet). The maintainer decided it should hold, and
+  accepts that a first visit shows nothing until the font comes. Now the script hides the page
+  at once (with JavaScript; without it nothing is hidden), and the guarantee is the
+  stylesheet's: the rule that hides the body ends the hiding by itself, with an animation of no
+  duration, 3.5 s after it first applies (`site/src/site.css`), whatever the script sees or
+  misses, and in a copy of the page saved while it was held. The script acts on the load and
+  error events of every stylesheet, without asking whose. The first starts a bound of 3 s (the
+  block period CSS Fonts 4 recommends for `font-display: block`). Once `--pixel` on `<html>`
+  names a face, it waits for that face; when the wait settles it reads `--pixel` again: another
+  face (the reader changed colour scheme meanwhile), it waits for that one; a face not known
+  yet (a stylesheet named the family and a later one brings its `@font-face`), the next
+  stylesheet event starts the wait again; else the page is shown. If the face failed, or the
+  bound came first, the page is shown with the class `font-fallback` too, under which
+  `--pixel` names the reader's own monospace font, so that the text is drawn in the frame that
+  shows the page; when the face comes later the class goes and the text changes to it.
+  Showing the page takes the class away before anything that could throw. Not handled, and
+  left so: around a change of colour scheme during the first load the page may wait for the
+  old face, or the bound, before it is shown; a change once the page is shown in its face is
+  left to the browser's own block period, as on any change of scheme; under `font-fallback`
+  the text stays in the fallback font until the face it was set for comes. Three reviews of
+  #118 shaped this. The first found the art shown without its letters for about 3 s (the 3 s
+  counted from the script's start, and the text left to the browser's own block period, which
+  CSS Fonts 4 starts at the first attempted use of the face, "the font display timeline"), and
+  the page shown in the light face after a switch to dark. The second found that a second
+  stylesheet of the site's without `--pixel` could leave the page hidden for good. The third
+  found that an address with a username (`http://reader@host/`) did the same, the script's
+  test of whose stylesheet it was failing, and that the page could be shown before its text
+  could draw when a stylesheet failed first or one named the family before another brought
+  its `@font-face`; each time the script had missed the event it waited for, so the
+  guarantee moved to the stylesheet. The browser's entry (`site/src/entry-client.tsx`), in a
+  browser without Paint Timing, now waits for the body being shown alone (the class taken
+  away, the animation's end, or the body already visible when it runs), no longer for the
+  font as well, so a font that never answers no longer keeps the page from being taken over;
+  and without `PerformanceObserver` it takes that path, where it threw before. The frame it
+  then waits for has the text when the script shows the body; when the animation shows it,
+  the text waits for its font as the browser decides, and that frame may have none. A repeat
+  visit, the font in the browser's cache, was held 6 to 7 ms in Chromium, with no request,
+  and shown before its first frame. `bun run check:browser` gains check 9, which reads in
+  each animation frame whether the body is visible, the classes, the computed font-family of
+  the page's heading and each face's status, and judges from that record on the page's
+  clock: in any load, a frame that shows the page before the bound while the face is neither
+  loaded nor failed fails it; a load with nothing wrong in its record whose face came after
+  the bound is made again, three times at most. The cases: with the font held back, on the home page
+  and the glossary in light and dark, every frame between the stylesheet's load and the
+  font's response hidden, then shown within a second of the response, the heading in the
+  scheme's face; another stylesheet loading or failing before the site's (from another
+  origin; of the site's own, empty, failing, or naming the face) changes nothing; switched
+  from light to dark during the hold, shown only after the dark face's response; at an
+  address with a username, shown by the script (in the face, or at the bound in the fallback
+  if the face came later); with the script deaf to every stylesheet event,
+  shown by the animation 3.5 s after the stylesheet loaded; with the font not come, shown 3 s
+  after the first stylesheet event, the heading in the fallback, then in the face; refused
+  (404, a network error), shown as the face failed, in the fallback; with JavaScript off,
+  shown. It fails on `main` as it was in every case but JavaScript off; and on copies of the
+  script with the stylesheet's load handler removed, with the bound's fallback removed, with
+  the bound counted from the script's start, with `show()` throwing before it takes the class
+  away, and with the animation removed. Measured in Chromium only; Firefox and WebKit are
+  unmeasured.
 - _(agents: append your entry here, one per merged benchmark)_
 
 ---

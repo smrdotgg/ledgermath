@@ -75,6 +75,47 @@
  *     click on its links loading each page as a new document; a click held for its page's chunk
  *     and then superseded by another click does not come back when the chunk arrives; and with
  *     JavaScript off, "Copy page" is not shown, and "View as Markdown" is.
+ *  9. The page is held back until its font is ready (src/Document.tsx), at desktop size. What
+ *     each frame shows is read in each animation frame: whether the body is visible, and the
+ *     computed font-family of the page's heading, with whether its first family is ready, whether
+ *     the heading is visible with a box, whether <html> has the classes font-loading and
+ *     font-fallback. Every judgement is made from the page's own record, on its clock (the first
+ *     stylesheet event, where the script's bound starts; a font's response end, by Resource
+ *     Timing; a face's failure, by loadingerror; each face's status in each frame), never from
+ *     the check's own steps. In any load, a frame that shows the page (the body visible, or the
+ *     class gone) before the bound while the face is neither loaded nor failed is a failure
+ *     (earlyShown). A load with nothing wrong in its record whose face came after the bound (the
+ *     case had no chance, as on a slow runner) is not judged, and is made again, TRIES times at
+ *     most; the case fails only if it is never judged. This applies to the held-font, the
+ *     other-stylesheet, the switch and the refusal cases.
+ *     - The font held back by the host and the stylesheet STYLESHEET_DELAY_MS late, on
+ *       HOLD_PAGES in light and dark: every frame drawn after the site's stylesheet loaded and
+ *       before the font's response ended (three at least are waited for) has the class
+ *       font-loading and the body hidden; the page is shown within PROMPT_MS of the font's
+ *       response ending, and the first frame showing the body draws the heading in the scheme's
+ *       face (FACE), ready; the font is asked for once.
+ *     - Another stylesheet (OTHER_STYLESHEETS) put into <head> before the site's, whose
+ *       stylesheet the host holds back until the page has recorded the other's load or error:
+ *       from another origin, loading or failing; on the site's own origin, empty, failing, or
+ *       naming the face whose @font-face only the site's brings. The same as above, and no
+ *       uncaught error and no unhandled rejection.
+ *     - Opened in light with both faces held back, and switched to dark once the stylesheet has
+ *       loaded; the light face let through, and SWITCH_GAP_MS after its response the dark face:
+ *       shown after the dark face's response ended, within PROMPT_MS of it, in the dark face.
+ *     - The font held back past the bound (the stylesheet late), in light and dark: the hold engaged, and the page
+ *       is shown HOLD_MS after the first stylesheet event (not before, and within HOLD_LATE_MS
+ *       after), its heading drawn, visible, in FALLBACK_FAMILY by the class font-fallback in the
+ *       first frame that shows the body; once the font is let through, the class goes and the
+ *       heading is in it.
+ *     - The font refused (404, and a network error): the hold engaged, and the page is shown
+ *       within PROMPT_MS of the face's failure, its heading in FALLBACK_FAMILY by the class
+ *       font-fallback from the first frame that shows the body, with no uncaught error.
+ *     - Opened at an address with a username (http://reader@host/): shown by the script, in the
+ *       face before the bound if the face came before it, else at the bound in FALLBACK_FAMILY.
+ *     - The script deaf to every stylesheet event (DEAF_TO_STYLESHEETS): the body shown by the
+ *       stylesheet's own animation, ANIMATION_DELAY_MS after the stylesheet loaded (within
+ *       HOLD_LATE_MS after), with the class font-loading still on.
+ *     - With JavaScript off, nothing is hidden, once the HTML is parsed and the stylesheet loaded.
  *
  * With --shots OUT it also writes, for each page, size and scheme, the first screen and the whole
  * page as PNG files in OUT: <page>-<size>-<scheme>-{first,full}.png, and <page>-<flag>-… for a
@@ -87,7 +128,7 @@
 import { mkdirSync, existsSync, readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import axe from "axe-core";
-import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
+import { chromium, type Browser, type BrowserContext, type Page, type Route } from "playwright";
 import { PAGES, type SitePage } from "../src/pages.text";
 import { AHEAD_BUDGET_BYTES, BUDGET_BYTES, missingText } from "./check-output";
 import { chunkName } from "./docs";
@@ -177,6 +218,155 @@ const HIDE_PAINT_TIMING = `(() => {
 
 /** How late the font comes in check 6's load without Paint Timing. */
 const FONT_DELAY_MS = 300;
+
+/** The pages check 9 loads with the font held back: the home page, whose dot art and bars are not text, and a documentation page. */
+const HOLD_PAGES = ["/", "/docs/glossary"];
+/** The longest the page is hidden when the font never answers: Document.tsx's HOLD_MS. */
+const HOLD_MS = 3_000;
+/** How long after HOLD_MS (counted from the stylesheet's load) the page may be shown when the font does not come. */
+const HOLD_LATE_MS = 1_000;
+/** How soon after the font is let through, or fails, the page must be shown: well before HOLD_MS. */
+const PROMPT_MS = 1_000;
+/** How late the stylesheet comes in check 9's loads that hold the font back. */
+const STYLESHEET_DELAY_MS = 500;
+/** The face the stylesheet sets in each scheme (--pixel in src/site.css), as a computed font-family names it. */
+const FACE = { light: '"Geist Pixel Square"', dark: '"Geist Pixel Circle"' } as const;
+/** The family the class font-fallback makes the heading's first (src/site.css). */
+const FALLBACK_FAMILY = "ui-monospace";
+/** How many times check 9 makes a load whose page's record shows the bound came before the check could act (a slow runner). */
+const TRIES = 3;
+/** How long, on the page's clock after the light face's response ended, check 9 holds the dark face back in the switch of colour scheme. */
+const SWITCH_GAP_MS = 200;
+
+/**
+ * Runs before the page's own scripts: records in window.__hold, on the page's clock, the load and
+ * error of every stylesheet in order (seen before the page's own listener sees them), when the
+ * first stylesheet of the site's own origin loaded (sheet), when <html> got the class font-loading
+ * and when it lost it, and every unhandled rejection; and in each animation frame once there is a
+ * body (the state the frame then paints): whether the body is visible, whether the site's
+ * stylesheets have loaded, whether <html> has the class font-fallback, the computed font-family
+ * of the page's heading (h1), whether the first family it names is ready (document.fonts.check,
+ * which answers true for a family no @font-face names), whether the heading itself is visible
+ * with a box, and the status of every face the page knows (check 9). A case that needs another
+ * init script gives it to open(), which installs both as one, in order: Playwright leaves the order
+ * of separate init scripts undefined.
+ */
+const WATCH_FONT_HOLD = `(() => {
+	const hold = (window.__hold = { sheet: null, first: null, failed: null, added: null, removed: null, frames: [], rejections: [], sheets: [] });
+	const stylesheet = (target) => target && /stylesheet/i.test(target.rel) && typeof target.href === "string";
+	const ours = (link) => stylesheet(link) && link.href.includes("/assets/");
+	addEventListener("unhandledrejection", (event) => hold.rejections.push(String(event.reason)));
+	for (const type of ["load", "error"]) {
+		document.addEventListener(type, (event) => {
+			if (!stylesheet(event.target)) return;
+			const t = performance.now();
+			hold.sheets.push({ href: event.target.href, ours: ours(event.target), type, t });
+			if (hold.first === null) hold.first = t;
+			if (type === "load" && ours(event.target) && hold.sheet === null) hold.sheet = t;
+		}, true);
+	}
+	document.fonts.addEventListener("loadingerror", () => {
+		if (hold.failed === null) hold.failed = performance.now();
+	});
+	new MutationObserver(() => {
+		const held = document.documentElement.classList.contains("font-loading");
+		if (held && hold.added === null) hold.added = performance.now();
+		if (!held && hold.added !== null && hold.removed === null) hold.removed = performance.now();
+	}).observe(document, { subtree: true, attributes: true, attributeFilter: ["class"] });
+	const frame = () => {
+		if (document.body) {
+			const links = [...document.querySelectorAll('link[rel="stylesheet"]')].filter(ours);
+			const heading = document.querySelector("h1");
+			const family = heading ? getComputedStyle(heading).fontFamily : "";
+			const first = family.split(",")[0].trim();
+			const box = heading ? heading.getBoundingClientRect() : null;
+			hold.frames.push({
+				t: performance.now(),
+				visible: getComputedStyle(document.body).visibility === "visible",
+				held: document.documentElement.classList.contains("font-loading"),
+				styled: links.length > 0 && links.every((link) => link.sheet !== null),
+				fallback: document.documentElement.classList.contains("font-fallback"),
+				family,
+				ready: first !== "" && document.fonts.check("1em " + first),
+				heading: !!heading && getComputedStyle(heading).visibility === "visible" && box.width > 0 && box.height > 0,
+				faces: Object.fromEntries([...document.fonts].map((face) => [face.family.replace(/"/g, ""), face.status])),
+			});
+		}
+		if (hold.frames.length < 1200) requestAnimationFrame(frame);
+	};
+	requestAnimationFrame(frame);
+})();`;
+
+type Frame = { t: number; visible: boolean; held: boolean; styled: boolean; fallback: boolean; family: string; ready: boolean; heading: boolean; faces: Record<string, string> };
+type Hold = {
+	/** The site's own stylesheet's load (an address under /assets/). */
+	sheet: number | null;
+	/** The first load or error of any stylesheet: where the script's bound starts. */
+	first: number | null;
+	/** The first face that failed (document.fonts' loadingerror). */
+	failed: number | null;
+	added: number | null;
+	removed: number | null;
+	frames: Frame[];
+	rejections: string[];
+	sheets: { href: string; ours: boolean; type: "load" | "error"; t: number }[];
+};
+
+/**
+ * Another stylesheet put into <head> before the site's, its load or error coming before the site's
+ * stylesheet's (which the host holds back until the page has recorded it): from another origin, as
+ * a browser extension may add one; and on the site's own origin, as a second CSS file of the build
+ * would be, empty, failing, or naming the face (--pixel) whose @font-face only the site's
+ * stylesheet brings. EXTRA is the address the host answers for those, with BODY or a 404. In every
+ * case the page must stay hidden until the font comes, and then be shown in the face.
+ */
+const EXTRA = "/extra.css";
+const OTHER_STYLESHEETS = [
+	{ how: "from another origin that loads first", href: "data:text/css,html%7Boutline%3A0%7D", status: 200, body: "" },
+	{ how: "from another origin that fails first", href: "https://foreign.invalid/extension.css", status: 0, body: "" },
+	{ how: "of the site's own origin, without --pixel, that loads first", href: EXTRA, status: 200, body: "" },
+	{ how: "of the site's own origin that fails first", href: EXTRA, status: 404, body: "" },
+	{ how: "of the site's own origin that names the face, before the stylesheet that brings its @font-face", href: EXTRA, status: 200, body: ':root{--pixel:"Geist Pixel Square"}' },
+] as const;
+/** Runs before the page's own scripts: makes the page deaf to every load and error listener registered on the document after it, as a script whose listener never sees a stylesheet event. */
+const DEAF_TO_STYLESHEETS = `(() => {
+	const add = Document.prototype.addEventListener;
+	Document.prototype.addEventListener = function (type, ...rest) {
+		if (type === "load" || type === "error") return;
+		return add.call(this, type, ...rest);
+	};
+})();`;
+/** The rule that hides the body ends the hiding by itself this long after it first applies (src/site.css). */
+const ANIMATION_DELAY_MS = 3_500;
+/** Runs before the page's own scripts: puts a <link rel="stylesheet"> to HREF into <head> as soon as <head> exists, before the site's own stylesheet. */
+const foreignStylesheet = (href: string) => `new MutationObserver((_, observer) => {
+	if (!document.head) return;
+	observer.disconnect();
+	const link = document.createElement("link");
+	link.rel = "stylesheet";
+	link.href = ${JSON.stringify(href)};
+	document.head.prepend(link);
+}).observe(document, { childList: true, subtree: true });`;
+/** Whether FRAME drew the heading, visible with a box, in the face of SCHEME, ready, without the class font-fallback. */
+const inFace = (frame: Frame, scheme: "light" | "dark") => frame.heading && frame.family.startsWith(FACE[scheme]) && frame.ready && !frame.fallback;
+/** Whether FRAME drew the heading, visible with a box, in the family the class font-fallback names. */
+const inFallback = (frame: Frame) => frame.heading && frame.fallback && frame.family.split(",")[0]!.trim() === FALLBACK_FAMILY;
+/** What FRAME drew the heading in, for a message. */
+const drawn = (frame: Frame) =>
+	`the heading ${frame.heading ? "visible" : "not visible or without a box"}, its font-family ${JSON.stringify(frame.family)} (its first family ${frame.ready ? "ready" : "not ready"}), ${frame.fallback ? "with" : "without"} the class font-fallback`;
+/** When each font's response ended, on the page's clock (Resource Timing), by the face's name in its address. */
+const fontEnds = (page: Page) =>
+	page.evaluate(() => {
+		const ends: Record<string, number> = {};
+		for (const entry of performance.getEntriesByType("resource") as PerformanceResourceTiming[]) {
+			const face = /GeistPixel-(\w+)-/.exec(entry.name)?.[1];
+			if (face && entry.responseEnd > 0) ends[face] = entry.responseEnd;
+		}
+		return ends;
+	});
+const holdOf = (page: Page) => page.evaluate(() => (window as unknown as { __hold: Hold }).__hold);
+/** Whether the page shows its body now: no class font-loading on <html>, and the body's computed visibility visible. */
+const bodyShown = (page: Page) => page.evaluate(() => !document.documentElement.classList.contains("font-loading") && getComputedStyle(document.body).visibility === "visible");
 
 /**
  * Check 6 in a browser without Paint Timing: PAGE (with HIDE_PAINT_TIMING added, then loaded)
@@ -401,6 +591,7 @@ export async function checkBrowser(dir: string, shots?: string): Promise<Result[
 	const hydration: string[] = [];
 	let moves: { problems: string[]; timings: string[]; ahead: string[] } = { problems: [], timings: [], ahead: [] };
 	let own: { problems: string[]; passed: string[] } = { problems: [], passed: [] };
+	let held: { problems: string[]; passed: string[] } = { problems: [], passed: [] };
 	const docs = docsPages(root);
 	if (docs.problems.length > 0) throw new Error(`the documentation's pages cannot be read from ${dir}: ${docs.problems.join("; ")}`);
 	const all: SitePage[] = [...PAGES, ...docs.pages];
@@ -507,6 +698,7 @@ export async function checkBrowser(dir: string, shots?: string): Promise<Result[
 		}
 		moves = await navigation(browser, server.origin, root, all);
 		own = await documentation(browser, server.origin, root, all);
+		held = await fontHold(browser, server.origin, all);
 	} finally {
 		await browser.close();
 		server.stop();
@@ -533,7 +725,380 @@ export async function checkBrowser(dir: string, shots?: string): Promise<Result[
 			passed: `through ${ROUTE.join(" -> ")} -> /, each click changed the page in place, with no request for it and no new document, to the page the build wrote for the address, at its top, its title and words, the focus at the top and the title announced, with no axe violation; back and forward the same, each page scrolled to where it was left; with the keyboard (${KEYBOARD_PAGES.join(", ")}), a link to a place on another page left the focus at the place, the same page without the fragment put it back at the top, and a page's own link brought the page back to its top; after an address whose fragment does not decode, navigation went on; with JavaScript off each link loaded its page. Loaded ahead after the clicks, for the links the new page brought: ${moves.ahead.join("; ") || "nothing"}. From the click to the next frame (not judged): ${moves.timings.join("; ")}`,
 		},
 		{ name: "the documentation's own: the keyboard, the two controls, a link to a heading", problems: own.problems, passed: own.passed.join("; ") },
+		{ name: "the page held back until its font is ready, and never longer than the bound", problems: held.problems, passed: held.passed.join("; ") },
 	];
+}
+
+/** Check 9: the page held back until its font is ready (see the comment at the top). */
+async function fontHold(browser: Browser, origin: string, all: readonly SitePage[]): Promise<{ problems: string[]; passed: string[] }> {
+	const problems: string[] = [];
+	const passed: string[] = [];
+	const metas = HOLD_PAGES.map((path) => all.find((meta) => meta.path === path));
+	if (metas.some((meta) => !meta)) return { problems: [`check 9 loads ${HOLD_PAGES.join(" and ")}, which are not all pages of the site`], passed };
+	// The HTML parsed and the site's stylesheets loaded (or, as WATCH_FONT_HOLD recorded, failed):
+	// only then does the class font-loading hide the body. Nothing in <head> after the stylesheet's
+	// <link> waits for it (the script there is a module, which waits for the parse). Today Solid's
+	// inline script at the end of the body does wait for it, so the parse ends after the stylesheet;
+	// the reading must not rest on that.
+	const styled = (page: Page) =>
+		page
+			.waitForFunction(
+				() => {
+					const links = [...document.querySelectorAll<HTMLLinkElement>('link[rel="stylesheet"]')].filter((link) => link.href.includes("/assets/"));
+					return document.readyState !== "loading" && links.length > 0 && links.every((link) => link.sheet !== null);
+				},
+				null,
+				{ timeout: 10_000 },
+			)
+			.then(() => true, () => false);
+	/** A page in a new context at desktop size, watched by WATCH_FONT_HOLD and then running AFTER, as one init script, with its uncaught errors. */
+	const open = async (scheme: "light" | "dark", after = "") => {
+		const ctx = await context(browser, SIZES[0]!, scheme);
+		const page = await ctx.newPage();
+		const errors: string[] = [];
+		page.on("pageerror", (error) => errors.push(error.message));
+		await page.addInitScript(`${WATCH_FONT_HOLD}\n${after}`);
+		return { ctx, page, errors };
+	};
+	/** Holds every request PATTERN matches until release() is called, and counts them. */
+	const holdBack = async (page: Page, pattern: string) => {
+		let release: () => void = () => {};
+		const letThrough = new Promise<void>((resolve) => (release = resolve));
+		const held = { count: 0, release: () => release() };
+		await page.route(pattern, async (route) => {
+			held.count += 1;
+			await letThrough;
+			await route.continue().catch(() => {});
+		});
+		return held;
+	};
+	const lateStylesheet = (page: Page) => page.route("**/*.css", (route) => Bun.sleep(STYLESHEET_DELAY_MS).then(() => route.continue().catch(() => {})));
+	/** Waits up to MS for a frame that shows the body; the record, and the first such frame or null. */
+	const firstShown = async (page: Page, ms: number) => {
+		await page.waitForFunction(() => (window as unknown as { __hold: Hold }).__hold.frames.some((frame) => frame.visible), null, { timeout: ms }).catch(() => {});
+		const hold = await holdOf(page);
+		return { hold, first: hold.frames.find((frame) => frame.visible) ?? null };
+	};
+	const uncaught = (where: string, errors: string[]) => (errors.length > 0 ? [`${where}: uncaught error(s): ${[...new Set(errors)].join("; ")}`] : []);
+	/** The uncaught errors and unhandled rejections of a load, one line each, without a place. */
+	const faults = (errors: string[], hold: Hold) => [
+		...(errors.length > 0 ? [`uncaught error(s): ${[...new Set(errors)].join("; ")}`] : []),
+		...(hold.rejections.length > 0 ? [`unhandled rejection(s): ${[...new Set(hold.rejections)].join("; ")}`] : []),
+	];
+	/**
+	 * Wrong in any load, judged or not: the first frame drawn after the site's stylesheet loaded and
+	 * before the bound (HOLD_MS after the first stylesheet event) that shows the page (the body
+	 * visible, or the class font-loading gone) while FACE (as document.fonts names it) is neither
+	 * loaded nor failed.
+	 */
+	const earlyShown = (hold: Hold, face: string) =>
+		hold.first === null ? undefined : hold.frames.find((frame) => frame.styled && (frame.visible || !frame.held) && frame.t < hold.first! + HOLD_MS - 1 && !["loaded", "error"].includes(frame.faces[face] ?? ""));
+	const early = (frame: Frame, face: string) => `the page was shown at ${frame.t.toFixed(0)} ms (the body ${frame.visible ? "visible" : "hidden"}, the class font-loading ${frame.held ? "on" : "gone"}), before the bound, with ${face} ${frame.faces[face] ?? "unknown"}, neither loaded nor failed`;
+	const faceOf = (scheme: "light" | "dark") => FACE[scheme].replace(/"/g, "");
+	/** Whether the page's record shows its bound (HOLD_MS after the first stylesheet event) had passed by T. */
+	const boundBy = (hold: Hold, t: number | null | undefined) => hold.first !== null && t !== null && t !== undefined && t >= hold.first + HOLD_MS - 1;
+	type Verdict = { unjudged: string } | { problems: string[]; passed: string };
+	/**
+	 * Every case that needs the check to act before the page's bound: LOAD makes one load and judges
+	 * it, or says, from the page's own record, that the bound came first (a slow runner), in which
+	 * case it is made again, TRIES times at most, and the case fails only if it is never judged.
+	 */
+	const judge = async (where: string, load: () => Promise<Verdict>) => {
+		const unjudged: string[] = [];
+		for (let attempt = 1; attempt <= TRIES; attempt++) {
+			const verdict = await load();
+			if ("unjudged" in verdict) {
+				unjudged.push(`load ${attempt}: ${verdict.unjudged}`);
+				continue;
+			}
+			problems.push(...verdict.problems.map((problem) => `${where}: ${problem}`));
+			if (verdict.problems.length === 0) passed.push(`${where}: ${verdict.passed}${unjudged.length ? ` (after ${unjudged.length} load(s) not judged: ${unjudged.join("; ")})` : ""}`);
+			return;
+		}
+		problems.push(`${where}: in ${TRIES} loads the bound always came before the check could act, so the case was never judged: ${unjudged.join("; ")}`);
+	};
+	const ms = (t: number | null | undefined, from: number | null) => (t === null || t === undefined ? "none" : `${(t - (from ?? 0)).toFixed(0)} ms`);
+
+	/**
+	 * What must hold of a load in which the font was held back and then let through, from the
+	 * page's own record: every frame drawn after the site's stylesheet loaded and before the font's
+	 * response ended (END) had the class set and the body hidden (and there was at least one); then
+	 * the page was shown within PROMPT_MS of END, the first frame showing the body drawing the
+	 * heading in SCHEME's face. The record is looked at for what is wrong in any load first
+	 * (earlyShown); only when nothing is, and the font's response came after the bound (the case
+	 * did not get its chance), is the load not judged.
+	 */
+	const heldThenShown = (scheme: "light" | "dark", ready: boolean, hold: Hold, first: Frame | null, end: number | undefined, errors: string[]): Verdict => {
+		const wrong = earlyShown(hold, faceOf(scheme));
+		if (ready && !wrong && errors.length === 0 && hold.rejections.length === 0 && boundBy(hold, end ?? hold.removed))
+			return { unjudged: `nothing wrong in the record, and the font's response ended at ${ms(end, hold.first)} after the first stylesheet event, after the bound` };
+		const waiting = hold.frames.filter((frame) => frame.styled && frame.t < (end ?? Infinity));
+		const shownEarly = waiting.find((frame) => frame.visible || !frame.held);
+		const p: string[] = [];
+		if (!ready) p.push("the HTML was not parsed with the site's stylesheet loaded within 10 s");
+		else if (wrong) p.push(early(wrong, faceOf(scheme)));
+		else if (waiting.length === 0) p.push("no frame was drawn between the site's stylesheet loading and the font's response");
+		else if (shownEarly) p.push(`a frame at ${shownEarly.t.toFixed(0)} ms, after the site's stylesheet loaded and before the font's response ended, ${shownEarly.held ? "had" : "lacked"} the class font-loading and the body ${shownEarly.visible ? "visible" : "hidden"}, not hidden`);
+		else if (!first || hold.removed === null) p.push("the page was not shown (the class font-loading taken away) within 10 s of the font being let through");
+		else if (end === undefined) p.push("the page's Resource Timing has no response for the font");
+		else if (hold.removed - end > PROMPT_MS) p.push(`the page was shown ${(hold.removed - end).toFixed(0)} ms after the font's response ended, not within ${PROMPT_MS} ms`);
+		else if (!first.styled) p.push(`the first frame showing the body (at ${first.t.toFixed(1)} ms) came before the stylesheet had loaded`);
+		else if (!inFace(first, scheme)) p.push(`the first frame showing the body (at ${first.t.toFixed(1)} ms) did not draw the heading in ${FACE[scheme]}, ready: ${drawn(first)}`);
+		p.push(...faults(errors, hold));
+		return {
+			problems: p,
+			passed: `hidden in all ${waiting.length} frames after the stylesheet loaded and before the font's response; shown ${hold.removed !== null && end !== undefined ? (hold.removed - end).toFixed(0) : "?"} ms after the font's response ended, the heading in ${FACE[scheme]} from the first frame showing the body`,
+		};
+	};
+	/** Waits until the page has drawn three frames after the site's stylesheet loaded, so that its record holds them. */
+	const styledFrame = (page: Page) =>
+		page.waitForFunction(() => (window as unknown as { __hold: Hold }).__hold.frames.filter((frame) => frame.styled).length >= 3, null, { timeout: 10_000 }).catch(() => {});
+
+	for (const meta of metas as SitePage[]) {
+		for (const scheme of SCHEMES) {
+			// The font held back by the host and the stylesheet late, until the HTML is parsed, the
+			// stylesheet loaded and the page looked at; then the font let through.
+			await judge(`${meta.path} ${scheme}, the font held back`, async () => {
+				const { ctx, page, errors } = await open(scheme);
+				const font = await holdBack(page, "**/*.woff2");
+				await lateStylesheet(page);
+				await page.goto(`${origin}${meta.path}`, { waitUntil: "commit" });
+				const ready = await styled(page);
+				await styledFrame(page);
+				font.release();
+				const { hold, first } = await firstShown(page, 10_000);
+				const end = (await fontEnds(page))[scheme === "light" ? "Square" : "Circle"];
+				await ctx.close();
+				const verdict = heldThenShown(scheme, ready, hold, first, end, errors);
+				if ("problems" in verdict && font.count !== 1) verdict.problems.push(`the font was asked for ${font.count} times, not once`);
+				return verdict;
+			});
+		}
+	}
+
+	// Another stylesheet put into <head> before the site's (OTHER_STYLESHEETS): the host holds the
+	// site's stylesheet back until the page's record shows the other's load or error, so that the
+	// order is the page's, not a delay's; the font held back. The page stays hidden and is shown, in
+	// the face, once the font comes; no uncaught error and no unhandled rejection.
+	for (const other of OTHER_STYLESHEETS) {
+		await judge(`/, a stylesheet ${other.how}`, async () => {
+			const { ctx, page, errors } = await open("light", foreignStylesheet(other.href));
+			await page.route("https://foreign.invalid/**", (route) => route.abort("failed"));
+			await page.route(`${origin}${EXTRA}`, (route) => route.fulfill({ status: other.status, contentType: "text/css", body: other.body }));
+			const font = await holdBack(page, "**/*.woff2");
+			const site = await holdBack(page, "**/assets/*.css");
+			await page.goto(`${origin}/`, { waitUntil: "commit" });
+			// Polled on a timer: with the site's stylesheet held back the page draws no frame, so a
+			// wait polled on animation frames would never look again.
+			await page
+				.waitForFunction((href) => (window as unknown as { __hold: Hold }).__hold.sheets.some((sheet) => sheet.href.startsWith(href) || sheet.href.endsWith(href)), other.href, { timeout: 10_000, polling: 20 })
+				.catch(() => {});
+			site.release();
+			const ready = await styled(page);
+			await styledFrame(page);
+			font.release();
+			const { hold, first } = await firstShown(page, 10_000);
+			const end = (await fontEnds(page)).Square;
+			await ctx.close();
+			const otherEvent = hold.sheets.find((sheet) => sheet.href.startsWith(other.href) || sheet.href.endsWith(other.href));
+			const siteEvent = hold.sheets.find((sheet) => sheet.ours);
+			const verdict = heldThenShown("light", ready, hold, first, end, errors);
+			if (!("problems" in verdict)) return verdict;
+			if (!otherEvent || !siteEvent || otherEvent.t >= siteEvent.t) verdict.problems.unshift(`the other stylesheet's event (${otherEvent ? `${otherEvent.type} at ${otherEvent.t.toFixed(0)} ms` : "none"}) did not come before the site's (${siteEvent ? `${siteEvent.type} at ${siteEvent.t.toFixed(0)} ms` : "none"})`);
+			else if (otherEvent.type !== (other.status === 200 ? "load" : "error")) verdict.problems.unshift(`the other stylesheet fired ${otherEvent.type}, not ${other.status === 200 ? "load" : "error"}`);
+			else verdict.passed = `its ${otherEvent.type} at ${otherEvent.t.toFixed(0)} ms, the site's load at ${siteEvent.t.toFixed(0)} ms; ${verdict.passed}; no uncaught error or unhandled rejection`;
+			return verdict;
+		});
+	}
+
+	// A change of colour scheme during the hold: opened in light, both faces held back, switched to
+	// dark once the stylesheet has loaded; the light face let through, and SWITCH_GAP_MS on the
+	// page's clock after its response ended, the dark face. Judged from the page's own record: the
+	// page must be shown after the dark face's response ended (not on the light face), within
+	// PROMPT_MS of it, in the dark face. Not judged when the record shows the bound came first.
+	const home = metas[0]!;
+	await judge(`${home.path}, opened in light and switched to dark once the stylesheet had loaded`, async () => {
+		{
+			const { ctx, page, errors } = await open("light");
+			const square = await holdBack(page, "**/GeistPixel-Square-*.woff2");
+			const circle = await holdBack(page, "**/GeistPixel-Circle-*.woff2");
+			await page.goto(`${origin}${home.path}`, { waitUntil: "commit" });
+			const ready = await styled(page);
+			await page.emulateMedia({ colorScheme: "dark" });
+			square.release();
+			// Chromium makes the stylesheet's faces again when the scheme changes (the light one is then
+			// "unloaded" again), so what is waited for is the light face's response, by Resource Timing.
+			await page
+				.waitForFunction(
+					(gap) => {
+						const entry = (performance.getEntriesByType("resource") as PerformanceResourceTiming[]).find((e) => e.name.includes("GeistPixel-Square-") && e.responseEnd > 0);
+						return !!entry && performance.now() - entry.responseEnd >= gap;
+					},
+					SWITCH_GAP_MS,
+					{ timeout: 5_000 },
+				)
+				.catch(() => {});
+			circle.release();
+			const { hold, first } = await firstShown(page, 10_000);
+			const ends = await fontEnds(page);
+			await ctx.close();
+			const wrong = earlyShown(hold, faceOf("dark"));
+			if (ready && hold.added !== null && !wrong && errors.length === 0 && boundBy(hold, ends.Circle ?? hold.removed))
+				return { unjudged: `nothing wrong in the record, and the dark face answered at ${ms(ends.Circle, hold.first)} after the first stylesheet event, after the bound` };
+			const p: string[] = [];
+			if (!ready) p.push("the HTML was not parsed with the stylesheet loaded within 10 s");
+			else if (hold.added === null) p.push("the page was never hidden (the hold did not engage)");
+			else if (wrong) p.push(early(wrong, faceOf("dark")));
+			else if (ends.Square === undefined) p.push("the light face, let through, was never answered");
+			else if (!first || hold.removed === null || ends.Circle === undefined) p.push("the page was not shown within 10 s of the dark face being let through");
+			else if (hold.removed < ends.Circle)
+				p.push(`the page was shown at ${hold.removed.toFixed(0)} ms, before the dark face's response ended (${ends.Circle.toFixed(0)} ms; the light face's at ${ends.Square.toFixed(0)} ms): on the light face, which the stylesheet no longer set`);
+			else if (hold.removed - ends.Circle > PROMPT_MS) p.push(`the page was shown ${(hold.removed - ends.Circle).toFixed(0)} ms after the dark face's response ended, not within ${PROMPT_MS} ms`);
+			else if (!inFace(first, "dark")) p.push(`the first frame showing the body did not draw the heading in ${FACE.dark}, ready: ${drawn(first)}`);
+			p.push(...faults(errors, hold));
+			return {
+				problems: p,
+				passed: `still hidden ${ends.Circle !== undefined && ends.Square !== undefined ? (ends.Circle - ends.Square).toFixed(0) : "?"} ms after the light face's response; shown ${hold.removed !== null && ends.Circle !== undefined ? (hold.removed - ends.Circle).toFixed(0) : "?"} ms after the dark face's response ended, the heading in ${FACE.dark} from the first frame showing the body`,
+			};
+		}
+	});
+
+	// The font not come within the bound (held back, the stylesheet late), in light and dark: the
+	// page is shown HOLD_MS after the first stylesheet event, with its text drawn in a fallback font
+	// from the first frame that shows it; once the font is let through, the text changes to it.
+	for (const scheme of SCHEMES) {
+		const where = `${home.path} ${scheme}, the font not come within the bound`;
+		const { ctx, page, errors } = await open(scheme);
+		const font = await holdBack(page, "**/*.woff2");
+		await lateStylesheet(page);
+		await page.goto(`${origin}${home.path}`, { waitUntil: "commit" });
+		const { hold, first } = await firstShown(page, STYLESHEET_DELAY_MS + HOLD_MS + HOLD_LATE_MS * 3);
+		const since = hold.removed !== null && hold.first !== null ? hold.removed - hold.first : null;
+		font.release();
+		const changed = await page
+			.waitForFunction(
+				(face) => {
+					const heading = document.querySelector("h1");
+					return !!heading && !document.documentElement.classList.contains("font-fallback") && getComputedStyle(heading).fontFamily.startsWith(face) && document.fonts.check(`1em ${face}`);
+				},
+				FACE[scheme],
+				{ timeout: 5_000 },
+			)
+			.then(() => true, () => false);
+		const before = problems.length;
+		const wrong = earlyShown(hold, faceOf(scheme));
+		if (hold.added === null) problems.push(`${where}: the page was never hidden (the hold did not engage)`);
+		else if (wrong) problems.push(`${where}: ${early(wrong, faceOf(scheme))}`);
+		else if (!first || since === null) problems.push(`${where}: the page was not shown within ${HOLD_MS + HOLD_LATE_MS * 3} ms of the stylesheet's load`);
+		else if (since < HOLD_MS - 1) problems.push(`${where}: the page was shown ${since.toFixed(0)} ms after the stylesheet loaded, before the bound of ${HOLD_MS} ms`);
+		else if (since > HOLD_MS + HOLD_LATE_MS) problems.push(`${where}: the page was shown ${since.toFixed(0)} ms after the stylesheet loaded, more than ${HOLD_LATE_MS} ms after the bound of ${HOLD_MS} ms`);
+		else if (!inFallback(first)) problems.push(`${where}: the first frame showing the body did not draw its text in a fallback font, so the art showed without its text: ${drawn(first)}`);
+		else if (!changed) problems.push(`${where}: once the font was let through, the heading did not change to it within 5 s`);
+		problems.push(...uncaught(where, errors));
+		if (problems.length === before && first && since !== null)
+			passed.push(`${where}: shown ${since.toFixed(0)} ms after the stylesheet loaded (the bound ${HOLD_MS} ms), the heading in ${first.family.split(",")[0]} from the first frame showing the body; once the font came, the heading changed to it`);
+		await ctx.close();
+	}
+
+	// The font refused, by an answer (404) and by a network error: the page is shown within
+	// PROMPT_MS of when it knew the face had failed (its own record), its text drawn in a fallback
+	// font from the first frame that shows it. Not judged when the bound came first.
+	for (const [how, refuse] of [
+		["404", (route: Route) => route.fulfill({ status: 404, body: "Not found" })],
+		["a network error", (route: Route) => route.abort("failed")],
+	] as const) {
+		await judge(`${home.path}, the font refused (${how})`, async () => {
+			const { ctx, page, errors } = await open("light");
+			await page.route("**/*.woff2", refuse);
+			await page.goto(`${origin}${home.path}`, { waitUntil: "commit" });
+			const { hold, first } = await firstShown(page, HOLD_MS * 2);
+			await ctx.close();
+			const wrong = earlyShown(hold, faceOf("light"));
+			if (hold.added !== null && !wrong && errors.length === 0 && boundBy(hold, hold.failed ?? hold.removed))
+				return { unjudged: `nothing wrong in the record, and the face failed at ${ms(hold.failed, hold.first)} after the first stylesheet event, after the bound` };
+			const p: string[] = [];
+			if (hold.added === null) p.push("the page was never hidden (the hold did not engage)");
+			else if (wrong) p.push(early(wrong, faceOf("light")));
+			else if (hold.failed === null) p.push("the page never recorded the face's failure (document.fonts' loadingerror)");
+			else if (!first || hold.removed === null) p.push("the page was not shown");
+			else if (hold.removed - hold.failed > PROMPT_MS) p.push(`the page was shown ${(hold.removed - hold.failed).toFixed(0)} ms after the face failed, not at once (within ${PROMPT_MS} ms)`);
+			else if (!inFallback(first)) p.push(`the first frame showing the body did not draw its text in ${FALLBACK_FAMILY} by the class font-fallback: ${drawn(first)}`);
+			p.push(...faults(errors, hold));
+			const lag = hold.removed !== null && hold.failed !== null ? hold.removed - hold.failed : null;
+			const when = lag === null ? "?" : lag < 0 ? `as the face failed (the page's loadingerror event ${(-lag).toFixed(0)} ms later)` : `${lag.toFixed(0)} ms after the face failed`;
+			return { problems: p, passed: `shown ${when}, the heading in ${FALLBACK_FAMILY} from the first frame showing the body, with no uncaught error` };
+		});
+	}
+
+	// Opened at an address with a username (http://reader@host/): the page's own address keeps the
+	// username, its origin does not, and the script must still hear the stylesheet's events. If the
+	// face came before the bound, the page must be shown in it, before the bound; if after (a slow
+	// host), the script must show it at the bound (within HOLD_LATE_MS), in the fallback font. In
+	// either case nothing in the record may be wrong (earlyShown). Nothing here needs the check to
+	// act before the bound, so every load is judged.
+	{
+		const where = `${home.path}, opened at an address with a username`;
+		const { ctx, page, errors } = await open("light");
+		await page.goto(origin.replace("://", "://reader@") + home.path, { waitUntil: "commit" });
+		const { hold, first } = await firstShown(page, HOLD_MS * 2);
+		// The face's response, when it comes after the page was shown.
+		await page
+			.waitForFunction(() => (performance.getEntriesByType("resource") as PerformanceResourceTiming[]).some((e) => e.name.includes("GeistPixel-") && e.responseEnd > 0), null, { timeout: 10_000, polling: 50 })
+			.catch(() => {});
+		const end = (await fontEnds(page)).Square;
+		await ctx.close();
+		const wrong = earlyShown(hold, faceOf("light"));
+		const late = boundBy(hold, end);
+		const p: string[] = [];
+		if (hold.added === null) p.push("the page was never hidden (the hold did not engage)");
+		else if (wrong) p.push(early(wrong, faceOf("light")));
+		else if (!first || hold.removed === null || hold.first === null) p.push("the page was not shown (the class font-loading taken away) by the script");
+		else if (!late && boundBy(hold, hold.removed)) p.push(`the page was shown only by the bound, ${ms(hold.removed, hold.first)} after the first stylesheet event, though the face's response ended at ${ms(end, hold.first)}`);
+		else if (!late && !inFace(first, "light")) p.push(`the first frame showing the body did not draw the heading in ${FACE.light}, ready: ${drawn(first)}`);
+		else if (late && hold.removed - hold.first > HOLD_MS + HOLD_LATE_MS) p.push(`the face came after the bound, and the page was shown ${ms(hold.removed, hold.first)} after the first stylesheet event, not at the bound`);
+		else if (late && !inFallback(first)) p.push(`the face came after the bound, and the first frame showing the body did not draw its text in ${FALLBACK_FAMILY}: ${drawn(first)}`);
+		p.push(...faults(errors, hold));
+		problems.push(...p.map((problem) => `${where}: ${problem}`));
+		if (p.length === 0)
+			passed.push(`${where}: shown ${ms(hold.removed, hold.first)} after the first stylesheet event, ${late ? `at the bound, the face's response at ${ms(end, hold.first)}, the heading in ${FALLBACK_FAMILY}` : `the heading in ${FACE.light}`} from the first frame showing the body`);
+	}
+
+	// The script's listener made deaf (an init script makes the document drop every load and error
+	// listener added after it), so that it never sees a stylesheet event: the body is shown by the
+	// rule's own animation, ANIMATION_DELAY_MS after the site's stylesheet loaded (within
+	// HOLD_LATE_MS after), with the class font-loading still on.
+	{
+		const where = `${home.path}, the script deaf to every stylesheet event`;
+		// The recorder first and the deafener after it, in one init script, so that the recorder's own
+		// stylesheet listener is installed before the document is made deaf.
+		const { ctx, page, errors } = await open("light", DEAF_TO_STYLESHEETS);
+		await page.goto(`${origin}${home.path}`, { waitUntil: "commit" });
+		const { hold, first } = await firstShown(page, ANIMATION_DELAY_MS + HOLD_LATE_MS * 3);
+		await ctx.close();
+		const since = first && hold.sheet !== null ? first.t - hold.sheet : null;
+		const p: string[] = [];
+		if (hold.added === null) p.push("the page was never hidden (the hold did not engage)");
+		else if (hold.sheet === null) p.push("the page's record has no load of the site's stylesheet (the recorder did not see it), so the animation's delay cannot be measured");
+		else if (!first || since === null) p.push(`the body was still hidden ${ANIMATION_DELAY_MS + HOLD_LATE_MS * 3} ms after the load began`);
+		else if (!first.held) p.push("the class font-loading was taken away, though the script heard no stylesheet event");
+		else if (since < ANIMATION_DELAY_MS - 100) p.push(`the body was shown ${since.toFixed(0)} ms after the stylesheet loaded, before the animation's delay of ${ANIMATION_DELAY_MS} ms`);
+		else if (since > ANIMATION_DELAY_MS + HOLD_LATE_MS) p.push(`the body was shown ${since.toFixed(0)} ms after the stylesheet loaded, more than ${HOLD_LATE_MS} ms after the animation's delay of ${ANIMATION_DELAY_MS} ms`);
+		p.push(...faults(errors, hold));
+		problems.push(...p.map((problem) => `${where}: ${problem}`));
+		if (p.length === 0) passed.push(`${where}: the body shown by the rule's own animation ${since!.toFixed(0)} ms after the stylesheet loaded, the class font-loading still on`);
+	}
+
+	// JavaScript off: nothing is hidden, read as soon as the HTML is parsed and the stylesheet loaded.
+	{
+		const ctx = await context(browser, SIZES[0]!, "light", false);
+		const page = await ctx.newPage();
+		await page.goto(`${origin}${home.path}`, { waitUntil: "commit" });
+		if (!(await styled(page))) problems.push(`${home.path} with JavaScript off: the HTML was not parsed with the stylesheet loaded within 10 s`);
+		else if (!(await bodyShown(page))) problems.push(`${home.path} with JavaScript off: the page is hidden once the HTML is parsed and the stylesheet loaded`);
+		else passed.push(`${home.path} with JavaScript off: shown once the HTML was parsed and the stylesheet loaded`);
+		await ctx.close();
+	}
+	return { problems, passed };
 }
 
 /** Check 7: navigation inside the site, with JavaScript on and then off (see the comment at the top). */

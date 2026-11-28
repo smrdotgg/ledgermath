@@ -20,37 +20,42 @@
 import { hydrate } from "@solidjs/web";
 import { App, landingBodyLoaded } from "./app";
 
-/** Resolves once the body is shown: when the inline script in <head> (Document.tsx) has taken away its class "font-loading", or at once if it never set it. */
+/**
+ * Resolves once the body is shown: when the inline script in <head> (Document.tsx) has taken away
+ * its class "font-loading", or when the rule that hides the body has ended the hiding by itself
+ * (its animation's end, site.css); at once if the body is already visible, whatever the class says
+ * (the animation may have ended before this script ran), or if the class was never set (a browser
+ * without document.fonts).
+ */
 function shown(): Promise<void> {
 	return new Promise((resolve) => {
 		const root = document.documentElement;
-		if (!root.classList.contains("font-loading")) return resolve();
-		const observer = new MutationObserver(() => {
-			if (root.classList.contains("font-loading")) return;
+		if (!root.classList.contains("font-loading") || getComputedStyle(document.body).visibility === "visible") return resolve();
+		const done = () => {
 			observer.disconnect();
 			resolve();
+		};
+		const observer = new MutationObserver(() => {
+			if (!root.classList.contains("font-loading")) done();
 		});
 		observer.observe(root, { attributes: true, attributeFilter: ["class"] });
+		document.body.addEventListener("animationend", (event) => event.animationName === "font-hold-end" && done());
 	});
 }
 
 /**
- * Resolves once the page has had its first contentful paint. In a browser without Paint Timing,
- * once a frame has been painted with the page's text: the text waits for the font of the reader's
- * colour scheme (font-display: block in site.css; the face is chosen as Document.tsx chooses it)
- * and for the body to be shown; then a callback of the frame after the next (an animation frame
- * asked for inside one) runs only once the next has been painted.
+ * Resolves once the page has had its first contentful paint. In a browser without Paint Timing
+ * (or without PerformanceObserver at all), once the body is shown (shown()) and then a callback of
+ * the frame after the next (an animation frame asked for inside one) has run, which it does only
+ * once the next has been painted. In the arrangement the build writes, the script shows the body
+ * when its text can be drawn, in its font or in a fallback; when the animation shows it instead,
+ * the text waits for its font as the browser decides, and the frame painted may have none.
  */
 function painted(): Promise<void> {
 	return new Promise((resolve) => {
 		if (performance.getEntriesByName("first-contentful-paint").length > 0) return resolve();
-		if (!PerformanceObserver.supportedEntryTypes?.includes("paint")) {
-			const face = matchMedia("(prefers-color-scheme: light)").matches ? "Square" : "Circle";
-			return void document.fonts
-				.load(`1em "Geist Pixel ${face}"`)
-				.catch(() => [])
-				.then(shown)
-				.then(() => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+		if (typeof PerformanceObserver === "undefined" || !PerformanceObserver.supportedEntryTypes?.includes("paint")) {
+			return void shown().then(() => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
 		}
 		const observer = new PerformanceObserver((list) => {
 			if (list.getEntriesByName("first-contentful-paint").length === 0) return;
