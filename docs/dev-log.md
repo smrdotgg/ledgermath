@@ -1942,6 +1942,29 @@ A migrated benchmark is done only when **all** of these hold:
   data API's tree for the tools and for it: nothing else used them. As they last stood:
   [`assemble-location.ts`](https://github.com/smrdotgg/ledgermath/blob/2059cf9/scripts/assemble-location.ts),
   [`ledger-data.ts`](https://github.com/smrdotgg/ledgermath/blob/2059cf9/scripts/lib/ledger-data.ts).
+- **2026-11-28** — **The site is held back until its font is ready, on a first visit too.**
+  The inline script in `<head>` (`site/src/Document.tsx`) was meant to hide the page while the
+  pixel font loads, so that the text, which `font-display: block` hides, and the dot art and
+  bars, which are not text, appear in one frame. It never did: it ran before the stylesheet's
+  `<link>`, which the build writes at the end of `<head>`, so no `@font-face` was known yet,
+  and `document.fonts.check()` answered that the font was ready (in Chromium, with the font
+  made late: true, no face known, no stylesheet). The maintainer decided it should hold, and
+  accepts that a first visit shows nothing until the font comes. Now the script hides the page
+  at once (with JavaScript; without it nothing is hidden) and asks for the font when the
+  stylesheet's load event comes; it shows the page when the font is ready or has failed, when
+  the stylesheet fails, and after 3 s whatever happens, the longest `font-display: block`
+  hides text, so the page is never hidden longer than its text would be. The browser's
+  entry (`site/src/entry-client.tsx`), in a browser without Paint Timing, now waits for the
+  body being shown alone, no longer for the font as well, so a font that never answers no
+  longer keeps the page from being taken over. A repeat visit, the font in the browser's
+  cache, was held 6 to 7 ms in Chromium, with no request, and shown before its first frame.
+  `bun run check:browser` gains check 9: with the font held back by the host, on the home
+  page and the glossary in light and dark, the body is hidden once the HTML is parsed and the
+  first frame that shows it has the font ready, the font asked for once; refused (404, a
+  network error) the page is shown at once (17 and 15 ms); never answering, after the bound
+  (3,011 ms); with JavaScript off, at once. Run against `main` as it was, its first part
+  failed on all four loads. Measured in Chromium only: WebKit and Firefox follow the same
+  standards (a stylesheet's load event, the CSS Font Loading API), unmeasured.
 - _(agents: append your entry here, one per merged benchmark)_
 
 ---

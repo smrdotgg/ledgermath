@@ -75,6 +75,16 @@
  *     click on its links loading each page as a new document; a click held for its page's chunk
  *     and then superseded by another click does not come back when the chunk arrives; and with
  *     JavaScript off, "Copy page" is not shown, and "View as Markdown" is.
+ *  9. The page is held back until its font is ready (src/Document.tsx), at desktop size, on
+ *     HOLD_PAGES in light and dark. With the font held back by the host: once the HTML is
+ *     parsed, <html> has the class font-loading and the body is hidden (computed visibility);
+ *     once the font is let through, the class goes, and in the first frame in which the body is
+ *     visible (read in each animation frame) the font of the scheme is ready
+ *     (document.fonts.check), so no frame shows the dot art without its text or the text in a
+ *     fallback font; the font is asked for once. With the font refused (404, and a network
+ *     error), the page is shown well before HOLD_MS, with no uncaught error. With the font never
+ *     answering, the page is shown after HOLD_MS on the page's clock, and within
+ *     HOLD_LATE_MS of it. With JavaScript off, nothing is hidden.
  *
  * With --shots OUT it also writes, for each page, size and scheme, the first screen and the whole
  * page as PNG files in OUT: <page>-<size>-<scheme>-{first,full}.png, and <page>-<flag>-… for a
@@ -87,7 +97,7 @@
 import { mkdirSync, existsSync, readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import axe from "axe-core";
-import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
+import { chromium, type Browser, type BrowserContext, type Page, type Route } from "playwright";
 import { PAGES, type SitePage } from "../src/pages.text";
 import { AHEAD_BUDGET_BYTES, BUDGET_BYTES, missingText } from "./check-output";
 import { chunkName } from "./docs";
@@ -177,6 +187,39 @@ const HIDE_PAINT_TIMING = `(() => {
 
 /** How late the font comes in check 6's load without Paint Timing. */
 const FONT_DELAY_MS = 300;
+
+/** The pages check 9 loads with the font held back: the home page, whose dot art and bars are not text, and a documentation page. */
+const HOLD_PAGES = ["/", "/docs/glossary"];
+/** The longest the page is hidden when the font never answers: Document.tsx's HOLD_MS. */
+const HOLD_MS = 3_000;
+/** How long after HOLD_MS the page may be shown when the font never answers (the script runs a little after the page's clock starts). */
+const HOLD_LATE_MS = 1_000;
+
+/**
+ * Runs before the page's own scripts: records in window.__hold when <html> got the class
+ * font-loading and when it lost it, on the page's clock, and in each animation frame once there is
+ * a body (the state the frame then paints), whether the body is visible and whether the font of
+ * the reader's scheme is ready (check 9).
+ */
+const WATCH_FONT_HOLD = `(() => {
+	const face = () => '1em "Geist Pixel ' + (matchMedia("(prefers-color-scheme: light)").matches ? "Square" : "Circle") + '"';
+	const hold = (window.__hold = { added: null, removed: null, frames: [] });
+	new MutationObserver(() => {
+		const held = document.documentElement.classList.contains("font-loading");
+		if (held && hold.added === null) hold.added = performance.now();
+		if (!held && hold.added !== null && hold.removed === null) hold.removed = performance.now();
+	}).observe(document, { subtree: true, attributes: true, attributeFilter: ["class"] });
+	const frame = () => {
+		if (document.body) hold.frames.push({ t: performance.now(), visible: getComputedStyle(document.body).visibility === "visible", font: document.fonts.check(face()) });
+		if (hold.frames.length < 1200) requestAnimationFrame(frame);
+	};
+	requestAnimationFrame(frame);
+})();`;
+
+type Hold = { added: number | null; removed: number | null; frames: { t: number; visible: boolean; font: boolean }[] };
+const holdOf = (page: Page) => page.evaluate(() => (window as unknown as { __hold: Hold }).__hold);
+/** Whether the page shows its body now: no class font-loading on <html>, and the body's computed visibility visible. */
+const bodyShown = (page: Page) => page.evaluate(() => !document.documentElement.classList.contains("font-loading") && getComputedStyle(document.body).visibility === "visible");
 
 /**
  * Check 6 in a browser without Paint Timing: PAGE (with HIDE_PAINT_TIMING added, then loaded)
@@ -401,6 +444,7 @@ export async function checkBrowser(dir: string, shots?: string): Promise<Result[
 	const hydration: string[] = [];
 	let moves: { problems: string[]; timings: string[]; ahead: string[] } = { problems: [], timings: [], ahead: [] };
 	let own: { problems: string[]; passed: string[] } = { problems: [], passed: [] };
+	let held: { problems: string[]; passed: string[] } = { problems: [], passed: [] };
 	const docs = docsPages(root);
 	if (docs.problems.length > 0) throw new Error(`the documentation's pages cannot be read from ${dir}: ${docs.problems.join("; ")}`);
 	const all: SitePage[] = [...PAGES, ...docs.pages];
@@ -507,6 +551,7 @@ export async function checkBrowser(dir: string, shots?: string): Promise<Result[
 		}
 		moves = await navigation(browser, server.origin, root, all);
 		own = await documentation(browser, server.origin, root, all);
+		held = await fontHold(browser, server.origin, all);
 	} finally {
 		await browser.close();
 		server.stop();
@@ -533,7 +578,115 @@ export async function checkBrowser(dir: string, shots?: string): Promise<Result[
 			passed: `through ${ROUTE.join(" -> ")} -> /, each click changed the page in place, with no request for it and no new document, to the page the build wrote for the address, at its top, its title and words, the focus at the top and the title announced, with no axe violation; back and forward the same, each page scrolled to where it was left; with the keyboard (${KEYBOARD_PAGES.join(", ")}), a link to a place on another page left the focus at the place, the same page without the fragment put it back at the top, and a page's own link brought the page back to its top; after an address whose fragment does not decode, navigation went on; with JavaScript off each link loaded its page. Loaded ahead after the clicks, for the links the new page brought: ${moves.ahead.join("; ") || "nothing"}. From the click to the next frame (not judged): ${moves.timings.join("; ")}`,
 		},
 		{ name: "the documentation's own: the keyboard, the two controls, a link to a heading", problems: own.problems, passed: own.passed.join("; ") },
+		{ name: "the page held back until its font is ready, and never longer than the bound", problems: held.problems, passed: held.passed.join("; ") },
 	];
+}
+
+/** Check 9: the page held back until its font is ready (see the comment at the top). */
+async function fontHold(browser: Browser, origin: string, all: readonly SitePage[]): Promise<{ problems: string[]; passed: string[] }> {
+	const problems: string[] = [];
+	const passed: string[] = [];
+	const metas = HOLD_PAGES.map((path) => all.find((meta) => meta.path === path));
+	if (metas.some((meta) => !meta)) return { problems: [`check 9 loads ${HOLD_PAGES.join(" and ")}, which are not all pages of the site`], passed };
+	const parsed = (page: Page) => page.waitForFunction(() => document.readyState !== "loading", null, { timeout: 10_000 }).catch(() => {});
+
+	for (const meta of metas as SitePage[]) {
+		for (const scheme of SCHEMES) {
+			// The font held back by the host until the HTML is parsed and looked at, then let through.
+			const where = `${meta.path} ${scheme}, the font held back`;
+			const ctx = await context(browser, SIZES[0]!, scheme);
+			const page = await ctx.newPage();
+			const errors: string[] = [];
+			page.on("pageerror", (error) => errors.push(error.message));
+			let fonts = 0;
+			let release: () => void = () => {};
+			const letThrough = new Promise<void>((resolve) => (release = resolve));
+			await page.route("**/*.woff2", async (route) => {
+				fonts += 1;
+				await letThrough;
+				await route.continue().catch(() => {});
+			});
+			await page.addInitScript(WATCH_FONT_HOLD);
+			await page.goto(`${origin}${meta.path}`, { waitUntil: "commit" });
+			await parsed(page);
+			const during = await page.evaluate(() => ({ held: document.documentElement.classList.contains("font-loading"), visibility: getComputedStyle(document.body).visibility }));
+			release();
+			const shown = await page.waitForFunction(() => !document.documentElement.classList.contains("font-loading"), null, { timeout: 10_000 }).then(() => true, () => false);
+			await page.waitForTimeout(300);
+			const hold = await holdOf(page);
+			const first = hold.frames.find((frame) => frame.visible);
+			const before = problems.length;
+			if (!during.held || during.visibility !== "hidden") problems.push(`${where}: once the HTML was parsed, <html> ${during.held ? "had" : "lacked"} the class font-loading and the body's visibility was ${during.visibility}, not hidden`);
+			else if (!shown) problems.push(`${where}: the class font-loading stayed after the font came`);
+			else if (!first) problems.push(`${where}: no frame showed the body once the font came`);
+			else if (!first.font) problems.push(`${where}: the first frame showing the body (at ${first.t.toFixed(1)} ms) came before the font was ready: the dot art without its text, or the text in a fallback font`);
+			if (fonts !== 1) problems.push(`${where}: the font was asked for ${fonts} times, not once`);
+			if (errors.length > 0) problems.push(`${where}: uncaught error(s): ${[...new Set(errors)].join("; ")}`);
+			if (problems.length === before && first) passed.push(`${where}: hidden once the HTML was parsed, then shown in the font from its first frame (at ${first.t.toFixed(0)} ms), the font asked for once`);
+			await ctx.close();
+		}
+	}
+
+	// The font refused, by an answer (404) and by a network error: the page is shown, well before the bound.
+	const home = metas[0]!;
+	for (const [how, refuse] of [
+		["404", (route: Route) => route.fulfill({ status: 404, body: "Not found" })],
+		["a network error", (route: Route) => route.abort("failed")],
+	] as const) {
+		const where = `${home.path}, the font refused (${how})`;
+		const ctx = await context(browser, SIZES[0]!, "light");
+		const page = await ctx.newPage();
+		const errors: string[] = [];
+		page.on("pageerror", (error) => errors.push(error.message));
+		await page.route("**/*.woff2", refuse);
+		await page.addInitScript(WATCH_FONT_HOLD);
+		await page.goto(`${origin}${home.path}`, { waitUntil: "load" });
+		await page.waitForFunction(() => !document.documentElement.classList.contains("font-loading"), null, { timeout: HOLD_MS * 2 }).catch(() => {});
+		const hold = await holdOf(page);
+		// When the page was shown, on its clock; null if it was never hidden.
+		const at = hold.added === null ? null : hold.removed;
+		if (!(await bodyShown(page))) problems.push(`${where}: the page is not shown`);
+		else if (at !== null && at >= HOLD_MS / 2) problems.push(`${where}: the page was shown only at ${at.toFixed(0)} ms, not at once`);
+		else if (errors.length > 0) problems.push(`${where}: uncaught error(s): ${[...new Set(errors)].join("; ")}`);
+		else passed.push(`${where}: shown${at === null ? "" : ` at ${at.toFixed(0)} ms`}, with no uncaught error`);
+		await ctx.close();
+	}
+
+	// The font never answering: the page is shown after the bound, not before and not long after.
+	{
+		const where = `${home.path}, the font never answering`;
+		const ctx = await context(browser, SIZES[0]!, "light");
+		const page = await ctx.newPage();
+		let release: () => void = () => {};
+		const never = new Promise<void>((resolve) => (release = resolve));
+		await page.route("**/*.woff2", async (route) => {
+			await never;
+			await route.abort("failed").catch(() => {});
+		});
+		await page.addInitScript(WATCH_FONT_HOLD);
+		await page.goto(`${origin}${home.path}`, { waitUntil: "commit" });
+		await page.waitForFunction(() => !document.documentElement.classList.contains("font-loading") && document.readyState !== "loading", null, { timeout: HOLD_MS + HOLD_LATE_MS * 3 }).catch(() => {});
+		const hold = await holdOf(page);
+		const shown = await bodyShown(page);
+		if (hold.added === null) problems.push(`${where}: the page was never hidden`);
+		else if (!shown || hold.removed === null) problems.push(`${where}: the page was still hidden ${HOLD_MS + HOLD_LATE_MS * 3} ms after the load began`);
+		else if (hold.removed < HOLD_MS) problems.push(`${where}: the page was shown at ${hold.removed.toFixed(0)} ms, before the bound of ${HOLD_MS} ms`);
+		else if (hold.removed > HOLD_MS + HOLD_LATE_MS) problems.push(`${where}: the page was shown at ${hold.removed.toFixed(0)} ms, more than ${HOLD_LATE_MS} ms after the bound of ${HOLD_MS} ms`);
+		else passed.push(`${where}: shown at ${hold.removed.toFixed(0)} ms (the bound ${HOLD_MS} ms)`);
+		release();
+		await ctx.close();
+	}
+
+	// JavaScript off: nothing is hidden.
+	{
+		const ctx = await context(browser, SIZES[0]!, "light", false);
+		const page = await ctx.newPage();
+		await page.goto(`${origin}${home.path}`, { waitUntil: "load" });
+		if (!(await bodyShown(page))) problems.push(`${home.path} with JavaScript off: the page is hidden`);
+		else passed.push(`${home.path} with JavaScript off: shown`);
+		await ctx.close();
+	}
+	return { problems, passed };
 }
 
 /** Check 7: navigation inside the site, with JavaScript on and then off (see the comment at the top). */

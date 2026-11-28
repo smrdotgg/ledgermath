@@ -20,7 +20,12 @@
 import { hydrate } from "@solidjs/web";
 import { App, landingBodyLoaded } from "./app";
 
-/** Resolves once the body is shown: when the inline script in <head> (Document.tsx) has taken away its class "font-loading", or at once if it never set it. */
+/**
+ * Resolves once the body is shown: when the inline script in <head> (Document.tsx) has taken away
+ * its class "font-loading" (the font of the reader's colour scheme is ready or has failed, the
+ * stylesheet has failed, or its bound has passed), or at once if it never set it (a browser
+ * without document.fonts).
+ */
 function shown(): Promise<void> {
 	return new Promise((resolve) => {
 		const root = document.documentElement;
@@ -36,21 +41,16 @@ function shown(): Promise<void> {
 
 /**
  * Resolves once the page has had its first contentful paint. In a browser without Paint Timing,
- * once a frame has been painted with the page's text: the text waits for the font of the reader's
- * colour scheme (font-display: block in site.css; the face is chosen as Document.tsx chooses it)
- * and for the body to be shown; then a callback of the frame after the next (an animation frame
- * asked for inside one) runs only once the next has been painted.
+ * once a frame has been painted with the page's text: the body is shown only once the font the
+ * text waits for (font-display: block in site.css) is ready or will not come (shown()); then a
+ * callback of the frame after the next (an animation frame asked for inside one) runs only once
+ * the next has been painted.
  */
 function painted(): Promise<void> {
 	return new Promise((resolve) => {
 		if (performance.getEntriesByName("first-contentful-paint").length > 0) return resolve();
 		if (!PerformanceObserver.supportedEntryTypes?.includes("paint")) {
-			const face = matchMedia("(prefers-color-scheme: light)").matches ? "Square" : "Circle";
-			return void document.fonts
-				.load(`1em "Geist Pixel ${face}"`)
-				.catch(() => [])
-				.then(shown)
-				.then(() => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+			return void shown().then(() => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
 		}
 		const observer = new PerformanceObserver((list) => {
 			if (list.getEntriesByName("first-contentful-paint").length === 0) return;

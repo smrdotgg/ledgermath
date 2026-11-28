@@ -14,7 +14,7 @@
 @media (prefers-color-scheme: light) { :root { --pixel: "Geist Pixel Square"; --bg: #fff; --fg: #000; --muted: #6a6a6a; --rule: #bbb; --off: #dcdcdc; --far: #8c8c8c; } }
 
 html { background: var(--bg); color: var(--fg); -webkit-text-size-adjust: 100%; }
-.font-loading body { visibility: hidden; } /* set by the script in Document.tsx until the font is ready */
+.font-loading body { visibility: hidden; } /* set by the script in Document.tsx until the font is ready or failed, 3 s at most */
 /* "ss09" is the font's zero without a slash: a page of figures reads more easily with it. Remove it for the slashed zero.
    The font is set by its long properties, not the `font` shorthand: the shorthand resets font-feature-settings, and the
    build's minifier may move it after that line. */

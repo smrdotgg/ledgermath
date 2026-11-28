@@ -10,10 +10,24 @@ import "./site.css";
 const LIGHT = "(prefers-color-scheme: light)";
 
 // As on smr.gg: the browser hides text until its font is ready (font-display: block), but the dot
-// art and bars are not text and would show first. So while the font loads, hide the whole page and reveal
-// it with one class change once the font is ready (or fails), so text and dots appear in the same
-// frame. Without JavaScript the browser's own wait applies.
-const HOLD_UNTIL_FONT = `(()=>{const f='1em "Geist Pixel '+(matchMedia("${LIGHT}").matches?"Square":"Circle")+'"';if(document.fonts.check(f))return;const r=document.documentElement;r.classList.add("font-loading");document.fonts.load(f).finally(()=>r.classList.remove("font-loading"))})()`;
+// art and bars are not text and would show first. So the whole page is hidden (the class
+// font-loading on <html>, site.css) from before the body is read, and shown with one class change
+// once the font is ready or has failed, so that text and dots appear in the same frame. Without
+// JavaScript nothing is hidden, and the browser's own wait applies.
+//
+// The script runs before the stylesheet's <link> (the build writes it at the end of <head>), when
+// no @font-face is known yet: asked then, document.fonts would say there is nothing to wait for.
+// So it hides the page at once and asks for the font only when the stylesheet has loaded (its
+// load event, caught on the way down to the <link>); if the stylesheet fails, the page is shown.
+// The font loading from the browser's cache, as on a repeat visit, is ready a few milliseconds
+// later, with no request added (the face is the stylesheet's own, which the preload has fetched).
+//
+// And whatever happens, the page is shown after HOLD_MS: font-display: block hides text for 3 s at
+// most (the block period CSS Fonts recommends, and Chromium's, Firefox's and WebKit's) from when
+// the font starts to load, which the preloads just above begin; then the browser shows the text in
+// a fallback font. So the page is never hidden longer than the browser itself would hide its text.
+const HOLD_MS = 3000;
+const HOLD_UNTIL_FONT = `(()=>{const d=document,r=d.documentElement;if(!d.fonts)return;const f='1em "Geist Pixel '+(matchMedia("${LIGHT}").matches?"Square":"Circle")+'"',show=()=>r.classList.remove("font-loading"),on=(e,go)=>d.addEventListener(e,(v)=>{if(v.target.rel==="stylesheet")go()},true);r.classList.add("font-loading");setTimeout(show,${HOLD_MS});on("load",()=>d.fonts.load(f).then(show,show));on("error",show)})()`;
 
 // The site has no logo yet. A page that names no icon gets the browser's own placeholder in its
 // tab (Chrome's globe) and a request for /favicon.ico; so each page names an icon that shows
