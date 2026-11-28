@@ -15,10 +15,15 @@
 
 html { background: var(--bg); color: var(--fg); -webkit-text-size-adjust: 100%; }
 /* Set by the script in Document.tsx: font-loading from before the body is read until the face --pixel names has loaded or
-   failed, or 3 s have passed since the first of the site's stylesheets loaded, or one of them failed; font-fallback, when the
-   page is shown without the face, until it comes, so that the text is drawn at once in the reader's own monospace font (the
-   next family the body names). */
-.font-loading body { visibility: hidden; }
+   failed, or 3 s have passed since the first stylesheet event; font-fallback, when the page is shown without the face, until
+   it comes, so that the text is drawn at once in the reader's own monospace font (the next family the body names).
+   The rule that hides the body also ends the hiding by itself: its animation, of no duration, sets visibility: visible 3.5 s
+   after the rule first applies (when this stylesheet has loaded) and keeps it. That is the guarantee: whatever the script
+   misses or however it fails, and in a copy of the page saved while it was held, the body is not hidden longer. The script's
+   own bound, earlier, is what lets the text come with it, in the fallback font; on an ordinary load the class is gone long
+   before the animation's delay, and the animation goes with it. */
+.font-loading body { visibility: hidden; animation: font-hold-end 0s 3.5s forwards; }
+@keyframes font-hold-end { to { visibility: visible; } }
 :root.font-fallback { --pixel: ui-monospace; }
 /* "ss09" is the font's zero without a slash: a page of figures reads more easily with it. Remove it for the slashed zero.
    The font is set by its long properties, not the `font` shorthand: the shorthand resets font-feature-settings, and the

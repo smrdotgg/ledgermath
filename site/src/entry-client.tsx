@@ -22,29 +22,33 @@ import { App, landingBodyLoaded } from "./app";
 
 /**
  * Resolves once the body is shown: when the inline script in <head> (Document.tsx) has taken away
- * its class "font-loading" (the face the stylesheet sets is ready, or it has failed or not come
- * within the bound and the text is drawn in a fallback font, or the stylesheet has failed), or at
- * once if it never set it (a browser without document.fonts).
+ * its class "font-loading", or when the rule that hides the body has ended the hiding by itself
+ * (its animation's end, site.css), or at once if the class was never set (a browser without
+ * document.fonts).
  */
 function shown(): Promise<void> {
 	return new Promise((resolve) => {
 		const root = document.documentElement;
 		if (!root.classList.contains("font-loading")) return resolve();
-		const observer = new MutationObserver(() => {
-			if (root.classList.contains("font-loading")) return;
+		const done = () => {
 			observer.disconnect();
 			resolve();
+		};
+		const observer = new MutationObserver(() => {
+			if (!root.classList.contains("font-loading")) done();
 		});
 		observer.observe(root, { attributes: true, attributeFilter: ["class"] });
+		document.body.addEventListener("animationend", (event) => event.animationName === "font-hold-end" && done());
 	});
 }
 
 /**
  * Resolves once the page has had its first contentful paint. In a browser without Paint Timing
- * (or without PerformanceObserver at all), once a frame has been painted with the page's text:
- * the body is shown only when its text can be drawn, in its font or in a fallback (shown()); then
- * a callback of the frame after the next (an animation frame asked for inside one) runs only once
- * the next has been painted.
+ * (or without PerformanceObserver at all), once the body is shown (shown()) and then a callback of
+ * the frame after the next (an animation frame asked for inside one) has run, which it does only
+ * once the next has been painted. In the arrangement the build writes, the script shows the body
+ * when its text can be drawn, in its font or in a fallback; when the animation shows it instead,
+ * the text waits for its font as the browser decides, and the frame painted may have none.
  */
 function painted(): Promise<void> {
 	return new Promise((resolve) => {
