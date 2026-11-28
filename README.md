@@ -3667,16 +3667,20 @@ and is never hydrated; its body is the application's. At the top of every page, 
 (`<link rel="describedby">`, as the convention asks). Each page's `<head>` loads the script
 as a module, which runs once the HTML is parsed and hydrates after the first contentful
 paint (`site/src/entry-client.tsx`; `check:browser` holds the order), so the page paints as
-it did without it (in a browser without Paint Timing, once the body is shown and two
+it did without it (in a browser without Paint Timing or `PerformanceObserver`, once the body is shown and two
 animation frames, one asked for inside the other, have passed, so that the frame showing the
 text has been painted);
 an inline script sets the page's feature flags (above) and holds the page back, hidden from
 before the body is read, until the font of the reader's colour scheme has loaded, so that
-the text and the dot art and bars, which are not text, appear in the same frame. It asks for
-the font once the stylesheet, which declares it, has loaded; it shows the page at once if the
-stylesheet or the font fails, and after 3 s whatever happens, the longest `font-display:
-block` hides text. A repeat visit, the font in the browser's cache, is held a few
-milliseconds. Without JavaScript nothing is hidden. Another inline script, Solid's, prepares
+the text and the dot art and bars, which are not text, appear in the same frame. Once the
+stylesheet has loaded, it reads the face the stylesheet sets (`--pixel`) and waits for it,
+and for the other face if the reader changes colour scheme meanwhile. If the face fails, or
+has not come 3 s after the stylesheet loaded (the block period CSS Fonts 4 recommends for
+`font-display: block`), it shows the page with its text in the reader's own monospace font
+(the class `font-fallback`), and the text changes to the face if it comes later; if the
+stylesheet fails, it shows the page at once. A repeat visit, the font in the browser's
+cache, was held 6 to 7 ms in Chromium, and shown before its first frame. Without JavaScript
+nothing is hidden. Another inline script, Solid's, prepares
 the hydration. The pages read the same with JavaScript off. `site/` has its own `package.json`
 and `bun.lock`, apart from the root's, and needs Bun (Vite runs under Bun, not Node), and
 the root's packages for the API reference's generator (`bun install` at the root).
@@ -3787,10 +3791,13 @@ paint time), or hydration that changes an
 element or text of the page (only the attributes the router derives from the address may
 change). They fail, too, when the page is not held back for its font: with the font held
 back by the host and the stylesheet made late, on the home page and the glossary in light
-and dark, the body must be hidden once the HTML is parsed and the stylesheet has loaded, and
-the first frame that shows it must have the stylesheet and the font ready;
-with the font refused (404, a network error) the page must be shown at once, with it never
-answering after 3 s and not a second later, and with JavaScript off at once. Then a round of clicks, each on a link to the next page: from `/` to `/docs/`, a
+and dark, the body must be hidden once the HTML is parsed and the stylesheet has loaded,
+shown within a second of the font being let through, and the first frame that shows it must
+draw the heading in the scheme's face; switched from light to dark during the hold, the page
+must wait for the dark face; with the font not come, the page must be shown 3 s after the
+stylesheet loaded (and not a second later), its heading in a fallback font from the first
+frame, then in the face once it comes; with the font refused (404, a network error), shown
+at once in a fallback font; and with JavaScript off, shown at once. Then a round of clicks, each on a link to the next page: from `/` to `/docs/`, a
 benchmark's page, two reference pages, `/` again and a benchmark's page by its name in the
 table, and back: each must change the page in place, with no request for it (the chunks the
 router then loads ahead for the new page's links are counted apart)

@@ -22,9 +22,9 @@ import { App, landingBodyLoaded } from "./app";
 
 /**
  * Resolves once the body is shown: when the inline script in <head> (Document.tsx) has taken away
- * its class "font-loading" (the font of the reader's colour scheme is ready or has failed, the
- * stylesheet has failed, or its bound has passed), or at once if it never set it (a browser
- * without document.fonts).
+ * its class "font-loading" (the face the stylesheet sets is ready, or it has failed or not come
+ * within the bound and the text is drawn in a fallback font, or the stylesheet has failed), or at
+ * once if it never set it (a browser without document.fonts).
  */
 function shown(): Promise<void> {
 	return new Promise((resolve) => {
@@ -40,16 +40,16 @@ function shown(): Promise<void> {
 }
 
 /**
- * Resolves once the page has had its first contentful paint. In a browser without Paint Timing,
- * once a frame has been painted with the page's text: the body is shown only once the font the
- * text waits for (font-display: block in site.css) is ready or will not come (shown()); then a
- * callback of the frame after the next (an animation frame asked for inside one) runs only once
+ * Resolves once the page has had its first contentful paint. In a browser without Paint Timing
+ * (or without PerformanceObserver at all), once a frame has been painted with the page's text:
+ * the body is shown only when its text can be drawn, in its font or in a fallback (shown()); then
+ * a callback of the frame after the next (an animation frame asked for inside one) runs only once
  * the next has been painted.
  */
 function painted(): Promise<void> {
 	return new Promise((resolve) => {
 		if (performance.getEntriesByName("first-contentful-paint").length > 0) return resolve();
-		if (!PerformanceObserver.supportedEntryTypes?.includes("paint")) {
+		if (typeof PerformanceObserver === "undefined" || !PerformanceObserver.supportedEntryTypes?.includes("paint")) {
 			return void shown().then(() => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
 		}
 		const observer = new PerformanceObserver((list) => {
