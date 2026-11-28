@@ -3786,8 +3786,9 @@ Timing hidden from the page and the font 300 ms late, before the first contentfu
 paint time), or hydration that changes an
 element or text of the page (only the attributes the router derives from the address may
 change). They fail, too, when the page is not held back for its font: with the font held
-back by the host, on the home page and the glossary in light and dark, the body must be
-hidden once the HTML is parsed, and the first frame that shows it must have the font ready;
+back by the host and the stylesheet made late, on the home page and the glossary in light
+and dark, the body must be hidden once the HTML is parsed and the stylesheet has loaded, and
+the first frame that shows it must have the stylesheet and the font ready;
 with the font refused (404, a network error) the page must be shown at once, with it never
 answering after 3 s and not a second later, and with JavaScript off at once. Then a round of clicks, each on a link to the next page: from `/` to `/docs/`, a
 benchmark's page, two reference pages, `/` again and a benchmark's page by its name in the

@@ -76,10 +76,13 @@
  *     and then superseded by another click does not come back when the chunk arrives; and with
  *     JavaScript off, "Copy page" is not shown, and "View as Markdown" is.
  *  9. The page is held back until its font is ready (src/Document.tsx), at desktop size, on
- *     HOLD_PAGES in light and dark. With the font held back by the host: once the HTML is
- *     parsed, <html> has the class font-loading and the body is hidden (computed visibility);
- *     once the font is let through, the class goes, and in the first frame in which the body is
- *     visible (read in each animation frame) the font of the scheme is ready
+ *     HOLD_PAGES in light and dark. With the font held back by the host and the stylesheet
+ *     STYLESHEET_DELAY_MS late (so that the HTML is parsed well before the stylesheet comes, as
+ *     on a slow network): once the HTML is parsed and the stylesheet has loaded (its <link>'s
+ *     sheet is there; before, the rule that hides the body is not known), <html> has the class
+ *     font-loading and the body is hidden (computed visibility); once the font is let through,
+ *     the class goes, and in the first frame in which the body is visible (read in each
+ *     animation frame) the stylesheet has loaded and the font of the scheme is ready
  *     (document.fonts.check), so no frame shows the dot art without its text or the text in a
  *     fallback font; the font is asked for once. With the font refused (404, and a network
  *     error), the page is shown well before HOLD_MS, with no uncaught error. With the font never
@@ -194,12 +197,15 @@ const HOLD_PAGES = ["/", "/docs/glossary"];
 const HOLD_MS = 3_000;
 /** How long after HOLD_MS the page may be shown when the font never answers (the script runs a little after the page's clock starts). */
 const HOLD_LATE_MS = 1_000;
+/** How late the stylesheet comes while check 9 holds the font back. */
+const STYLESHEET_DELAY_MS = 500;
 
 /**
  * Runs before the page's own scripts: records in window.__hold when <html> got the class
  * font-loading and when it lost it, on the page's clock, and in each animation frame once there is
- * a body (the state the frame then paints), whether the body is visible and whether the font of
- * the reader's scheme is ready (check 9).
+ * a body (the state the frame then paints), whether the body is visible, whether the stylesheet
+ * has loaded, and whether the font of the reader's scheme is ready (check 9). Before the
+ * stylesheet has loaded no @font-face is known, and document.fonts.check() answers true.
  */
 const WATCH_FONT_HOLD = `(() => {
 	const face = () => '1em "Geist Pixel ' + (matchMedia("(prefers-color-scheme: light)").matches ? "Square" : "Circle") + '"';
@@ -210,13 +216,16 @@ const WATCH_FONT_HOLD = `(() => {
 		if (!held && hold.added !== null && hold.removed === null) hold.removed = performance.now();
 	}).observe(document, { subtree: true, attributes: true, attributeFilter: ["class"] });
 	const frame = () => {
-		if (document.body) hold.frames.push({ t: performance.now(), visible: getComputedStyle(document.body).visibility === "visible", font: document.fonts.check(face()) });
+		if (document.body) {
+			const links = [...document.querySelectorAll('link[rel="stylesheet"]')];
+			hold.frames.push({ t: performance.now(), visible: getComputedStyle(document.body).visibility === "visible", styled: links.length > 0 && links.every((link) => link.sheet !== null), font: document.fonts.check(face()) });
+		}
 		if (hold.frames.length < 1200) requestAnimationFrame(frame);
 	};
 	requestAnimationFrame(frame);
 })();`;
 
-type Hold = { added: number | null; removed: number | null; frames: { t: number; visible: boolean; font: boolean }[] };
+type Hold = { added: number | null; removed: number | null; frames: { t: number; visible: boolean; styled: boolean; font: boolean }[] };
 const holdOf = (page: Page) => page.evaluate(() => (window as unknown as { __hold: Hold }).__hold);
 /** Whether the page shows its body now: no class font-loading on <html>, and the body's computed visibility visible. */
 const bodyShown = (page: Page) => page.evaluate(() => !document.documentElement.classList.contains("font-loading") && getComputedStyle(document.body).visibility === "visible");
@@ -588,11 +597,26 @@ async function fontHold(browser: Browser, origin: string, all: readonly SitePage
 	const passed: string[] = [];
 	const metas = HOLD_PAGES.map((path) => all.find((meta) => meta.path === path));
 	if (metas.some((meta) => !meta)) return { problems: [`check 9 loads ${HOLD_PAGES.join(" and ")}, which are not all pages of the site`], passed };
-	const parsed = (page: Page) => page.waitForFunction(() => document.readyState !== "loading", null, { timeout: 10_000 }).catch(() => {});
+	// The HTML parsed and the stylesheet loaded: only then does the class font-loading hide the body.
+	// Nothing in <head> after the stylesheet's <link> waits for it (the script there is a module,
+	// which waits for the parse). Today Solid's inline script at the end of the body does wait for
+	// it, so the parse ends after the stylesheet; the reading must not rest on that.
+	const styled = (page: Page) =>
+		page
+			.waitForFunction(
+				() => {
+					const links = [...document.querySelectorAll<HTMLLinkElement>('link[rel="stylesheet"]')];
+					return document.readyState !== "loading" && links.length > 0 && links.every((link) => link.sheet !== null);
+				},
+				null,
+				{ timeout: 10_000 },
+			)
+			.then(() => true, () => false);
 
 	for (const meta of metas as SitePage[]) {
 		for (const scheme of SCHEMES) {
-			// The font held back by the host until the HTML is parsed and looked at, then let through.
+			// The font held back by the host and the stylesheet late, until the HTML is parsed, the
+			// stylesheet loaded and the page looked at; then the font let through.
 			const where = `${meta.path} ${scheme}, the font held back`;
 			const ctx = await context(browser, SIZES[0]!, scheme);
 			const page = await ctx.newPage();
@@ -606,9 +630,10 @@ async function fontHold(browser: Browser, origin: string, all: readonly SitePage
 				await letThrough;
 				await route.continue().catch(() => {});
 			});
+			await page.route("**/*.css", (route) => Bun.sleep(STYLESHEET_DELAY_MS).then(() => route.continue().catch(() => {})));
 			await page.addInitScript(WATCH_FONT_HOLD);
 			await page.goto(`${origin}${meta.path}`, { waitUntil: "commit" });
-			await parsed(page);
+			const ready = await styled(page);
 			const during = await page.evaluate(() => ({ held: document.documentElement.classList.contains("font-loading"), visibility: getComputedStyle(document.body).visibility }));
 			release();
 			const shown = await page.waitForFunction(() => !document.documentElement.classList.contains("font-loading"), null, { timeout: 10_000 }).then(() => true, () => false);
@@ -616,13 +641,15 @@ async function fontHold(browser: Browser, origin: string, all: readonly SitePage
 			const hold = await holdOf(page);
 			const first = hold.frames.find((frame) => frame.visible);
 			const before = problems.length;
-			if (!during.held || during.visibility !== "hidden") problems.push(`${where}: once the HTML was parsed, <html> ${during.held ? "had" : "lacked"} the class font-loading and the body's visibility was ${during.visibility}, not hidden`);
+			if (!ready) problems.push(`${where}: the HTML was not parsed with the stylesheet loaded within 10 s`);
+			else if (!during.held || during.visibility !== "hidden") problems.push(`${where}: once the HTML was parsed and the stylesheet loaded, <html> ${during.held ? "had" : "lacked"} the class font-loading and the body's visibility was ${during.visibility}, not hidden`);
 			else if (!shown) problems.push(`${where}: the class font-loading stayed after the font came`);
 			else if (!first) problems.push(`${where}: no frame showed the body once the font came`);
+			else if (!first.styled) problems.push(`${where}: the first frame showing the body (at ${first.t.toFixed(1)} ms) came before the stylesheet had loaded`);
 			else if (!first.font) problems.push(`${where}: the first frame showing the body (at ${first.t.toFixed(1)} ms) came before the font was ready: the dot art without its text, or the text in a fallback font`);
 			if (fonts !== 1) problems.push(`${where}: the font was asked for ${fonts} times, not once`);
 			if (errors.length > 0) problems.push(`${where}: uncaught error(s): ${[...new Set(errors)].join("; ")}`);
-			if (problems.length === before && first) passed.push(`${where}: hidden once the HTML was parsed, then shown in the font from its first frame (at ${first.t.toFixed(0)} ms), the font asked for once`);
+			if (problems.length === before && first) passed.push(`${where}: hidden once the HTML was parsed and the stylesheet loaded (${STYLESHEET_DELAY_MS} ms late), then shown in the font from its first frame (at ${first.t.toFixed(0)} ms), the font asked for once`);
 			await ctx.close();
 		}
 	}

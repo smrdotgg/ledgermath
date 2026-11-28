@@ -1958,12 +1958,15 @@ A migrated benchmark is done only when **all** of these hold:
   body being shown alone, no longer for the font as well, so a font that never answers no
   longer keeps the page from being taken over. A repeat visit, the font in the browser's
   cache, was held 6 to 7 ms in Chromium, with no request, and shown before its first frame.
-  `bun run check:browser` gains check 9: with the font held back by the host, on the home
-  page and the glossary in light and dark, the body is hidden once the HTML is parsed and the
-  first frame that shows it has the font ready, the font asked for once; refused (404, a
-  network error) the page is shown at once (17 and 15 ms); never answering, after the bound
-  (3,011 ms); with JavaScript off, at once. Run against `main` as it was, its first part
-  failed on all four loads. Measured in Chromium only: WebKit and Firefox follow the same
+  `bun run check:browser` gains check 9: with the font held back by the host and the
+  stylesheet 500 ms late, on the home page and the glossary in light and dark, the body is
+  hidden once the HTML is parsed and the stylesheet has loaded (read before the stylesheet is
+  known, the body would be visible on a correct build: the review of #118 found that race,
+  covered only by Solid's inline script at the end of the body, which waits for the
+  stylesheet), and the first frame that shows it has the stylesheet and the font ready, the
+  font asked for once; refused (404, a network error) the page is shown at once (16 and
+  17 ms); never answering, after the bound (3,011 ms); with JavaScript off, at once. Run
+  against `main` as it was, its first part failed on all four loads. Measured in Chromium only: WebKit and Firefox follow the same
   standards (a stylesheet's load event, the CSS Font Loading API), unmeasured.
 - _(agents: append your entry here, one per merged benchmark)_
 
