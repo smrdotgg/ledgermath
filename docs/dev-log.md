@@ -1950,35 +1950,50 @@ A migrated benchmark is done only when **all** of these hold:
   and `document.fonts.check()` answered that the font was ready (in Chromium, with the font
   made late: true, no face known, no stylesheet). The maintainer decided it should hold, and
   accepts that a first visit shows nothing until the font comes. Now the script hides the page
-  at once (with JavaScript; without it nothing is hidden). When the stylesheet's load event
-  comes, it reads the face the stylesheet sets (`--pixel` on `<html>`) and waits for it, and
-  for the other face if the reader changes colour scheme meanwhile. When the face is ready,
-  the page is shown in it. If the face fails, or has not come 3 s after the stylesheet loaded
-  (the block period CSS Fonts 4 recommends for `font-display: block`), the page is shown with
-  the class `font-fallback` too, under which `--pixel` names the reader's own monospace font,
-  so that the text is drawn in the frame that shows the page; when the face comes later the
-  class goes and the text changes to it. If the stylesheet fails, the page is shown at once.
-  The first version counted the 3 s from the script's start and left the text to the
-  browser's own block period, which starts only when the browser first tries to use the face
-  (CSS Fonts 4, "the font display timeline"): the review of #118 found the art shown without
-  its letters for about 3 s with the stylesheet 2.3 s late, and the page shown in the light
-  face after a switch to dark. The browser's entry (`site/src/entry-client.tsx`), in a browser
+  at once (with JavaScript; without it nothing is hidden), and acts only on the site's own
+  stylesheets, told by their origin. At the first load of one, the 3 s bound starts (the
+  block period CSS Fonts 4 recommends for `font-display: block`). At the first load after
+  which `--pixel` on `<html>` names a face, it waits for that face; when the wait settles,
+  loaded or failed, it reads `--pixel` again and shows the page if it names the same face,
+  else waits for the new one (the reader changed colour scheme meanwhile). When the face is
+  ready, the page is shown in it. If the face failed, or the bound came first, the page is
+  shown with the class `font-fallback` too, under which `--pixel` names the reader's own
+  monospace font, so that the text is drawn in the frame that shows the page; when the face
+  comes later the class goes and the text changes to it. If one of the site's stylesheets
+  fails, the page is shown at once. Showing the page takes the class away before anything
+  that could throw. Not handled, and left so: other orders of events around a change of
+  colour scheme during the first load (the page may wait for the old face, or the bound,
+  before it is shown), and a change once the page is shown or while the fallback is set,
+  where the browser hides the text in the new face for its own block period, as on any change
+  of scheme. The first version counted the 3 s from the script's start and left the text to
+  the browser's own block period, which CSS Fonts 4 starts at the first attempted use of the
+  face ("the font display timeline"): the review of #118 found the art shown without its
+  letters for about 3 s with the stylesheet 2.3 s late, and the page shown in the light face
+  after a switch to dark. A second review found that an extension's stylesheet loading or
+  failing first, or a second stylesheet of the site's without `--pixel`, could make the
+  script throw before it took the class away, and in the second case leave the page hidden
+  for good. The browser's entry (`site/src/entry-client.tsx`), in a browser
   without Paint Timing, now waits for the body being shown alone, no longer for the font as
   well, so a font that never answers no longer keeps the page from being taken over; and
   without `PerformanceObserver` it takes that path, where it threw before. A repeat visit,
   the font in the browser's cache, was held 6 to 7 ms in Chromium, with no request, and shown
   before its first frame. `bun run check:browser` gains check 9, which reads in each
   animation frame whether the body is visible and the computed font-family of the page's
-  heading: with the font held back and the stylesheet 500 ms late, on the home page and the
-  glossary in light and dark, hidden once the HTML is parsed and the stylesheet has loaded,
-  shown within a second of the font being let through, the heading in the scheme's face from
-  the first frame; switched from light to dark during the hold, hidden until the dark face
-  came; with the font not come, shown 3 s after the stylesheet loaded, the heading in the
-  fallback from the first frame, then in the face once it came; refused (404, a network
-  error), shown at once in the fallback; with JavaScript off, at once. It fails on `main` as
-  it was in every case, and on copies of the script with the stylesheet's load handler
-  removed, with the bound's fallback removed, and with the bound counted from the script's
-  start. Measured in Chromium only; Firefox and WebKit are unmeasured.
+  heading, and times everything on the page's clock: with the font held back and the
+  stylesheet 500 ms late, on the home page and the glossary in light and dark, hidden once
+  the HTML is parsed and the stylesheet has loaded, shown within a second of the font's
+  response ending, the heading in the scheme's face from the first frame; another stylesheet
+  loading or failing first (from another origin, or of the site's without `--pixel`) changes
+  nothing, and one of the site's that fails shows the page; switched from light to dark
+  during the hold, shown only after the dark face's response (a load in which the bound came
+  first is made again, three times at most); with the font not come, shown 3 s after the
+  stylesheet loaded, the heading in the fallback from the first frame, then in the face once
+  it came; refused (404, a network error), shown at once in the fallback; with JavaScript off,
+  shown. It fails on `main` as it was in every case but two, JavaScript off and a stylesheet of
+  the site's that fails, where a page that is never hidden is right; and on copies of the
+  script with the stylesheet's load handler removed, with the bound's fallback removed, with
+  the bound counted from the script's start, and with `show()` throwing before it takes the
+  class away. Measured in Chromium only; Firefox and WebKit are unmeasured.
 - _(agents: append your entry here, one per merged benchmark)_
 
 ---

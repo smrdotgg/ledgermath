@@ -15,28 +15,38 @@ const LIGHT = "(prefers-color-scheme: light)";
 // so that text and dots appear in the same frame. Without JavaScript nothing is hidden, and the
 // browser's own wait applies.
 //
-// The script runs before the stylesheet's <link> (the build writes it at the end of <head>), when
-// no @font-face is known yet: asked then, document.fonts would say there is nothing to wait for.
-// So it hides the page at once and, when the stylesheet has loaded (its load event, caught on the
-// way down to the <link>, once), reads the face the stylesheet sets (--pixel on <html>) and waits
-// for it; if the stylesheet then sets another face (the reader changed colour scheme meanwhile),
-// it waits for that one. Until the stylesheet has loaded, nothing is drawn anyway: the browser
-// waits for it, and the rule that hides the body is in it. If the stylesheet fails, the page is
-// shown, in the browser's own fonts. The site's stylesheet is told from any other by its address,
-// on the site's own origin: a browser extension may add a <link> of its own to the page, from
-// another origin, which may load or fail first, and its load or failure changes nothing. The font coming from the browser's cache, as on a repeat visit, is
-// ready a few milliseconds after the stylesheet, with no request added (the face is the
-// stylesheet's own, which the preload has fetched).
+// The script runs before the stylesheet's <link> (the build writes one for each CSS file at the
+// end of <head>), when no @font-face is known yet: asked then, document.fonts would say there is
+// nothing to wait for. So it hides the page at once and acts on the load and error events of the
+// site's own stylesheets, caught on the way down to each <link>. A stylesheet of the site's is told
+// by its address, on the site's own origin: a browser extension may add a <link> from another
+// origin, which may load or fail first, and that changes nothing. Until the site's stylesheets
+// have loaded nothing is drawn anyway: the browser waits for them, and the rule that hides the
+// body is in one of them.
+// - At the first load of a stylesheet of the site's, the bound starts: the page is shown HOLD_MS
+//   later whatever has happened, even if no stylesheet ever sets --pixel.
+// - At the first load after which --pixel (on <html>) names a face, the script waits for that face;
+//   when the wait settles, loaded or failed, it reads --pixel again and shows the page if it names
+//   the same face, else waits for the new one (the reader changed colour scheme meanwhile).
+// - An error from a stylesheet of the site's shows the page at once.
+// Showing the page takes the class away first, so that nothing that throws afterwards can leave
+// the page hidden. If the face is not ready then (it failed, or the bound came first), the class
+// font-fallback is set in the same task, under which --pixel names the reader's own monospace font,
+// so that the text is drawn in the frame that shows the page; when the face comes later, the class
+// goes and the text changes to it.
 //
-// The page is shown HOLD_MS after the stylesheet has loaded if the face is not ready by then, and
-// at once if it fails: then with the class font-fallback too, under which --pixel names the
-// reader's own monospace font, so that the text is drawn in the frame that shows the page; when
-// the face comes later, the class goes and the text changes to it. The browser's own block period
-// is not relied on to end at the same moment: it starts when the browser first tries to use the
-// face (CSS Fonts 4, "the font display timeline"), which is later than this. 3 s is the block
-// period CSS Fonts 4 recommends for font-display: block.
+// What is not handled: a change of colour scheme once the page is shown, or while a fallback is
+// set, is left to the browser, which hides the text in the new face for its own block period, as
+// it does on any change of scheme after the load; and around a change during the hold the page
+// may wait for the old face to settle, or the bound, before it is shown.
+//
+// The font coming from the browser's cache, as on a repeat visit, is ready a few milliseconds after
+// the stylesheet, with no request added (the face is the stylesheet's own, which the preload has
+// fetched). 3 s is the block period CSS Fonts 4 recommends for font-display: block. Its block
+// period starts when the browser first tries to use the face ("the font display timeline"); the
+// script does not rely on when that is.
 const HOLD_MS = 3000;
-const HOLD_UNTIL_FONT = `(()=>{const d=document,r=d.documentElement,c=r.classList;if(!d.fonts)return;let bound=0;const face=()=>"1em "+getComputedStyle(r).getPropertyValue("--pixel"),show=()=>{if(!c.contains("font-loading"))return;clearTimeout(bound);const f=face();if(!d.fonts.check(f)){c.add("font-fallback");d.fonts.load(f).then((l)=>{if(l.length>0&&l.every((x)=>x.status==="loaded"))c.remove("font-fallback")},()=>{})}c.remove("font-loading")},wait=()=>{const f=face();d.fonts.load(f).then(()=>(f===face()?show():wait()),show)},on=(e,go)=>d.addEventListener(e,(v)=>{if(v.target.rel==="stylesheet"&&v.target.href.startsWith(location.origin+"/"))go()},true);c.add("font-loading");on("load",()=>{if(!bound){bound=setTimeout(show,${HOLD_MS});wait()}});on("error",()=>c.remove("font-loading"))})()`;
+const HOLD_UNTIL_FONT = `(()=>{const d=document,r=d.documentElement,c=r.classList;if(!d.fonts)return;let bound=0,waiting=0;const face=()=>getComputedStyle(r).getPropertyValue("--pixel"),show=()=>{if(!c.contains("font-loading"))return;c.remove("font-loading");clearTimeout(bound);const p=face();if(p&&!d.fonts.check("1em "+p)){c.add("font-fallback");d.fonts.load("1em "+p).then((l)=>{if(l.length>0&&l.every((x)=>x.status==="loaded"))c.remove("font-fallback")},()=>{})}},wait=()=>{const p=face(),settled=()=>(p===face()?show():wait());d.fonts.load("1em "+p).then(settled,settled)},on=(e,go)=>d.addEventListener(e,(v)=>{if(v.target.rel==="stylesheet"&&v.target.href.startsWith(location.origin+"/"))go()},true);c.add("font-loading");on("load",()=>{bound=bound||setTimeout(show,${HOLD_MS});if(!waiting&&face()){waiting=1;wait()}});on("error",show)})()`;
 
 // The site has no logo yet. A page that names no icon gets the browser's own placeholder in its
 // tab (Chrome's globe) and a request for /favicon.ico; so each page names an icon that shows

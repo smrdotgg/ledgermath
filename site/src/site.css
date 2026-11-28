@@ -14,9 +14,10 @@
 @media (prefers-color-scheme: light) { :root { --pixel: "Geist Pixel Square"; --bg: #fff; --fg: #000; --muted: #6a6a6a; --rule: #bbb; --off: #dcdcdc; --far: #8c8c8c; } }
 
 html { background: var(--bg); color: var(--fg); -webkit-text-size-adjust: 100%; }
-/* Set by the script in Document.tsx: font-loading from before the body is read until the face --pixel names is ready, or
-   has failed, or 3 s have passed since this stylesheet loaded; font-fallback, when the page is shown without the face, until
-   it comes, so that the text is drawn at once in the reader's own monospace font (the next family the body names). */
+/* Set by the script in Document.tsx: font-loading from before the body is read until the face --pixel names has loaded or
+   failed, or 3 s have passed since the first of the site's stylesheets loaded, or one of them failed; font-fallback, when the
+   page is shown without the face, until it comes, so that the text is drawn at once in the reader's own monospace font (the
+   next family the body names). */
 .font-loading body { visibility: hidden; }
 :root.font-fallback { --pixel: ui-monospace; }
 /* "ss09" is the font's zero without a slash: a page of figures reads more easily with it. Remove it for the slashed zero.
