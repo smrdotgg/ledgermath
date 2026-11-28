@@ -1979,20 +1979,25 @@ A migrated benchmark is done only when **all** of these hold:
   its `@font-face`; each time the script had missed the event it waited for, so the
   guarantee moved to the stylesheet. The browser's entry (`site/src/entry-client.tsx`), in a
   browser without Paint Timing, now waits for the body being shown alone (the class taken
-  away, or the animation's end), no longer for the font as well, so a font that never answers
-  no longer keeps the page from being taken over; and without `PerformanceObserver` it takes
-  that path, where it threw before. A repeat visit, the font in the browser's cache, was held
-  6 to 7 ms in Chromium, with no request, and shown before its first frame. `bun run
-  check:browser` gains check 9, which reads in each animation frame whether the body is
-  visible and the computed font-family of the page's heading, judges from the page's own
-  record on the page's clock, and makes a load again (three times at most) when that record
-  shows the bound came before the check could act: with the font held back, on the home page
+  away, the animation's end, or the body already visible when it runs), no longer for the
+  font as well, so a font that never answers no longer keeps the page from being taken over;
+  and without `PerformanceObserver` it takes that path, where it threw before. The frame it
+  then waits for has the text when the script shows the body; when the animation shows it,
+  the text waits for its font as the browser decides, and that frame may have none. A repeat
+  visit, the font in the browser's cache, was held 6 to 7 ms in Chromium, with no request,
+  and shown before its first frame. `bun run check:browser` gains check 9, which reads in
+  each animation frame whether the body is visible, the classes, the computed font-family of
+  the page's heading and each face's status, and judges from that record on the page's
+  clock: in any load, a frame that shows the page before the bound while the face is neither
+  loaded nor failed fails it; a load with nothing wrong in its record whose face came after
+  the bound is made again, three times at most. The cases: with the font held back, on the home page
   and the glossary in light and dark, every frame between the stylesheet's load and the
   font's response hidden, then shown within a second of the response, the heading in the
   scheme's face; another stylesheet loading or failing before the site's (from another
   origin; of the site's own, empty, failing, or naming the face) changes nothing; switched
   from light to dark during the hold, shown only after the dark face's response; at an
-  address with a username, shown in the face; with the script deaf to every stylesheet event,
+  address with a username, shown by the script (in the face, or at the bound in the fallback
+  if the face came later); with the script deaf to every stylesheet event,
   shown by the animation 3.5 s after the stylesheet loaded; with the font not come, shown 3 s
   after the first stylesheet event, the heading in the fallback, then in the face; refused
   (404, a network error), shown as the face failed, in the fallback; with JavaScript off,

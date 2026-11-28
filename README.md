@@ -3667,9 +3667,11 @@ and is never hydrated; its body is the application's. At the top of every page, 
 (`<link rel="describedby">`, as the convention asks). Each page's `<head>` loads the script
 as a module, which runs once the HTML is parsed and hydrates after the first contentful
 paint (`site/src/entry-client.tsx`; `check:browser` holds the order), so the page paints as
-it did without it (in a browser without Paint Timing or `PerformanceObserver`, once the body is shown and two
-animation frames, one asked for inside the other, have passed, so that the frame showing the
-text has been painted);
+it did without it (in a browser without Paint Timing or `PerformanceObserver`, once the body
+is shown and two animation frames, one asked for inside the other, have passed, so that the
+frame showing the body has been painted: when the script shows it, with its text, in its font
+or a fallback; when the stylesheet's animation shows it instead, the text waits for its font
+as the browser decides, and that frame may have none);
 an inline script sets the page's feature flags (above) and holds the page back, hidden from
 before the body is read, until the font of the reader's colour scheme has loaded, so that
 the text and the dot art and bars, which are not text, appear in the same frame. The
@@ -3798,22 +3800,28 @@ and those four, with Paint
 Timing hidden from the page and the font 300 ms late, before the first contentful frame's
 paint time), or hydration that changes an
 element or text of the page (only the attributes the router derives from the address may
-change). They fail, too, when the page is not held back for its font: with the font held
-back by the host and the stylesheet made late, on the home page and the glossary in light
-and dark, every frame between the stylesheet's load and the font's response must have the body
-hidden (by the page's own record), the page shown within a second of the font's response
+change). They fail, too, when the page is not held back for its font. Each of these is
+judged from the page's own record (each frame's visibility, classes and heading's font, each
+face's status, the stylesheet events, the fonts' responses); in any load, a frame that shows
+the page before the bound while the face is neither loaded nor failed fails the check; a load
+with nothing wrong in its record in which the face came after the bound, so that the case
+had no chance, is made again, three times at most, and the case fails if it is never judged
+(for the cases in which the check lets a font through).
+With the font held back by the host and the stylesheet made late, on the home page and the
+glossary in light and dark, every frame between the stylesheet's load and the font's
+response must have the body hidden, the page shown within a second of the font's response
 ending, and the first frame that shows it must draw the heading in the scheme's face; another
 stylesheet loading or failing before the site's (from another origin; on the site's own
 origin empty, failing, or naming the face whose `@font-face` comes later) must change
 nothing; switched from light to dark during the hold, the page must be shown only after the
-dark face's response, in it (a load in which the page's record shows the bound came before
-the check could act is made again, three times at most); opened at an address with a
-username, shown in the face; with the script deaf to every stylesheet event, the body shown
-by the stylesheet's own animation 3.5 s after it loaded; with the font not come, the page
-must be shown 3 s after the stylesheet loaded (and not a second later), its heading in a
-fallback font from the first frame, then in the face once it comes;
-with the font refused (404, a network error), shown at once in a fallback font; and with
-JavaScript off, shown once the HTML is parsed and the stylesheet loaded. Then a round of clicks, each on a link to the next page: from `/` to `/docs/`, a
+dark face's response, in it; opened at an address with a username, shown by the script (in
+the face, or at the 3 s if the face came later, in the fallback); with
+the script deaf to every stylesheet event, the body shown by the stylesheet's own animation
+3.5 s after it loaded, the class still on; with the font not come, the page must be shown 3 s
+after the first stylesheet event (and not a second later), its heading in a fallback font
+from the first frame, then in the face once it comes; with the font refused (404, a network
+error), shown within a second of the face's failure in a fallback font; and with JavaScript
+off, shown once the HTML is parsed and the stylesheet loaded. Then a round of clicks, each on a link to the next page: from `/` to `/docs/`, a
 benchmark's page, two reference pages, `/` again and a benchmark's page by its name in the
 table, and back: each must change the page in place, with no request for it (the chunks the
 router then loads ahead for the new page's links are counted apart)

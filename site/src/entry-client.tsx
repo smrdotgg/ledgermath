@@ -23,13 +23,14 @@ import { App, landingBodyLoaded } from "./app";
 /**
  * Resolves once the body is shown: when the inline script in <head> (Document.tsx) has taken away
  * its class "font-loading", or when the rule that hides the body has ended the hiding by itself
- * (its animation's end, site.css), or at once if the class was never set (a browser without
- * document.fonts).
+ * (its animation's end, site.css); at once if the body is already visible, whatever the class says
+ * (the animation may have ended before this script ran), or if the class was never set (a browser
+ * without document.fonts).
  */
 function shown(): Promise<void> {
 	return new Promise((resolve) => {
 		const root = document.documentElement;
-		if (!root.classList.contains("font-loading")) return resolve();
+		if (!root.classList.contains("font-loading") || getComputedStyle(document.body).visibility === "visible") return resolve();
 		const done = () => {
 			observer.disconnect();
 			resolve();
