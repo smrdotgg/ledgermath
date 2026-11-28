@@ -18,11 +18,13 @@ const LIGHT = "(prefers-color-scheme: light)";
 // The script runs before the stylesheet's <link> (the build writes it at the end of <head>), when
 // no @font-face is known yet: asked then, document.fonts would say there is nothing to wait for.
 // So it hides the page at once and, when the stylesheet has loaded (its load event, caught on the
-// way down to the <link>), reads the face the stylesheet sets (--pixel on <html>) and waits for
-// it; if the stylesheet then sets another face (the reader changed colour scheme meanwhile), it
-// waits for that one. Until the stylesheet has loaded, nothing is drawn anyway: the browser waits
-// for it, and the rule that hides the body is in it. If the stylesheet fails, the page is shown,
-// in the browser's own fonts. The font coming from the browser's cache, as on a repeat visit, is
+// way down to the <link>, once), reads the face the stylesheet sets (--pixel on <html>) and waits
+// for it; if the stylesheet then sets another face (the reader changed colour scheme meanwhile),
+// it waits for that one. Until the stylesheet has loaded, nothing is drawn anyway: the browser
+// waits for it, and the rule that hides the body is in it. If the stylesheet fails, the page is
+// shown, in the browser's own fonts. The site's stylesheet is told from any other by its address,
+// on the site's own origin: a browser extension may add a <link> of its own to the page, from
+// another origin, which may load or fail first, and its load or failure changes nothing. The font coming from the browser's cache, as on a repeat visit, is
 // ready a few milliseconds after the stylesheet, with no request added (the face is the
 // stylesheet's own, which the preload has fetched).
 //
@@ -34,7 +36,7 @@ const LIGHT = "(prefers-color-scheme: light)";
 // face (CSS Fonts 4, "the font display timeline"), which is later than this. 3 s is the block
 // period CSS Fonts 4 recommends for font-display: block.
 const HOLD_MS = 3000;
-const HOLD_UNTIL_FONT = `(()=>{const d=document,r=d.documentElement,c=r.classList;if(!d.fonts)return;let bound=0;const face=()=>"1em "+getComputedStyle(r).getPropertyValue("--pixel"),show=()=>{if(!c.contains("font-loading"))return;clearTimeout(bound);const f=face();if(!d.fonts.check(f)){c.add("font-fallback");d.fonts.load(f).then((l)=>{if(l.length>0&&l.every((x)=>x.status==="loaded"))c.remove("font-fallback")},()=>{})}c.remove("font-loading")},wait=()=>{const f=face();d.fonts.load(f).then(()=>(f===face()?show():wait()),show)},on=(e,go)=>d.addEventListener(e,(v)=>{if(v.target.rel==="stylesheet")go()},true);c.add("font-loading");on("load",()=>{bound=setTimeout(show,${HOLD_MS});wait()});on("error",()=>c.remove("font-loading"))})()`;
+const HOLD_UNTIL_FONT = `(()=>{const d=document,r=d.documentElement,c=r.classList;if(!d.fonts)return;let bound=0;const face=()=>"1em "+getComputedStyle(r).getPropertyValue("--pixel"),show=()=>{if(!c.contains("font-loading"))return;clearTimeout(bound);const f=face();if(!d.fonts.check(f)){c.add("font-fallback");d.fonts.load(f).then((l)=>{if(l.length>0&&l.every((x)=>x.status==="loaded"))c.remove("font-fallback")},()=>{})}c.remove("font-loading")},wait=()=>{const f=face();d.fonts.load(f).then(()=>(f===face()?show():wait()),show)},on=(e,go)=>d.addEventListener(e,(v)=>{if(v.target.rel==="stylesheet"&&v.target.href.startsWith(location.origin+"/"))go()},true);c.add("font-loading");on("load",()=>{if(!bound){bound=setTimeout(show,${HOLD_MS});wait()}});on("error",()=>c.remove("font-loading"))})()`;
 
 // The site has no logo yet. A page that names no icon gets the browser's own placeholder in its
 // tab (Chrome's globe) and a request for /favicon.ico; so each page names an icon that shows
